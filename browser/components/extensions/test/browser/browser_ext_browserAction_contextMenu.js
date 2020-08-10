@@ -58,6 +58,7 @@ let contextMenuItems = {
   "inspect-separator": "hidden",
   "context-inspect": "hidden",
   "context-inspect-a11y": "hidden",
+  "context-qrshare": "hidden",
   "context-bookmarkpage": "hidden",
 };
 

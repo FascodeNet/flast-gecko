@@ -522,6 +522,7 @@ class nsContextMenu {
     );
     this.showItem("inspect-separator", showInspect);
     this.showItem("context-inspect", showInspect);
+    this.showItem("context-qrshare",shouldShow);
 
     this.showItem("context-inspect-a11y", showInspectA11Y);
 
