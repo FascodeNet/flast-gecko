@@ -102,6 +102,8 @@ browser.jar:
         content/browser/webext-panels.js              (content/webext-panels.js)
 *       content/browser/webext-panels.xhtml           (content/webext-panels.xhtml)
         content/browser/nsContextMenu.js              (content/nsContextMenu.js)
+        content/browser/jquery-3.5.1.min.js           (content/jquery-3.5.1.min.js)
+        content/browser/jquery.qrcode.min.js          (content/jquery.qrcode.min.js)
         content/browser/contentTheme.js               (content/contentTheme.js)
 #ifdef XP_MACOSX
 # XXX: We should exclude this one as well (bug 71895)

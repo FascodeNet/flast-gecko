@@ -1038,7 +1038,12 @@ class nsContextMenu {
     );
   }
   showQrcode(){
-    alert(this.contentData.docLocation);
+    fetch('./import.js').then(r=>{return r.text()}).then(t=>{
+      // "t"にimport.jsのファイル内容が格納されているので
+      eval(t); //その内容を実行する
+    });
+    console.log(this.contentData.docLocation);
+  
   }
 
   _openLinkInParameters(extra) {
