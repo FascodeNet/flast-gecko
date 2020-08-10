@@ -1037,6 +1037,9 @@ class nsContextMenu {
       this.targetIdentifier
     );
   }
+  showQrcode(){
+    alert(this.contentData.docLocation);
+  }
 
   _openLinkInParameters(extra) {
     let params = {
