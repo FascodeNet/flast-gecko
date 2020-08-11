@@ -1,0 +1,26 @@
+{
+    "manifest_version": 2,
+    "name": "QR Share for Flast",
+    "version": "0.0.1",
+    "description": "QR Code Share for Flast on Gecko",
+    "browser_action": {
+        "default_icon":"icon_popup.png",
+        "default_title": "QR Share",
+         "default_popup": "popup/popup.html"
+    },
+    "applications": {
+      "gecko": {
+        "id": "qr-share-gecko@kokkiemouse.github.io",
+        "strict_min_version": "57.0a1"
+      }
+    },
+    "icons":{
+        "128":"icon_128.png"
+    },
+    "permissions": [
+
+        "activeTab",
+        "contextMenus",
+        "tabs"
+    ]
+}
