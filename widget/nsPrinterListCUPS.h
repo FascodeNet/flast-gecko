@@ -9,19 +9,13 @@
 #include "nsPrinterListBase.h"
 #include "nsStringFwd.h"
 
-struct cups_dest_s;
-
 class nsPrinterListCUPS final : public nsPrinterListBase {
-  NS_DECL_NSIPRINTERLIST
+  NS_IMETHOD InitPrintSettingsFromPrinter(const nsAString&,
+                                          nsIPrintSettings*) final;
+  NS_IMETHOD GetSystemDefaultPrinterName(nsAString&) final;
 
-#ifdef XP_MACOSX
-  // This is implemented in nsDeviceContextSpecX. We could add a new class to
-  // the class hierarchy instead and make this virtual, but it seems overkill
-  // just for this.
-  static void GetDisplayNameForPrinter(const cups_dest_s&, nsAString& aName);
-#else
-  static void GetDisplayNameForPrinter(const cups_dest_s&, nsAString& aName) {}
-#endif
+  nsTArray<PrinterInfo> Printers() const final;
+  RefPtr<nsIPrinter> CreatePrinter(PrinterInfo) const final;
 
  private:
   ~nsPrinterListCUPS() override = default;

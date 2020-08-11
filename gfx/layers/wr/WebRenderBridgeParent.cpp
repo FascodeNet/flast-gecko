@@ -239,9 +239,10 @@ class SceneBuiltNotification : public wr::NotificationHandler {
                     TagForDeserializer(Deserialize);
                 SerializeTagAndCommonProps(tag, aEntryWriter);
               }
-              void StreamPayload(SpliceableJSONWriter& aWriter,
-                                 const TimeStamp& aProcessStartTime,
-                                 UniqueStacks& aUniqueStacks) const override {
+              void StreamPayload(
+                  mozilla::baseprofiler::SpliceableJSONWriter& aWriter,
+                  const TimeStamp& aProcessStartTime,
+                  UniqueStacks& aUniqueStacks) const override {
                 StreamCommonProps("CONTENT_FULL_PAINT_TIME", aWriter,
                                   aProcessStartTime, aUniqueStacks);
               }
@@ -986,13 +987,17 @@ void WebRenderBridgeParent::SetAPZSampleTime() {
     return;
   }
   if (RefPtr<APZSampler> apz = cbp->GetAPZSampler()) {
-    TimeStamp animationTime = cbp->GetTestingTimeStamp().valueOr(
-        mCompositorScheduler->GetLastComposeTime());
+    SampleTime animationTime;
+    if (Maybe<TimeStamp> testTime = cbp->GetTestingTimeStamp()) {
+      animationTime = SampleTime::FromTest(*testTime);
+    } else {
+      animationTime = mCompositorScheduler->GetLastComposeTime();
+    }
     TimeDuration frameInterval = cbp->GetVsyncInterval();
     // As with the non-webrender codepath in AsyncCompositionManager, we want to
     // use the timestamp for the next vsync when advancing animations.
     if (frameInterval != TimeDuration::Forever()) {
-      animationTime += frameInterval;
+      animationTime = animationTime + frameInterval;
     }
     apz->SetSampleTime(animationTime);
   }
@@ -1941,7 +1946,7 @@ RefPtr<OMTASampler> WebRenderBridgeParent::GetOMTASampler() const {
 void WebRenderBridgeParent::SetOMTASampleTime() {
   MOZ_ASSERT(IsRootWebRenderBridgeParent());
   if (RefPtr<OMTASampler> sampler = GetOMTASampler()) {
-    sampler->SetSampleTime(mCompositorScheduler->GetLastComposeTime());
+    sampler->SetSampleTime(mCompositorScheduler->GetLastComposeTime().Time());
   }
 }
 

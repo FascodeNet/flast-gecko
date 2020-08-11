@@ -7,10 +7,9 @@
 #ifndef ProfileBufferEntry_h
 #define ProfileBufferEntry_h
 
-#include "BaseProfileJSONWriter.h"
-
-#include "gtest/MozGtestFriend.h"
 #include "BaseProfilingCategory.h"
+#include "gtest/MozGtestFriend.h"
+#include "mozilla/BaseProfileJSONWriter.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/HashTable.h"
 #include "mozilla/Maybe.h"
@@ -144,7 +143,7 @@ class UniqueJSONStrings {
   explicit UniqueJSONStrings(const UniqueJSONStrings& aOther);
 
   void SpliceStringTableElements(SpliceableJSONWriter& aWriter) {
-    aWriter.TakeAndSplice(mStringTableWriter.WriteFunc());
+    aWriter.TakeAndSplice(mStringTableWriter.ChunkedWriteFunc());
   }
 
   void WriteProperty(JSONWriter& aWriter, const char* aName, const char* aStr) {

@@ -769,7 +769,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 dependencies = [
  "cranelift-entity 0.66.0",
 ]
@@ -777,7 +777,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 dependencies = [
  "byteorder",
  "cranelift-bforest",
@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 dependencies = [
  "cranelift-codegen-shared",
  "cranelift-entity 0.66.0",
@@ -803,7 +803,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 
 [[package]]
 name = "cranelift-entity"
@@ -813,12 +813,12 @@ source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a6
 [[package]]
 name = "cranelift-entity"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 
 [[package]]
 name = "cranelift-frontend"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -829,7 +829,7 @@ dependencies = [
 [[package]]
 name = "cranelift-wasm"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=fc88898e9ad7766feadfa0954c4594fcccd86b92#fc88898e9ad7766feadfa0954c4594fcccd86b92"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=e88d74903102266a18e97489557760b9be67f782#e88d74903102266a18e97489557760b9be67f782"
 dependencies = [
  "cranelift-codegen",
  "cranelift-entity 0.66.0",
@@ -1318,7 +1318,7 @@ checksum = "ff511d5dc435d703f4971bc399647c9bc38e20cb41452e3b9feb4765419ed3f3"
 [[package]]
 name = "error-support"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "failure",
 ]
@@ -1663,7 +1663,7 @@ dependencies = [
 [[package]]
 name = "fxa-client"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "base64 0.12.0",
  "byteorder",
@@ -2349,7 +2349,7 @@ dependencies = [
 [[package]]
 name = "interrupt-support"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 
 [[package]]
 name = "intl-memoizer"
@@ -2422,7 +2422,7 @@ dependencies = [
 [[package]]
 name = "jsparagus"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "jsparagus-ast",
  "jsparagus-emitter",
@@ -2436,7 +2436,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-ast"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "bumpalo",
  "indexmap",
@@ -2445,7 +2445,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-emitter"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "bumpalo",
  "byteorder",
@@ -2458,7 +2458,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-generated-parser"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "bumpalo",
  "jsparagus-ast",
@@ -2468,12 +2468,12 @@ dependencies = [
 [[package]]
 name = "jsparagus-json-log"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 
 [[package]]
 name = "jsparagus-parser"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "arrayvec",
  "bumpalo",
@@ -2485,7 +2485,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-scope"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "indexmap",
  "jsparagus-ast",
@@ -2495,7 +2495,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-stencil"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96#ba8fe73bda8cc5dd2fa0dafaa3dbde68a901cf96"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=239df3502e7e09a706b8d6fbe4c0db139d653e25#239df3502e7e09a706b8d6fbe4c0db139d653e25"
 dependencies = [
  "jsparagus-ast",
 ]
@@ -3307,7 +3307,7 @@ dependencies = [
 [[package]]
 name = "nss"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "base64 0.12.0",
  "error-support",
@@ -3321,12 +3321,12 @@ dependencies = [
 [[package]]
 name = "nss_build_common"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 
 [[package]]
 name = "nss_sys"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "nss_build_common",
 ]
@@ -3985,7 +3985,7 @@ dependencies = [
 [[package]]
 name = "rc_crypto"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "base64 0.12.0",
  "ece",
@@ -4578,7 +4578,7 @@ dependencies = [
 [[package]]
 name = "sql-support"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "ffi-support",
  "interrupt-support",
@@ -4776,7 +4776,7 @@ dependencies = [
 [[package]]
 name = "sync-guid"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "base64 0.12.0",
  "rand",
@@ -4787,7 +4787,7 @@ dependencies = [
 [[package]]
 name = "sync15"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "base16",
  "base64 0.12.0",
@@ -4810,7 +4810,7 @@ dependencies = [
 [[package]]
 name = "sync15-traits"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "failure",
  "ffi-support",
@@ -5395,7 +5395,7 @@ checksum = "078775d0255232fb988e6fccf26ddc9d1ac274299aaedcedce21c6f72cc533ce"
 [[package]]
 name = "viaduct"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "failure",
  "failure_derive",
@@ -5517,7 +5517,7 @@ dependencies = [
 [[package]]
 name = "webext-storage"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/application-services?rev=61dcc364ac0d6d0816ab88a494bbf20d824b009b#61dcc364ac0d6d0816ab88a494bbf20d824b009b"
+source = "git+https://github.com/mozilla/application-services?rev=9ba519a5739b1976f1d333923d34b7f4916b9e26#9ba519a5739b1976f1d333923d34b7f4916b9e26"
 dependencies = [
  "error-support",
  "failure",

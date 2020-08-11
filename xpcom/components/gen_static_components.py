@@ -605,6 +605,7 @@ def gen_substs(manifests):
     headers = set()
 
     modules = []
+    categories = defaultdict(list)
 
     for manifest in manifests:
         headers |= set(manifest.get('Headers', []))
@@ -619,9 +620,17 @@ def gen_substs(manifests):
         for clas in manifest['Classes']:
             modules.append(ModuleEntry(clas, init_idx))
 
+        for category, entries in manifest.get('Categories', {}).items():
+            for key, entry in entries.items():
+                if isinstance(entry, tuple):
+                    value, process = entry
+                else:
+                    value, process = entry, 0
+                categories[category].append((key, value, process))
+
+    cids = set()
     contracts = []
     contract_map = {}
-    categories = defaultdict(list)
     js_services = {}
 
     jsms = set()
@@ -654,6 +663,10 @@ def gen_substs(manifests):
             if mod.js_name in js_services:
                 raise Exception('Duplicate JS service name: %s' % mod.js_name)
             js_services[mod.js_name] = mod
+
+        if str(mod.cid) in cids:
+            raise Exception('Duplicate cid: %s' % str(mod.cid))
+        cids.add(str(mod.cid))
 
     cid_phf = PerfectHash(modules, PHF_SIZE,
                           key=lambda module: module.cid.bytes)

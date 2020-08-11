@@ -2,7 +2,7 @@
 // - http://creativecommons.org/publicdomain/zero/1.0/
 
 /* eslint-env mozilla/chrome-worker, node */
-/* global finish, log*/
+/* global finish, log */
 
 "use strict";
 
@@ -12,6 +12,7 @@ importScripts("resource://gre/modules/ObjectUtils.jsm");
 // TODO: Remove this import for OS.File. It is currently being used as a
 //       stop gap for missing IOUtils functionality.
 importScripts("resource://gre/modules/osfile.jsm");
+importScripts("file_ioutils_test_fixtures.js");
 
 self.onmessage = async function(msg) {
   const tmpDir = OS.Constants.Path.tmpDir;
@@ -22,6 +23,7 @@ self.onmessage = async function(msg) {
   await test_api_is_available_on_worker();
   await test_full_read_and_write();
   await test_move_file();
+  await test_copy_file();
   await test_make_directory();
 
   finish();
@@ -76,6 +78,21 @@ self.onmessage = async function(msg) {
     await cleanup(dest);
   }
 
+  async function test_copy_file() {
+    const tmpFileName = OS.Path.join(tmpDir, "test_ioutils_orig.tmp");
+    const destFileName = OS.Path.join(tmpDir, "test_ioutils_copy.tmp");
+    await createFile(tmpFileName, "original");
+
+    await self.IOUtils.copy(tmpFileName, destFileName);
+    ok(
+      (await fileExists(tmpFileName)) &&
+        (await fileHasTextContents(destFileName, "original")),
+      "IOUtils::copy can copy source to dest in same directory"
+    );
+
+    await cleanup(tmpFileName, destFileName);
+  }
+
   async function test_make_directory() {
     const dir = OS.Path.join(tmpDir, "test_make_dir.tmp.d");
     await self.IOUtils.makeDirectory(dir);
@@ -85,31 +102,5 @@ self.onmessage = async function(msg) {
     );
 
     await cleanup(dir);
-  }
-
-  async function cleanup(...files) {
-    for (const file of files) {
-      await self.IOUtils.remove(file, { ignoreAbsent: true, recursive: true });
-      const exists = await fileOrDirExists(file);
-      ok(!exists, `Removed temporary file: ${file}`);
-    }
-  }
-
-  async function fileOrDirExists(location) {
-    try {
-      await self.IOUtils.stat(location);
-      return true;
-    } catch (ex) {
-      return false;
-    }
-  }
-
-  async function fileExists(location) {
-    try {
-      let { type } = await self.IOUtils.stat(location);
-      return type === "regular";
-    } catch (ex) {
-      return false;
-    }
   }
 };

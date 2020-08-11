@@ -1709,6 +1709,23 @@ findbar:
       - 'main'
 
 sidebar:
+  opened:
+    bug_numbers:
+      - 1648530
+    description: >
+      The number of times the sidebar was opened, per view (e.g.: bookmarks, history,
+      synced tabs).
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - emalysz@mozilla.com
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
   search:
     bug_numbers:
       - 1648524
@@ -3978,6 +3995,7 @@ printing:
     kind: uint
     notification_emails:
       - jwatt@jwatt.org
+      - emalysz@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4043,6 +4061,7 @@ printing:
     kind: uint
     notification_emails:
       - jwatt@jwatt.org
+      - emalysz@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4059,11 +4078,30 @@ printing:
     kind: uint
     notification_emails:
       - jwatt@jwatt.org
+      - emalysz@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
       - 'content'
+
+  settings_changed:
+    bug_numbers:
+      - 1653386
+    description: >
+      A count of how many times the user changed a setting in print preview,
+      broken down per setting.
+    keyed: true
+    expires: never
+    kind: uint
+    notification_emails:
+      - emalysz@mozilla.com
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - "firefox"
+    record_in_processes:
+      - 'main'
 
   silent_print:
     bug_numbers:

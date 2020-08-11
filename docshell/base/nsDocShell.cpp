@@ -2276,7 +2276,7 @@ nsDocShell::SetMetaViewportOverride(
   // Inform our presShell that it needs to re-check its need for a viewport
   // override.
   if (RefPtr<PresShell> presShell = GetPresShell()) {
-    presShell->UpdateViewportOverridden(true);
+    presShell->MaybeRecreateMobileViewportManager(true);
   }
 
   return NS_OK;
@@ -7957,9 +7957,17 @@ nsresult nsDocShell::CheckLoadingPermissions() {
 
   // Check if the caller is from the same origin as this docshell,
   // or any of its ancestors.
-  nsCOMPtr<nsIDocShellTreeItem> item(this);
-  do {
-    nsCOMPtr<nsIScriptGlobalObject> sgo = do_GetInterface(item);
+  for (RefPtr<BrowsingContext> bc = mBrowsingContext; bc;
+       bc = bc->GetParent()) {
+    // If the BrowsingContext is not in process, then it
+    // is true by construction that its principal will not
+    // subsume the current docshell principal.
+    if (!bc->IsInProcess()) {
+      continue;
+    }
+
+    nsCOMPtr<nsIScriptGlobalObject> sgo =
+        bc->GetDocShell()->GetScriptGlobalObject();
     nsCOMPtr<nsIScriptObjectPrincipal> sop(do_QueryInterface(sgo));
 
     nsIPrincipal* p;
@@ -7971,11 +7979,7 @@ nsresult nsDocShell::CheckLoadingPermissions() {
       // Same origin, permit load
       return NS_OK;
     }
-
-    nsCOMPtr<nsIDocShellTreeItem> tmp;
-    item->GetInProcessSameTypeParent(getter_AddRefs(tmp));
-    item.swap(tmp);
-  } while (item);
+  }
 
   return NS_ERROR_DOM_PROP_ACCESS_DENIED;
 }
@@ -9183,23 +9187,6 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
     aLoadInfo->SetIsFormSubmission(true);
   }
 
-  // If the HTTPS-Only mode is enabled, every insecure request gets upgraded to
-  // HTTPS by default. This behavior can be disabled through the loadinfo flag
-  // HTTPS_ONLY_EXEMPT.
-  bool isPrivateWin = attrs.mPrivateBrowsingId > 0;
-  if (nsHTTPSOnlyUtils::IsHttpsOnlyModeEnabled(isPrivateWin)) {
-    // Let's create a new content principal based on the URI for the
-    // PermissionManager
-    nsCOMPtr<nsIPrincipal> permissionPrincipal =
-        BasePrincipal::CreateContentPrincipal(aLoadState->URI(), attrs);
-
-    if (nsHTTPSOnlyUtils::TestHttpsOnlySitePermission(permissionPrincipal)) {
-      uint32_t httpsOnlyStatus = aLoadInfo->GetHttpsOnlyStatus();
-      httpsOnlyStatus |= nsILoadInfo::HTTPS_ONLY_EXEMPT;
-      aLoadInfo->SetHttpsOnlyStatus(httpsOnlyStatus);
-    }
-  }
-
   nsCOMPtr<nsIChannel> channel;
   aRv = CreateRealChannelForDocument(getter_AddRefs(channel), aLoadState->URI(),
                                      aLoadInfo, aCallbacks, aLoadFlags, srcdoc,
@@ -9209,6 +9196,11 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
   if (!channel) {
     return false;
   }
+
+  // If the HTTPS-Only mode is enabled, every insecure request gets upgraded to
+  // HTTPS by default. This behavior can be disabled through the loadinfo flag
+  // HTTPS_ONLY_EXEMPT.
+  nsHTTPSOnlyUtils::TestSitePermissionAndPotentiallyAddExemption(channel);
 
   if (nsCOMPtr<nsIApplicationCacheChannel> appCacheChannel =
           do_QueryInterface(channel)) {
