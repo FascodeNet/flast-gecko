@@ -381,9 +381,6 @@ main-context-menu-inspect-element =
     .label = Inspect Element
     .accesskey = Q
 
-main-context-menu-qr-share =
-    .label = QRCode Share
-
 main-context-menu-inspect-a11y-properties =
     .label = Inspect Accessibility Properties
 

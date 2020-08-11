@@ -384,10 +384,6 @@
                 hidden="true"
                 data-l10n-id="main-context-menu-inspect-element"
                 oncommand="gContextMenu.inspectNode();"/>
-      <menuitem id="context-qrshare"
-                hidden="true"
-                data-l10n-id="main-context-menu-qr-share"
-                oncommand="gContextMenu.showQrcode();"/>
       <menuseparator id="context-media-eme-separator" hidden="true"/>
       <menuitem id="context-media-eme-learnmore"
                 class="menuitem-iconic"

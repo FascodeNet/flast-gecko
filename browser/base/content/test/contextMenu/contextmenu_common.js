@@ -90,8 +90,7 @@ function getVisibleMenuItems(aMenu, aData) {
         item.id != "screenshots_mozilla_org-menuitem-_create-screenshot" &&
         // Inspect accessibility properties does not have an access key. See
         // bug 1630717 for more details.
-        item.id != "context-inspect-a11y" &&
-        item.id != "context-qrshare"
+        item.id != "context-inspect-a11y"
       ) {
         if (item.id != FRAME_OS_PID) {
           ok(key, "menuitem " + item.id + " has an access key");

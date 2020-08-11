@@ -522,7 +522,6 @@ class nsContextMenu {
     );
     this.showItem("inspect-separator", showInspect);
     this.showItem("context-inspect", showInspect);
-    this.showItem("context-qrshare",shouldShow);
 
     this.showItem("context-inspect-a11y", showInspectA11Y);
 
@@ -1036,14 +1035,6 @@ class nsContextMenu {
       gBrowser.selectedTab,
       this.targetIdentifier
     );
-  }
-  showQrcode(){
-    fetch('./import.js').then(r=>{return r.text()}).then(t=>{
-      // "t"にimport.jsのファイル内容が格納されているので
-      eval(t); //その内容を実行する
-    });
-    console.log(this.contentData.docLocation);
-  
   }
 
   _openLinkInParameters(extra) {
