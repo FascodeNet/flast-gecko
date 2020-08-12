@@ -2544,13 +2544,6 @@
   value: false
   mirror: always
 
-# This pref enables FeaturePolicy logic and the parsing of 'allow' attribute in
-# HTMLIFrameElement objects.
-- name: dom.security.featurePolicy.enabled
-  type: bool
-  value: true
-  mirror: always
-
 # This pref enables Sec-Fetch-* logic and causes corresponding
 # request headers to be set.
 - name: dom.security.secFetch.enabled
@@ -5705,6 +5698,13 @@
   mirror: always
   rust: true
 
+# Whether :-moz-any is an alias of the :is selector.
+- name: layout.css.moz-any-is-is.enabled
+  type: RelaxedAtomicBool
+  value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+  rust: true
+
 # Whether the `no-preference` value for `prefers-color-scheme` is parsed.
 #
 # It never matches regardless.
@@ -8217,26 +8217,6 @@
 
 # Whether to send the User-Agent header for TRR requests
 - name: network.trr.send_user-agent_headers
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# This pref controls if TRR will still be enabled when a VPN is detected on
-# the system. Detection is not foolproof, and some VPNs may not be detected.
-# See bug 1565004 comment 3 for details.
-- name: network.trr.enable_when_vpn_detected
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# This pref controls if TRR will still be enabled when a proxy is detected
-- name: network.trr.enable_when_proxy_detected
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# This pref controls if TRR will still be enabled when NRPT rules are detected
-- name: network.trr.enable_when_nrpt_detected
   type: RelaxedAtomicBool
   value: false
   mirror: always

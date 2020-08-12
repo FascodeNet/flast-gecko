@@ -286,6 +286,16 @@ add_task(async function editedView() {
     );
   }
 
+  // TODO: (Bug 1658629) We haven't decided what kind of heuristic action text
+  // local one-offs should show. This subtest will start failing if we introduce
+  // action text for local one-offs, at which point this array and its uses
+  // below can be removed.
+  const localOneOffIds = [
+    "urlbar-engine-one-off-item-bookmarks",
+    "urlbar-engine-one-off-item-tabs",
+    "urlbar-engine-one-off-item-history",
+  ];
+
   // Key down through each one-off.
   let numButtons = oneOffSearchButtons.getSelectableButtons(true).length;
   for (let i = 0; i < numButtons; i++) {
@@ -295,7 +305,7 @@ add_task(async function editedView() {
       BrowserTestUtils.is_visible(heuristicResult.element.action),
       !oneOffSearchButtons.selectedButton.classList.contains(
         "search-setting-button-compact"
-      ),
+      ) && !localOneOffIds.includes(oneOffSearchButtons.selectedButton.id),
       "The heuristic action should be visible when a one-off button is selected"
     );
   }
@@ -317,7 +327,7 @@ add_task(async function editedView() {
       BrowserTestUtils.is_visible(heuristicResult.element.action),
       !oneOffSearchButtons.selectedButton.classList.contains(
         "search-setting-button-compact"
-      ),
+      ) && !localOneOffIds.includes(oneOffSearchButtons.selectedButton.id),
       "The heuristic action should be visible when a one-off button is selected"
     );
   }
@@ -348,8 +358,7 @@ add_task(async function editedView() {
 });
 
 // Checks that "Search with Current Search Engine" items are updated to "Search
-// with One-Off Engine" when a one-off is selected. If update2 one-offs are
-// enabled, only the heuristic result should update.
+// with One-Off Engine" when a one-off is selected.
 add_task(async function searchWith() {
   // Enable suggestions for this subtest so we can check non-heuristic results.
   let oldDefaultEngine = await Services.search.getDefault();
@@ -392,49 +401,37 @@ add_task(async function searchWith() {
   );
 
   // Check non-heuristic results.
-  for (let refresh of [true, false]) {
-    UrlbarPrefs.set("update2", refresh);
-    UrlbarPrefs.set("update2.oneOffsRefresh", refresh);
-    await hidePopup();
-    await UrlbarTestUtils.promiseAutocompleteResultPopup({
-      window,
-      value: typedValue,
-    });
+  await hidePopup();
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: typedValue,
+  });
 
-    EventUtils.synthesizeKey("KEY_ArrowDown");
-    result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
-    assertState(1, -1, typedValue + "foo");
-    Assert.equal(
-      result.displayed.action,
-      "Search with " + engine.name,
-      "Sanity check: second result's action text"
-    );
-    Assert.ok(!result.heuristic, "The second result is not heuristic.");
-    EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true, repeat: 2 });
-    assertState(1, 1, typedValue + "foo");
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
+  assertState(1, -1, typedValue + "foo");
+  Assert.equal(
+    result.displayed.action,
+    "Search with " + engine.name,
+    "Sanity check: second result's action text"
+  );
+  Assert.ok(!result.heuristic, "The second result is not heuristic.");
+  EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true, repeat: 2 });
+  assertState(1, 1, typedValue + "foo");
 
-    engineName = oneOffSearchButtons.selectedButton.engine.name;
-    Assert.notEqual(
-      engineName,
-      (await Services.search.getDefault()).name,
-      "Sanity check: Second one-off engine should not be the current engine"
-    );
-    result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
+  engineName = oneOffSearchButtons.selectedButton.engine.name;
+  Assert.notEqual(
+    engineName,
+    (await Services.search.getDefault()).name,
+    "Sanity check: Second one-off engine should not be the current engine"
+  );
+  result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
 
-    if (refresh) {
-      Assert.equal(
-        result.displayed.action,
-        "Search with " + (await Services.search.getDefault()).name,
-        "Second result's action text should be the same"
-      );
-    } else {
-      Assert.equal(
-        result.displayed.action,
-        "Search with " + engineName,
-        "Second result's action text should be updated"
-      );
-    }
-  }
+  Assert.equal(
+    result.displayed.action,
+    "Search with " + engineName,
+    "Second result's action text should be updated"
+  );
 
   Services.prefs.setBoolPref("browser.urlbar.suggest.searches", oldSuggestPref);
   await Services.search.setDefault(oldDefaultEngine);

@@ -131,29 +131,23 @@ class DNSListener {
     this.promise = new Promise(resolve => {
       this.resolve = resolve;
     });
-    if (trrServer == "") {
+
+    let resolverInfo =
+      trrServer == "" ? null : dns.newTRRResolverInfo(trrServer);
+    try {
       this.request = dns.asyncResolve(
         name,
+        Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT,
         flags,
+        resolverInfo,
         this,
         mainThread,
         defaultOriginAttributes
       );
-    } else {
-      try {
-        this.request = dns.asyncResolveWithTrrServer(
-          name,
-          trrServer,
-          flags,
-          this,
-          mainThread,
-          defaultOriginAttributes
-        );
-        Assert.ok(!expectEarlyFail);
-      } catch (e) {
-        Assert.ok(expectEarlyFail);
-        this.resolve([e]);
-      }
+      Assert.ok(!expectEarlyFail);
+    } catch (e) {
+      Assert.ok(expectEarlyFail);
+      this.resolve([e]);
     }
   }
 
@@ -171,6 +165,7 @@ class DNSListener {
     }
 
     Assert.equal(inStatus, Cr.NS_OK, "Checking status");
+    inRecord.QueryInterface(Ci.nsIDNSAddrRecord);
     let answer = inRecord.getNextAddrAsString();
     Assert.equal(
       answer,
@@ -1351,52 +1346,6 @@ add_task(async function test_dnsSuffix() {
   Services.prefs.clearUserPref("network.trr.bootstrapAddress");
 });
 
-add_task(async function test_vpnDetection() {
-  Services.prefs.setIntPref("network.trr.mode", 2);
-  Services.prefs.setCharPref(
-    "network.trr.uri",
-    `https://foo.example.com:${h2Port}/doh?responseIP=1.2.3.4&push=true`
-  );
-  dns.clearCache(true);
-  await new DNSListener("example.org", "1.2.3.4");
-  await new DNSListener("push.example.org", "2018::2018");
-
-  let networkLinkService = {
-    platformDNSIndications: Ci.nsINetworkLinkService.VPN_DETECTED,
-    QueryInterface: ChromeUtils.generateQI(["nsINetworkLinkService"]),
-  };
-
-  Services.obs.notifyObservers(
-    networkLinkService,
-    "network:link-status-changed",
-    "changed"
-  );
-  await new DNSListener("example.org", "127.0.0.1");
-  await new DNSListener("test.com", "127.0.0.1");
-  // Also test that we don't use the pushed entry.
-  await new DNSListener("push.example.org", "127.0.0.1");
-
-  Services.prefs.setCharPref("network.trr.bootstrapAddress", "127.0.0.1");
-  Services.prefs.setIntPref("network.trr.mode", 3);
-  dns.clearCache(true);
-
-  await new DNSListener("example.org", "127.0.0.1");
-  await new DNSListener("test.com", "127.0.0.1");
-  // Also test that we don't use the pushed entry.
-  await new DNSListener("push.example.org", "127.0.0.1");
-
-  Services.prefs.clearUserPref("network.trr.bootstrapAddress");
-
-  // Attempt to clean up, just in case
-  networkLinkService.platformDNSIndications =
-    Ci.nsINetworkLinkService.NONE_DETECTED;
-  Services.obs.notifyObservers(
-    networkLinkService,
-    "network:link-status-changed",
-    "changed"
-  );
-});
-
 // Test AsyncResoleWithTrrServer.
 add_task(async function test_async_resolve_with_trr_server_1() {
   dns.clearCache(true);
@@ -1744,6 +1693,7 @@ add_task(async function test_resolve_not_confirmed() {
       undefined,
       false
     );
+    inRecord.QueryInterface(Ci.nsIDNSAddrRecord);
     let responseIP = inRecord.getNextAddrAsString();
     if (responseIP == "7.7.7.7") {
       break;

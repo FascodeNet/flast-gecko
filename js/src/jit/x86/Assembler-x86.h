@@ -229,14 +229,13 @@ static constexpr ValueOperand JSReturnOperand{JSReturnReg_Type,
                                               JSReturnReg_Data};
 
 class Assembler : public AssemblerX86Shared {
-  void writeRelocation(JmpSrc src) {
-    jumpRelocations_.writeUnsigned(src.offset());
-  }
+  Vector<RelativePatch, 8, SystemAllocPolicy> jumps_;
+
   void addPendingJump(JmpSrc src, ImmPtr target, RelocationKind kind) {
     enoughMemory_ &=
         jumps_.append(RelativePatch(src.offset(), target.value, kind));
     if (kind == RelocationKind::JITCODE) {
-      writeRelocation(src);
+      jumpRelocations_.writeUnsigned(src.offset());
     }
   }
 
@@ -258,6 +257,15 @@ class Assembler : public AssemblerX86Shared {
   // Copy the assembly code to the given buffer, and perform any pending
   // relocations relying on the target address.
   void executableCopy(uint8_t* buffer);
+
+  void assertNoGCThings() const {
+#ifdef DEBUG
+    MOZ_ASSERT(dataRelocations_.length() == 0);
+    for (auto& j : jumps_) {
+      MOZ_ASSERT(j.kind == RelocationKind::HARDCODED);
+    }
+#endif
+  }
 
   // Actual assembly emitting functions.
 

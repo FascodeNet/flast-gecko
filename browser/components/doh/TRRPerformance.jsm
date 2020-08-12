@@ -116,10 +116,11 @@ class DNSLookup {
     this.retryCount++;
     try {
       this.usedDomain = this._domain || getRandomSubdomain();
-      gDNSService.asyncResolveWithTrrServer(
+      gDNSService.asyncResolve(
         this.usedDomain,
-        this.trrServer,
+        Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT,
         Ci.nsIDNSService.RESOLVE_BYPASS_CACHE,
+        gDNSService.newTRRResolverInfo(this.trrServer),
         this,
         Services.tm.currentThread,
         {}
@@ -181,7 +182,10 @@ class LookupAggregator {
               domain: usedDomain,
               trr,
               status,
-              time: record ? record.trrFetchDurationNetworkOnly : -1,
+              time: record
+                ? record.QueryInterface(Ci.nsIDNSAddrRecord)
+                    .trrFetchDurationNetworkOnly
+                : -1,
               retryCount,
             });
 
