@@ -2412,7 +2412,7 @@ class HTMLEditor final : public TextEditor,
    *                            Set the direction of handled edit action.
    */
   EditorDOMPoint GetGoodCaretPointFor(
-      nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount);
+      nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount) const;
 
   /**
    * RemoveEmptyInclusiveAncestorInlineElements() removes empty inclusive
@@ -2422,32 +2422,6 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   RemoveEmptyInclusiveAncestorInlineElements(nsIContent& aContent);
-
-  /**
-   * MaybeDeleteTopMostEmptyAncestor() looks for top most empty block ancestor
-   * of aStartContent in aEditingHostElement.
-   * If found empty ancestor is a list item element, inserts a <br> element
-   * before its parent element if grand parent is a list element.  Then,
-   * collapse Selection to after the empty block.
-   * If found empty ancestor is not a list item element, collapse Selection to
-   * somewhere depending on aAction.
-   * Finally, removes the empty block ancestor.
-   *
-   * @param aStartContent       Start content to look for empty ancestors.
-   * @param aEditingHostElement Current editing host.
-   * @param aDirectionAndAmount If found empty ancestor block is a list item
-   *                            element, this is ignored.  Otherwise:
-   *                            - If eNext, eNextWord or eToEndOfLine, collapse
-   *                              Selection to after found empty ancestor.
-   *                            - If ePrevious, ePreviousWord or
-   *                              eToBeginningOfLine, collapse Selection to
-   *                              end of previous editable node.
-   *                            Otherwise, eNone is allowed but does nothing.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  MaybeDeleteTopMostEmptyAncestor(nsIContent& aStartContent,
-                                  Element& aEditingHostElement,
-                                  nsIEditor::EDirection aDirectionAndAmount);
 
   /**
    * ExtendRangeToIncludeInvisibleNodes() extends aRange if there are some
@@ -2683,6 +2657,66 @@ class HTMLEditor final : public TextEditor,
       nsIEditor::EDirection aDirectionAndAmount,
       nsIEditor::EStripWrappers aStripWrappers, nsIContent& aAtomicContent,
       const EditorDOMPoint& aCaretPoint, WSRunScanner& aWSRunScannerAtCaret);
+
+  class MOZ_STACK_CLASS AutoEmptyBlockAncestorDeleter final {
+   public:
+    /**
+     * ScanEmptyBlockInclusiveAncestor() scans an inclusive ancestor element
+     * which is empty and a block element.  Then, stores the result and
+     * returns the found empty block element.
+     *
+     * @param aHTMLEditor         The HTMLEditor.
+     * @param aStartContent       Start content to look for empty ancestors.
+     * @param aEditingHostElement Current editing host.
+     */
+    [[nodiscard]] Element* ScanEmptyBlockInclusiveAncestor(
+        const HTMLEditor& aHTMLEditor, nsIContent& aStartContent,
+        Element& aEditingHostElement);
+
+    /**
+     * Deletes found empty block element by `ScanEmptyBlockInclusiveAncestor()`.
+     * If found one is a list item element, calls
+     * `MaybeInsertBRElementBeforeEmptyListItemElement()` before deleting
+     * the list item element.
+     * If found empty ancestor is not a list item element,
+     * `GetNewCaretPoisition()` will be called to determine new caret position.
+     * Finally, removes the empty block ancestor.
+     *
+     * @param aHTMLEditor         The HTMLEditor.
+     * @param aDirectionAndAmount If found empty ancestor block is a list item
+     *                            element, this is ignored.  Otherwise:
+     *                            - If eNext, eNextWord or eToEndOfLine,
+     *                              collapse Selection to after found empty
+     *                              ancestor.
+     *                            - If ePrevious, ePreviousWord or
+     *                              eToBeginningOfLine, collapse Selection to
+     *                              end of previous editable node.
+     *                            - Otherwise, eNone is allowed but does
+     *                              nothing.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    Run(HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount);
+
+   private:
+    /**
+     * MaybeInsertBRElementBeforeEmptyListItemElement() inserts a `<br>` element
+     * if `mEmptyInclusiveAncestorBlockElement` is a list item element which
+     * is first editable element in its parent, and its grand parent is not a
+     * list element, inserts a `<br>` element before the empty list item.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<RefPtr<Element>, nsresult>
+    MaybeInsertBRElementBeforeEmptyListItemElement(HTMLEditor& aHTMLEditor);
+
+    /**
+     * GetNewCaretPoisition() returns new caret position after deleting
+     * `mEmptyInclusiveAncestorBlockElement`.
+     */
+    [[nodiscard]] Result<EditorDOMPoint, nsresult> GetNewCaretPoisition(
+        const HTMLEditor& aHTMLEditor,
+        nsIEditor::EDirection aDirectionAndAmount) const;
+
+    RefPtr<Element> mEmptyInclusiveAncestorBlockElement;
+  };
 
   class MOZ_STACK_CLASS AutoBlockElementsJoiner final {
    public:
@@ -2923,7 +2957,8 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
   HandleDeleteSelectionInternal(nsIEditor::EDirection aDirectionAndAmount,
-                                nsIEditor::EStripWrappers aStripWrappers);
+                                nsIEditor::EStripWrappers aStripWrappers,
+                                AutoRangeArray& aRangesToDelete);
 
   /**
    * This method handles "delete selection" commands.

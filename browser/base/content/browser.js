@@ -4033,14 +4033,19 @@ const BrowserSearch = {
    * initialized quickly before the user sees anything.
    *
    * Note: If the preference doesn't exist, we don't do anything as the default
-   * placeholder is a string which doesn't have the engine name.
+   * placeholder is a string which doesn't have the engine name; however, this
+   * can be overridden using the `force` parameter.
+   *
+   * @param {Boolean} force If true and the preference doesn't exist, the
+   *                        placeholder will be set to the default version
+   *                        without an engine name ("Search or enter address").
    */
-  initPlaceHolder() {
+  initPlaceHolder(force = false) {
     const prefName =
       "browser.urlbar.placeholderName" +
       (PrivateBrowsingUtils.isWindowPrivate(window) ? ".private" : "");
     let engineName = Services.prefs.getStringPref(prefName, "");
-    if (engineName) {
+    if (engineName || force) {
       // We can do this directly, since we know we're at DOMContentLoaded.
       this._setURLBarPlaceholder(engineName);
     }
@@ -5024,29 +5029,10 @@ var XULBrowserWindow = {
       return;
     }
 
-    // The x,y coordinates are relative to the <browser> element using
-    // the chrome zoom level.
     let elt = document.getElementById("remoteBrowserTooltip");
     elt.label = tooltip;
     elt.style.direction = direction;
-
-    let screenX;
-    let screenY;
-
-    if (browser instanceof XULElement) {
-      // XUL element such as <browser> has the `screenX` and `screenY` fields.
-      // https://searchfox.org/mozilla-central/source/dom/webidl/XULElement.webidl
-      screenX = browser.screenX;
-      screenY = browser.screenY;
-    } else {
-      // In case of HTML element such as <iframe> which RDM uses,
-      // calculate the coordinate manually since it does not have the fields.
-      const componentBounds = browser.getBoundingClientRect();
-      screenX = window.screenX + componentBounds.x;
-      screenY = window.screenY + componentBounds.y;
-    }
-
-    elt.openPopupAtScreen(screenX + x, screenY + y, false, null);
+    elt.openPopupAtScreen(x, y, false, null);
   },
 
   hideTooltip() {
@@ -5375,6 +5361,10 @@ var XULBrowserWindow = {
   _lastLocation: null,
   _event: null,
   _lastLocationForEvent: null,
+  // _isSecureContext can change without the state/location changing, due to security
+  // error pages that intercept certain loads. For example this happens sometimes
+  // with the the HTTPS-Only Mode error page (more details in bug 1656027)
+  _isSecureContext: null,
 
   // This is called in multiple ways:
   //  1. Due to the nsIWebProgressListener.onContentBlockingEvent notification.
@@ -5425,7 +5415,12 @@ var XULBrowserWindow = {
     // changed
     let uri = gBrowser.currentURI;
     let spec = uri.spec;
-    if (this._state == aState && this._lastLocation == spec) {
+    let isSecureContext = gBrowser.securityUI.isSecureContext;
+    if (
+      this._state == aState &&
+      this._lastLocation == spec &&
+      this._isSecureContext === isSecureContext
+    ) {
       // Switching to a tab of the same URL doesn't change most security
       // information, but tab specific permissions may be different.
       gIdentityHandler.refreshIdentityBlock();
@@ -5433,6 +5428,7 @@ var XULBrowserWindow = {
     }
     this._state = aState;
     this._lastLocation = spec;
+    this._isSecureContext = isSecureContext;
 
     // Make sure the "https" part of the URL is striked out or not,
     // depending on the current mixed active content blocking state.

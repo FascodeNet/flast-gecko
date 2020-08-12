@@ -1141,30 +1141,6 @@
     "n_values":  10,
     "description": "Count how often we use different fallbacks when the GPU process crashes: None=0, GPUProcessDecodingDisabled=1, GPUProcessDisabled=2"
   },
-  "JS_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["dteller@mozilla.com"],
-    "expires_in_version": "70",
-    "bug_numbers": [1343483],
-    "kind": "exponential",
-    "low": 10,
-    "high": 10000,
-    "n_buckets": 10,
-    "description": "Time elapsed between the moment a function is lazy-parsed (end of parsing of the ScriptSource) and the moment it is recompiled as non-lazy (start of compilation), in milliseconds, for privileged code."
-  },
-  "JS_WEB_PARSER_COMPILE_LAZY_AFTER_MS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["dteller@mozilla.com"],
-    "expires_in_version": "70",
-    "bug_numbers": [1343483],
-    "kind": "exponential",
-    "low": 10,
-    "high": 10000,
-    "n_buckets": 10,
-    "description": "Time elapsed between the moment a function is lazy-parsed (end of parsing of the ScriptSource) and the moment it is recompiled as non-lazy (start of compilation), in milliseconds, for web code."
-  },
   "XUL_CACHE_DISABLED": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -15127,6 +15103,16 @@
     "releaseChannelCollection": "opt-out",
     "description": "Whether a child process successfully mapped the User Agent style sheet shared memory buffer at the desired address"
   },
+  "TLS_1_3_CLIENT_AUTH_USES_PHA": {
+    "record_in_processes": ["main"],
+    "products": ["firefox", "fennec"],
+    "alert_emails": ["mbirghan@mozilla.com", "seceng-telemetry@mozilla.com"],
+    "bug_numbers": [1649472],
+    "releaseChannelCollection": "opt-out",
+    "expires_in_version": "99",
+    "kind": "boolean",
+    "description": "Whether TLS 1.3 client authentication uses PHA (true) or regular in-handshake authentication (false)"
+  },
   "TLS_DELEGATED_CREDENTIALS_TIME_UNTIL_READY_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -15442,5 +15428,47 @@
     "alert_emails": ["jmathies@mozilla.com", "chsiang@mozilla.com"],
     "bug_numbers": [1653073, 1656355],
     "releaseChannelCollection": "opt-out"
+  },
+  "SQLITE_STORE_OPEN": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["dtownsend@mozilla.com", "mbonardo@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "categorical",
+    "keyed": true,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1635489],
+    "description": "The result of attempting to open a sqlite file.",
+    "labels": [
+      "success",
+      "failure",
+      "access",
+      "diskio",
+      "corrupt",
+      "busy",
+      "misuse",
+      "diskspace"
+    ]
+  },
+  "SQLITE_STORE_QUERY": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["dtownsend@mozilla.com", "mbonardo@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "categorical",
+    "keyed": true,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1635489],
+    "description": "The result of attempting to query a sqlite file.",
+    "labels": [
+      "success",
+      "failure",
+      "access",
+      "diskio",
+      "corrupt",
+      "busy",
+      "misuse",
+      "diskspace"
+    ]
   }
 }

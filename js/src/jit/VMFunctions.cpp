@@ -12,6 +12,7 @@
 #include "builtin/TypedObject.h"
 #include "frontend/BytecodeCompiler.h"
 #include "jit/arm/Simulator-arm.h"
+#include "jit/AtomicOperations.h"
 #include "jit/BaselineIC.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRealm.h"
@@ -2162,6 +2163,211 @@ template bool StringBigIntCompare<ComparisonKind::LessThan>(JSContext* cx,
                                                             bool* res);
 template bool StringBigIntCompare<ComparisonKind::GreaterThanOrEqual>(
     JSContext* cx, HandleString x, HandleBigInt y, bool* res);
+
+template <typename T>
+static int32_t AtomicsCompareExchange(TypedArrayObject* typedArray,
+                                      int32_t index, int32_t expected,
+                                      int32_t replacement) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::compareExchangeSeqCst(addr + index, T(expected),
+                                                      T(replacement));
+}
+
+AtomicsCompareExchangeFn AtomicsCompareExchange(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsCompareExchange<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsCompareExchange<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsCompareExchange<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsCompareExchange<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsCompareExchange<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
+
+template <typename T>
+static int32_t AtomicsExchange(TypedArrayObject* typedArray, int32_t index,
+                               int32_t value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::exchangeSeqCst(addr + index, T(value));
+}
+
+AtomicsReadWriteModifyFn AtomicsExchange(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsExchange<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsExchange<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsExchange<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsExchange<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsExchange<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
+
+template <typename T>
+static int32_t AtomicsAdd(TypedArrayObject* typedArray, int32_t index,
+                          int32_t value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::fetchAddSeqCst(addr + index, T(value));
+}
+
+AtomicsReadWriteModifyFn AtomicsAdd(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsAdd<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsAdd<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsAdd<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsAdd<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsAdd<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
+
+template <typename T>
+static int32_t AtomicsSub(TypedArrayObject* typedArray, int32_t index,
+                          int32_t value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::fetchSubSeqCst(addr + index, T(value));
+}
+
+AtomicsReadWriteModifyFn AtomicsSub(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsSub<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsSub<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsSub<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsSub<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsSub<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
+
+template <typename T>
+static int32_t AtomicsAnd(TypedArrayObject* typedArray, int32_t index,
+                          int32_t value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::fetchAndSeqCst(addr + index, T(value));
+}
+
+AtomicsReadWriteModifyFn AtomicsAnd(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsAnd<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsAnd<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsAnd<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsAnd<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsAnd<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
+
+template <typename T>
+static int32_t AtomicsOr(TypedArrayObject* typedArray, int32_t index,
+                         int32_t value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::fetchOrSeqCst(addr + index, T(value));
+}
+
+AtomicsReadWriteModifyFn AtomicsOr(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsOr<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsOr<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsOr<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsOr<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsOr<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
+
+template <typename T>
+static int32_t AtomicsXor(TypedArrayObject* typedArray, int32_t index,
+                          int32_t value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index >= 0 && uint32_t(index) < typedArray->length());
+
+  SharedMem<T*> addr = typedArray->dataPointerEither().cast<T*>();
+  return jit::AtomicOperations::fetchXorSeqCst(addr + index, T(value));
+}
+
+AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType) {
+  switch (elementType) {
+    case Scalar::Int8:
+      return AtomicsXor<int8_t>;
+    case Scalar::Uint8:
+      return AtomicsXor<uint8_t>;
+    case Scalar::Int16:
+      return AtomicsXor<int16_t>;
+    case Scalar::Uint16:
+      return AtomicsXor<uint16_t>;
+    case Scalar::Int32:
+      return AtomicsXor<int32_t>;
+    default:
+      MOZ_CRASH("Unexpected TypedArray type");
+  }
+}
 
 }  // namespace jit
 }  // namespace js

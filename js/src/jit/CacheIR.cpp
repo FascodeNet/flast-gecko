@@ -17,6 +17,7 @@
 #include "jit/CacheIRSpewer.h"
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"  // IsIonEnabled
+#include "jit/JitContext.h"
 #include "js/friend/WindowProxy.h"  // js::IsWindow, js::IsWindowProxy, js::ToWindowIfWindowProxy
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/Wrapper.h"
@@ -6929,6 +6930,468 @@ AttachDecision CallIRGenerator::tryAttachReflectGetPrototypeOf(
   return AttachDecision::Attach;
 }
 
+static bool AtomicsMeetsPreconditions(TypedArrayObject* typedArray,
+                                      double index) {
+  switch (typedArray->type()) {
+    case Scalar::Int8:
+    case Scalar::Uint8:
+    case Scalar::Int16:
+    case Scalar::Uint16:
+    case Scalar::Int32:
+    case Scalar::Uint32:
+      break;
+
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
+      // Bug 1638295: Not yet implemented.
+      return false;
+
+    case Scalar::Float32:
+    case Scalar::Float64:
+    case Scalar::Uint8Clamped:
+      // Exclude floating types and Uint8Clamped.
+      return false;
+
+    case Scalar::MaxTypedArrayViewType:
+    case Scalar::Int64:
+    case Scalar::Simd128:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+
+  // Bounds check the index argument.
+  int32_t indexInt32;
+  if (!mozilla::NumberEqualsInt32(index, &indexInt32)) {
+    return false;
+  }
+  if (indexInt32 < 0 || uint32_t(indexInt32) >= typedArray->length()) {
+    return false;
+  }
+
+  return true;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsCompareExchange(
+    HandleFunction callee) {
+  if (!JitSupportsAtomics()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Need four arguments.
+  if (argc_ != 4) {
+    return AttachDecision::NoAction;
+  }
+
+  // Arguments: typedArray, index (number), expected, replacement.
+  if (!args_[0].isObject() || !args_[0].toObject().is<TypedArrayObject>()) {
+    return AttachDecision::NoAction;
+  }
+  if (!args_[1].isNumber()) {
+    return AttachDecision::NoAction;
+  }
+  if (!args_[2].isNumber()) {
+    return AttachDecision::NoAction;
+  }
+  if (!args_[3].isNumber()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+  if (!AtomicsMeetsPreconditions(typedArray, args_[1].toNumber())) {
+    return AttachDecision::NoAction;
+  }
+
+  // TODO: Uint32 isn't yet supported (bug 1077305).
+  if (typedArray->type() == Scalar::Uint32) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the `compareExchange` native function.
+  emitNativeCalleeGuard(callee);
+
+  ValOperandId arg0Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  ObjOperandId objId = writer.guardToObject(arg0Id);
+  writer.guardShapeForClass(objId, typedArray->shape());
+
+  // Convert index to int32.
+  ValOperandId indexId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+  Int32OperandId int32IndexId = writer.guardToInt32Index(indexId);
+
+  // Convert expected value to int32.
+  ValOperandId expectedId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg2, argc_);
+  Int32OperandId int32ExpectedId = writer.guardToInt32ModUint32(expectedId);
+
+  // Convert replacement value to int32.
+  ValOperandId replacementId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg3, argc_);
+  Int32OperandId int32ReplacementId =
+      writer.guardToInt32ModUint32(replacementId);
+
+  writer.atomicsCompareExchangeResult(objId, int32IndexId, int32ExpectedId,
+                                      int32ReplacementId, typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsCompareExchange");
+  return AttachDecision::Attach;
+}
+
+bool CallIRGenerator::canAttachAtomicsReadWriteModify() {
+  if (!JitSupportsAtomics()) {
+    return false;
+  }
+
+  // Need three arguments.
+  if (argc_ != 3) {
+    return false;
+  }
+
+  // Arguments: typedArray, index (number), value.
+  if (!args_[0].isObject() || !args_[0].toObject().is<TypedArrayObject>()) {
+    return false;
+  }
+  if (!args_[1].isNumber()) {
+    return false;
+  }
+  if (!args_[2].isNumber()) {
+    return false;
+  }
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+  if (!AtomicsMeetsPreconditions(typedArray, args_[1].toNumber())) {
+    return false;
+  }
+
+  // TODO: Uint32 isn't yet supported (bug 1077305).
+  if (typedArray->type() == Scalar::Uint32) {
+    return false;
+  }
+
+  return true;
+}
+
+CallIRGenerator::AtomicsReadWriteModifyOperands
+CallIRGenerator::emitAtomicsReadWriteModifyOperands(HandleFunction callee) {
+  MOZ_ASSERT(canAttachAtomicsReadWriteModify());
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is this Atomics function.
+  emitNativeCalleeGuard(callee);
+
+  ValOperandId arg0Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  ObjOperandId objId = writer.guardToObject(arg0Id);
+  writer.guardShapeForClass(objId, typedArray->shape());
+
+  // Convert index to int32.
+  ValOperandId indexId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+  Int32OperandId int32IndexId = writer.guardToInt32Index(indexId);
+
+  // Convert value to int32.
+  ValOperandId valueId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg2, argc_);
+  Int32OperandId int32ValueId = writer.guardToInt32ModUint32(valueId);
+
+  return {objId, int32IndexId, int32ValueId};
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsExchange(
+    HandleFunction callee) {
+  if (!canAttachAtomicsReadWriteModify()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto [objId, int32IndexId, int32ValueId] =
+      emitAtomicsReadWriteModifyOperands(callee);
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  writer.atomicsExchangeResult(objId, int32IndexId, int32ValueId,
+                               typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsExchange");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsAdd(HandleFunction callee) {
+  if (!canAttachAtomicsReadWriteModify()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto [objId, int32IndexId, int32ValueId] =
+      emitAtomicsReadWriteModifyOperands(callee);
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  writer.atomicsAddResult(objId, int32IndexId, int32ValueId,
+                          typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsAdd");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsSub(HandleFunction callee) {
+  if (!canAttachAtomicsReadWriteModify()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto [objId, int32IndexId, int32ValueId] =
+      emitAtomicsReadWriteModifyOperands(callee);
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  writer.atomicsSubResult(objId, int32IndexId, int32ValueId,
+                          typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsSub");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsAnd(HandleFunction callee) {
+  if (!canAttachAtomicsReadWriteModify()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto [objId, int32IndexId, int32ValueId] =
+      emitAtomicsReadWriteModifyOperands(callee);
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  writer.atomicsAndResult(objId, int32IndexId, int32ValueId,
+                          typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsAnd");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsOr(HandleFunction callee) {
+  if (!canAttachAtomicsReadWriteModify()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto [objId, int32IndexId, int32ValueId] =
+      emitAtomicsReadWriteModifyOperands(callee);
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  writer.atomicsOrResult(objId, int32IndexId, int32ValueId, typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsOr");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsXor(HandleFunction callee) {
+  if (!canAttachAtomicsReadWriteModify()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto [objId, int32IndexId, int32ValueId] =
+      emitAtomicsReadWriteModifyOperands(callee);
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+
+  writer.atomicsXorResult(objId, int32IndexId, int32ValueId,
+                          typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsXor");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsLoad(HandleFunction callee) {
+  if (!JitSupportsAtomics()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Need two arguments.
+  if (argc_ != 2) {
+    return AttachDecision::NoAction;
+  }
+
+  // Arguments: typedArray, index (number).
+  if (!args_[0].isObject() || !args_[0].toObject().is<TypedArrayObject>()) {
+    return AttachDecision::NoAction;
+  }
+  if (!args_[1].isNumber()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+  if (!AtomicsMeetsPreconditions(typedArray, args_[1].toNumber())) {
+    return AttachDecision::NoAction;
+  }
+
+  // TODO: Uint32 isn't yet supported (bug 1077305).
+  if (typedArray->type() == Scalar::Uint32) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the `load` native function.
+  emitNativeCalleeGuard(callee);
+
+  ValOperandId arg0Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  ObjOperandId objId = writer.guardToObject(arg0Id);
+  writer.guardShapeForClass(objId, typedArray->shape());
+
+  // Convert index to int32.
+  ValOperandId indexId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+  Int32OperandId int32IndexId = writer.guardToInt32Index(indexId);
+
+  writer.atomicsLoadResult(objId, int32IndexId, typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsLoad");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsStore(HandleFunction callee) {
+  if (!JitSupportsAtomics()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Need three arguments.
+  if (argc_ != 3) {
+    return AttachDecision::NoAction;
+  }
+
+  // Atomics.store() is annoying because it returns the result of converting the
+  // value by ToInteger(), not the input value, nor the result of converting the
+  // value by ToInt32(). It is especially annoying because almost nobody uses
+  // the result value.
+  //
+  // As an expedient compromise, therefore, we inline only if the result is
+  // obviously unused or if the argument is already Int32 and thus requires no
+  // conversion.
+
+  // Arguments: typedArray, index (number), value.
+  if (!args_[0].isObject() || !args_[0].toObject().is<TypedArrayObject>()) {
+    return AttachDecision::NoAction;
+  }
+  if (!args_[1].isNumber()) {
+    return AttachDecision::NoAction;
+  }
+  if (op_ == JSOp::CallIgnoresRv ? !args_[2].isNumber() : !args_[2].isInt32()) {
+    return AttachDecision::NoAction;
+  }
+
+  auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
+  if (!AtomicsMeetsPreconditions(typedArray, args_[1].toNumber())) {
+    return AttachDecision::NoAction;
+  }
+
+  // TODO: Uint32 isn't yet supported (bug 1077305).
+  if (typedArray->type() == Scalar::Uint32) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the `store` native function.
+  emitNativeCalleeGuard(callee);
+
+  ValOperandId arg0Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  ObjOperandId objId = writer.guardToObject(arg0Id);
+  writer.guardShapeForClass(objId, typedArray->shape());
+
+  // Convert index to int32.
+  ValOperandId indexId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+  Int32OperandId int32IndexId = writer.guardToInt32Index(indexId);
+
+  // Ensure value is int32.
+  ValOperandId valueId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg2, argc_);
+  Int32OperandId int32ValueId;
+  if (op_ == JSOp::CallIgnoresRv) {
+    int32ValueId = writer.guardToInt32ModUint32(valueId);
+  } else {
+    int32ValueId = writer.guardToInt32(valueId);
+  }
+
+  writer.atomicsStoreResult(objId, int32IndexId, int32ValueId,
+                            typedArray->type());
+
+  // This stub doesn't need to be monitored, because it always returns an int32.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsStore");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAtomicsIsLockFree(
+    HandleFunction callee) {
+  // Need one argument.
+  if (argc_ != 1) {
+    return AttachDecision::NoAction;
+  }
+
+  if (!args_[0].isInt32()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the `isLockFree` native function.
+  emitNativeCalleeGuard(callee);
+
+  // Ensure value is int32.
+  ValOperandId valueId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  Int32OperandId int32ValueId = writer.guardToInt32(valueId);
+
+  writer.atomicsIsLockFreeResult(int32ValueId);
+
+  // This stub doesn't need to be monitored, because it always returns a bool.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AtomicsIsLockFree");
+  return AttachDecision::Attach;
+}
+
 AttachDecision CallIRGenerator::tryAttachFunCall(HandleFunction callee) {
   MOZ_ASSERT(callee->isNativeWithoutJitEntry());
   if (callee->native() != fun_call) {
@@ -8008,6 +8471,28 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
     // Reflect natives.
     case InlinableNative::ReflectGetPrototypeOf:
       return tryAttachReflectGetPrototypeOf(callee);
+
+    // Atomics intrinsics:
+    case InlinableNative::AtomicsCompareExchange:
+      return tryAttachAtomicsCompareExchange(callee);
+    case InlinableNative::AtomicsExchange:
+      return tryAttachAtomicsExchange(callee);
+    case InlinableNative::AtomicsAdd:
+      return tryAttachAtomicsAdd(callee);
+    case InlinableNative::AtomicsSub:
+      return tryAttachAtomicsSub(callee);
+    case InlinableNative::AtomicsAnd:
+      return tryAttachAtomicsAnd(callee);
+    case InlinableNative::AtomicsOr:
+      return tryAttachAtomicsOr(callee);
+    case InlinableNative::AtomicsXor:
+      return tryAttachAtomicsXor(callee);
+    case InlinableNative::AtomicsLoad:
+      return tryAttachAtomicsLoad(callee);
+    case InlinableNative::AtomicsStore:
+      return tryAttachAtomicsStore(callee);
+    case InlinableNative::AtomicsIsLockFree:
+      return tryAttachAtomicsIsLockFree(callee);
 
     default:
       return AttachDecision::NoAction;

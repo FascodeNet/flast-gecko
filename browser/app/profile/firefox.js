@@ -788,10 +788,6 @@ pref("browser.preferences.exposeHTTPSOnly", false);
 pref("browser.download.show_plugins_in_list", true);
 pref("browser.download.hide_plugins_without_extensions", true);
 
-// URL for "Learn More" for HttpsOnly
-pref("domsecurity.httpsonly.infoURL",
-     "https://developer.mozilla.org/en-US/docs/Glossary/https");
-
 // Backspace and Shift+Backspace behavior
 // 0 goes Back/Forward
 // 1 act like PgUp/PgDown
@@ -1575,7 +1571,13 @@ pref("toolkit.telemetry.updatePing.enabled", true);
 // Enables sending 'bhr' pings when the browser hangs.
 pref("toolkit.telemetry.bhrPing.enabled", true);
 // Whether to enable Ecosystem Telemetry, requires a restart.
+// This is limited to nightly builds for initial verification and QA,
+// and will eventually default to `true` on all builds.
+#ifdef NIGHTLY_BUILD
+pref("toolkit.telemetry.ecosystemtelemetry.enabled", true);
+#else
 pref("toolkit.telemetry.ecosystemtelemetry.enabled", false);
+#endif
 
 // Ping Centre Telemetry settings.
 pref("browser.ping-centre.telemetry", true);

@@ -343,13 +343,12 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
 
     #[inline]
     fn parse_is_and_where(&self) -> bool {
-        self.in_user_agent_stylesheet() ||
-            static_prefs::pref!("layout.css.is-where-selectors.enabled")
+        true
     }
 
     #[inline]
     fn parse_part(&self) -> bool {
-        self.chrome_rules_enabled() || static_prefs::pref!("layout.css.shadow-parts.enabled")
+        true
     }
 
     fn parse_non_ts_pseudo_class(

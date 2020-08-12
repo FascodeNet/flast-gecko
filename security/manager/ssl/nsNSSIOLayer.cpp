@@ -1552,8 +1552,10 @@ void nsSSLIOLayerHelpers::loadVersionFallbackLimit() {
 }
 
 void nsSSLIOLayerHelpers::clearStoredData() {
+  MOZ_ASSERT(NS_IsMainThread());
+  initInsecureFallbackSites();
+
   MutexAutoLock lock(mutex);
-  mInsecureFallbackSites.Clear();
   mTLSIntoleranceInfo.Clear();
 }
 
@@ -1911,6 +1913,10 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
     info->SetSentClientCert();
     Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_CLIENT_CERT, u"sent"_ns,
                          1);
+    if (info->GetSSLVersionUsed() == nsISSLSocketControl::TLS_VERSION_1_3) {
+        Telemetry::Accumulate(Telemetry::TLS_1_3_CLIENT_AUTH_USES_PHA,
+                              info->IsHandshakeCompleted());
+    }
   }
 
   return SECSuccess;

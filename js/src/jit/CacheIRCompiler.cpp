@@ -7491,6 +7491,266 @@ bool CacheIRCompiler::emitGetFirstDollarIndexResult(StringOperandId strId) {
   return true;
 }
 
+bool CacheIRCompiler::emitAtomicsCompareExchangeResult(
+    ObjOperandId objId, Int32OperandId indexId, Int32OperandId expectedId,
+    Int32OperandId replacementId, Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+#ifdef JS_CODEGEN_X86
+  // Use a scratch register to avoid running out of registers.
+  Register obj = output.valueReg().typeReg();
+  allocator.copyToScratchRegister(masm, objId, obj);
+#else
+  Register obj = allocator.useRegister(masm, objId);
+#endif
+  Register index = allocator.useRegister(masm, indexId);
+  Register expected = allocator.useRegister(masm, expectedId);
+  Register replacement = allocator.useRegister(masm, replacementId);
+
+  Register scratch = output.valueReg().scratchReg();
+  MOZ_ASSERT(scratch != obj, "scratchReg must not be typeReg");
+
+  // Not enough registers on X86.
+  Register spectreTemp = Register::Invalid();
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Bounds check.
+  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
+
+  // Atomic operations are highly platform-dependent, for example x86/x64 has
+  // specific requirements on which registers are used; MIPS needs multiple
+  // additional temporaries. Therefore we're using an ABI call here instead of
+  // handling each platform separately.
+  {
+    LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
+                                 liveVolatileFloatRegs());
+    volatileRegs.takeUnchecked(output.valueReg());
+    volatileRegs.takeUnchecked(scratch);
+    masm.PushRegsInMask(volatileRegs);
+
+    masm.setupUnalignedABICall(scratch);
+    masm.passABIArg(obj);
+    masm.passABIArg(index);
+    masm.passABIArg(expected);
+    masm.passABIArg(replacement);
+    masm.callWithABI(
+        JS_FUNC_TO_DATA_PTR(void*, AtomicsCompareExchange(elementType)));
+    masm.storeCallInt32Result(scratch);
+
+    masm.PopRegsInMask(volatileRegs);
+    masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
+  }
+
+  return true;
+}
+
+bool CacheIRCompiler::emitAtomicsReadModifyWriteResult(
+    ObjOperandId objId, Int32OperandId indexId, Int32OperandId valueId,
+    Scalar::Type elementType, AtomicsReadWriteModifyFn fn) {
+  AutoOutputRegister output(*this);
+  Register obj = allocator.useRegister(masm, objId);
+  Register index = allocator.useRegister(masm, indexId);
+  Register value = allocator.useRegister(masm, valueId);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  // Not enough registers on X86.
+  Register spectreTemp = Register::Invalid();
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Bounds check.
+  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
+
+  // See comment in emitAtomicsCompareExchange for why we use an ABI call.
+  {
+    LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
+                                 liveVolatileFloatRegs());
+    volatileRegs.takeUnchecked(output.valueReg());
+    volatileRegs.takeUnchecked(scratch);
+    masm.PushRegsInMask(volatileRegs);
+
+    masm.setupUnalignedABICall(scratch);
+    masm.passABIArg(obj);
+    masm.passABIArg(index);
+    masm.passABIArg(value);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, fn));
+    masm.storeCallInt32Result(scratch);
+
+    masm.PopRegsInMask(volatileRegs);
+    masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
+  }
+
+  return true;
+}
+
+bool CacheIRCompiler::emitAtomicsExchangeResult(ObjOperandId objId,
+                                                Int32OperandId indexId,
+                                                Int32OperandId valueId,
+                                                Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  return emitAtomicsReadModifyWriteResult(objId, indexId, valueId, elementType,
+                                          AtomicsExchange(elementType));
+}
+
+bool CacheIRCompiler::emitAtomicsAddResult(ObjOperandId objId,
+                                           Int32OperandId indexId,
+                                           Int32OperandId valueId,
+                                           Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  return emitAtomicsReadModifyWriteResult(objId, indexId, valueId, elementType,
+                                          AtomicsAdd(elementType));
+}
+
+bool CacheIRCompiler::emitAtomicsSubResult(ObjOperandId objId,
+                                           Int32OperandId indexId,
+                                           Int32OperandId valueId,
+                                           Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  return emitAtomicsReadModifyWriteResult(objId, indexId, valueId, elementType,
+                                          AtomicsSub(elementType));
+}
+
+bool CacheIRCompiler::emitAtomicsAndResult(ObjOperandId objId,
+                                           Int32OperandId indexId,
+                                           Int32OperandId valueId,
+                                           Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  return emitAtomicsReadModifyWriteResult(objId, indexId, valueId, elementType,
+                                          AtomicsAnd(elementType));
+}
+
+bool CacheIRCompiler::emitAtomicsOrResult(ObjOperandId objId,
+                                          Int32OperandId indexId,
+                                          Int32OperandId valueId,
+                                          Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  return emitAtomicsReadModifyWriteResult(objId, indexId, valueId, elementType,
+                                          AtomicsOr(elementType));
+}
+
+bool CacheIRCompiler::emitAtomicsXorResult(ObjOperandId objId,
+                                           Int32OperandId indexId,
+                                           Int32OperandId valueId,
+                                           Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  return emitAtomicsReadModifyWriteResult(objId, indexId, valueId, elementType,
+                                          AtomicsXor(elementType));
+}
+
+bool CacheIRCompiler::emitAtomicsLoadResult(ObjOperandId objId,
+                                            Int32OperandId indexId,
+                                            Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  Register obj = allocator.useRegister(masm, objId);
+  Register index = allocator.useRegister(masm, indexId);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+  AutoSpectreBoundsScratchRegister spectreTemp(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Bounds check.
+  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
+
+  // Load the elements vector.
+  LoadTypedThingData(masm, TypedThingLayout::TypedArray, obj, scratch);
+
+  // Load the value.
+  BaseIndex source(scratch, index,
+                   ScaleFromElemWidth(Scalar::byteSize(elementType)));
+
+  // Uint32 isn't handled yet (bug 1077305).
+  MOZ_ASSERT(elementType != Scalar::Uint32);
+  bool allowDouble = false;
+  Register tempUint32 = Register::Invalid();
+  Label* failUint32 = nullptr;
+
+  auto sync = Synchronization::Load();
+
+  masm.memoryBarrierBefore(sync);
+  masm.loadFromTypedArray(elementType, source, output.valueReg(), allowDouble,
+                          tempUint32, failUint32);
+  masm.memoryBarrierAfter(sync);
+
+  return true;
+}
+
+bool CacheIRCompiler::emitAtomicsStoreResult(ObjOperandId objId,
+                                             Int32OperandId indexId,
+                                             Int32OperandId valueId,
+                                             Scalar::Type elementType) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  Register obj = allocator.useRegister(masm, objId);
+  Register index = allocator.useRegister(masm, indexId);
+  Register value = allocator.useRegister(masm, valueId);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  // Not enough registers on X86.
+  Register spectreTemp = Register::Invalid();
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Bounds check.
+  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
+
+  // Load the elements vector.
+  LoadTypedThingData(masm, TypedThingLayout::TypedArray, obj, scratch);
+
+  // Store the value.
+  BaseIndex dest(scratch, index,
+                 ScaleFromElemWidth(Scalar::byteSize(elementType)));
+
+  auto sync = Synchronization::Store();
+
+  masm.memoryBarrierBefore(sync);
+  masm.storeToTypedIntArray(elementType, value, dest);
+  masm.memoryBarrierAfter(sync);
+
+  masm.tagValue(JSVAL_TYPE_INT32, value, output.valueReg());
+
+  return true;
+}
+
+bool CacheIRCompiler::emitAtomicsIsLockFreeResult(Int32OperandId valueId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  Register value = allocator.useRegister(masm, valueId);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  masm.atomicIsLockFreeJS(value, scratch);
+  masm.tagValue(JSVAL_TYPE_BOOLEAN, scratch, output.valueReg());
+
+  return true;
+}
+
 template <typename Fn, Fn fn>
 void CacheIRCompiler::callVM(MacroAssembler& masm) {
   VMFunctionId id = VMFunctionToId<Fn, fn>::id;

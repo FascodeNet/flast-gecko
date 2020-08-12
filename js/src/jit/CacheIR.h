@@ -367,7 +367,15 @@ enum class AttachDecision {
 // Set of arguments supported by GetIndexOfArgument.
 // Support for higher argument indices can be added easily, but is currently
 // unneeded.
-enum class ArgumentKind : uint8_t { Callee, This, NewTarget, Arg0, Arg1, Arg2 };
+enum class ArgumentKind : uint8_t {
+  Callee,
+  This,
+  NewTarget,
+  Arg0,
+  Arg1,
+  Arg2,
+  Arg3
+};
 
 // This function calculates the index of an argument based on the call flags.
 // addArgc is an out-parameter, indicating whether the value of argc should
@@ -418,6 +426,8 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
       return flags.isConstructing() + hasArgumentArray - 2;
     case ArgumentKind::Arg2:
       return flags.isConstructing() + hasArgumentArray - 3;
+    case ArgumentKind::Arg3:
+      return flags.isConstructing() + hasArgumentArray - 4;
     case ArgumentKind::NewTarget:
       MOZ_ASSERT(flags.isConstructing());
       *addArgc = false;
@@ -1611,6 +1621,17 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
 
   void emitNativeCalleeGuard(HandleFunction callee);
 
+  bool canAttachAtomicsReadWriteModify();
+
+  struct AtomicsReadWriteModifyOperands {
+    ObjOperandId objId;
+    Int32OperandId int32IndexId;
+    Int32OperandId int32ValueId;
+  };
+
+  AtomicsReadWriteModifyOperands emitAtomicsReadWriteModifyOperands(
+      HandleFunction callee);
+
   AttachDecision tryAttachArrayPush(HandleFunction callee);
   AttachDecision tryAttachArrayPopShift(HandleFunction callee,
                                         InlinableNative native);
@@ -1691,6 +1712,16 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachArrayConstructor(HandleFunction callee);
   AttachDecision tryAttachTypedArrayConstructor(HandleFunction callee);
   AttachDecision tryAttachReflectGetPrototypeOf(HandleFunction callee);
+  AttachDecision tryAttachAtomicsCompareExchange(HandleFunction callee);
+  AttachDecision tryAttachAtomicsExchange(HandleFunction callee);
+  AttachDecision tryAttachAtomicsAdd(HandleFunction callee);
+  AttachDecision tryAttachAtomicsSub(HandleFunction callee);
+  AttachDecision tryAttachAtomicsAnd(HandleFunction callee);
+  AttachDecision tryAttachAtomicsOr(HandleFunction callee);
+  AttachDecision tryAttachAtomicsXor(HandleFunction callee);
+  AttachDecision tryAttachAtomicsLoad(HandleFunction callee);
+  AttachDecision tryAttachAtomicsStore(HandleFunction callee);
+  AttachDecision tryAttachAtomicsIsLockFree(HandleFunction callee);
 
   AttachDecision tryAttachFunCall(HandleFunction calleeFunc);
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);

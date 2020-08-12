@@ -2350,8 +2350,41 @@ EditActionResult HTMLEditor::HandleDeleteSelection(
   MOZ_ASSERT(aStripWrappers == nsIEditor::eStrip ||
              aStripWrappers == nsIEditor::eNoStrip);
 
-  EditActionResult result =
-      HandleDeleteSelectionInternal(aDirectionAndAmount, aStripWrappers);
+  // Remember that we did a selection deletion.  Used by
+  // CreateStyleForInsertText()
+  TopLevelEditSubActionDataRef().mDidDeleteSelection = true;
+
+  // If there is only padding `<br>` element for empty editor, cancel the
+  // operation.
+  if (mPaddingBRElementForEmptyEditor) {
+    return EditActionCanceled();
+  }
+
+  // First check for table selection mode.  If so, hand off to table editor.
+  ErrorResult error;
+  if (RefPtr<Element> cellElement = GetFirstSelectedTableCellElement(error)) {
+    error.SuppressException();
+    nsresult rv = DeleteTableCellContentsWithTransaction();
+    if (NS_WARN_IF(Destroyed())) {
+      return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
+    }
+    NS_WARNING_ASSERTION(
+        NS_SUCCEEDED(rv),
+        "HTMLEditor::DeleteTableCellContentsWithTransaction() failed");
+    return EditActionHandled(rv);
+  }
+
+  // Only when there is no selection range, GetFirstSelectedTableCellElement()
+  // returns error and in this case, anyway we cannot handle delete selection.
+  // So, let's return error here even though we haven't handled this.
+  if (error.Failed()) {
+    NS_WARNING("HTMLEditor::GetFirstSelectedTableCellElement() failed");
+    return EditActionResult(error.StealNSResult());
+  }
+
+  AutoRangeArray rangesToDelete(*SelectionRefPtr());
+  EditActionResult result = HandleDeleteSelectionInternal(
+      aDirectionAndAmount, aStripWrappers, rangesToDelete);
   if (result.Failed() || result.Canceled()) {
     NS_WARNING_ASSERTION(result.Succeeded(),
                          "HTMLEditor::HandleDeleteSelectionInternal() failed");
@@ -2360,12 +2393,12 @@ EditActionResult HTMLEditor::HandleDeleteSelection(
   // If it's just ignored, we should fall this back to
   // `DeleteSelectionWithTransaction()` when selection is not collapsed or
   // content around collapsed range should be deleted.
-  if (!result.Handled() && SelectionRefPtr()->RangeCount() > 0 &&
-      (!SelectionRefPtr()->IsCollapsed() ||
+  if (!result.Handled() && !rangesToDelete.Ranges().IsEmpty() &&
+      (!rangesToDelete.IsCollapsed() ||
        EditorBase::HowToHandleCollapsedRangeFor(aDirectionAndAmount) !=
            HowToHandleCollapsedRange::Ignore)) {
-    nsresult rv =
-        DeleteSelectionWithTransaction(aDirectionAndAmount, aStripWrappers);
+    nsresult rv = DeleteRangesWithTransaction(aDirectionAndAmount,
+                                              aStripWrappers, rangesToDelete);
     if (rv == NS_ERROR_EDITOR_DESTROYED) {
       NS_WARNING(
           "EditorBase::DeleteSelectionWithTransaction() caused destroying the "
@@ -2399,14 +2432,11 @@ EditActionResult HTMLEditor::HandleDeleteSelection(
 
 EditActionResult HTMLEditor::HandleDeleteSelectionInternal(
     nsIEditor::EDirection aDirectionAndAmount,
-    nsIEditor::EStripWrappers aStripWrappers) {
+    nsIEditor::EStripWrappers aStripWrappers, AutoRangeArray& aRangesToDelete) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aStripWrappers == nsIEditor::eStrip ||
              aStripWrappers == nsIEditor::eNoStrip);
-
-  // Remember that we did a selection deletion.  Used by
-  // CreateStyleForInsertText()
-  TopLevelEditSubActionDataRef().mDidDeleteSelection = true;
+  MOZ_ASSERT(!aRangesToDelete.Ranges().IsEmpty());
 
   // If there is only padding `<br>` element for empty editor, cancel the
   // operation.
@@ -2414,66 +2444,56 @@ EditActionResult HTMLEditor::HandleDeleteSelectionInternal(
     return EditActionCanceled();
   }
 
-  // First check for table selection mode.  If so, hand off to table editor.
-  ErrorResult error;
-  if (RefPtr<Element> cellElement = GetFirstSelectedTableCellElement(error)) {
-    error.SuppressException();
-    nsresult rv = DeleteTableCellContentsWithTransaction();
-    if (NS_WARN_IF(Destroyed())) {
-      return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
-    }
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rv),
-        "HTMLEditor::DeleteTableCellContentsWithTransaction() failed");
-    return EditActionHandled(rv);
-  }
-
-  // Only when there is no selection range, GetFirstSelectedTableCellElement()
-  // returns error and in this case, anyway we cannot handle delete selection.
-  // So, let's return error here even though we haven't handled this.
-  if (error.Failed()) {
-    NS_WARNING("HTMLEditor::GetFirstSelectedTableCellElement() failed");
-    return EditActionResult(error.StealNSResult());
-  }
-
   // selectionWasCollapsed is used later to determine whether we should join
-  // blocks in HandleDeleteNonCollapasedSelection(). We don't really care
-  // about collapsed because it will be modified by ExtendSelectionForDelete()
-  // later. TryToJoinBlocksWithTransaction() should happen if the original
-  // selection is collapsed and the cursor is at the end of a block element,
-  // in which case ExtendSelectionForDelete() would always make the selection
+  // blocks in HandleDeleteNonCollapsedRanges(). We don't really care about
+  // collapsed because it will be modified by
+  // AutoRangeArray::ExtendAnchorFocusRangeFor() later.
+  // TryToJoinBlocksWithTransaction() should happen if the original selection is
+  // collapsed and the cursor is at the end of a block element, in which case
+  // AutoRangeArray::ExtendAnchorFocusRangeFor() would always make the selection
   // not collapsed.
-  SelectionWasCollapsed selectionWasCollapsed = SelectionRefPtr()->IsCollapsed()
+  SelectionWasCollapsed selectionWasCollapsed = aRangesToDelete.IsCollapsed()
                                                     ? SelectionWasCollapsed::Yes
                                                     : SelectionWasCollapsed::No;
 
   if (selectionWasCollapsed == SelectionWasCollapsed::Yes) {
-    EditorDOMPoint startPoint(EditorBase::GetStartPoint(*SelectionRefPtr()));
+    EditorDOMPoint startPoint(aRangesToDelete.GetStartPointOfFirstRange());
     if (NS_WARN_IF(!startPoint.IsSet())) {
       return EditActionResult(NS_ERROR_FAILURE);
     }
 
     // If we are inside an empty block, delete it.
-    RefPtr<Element> editingHost = GetActiveEditingHost();
-    if (NS_WARN_IF(!editingHost)) {
-      return EditActionResult(NS_ERROR_FAILURE);
-    }
-
     if (startPoint.GetContainerAsContent()) {
-      AutoEditorDOMPointChildInvalidator lockOffset(startPoint);
-
-      EditActionResult result = MaybeDeleteTopMostEmptyAncestor(
-          MOZ_KnownLive(*startPoint.GetContainerAsContent()), *editingHost,
-          aDirectionAndAmount);
-      if (result.Failed() || result.Handled()) {
-        NS_WARNING_ASSERTION(
-            result.Succeeded(),
-            "HTMLEditor::MaybeDeleteTopMostEmptyAncestor() failed");
-        return result;
+      RefPtr<Element> editingHost = GetActiveEditingHost();
+      if (NS_WARN_IF(!editingHost)) {
+        return EditActionResult(NS_ERROR_FAILURE);
       }
+#ifdef DEBUG
+      nsMutationGuard debugMutation;
+#endif  // #ifdef DEBUG
+      AutoEmptyBlockAncestorDeleter deleter;
+      if (deleter.ScanEmptyBlockInclusiveAncestor(
+              *this, MOZ_KnownLive(*startPoint.GetContainerAsContent()),
+              *editingHost)) {
+        EditActionResult result = deleter.Run(*this, aDirectionAndAmount);
+        if (result.Failed() || result.Handled()) {
+          NS_WARNING_ASSERTION(result.Succeeded(),
+                               "AutoEmptyBlockAncestorDeleter::Run() failed");
+          return result;
+        }
+      }
+      MOZ_ASSERT(!debugMutation.Mutated(0),
+                 "AutoEmptyBlockAncestorDeleter shouldn't modify the DOM tree "
+                 "if it returns not handled nor error");
     }
 
-    // Test for distance between caret and text that will be deleted
+    // Test for distance between caret and text that will be deleted.
+    // Note that this call modifies `nsFrameSelection` without modifying
+    // `Selection`.  However, it does not have problem for now because
+    // it'll be referred by `AutoRangeArray::ExtendAnchorFocusRangeFor()`
+    // before modifying `Selection`.
+    // XXX This looks odd.  `ExtendAnchorFocusRangeFor()` will extend
+    //     anchor-focus range, but here refers the first range.
     EditActionResult result =
         SetCaretBidiLevelForDeletion(startPoint, aDirectionAndAmount);
     if (result.Failed() || result.Canceled()) {
@@ -2481,31 +2501,33 @@ EditActionResult HTMLEditor::HandleDeleteSelectionInternal(
       return result;
     }
 
-    // ExtendSelectionForDelete will use selection controller to set
-    // selection for delete.  But if focus event doesn't receive yet,
-    // ancestor isn't set.  So we must set root eleement of editor to
-    // ancestor.
+    // AutoRangeArray::ExtendAnchorFocusRangeFor() will use `nsFrameSelection`
+    // to extend the range for deletion.  But if focus event doesn't receive
+    // yet, ancestor isn't set.  So we must set root element of editor to
+    // ancestor temporarily.
     AutoSetTemporaryAncestorLimiter autoSetter(*this, *SelectionRefPtr(),
                                                *startPoint.GetContainer());
 
-    nsresult rv = ExtendSelectionForDelete(&aDirectionAndAmount);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("TextEditor::ExtendSelectionForDelete() failed");
-      return EditActionResult(rv);
+    Result<nsIEditor::EDirection, nsresult> extendResult =
+        aRangesToDelete.ExtendAnchorFocusRangeFor(*this, aDirectionAndAmount);
+    if (extendResult.isErr()) {
+      NS_WARNING("AutoRangeArray::ExtendAnchorFocusRangeFor() failed");
+      return EditActionResult(extendResult.unwrapErr());
     }
+    aDirectionAndAmount = extendResult.unwrap();
 
     if (aDirectionAndAmount == nsIEditor::eNone) {
       // If we're not called recursively, we should call
-      // `DeleteSelectionWithTransaction()` here, but we cannot detect it for
+      // `DeleteRangesWithTransaction()` here, but we cannot detect it for
       // now.  Therefore, we should just tell the caller of that we does
       // nothing.
+      MOZ_ASSERT(aRangesToDelete.Ranges().Length() == 1);
       return EditActionIgnored();
     }
 
-    if (SelectionRefPtr()->IsCollapsed()) {
-      AutoRangeArray rangesToDelete(*SelectionRefPtr());
+    if (aRangesToDelete.IsCollapsed()) {
       EditActionResult result = HandleDeleteAroundCollapsedRanges(
-          aDirectionAndAmount, aStripWrappers, rangesToDelete);
+          aDirectionAndAmount, aStripWrappers, aRangesToDelete);
       NS_WARNING_ASSERTION(
           result.Succeeded(),
           "HTMLEditor::HandleDeleteAroundCollapsedRanges() failed");
@@ -2513,10 +2535,9 @@ EditActionResult HTMLEditor::HandleDeleteSelectionInternal(
     }
   }
 
-  AutoRangeArray rangesToDelete(*SelectionRefPtr());
   EditActionResult result =
       HandleDeleteNonCollapsedRanges(aDirectionAndAmount, aStripWrappers,
-                                     rangesToDelete, selectionWasCollapsed);
+                                     aRangesToDelete, selectionWasCollapsed);
   NS_WARNING_ASSERTION(result.Succeeded(),
                        "HTMLEditor::HandleDeleteNonCollapsedRanges() failed");
   return result;
@@ -2634,10 +2655,16 @@ EditActionResult HTMLEditor::HandleDeleteAroundCollapsedRanges(
     if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
       return result.SetResult(NS_ERROR_EDITOR_DESTROYED);
     }
+    if (!SelectionRefPtr()->RangeCount()) {
+      NS_WARNING("Failed to put caret to new position");
+      return EditActionHandled(rv);
+    }
     NS_WARNING_ASSERTION(
         NS_SUCCEEDED(rv),
         "HTMLEditor::CollapseSelectionTo() failed, but ignored");
-    result = HandleDeleteSelectionInternal(aDirectionAndAmount, aStripWrappers);
+    AutoRangeArray rangesToDelete(*SelectionRefPtr());
+    result = HandleDeleteSelectionInternal(aDirectionAndAmount, aStripWrappers,
+                                           rangesToDelete);
     NS_WARNING_ASSERTION(
         result.Succeeded(),
         "Recursive HTMLEditor::HandleDeleteSelectionInternal() failed");
@@ -2896,10 +2923,14 @@ EditActionResult HTMLEditor::HandleDeleteCollapsedSelectionAtAtomicContent(
       NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed");
       return EditActionResult(rv);
     }
+    if (!SelectionRefPtr()->RangeCount()) {
+      return EditActionHandled();
+    }
     // XXX This nesting call is not safe.  If mutation event listener
     //     creates same situation, this causes stack-overflow.
-    EditActionResult result =
-        HandleDeleteSelectionInternal(aDirectionAndAmount, aStripWrappers);
+    AutoRangeArray rangesToDelete(*SelectionRefPtr());
+    EditActionResult result = HandleDeleteSelectionInternal(
+        aDirectionAndAmount, aStripWrappers, rangesToDelete);
     NS_WARNING_ASSERTION(
         result.Succeeded(),
         "HTMLEditor::Nested HandleDeleteSelectionInternal() failed");
@@ -4335,7 +4366,7 @@ nsresult HTMLEditor::InsertBRElementIfHardLineIsEmptyAndEndsWithBlockBoundary(
 }
 
 EditorDOMPoint HTMLEditor::GetGoodCaretPointFor(
-    nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount) {
+    nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount) const {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aDirectionAndAmount == nsIEditor::eNext ||
              aDirectionAndAmount == nsIEditor::eNextWord ||
@@ -7859,159 +7890,193 @@ nsresult HTMLEditor::AlignBlockContentsWithDivElement(
   return NS_OK;
 }
 
-EditActionResult HTMLEditor::MaybeDeleteTopMostEmptyAncestor(
-    nsIContent& aStartContent, Element& aEditingHostElement,
-    nsIEditor::EDirection aDirectionAndAmount) {
-  MOZ_ASSERT(IsEditActionDataAvailable());
+Element*
+HTMLEditor::AutoEmptyBlockAncestorDeleter::ScanEmptyBlockInclusiveAncestor(
+    const HTMLEditor& aHTMLEditor, nsIContent& aStartContent,
+    Element& aEditingHostElement) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
 
   // If the editing host is an inline element, bail out early.
   if (HTMLEditUtils::IsInlineElement(aEditingHostElement)) {
-    return EditActionIgnored();
+    return nullptr;
   }
 
   // If we are inside an empty block, delete it.  Note: do NOT delete table
   // elements this way.
-  RefPtr<Element> blockElement =
+  Element* blockElement =
       HTMLEditUtils::GetInclusiveAncestorBlockElement(aStartContent);
-  RefPtr<Element> topMostEmptyBlockElement;
+  if (!blockElement) {
+    return nullptr;
+  }
   while (blockElement && blockElement != &aEditingHostElement &&
          !HTMLEditUtils::IsAnyTableElement(blockElement) &&
-         IsEmptyNode(*blockElement, true, false)) {
-    topMostEmptyBlockElement = blockElement;
-    blockElement =
-        HTMLEditUtils::GetAncestorBlockElement(*topMostEmptyBlockElement);
+         aHTMLEditor.IsEmptyNode(*blockElement, true, false)) {
+    mEmptyInclusiveAncestorBlockElement = blockElement;
+    blockElement = HTMLEditUtils::GetAncestorBlockElement(
+        *mEmptyInclusiveAncestorBlockElement);
+  }
+  if (!mEmptyInclusiveAncestorBlockElement) {
+    return nullptr;
   }
 
   // XXX Because of not checking whether found block element is editable
   //     in the above loop, empty ediable block element may be overwritten
   //     with empty non-editable clock element.  Therefore, we fail to
   //     remove the found empty nodes.
-  if (!topMostEmptyBlockElement || !topMostEmptyBlockElement->IsEditable()) {
-    return EditActionIgnored();
+  if (NS_WARN_IF(!mEmptyInclusiveAncestorBlockElement->IsEditable()) ||
+      NS_WARN_IF(!mEmptyInclusiveAncestorBlockElement->GetParentElement())) {
+    mEmptyInclusiveAncestorBlockElement = nullptr;
+  }
+  return mEmptyInclusiveAncestorBlockElement;
+}
+
+Result<RefPtr<Element>, nsresult> HTMLEditor::AutoEmptyBlockAncestorDeleter::
+    MaybeInsertBRElementBeforeEmptyListItemElement(HTMLEditor& aHTMLEditor) {
+  MOZ_ASSERT(mEmptyInclusiveAncestorBlockElement);
+  MOZ_ASSERT(mEmptyInclusiveAncestorBlockElement->GetParentElement());
+  MOZ_ASSERT(HTMLEditUtils::IsListItem(mEmptyInclusiveAncestorBlockElement));
+
+  // If the found empty block is a list item element and its grand parent
+  // (i.e., parent of list element) is NOT a list element, insert <br>
+  // element before the list element which has the empty list item.
+  // This odd list structure may occur if `Document.execCommand("indent")`
+  // is performed for list items.
+  // XXX Chrome does not remove empty list elements when last content in
+  //     last list item is deleted.  We should follow it since current
+  //     behavior is annoying when you type new list item with selecting
+  //     all list items.
+  if (!aHTMLEditor.IsFirstEditableChild(mEmptyInclusiveAncestorBlockElement)) {
+    return RefPtr<Element>();
   }
 
-  RefPtr<Element> parentOfEmptyBlockElement =
-      topMostEmptyBlockElement->GetParentElement();
-  if (NS_WARN_IF(!parentOfEmptyBlockElement)) {
-    return EditActionResult(NS_ERROR_FAILURE);
+  EditorDOMPoint atParentOfEmptyListItem(
+      mEmptyInclusiveAncestorBlockElement->GetParentElement());
+  if (NS_WARN_IF(!atParentOfEmptyListItem.IsSet())) {
+    return Err(NS_ERROR_FAILURE);
   }
+  if (HTMLEditUtils::IsAnyListElement(atParentOfEmptyListItem.GetContainer())) {
+    return RefPtr<Element>();
+  }
+  RefPtr<Element> brElement =
+      aHTMLEditor.InsertBRElementWithTransaction(atParentOfEmptyListItem);
+  if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
+    return Err(NS_ERROR_EDITOR_DESTROYED);
+  }
+  if (!brElement) {
+    NS_WARNING("HTMLEditor::InsertBRElementWithTransaction() failed");
+    return Err(NS_ERROR_FAILURE);
+  }
+  return brElement;
+}
 
-  if (HTMLEditUtils::IsListItem(topMostEmptyBlockElement)) {
-    // If the found empty block is a list item element and its grand parent
-    // (i.e., parent of list element) is NOT a list element, insert <br>
-    // element before the list element which has the empty list item.
-    // This odd list structure may occur if `Document.execCommand("indent")`
-    // is performed for list items.
-    // XXX Chrome does not remove empty list elements when last content in
-    //     last list item is deleted.  We should follow it since current
-    //     behavior is annoying when you type new list item with selecting
-    //     all list items.
-    if (IsFirstEditableChild(topMostEmptyBlockElement)) {
-      EditorDOMPoint atParentOfEmptyBlock(parentOfEmptyBlockElement);
-      if (NS_WARN_IF(!atParentOfEmptyBlock.IsSet())) {
-        return EditActionResult(NS_ERROR_FAILURE);
+Result<EditorDOMPoint, nsresult>
+HTMLEditor::AutoEmptyBlockAncestorDeleter::GetNewCaretPoisition(
+    const HTMLEditor& aHTMLEditor,
+    nsIEditor::EDirection aDirectionAndAmount) const {
+  MOZ_ASSERT(mEmptyInclusiveAncestorBlockElement);
+  MOZ_ASSERT(mEmptyInclusiveAncestorBlockElement->GetParentElement());
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+
+  switch (aDirectionAndAmount) {
+    case nsIEditor::eNext:
+    case nsIEditor::eNextWord:
+    case nsIEditor::eToEndOfLine: {
+      // Collapse Selection to next node of after empty block element
+      // if there is.  Otherwise, to just after the empty block.
+      EditorDOMPoint afterEmptyBlock(
+          EditorRawDOMPoint::After(mEmptyInclusiveAncestorBlockElement));
+      MOZ_ASSERT(afterEmptyBlock.IsSet());
+      if (nsIContent* nextContentOfEmptyBlock =
+              aHTMLEditor.GetNextNode(afterEmptyBlock)) {
+        EditorDOMPoint pt = aHTMLEditor.GetGoodCaretPointFor(
+            *nextContentOfEmptyBlock, aDirectionAndAmount);
+        if (!pt.IsSet()) {
+          NS_WARNING("HTMLEditor::GetGoodCaretPointFor() failed");
+          return Err(NS_ERROR_FAILURE);
+        }
+        return pt;
       }
-      // If the grand parent IS a list element, we'll adjust Selection in
-      // AfterEdit().
-      if (!HTMLEditUtils::IsAnyListElement(
-              atParentOfEmptyBlock.GetContainer())) {
-        RefPtr<Element> brElement =
-            InsertBRElementWithTransaction(atParentOfEmptyBlock);
-        if (NS_WARN_IF(Destroyed())) {
-          return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
+      if (NS_WARN_IF(!afterEmptyBlock.IsSet())) {
+        return Err(NS_ERROR_FAILURE);
+      }
+      return afterEmptyBlock;
+    }
+    case nsIEditor::ePrevious:
+    case nsIEditor::ePreviousWord:
+    case nsIEditor::eToBeginningOfLine: {
+      // Collapse Selection to previous editable node of the empty block
+      // if there is.  Otherwise, to after the empty block.
+      EditorRawDOMPoint atEmptyBlock(mEmptyInclusiveAncestorBlockElement);
+      if (nsIContent* previousContentOfEmptyBlock =
+              aHTMLEditor.GetPreviousEditableNode(atEmptyBlock)) {
+        EditorDOMPoint pt = aHTMLEditor.GetGoodCaretPointFor(
+            *previousContentOfEmptyBlock, aDirectionAndAmount);
+        if (!pt.IsSet()) {
+          NS_WARNING("HTMLEditor::GetGoodCaretPointFor() failed");
+          return Err(NS_ERROR_FAILURE);
         }
-        if (!brElement) {
-          NS_WARNING("HTMLEditor::InsertBRElementWithTransaction() failed");
-          return EditActionResult(NS_ERROR_FAILURE);
-        }
-        nsresult rv = CollapseSelectionTo(EditorRawDOMPoint(brElement));
-        if (NS_FAILED(rv)) {
-          NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                               "HTMLEditor::CollapseSelectionTo() failed");
-          return EditActionResult(rv);
-        }
+        return pt;
+      }
+      EditorDOMPoint afterEmptyBlock(
+          EditorRawDOMPoint::After(*mEmptyInclusiveAncestorBlockElement));
+      if (NS_WARN_IF(!afterEmptyBlock.IsSet())) {
+        return Err(NS_ERROR_FAILURE);
+      }
+      return afterEmptyBlock;
+    }
+    case nsIEditor::eNone:
+      return EditorDOMPoint();
+    default:
+      MOZ_CRASH(
+          "AutoEmptyBlockAncestorDeleter doesn't support this action yet");
+      return EditorDOMPoint();
+  }
+}
+
+EditActionResult HTMLEditor::AutoEmptyBlockAncestorDeleter::Run(
+    HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount) {
+  MOZ_ASSERT(mEmptyInclusiveAncestorBlockElement);
+  MOZ_ASSERT(mEmptyInclusiveAncestorBlockElement->GetParentElement());
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+
+  if (HTMLEditUtils::IsListItem(mEmptyInclusiveAncestorBlockElement)) {
+    Result<RefPtr<Element>, nsresult> result =
+        MaybeInsertBRElementBeforeEmptyListItemElement(aHTMLEditor);
+    if (result.isErr()) {
+      NS_WARNING(
+          "AutoEmptyBlockAncestorDeleter::"
+          "MaybeInsertBRElementBeforeEmptyListItemElement() failed");
+      return EditActionResult(result.inspectErr());
+    }
+    // If a `<br>` element is inserted, caret should be moved to after it.
+    if (RefPtr<Element> brElement = result.unwrap()) {
+      nsresult rv =
+          aHTMLEditor.CollapseSelectionTo(EditorRawDOMPoint(brElement));
+      if (NS_FAILED(rv)) {
+        NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                             "HTMLEditor::CollapseSelectionTo() failed");
+        return EditActionResult(rv);
       }
     }
   } else {
-    switch (aDirectionAndAmount) {
-      case nsIEditor::eNext:
-      case nsIEditor::eNextWord:
-      case nsIEditor::eToEndOfLine: {
-        // Collapse Selection to next node of after empty block element
-        // if there is.  Otherwise, to just after the empty block.
-        EditorRawDOMPoint afterEmptyBlock(topMostEmptyBlockElement);
-        bool advancedFromEmptyBlock = afterEmptyBlock.AdvanceOffset();
-        NS_WARNING_ASSERTION(
-            advancedFromEmptyBlock,
-            "Failed to set selection to the after the empty block");
-        nsCOMPtr<nsIContent> nextContentOfEmptyBlock =
-            GetNextNode(afterEmptyBlock);
-        if (nextContentOfEmptyBlock) {
-          EditorDOMPoint pt = GetGoodCaretPointFor(*nextContentOfEmptyBlock,
-                                                   aDirectionAndAmount);
-          NS_WARNING_ASSERTION(
-              pt.IsSet(),
-              "HTMLEditor::GetGoodCaretPointFor() failed, but ignored");
-          nsresult rv = CollapseSelectionTo(pt);
-          if (NS_FAILED(rv)) {
-            NS_WARNING("HTMLEditor::CollapseSelectionTo() failed");
-            return EditActionResult(rv);
-          }
-          break;
-        }
-        if (NS_WARN_IF(!advancedFromEmptyBlock)) {
-          return EditActionResult(NS_ERROR_FAILURE);
-        }
-        nsresult rv = CollapseSelectionTo(afterEmptyBlock);
-        if (NS_FAILED(rv)) {
-          NS_WARNING("HTMLEditor::CollapseSelectionTo() failed");
-          return EditActionResult(rv);
-        }
-        break;
+    Result<EditorDOMPoint, nsresult> result =
+        GetNewCaretPoisition(aHTMLEditor, aDirectionAndAmount);
+    if (result.isErr()) {
+      NS_WARNING(
+          "AutoEmptyBlockAncestorDeleter::GetNewCaretPoisition() failed");
+      return EditActionResult(result.inspectErr());
+    }
+    if (result.inspect().IsSet()) {
+      nsresult rv = aHTMLEditor.CollapseSelectionTo(result.inspect());
+      if (NS_FAILED(rv)) {
+        NS_WARNING("HTMLEditor::CollapseSelectionTo() failed");
+        return EditActionResult(rv);
       }
-      case nsIEditor::ePrevious:
-      case nsIEditor::ePreviousWord:
-      case nsIEditor::eToBeginningOfLine: {
-        // Collapse Selection to previous editable node of the empty block
-        // if there is.  Otherwise, to after the empty block.
-        EditorRawDOMPoint atEmptyBlock(topMostEmptyBlockElement);
-        nsCOMPtr<nsIContent> previousContentOfEmptyBlock =
-            GetPreviousEditableNode(atEmptyBlock);
-        if (previousContentOfEmptyBlock) {
-          EditorDOMPoint pt = GetGoodCaretPointFor(*previousContentOfEmptyBlock,
-                                                   aDirectionAndAmount);
-          NS_WARNING_ASSERTION(
-              pt.IsSet(),
-              "HTMLEditor::GetGoodCaretPointFor() failed, but ignored");
-          nsresult rv = CollapseSelectionTo(pt);
-          if (NS_FAILED(rv)) {
-            NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                                 "HTMLEditor::CollapseSelectionTo() failed");
-            return EditActionResult(rv);
-          }
-          break;
-        }
-        EditorRawDOMPoint afterEmptyBlock(
-            EditorRawDOMPoint::After(*topMostEmptyBlockElement));
-        if (NS_WARN_IF(!afterEmptyBlock.IsSet())) {
-          return EditActionResult(NS_ERROR_FAILURE);
-        }
-        nsresult rv = CollapseSelectionTo(afterEmptyBlock);
-        if (NS_FAILED(rv)) {
-          NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                               "HTMLEditor::CollapseSelectionTo() failed");
-          return EditActionResult(rv);
-        }
-        break;
-      }
-      case nsIEditor::eNone:
-        break;
-      default:
-        MOZ_CRASH("CheckForEmptyBlock doesn't support this action yet");
     }
   }
-  nsresult rv = DeleteNodeWithTransaction(*topMostEmptyBlockElement);
-  if (NS_WARN_IF(Destroyed())) {
+  nsresult rv = aHTMLEditor.DeleteNodeWithTransaction(
+      MOZ_KnownLive(*mEmptyInclusiveAncestorBlockElement));
+  if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
     return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
   }
   if (NS_FAILED(rv)) {

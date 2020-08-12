@@ -5705,13 +5705,6 @@
   mirror: always
   rust: true
 
-# Whether `min()` / `max()` / `clamp()` are enabled.
-- name: layout.css.comparison-functions.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
-
 # Whether the `no-preference` value for `prefers-color-scheme` is parsed.
 #
 # It never matches regardless.
@@ -6418,12 +6411,6 @@
   value: true
   mirror: always
 
-- name: layout.css.shadow-parts.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
-
 # Is support for CSS text-justify property enabled?
 - name: layout.css.text-justify.enabled
   type: bool
@@ -6435,17 +6422,6 @@
   type: bool
   value: true
   mirror: always
-
-# Is support for :is() and :where() enabled?
-#
-# TODO(emilio): when removing this pref it would make sense to implement
-# :-moz-any as an alias of :is or such, or maybe its own thing to preserve its
-# specificity.
-- name: layout.css.is-where-selectors.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
 
 # Is support for the ::file-chooser-button pseudo-element enabled?
 - name: layout.css.file-chooser-button.enabled
