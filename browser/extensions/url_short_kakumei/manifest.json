@@ -1,0 +1,23 @@
+{
+   "browser_action": {
+      "default_icon": {
+         "512": "img/icon.png"
+      },
+      "default_popup": "popup.html"
+   },
+   "content_security_policy": "script-src 'self' https://cdnjs.cloudflare.com/; https://getpocket.com/; https://b.hatena.ne.jp/; https://social-plugins.line.me/; https://twitter.com/; object-src 'self'",
+   "description": "簡単に短縮URLを作成することができます。短縮URLを作成したいページで拡張機能アイコンをクリックすることで短い短縮URLを作成することができます",
+   "icons": {
+      "512": "img/icon.png"
+   },
+   "applications": {
+     "gecko": {
+       "id": "url_short_kakumei@kokkiemouse.github.io",
+       "strict_min_version": "57.0a1"
+     }
+   },
+   "manifest_version": 2,
+   "name": "URL短縮革命 短縮URL作成ツール",
+   "permissions": [ "tabs", "activeTab","clipboardWrite", "https://u.artspin.jp/*" ],
+   "version": "1.2"
+}

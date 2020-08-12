@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+  <html>
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.qrcode/1.0/jquery.qrcode.min.js"></script>
+        
+        <style>
+            #title{
+                width: 220px;
+                font-size: 19px;
+                text-align: center;
+            }
+            #url{
+                width: 220px;
+                font-size: 16px;
+                text-align: center;
+            }
+            #qr{
+                width:  220px;
+                height: 220px;
+            }
+            #share{
+                width: 220px;
+            }
+            #share img{
+                width: 15%;
+                padding: 1.9%;
+            }
+        </style>
+    </head>
+    <body>
+        <p id="title">短縮URLを生成しました</p>
+        <div id="qr"></div>
+        <p id="url"></p>
+        <div id="share">
+            <a href=""><img src="" alt=""></a>
+        </div>
+        <script src="popup.js"></script>
+    </body>
+</html>
