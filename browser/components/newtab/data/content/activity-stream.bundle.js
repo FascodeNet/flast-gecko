@@ -758,7 +758,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       appUpdateChannel: this.props.Prefs.values.appUpdateChannel,
       fxaEndpoint: this.props.Prefs.values.fxa_endpoint,
       dispatch: this.props.dispatch
-    }), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
+    }), /*react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
       className: `body-wrapper${initialized ? " on" : ""}`
     }, isDiscoveryStream ? react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], {
       className: "borderless-error"
@@ -766,7 +766,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       locale: props.App.locale
     })) : react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_9__["Sections"], null), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(PrefsButton, {
       onClick: this.openPreferences
-    })), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))));
+    })),*/ react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))));
   }
 
 }

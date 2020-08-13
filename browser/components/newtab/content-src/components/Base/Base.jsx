@@ -175,7 +175,7 @@ export class BaseContent extends React.PureComponent {
               fxaEndpoint={this.props.Prefs.values.fxa_endpoint}
               dispatch={this.props.dispatch}
             />
-            <div className={`body-wrapper${initialized ? " on" : ""}`}>
+            {/*<div className={`body-wrapper${initialized ? " on" : ""}`}>
               {isDiscoveryStream ? (
                 <ErrorBoundary className="borderless-error">
                   <DiscoveryStreamBase locale={props.App.locale} />
@@ -185,6 +185,7 @@ export class BaseContent extends React.PureComponent {
               )}
               <PrefsButton onClick={this.openPreferences} />
             </div>
+              */}
             <ConfirmDialog />
           </main>
         </div>
