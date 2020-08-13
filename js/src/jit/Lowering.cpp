@@ -4133,6 +4133,15 @@ void LIRGenerator::visitGuardNullProto(MGuardNullProto* ins) {
   redefine(ins, ins->object());
 }
 
+void LIRGenerator::visitGuardIsProxy(MGuardIsProxy* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+
+  auto* lir = new (alloc()) LGuardIsProxy(useRegister(ins->object()), temp());
+  assignSnapshot(lir, BailoutKind::ProxyGuard);
+  add(lir, ins);
+  redefine(ins, ins->object());
+}
+
 void LIRGenerator::visitGuardIsNotProxy(MGuardIsNotProxy* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
 
@@ -4141,6 +4150,61 @@ void LIRGenerator::visitGuardIsNotProxy(MGuardIsNotProxy* ins) {
   assignSnapshot(lir, BailoutKind::NotProxyGuard);
   add(lir, ins);
   redefine(ins, ins->object());
+}
+
+void LIRGenerator::visitGuardIsNotDOMProxy(MGuardIsNotDOMProxy* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+
+  auto* lir =
+      new (alloc()) LGuardIsNotDOMProxy(useRegister(ins->proxy()), temp());
+  assignSnapshot(lir, BailoutKind::NotDOMProxyGuard);
+  add(lir, ins);
+  redefine(ins, ins->proxy());
+}
+
+void LIRGenerator::visitProxyGet(MProxyGet* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir = new (alloc()) LProxyGet(useRegisterAtStart(ins->proxy()), temp());
+  defineReturn(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitProxyGetByValue(MProxyGetByValue* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LProxyGetByValue(useRegisterAtStart(ins->proxy()),
+                                             useBoxAtStart(ins->idVal()));
+  defineReturn(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitProxyHasProp(MProxyHasProp* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LProxyHasProp(useRegisterAtStart(ins->proxy()),
+                                          useBoxAtStart(ins->idVal()));
+  defineReturn(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitProxySet(MProxySet* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->rhs()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LProxySet(useRegisterAtStart(ins->proxy()),
+                                      useBoxAtStart(ins->rhs()), temp());
+  add(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitProxySetByValue(MProxySetByValue* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
+  MOZ_ASSERT(ins->rhs()->type() == MIRType::Value);
+  auto* lir = new (alloc())
+      LProxySetByValue(useRegisterAtStart(ins->proxy()),
+                       useBoxAtStart(ins->idVal()), useBoxAtStart(ins->rhs()));
+  add(lir, ins);
+  assignSafepoint(lir, ins);
 }
 
 void LIRGenerator::visitGuardIsNotArrayBufferMaybeShared(

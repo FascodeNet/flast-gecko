@@ -6163,6 +6163,20 @@ class LGuardNullProto : public LInstructionHelper<0, 1, 1> {
   const LDefinition* temp() { return getTemp(0); }
 };
 
+class LGuardIsProxy : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardIsProxy)
+
+  LGuardIsProxy(const LAllocation& obj, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
 class LGuardIsNotProxy : public LInstructionHelper<0, 1, 1> {
  public:
   LIR_HEADER(GuardIsNotProxy)
@@ -6175,6 +6189,111 @@ class LGuardIsNotProxy : public LInstructionHelper<0, 1, 1> {
 
   const LAllocation* object() { return getOperand(0); }
   const LDefinition* temp() { return getTemp(0); }
+};
+
+class LGuardIsNotDOMProxy : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardIsNotDOMProxy)
+
+  LGuardIsNotDOMProxy(const LAllocation& proxy, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* proxy() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+class LProxyGet : public LCallInstructionHelper<BOX_PIECES, 1, 1> {
+ public:
+  LIR_HEADER(ProxyGet)
+
+  LProxyGet(const LAllocation& proxy, const LDefinition& temp)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* proxy() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+
+  MProxyGet* mir() const { return mir_->toProxyGet(); }
+};
+
+class LProxyGetByValue
+    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(ProxyGetByValue)
+
+  LProxyGetByValue(const LAllocation& proxy, const LBoxAllocation& idVal)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+    setBoxOperand(IdIndex, idVal);
+  }
+
+  static const size_t IdIndex = 1;
+
+  const LAllocation* proxy() { return getOperand(0); }
+};
+
+class LProxyHasProp
+    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(ProxyHasProp)
+
+  LProxyHasProp(const LAllocation& proxy, const LBoxAllocation& idVal)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+    setBoxOperand(IdIndex, idVal);
+  }
+
+  static const size_t IdIndex = 1;
+
+  const LAllocation* proxy() { return getOperand(0); }
+
+  MProxyHasProp* mir() const { return mir_->toProxyHasProp(); }
+};
+
+class LProxySet : public LCallInstructionHelper<0, 1 + BOX_PIECES, 1> {
+ public:
+  LIR_HEADER(ProxySet)
+
+  LProxySet(const LAllocation& proxy, const LBoxAllocation& rhs,
+            const LDefinition& temp)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+    setBoxOperand(RhsIndex, rhs);
+    setTemp(0, temp);
+  }
+
+  static const size_t RhsIndex = 1;
+
+  const LAllocation* proxy() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+
+  MProxySet* mir() const { return mir_->toProxySet(); }
+};
+
+class LProxySetByValue
+    : public LCallInstructionHelper<0, 1 + 2 * BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(ProxySetByValue)
+
+  LProxySetByValue(const LAllocation& proxy, const LBoxAllocation& idVal,
+                   const LBoxAllocation& rhs)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+    setBoxOperand(IdIndex, idVal);
+    setBoxOperand(RhsIndex, rhs);
+  }
+
+  static const size_t IdIndex = 1;
+  static const size_t RhsIndex = 1 + BOX_PIECES;
+
+  const LAllocation* proxy() { return getOperand(0); }
+
+  MProxySetByValue* mir() const { return mir_->toProxySetByValue(); }
 };
 
 class LGuardIsNotArrayBufferMaybeShared : public LInstructionHelper<0, 1, 1> {

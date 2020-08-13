@@ -100,7 +100,8 @@ struct SimpleLinearSum {
 enum class MathSpace { Modulo, Infinite, Unknown };
 
 SimpleLinearSum ExtractLinearSum(MDefinition* ins,
-                                 MathSpace space = MathSpace::Unknown);
+                                 MathSpace space = MathSpace::Unknown,
+                                 int32_t recursionDepth = 0);
 
 MOZ_MUST_USE bool ExtractLinearInequality(MTest* test,
                                           BranchDirection direction,
@@ -173,10 +174,6 @@ MOZ_MUST_USE bool AnalyzeArgumentsUsage(JSContext* cx, JSScript* script);
 bool DeadIfUnused(const MDefinition* def);
 
 bool IsDiscardable(const MDefinition* def);
-
-enum class KnownClass { PlainObject, Array, Function, RegExp, None };
-KnownClass GetObjectKnownClass(const MDefinition* def);
-const JSClass* GetObjectKnownJSClass(const MDefinition* def);
 
 class CompileInfo;
 void DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,

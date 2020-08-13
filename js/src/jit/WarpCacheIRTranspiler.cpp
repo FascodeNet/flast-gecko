@@ -106,6 +106,9 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   const void* rawPointerField(uint32_t offset) {
     return reinterpret_cast<const void*>(readStubWord(offset));
   }
+  jsid idStubField(uint32_t offset) {
+    return jsid::fromRawBits(readStubWord(offset));
+  }
   int32_t int32StubField(uint32_t offset) {
     return static_cast<int32_t>(readStubWord(offset));
   }
@@ -284,6 +287,16 @@ bool WarpCacheIRTranspiler::emitGuardNullProto(ObjOperandId objId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitGuardIsProxy(ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* ins = MGuardIsProxy::New(alloc(), obj);
+  add(ins);
+
+  setOperand(objId, ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitGuardIsNotProxy(ObjOperandId objId) {
   MDefinition* obj = getOperand(objId);
 
@@ -292,6 +305,79 @@ bool WarpCacheIRTranspiler::emitGuardIsNotProxy(ObjOperandId objId) {
 
   setOperand(objId, ins);
   return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardIsNotDOMProxy(ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* ins = MGuardIsNotDOMProxy::New(alloc(), obj);
+  add(ins);
+
+  setOperand(objId, ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitProxyGetResult(ObjOperandId objId,
+                                               uint32_t idOffset) {
+  MDefinition* obj = getOperand(objId);
+  jsid id = idStubField(idOffset);
+
+  auto* ins = MProxyGet::New(alloc(), obj, id);
+  addEffectful(ins);
+
+  pushResult(ins);
+  return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitProxyGetByValueResult(ObjOperandId objId,
+                                                      ValOperandId idId) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* id = getOperand(idId);
+
+  auto* ins = MProxyGetByValue::New(alloc(), obj, id);
+  addEffectful(ins);
+
+  pushResult(ins);
+  return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitProxyHasPropResult(ObjOperandId objId,
+                                                   ValOperandId idId,
+                                                   bool hasOwn) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* id = getOperand(idId);
+
+  auto* ins = MProxyHasProp::New(alloc(), obj, id, hasOwn);
+  addEffectful(ins);
+
+  pushResult(ins);
+  return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitProxySet(ObjOperandId objId, uint32_t idOffset,
+                                         ValOperandId rhsId, bool strict) {
+  MDefinition* obj = getOperand(objId);
+  jsid id = idStubField(idOffset);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* ins = MProxySet::New(alloc(), obj, id, rhs, strict);
+  addEffectful(ins);
+
+  return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitProxySetByValue(ObjOperandId objId,
+                                                ValOperandId idId,
+                                                ValOperandId rhsId,
+                                                bool strict) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* id = getOperand(idId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* ins = MProxySetByValue::New(alloc(), obj, id, rhs, strict);
+  addEffectful(ins);
+
+  return resumeAfter(ins);
 }
 
 bool WarpCacheIRTranspiler::emitGuardIsNotArrayBufferMaybeShared(
@@ -2504,6 +2590,19 @@ bool WarpCacheIRTranspiler::emitAtomicsIsLockFreeResult(
   add(ilf);
 
   pushResult(ilf);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitLoadValueTruthyResult(ValOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  // Convert to bool with the '!!' idiom.
+  auto* resultInverted = MNot::New(alloc(), input);
+  add(resultInverted);
+  auto* result = MNot::New(alloc(), resultInverted);
+  add(result);
+
+  pushResult(result);
   return true;
 }
 

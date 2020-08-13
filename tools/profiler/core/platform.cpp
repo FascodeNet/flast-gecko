@@ -1660,16 +1660,17 @@ MarkerTiming get_marker_timing_from_payload(
 
 // Add the marker to the given buffer with the given information.
 // This is a unified insertion point for all the markers.
-template <typename Buffer>
-static void StoreMarker(Buffer& aBuffer, int aThreadId, const char* aMarkerName,
+static void StoreMarker(ProfileChunkedBuffer& aChunkedBuffer, int aThreadId,
+                        const char* aMarkerName,
                         const MarkerTiming& aMarkerTiming,
                         JS::ProfilingCategoryPair aCategoryPair,
                         const ProfilerMarkerPayload* aPayload) {
-  aBuffer.PutObjects(ProfileBufferEntry::Kind::MarkerData, aThreadId,
-                     WrapProfileBufferUnownedCString(aMarkerName),
-                     aMarkerTiming.GetStartTime(), aMarkerTiming.GetEndTime(),
-                     aMarkerTiming.GetMarkerPhase(),
-                     static_cast<uint32_t>(aCategoryPair), aPayload);
+  aChunkedBuffer.PutObjects(ProfileBufferEntry::Kind::MarkerData, aThreadId,
+                            WrapProfileBufferUnownedCString(aMarkerName),
+                            aMarkerTiming.GetStartTime(),
+                            aMarkerTiming.GetEndTime(),
+                            aMarkerTiming.GetMarkerPhase(),
+                            static_cast<uint32_t>(aCategoryPair), aPayload);
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -2764,7 +2765,8 @@ static void CollectJavaThreadProfileData(ProfileBuffer& aProfileBuffer) {
 
     if (!text) {
       // This marker doesn't have a text.
-      StoreMarker(aProfileBuffer, threadId, markerName.get(), timing,
+      StoreMarker(aProfileBuffer.UnderlyingChunkedBuffer(), threadId,
+                  markerName.get(), timing,
                   JS::ProfilingCategoryPair::JAVA_ANDROID, nullptr);
     } else {
       // This marker has a text.
@@ -2773,7 +2775,8 @@ static void CollectJavaThreadProfileData(ProfileBuffer& aProfileBuffer) {
                                       nullptr);
 
       // Put the marker inside the buffer.
-      StoreMarker(aProfileBuffer, threadId, markerName.get(), timing,
+      StoreMarker(aProfileBuffer.UnderlyingChunkedBuffer(), threadId,
+                  markerName.get(), timing,
                   JS::ProfilingCategoryPair::JAVA_ANDROID, &payload);
     }
   }
@@ -5298,6 +5301,20 @@ double profiler_time() {
   return delta.ToMilliseconds();
 }
 
+static void locked_profiler_fill_backtrace(PSLockRef aLock,
+                                           RegisteredThread& aRegisteredThread,
+                                           ProfileBuffer& aProfileBuffer) {
+  Registers regs;
+#if defined(HAVE_NATIVE_UNWIND)
+  regs.SyncPopulate();
+#else
+  regs.Clear();
+#endif
+
+  DoSyncSample(aLock, aRegisteredThread, TimeStamp::NowUnfuzzed(), regs,
+               aProfileBuffer);
+}
+
 static UniqueProfilerBacktrace locked_profiler_get_backtrace(PSLockRef aLock) {
   if (!ActivePS::Exists(aLock)) {
     return nullptr;
@@ -5313,26 +5330,16 @@ static UniqueProfilerBacktrace locked_profiler_get_backtrace(PSLockRef aLock) {
     return nullptr;
   }
 
-  int tid = profiler_current_thread_id();
-
-  TimeStamp now = TimeStamp::NowUnfuzzed();
-
-  Registers regs;
-#if defined(HAVE_NATIVE_UNWIND)
-  regs.SyncPopulate();
-#else
-  regs.Clear();
-#endif
-
   auto bufferManager = MakeUnique<ProfileChunkedBuffer>(
       ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
       MakeUnique<ProfileBufferChunkManagerSingle>(scExpectedMaximumStackSize));
-  auto buffer = MakeUnique<ProfileBuffer>(*bufferManager);
+  ProfileBuffer buffer(*bufferManager);
 
-  DoSyncSample(aLock, *registeredThread, now, regs, *buffer);
+  locked_profiler_fill_backtrace(aLock, *registeredThread, buffer);
 
-  return UniqueProfilerBacktrace(new ProfilerBacktrace(
-      "SyncProfile", tid, std::move(bufferManager), std::move(buffer)));
+  return UniqueProfilerBacktrace(
+      new ProfilerBacktrace("SyncProfile", registeredThread->Info()->ThreadId(),
+                            std::move(bufferManager)));
 }
 
 UniqueProfilerBacktrace profiler_get_backtrace() {
@@ -5350,6 +5357,29 @@ UniqueProfilerBacktrace profiler_get_backtrace() {
 
 void ProfilerBacktraceDestructor::operator()(ProfilerBacktrace* aBacktrace) {
   delete aBacktrace;
+}
+
+bool profiler_capture_backtrace(ProfileChunkedBuffer& aChunkedBuffer) {
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  PSAutoLock lock(gPSMutex);
+
+  if (!ActivePS::Exists(lock)) {
+    return false;
+  }
+
+  RegisteredThread* registeredThread =
+      TLSRegisteredThread::RegisteredThread(lock);
+  if (!registeredThread) {
+    MOZ_ASSERT(registeredThread);
+    return false;
+  }
+
+  ProfileBuffer profileBuffer(aChunkedBuffer);
+
+  locked_profiler_fill_backtrace(lock, *registeredThread, profileBuffer);
+
+  return true;
 }
 
 static void racy_profiler_add_marker(const char* aMarkerName,

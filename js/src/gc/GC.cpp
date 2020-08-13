@@ -6706,8 +6706,6 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
       [[fallthrough]];
 
     case State::Mark:
-      rt->mainContextFromOwnThread()->traceWrapperGCRooters(&marker);
-
       {
         gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
         if (markUntilBudgetExhausted(budget) == NotFinished) {

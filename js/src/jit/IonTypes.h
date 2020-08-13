@@ -170,8 +170,14 @@ enum class BailoutKind : uint8_t {
   // Bailout triggered by MGuardProto or MGuardNullProto.
   ProtoGuard,
 
+  // Bailout triggered by MGuardIsProxy.
+  ProxyGuard,
+
   // Bailout triggered by MGuardIsNotProxy.
   NotProxyGuard,
+
+  // Bailout triggered by MGuardIsNotDOMProxy.
+  NotDOMProxyGuard,
 
   // Bailout triggered by MGuardIsNotArrayBufferMaybeShared.
   NotArrayBufferMaybeSharedGuard,
@@ -271,8 +277,12 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::ShapeGuard";
     case BailoutKind::ProtoGuard:
       return "BailoutKind::ProtoGuard";
+    case BailoutKind::ProxyGuard:
+      return "BailoutKind::ProxyGuard";
     case BailoutKind::NotProxyGuard:
       return "BailoutKind::NotProxyGuard";
+    case BailoutKind::NotDOMProxyGuard:
+      return "BailoutKind::NotDOMProxyGuard";
     case BailoutKind::NotArrayBufferMaybeSharedGuard:
       return "BailoutKind::NotArrayBufferMaybeSharedGuard";
     case BailoutKind::ArrayPopShift:

@@ -380,7 +380,7 @@
 
 - name: GuardIsProxy
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -407,9 +407,9 @@
     obj: ObjId
     handler: RawPointerField
 
-- name: GuardNotDOMProxy
+- name: GuardIsNotDOMProxy
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -1417,9 +1417,9 @@
     strict: BoolImm
     rhs: ValId
 
-- name: CallProxySet
+- name: ProxySet
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
@@ -1427,9 +1427,9 @@
     rhs: ValId
     strict: BoolImm
 
-- name: CallProxySetByValue
+- name: ProxySetByValue
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
@@ -1832,25 +1832,25 @@
     val: ValId
     getter: ObjectField
 
-- name: CallProxyGetResult
+- name: ProxyGetResult
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
     id: IdField
 
-- name: CallProxyGetByValueResult
+- name: ProxyGetByValueResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
     id: ValId
 
-- name: CallProxyHasPropResult
+- name: ProxyHasPropResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
@@ -2284,6 +2284,13 @@
   cost_estimate: 2
   args:
     bigInt: BigIntId
+
+- name: LoadValueTruthyResult
+  shared: true
+  transpile: true
+  cost_estimate: 4
+  args:
+    input: ValId
 
 - name: LoadValueResult
   shared: false

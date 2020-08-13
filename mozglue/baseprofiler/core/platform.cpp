@@ -97,23 +97,29 @@
 #  define USE_FRAME_POINTER_STACK_WALK
 #endif
 
+// No stack-walking in baseprofiler on linux, android, bsd.
+// APIs now make it easier to capture backtraces from the Base Profiler, which
+// is currently not supported on these platform, and would lead to a MOZ_CRASH
+// in Registers::SyncPopulate(). `#if 0` added in bug 1658232, follow-up bugs
+// should be referenced in meta bug 1557568.
+#if 0
 // Android builds use the ARM Exception Handling ABI to unwind.
-#if defined(GP_PLAT_arm_linux) || defined(GP_PLAT_arm_android)
-#  define HAVE_NATIVE_UNWIND
-#  define USE_EHABI_STACKWALK
-#  include "EHABIStackWalk.h"
-#endif
+#  if defined(GP_PLAT_arm_linux) || defined(GP_PLAT_arm_android)
+#    define HAVE_NATIVE_UNWIND
+#    define USE_EHABI_STACKWALK
+#    include "EHABIStackWalk.h"
+#  endif
 
 // Linux/BSD builds use LUL, which uses DWARF info to unwind stacks.
-#if defined(GP_PLAT_amd64_linux) || defined(GP_PLAT_x86_linux) ||       \
-    defined(GP_PLAT_amd64_android) || defined(GP_PLAT_x86_android) ||   \
-    defined(GP_PLAT_mips64_linux) || defined(GP_PLAT_arm64_linux) ||    \
-    defined(GP_PLAT_arm64_android) || defined(GP_PLAT_amd64_freebsd) || \
-    defined(GP_PLAT_arm64_freebsd)
-#  define HAVE_NATIVE_UNWIND
-#  define USE_LUL_STACKWALK
-#  include "lul/LulMain.h"
-#  include "lul/platform-linux-lul.h"
+#  if defined(GP_PLAT_amd64_linux) || defined(GP_PLAT_x86_linux) ||       \
+      defined(GP_PLAT_amd64_android) || defined(GP_PLAT_x86_android) ||   \
+      defined(GP_PLAT_mips64_linux) || defined(GP_PLAT_arm64_linux) ||    \
+      defined(GP_PLAT_arm64_android) || defined(GP_PLAT_amd64_freebsd) || \
+      defined(GP_PLAT_arm64_freebsd)
+#    define HAVE_NATIVE_UNWIND
+#    define USE_LUL_STACKWALK
+#    include "lul/LulMain.h"
+#    include "lul/platform-linux-lul.h"
 
 // On linux we use LUL for periodic samples and synchronous samples, but we use
 // FramePointerStackWalk for backtrace samples when MOZ_PROFILING is enabled.
@@ -124,8 +130,9 @@
 // in a shared library without framepointers, however LUL can take a long time
 // to initialize, which is undesirable for consumers of
 // profiler_suspend_and_sample_thread like the Background Hang Reporter.
-#  if defined(MOZ_PROFILING)
-#    define USE_FRAME_POINTER_STACK_WALK
+#    if defined(MOZ_PROFILING)
+#      define USE_FRAME_POINTER_STACK_WALK
+#    endif
 #  endif
 #endif
 
@@ -3523,6 +3530,20 @@ double profiler_time() {
   return delta.ToMilliseconds();
 }
 
+static void locked_profiler_fill_backtrace(PSLockRef aLock,
+                                           RegisteredThread& aRegisteredThread,
+                                           ProfileBuffer& aProfileBuffer) {
+  Registers regs;
+#if defined(HAVE_NATIVE_UNWIND)
+  regs.SyncPopulate();
+#else
+  regs.Clear();
+#endif
+
+  DoSyncSample(aLock, aRegisteredThread, TimeStamp::NowUnfuzzed(), regs,
+               aProfileBuffer);
+}
+
 static UniqueProfilerBacktrace locked_profiler_get_backtrace(PSLockRef aLock) {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
@@ -3537,26 +3558,16 @@ static UniqueProfilerBacktrace locked_profiler_get_backtrace(PSLockRef aLock) {
     return nullptr;
   }
 
-  int tid = profiler_current_thread_id();
-
-  TimeStamp now = TimeStamp::NowUnfuzzed();
-
-  Registers regs;
-#if defined(HAVE_NATIVE_UNWIND)
-  regs.SyncPopulate();
-#else
-  regs.Clear();
-#endif
-
   auto bufferManager = MakeUnique<ProfileChunkedBuffer>(
       ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
       MakeUnique<ProfileBufferChunkManagerSingle>(scExpectedMaximumStackSize));
-  auto buffer = MakeUnique<ProfileBuffer>(*bufferManager);
+  ProfileBuffer buffer(*bufferManager);
 
-  DoSyncSample(aLock, *registeredThread, now, regs, *buffer);
+  locked_profiler_fill_backtrace(aLock, *registeredThread, buffer);
 
-  return UniqueProfilerBacktrace(new ProfilerBacktrace(
-      "SyncProfile", tid, std::move(bufferManager), std::move(buffer)));
+  return UniqueProfilerBacktrace(
+      new ProfilerBacktrace("SyncProfile", registeredThread->Info()->ThreadId(),
+                            std::move(bufferManager)));
 }
 
 UniqueProfilerBacktrace profiler_get_backtrace() {
@@ -3569,6 +3580,29 @@ UniqueProfilerBacktrace profiler_get_backtrace() {
 
 void ProfilerBacktraceDestructor::operator()(ProfilerBacktrace* aBacktrace) {
   delete aBacktrace;
+}
+
+bool profiler_capture_backtrace(ProfileChunkedBuffer& aChunkedBuffer) {
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  PSAutoLock lock;
+
+  if (!ActivePS::Exists(lock)) {
+    return false;
+  }
+
+  RegisteredThread* registeredThread =
+      TLSRegisteredThread::RegisteredThread(lock);
+  if (!registeredThread) {
+    MOZ_ASSERT(registeredThread);
+    return false;
+  }
+
+  ProfileBuffer profileBuffer(aChunkedBuffer);
+
+  locked_profiler_fill_backtrace(lock, *registeredThread, profileBuffer);
+
+  return true;
 }
 
 bool profiler_is_locked_on_current_thread() {

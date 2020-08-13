@@ -106,7 +106,7 @@ class MozbuildObject(ProcessExecutionMixin):
     """
 
     def __init__(self, topsrcdir, settings, log_manager, topobjdir=None,
-                 mozconfig=MozconfigLoader.AUTODETECT):
+                 mozconfig=MozconfigLoader.AUTODETECT, virtualenv_name=None):
         """Create a new Mozbuild object instance.
 
         Instances are bound to a source directory, a ConfigSettings instance,
@@ -123,6 +123,8 @@ class MozbuildObject(ProcessExecutionMixin):
         self._topobjdir = mozpath.normsep(topobjdir) if topobjdir else topobjdir
         self._mozconfig = mozconfig
         self._config_environment = None
+        self._virtualenv_name = virtualenv_name or (
+            'init_py3' if six.PY3 else 'init')
         self._virtualenv_manager = None
 
     @classmethod
@@ -275,12 +277,10 @@ class MozbuildObject(ProcessExecutionMixin):
         from .virtualenv import VirtualenvManager
 
         if self._virtualenv_manager is None:
-            name = "init"
-            if six.PY3:
-                name += "_py3"
             self._virtualenv_manager = VirtualenvManager(
                 self.topsrcdir,
-                os.path.join(self.topobjdir, '_virtualenvs', name),
+                os.path.join(self.topobjdir, '_virtualenvs',
+                             self._virtualenv_name),
                 sys.stdout,
                 os.path.join(self.topsrcdir, 'build', 'virtualenv_packages.txt')
                 )
@@ -845,12 +845,11 @@ class MozbuildObject(ProcessExecutionMixin):
     def ensure_pipenv(self):
         self.activate_virtualenv()
         pipenv = os.path.join(self.virtualenv_manager.bin_path, 'pipenv')
-        if not os.path.exists(pipenv):
+        if not os.path.exists(pipenv + '.exe' if self._is_windows() else pipenv):
             for package in ['certifi', 'pipenv', 'six', 'virtualenv', 'virtualenv-clone']:
                 path = os.path.normpath(os.path.join(
                     self.topsrcdir, 'third_party/python', package))
                 self.virtualenv_manager.install_pip_package(path, vendored=True)
-        return pipenv
 
     def activate_pipenv(self, workon_home, pipfile=None, populate=False,
                         python=None):
@@ -875,7 +874,7 @@ class MachCommandBase(MozbuildObject):
     without having to change everything that inherits from it.
     """
 
-    def __init__(self, context):
+    def __init__(self, context, virtualenv_name):
         # Attempt to discover topobjdir through environment detection, as it is
         # more reliable than mozconfig when cwd is inside an objdir.
         topsrcdir = context.topdir
@@ -916,8 +915,10 @@ class MachCommandBase(MozbuildObject):
             print(e)
             sys.exit(1)
 
-        MozbuildObject.__init__(self, topsrcdir, context.settings,
-                                context.log_manager, topobjdir=topobjdir)
+        MozbuildObject.__init__(
+            self, topsrcdir, context.settings,
+            context.log_manager, topobjdir=topobjdir,
+            virtualenv_name=virtualenv_name)
 
         self._mach_context = context
 

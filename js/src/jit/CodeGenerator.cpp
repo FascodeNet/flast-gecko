@@ -4469,6 +4469,15 @@ void CodeGenerator::visitGuardNullProto(LGuardNullProto* guard) {
   bailoutFrom(&bail, guard->snapshot());
 }
 
+void CodeGenerator::visitGuardIsProxy(LGuardIsProxy* guard) {
+  Register obj = ToRegister(guard->input());
+  Register temp = ToRegister(guard->temp());
+
+  Label bail;
+  masm.branchTestObjectIsProxy(false, obj, temp, &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
 void CodeGenerator::visitGuardIsNotProxy(LGuardIsNotProxy* guard) {
   Register obj = ToRegister(guard->input());
   Register temp = ToRegister(guard->temp());
@@ -4476,6 +4485,82 @@ void CodeGenerator::visitGuardIsNotProxy(LGuardIsNotProxy* guard) {
   Label bail;
   masm.branchTestObjectIsProxy(true, obj, temp, &bail);
   bailoutFrom(&bail, guard->snapshot());
+}
+
+void CodeGenerator::visitGuardIsNotDOMProxy(LGuardIsNotDOMProxy* guard) {
+  Register proxy = ToRegister(guard->proxy());
+  Register temp = ToRegister(guard->temp());
+
+  Label bail;
+  masm.branchTestProxyHandlerFamily(Assembler::Equal, proxy, temp,
+                                    GetDOMProxyHandlerFamily(), &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
+void CodeGenerator::visitProxyGet(LProxyGet* lir) {
+  Register proxy = ToRegister(lir->proxy());
+  Register temp = ToRegister(lir->temp());
+
+  pushArg(lir->mir()->id(), temp);
+  pushArg(proxy);
+
+  using Fn = bool (*)(JSContext*, HandleObject, HandleId, MutableHandleValue);
+  callVM<Fn, ProxyGetProperty>(lir);
+}
+
+void CodeGenerator::visitProxyGetByValue(LProxyGetByValue* lir) {
+  Register proxy = ToRegister(lir->proxy());
+  ValueOperand idVal = ToValue(lir, LProxyGetByValue::IdIndex);
+
+  pushArg(idVal);
+  pushArg(proxy);
+
+  using Fn =
+      bool (*)(JSContext*, HandleObject, HandleValue, MutableHandleValue);
+  callVM<Fn, ProxyGetPropertyByValue>(lir);
+}
+
+void CodeGenerator::visitProxyHasProp(LProxyHasProp* lir) {
+  Register proxy = ToRegister(lir->proxy());
+  ValueOperand idVal = ToValue(lir, LProxyHasProp::IdIndex);
+
+  pushArg(idVal);
+  pushArg(proxy);
+
+  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, bool*);
+  if (lir->mir()->hasOwn()) {
+    callVM<Fn, ProxyHasOwn>(lir);
+  } else {
+    callVM<Fn, ProxyHas>(lir);
+  }
+}
+
+void CodeGenerator::visitProxySet(LProxySet* lir) {
+  Register proxy = ToRegister(lir->proxy());
+  ValueOperand rhs = ToValue(lir, LProxySet::RhsIndex);
+  Register temp = ToRegister(lir->temp());
+
+  pushArg(Imm32(lir->mir()->strict()));
+  pushArg(rhs);
+  pushArg(lir->mir()->id(), temp);
+  pushArg(proxy);
+
+  using Fn = bool (*)(JSContext*, HandleObject, HandleId, HandleValue, bool);
+  callVM<Fn, ProxySetProperty>(lir);
+}
+
+void CodeGenerator::visitProxySetByValue(LProxySetByValue* lir) {
+  Register proxy = ToRegister(lir->proxy());
+  ValueOperand idVal = ToValue(lir, LProxySetByValue::IdIndex);
+  ValueOperand rhs = ToValue(lir, LProxySetByValue::RhsIndex);
+
+  pushArg(Imm32(lir->mir()->strict()));
+  pushArg(rhs);
+  pushArg(idVal);
+  pushArg(proxy);
+
+  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, HandleValue, bool);
+  callVM<Fn, ProxySetPropertyByValue>(lir);
 }
 
 void CodeGenerator::visitGuardIsNotArrayBufferMaybeShared(

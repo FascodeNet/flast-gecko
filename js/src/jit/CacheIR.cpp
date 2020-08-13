@@ -1500,19 +1500,19 @@ AttachDecision GetPropIRGenerator::tryAttachGenericProxy(
   if (!handleDOMProxies) {
     // Ensure that the incoming object is not a DOM proxy, so that we can get to
     // the specialized stubs
-    writer.guardNotDOMProxy(objId);
+    writer.guardIsNotDOMProxy(objId);
   }
 
   if (cacheKind_ == CacheKind::GetProp || mode_ == ICState::Mode::Specialized) {
     MOZ_ASSERT(!isSuper());
     maybeEmitIdGuard(id);
-    writer.callProxyGetResult(objId, id);
+    writer.proxyGetResult(objId, id);
   } else {
     // Attach a stub that handles every id.
     MOZ_ASSERT(cacheKind_ == CacheKind::GetElem);
     MOZ_ASSERT(mode_ == ICState::Mode::Megamorphic);
     MOZ_ASSERT(!isSuper());
-    writer.callProxyGetByValueResult(objId, getElemKeyValueId());
+    writer.proxyGetByValueResult(objId, getElemKeyValueId());
   }
 
   writer.typeMonitorResult();
@@ -1604,7 +1604,7 @@ AttachDecision GetPropIRGenerator::tryAttachDOMProxyShadowed(HandleObject obj,
 
   maybeEmitIdGuard(id);
   TestMatchingProxyReceiver(writer, &obj->as<ProxyObject>(), objId);
-  writer.callProxyGetResult(objId, id);
+  writer.proxyGetResult(objId, id);
   writer.typeMonitorResult();
 
   trackAttached("DOMProxyShadowed");
@@ -1696,7 +1696,7 @@ AttachDecision GetPropIRGenerator::tryAttachDOMProxyUnshadowed(
     // Property was not found on the prototype chain. Deoptimize down to
     // proxy get call.
     MOZ_ASSERT(!isSuper());
-    writer.callProxyGetResult(objId, id);
+    writer.proxyGetResult(objId, id);
     writer.typeMonitorResult();
   }
 
@@ -2528,12 +2528,12 @@ AttachDecision GetPropIRGenerator::tryAttachProxyElement(HandleObject obj,
 
   // We are not guarding against DOM proxies here, because there is no other
   // specialized DOM IC we could attach.
-  // We could call maybeEmitIdGuard here and then emit CallProxyGetResult,
+  // We could call maybeEmitIdGuard here and then emit ProxyGetResult,
   // but for GetElem we prefer to attach a stub that can handle any Value
   // so we don't attach a new stub for every id.
   MOZ_ASSERT(cacheKind_ == CacheKind::GetElem);
   MOZ_ASSERT(!isSuper());
-  writer.callProxyGetByValueResult(objId, getElemKeyValueId());
+  writer.proxyGetByValueResult(objId, getElemKeyValueId());
   writer.typeMonitorResult();
 
   trackAttached("ProxyElement");
@@ -3288,7 +3288,7 @@ AttachDecision HasPropIRGenerator::tryAttachProxyElement(HandleObject obj,
   }
 
   writer.guardIsProxy(objId);
-  writer.callProxyHasPropResult(objId, keyId, hasOwn);
+  writer.proxyHasPropResult(objId, keyId, hasOwn);
   writer.returnFromIC();
 
   trackAttached("ProxyHasProp");
@@ -4293,18 +4293,18 @@ AttachDecision SetPropIRGenerator::tryAttachGenericProxy(
     // get to the specialized stubs. If handleDOMProxies is true, we were
     // unable to attach a specialized DOM stub, so we just handle all
     // proxies here.
-    writer.guardNotDOMProxy(objId);
+    writer.guardIsNotDOMProxy(objId);
   }
 
   if (cacheKind_ == CacheKind::SetProp || mode_ == ICState::Mode::Specialized) {
     maybeEmitIdGuard(id);
-    writer.callProxySet(objId, id, rhsId, IsStrictSetPC(pc_));
+    writer.proxySet(objId, id, rhsId, IsStrictSetPC(pc_));
   } else {
     // Attach a stub that handles every id.
     MOZ_ASSERT(cacheKind_ == CacheKind::SetElem);
     MOZ_ASSERT(mode_ == ICState::Mode::Megamorphic);
-    writer.callProxySetByValue(objId, setElemKeyValueId(), rhsId,
-                               IsStrictSetPC(pc_));
+    writer.proxySetByValue(objId, setElemKeyValueId(), rhsId,
+                           IsStrictSetPC(pc_));
   }
 
   writer.returnFromIC();
@@ -4319,7 +4319,7 @@ AttachDecision SetPropIRGenerator::tryAttachDOMProxyShadowed(
 
   maybeEmitIdGuard(id);
   TestMatchingProxyReceiver(writer, &obj->as<ProxyObject>(), objId);
-  writer.callProxySet(objId, id, rhsId, IsStrictSetPC(pc_));
+  writer.proxySet(objId, id, rhsId, IsStrictSetPC(pc_));
   writer.returnFromIC();
 
   trackAttached("DOMProxyShadowed");
@@ -4469,8 +4469,7 @@ AttachDecision SetPropIRGenerator::tryAttachProxyElement(HandleObject obj,
   // Like GetPropIRGenerator::tryAttachProxyElement, don't check for DOM
   // proxies here as we don't have specialized DOM stubs for this.
   MOZ_ASSERT(cacheKind_ == CacheKind::SetElem);
-  writer.callProxySetByValue(objId, setElemKeyValueId(), rhsId,
-                             IsStrictSetPC(pc_));
+  writer.proxySetByValue(objId, setElemKeyValueId(), rhsId, IsStrictSetPC(pc_));
   writer.returnFromIC();
 
   trackAttached("ProxyElement");
@@ -7392,6 +7391,35 @@ AttachDecision CallIRGenerator::tryAttachAtomicsIsLockFree(
   return AttachDecision::Attach;
 }
 
+AttachDecision CallIRGenerator::tryAttachBoolean(HandleFunction callee) {
+  // Need zero or one argument.
+  if (argc_ > 1) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'Boolean' native function.
+  emitNativeCalleeGuard(callee);
+
+  if (argc_ == 0) {
+    writer.loadBooleanResult(false);
+  } else {
+    ValOperandId valId =
+        writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+
+    writer.loadValueTruthyResult(valId);
+  }
+
+  // This stub doesn't need to be monitored, because it always returns a bool.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("Boolean");
+  return AttachDecision::Attach;
+}
+
 AttachDecision CallIRGenerator::tryAttachFunCall(HandleFunction callee) {
   MOZ_ASSERT(callee->isNativeWithoutJitEntry());
   if (callee->native() != fun_call) {
@@ -8493,6 +8521,10 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
       return tryAttachAtomicsStore(callee);
     case InlinableNative::AtomicsIsLockFree:
       return tryAttachAtomicsIsLockFree(callee);
+
+    // Boolean natives.
+    case InlinableNative::Boolean:
+      return tryAttachBoolean(callee);
 
     default:
       return AttachDecision::NoAction;
