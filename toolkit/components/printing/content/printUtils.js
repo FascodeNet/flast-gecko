@@ -154,6 +154,7 @@ var PrintUtils = {
 
     // Move the overlay so it overlaps the chrome and content.
     container.prepend(dialog._overlay);
+    container.querySelector(".printSettingsBrowser").hidden = false;
 
     // Store the dialog on the overlay for access in the tests.
     dialog._overlay._dialog = dialog;
@@ -164,7 +165,8 @@ var PrintUtils = {
       skipLoad: false,
     });
     printPreviewBrowser.classList.add("printPreviewBrowser");
-    container.querySelector(".printTabModalView").prepend(printPreviewBrowser);
+    printPreviewBrowser.setAttribute("isRendering", "true");
+    container.querySelector(".previewStack").append(printPreviewBrowser);
     printPreviewBrowser.loadURI("about:printpreview", {
       triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
     });
@@ -196,6 +198,9 @@ var PrintUtils = {
    * @return {Promise<Integer>} The number of pages that were rendered in the preview.
    */
   updatePrintPreview(sourceBrowser, printPreviewBrowser, printSettings) {
+    let previewContainer = printPreviewBrowser.parentElement;
+    previewContainer.classList.add("previewRendering");
+
     return new Promise(resolve => {
       printPreviewBrowser.messageManager.addMessageListener(
         "Printing:Preview:UpdatePageCount",
@@ -204,6 +209,10 @@ var PrintUtils = {
             "Printing:Preview:UpdatePageCount",
             done
           );
+
+          previewContainer.classList.remove("previewRendering");
+          printPreviewBrowser.removeAttribute("isRendering");
+
           resolve(message.data.numPages);
         }
       );

@@ -36,6 +36,14 @@ class MediaControlService final : public nsIObserver {
 
   static RefPtr<MediaControlService> GetService();
 
+  // Currently these following static methods are only being used in testing.
+  static void GenerateMediaControlKey(const GlobalObject& global,
+                                      MediaControlKey aKey);
+  static void GetCurrentActiveMediaMetadata(const GlobalObject& aGlobal,
+                                            MediaMetadataInit& aMetadata);
+  static MediaSessionPlaybackState GetCurrentMediaSessionPlaybackState(
+      GlobalObject& aGlobal);
+
   AudioFocusManager& GetAudioFocusManager() { return mAudioFocusManager; }
   MediaControlKeySource* GetMediaControlKeySource() {
     return mMediaControlKeyManager;
@@ -51,10 +59,9 @@ class MediaControlService final : public nsIObserver {
   // This method would be called when the controller changes its playback state.
   void NotifyControllerPlaybackStateChanged(MediaController* aController);
 
-  // This method would be called when the controller starts to being used in the
-  // picture-in-picture mode.
-  void NotifyControllerBeingUsedInPictureInPictureMode(
-      MediaController* aController);
+  // This method is used to help a media controller become a main controller, if
+  // it fits the requirement.
+  void RequestUpdateMainController(MediaController* aController);
 
   // The main controller is the controller which can receive the media control
   // key events and would show its metadata to virtual controller interface.
@@ -121,12 +128,14 @@ class MediaControlService final : public nsIObserver {
     void MainControllerMetadataChanged(const MediaMetadataBase& aMetadata);
 
    private:
-    // Assume that we have a list [A, B, C, D], and we want to reorder B.
-    // When applying `eInsertToTail`, list would become [A, C, D, B].
-    // When applying `eInsertBeforeTail`, list would become [A, C, B, D].
+    // When applying `eInsertAsMainController`, we would always insert the
+    // element to the tail of the list. Eg. Insert C , [A, B] -> [A, B, C]
+    // When applying `eInsertAsNormalController`, we would insert the element
+    // prior to the element with a higher priority controller. Eg. Insert E and
+    // C and D have higher priority. [A, B, C, D] -> [A, B, E, C, D]
     enum class InsertOptions {
-      eInsertToTail,
-      eInsertBeforeTail,
+      eInsertAsMainController,
+      eInsertAsNormalController,
     };
 
     // Adjust the given controller's order by the insert option.

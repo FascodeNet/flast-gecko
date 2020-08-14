@@ -120,10 +120,6 @@ class MediaController final : public DOMEventTargetHelper,
   void NotifyMediaFullScreenState(uint64_t aBrowsingContextId,
                                   bool aIsInFullScreen) override;
 
-  // Reture true if any of controlled media is being used in Picture-In-Picture
-  // mode.
-  bool IsInPictureInPictureMode() const;
-
   // Calling this method explicitly would mark this controller as deprecated,
   // then calling any its method won't take any effect.
   void Shutdown();
@@ -143,6 +139,8 @@ class MediaController final : public DOMEventTargetHelper,
   }
 
   CopyableTArray<MediaControlKey> GetSupportedMediaKeys() const;
+
+  bool IsBeingUsedInPIPModeOrFullscreen() const;
 
  private:
   ~MediaController();
@@ -167,10 +165,12 @@ class MediaController final : public DOMEventTargetHelper,
 
   void UpdateDeactivationTimerIfNeeded();
 
-  bool IsMediaBeingUsedInPIPModeOrFullScreen() const;
-
   void DispatchAsyncEvent(const nsAString& aName);
   void DispatchAsyncEvent(Event* aEvent);
+
+  bool IsMainController() const;
+  void ForceToBecomeMainControllerIfNeeded();
+  bool ShouldRequestForMainController() const;
 
   bool mIsActive = false;
   bool mShutdown = false;

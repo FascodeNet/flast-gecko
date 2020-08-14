@@ -1095,9 +1095,9 @@ class UrlbarInput {
     };
 
     if (this.searchMode) {
-      options.sources = [this.searchMode.source];
-      if (this.searchMode.engineName) {
-        options.engineName = this.searchMode.engineName;
+      options.searchMode = this.searchMode;
+      if (this.searchMode.source) {
+        options.sources = [this.searchMode.source];
       }
     }
 
@@ -1195,10 +1195,15 @@ class UrlbarInput {
     this._searchModeLabel.removeAttribute("data-l10n-id");
 
     if (engineName) {
-      this.searchMode = {
-        source: UrlbarUtils.RESULT_SOURCE.SEARCH,
-        engineName,
-      };
+      this.searchMode = { engineName };
+      if (source) {
+        this.searchMode.source = source;
+      } else if (UrlbarUtils.WEB_ENGINE_NAMES.has(engineName)) {
+        // History results for general-purpose search engines are often not
+        // useful, so we hide them in search mode. See bug 1658646 for
+        // discussion.
+        this.searchMode.source = UrlbarUtils.RESULT_SOURCE.SEARCH;
+      }
       this._searchModeIndicatorTitle.textContent = engineName;
       this._searchModeLabel.textContent = engineName;
       this.document.l10n.setAttributes(
@@ -1255,7 +1260,12 @@ class UrlbarInput {
    */
   searchModeShortcut() {
     if (this.view.oneOffsRefresh) {
-      this.setSearchMode({ engineName: Services.search.defaultEngine.name });
+      // We restrict to search results when entering search mode from this
+      // shortcut to honor historical behaviour.
+      this.setSearchMode({
+        source: UrlbarUtils.RESULT_SOURCE.SEARCH,
+        engineName: Services.search.defaultEngine.name,
+      });
       this.search("");
     } else {
       this.search(UrlbarTokenizer.RESTRICT.SEARCH);
@@ -2383,18 +2393,14 @@ class UrlbarInput {
   _on_input(event) {
     // We enter search mode when space is typed if there is a selected keyword
     // offer result.
-    let searchModeParams;
+    let enteredSearchMode = false;
     if (event.data == " ") {
       let result = this.view.selectedResult;
-      searchModeParams = this._searchModeForResult(result);
-      if (
-        searchModeParams &&
-        this.value.trim() == result.payload.keyword.trim()
-      ) {
-        this.setSearchMode(searchModeParams);
+      let searchMode = this._searchModeForResult(result);
+      if (searchMode && this.value.trim() == result.payload.keyword.trim()) {
+        this.setSearchMode(searchMode);
         this.value = "";
-      } else {
-        searchModeParams = null;
+        enteredSearchMode = true;
       }
     }
 
@@ -2431,18 +2437,16 @@ class UrlbarInput {
     }
 
     let canShowTopSites =
-      !this.isPrivate &&
-      UrlbarPrefs.get("suggest.topsites") &&
-      !this.searchMode;
-    if (
-      !this.view.isOpen ||
-      (!value && !canShowTopSites && !searchModeParams)
-    ) {
+      !this.isPrivate && UrlbarPrefs.get("suggest.topsites");
+
+    if (!this.view.isOpen) {
       this.view.clear();
-    }
-    if (!value && !canShowTopSites && !searchModeParams) {
-      this.view.close();
-      return;
+    } else if (!value && !canShowTopSites && !enteredSearchMode) {
+      this.view.clear();
+      if (!this.searchMode) {
+        this.view.close();
+        return;
+      }
     }
 
     this.view.removeAccessibleFocus();

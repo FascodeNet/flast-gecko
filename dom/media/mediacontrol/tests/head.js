@@ -31,7 +31,7 @@ async function createTabAndLoad(url, inputWindow = null) {
  */
 function generateMediaControlKeyEvent(event) {
   const playbackStateChanged = waitUntilDisplayedPlaybackChanged();
-  ChromeUtils.generateMediaControlKey(event);
+  MediaControlService.generateMediaControlKey(event);
   return playbackStateChanged;
 }
 
@@ -158,7 +158,7 @@ function checkOrWaitUntilMediaStoppedPlaying(tab, elementId) {
  * Check if the active metadata is empty.
  */
 function isCurrentMetadataEmpty() {
-  const current = ChromeUtils.getCurrentActiveMediaMetadata();
+  const current = MediaControlService.getCurrentActiveMediaMetadata();
   is(current.title, "", `current title should be empty`);
   is(current.artist, "", `current title should be empty`);
   is(current.album, "", `current album should be empty`);
@@ -172,7 +172,7 @@ function isCurrentMetadataEmpty() {
  *        The metadata that would be compared with the active metadata
  */
 function isCurrentMetadataEqualTo(metadata) {
-  const current = ChromeUtils.getCurrentActiveMediaMetadata();
+  const current = MediaControlService.getCurrentActiveMediaMetadata();
   is(
     current.title,
     metadata.title,
@@ -220,22 +220,22 @@ function isCurrentMetadataEqualTo(metadata) {
  * the `options`.
  */
 async function isUsingDefaultMetadata(tab, options = {}) {
-  let metadata = ChromeUtils.getCurrentActiveMediaMetadata();
-  if (options.isPrivateBrowsing) {
-    is(
-      metadata.title,
-      "Firefox is playing media",
-      "Using generic title to not expose sensitive information"
-    );
-  } else {
-    await SpecialPowers.spawn(tab.linkedBrowser, [metadata.title], title => {
-      is(
-        title,
-        content.document.title,
-        "Using website title as a default title"
-      );
-    });
-  }
+  const metadata = MediaControlService.getCurrentActiveMediaMetadata();
+  await SpecialPowers.spawn(
+    tab.linkedBrowser,
+    [metadata.title, options.isPrivateBrowsing],
+    (title, isPrivateBrowsing) => {
+      if (isPrivateBrowsing || !content.document.title.length) {
+        is(title, "Firefox is playing media", "Using a generic default title");
+      } else {
+        is(
+          title,
+          content.document.title,
+          "Using website title as a default title"
+        );
+      }
+    }
+  );
   is(metadata.artwork.length, 1, "Default metada contains one artwork");
   ok(
     metadata.artwork[0].src.includes("defaultFavicon.svg"),
@@ -304,4 +304,16 @@ function waitUntilControllerMetadataChanged() {
  */
 function waitUntilMediaControllerAmountChanged() {
   return BrowserUtils.promiseObserved("media-controller-amount-changed");
+}
+
+/**
+ * check if the media controll from given tab is active. If not, return a
+ * promise and resolve it when controller become active.
+ */
+async function checkOrWaitUntilControllerBecomeActive(tab) {
+  const controller = tab.linkedBrowser.browsingContext.mediaController;
+  if (controller.isActive) {
+    return;
+  }
+  await new Promise(r => (controller.onactivated = r));
 }

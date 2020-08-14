@@ -111,7 +111,6 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/ContentChild.h"
-#include "mozilla/dom/ContentMediaController.h"
 #include "mozilla/dom/CSSImportRule.h"
 #include "mozilla/dom/CSPDictionariesBinding.h"
 #include "mozilla/dom/DOMIntersectionObserver.h"
@@ -7369,7 +7368,9 @@ void Document::EndLoad() {
   // Update the attributes on the PerformanceNavigationTiming before notifying
   // the onload observers.
   if (nsPIDOMWindowInner* window = GetInnerWindow()) {
-    window->QueuePerformanceNavigationTiming();
+    if (RefPtr<Performance> performance = window->GetPerformance()) {
+      performance->UpdateNavigationTimingEntry();
+    }
   }
 
   NS_DOCUMENT_NOTIFY_OBSERVERS(EndLoad, (this));
@@ -13572,7 +13573,7 @@ static void UpdateViewportScrollbarOverrideForFullscreen(Document* aDoc) {
   }
 }
 
-static void NotifyFullScreenChangedForMediaControl(Element* aElement,
+static void NotifyFullScreenChangedForMediaElement(Element* aElement,
                                                    bool aIsInFullScreen) {
   // When a media element enters the fullscreen, we would like to notify that
   // to the media controller in order to update its status.
@@ -13581,20 +13582,12 @@ static void NotifyFullScreenChangedForMediaControl(Element* aElement,
   }
   HTMLMediaElement* mediaElem = HTMLMediaElement::FromNodeOrNull(aElement);
   mediaElem->NotifyFullScreenChanged();
-
-  RefPtr<BrowsingContext> bc = aElement->OwnerDoc()->GetBrowsingContext();
-  if (!bc) {
-    return;
-  }
-  if (RefPtr<IMediaInfoUpdater> updater = ContentMediaAgent::Get(bc)) {
-    updater->NotifyMediaFullScreenState(bc->Id(), aIsInFullScreen);
-  }
 }
 
 static void ClearFullscreenStateOnElement(Element* aElement) {
   // Remove styles from existing top element.
   EventStateManager::SetFullscreenState(aElement, false);
-  NotifyFullScreenChangedForMediaControl(aElement, false);
+  NotifyFullScreenChangedForMediaElement(aElement, false);
   // Reset iframe fullscreen flag.
   if (aElement->IsHTMLElement(nsGkAtoms::iframe)) {
     static_cast<HTMLIFrameElement*>(aElement)->SetFullscreenFlag(false);
@@ -13649,7 +13642,7 @@ void Document::UnsetFullscreenElement() {
 bool Document::SetFullscreenElement(Element* aElement) {
   if (TopLayerPush(aElement)) {
     EventStateManager::SetFullscreenState(aElement, true);
-    NotifyFullScreenChangedForMediaControl(aElement, true);
+    NotifyFullScreenChangedForMediaElement(aElement, true);
     UpdateViewportScrollbarOverrideForFullscreen(this);
     return true;
   }

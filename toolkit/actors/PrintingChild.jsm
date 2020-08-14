@@ -316,6 +316,12 @@ class PrintingChild extends ActorChild {
     try {
       let printSettings = this.getPrintSettings(lastUsedPrinterName);
 
+      // Disable the progress dialog for generating previews.
+      printSettings.showPrintProgress = !Services.prefs.getBoolPref(
+        "print.tab_modal.enabled",
+        false
+      );
+
       // If we happen to be on simplified mode, we need to set docURL in order
       // to generate header/footer content correctly, since simplified tab has
       // "about:blank" as its URI.
@@ -327,6 +333,15 @@ class PrintingChild extends ActorChild {
       // printPreviewInitialize must be run in a separate runnable to avoid
       // touching a different TabGroup in our own runnable.
       let printPreviewInitialize = () => {
+        // During dispatching this function to the main-thread, the docshell
+        // might be destroyed, for example the print preview window gets closed
+        // soon after it's opened, in such case we should just simply bail out.
+        if (docShell.isBeingDestroyed()) {
+          this.mm.sendAsyncMessage("Printing:Preview:Entered", {
+            failed: true,
+          });
+          return;
+        }
         try {
           let listener = new PrintingListener(this.mm);
 

@@ -89,7 +89,7 @@ class ProviderSearchSuggestions extends UrlbarProvider {
     // No suggestions for empty search strings, unless we are restricting to
     // search.
     if (
-      !queryContext.searchString.trim() &&
+      !queryContext.trimmedSearchString &&
       !this._isTokenOrRestrictionPresent(queryContext)
     ) {
       return false;
@@ -102,9 +102,9 @@ class ProviderSearchSuggestions extends UrlbarProvider {
   }
 
   /**
-   * Returns whether the user typed a token alias or a restriction token. We use
-   * this value to override the pref to disable search suggestions in the
-   * Urlbar.
+   * Returns whether the user typed a token alias or restriction token, or is in
+   * search mode. We use this value to override the pref to disable search
+   * suggestions in the Urlbar.
    * @param {UrlbarQueryContext} queryContext  The query context object.
    * @returns {boolean} True if the user typed a token alias or search
    *   restriction token.
@@ -116,7 +116,9 @@ class ProviderSearchSuggestions extends UrlbarProvider {
         queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.SEARCH) ||
       queryContext.tokens.some(
         t => t.type == UrlbarTokenizer.TYPE.RESTRICT_SEARCH
-      )
+      ) ||
+      (queryContext.searchMode &&
+        queryContext.sources.includes(UrlbarUtils.RESULT_SOURCE.SEARCH))
     );
   }
 
@@ -263,8 +265,10 @@ class ProviderSearchSuggestions extends UrlbarProvider {
     let engine;
     if (aliasEngine) {
       engine = aliasEngine.engine;
-    } else if (queryContext.engineName) {
-      engine = Services.search.getEngineByName(queryContext.engineName);
+    } else if (queryContext.searchMode?.engineName) {
+      engine = Services.search.getEngineByName(
+        queryContext.searchMode.engineName
+      );
     } else if (queryContext.isPrivate) {
       engine = Services.search.defaultPrivateEngine;
     } else {
@@ -496,7 +500,7 @@ class ProviderSearchSuggestions extends UrlbarProvider {
     if (
       queryContext.restrictSource &&
       queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.SEARCH &&
-      queryContext.engineName &&
+      queryContext.searchMode?.engineName &&
       !queryContext.searchString.startsWith("@")
     ) {
       // If an engineName was passed in from the queryContext in restrict mode,

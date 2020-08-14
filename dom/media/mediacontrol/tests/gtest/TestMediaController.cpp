@@ -175,14 +175,20 @@ TEST(MediaController, ControllerShouldRemainPlayingIfAnyPlayingMediaExists)
   ASSERT_TRUE(controller->GetState() == MediaSessionPlaybackState::Paused);
 }
 
-TEST(MediaController, PictureInPictureMode)
+TEST(MediaController, PictureInPictureModeOrFullscreen)
 {
   RefPtr<MediaController> controller = new MediaController(CONTROLLER_ID);
-  ASSERT_TRUE(!controller->IsInPictureInPictureMode());
+  ASSERT_TRUE(!controller->IsBeingUsedInPIPModeOrFullscreen());
 
   controller->SetIsInPictureInPictureMode(FAKE_CONTEXT_ID, true);
-  ASSERT_TRUE(controller->IsInPictureInPictureMode());
+  ASSERT_TRUE(controller->IsBeingUsedInPIPModeOrFullscreen());
 
   controller->SetIsInPictureInPictureMode(FAKE_CONTEXT_ID, false);
-  ASSERT_TRUE(!controller->IsInPictureInPictureMode());
+  ASSERT_TRUE(!controller->IsBeingUsedInPIPModeOrFullscreen());
+
+  controller->NotifyMediaFullScreenState(FAKE_CONTEXT_ID, true);
+  ASSERT_TRUE(controller->IsBeingUsedInPIPModeOrFullscreen());
+
+  controller->NotifyMediaFullScreenState(FAKE_CONTEXT_ID, false);
+  ASSERT_TRUE(!controller->IsBeingUsedInPIPModeOrFullscreen());
 }
