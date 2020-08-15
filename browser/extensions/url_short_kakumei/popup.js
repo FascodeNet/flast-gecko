@@ -14,8 +14,8 @@ $(function(){
         execCopy(data);
         $('.m-url').text(data)
         $('.url').text(url)
-        $('.qr').qrcode({width: 100, height: 100, text: data});
-        $('.qr').qrcode({width: 100, height: 100, text: url});
+        $('.qr').qrcode({width: 150, height: 150, text: data});
+        $('.qr').qrcode({width: 150, height: 150, text: url});
         $('.share').append('<a class="link" href="https://getpocket.com/edit?url='+data+'"><img src="http://www.google.com/s2/favicons?domain=getpocket.com"></a>');
         $('.share').append('<a class="link" href="http://b.hatena.ne.jp/add?&url='+data+'"><img src="http://www.google.com/s2/favicons?domain=b.hatena.ne.jp"></a>');
         $('.share').append('<a class="link" href="https://social-plugins.line.me/lineit/share?url='+data+'"><img src="http://www.google.com/s2/favicons?domain=line.me"></a>');

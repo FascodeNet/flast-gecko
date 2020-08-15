@@ -11,6 +11,7 @@ with Files("**"):
 # AUTOMATIC INSERTION START
 FINAL_TARGET_FILES.features['url_short_kakumei@kokkiemouse.github.io'] += [
   'background.js',
+  'jquery.qrcode.min.js',
   'manifest.json',
   'moz.build',
   'popup.html',
