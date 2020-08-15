@@ -8,7 +8,6 @@ DIRS += [
     'doh-rollout',
     'formautofill',
     'screenshots',
-    'qr-share-gecko',
     'webcompat',
     'report-site-issue',
     'url_short_kakumei'

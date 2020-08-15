@@ -12,24 +12,35 @@ $(function(){
         data:{'url':url}
     }).done((data)=>{
         execCopy(data);
-        $('#url').text(data);
-        $('#qr').qrcode({width: 220, height: 220, text: data});
-        /*
-        $('#share').append('<a class="link" href="https://getpocket.com/edit?url='+data+'"><img src="http://www.google.com/s2/favicons?domain=getpocket.com"></a>');
-        $('#share').append('<a class="link" href="http://b.hatena.ne.jp/add?&url='+data+'"><img src="http://www.google.com/s2/favicons?domain=b.hatena.ne.jp"></a>');
-        $('#share').append('<a class="link" href="https://social-plugins.line.me/lineit/share?url='+data+'"><img src="http://www.google.com/s2/favicons?domain=line.me"></a>');
-        $('#share').append('<a class="link" href="https://twitter.com/intent/tweet?text='+document.title+'&url='+data+'"><img src="http://www.google.com/s2/favicons?domain=twitter.com"></a>');
-        */
+        $('.m-url').text(data)
+        $('.url').text(url)
+        $('.qr').qrcode({width: 100, height: 100, text: data});
+        $('.qr').qrcode({width: 100, height: 100, text: url});
+        $('.share').append('<a class="link" href="https://getpocket.com/edit?url='+data+'"><img src="http://www.google.com/s2/favicons?domain=getpocket.com"></a>');
+        $('.share').append('<a class="link" href="http://b.hatena.ne.jp/add?&url='+data+'"><img src="http://www.google.com/s2/favicons?domain=b.hatena.ne.jp"></a>');
+        $('.share').append('<a class="link" href="https://social-plugins.line.me/lineit/share?url='+data+'"><img src="http://www.google.com/s2/favicons?domain=line.me"></a>');
+        $('.share').append('<a class="link" href="https://twitter.com/intent/tweet?text='+document.title+'&url='+data+'"><img src="http://www.google.com/s2/favicons?domain=twitter.com"></a>');
+        
 
-        $("#share").on("click",".link",function (e) {
+        $(".share").on("click",".link",function (e) {
                 console.log($(e.currentTarget).attr('href'));
                 
-            browser.tabs.create({ url: $(e.currentTarget).attr('href') });
+                browser.tabs.create({ url: $(e.currentTarget).attr('href') });
             
         });
     }).fail((data)=>{
 
     }).always((data)=>{
+
+    });
+
+    $('.m-url').on("click",function () {
+        execCopy($(this).text())
+        $(".title").html("短縮URLを<br>クリップボードに<br>コピーしました")
+    });
+    $('.url').on("click",function () {
+        execCopy($(this).text());
+        $(".title").html("非短縮URLを<br>クリップボードに<br>コピーしました")
 
     });
 });

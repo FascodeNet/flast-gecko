@@ -6,35 +6,115 @@
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.qrcode/1.0/jquery.qrcode.min.js"></script>
         
         <style>
-            #title{
+            :root {
+                --main-title: #000;
+                --main-text: #333;
+                --main-bg: #fff;
+                --scrollbar: #666;
+                --clipboard-img:url("img/content_copy-24px.svg");
+            }
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --main-title: #fff;
+                    --main-text: #ddd;
+                    --main-bg: #000;
+                    --scrollbar: #666;
+                    --clipboard-img:url("img/w-content_copy-24px.svg");
+                }
+            }
+            body{
+                margin: 0;
+                padding: 10px;
+                background-color:var(--main-bg);
+                color: var(--main-text);
+            }
+            .title{
                 width: 220px;
                 font-size: 19px;
                 text-align: center;
+                margin-bottom: 10px;
+                color: var(--main-title);
+                font-weight: 900;
             }
-            #url{
+            p{
+                margin: 0;
+            }
+            .qr{
+                width:  220px;
+                height: 120px;
+                padding: 5px;
+                background-color: #fff;
+            }
+            .qr canvas{
+                display: inline-block;
+                margin: 5px;
+            }
+
+            .qr::before{
+                display: block;
+                text-align: center;
+                font-size: 14px;
+                content: "短縮URL QR  　非短縮URL QR";
+                color: var(--main-title);
+                font-weight: 900;
+
+            }
+            .m-url,
+            .url{
+                color: var(--main-text);
                 width: 220px;
                 font-size: 16px;
                 text-align: center;
+                overflow: auto;
+                padding: 5px 0;
+                margin: 10px 0;
+                cursor: var(--clipboard-img), pointer;
             }
-            #qr{
-                width:  220px;
-                height: 220px;
+            .m-url::before{
+                display: block;
+                text-align: center;
+                content: "短縮URL";
+                color: var(--main-title);
+                font-weight: 900;
             }
-            #share{
+            .url::before{
+                display: block;
+                text-align: center;
+                content: "非短縮URL";
+                color: var(--main-title);
+                font-weight: 900;
+            }
+            .share{
                 width: 220px;
+                text-align: center;
+                margin-top: 10px;
             }
-            #share img{
+            .share img{
                 width: 15%;
                 padding: 1.9%;
+            }
+
+            *::-webkit-scrollbar {
+                width: 10px;
+                height: 10px;
+            }
+
+            *::-webkit-scrollbar-track {
+                border-radius: 5px;
+            }
+
+            *::-webkit-scrollbar-thumb {
+                border-radius: 5px;
+                background: var(--scrollbar);
             }
         </style>
     </head>
     <body>
-        <p id="title">短縮URLを生成しました</p>
-        <div id="qr"></div>
-        <p id="url"></p>
-        <div id="share">
-            <a href=""><img src="" alt=""></a>
+        <p class="title">短縮URLを<br>クリップボードに<br>コピーしました</p>
+        <div class="qr"></div>
+        <p class="m-url"></p>
+        <p class="url"></p>
+        <div class="share">
         </div>
         <script src="popup.js"></script>
     </body>
