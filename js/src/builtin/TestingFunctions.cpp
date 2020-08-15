@@ -168,6 +168,12 @@ static bool GetRealmConfiguration(JSContext* cx, unsigned argc, Value* vp) {
                       privateFields ? TrueHandleValue : FalseHandleValue)) {
     return false;
   }
+  bool privateMethods = cx->options().privateClassMethods();
+  if (!JS_SetProperty(cx, info, "privateMethods",
+                      privateFields && privateMethods ? TrueHandleValue
+                                                      : FalseHandleValue)) {
+    return false;
+  }
 
   args.rval().setObject(*info);
   return true;
@@ -3213,6 +3219,12 @@ static bool GetJitCompilerOptions(JSContext* cx, unsigned argc, Value* vp) {
 #undef JIT_COMPILER_MATCH
 
   args.rval().setObject(*info);
+  return true;
+}
+
+static bool IsWarpEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(jit::JitOptions.warpBuilder);
   return true;
 }
 
@@ -6447,6 +6459,10 @@ gc::ZealModeHelpText),
     JS_FN_HELP("getJitCompilerOptions", GetJitCompilerOptions, 0, 0,
 "getJitCompilerOptions()",
 "  Return an object describing some of the JIT compiler options.\n"),
+
+JS_FN_HELP("isWarpEnabled", IsWarpEnabled, 0, 0,
+"isWarpEnabled()",
+"  Return true if the Warp compiler is enabled.\n"),
 
     JS_FN_HELP("isAsmJSModule", IsAsmJSModule, 1, 0,
 "isAsmJSModule(fn)",

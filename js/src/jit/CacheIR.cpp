@@ -7077,11 +7077,6 @@ AttachDecision CallIRGenerator::tryAttachAtomicsCompareExchange(
     return AttachDecision::NoAction;
   }
 
-  // TODO: Uint32 isn't yet supported (bug 1077305).
-  if (typedArray->type() == Scalar::Uint32) {
-    return AttachDecision::NoAction;
-  }
-
   // Initialize the input operand.
   Int32OperandId argcId(writer.setInputOperandId(0));
 
@@ -7111,7 +7106,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsCompareExchange(
   writer.atomicsCompareExchangeResult(objId, int32IndexId, int32ExpectedId,
                                       int32ReplacementId, typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7142,11 +7138,6 @@ bool CallIRGenerator::canAttachAtomicsReadWriteModify() {
 
   auto* typedArray = &args_[0].toObject().as<TypedArrayObject>();
   if (!AtomicsMeetsPreconditions(typedArray, args_[1].toNumber())) {
-    return false;
-  }
-
-  // TODO: Uint32 isn't yet supported (bug 1077305).
-  if (typedArray->type() == Scalar::Uint32) {
     return false;
   }
 
@@ -7196,7 +7187,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsExchange(
   writer.atomicsExchangeResult(objId, int32IndexId, int32ValueId,
                                typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7217,7 +7209,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsAdd(HandleFunction callee) {
   writer.atomicsAddResult(objId, int32IndexId, int32ValueId,
                           typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7238,7 +7231,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsSub(HandleFunction callee) {
   writer.atomicsSubResult(objId, int32IndexId, int32ValueId,
                           typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7259,7 +7253,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsAnd(HandleFunction callee) {
   writer.atomicsAndResult(objId, int32IndexId, int32ValueId,
                           typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7279,7 +7274,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsOr(HandleFunction callee) {
 
   writer.atomicsOrResult(objId, int32IndexId, int32ValueId, typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7300,7 +7296,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsXor(HandleFunction callee) {
   writer.atomicsXorResult(objId, int32IndexId, int32ValueId,
                           typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7331,11 +7328,6 @@ AttachDecision CallIRGenerator::tryAttachAtomicsLoad(HandleFunction callee) {
     return AttachDecision::NoAction;
   }
 
-  // TODO: Uint32 isn't yet supported (bug 1077305).
-  if (typedArray->type() == Scalar::Uint32) {
-    return AttachDecision::NoAction;
-  }
-
   // Initialize the input operand.
   Int32OperandId argcId(writer.setInputOperandId(0));
 
@@ -7353,7 +7345,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsLoad(HandleFunction callee) {
 
   writer.atomicsLoadResult(objId, int32IndexId, typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or, for uint32, a double.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7396,11 +7389,6 @@ AttachDecision CallIRGenerator::tryAttachAtomicsStore(HandleFunction callee) {
     return AttachDecision::NoAction;
   }
 
-  // TODO: Uint32 isn't yet supported (bug 1077305).
-  if (typedArray->type() == Scalar::Uint32) {
-    return AttachDecision::NoAction;
-  }
-
   // Initialize the input operand.
   Int32OperandId argcId(writer.setInputOperandId(0));
 
@@ -7429,7 +7417,8 @@ AttachDecision CallIRGenerator::tryAttachAtomicsStore(HandleFunction callee) {
   writer.atomicsStoreResult(objId, int32IndexId, int32ValueId,
                             typedArray->type());
 
-  // This stub doesn't need to be monitored, because it always returns an int32.
+  // This stub doesn't need to be monitored, because it always returns an int32
+  // or the result is not observed.
   writer.returnFromIC();
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
@@ -7495,6 +7484,184 @@ AttachDecision CallIRGenerator::tryAttachBoolean(HandleFunction callee) {
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
   trackAttached("Boolean");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachBailout(HandleFunction callee) {
+  // Expecting no arguments.
+  if (argc_ != 0) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'bailout' native function.
+  emitNativeCalleeGuard(callee);
+
+  writer.bailout();
+  writer.loadUndefinedResult();
+
+  // This stub doesn't need to be monitored, it always returns undefined.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("Bailout");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAssertFloat32(HandleFunction callee) {
+  // Expecting two arguments.
+  if (argc_ != 2) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'assertFloat32' native function.
+  emitNativeCalleeGuard(callee);
+
+  // TODO: Warp doesn't yet optimize Float32 (bug 1655773).
+
+  // NOP when not in IonMonkey.
+  writer.loadUndefinedResult();
+
+  // This stub doesn't need to be monitored, it always returns undefined.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AssertFloat32");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachAssertRecoveredOnBailout(
+    HandleFunction callee) {
+  // Expecting two arguments.
+  if (argc_ != 2) {
+    return AttachDecision::NoAction;
+  }
+
+  // (Fuzzing unsafe) testing function which must be called with a constant
+  // boolean as its second argument.
+  bool mustBeRecovered = args_[1].toBoolean();
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'assertRecoveredOnBailout' native function.
+  emitNativeCalleeGuard(callee);
+
+  ValOperandId valId = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+
+  writer.assertRecoveredOnBailoutResult(valId, mustBeRecovered);
+
+  // This stub doesn't need to be monitored, it always returns undefined.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("AssertRecoveredOnBailout");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachObjectIs(HandleFunction callee) {
+  // Need two arguments.
+  if (argc_ != 2) {
+    return AttachDecision::NoAction;
+  }
+
+  // TODO(Warp): attach this stub just once to prevent slowdowns for polymorphic
+  // calls.
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the `is` native function.
+  emitNativeCalleeGuard(callee);
+
+  ValOperandId lhsId = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  ValOperandId rhsId = writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+
+  HandleValue lhs = args_[0];
+  HandleValue rhs = args_[1];
+
+  if (lhs.isNumber() && rhs.isNumber() && !(lhs.isInt32() && rhs.isInt32())) {
+    NumberOperandId lhsNumId = writer.guardIsNumber(lhsId);
+    NumberOperandId rhsNumId = writer.guardIsNumber(rhsId);
+    writer.compareDoubleSameValueResult(lhsNumId, rhsNumId);
+  } else if (!SameType(lhs, rhs)) {
+    // Compare tags for strictly different types.
+    ValueTagOperandId lhsTypeId = writer.loadValueTag(lhsId);
+    ValueTagOperandId rhsTypeId = writer.loadValueTag(rhsId);
+    writer.guardTagNotEqual(lhsTypeId, rhsTypeId);
+    writer.loadBooleanResult(false);
+  } else {
+    MOZ_ASSERT(lhs.type() == rhs.type());
+    MOZ_ASSERT(lhs.type() != JS::ValueType::Double);
+
+    switch (lhs.type()) {
+      case JS::ValueType::Int32: {
+        Int32OperandId lhsIntId = writer.guardToInt32(lhsId);
+        Int32OperandId rhsIntId = writer.guardToInt32(rhsId);
+        writer.compareInt32Result(JSOp::StrictEq, lhsIntId, rhsIntId);
+        break;
+      }
+      case JS::ValueType::Boolean: {
+        Int32OperandId lhsIntId = writer.guardBooleanToInt32(lhsId);
+        Int32OperandId rhsIntId = writer.guardBooleanToInt32(rhsId);
+        writer.compareInt32Result(JSOp::StrictEq, lhsIntId, rhsIntId);
+        break;
+      }
+      case JS::ValueType::Undefined: {
+        writer.guardIsUndefined(lhsId);
+        writer.guardIsUndefined(rhsId);
+        writer.loadBooleanResult(true);
+        break;
+      }
+      case JS::ValueType::Null: {
+        writer.guardIsNull(lhsId);
+        writer.guardIsNull(rhsId);
+        writer.loadBooleanResult(true);
+        break;
+      }
+      case JS::ValueType::String: {
+        StringOperandId lhsStrId = writer.guardToString(lhsId);
+        StringOperandId rhsStrId = writer.guardToString(rhsId);
+        writer.compareStringResult(JSOp::StrictEq, lhsStrId, rhsStrId);
+        break;
+      }
+      case JS::ValueType::Symbol: {
+        SymbolOperandId lhsSymId = writer.guardToSymbol(lhsId);
+        SymbolOperandId rhsSymId = writer.guardToSymbol(rhsId);
+        writer.compareSymbolResult(JSOp::StrictEq, lhsSymId, rhsSymId);
+        break;
+      }
+      case JS::ValueType::BigInt: {
+        BigIntOperandId lhsBigIntId = writer.guardToBigInt(lhsId);
+        BigIntOperandId rhsBigIntId = writer.guardToBigInt(rhsId);
+        writer.compareBigIntResult(JSOp::StrictEq, lhsBigIntId, rhsBigIntId);
+        break;
+      }
+      case JS::ValueType::Object: {
+        ObjOperandId lhsObjId = writer.guardToObject(lhsId);
+        ObjOperandId rhsObjId = writer.guardToObject(rhsId);
+        writer.compareObjectResult(JSOp::StrictEq, lhsObjId, rhsObjId);
+        break;
+      }
+
+      case JS::ValueType::Double:
+      case JS::ValueType::Magic:
+      case JS::ValueType::PrivateGCThing:
+        MOZ_CRASH("Unexpected type");
+    }
+  }
+
+  // This stub does not need to be monitored, because it always returns a
+  // boolean.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("ObjectIs");
   return AttachDecision::Attach;
 }
 
@@ -8538,6 +8705,10 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
       return tryAttachToObject(callee, native);
     case InlinableNative::ObjectCreate:
       return tryAttachObjectCreate(callee);
+    case InlinableNative::ObjectIs:
+      return tryAttachObjectIs(callee);
+    case InlinableNative::ObjectToString:
+      return AttachDecision::NoAction;  // Not yet supported.
 
     // Set intrinsics.
     case InlinableNative::IntrinsicGuardToSetObject:
@@ -8561,6 +8732,8 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
       return tryAttachGuardToClass(callee, native);
 
     // TypedArray intrinsics.
+    case InlinableNative::TypedArrayConstructor:
+      return AttachDecision::NoAction;  // Not callable.
     case InlinableNative::IntrinsicIsTypedArray:
       return tryAttachIsTypedArray(callee, /* isPossiblyWrapped = */ false);
     case InlinableNative::IntrinsicIsPossiblyWrappedTypedArray:
@@ -8606,9 +8779,19 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
     case InlinableNative::Boolean:
       return tryAttachBoolean(callee);
 
-    default:
-      return AttachDecision::NoAction;
+    // Testing functions.
+    case InlinableNative::TestBailout:
+      return tryAttachBailout(callee);
+    case InlinableNative::TestAssertFloat32:
+      return tryAttachAssertFloat32(callee);
+    case InlinableNative::TestAssertRecoveredOnBailout:
+      return tryAttachAssertRecoveredOnBailout(callee);
+
+    case InlinableNative::Limit:
+      break;
   }
+
+  MOZ_CRASH("Shouldn't get here");
 }
 
 // Remember the template object associated with any script being called

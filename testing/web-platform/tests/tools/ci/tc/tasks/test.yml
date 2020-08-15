@@ -10,6 +10,13 @@ components:
       public/results:
         path: /home/test/artifacts
         type: directory
+    extra:
+      github:
+        customCheckRun:
+          # We set both textArtifactName and annotationsArtifactName due
+          # to https://github.com/taskcluster/taskcluster/issues/3191
+          textArtifactName: public/results/checkrun.md
+          annotationsArtifactName: public/results/checkrun.md
 
   wpt-testharness:
     chunks: 16
@@ -52,6 +59,7 @@ components:
     command: >-
       ./tools/ci/taskcluster-run.py
       ${vars.browser}
+      ${vars.channel}
       --
       --channel=${vars.channel}
       --log-wptreport=../artifacts/wpt_report.json
@@ -60,6 +68,7 @@ components:
       --this-chunk=${chunks.id}
       --total-chunks=${chunks.total}
       --test-type=${vars.suite}
+
   trigger-master:
     trigger:
       branch:
@@ -164,6 +173,13 @@ tasks:
                 - trigger-daily
                 - trigger-push
             - vars:
+                # Chromium ToT
+                browser: chrome
+                channel: nightly
+              use:
+                - trigger-daily
+                - trigger-push
+            - vars:
                 browser: chrome
                 channel: dev
               use:
@@ -239,6 +255,13 @@ tasks:
                 - trigger-daily
                 - trigger-push
             - vars:
+                # Chromium ToT
+                browser: chrome
+                channel: nightly
+              use:
+                - trigger-daily
+                - trigger-push
+            - vars:
                 browser: chrome
                 channel: dev
               use:
@@ -292,10 +315,12 @@ tasks:
               ./tools/ci/taskcluster-run.py
               --commit-range base_head
               ${vars.browser}
+              ${vars.channel}
               --
               --channel=${vars.channel}
               --verify
               --verify-no-chaos-mode
+              --github-checks-text-file="/home/test/artifacts/checkrun.md"
 
         - wpt-${vars.browser}-${vars.channel}-results:
             use:
@@ -311,6 +336,7 @@ tasks:
               ./tools/ci/taskcluster-run.py
               --commit-range base_head
               ${vars.browser}
+              ${vars.channel}
               --
               --channel=${vars.channel}
               --no-fail-on-unexpected
@@ -333,6 +359,7 @@ tasks:
               ./tools/ci/taskcluster-run.py
               --commit-range task_head
               ${vars.browser}
+              ${vars.channel}
               --
               --channel=${vars.channel}
               --no-fail-on-unexpected

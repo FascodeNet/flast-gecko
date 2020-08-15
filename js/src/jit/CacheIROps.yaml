@@ -231,7 +231,7 @@
 
 - name: GuardGroup
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -817,7 +817,7 @@
 
 - name: AddAndStoreFixedSlot
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 6
   args:
     obj: ObjId
@@ -829,7 +829,7 @@
 
 - name: AddAndStoreDynamicSlot
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 6
   args:
     obj: ObjId
@@ -2465,6 +2465,14 @@
     op: JSOpImm
     obj: ObjId
 
+- name: CompareDoubleSameValueResult
+  shared: true
+  transpile: true
+  cost_estimate: 3
+  args:
+    lhs: NumberId
+    rhs: NumberId
+
 - name: CallPrintString
   shared: true
   transpile: false
@@ -2483,3 +2491,17 @@
   transpile: false
   cost_estimate: 4
   args:
+
+- name: Bailout
+  shared: true
+  transpile: true
+  cost_estimate: 0
+  args:
+
+- name: AssertRecoveredOnBailoutResult
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    val: ValId
+    mustBeRecovered: BoolImm

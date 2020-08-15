@@ -1074,6 +1074,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void pow32(Register base, Register power, Register dest, Register temp1,
              Register temp2, Label* onOver);
 
+  void sameValueDouble(FloatRegister left, FloatRegister right,
+                       FloatRegister temp, Register dest);
+
   void branchIfNotRegExpPrototypeOptimizable(Register proto, Register temp,
                                              Label* label);
   void branchIfNotRegExpInstanceOptimizable(Register regexp, Register temp,
@@ -3120,7 +3123,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
   //
   // If arrayType is Scalar::Uint32 then:
   //
-  //   - `output` must be a float register (this is bug 1077305)
+  //   - `output` must be a float register
   //   - if the operation takes one temp register then `temp` must be defined
   //   - if the operation takes two temp registers then `temp2` must be defined.
   //

@@ -4739,12 +4739,32 @@ nsDocShell::SetTitle(const nsAString& aTitle) {
   }
 
   // Update SessionHistory with the document's title.
-  if (mOSHE && mLoadType != LOAD_BYPASS_HISTORY &&
-      mLoadType != LOAD_ERROR_PAGE) {
-    mOSHE->SetTitle(mTitle);
+  if (mLoadType != LOAD_BYPASS_HISTORY && mLoadType != LOAD_ERROR_PAGE) {
+    SetTitleOnHistoryEntry();
   }
 
   return NS_OK;
+}
+
+void nsDocShell::SetTitleOnHistoryEntry() {
+  if (mOSHE) {
+    mOSHE->SetTitle(mTitle);
+  }
+
+  if (mActiveEntry) {
+    mActiveEntry->SetTitle(mTitle);
+    if (XRE_IsParentProcess()) {
+      SessionHistoryEntry* entry =
+          SessionHistoryEntry::GetByInfoId(mActiveEntry->Id());
+      if (entry) {
+        entry->SetTitle(mTitle);
+      }
+    } else {
+      mozilla::Unused
+          << ContentChild::GetSingleton()->SendSessionHistoryEntryTitle(
+                 mActiveEntry->Id(), mTitle);
+    }
+  }
 }
 
 nsPoint nsDocShell::GetCurScrollPos() {
@@ -5390,23 +5410,37 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
     SetDocCurrentStateObj(mLSHE);
 
     SetHistoryEntryAndUpdateBC(Nothing(), Some<nsISHEntry*>(mLSHE));
-    nsID changeID = {};
-    if (StaticPrefs::fission_sessionHistoryInParent()) {
-      mActiveEntry = nullptr;
-      mLoadingEntry.swap(mActiveEntry);
-      if (mActiveEntry) {
-        if (XRE_IsParentProcess()) {
-          mBrowsingContext->Canonical()->SessionHistoryCommit(
-              mActiveEntry->Id(), changeID);
-        } else {
-          RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
-          if (rootSH) {
+  }
+
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    mActiveEntry = nullptr;
+    mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> loadingEntry;
+    if (mLoadingEntry) {
+      mActiveEntry = MakeUnique<SessionHistoryInfo>(mLoadingEntry->mInfo);
+      mLoadingEntry.swap(loadingEntry);
+    }
+    if (mActiveEntry) {
+      MOZ_ASSERT(loadingEntry);
+      nsID changeID = {};
+      if (XRE_IsParentProcess()) {
+        mBrowsingContext->Canonical()->SessionHistoryCommit(mActiveEntry->Id(),
+                                                            changeID);
+      } else {
+        RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
+        if (rootSH) {
+          if (!loadingEntry->mIsLoadFromSessionHistory) {
             changeID = rootSH->AddPendingHistoryChange();
+          } else {
+            // This is a load from session history, so we can update
+            // index and length immediately.
+            rootSH->SetIndexAndLength(loadingEntry->mRequestedIndex,
+                                      loadingEntry->mSessionHistoryLength,
+                                      changeID);
           }
-          ContentChild* cc = ContentChild::GetSingleton();
-          mozilla::Unused << cc->SendHistoryCommit(
-              mBrowsingContext, mActiveEntry->Id(), changeID);
         }
+        ContentChild* cc = ContentChild::GetSingleton();
+        mozilla::Unused << cc->SendHistoryCommit(mBrowsingContext,
+                                                 mActiveEntry->Id(), changeID);
       }
     }
   }
@@ -8474,11 +8508,18 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
       // Link our new SHEntry to the old SHEntry's back/forward
       // cache data, since the two SHEntries correspond to the
       // same document.
+      if (mLoadingEntry && !mLoadingEntry->mIsLoadFromSessionHistory) {
+        // If we're not doing a history load, scroll restoration
+        // should be inherited from the previous session history entry.
+        SetScrollRestorationIsManualOnHistoryEntry(
+            nullptr, &mLoadingEntry->mInfo, scrollRestorationIsManual);
+      }
       if (mLSHE) {
         if (!aLoadState->SHEntry()) {
           // If we're not doing a history load, scroll restoration
           // should be inherited from the previous session history entry.
-          mLSHE->SetScrollRestorationIsManual(scrollRestorationIsManual);
+          SetScrollRestorationIsManualOnHistoryEntry(mLSHE, nullptr,
+                                                     scrollRestorationIsManual);
         }
         mLSHE->AdoptBFCacheEntry(mOSHE);
       }
@@ -8514,21 +8555,19 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
     }
   }
 
+  /* Set the title for the SH entry for this target url so that
+   * SH menus in go/back/forward buttons won't be empty for this.
+   * Note, this happens on mOSHE (and mActiveEntry in the future) because of
+   * the code above.
+   * XXX HandleSameDocumentNavigation needs to be made work with
+   *     session-history-in-parent
+   */
+  SetTitleOnHistoryEntry();
+
   /* Restore the original LSHE if we were loading something
    * while same document navigation was initiated.
    */
   SetHistoryEntryAndUpdateBC(Some<nsISHEntry*>(oldLSHE), Nothing());
-  /* Set the title for the SH entry for this target url. so that
-   * SH menus in go/back/forward buttons won't be empty for this.
-   */
-  ChildSHistory* shistory = GetSessionHistory();
-  if (shistory) {
-    int32_t index = shistory->Index();
-    nsCOMPtr<nsISHEntry> shEntry;
-    shistory->LegacySHistory()->GetEntryAtIndex(index, getter_AddRefs(shEntry));
-    NS_ENSURE_TRUE(shEntry, NS_ERROR_FAILURE);
-    shEntry->SetTitle(mTitle);
-  }
 
   /* Set the title for the Global History entry for this anchor url.
    */
@@ -9540,9 +9579,9 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   // FIXME We still have a ton of codepaths that don't pass through
   //       DocumentLoadListener, so probably need to create session history info
   //       in more places.
-  if (aLoadState->GetSessionHistoryInfo()) {
-    mLoadingEntry =
-        MakeUnique<SessionHistoryInfo>(*aLoadState->GetSessionHistoryInfo());
+  if (aLoadState->GetLoadingSessionHistoryInfo()) {
+    mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(
+        *aLoadState->GetLoadingSessionHistoryInfo());
   }
 
   // open a channel for the url
@@ -9699,7 +9738,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   bool uriModified;
   if (mLSHE) {
     if (StaticPrefs::fission_sessionHistoryInParent()) {
-      uriModified = mLoadingEntry->GetURIWasModified();
+      uriModified = mLoadingEntry->mInfo.GetURIWasModified();
       MOZ_ASSERT(uriModified == mLSHE->GetURIWasModified());
     } else {
       uriModified = mLSHE->GetURIWasModified();
@@ -10755,11 +10794,33 @@ nsDocShell::GetCurrentScrollRestorationIsManual(bool* aIsManual) {
 
 NS_IMETHODIMP
 nsDocShell::SetCurrentScrollRestorationIsManual(bool aIsManual) {
-  if (mOSHE) {
-    mOSHE->SetScrollRestorationIsManual(aIsManual);
-  }
+  SetScrollRestorationIsManualOnHistoryEntry(mOSHE, mActiveEntry.get(),
+                                             aIsManual);
 
   return NS_OK;
+}
+
+void nsDocShell::SetScrollRestorationIsManualOnHistoryEntry(
+    nsISHEntry* aSHEntry, mozilla::dom::SessionHistoryInfo* aInfo,
+    bool aIsManual) {
+  if (aSHEntry) {
+    aSHEntry->SetScrollRestorationIsManual(aIsManual);
+  }
+
+  if (aInfo) {
+    aInfo->SetScrollRestorationIsManual(aIsManual);
+    if (XRE_IsParentProcess()) {
+      SessionHistoryEntry* entry =
+          SessionHistoryEntry::GetByInfoId(aInfo->Id());
+      if (entry) {
+        entry->SetScrollRestorationIsManual(aIsManual);
+      }
+    } else {
+      mozilla::Unused << ContentChild::GetSingleton()
+                             ->SendSessionHistoryEntryScrollRestorationIsManual(
+                                 aInfo->Id(), aIsManual);
+    }
+  }
 }
 
 bool nsDocShell::ShouldAddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel) {
@@ -12753,6 +12814,6 @@ bool nsDocShell::GetIsAttemptingToNavigate() {
 }
 
 void nsDocShell::SetLoadingSessionHistoryInfo(
-    const mozilla::dom::SessionHistoryInfo& aInfo) {
-  mLoadingEntry = MakeUnique<SessionHistoryInfo>(aInfo);
+    const mozilla::dom::LoadingSessionHistoryInfo& aLoadingInfo) {
+  mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(aLoadingInfo);
 }

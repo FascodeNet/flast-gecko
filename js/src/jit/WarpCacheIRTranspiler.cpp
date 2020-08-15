@@ -60,6 +60,12 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
 #endif
   }
 
+  // Bypasses all checks in addEffectful. Only used for testing functions.
+  inline void addEffectfulUnsafe(MInstruction* ins) {
+    MOZ_ASSERT(ins->isEffectful());
+    current->add(ins);
+  }
+
   MOZ_MUST_USE bool resumeAfter(MInstruction* ins) {
     MOZ_ASSERT(effectful_ == ins);
     return WarpBuilderShared::resumeAfter(ins, loc_);
@@ -145,6 +151,10 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
                                           uint32_t templateObjectOffset);
 
   MInstruction* addBoundsCheck(MDefinition* index, MDefinition* length);
+
+  bool emitAddAndStoreSlotShared(MAddAndStoreSlot::Kind kind,
+                                 ObjOperandId objId, uint32_t offsetOffset,
+                                 ValOperandId rhsId, uint32_t newShapeOffset);
 
   void addDataViewData(MDefinition* obj, Scalar::Type type,
                        MDefinition** offset, MInstruction** elements);
@@ -271,6 +281,20 @@ bool WarpCacheIRTranspiler::emitGuardShape(ObjOperandId objId,
   Shape* shape = shapeStubField(shapeOffset);
 
   auto* ins = MGuardShape::New(alloc(), def, shape);
+  add(ins);
+
+  setOperand(objId, ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardGroup(ObjOperandId objId,
+                                           uint32_t groupOffset) {
+  MDefinition* def = getOperand(objId);
+  ObjectGroup* group = groupStubField(groupOffset);
+
+  auto* ins = MGuardObjectGroup::New(alloc(), def, group,
+                                     /* bailOnEquality = */ false,
+                                     BailoutKind::ObjectIdentityOrTypeGuard);
   add(ins);
 
   setOperand(objId, ins);
@@ -1253,6 +1277,43 @@ bool WarpCacheIRTranspiler::emitStoreFixedSlotUndefinedResult(
   return resumeAfter(store);
 }
 
+bool WarpCacheIRTranspiler::emitAddAndStoreSlotShared(
+    MAddAndStoreSlot::Kind kind, ObjOperandId objId, uint32_t offsetOffset,
+    ValOperandId rhsId, uint32_t newShapeOffset) {
+  int32_t offset = int32StubField(offsetOffset);
+  Shape* shape = shapeStubField(newShapeOffset);
+
+  MDefinition* obj = getOperand(objId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* barrier = MPostWriteBarrier::New(alloc(), obj, rhs);
+  add(barrier);
+
+  auto* addAndStore =
+      MAddAndStoreSlot::New(alloc(), obj, rhs, kind, offset, shape);
+  addEffectful(addAndStore);
+
+  return resumeAfter(addAndStore);
+}
+
+bool WarpCacheIRTranspiler::emitAddAndStoreFixedSlot(
+    ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
+    bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset) {
+  MOZ_ASSERT(!changeGroup);
+
+  return emitAddAndStoreSlotShared(MAddAndStoreSlot::Kind::FixedSlot, objId,
+                                   offsetOffset, rhsId, newShapeOffset);
+}
+
+bool WarpCacheIRTranspiler::emitAddAndStoreDynamicSlot(
+    ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
+    bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset) {
+  MOZ_ASSERT(!changeGroup);
+
+  return emitAddAndStoreSlotShared(MAddAndStoreSlot::Kind::DynamicSlot, objId,
+                                   offsetOffset, rhsId, newShapeOffset);
+}
+
 bool WarpCacheIRTranspiler::emitStoreDenseElement(ObjOperandId objId,
                                                   Int32OperandId indexId,
                                                   ValOperandId rhsId) {
@@ -1315,7 +1376,7 @@ void WarpCacheIRTranspiler::addDataViewData(MDefinition* obj, Scalar::Type type,
                                             MDefinition** offset,
                                             MInstruction** elements) {
   MInstruction* length = MArrayBufferViewLength::New(alloc(), obj);
-  current->add(length);
+  add(length);
 
   // Adjust the length to account for accesses near the end of the dataview.
   if (size_t byteSize = Scalar::byteSize(type); byteSize > 1) {
@@ -1673,6 +1734,18 @@ bool WarpCacheIRTranspiler::emitCompareSymbolResult(JSOp op,
                                                     SymbolOperandId rhsId) {
   MOZ_ASSERT(IsEqualityOp(op));
   return emitCompareResult(op, lhsId, rhsId, MCompare::Compare_Symbol);
+}
+
+bool WarpCacheIRTranspiler::emitCompareDoubleSameValueResult(
+    NumberOperandId lhsId, NumberOperandId rhsId) {
+  MDefinition* lhs = getOperand(lhsId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* sameValue = MSameValue::New(alloc(), lhs, rhs);
+  add(sameValue);
+
+  pushResult(sameValue);
+  return true;
 }
 
 bool WarpCacheIRTranspiler::emitMathHypot2NumberResult(
@@ -2468,9 +2541,13 @@ bool WarpCacheIRTranspiler::emitAtomicsCompareExchangeResult(
   auto* elements = MArrayBufferViewElements::New(alloc(), obj);
   add(elements);
 
+  bool allowDoubleForUint32 = true;
+  MIRType knownType =
+      MIRTypeForArrayBufferViewRead(elementType, allowDoubleForUint32);
+
   auto* cas = MCompareExchangeTypedArrayElement::New(
       alloc(), elements, index, elementType, expected, replacement);
-  cas->setResultType(MIRType::Int32);
+  cas->setResultType(knownType);
   addEffectful(cas);
 
   pushResult(cas);
@@ -2492,9 +2569,13 @@ bool WarpCacheIRTranspiler::emitAtomicsExchangeResult(
   auto* elements = MArrayBufferViewElements::New(alloc(), obj);
   add(elements);
 
+  bool allowDoubleForUint32 = true;
+  MIRType knownType =
+      MIRTypeForArrayBufferViewRead(elementType, allowDoubleForUint32);
+
   auto* exchange = MAtomicExchangeTypedArrayElement::New(
       alloc(), elements, index, value, elementType);
-  exchange->setResultType(MIRType::Int32);
+  exchange->setResultType(knownType);
   addEffectful(exchange);
 
   pushResult(exchange);
@@ -2518,9 +2599,13 @@ bool WarpCacheIRTranspiler::emitAtomicsBinaryOp(ObjOperandId objId,
   auto* elements = MArrayBufferViewElements::New(alloc(), obj);
   add(elements);
 
+  bool allowDoubleForUint32 = true;
+  MIRType knownType =
+      MIRTypeForArrayBufferViewRead(elementType, allowDoubleForUint32);
+
   auto* binop = MAtomicTypedArrayElementBinop::New(alloc(), op, elements, index,
                                                    elementType, value);
-  binop->setResultType(MIRType::Int32);
+  binop->setResultType(knownType);
   addEffectful(binop);
 
   pushResult(binop);
@@ -2581,9 +2666,13 @@ bool WarpCacheIRTranspiler::emitAtomicsLoadResult(ObjOperandId objId,
   auto* elements = MArrayBufferViewElements::New(alloc(), obj);
   add(elements);
 
+  bool allowDoubleForUint32 = true;
+  MIRType knownType =
+      MIRTypeForArrayBufferViewRead(elementType, allowDoubleForUint32);
+
   auto* load = MLoadUnboxedScalar::New(alloc(), elements, index, elementType,
                                        DoesRequireMemoryBarrier);
-  load->setResultType(MIRType::Int32);
+  load->setResultType(knownType);
   addEffectful(load);
 
   pushResult(load);
@@ -2873,6 +2962,57 @@ bool WarpCacheIRTranspiler::emitTypeMonitorResult() {
 }
 
 bool WarpCacheIRTranspiler::emitReturnFromIC() { return true; }
+
+bool WarpCacheIRTranspiler::emitBailout() {
+  auto* bail = MBail::New(alloc());
+  add(bail);
+
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitAssertRecoveredOnBailoutResult(
+    ValOperandId valId, bool mustBeRecovered) {
+  MDefinition* val = getOperand(valId);
+
+  // Don't assert for recovered instructions when recovering is disabled.
+  if (JitOptions.disableRecoverIns) {
+    pushResult(constant(UndefinedValue()));
+    return true;
+  }
+
+  if (JitOptions.checkRangeAnalysis) {
+    // If we are checking the range of all instructions, then the guards
+    // inserted by Range Analysis prevent the use of recover instruction. Thus,
+    // we just disable these checks.
+    pushResult(constant(UndefinedValue()));
+    return true;
+  }
+
+  auto* assert = MAssertRecoveredOnBailout::New(alloc(), val, mustBeRecovered);
+  addEffectfulUnsafe(assert);
+  current->push(assert);
+
+  // Create an instruction sequence which implies that the argument of the
+  // assertRecoveredOnBailout function would be encoded at least in one
+  // Snapshot.
+  auto* nop = MNop::New(alloc());
+  add(nop);
+
+  auto* resumePoint = MResumePoint::New(
+      alloc(), nop->block(), loc_.toRawBytecode(), MResumePoint::ResumeAfter);
+  if (!resumePoint) {
+    return false;
+  }
+  nop->setResumePoint(resumePoint);
+
+  auto* encode = MEncodeSnapshot::New(alloc());
+  addEffectfulUnsafe(encode);
+
+  current->pop();
+
+  pushResult(constant(UndefinedValue()));
+  return true;
+}
 
 static void MaybeSetImplicitlyUsed(uint32_t numInstructionIdsBefore,
                                    MDefinition* input) {

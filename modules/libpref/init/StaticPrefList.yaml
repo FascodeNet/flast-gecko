@@ -511,7 +511,7 @@
 
 - name: apz.one_touch_pinch.enabled
   type: RelaxedAtomicBool
-  value: true
+  value: @IS_ANDROID@
   mirror: always
 
 - name: apz.overscroll.enabled
@@ -4913,6 +4913,12 @@
 
   # Experimental support for Private Fields in JavaScript.
 - name: javascript.options.experimental.private_fields
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+  # Experimental support for Private Methods in JavaScript.
+- name: javascript.options.experimental.private_methods
   type: RelaxedAtomicBool
   value: false
   mirror: always

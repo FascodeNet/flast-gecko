@@ -6553,6 +6553,24 @@ bool CacheIRCompiler::emitCompareObjectUndefinedNullResult(JSOp op,
   return true;
 }
 
+bool CacheIRCompiler::emitCompareDoubleSameValueResult(NumberOperandId lhsId,
+                                                       NumberOperandId rhsId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+  AutoAvailableFloatRegister floatScratch0(*this, FloatReg0);
+  AutoAvailableFloatRegister floatScratch1(*this, FloatReg1);
+  AutoAvailableFloatRegister floatScratch2(*this, FloatReg2);
+
+  allocator.ensureDoubleRegister(masm, lhsId, floatScratch0);
+  allocator.ensureDoubleRegister(masm, rhsId, floatScratch1);
+
+  masm.sameValueDouble(floatScratch0, floatScratch1, floatScratch2, scratch);
+  masm.tagValue(JSVAL_TYPE_BOOLEAN, scratch, output.valueReg());
+  return true;
+}
+
 bool CacheIRCompiler::emitCallPrintString(const char* str) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   masm.printf(str);
@@ -7689,7 +7707,14 @@ bool CacheIRCompiler::emitAtomicsCompareExchangeResult(
     masm.storeCallInt32Result(scratch);
 
     masm.PopRegsInMask(volatileRegs);
+  }
+
+  if (elementType != Scalar::Uint32) {
     masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
+  } else {
+    ScratchDoubleScope fpscratch(masm);
+    masm.convertUInt32ToDouble(scratch, fpscratch);
+    masm.boxDouble(fpscratch, output.valueReg(), fpscratch);
   }
 
   return true;
@@ -7732,7 +7757,14 @@ bool CacheIRCompiler::emitAtomicsReadModifyWriteResult(
     masm.storeCallInt32Result(scratch);
 
     masm.PopRegsInMask(volatileRegs);
+  }
+
+  if (elementType != Scalar::Uint32) {
     masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
+  } else {
+    ScratchDoubleScope fpscratch(masm);
+    masm.convertUInt32ToDouble(scratch, fpscratch);
+    masm.boxDouble(fpscratch, output.valueReg(), fpscratch);
   }
 
   return true;
@@ -7808,6 +7840,7 @@ bool CacheIRCompiler::emitAtomicsLoadResult(ObjOperandId objId,
   Register index = allocator.useRegister(masm, indexId);
   AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
   AutoSpectreBoundsScratchRegister spectreTemp(allocator, masm);
+  AutoAvailableFloatRegister floatReg(*this, FloatReg0);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -7825,17 +7858,23 @@ bool CacheIRCompiler::emitAtomicsLoadResult(ObjOperandId objId,
   BaseIndex source(scratch, index,
                    ScaleFromElemWidth(Scalar::byteSize(elementType)));
 
-  // Uint32 isn't handled yet (bug 1077305).
-  MOZ_ASSERT(elementType != Scalar::Uint32);
-  bool allowDouble = false;
-  Register tempUint32 = Register::Invalid();
-  Label* failUint32 = nullptr;
-
   auto sync = Synchronization::Load();
 
   masm.memoryBarrierBefore(sync);
-  masm.loadFromTypedArray(elementType, source, output.valueReg(), allowDouble,
-                          tempUint32, failUint32);
+  if (elementType != Scalar::Uint32) {
+    bool allowDouble = false;
+    Register tempUint32 = Register::Invalid();
+    Label* failUint32 = nullptr;
+
+    masm.loadFromTypedArray(elementType, source, output.valueReg(), allowDouble,
+                            tempUint32, failUint32);
+  } else {
+    Label* failUint32 = nullptr;
+
+    masm.loadFromTypedArray(elementType, source, AnyRegister(floatReg), scratch,
+                            failUint32);
+    masm.boxDouble(floatReg, output.valueReg(), floatReg);
+  }
   masm.memoryBarrierAfter(sync);
 
   return true;
@@ -7892,6 +7931,26 @@ bool CacheIRCompiler::emitAtomicsIsLockFreeResult(Int32OperandId valueId) {
 
   masm.atomicIsLockFreeJS(value, scratch);
   masm.tagValue(JSVAL_TYPE_BOOLEAN, scratch, output.valueReg());
+
+  return true;
+}
+
+bool CacheIRCompiler::emitBailout() {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  // Generates no code.
+
+  return true;
+}
+
+bool CacheIRCompiler::emitAssertRecoveredOnBailoutResult(ValOperandId valId,
+                                                         bool mustBeRecovered) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+
+  // NOP when not in IonMonkey
+  masm.moveValue(UndefinedValue(), output.valueReg());
 
   return true;
 }

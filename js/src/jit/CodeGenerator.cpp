@@ -9017,62 +9017,13 @@ void CodeGenerator::visitIsNullOrLikeUndefinedAndBranchT(
   }
 }
 
-void CodeGenerator::emitSameValue(FloatRegister left, FloatRegister right,
-                                  FloatRegister temp, Register output) {
-  Label nonEqual, isSameValue, isNotSameValue;
-  masm.branchDouble(Assembler::DoubleNotEqualOrUnordered, left, right,
-                    &nonEqual);
-  {
-    // First, test for being equal to 0.0, which also includes -0.0.
-    masm.loadConstantDouble(0.0, temp);
-    masm.branchDouble(Assembler::DoubleNotEqual, left, temp, &isSameValue);
-
-    // The easiest way to distinguish -0.0 from 0.0 is that 1.0/-0.0
-    // is -Infinity instead of Infinity.
-    Label isNegInf;
-    masm.loadConstantDouble(1.0, temp);
-    masm.divDouble(left, temp);
-    masm.branchDouble(Assembler::DoubleLessThan, temp, left, &isNegInf);
-    {
-      masm.loadConstantDouble(1.0, temp);
-      masm.divDouble(right, temp);
-      masm.branchDouble(Assembler::DoubleGreaterThan, temp, right,
-                        &isSameValue);
-      masm.jump(&isNotSameValue);
-    }
-    masm.bind(&isNegInf);
-    {
-      masm.loadConstantDouble(1.0, temp);
-      masm.divDouble(right, temp);
-      masm.branchDouble(Assembler::DoubleLessThan, temp, right, &isSameValue);
-      masm.jump(&isNotSameValue);
-    }
-  }
-  masm.bind(&nonEqual);
-  {
-    // Test if both values are NaN.
-    masm.branchDouble(Assembler::DoubleOrdered, left, left, &isNotSameValue);
-    masm.branchDouble(Assembler::DoubleOrdered, right, right, &isNotSameValue);
-  }
-
-  Label done;
-  masm.bind(&isSameValue);
-  masm.move32(Imm32(1), output);
-  masm.jump(&done);
-
-  masm.bind(&isNotSameValue);
-  masm.move32(Imm32(0), output);
-
-  masm.bind(&done);
-}
-
 void CodeGenerator::visitSameValueD(LSameValueD* lir) {
   FloatRegister left = ToFloatRegister(lir->left());
   FloatRegister right = ToFloatRegister(lir->right());
   FloatRegister temp = ToFloatRegister(lir->tempFloat());
   Register output = ToRegister(lir->output());
 
-  emitSameValue(left, right, temp, output);
+  masm.sameValueDouble(left, right, temp, output);
 }
 
 void CodeGenerator::visitSameValueV(LSameValueV* lir) {
@@ -9085,7 +9036,7 @@ void CodeGenerator::visitSameValueV(LSameValueV* lir) {
   Label nonDouble;
   masm.move32(Imm32(0), output);
   masm.ensureDouble(left, temp1, &nonDouble);
-  emitSameValue(temp1, right, temp2, output);
+  masm.sameValueDouble(temp1, right, temp2, output);
   masm.bind(&nonDouble);
 }
 
@@ -11634,6 +11585,30 @@ void CodeGenerator::visitLoadElementAndUnbox(LLoadElementAndUnbox* ins) {
 
   if (mir->fallible()) {
     bailoutFrom(&bail, ins->snapshot());
+  }
+}
+
+void CodeGenerator::visitAddAndStoreSlot(LAddAndStoreSlot* ins) {
+  const Register obj = ToRegister(ins->getOperand(0));
+  const ValueOperand value = ToValue(ins, LAddAndStoreSlot::Value);
+  const Register maybeTemp = ToTempRegisterOrInvalid(ins->getTemp(0));
+
+  masm.storeObjShape(ins->mir()->shape(), obj,
+                     [](MacroAssembler& masm, const Address& addr) {
+                       EmitPreBarrier(masm, addr, MIRType::Shape);
+                     });
+
+  // Perform the store. No pre-barrier required since this is a new
+  // initialization.
+
+  uint32_t offset = ins->mir()->slotOffset();
+  if (ins->mir()->kind() == MAddAndStoreSlot::Kind::FixedSlot) {
+    Address slot(obj, offset);
+    masm.storeValue(value, slot);
+  } else {
+    masm.loadPtr(Address(obj, NativeObject::offsetOfSlots()), maybeTemp);
+    Address slot(maybeTemp, offset);
+    masm.storeValue(value, slot);
   }
 }
 

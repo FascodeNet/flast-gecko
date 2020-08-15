@@ -37,6 +37,7 @@
 #include "nsTextFragment.h"
 #include "nsTextFrame.h"
 #include "nsView.h"
+#include "mozilla/ViewportUtils.h"
 
 #include <algorithm>
 
@@ -480,8 +481,8 @@ nsresult ContentEventHandler::QueryContentRect(
     resultRect.UnionRect(resultRect, frameRect);
   }
 
-  aEvent->mReply.mRect = LayoutDeviceIntRect::FromUnknownRect(
-      resultRect.ToOutsidePixels(presContext->AppUnitsPerDevPixel()));
+  aEvent->mReply.mRect = LayoutDeviceIntRect::FromAppUnitsToOutside(
+      resultRect, presContext->AppUnitsPerDevPixel());
   // Returning empty rect may cause native IME confused, let's make sure to
   // return non-empty rect.
   EnsureNonEmptyRect(aEvent->mReply.mRect);
@@ -856,7 +857,8 @@ void ContentEventHandler::AppendFontRanges(FontRangeArray& aFontRanges,
 
       FontRange* fontRange = AppendFontRange(aFontRanges, baseOffset);
       fontRange->mFontName.Append(NS_ConvertUTF8toUTF16(font->GetName()));
-      fontRange->mFontSize = font->GetAdjustedSize();
+      fontRange->mFontSize = font->GetAdjustedSize() *
+                             frame->PresShell()->GetCumulativeResolution();
 
       // The converted original offset may exceed the range,
       // hence we need to clamp it.
@@ -935,7 +937,8 @@ nsresult ContentEventHandler::GenerateFlatFontRanges(
           fontName.AppendToString(name, false);
           AppendUTF8toUTF16(name, fontRange->mFontName);
           fontRange->mFontSize = frame->PresContext()->CSSPixelsToDevPixels(
-              font.size.ToCSSPixels());
+              font.size.ToCSSPixels() *
+              frame->PresShell()->GetCumulativeResolution());
         }
       }
       baseOffset += GetBRLength(aLineBreakType);
@@ -2021,8 +2024,14 @@ nsresult ContentEventHandler::OnQueryTextRectArray(
         return rv;
       }
 
-      rect = LayoutDeviceIntRect::FromUnknownRect(charRect.ToOutsidePixels(
-          baseFrame->PresContext()->AppUnitsPerDevPixel()));
+      nsPresContext* presContext = baseFrame->PresContext();
+      rect = LayoutDeviceIntRect::FromAppUnitsToOutside(
+          charRect, presContext->AppUnitsPerDevPixel());
+      if (nsPresContext* rootContext =
+              presContext->GetInProcessRootContentDocumentPresContext()) {
+        rect = RoundedOut(ViewportUtils::DocumentRelativeLayoutToVisual(
+            rect, rootContext->PresShell()));
+      }
       // Returning empty rect may cause native IME confused, let's make sure to
       // return non-empty rect.
       EnsureNonEmptyRect(rect);
@@ -2220,8 +2229,15 @@ nsresult ContentEventHandler::OnQueryTextRect(WidgetQueryContentEvent* aEvent) {
       }
       aEvent->mReply.mWritingMode = rootContentFrame->GetWritingMode();
     }
-    aEvent->mReply.mRect = LayoutDeviceIntRect::FromUnknownRect(
-        rect.ToOutsidePixels(presContext->AppUnitsPerDevPixel()));
+    aEvent->mReply.mRect = LayoutDeviceIntRect::FromAppUnitsToOutside(
+        rect, presContext->AppUnitsPerDevPixel());
+    if (nsPresContext* rootContext =
+            presContext->GetInProcessRootContentDocumentPresContext()) {
+      aEvent->mReply.mRect =
+          RoundedOut(ViewportUtils::DocumentRelativeLayoutToVisual(
+              aEvent->mReply.mRect, rootContext->PresShell()));
+    }
+
     EnsureNonEmptyRect(aEvent->mReply.mRect);
     aEvent->mSucceeded = true;
     return NS_OK;
@@ -2402,8 +2418,15 @@ nsresult ContentEventHandler::OnQueryTextRect(WidgetQueryContentEvent* aEvent) {
     }
   }
 
-  aEvent->mReply.mRect = LayoutDeviceIntRect::FromUnknownRect(
-      rect.ToOutsidePixels(lastFrame->PresContext()->AppUnitsPerDevPixel()));
+  nsPresContext* presContext = lastFrame->PresContext();
+  aEvent->mReply.mRect = LayoutDeviceIntRect::FromAppUnitsToOutside(
+      rect, presContext->AppUnitsPerDevPixel());
+  if (nsPresContext* rootContext =
+          presContext->GetInProcessRootContentDocumentPresContext()) {
+    aEvent->mReply.mRect =
+        RoundedOut(ViewportUtils::DocumentRelativeLayoutToVisual(
+            aEvent->mReply.mRect, rootContext->PresShell()));
+  }
   // Returning empty rect may cause native IME confused, let's make sure to
   // return non-empty rect.
   EnsureNonEmptyRect(aEvent->mReply.mRect);
@@ -2446,10 +2469,15 @@ nsresult ContentEventHandler::OnQueryCaretRect(
       if (offset == aEvent->mInput.mOffset) {
         rv = ConvertToRootRelativeOffset(caretFrame, caretRect);
         NS_ENSURE_SUCCESS(rv, rv);
-        nscoord appUnitsPerDevPixel =
-            caretFrame->PresContext()->AppUnitsPerDevPixel();
-        aEvent->mReply.mRect = LayoutDeviceIntRect::FromUnknownRect(
-            caretRect.ToOutsidePixels(appUnitsPerDevPixel));
+        nsPresContext* presContext = caretFrame->PresContext();
+        aEvent->mReply.mRect = LayoutDeviceIntRect::FromAppUnitsToOutside(
+            caretRect, presContext->AppUnitsPerDevPixel());
+        if (nsPresContext* rootContext =
+                presContext->GetInProcessRootContentDocumentPresContext()) {
+          aEvent->mReply.mRect =
+              RoundedOut(ViewportUtils::DocumentRelativeLayoutToVisual(
+                  aEvent->mReply.mRect, rootContext->PresShell()));
+        }
         // Returning empty rect may cause native IME confused, let's make sure
         // to return non-empty rect.
         EnsureNonEmptyRect(aEvent->mReply.mRect);
