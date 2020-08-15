@@ -7,33 +7,22 @@
         
         <style>
             :root {
-                --main-title: #000;
-                --main-text: #333;
-                --main-bg: #fff;
-                --scrollbar: #666;
                 --clipboard-img:url("img/content_copy-24px.svg");
             }
             @media (prefers-color-scheme: dark) {
                 :root {
-                    --main-title: #fff;
-                    --main-text: #ddd;
-                    --main-bg: #000;
-                    --scrollbar: #666;
                     --clipboard-img:url("img/w-content_copy-24px.svg");
                 }
             }
             body{
                 margin: 0;
                 padding: 10px;
-                background-color:var(--main-bg);
-                color: var(--main-text);
             }
             .title{
                 width: 220px;
                 font-size: 19px;
                 text-align: center;
                 margin-bottom: 10px;
-                color: var(--main-title);
                 font-weight: 900;
             }
             p{
@@ -43,7 +32,6 @@
                 width:  220px;
                 height: 120px;
                 padding: 5px;
-                background-color: #fff;
             }
             .qr canvas{
                 display: inline-block;
@@ -55,7 +43,6 @@
                 text-align: center;
                 font-size: 14px;
                 content: "短縮URL QR  　非短縮URL QR";
-                color: var(--main-title);
                 font-weight: 900;
 
             }
@@ -74,14 +61,12 @@
                 display: block;
                 text-align: center;
                 content: "短縮URL";
-                color: var(--main-title);
                 font-weight: 900;
             }
             .url::before{
                 display: block;
                 text-align: center;
                 content: "非短縮URL";
-                color: var(--main-title);
                 font-weight: 900;
             }
             .share{
@@ -105,7 +90,6 @@
 
             *::-webkit-scrollbar-thumb {
                 border-radius: 5px;
-                background: var(--scrollbar);
             }
         </style>
     </head>
