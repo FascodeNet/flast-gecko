@@ -13,7 +13,6 @@
   --toolbar-non-lwt-textcolor: -moz-dialogtext;
   --toolbar-non-lwt-bgimage: linear-gradient(rgba(255,255,255,.15), rgba(255,255,255,.15));
 
-  --toolbarbutton-border-radius: 4px;
   --toolbarbutton-vertical-text-padding: calc(var(--toolbarbutton-inner-padding) - 1px);
   --toolbarbutton-icon-fill-opacity: .85;
 
@@ -157,18 +156,6 @@ menuitem.bookmark-item {
   background-color: hsla(0,0%,100%,.22);
 }
 
-#close-button {
-  list-style-image: url(chrome://browser/skin/window-controls/close.svg);
-}
-
-#close-button:hover {
-  background-color: #d70022;
-  stroke: white;
-}
-
-#close-button:hover:active {
-  background-color: #ff0039;
-}
 
 /* Address bar */
 
@@ -523,7 +510,20 @@ notification[value="translation"] menulist::part(dropmarker) {
   .titlebar-restore {
     list-style-image: url(chrome://browser/skin/window-controls/restore-themes.svg);
   }
+  .titlebar-close:hover {
+    stroke: white;
+    background-color: hsl(355,86%,49%);
+  }
+  .titlebar-close:hover:active {
+    background-color: hsl(355,82%,69%);
+  }
+
   .titlebar-close {
     list-style-image: url(chrome://browser/skin/window-controls/close-themes.svg);
   }
+
+  .titlebar-button:not(:hover) > .toolbarbutton-icon:-moz-window-inactive {
+    opacity: 0.5;
+  }
+  
 }
