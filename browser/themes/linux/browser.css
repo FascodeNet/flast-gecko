@@ -513,53 +513,17 @@ notification[value="translation"] menulist::part(dropmarker) {
     z-index: 1;
     -moz-box-align: center;
   }
-
-  /* Render titlebar command buttons according to system config.
-   * Use full scale icons here as the Gtk+ does. */
-  @media (-moz-gtk-csd-minimize-button) {
-    .titlebar-min {
-      appearance: auto;
-      -moz-default-appearance: -moz-window-button-minimize;
-    }
+  
+  .titlebar-min {
+    list-style-image: url(chrome://browser/skin/window-controls/minimize-themes.svg);
   }
-  @media (-moz-gtk-csd-minimize-button: 0) {
-    .titlebar-min {
-      display: none;
-    }
+  .titlebar-max {
+    list-style-image: url(chrome://browser/skin/window-controls/maximize-themes.svg);
   }
-
-  @media (-moz-gtk-csd-maximize-button) {
-    .titlebar-max {
-      appearance: auto;
-      -moz-default-appearance: -moz-window-button-maximize;
-    }
-    .titlebar-restore {
-      appearance: auto;
-      -moz-default-appearance: -moz-window-button-restore;
-    }
+  .titlebar-restore {
+    list-style-image: url(chrome://browser/skin/window-controls/restore-themes.svg);
   }
-  @media (-moz-gtk-csd-maximize-button: 0) {
-    .titlebar-restore,
-    .titlebar-max {
-      display: none;
-    }
-  }
-
-  @media (-moz-gtk-csd-close-button) {
-    .titlebar-close {
-      appearance: auto;
-      -moz-default-appearance: -moz-window-button-close;
-    }
-  }
-  @media (-moz-gtk-csd-close-button: 0) {
-    .titlebar-close {
-      display: none;
-    }
-  }
-  @media (-moz-gtk-csd-reversed-placement) {
-    .titlebar-buttonbox-container,
-    .titlebar-close {
-      -moz-box-ordinal-group: 0;
-    }
+  .titlebar-close {
+    list-style-image: url(chrome://browser/skin/window-controls/close-themes.svg);
   }
 }
