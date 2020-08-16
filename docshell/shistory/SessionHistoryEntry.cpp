@@ -952,13 +952,15 @@ SessionHistoryEntry::SyncTreesForSubframeNavigation(
   NS_WARNING("Need to implement this");
 }
 
-void SessionHistoryEntry::UpdateLayoutHistoryState(
-    uint64_t aSessionHistoryEntryID, nsILayoutHistoryState* aState) {
-  SessionHistoryEntry* entry =
-      SessionHistoryEntry::GetByInfoId(aSessionHistoryEntryID);
-  if (entry) {
-    entry->SetLayoutHistoryState(aState);
+void SessionHistoryEntry::MaybeSynchronizeSharedStateToInfo(
+    nsISHEntry* aEntry) {
+  nsCOMPtr<SessionHistoryEntry> entry = do_QueryInterface(aEntry);
+  if (!entry) {
+    return;
   }
+
+  entry->mInfo->mCacheKey = entry->mSharedInfo->mCacheKey;
+  // XXX Add other member variables which live in mSharedInfo.
 }
 
 }  // namespace dom
