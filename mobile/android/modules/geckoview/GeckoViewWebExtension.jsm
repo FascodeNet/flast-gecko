@@ -45,7 +45,7 @@ XPCOMUtils.defineLazyServiceGetter(
   "nsIMIMEService"
 );
 
-const { debug, warn } = GeckoViewUtils.initLogging("Console"); // eslint-disable-line no-unused-vars
+const { debug, warn } = GeckoViewUtils.initLogging("Console");
 
 /** Provides common logic between page and browser actions */
 class ExtensionActionHelper {
@@ -512,7 +512,7 @@ class MobileWindowTracker extends EventEmitter {
   }
 
   setTabActive(aWindow, aActive) {
-    const { browser, tab, windowUtils } = aWindow;
+    const { browser, tab, docShell } = aWindow;
     tab.active = aActive;
 
     if (aActive) {
@@ -522,7 +522,7 @@ class MobileWindowTracker extends EventEmitter {
         this._topNonPBWindow = this._topWindow;
       }
       this.emit("tab-activated", {
-        windowId: windowUtils.outerWindowID,
+        windowId: docShell.outerWindowID,
         tabId: tab.id,
         isPrivate,
       });

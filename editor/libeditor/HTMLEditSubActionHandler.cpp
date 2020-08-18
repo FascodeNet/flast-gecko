@@ -2448,8 +2448,9 @@ EditActionResult HTMLEditor::HandleDeleteSelectionInternal(
   // blocks in HandleDeleteNonCollapsedRanges(). We don't really care about
   // collapsed because it will be modified by
   // AutoRangeArray::ExtendAnchorFocusRangeFor() later.
-  // TryToJoinBlocksWithTransaction() should happen if the original selection is
-  // collapsed and the cursor is at the end of a block element, in which case
+  // AutoBlockElementsJoiner::AutoInclusiveAncestorBlockElementsJoiner should
+  // happen if the original selection is collapsed and the cursor is at the end
+  // of a block element, in which case
   // AutoRangeArray::ExtendAnchorFocusRangeFor() would always make the selection
   // not collapsed.
   SelectionWasCollapsed selectionWasCollapsed = aRangesToDelete.IsCollapsed()
@@ -3215,15 +3216,23 @@ EditActionResult HTMLEditor::AutoBlockElementsJoiner::
   EditorDOMPoint pointToPutCaret(aCaretPoint);
   {
     AutoTrackDOMPoint tracker(aHTMLEditor.RangeUpdaterRef(), &pointToPutCaret);
-    result |= aHTMLEditor.TryToJoinBlocksWithTransaction(
-        MOZ_KnownLive(*mLeftContent), MOZ_KnownLive(*mRightContent));
+    AutoInclusiveAncestorBlockElementsJoiner joiner(*mLeftContent,
+                                                    *mRightContent);
+    result |= joiner.Prepare();
     if (result.Failed()) {
-      NS_WARNING("HTMLEditor::TryToJoinBlocksWithTransaction() failed");
+      NS_WARNING("AutoInclusiveAncestorBlockElementsJoiner::Prepare() failed");
       return result;
+    }
+    if (!result.Canceled() && !result.Handled()) {
+      result |= joiner.Run(aHTMLEditor);
+      if (result.Failed()) {
+        NS_WARNING("AutoInclusiveAncestorBlockElementsJoiner::Run() failed");
+        return result;
+      }
     }
   }
 
-  // If TryToJoinBlocksWithTransaction() didn't handle it and it's not
+  // If AutoInclusiveAncestorBlockElementsJoiner didn't handle it and it's not
   // canceled, user may want to modify the start leaf node or the last leaf
   // node of the block.
   if (!result.Handled() && !result.Canceled() &&
@@ -3287,16 +3296,24 @@ EditActionResult HTMLEditor::AutoBlockElementsJoiner::
   EditorDOMPoint pointToPutCaret(aCaretPoint);
   {
     AutoTrackDOMPoint tracker(aHTMLEditor.RangeUpdaterRef(), &pointToPutCaret);
-    result |= aHTMLEditor.TryToJoinBlocksWithTransaction(
-        MOZ_KnownLive(*mLeftContent), MOZ_KnownLive(*mRightContent));
+    AutoInclusiveAncestorBlockElementsJoiner joiner(*mLeftContent,
+                                                    *mRightContent);
+    result |= joiner.Prepare();
+    if (result.Failed()) {
+      NS_WARNING("AutoInclusiveAncestorBlockElementsJoiner::Prepare() failed");
+      return result;
+    }
+    if (!result.Canceled() && !result.Handled()) {
+      result |= joiner.Run(aHTMLEditor);
+      if (result.Failed()) {
+        NS_WARNING("AutoInclusiveAncestorBlockElementsJoiner::Run() failed");
+        return result;
+      }
+    }
     // This should claim that trying to join the block means that
     // this handles the action because the caller shouldn't do anything
     // anymore in this case.
     result.MarkAsHandled();
-    if (result.Failed()) {
-      NS_WARNING("HTMLEditor::TryToJoinBlocksWithTransaction() failed");
-      return result;
-    }
   }
   nsresult rv = aHTMLEditor.CollapseSelectionTo(pointToPutCaret);
   if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
@@ -3696,11 +3713,21 @@ HTMLEditor::AutoBlockElementsJoiner::HandleDeleteNonCollapsedRanges(
     }
 
     if (joinInclusiveAncestorBlockElements) {
-      result |= aHTMLEditor.TryToJoinBlocksWithTransaction(
-          MOZ_KnownLive(*mLeftContent), MOZ_KnownLive(*mRightContent));
+      AutoInclusiveAncestorBlockElementsJoiner joiner(*mLeftContent,
+                                                      *mRightContent);
+      EditActionResult preparationResult = joiner.Prepare();
+      result |= preparationResult;
       if (result.Failed()) {
-        NS_WARNING("HTMLEditor::TryToJoinBlocksWithTransaction() failed");
+        NS_WARNING(
+            "AutoInclusiveAncestorBlockElementsJoiner::Prepare() failed");
         return result;
+      }
+      if (!preparationResult.Canceled() && !preparationResult.Handled()) {
+        result |= joiner.Run(aHTMLEditor);
+        if (result.Failed()) {
+          NS_WARNING("AutoInclusiveAncestorBlockElementsJoiner::Run() failed");
+          return result;
+        }
       }
 
       // If we're joining blocks: if deleting forward the selection should
@@ -4595,95 +4622,87 @@ HTMLEditor::AutoBlockElementsJoiner::JoinNodesDeepWithTransaction(
   return ret;
 }
 
-EditActionResult HTMLEditor::TryToJoinBlocksWithTransaction(
-    nsIContent& aLeftContentInBlock, nsIContent& aRightContentInBlock) {
-  MOZ_ASSERT(IsEditActionDataAvailable());
+EditActionResult HTMLEditor::AutoBlockElementsJoiner::
+    AutoInclusiveAncestorBlockElementsJoiner::Prepare() {
+  mLeftBlockElement =
+      HTMLEditUtils::GetInclusiveAncestorBlockElementExceptHRElement(
+          mInclusiveDescendantOfLeftBlockElement);
+  mRightBlockElement =
+      HTMLEditUtils::GetInclusiveAncestorBlockElementExceptHRElement(
+          mInclusiveDescendantOfRightBlockElement);
 
-  RefPtr<Element> leftBlockElement =
-      HTMLEditUtils::GetInclusiveAncestorBlockElement(aLeftContentInBlock);
-  RefPtr<Element> rightBlockElement =
-      HTMLEditUtils::GetInclusiveAncestorBlockElement(aRightContentInBlock);
-
-  // Sanity checks
-  if (NS_WARN_IF(!leftBlockElement) || NS_WARN_IF(!rightBlockElement)) {
-    return EditActionIgnored(NS_ERROR_NULL_POINTER);
-  }
-  if (NS_WARN_IF(leftBlockElement == rightBlockElement)) {
+  if (NS_WARN_IF(!IsSet())) {
     return EditActionIgnored(NS_ERROR_UNEXPECTED);
   }
 
-  if (HTMLEditUtils::IsAnyTableElement(leftBlockElement) ||
-      HTMLEditUtils::IsAnyTableElement(rightBlockElement)) {
+  if (HTMLEditUtils::IsAnyTableElement(mLeftBlockElement) ||
+      HTMLEditUtils::IsAnyTableElement(mRightBlockElement)) {
     // Do not try to merge table elements
     return EditActionCanceled();
   }
 
-  // Make sure we don't try to move things into HR's, which look like blocks
-  // but aren't containers
-  if (leftBlockElement->IsHTMLElement(nsGkAtoms::hr)) {
-    leftBlockElement =
-        HTMLEditUtils::GetAncestorBlockElement(*leftBlockElement);
-    if (NS_WARN_IF(!leftBlockElement)) {
-      return EditActionIgnored(NS_ERROR_UNEXPECTED);
-    }
-  }
-  if (rightBlockElement->IsHTMLElement(nsGkAtoms::hr)) {
-    rightBlockElement =
-        HTMLEditUtils::GetAncestorBlockElement(*rightBlockElement);
-    if (NS_WARN_IF(!rightBlockElement)) {
-      return EditActionIgnored(NS_ERROR_UNEXPECTED);
-    }
-  }
-
   // Bail if both blocks the same
-  if (leftBlockElement == rightBlockElement) {
+  if (IsSameBlockElement()) {
     return EditActionIgnored();
   }
 
   // Joining a list item to its parent is a NOP.
-  if (HTMLEditUtils::IsAnyListElement(leftBlockElement) &&
-      HTMLEditUtils::IsListItem(rightBlockElement) &&
-      rightBlockElement->GetParentNode() == leftBlockElement) {
+  if (HTMLEditUtils::IsAnyListElement(mLeftBlockElement) &&
+      HTMLEditUtils::IsListItem(mRightBlockElement) &&
+      mRightBlockElement->GetParentNode() == mLeftBlockElement) {
     return EditActionHandled();
   }
 
   // Special rule here: if we are trying to join list items, and they are in
   // different lists, join the lists instead.
-  Maybe<nsAtom*> newListElementTagNameOfRightListElement;
-  if (HTMLEditUtils::IsListItem(leftBlockElement) &&
-      HTMLEditUtils::IsListItem(rightBlockElement)) {
+  if (HTMLEditUtils::IsListItem(mLeftBlockElement) &&
+      HTMLEditUtils::IsListItem(mRightBlockElement)) {
     // XXX leftListElement and/or rightListElement may be not list elements.
-    Element* leftListElement = leftBlockElement->GetParentElement();
-    Element* rightListElement = rightBlockElement->GetParentElement();
+    Element* leftListElement = mLeftBlockElement->GetParentElement();
+    Element* rightListElement = mRightBlockElement->GetParentElement();
     EditorDOMPoint atChildInBlock;
     if (leftListElement && rightListElement &&
         leftListElement != rightListElement &&
-        !EditorUtils::IsDescendantOf(*leftListElement, *rightBlockElement,
+        !EditorUtils::IsDescendantOf(*leftListElement, *mRightBlockElement,
                                      &atChildInBlock) &&
-        !EditorUtils::IsDescendantOf(*rightListElement, *leftBlockElement,
+        !EditorUtils::IsDescendantOf(*rightListElement, *mLeftBlockElement,
                                      &atChildInBlock)) {
       // There are some special complications if the lists are descendants of
       // the other lists' items.  Note that it is okay for them to be
       // descendants of the other lists themselves, which is the usual case for
       // sublists in our implementation.
       MOZ_DIAGNOSTIC_ASSERT(!atChildInBlock.IsSet());
-      leftBlockElement = leftListElement;
-      rightBlockElement = rightListElement;
-      newListElementTagNameOfRightListElement =
+      mLeftBlockElement = leftListElement;
+      mRightBlockElement = rightListElement;
+      mNewListElementTagNameOfRightListElement =
           Some(leftListElement->NodeInfo()->NameAtom());
     }
+  }
+
+  return EditActionIgnored();
+}
+
+EditActionResult HTMLEditor::AutoBlockElementsJoiner::
+    AutoInclusiveAncestorBlockElementsJoiner::Run(HTMLEditor& aHTMLEditor) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+  MOZ_ASSERT(mLeftBlockElement);
+  MOZ_ASSERT(mRightBlockElement);
+
+  if (IsSameBlockElement()) {
+    return EditActionIgnored();
   }
 
   // If the left block element is in the right block element, move the hard
   // line including the right block element to end of the left block.
   // However, if we are merging list elements, we don't join them.
   EditorDOMPoint atRightBlockChild;
-  if (EditorUtils::IsDescendantOf(*leftBlockElement, *rightBlockElement,
+  if (EditorUtils::IsDescendantOf(*mLeftBlockElement, *mRightBlockElement,
                                   &atRightBlockChild)) {
     EditActionResult result = WhiteSpaceVisibilityKeeper::
         MergeFirstLineOfRightBlockElementIntoDescendantLeftBlockElement(
-            *this, *leftBlockElement, *rightBlockElement, atRightBlockChild,
-            newListElementTagNameOfRightListElement);
+            aHTMLEditor, MOZ_KnownLive(*mLeftBlockElement),
+            MOZ_KnownLive(*mRightBlockElement), atRightBlockChild,
+            mNewListElementTagNameOfRightListElement);
     NS_WARNING_ASSERTION(result.Succeeded(),
                          "WhiteSpaceVisibilityKeeper::"
                          "MergeFirstLineOfRightBlockElementIntoDescendantLeftBl"
@@ -4700,12 +4719,14 @@ EditActionResult HTMLEditor::TryToJoinBlocksWithTransaction(
   //   - the left block element is.
   //   - or the given left content in the left block is.
   EditorDOMPoint atLeftBlockChild;
-  if (EditorUtils::IsDescendantOf(*rightBlockElement, *leftBlockElement,
+  if (EditorUtils::IsDescendantOf(*mRightBlockElement, *mLeftBlockElement,
                                   &atLeftBlockChild)) {
     EditActionResult result = WhiteSpaceVisibilityKeeper::
         MergeFirstLineOfRightBlockElementIntoAncestorLeftBlockElement(
-            *this, *leftBlockElement, *rightBlockElement, atLeftBlockChild,
-            aLeftContentInBlock, newListElementTagNameOfRightListElement);
+            aHTMLEditor, MOZ_KnownLive(*mLeftBlockElement),
+            MOZ_KnownLive(*mRightBlockElement), atLeftBlockChild,
+            MOZ_KnownLive(*mInclusiveDescendantOfLeftBlockElement),
+            mNewListElementTagNameOfRightListElement);
     NS_WARNING_ASSERTION(result.Succeeded(),
                          "WhiteSpaceVisibilityKeeper::"
                          "MergeFirstLineOfRightBlockElementIntoAncestorLeftBloc"
@@ -4719,8 +4740,9 @@ EditActionResult HTMLEditor::TryToJoinBlocksWithTransaction(
   // if you backspace from li into p.
   EditActionResult result = WhiteSpaceVisibilityKeeper::
       MergeFirstLineOfRightBlockElementIntoLeftBlockElement(
-          *this, *leftBlockElement, *rightBlockElement,
-          newListElementTagNameOfRightListElement);
+          aHTMLEditor, MOZ_KnownLive(*mLeftBlockElement),
+          MOZ_KnownLive(*mRightBlockElement),
+          mNewListElementTagNameOfRightListElement);
   NS_WARNING_ASSERTION(
       result.Succeeded(),
       "WhiteSpaceVisibilityKeeper::"
