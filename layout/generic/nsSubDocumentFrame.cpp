@@ -624,19 +624,33 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
     return {};  // XUL <iframe> and <browser> have no useful intrinsic size
   }
 
-  // We must be an HTML <iframe>.  Default to size of 300px x 150px, for IE
-  // compat (and per CSS2.1 draft)
-  return IntrinsicSize(CSSPixel::ToAppUnits(300), CSSPixel::ToAppUnits(150));
+  // We must be an HTML <iframe>.  Default to size of
+  // REPLACED_ELEM_FALLBACK_PX_WIDTH x REPLACED_ELEM_FALLBACK_PX_HEIGHT (i.e.
+  // 300px x 150px), for IE compat (and per CSS2.1 draft)
+  return IntrinsicSize(CSSPixel::ToAppUnits(REPLACED_ELEM_FALLBACK_PX_WIDTH),
+                       CSSPixel::ToAppUnits(REPLACED_ELEM_FALLBACK_PX_HEIGHT));
 }
 
 /* virtual */
 AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() {
+  const auto& aspectRatio = StylePosition()->mAspectRatio;
+  if (!aspectRatio.auto_) {
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
   // FIXME(emilio): This should probably respect contain: size and return no
   // ratio in the case subDocRoot is non-null. Otherwise we do it by virtue of
   // using a zero-size below and reusing GetIntrinsicSize().
   if (nsIFrame* subDocRoot = ObtainIntrinsicSizeFrame()) {
-    return subDocRoot->GetIntrinsicRatio();
+    if (AspectRatio subDocRatio = subDocRoot->GetIntrinsicRatio()) {
+      return subDocRatio;
+    }
   }
+
+  if (aspectRatio.HasRatio()) {
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
   // NOTE(emilio): Even though we have an intrinsic size, we may not have an
   // intrinsic ratio. For example `<iframe style="width: 100px">` should not
   // shrink in the vertical axis to preserve the 300x150 ratio.
@@ -661,14 +675,15 @@ LogicalSize nsSubDocumentFrame::ComputeAutoSize(
 }
 
 /* virtual */
-LogicalSize nsSubDocumentFrame::ComputeSize(
+nsIFrame::SizeComputationResult nsSubDocumentFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
     const LogicalSize& aBorder, const LogicalSize& aPadding,
     ComputeSizeFlags aFlags) {
-  return ComputeSizeWithIntrinsicDimensions(
-      aRenderingContext, aWM, GetIntrinsicSize(), GetIntrinsicRatio(), aCBSize,
-      aMargin, aBorder, aPadding, aFlags);
+  return {ComputeSizeWithIntrinsicDimensions(
+              aRenderingContext, aWM, GetIntrinsicSize(), GetIntrinsicRatio(),
+              aCBSize, aMargin, aBorder, aPadding, aFlags),
+          AspectRatioUsage::None};
 }
 
 void nsSubDocumentFrame::Reflow(nsPresContext* aPresContext,

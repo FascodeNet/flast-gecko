@@ -50,7 +50,7 @@ class Documentation(MachCommandBase):
         self._project = None
         self._version = None
 
-    @Command('doc', category='devenv',
+    @Command('doc', category='devenv', virtualenv_name="docs",
              description='Generate and serve documentation from the tree.')
     @CommandArgument('path', default=None, metavar='DIRECTORY', nargs='?',
                      help='Path to documentation to build and display.')
@@ -80,9 +80,8 @@ class Documentation(MachCommandBase):
         if self.check_jsdoc():
             return die(JSDOC_NOT_FOUND)
 
-        self.activate_pipenv(
-            os.path.dirname(self.virtualenv_manager.virtualenv_root),
-            pipfile=os.path.join(here, 'Pipfile'))
+        self.activate_virtualenv()
+        self.virtualenv_manager.install_pip_requirements(os.path.join(here, 'requirements.txt'))
 
         import webbrowser
         from livereload import Server
@@ -297,10 +296,10 @@ class Documentation(MachCommandBase):
         for prefix in key_prefixes:
             s3_upload(files, prefix)
 
-            # Don't setup redirects for the "version" prefix since we are
-            # exceeding a 50 redirect limit and external things are unlikely to
-            # link there anyway (see bug 1614908).
-            if version and prefix.endswith(version):
+            # Don't setup redirects for the "version" or "uuid" prefixes since
+            # we are exceeding a 50 redirect limit and external things are
+            # unlikely to link there anyway (see bug 1614908).
+            if (version and prefix.endswith(version)) or prefix == unique_id:
                 continue
 
             if prefix:

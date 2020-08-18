@@ -268,6 +268,11 @@ AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() {
     return AspectRatio();
   }
 
+  const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
+  if (!aspectRatio.auto_) {
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
   // We only have an intrinsic size/ratio if our width and height attributes
   // are both specified and set to non-percentage values, or we have a viewBox
   // rect: http://www.w3.org/TR/SVGMobile12/coords.html#IntrinsicSizing
@@ -300,11 +305,16 @@ AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() {
     return AspectRatio::FromSize(viewbox->width, viewbox->height);
   }
 
+  if (aspectRatio.HasRatio()) {
+    // For aspect-ratio: "auto && <ratio>" case.
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
   return SVGDisplayContainerFrame::GetIntrinsicRatio();
 }
 
 /* virtual */
-LogicalSize SVGOuterSVGFrame::ComputeSize(
+nsIFrame::SizeComputationResult SVGOuterSVGFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWritingMode,
     const LogicalSize& aCBSize, nscoord aAvailableISize,
     const LogicalSize& aMargin, const LogicalSize& aBorder,
@@ -315,7 +325,7 @@ LogicalSize SVGOuterSVGFrame::ComputeSize(
     // says that the width and height of embedded SVG is overridden by the
     // width and height of the embedding element, so we just need to size to
     // the viewport that the embedding element has established for us.
-    return aCBSize;
+    return {aCBSize, AspectRatioUsage::None};
   }
 
   LogicalSize cbSize = aCBSize;
@@ -368,9 +378,10 @@ LogicalSize SVGOuterSVGFrame::ComputeSize(
                "we lack an intrinsic height or width.");
   }
 
-  return ComputeSizeWithIntrinsicDimensions(
-      aRenderingContext, aWritingMode, intrinsicSize, GetIntrinsicRatio(),
-      cbSize, aMargin, aBorder, aPadding, aFlags);
+  return {ComputeSizeWithIntrinsicDimensions(
+              aRenderingContext, aWritingMode, intrinsicSize,
+              GetIntrinsicRatio(), cbSize, aMargin, aBorder, aPadding, aFlags),
+          AspectRatioUsage::None};
 }
 
 void SVGOuterSVGFrame::Reflow(nsPresContext* aPresContext,

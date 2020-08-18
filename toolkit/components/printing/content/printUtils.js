@@ -150,7 +150,6 @@ var PrintUtils = {
       parentElement: container,
       dialogOptions: {
         consumeOutsideClicks: false,
-        reuseDialog: false,
       },
     });
 
@@ -176,7 +175,7 @@ var PrintUtils = {
 
     await dialog.open(
       `chrome://global/content/print.html?browsingContextId=${aBrowsingContext.id}`,
-      null,
+      "resizable=no",
       null,
       () => {
         printPreviewBrowser.messageManager.sendAsyncMessage(
@@ -570,13 +569,16 @@ var PrintUtils = {
     );
   },
 
-  getPrintSettings() {
+  getPrintSettings(aPrinterName) {
     var printSettings;
     try {
       var PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
         Ci.nsIPrintSettingsService
       );
       printSettings = PSSVC.globalPrintSettings;
+      if (aPrinterName) {
+        printSettings.printerName = aPrinterName;
+      }
       this._setPrinterDefaultsForSelectedPrinter(PSSVC, printSettings);
     } catch (e) {
       dump("getPrintSettings: " + e + "\n");

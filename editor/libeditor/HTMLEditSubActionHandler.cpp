@@ -3412,182 +3412,292 @@ EditActionResult HTMLEditor::HandleDeleteNonCollapsedRanges(
     aDirectionAndAmount = nsIEditor::ePrevious;
   }
 
-  // Figure out block parents
-  RefPtr<Element> leftBlockElement =
-      HTMLEditUtils::GetInclusiveAncestorBlockElement(
-          *aRangesToDelete.FirstRangeRef()->GetStartContainer()->AsContent());
-  RefPtr<Element> rightBlockElement =
-      HTMLEditUtils::GetInclusiveAncestorBlockElement(
-          *aRangesToDelete.FirstRangeRef()->GetEndContainer()->AsContent());
-  if (NS_WARN_IF(!leftBlockElement) || NS_WARN_IF(!rightBlockElement)) {
-    return EditActionHandled(NS_ERROR_FAILURE);  // XXX "handled"??
+  AutoBlockElementsJoiner joiner;
+  if (!joiner.PrepareToDeleteNonCollapsedRanges(*this, aRangesToDelete)) {
+    return EditActionHandled(NS_ERROR_FAILURE);
   }
+  EditActionResult result =
+      joiner.Run(*this, aDirectionAndAmount, aStripWrappers, aRangesToDelete,
+                 aSelectionWasCollapsed);
+  NS_WARNING_ASSERTION(result.Succeeded(),
+                       "AutoBlockElementsJoiner::Run() failed");
+  return result;
+}
 
-  // XXX This is also odd.  We do we simply use
-  //     `DeleteRangesWithTransaction()` only when **first** range is in
-  //     same block?
-  if (leftBlockElement && leftBlockElement == rightBlockElement) {
-    {
-      AutoTrackDOMRange firstRangeTracker(RangeUpdaterRef(),
-                                          &aRangesToDelete.FirstRangeRef());
-      nsresult rv = DeleteRangesWithTransaction(
-          aDirectionAndAmount, aStripWrappers, aRangesToDelete);
-      if (rv == NS_ERROR_EDITOR_DESTROYED) {
-        NS_WARNING(
-            "EditorBase::DeleteRangesWithTransaction() caused destroying "
-            "the editor");
-        return EditActionHandled(NS_ERROR_EDITOR_DESTROYED);
-      }
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rv),
-          "EditorBase::DeleteRangesWithTransaction() failed, but ignored");
-    }
-    nsresult rv = DeleteUnnecessaryNodesAndCollapseSelection(
-        aDirectionAndAmount,
-        EditorDOMPoint(aRangesToDelete.FirstRangeRef()->StartRef()),
-        EditorDOMPoint(aRangesToDelete.FirstRangeRef()->EndRef()));
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rv),
-        "HTMLEditor::DeleteUnnecessaryNodesAndCollapseSelection() failed");
-    return EditActionHandled(rv);
+bool HTMLEditor::AutoBlockElementsJoiner::PrepareToDeleteNonCollapsedRanges(
+    const HTMLEditor& aHTMLEditor, const AutoRangeArray& aRangesToDelete) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+  MOZ_ASSERT(!aRangesToDelete.IsCollapsed());
+
+  mLeftContent = HTMLEditUtils::GetInclusiveAncestorBlockElement(
+      *aRangesToDelete.FirstRangeRef()->GetStartContainer()->AsContent());
+  mRightContent = HTMLEditUtils::GetInclusiveAncestorBlockElement(
+      *aRangesToDelete.FirstRangeRef()->GetEndContainer()->AsContent());
+  if (NS_WARN_IF(!mLeftContent) || NS_WARN_IF(!mRightContent)) {
+    return false;
   }
-
-  // Deleting across blocks.
+  if (mLeftContent == mRightContent) {
+    mMode = Mode::DeleteContentInRanges;
+    return true;
+  }
 
   // If left block and right block are adjuscent siblings and they are same
   // type of elements, we can merge them after deleting the selected contents.
   // MOOSE: this could conceivably screw up a table.. fix me.
-  if (leftBlockElement->GetParentNode() == rightBlockElement->GetParentNode() &&
+  if (mLeftContent->GetParentNode() == mRightContent->GetParentNode() &&
       HTMLEditUtils::CanContentsBeJoined(
-          *leftBlockElement, *rightBlockElement,
-          IsCSSEnabled() ? StyleDifference::CompareIfSpanElements
-                         : StyleDifference::Ignore) &&
+          *mLeftContent, *mRightContent,
+          aHTMLEditor.IsCSSEnabled() ? StyleDifference::CompareIfSpanElements
+                                     : StyleDifference::Ignore) &&
       // XXX What's special about these three types of block?
-      (leftBlockElement->IsHTMLElement(nsGkAtoms::p) ||
-       HTMLEditUtils::IsListItem(leftBlockElement) ||
-       HTMLEditUtils::IsHeader(*leftBlockElement))) {
-    // First delete the selection
-    nsresult rv = DeleteRangesWithTransaction(aDirectionAndAmount,
-                                              aStripWrappers, aRangesToDelete);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("EditorBase::DeleteRangesWithTransaction() failed");
-      return EditActionHandled(rv);
+      (mLeftContent->IsHTMLElement(nsGkAtoms::p) ||
+       HTMLEditUtils::IsListItem(mLeftContent) ||
+       HTMLEditUtils::IsHeader(*mLeftContent))) {
+    mMode = Mode::JoinBlocksInSameParent;
+    return true;
+  }
+
+  mMode = Mode::DeleteNonCollapsedRanges;
+  return true;
+}
+
+EditActionResult HTMLEditor::AutoBlockElementsJoiner::DeleteContentInRanges(
+    HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+    nsIEditor::EStripWrappers aStripWrappers, AutoRangeArray& aRangesToDelete) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+  MOZ_ASSERT(!aRangesToDelete.IsCollapsed());
+  MOZ_ASSERT(mMode == Mode::DeleteContentInRanges);
+  MOZ_ASSERT(mLeftContent);
+  MOZ_ASSERT(mLeftContent->IsElement());
+  MOZ_ASSERT(aRangesToDelete.FirstRangeRef()
+                 ->GetStartContainer()
+                 ->IsInclusiveDescendantOf(mLeftContent));
+  MOZ_ASSERT(mRightContent);
+  MOZ_ASSERT(mRightContent->IsElement());
+  MOZ_ASSERT(aRangesToDelete.FirstRangeRef()
+                 ->GetEndContainer()
+                 ->IsInclusiveDescendantOf(mRightContent));
+
+  // XXX This is also odd.  We do we simply use
+  //     `DeleteRangesWithTransaction()` only when **first** range is in
+  //     same block?
+  MOZ_ASSERT(mLeftContent == mRightContent);
+  {
+    AutoTrackDOMRange firstRangeTracker(aHTMLEditor.RangeUpdaterRef(),
+                                        &aRangesToDelete.FirstRangeRef());
+    nsresult rv = aHTMLEditor.DeleteRangesWithTransaction(
+        aDirectionAndAmount, aStripWrappers, aRangesToDelete);
+    if (rv == NS_ERROR_EDITOR_DESTROYED) {
+      NS_WARNING(
+          "EditorBase::DeleteRangesWithTransaction() caused destroying the "
+          "editor");
+      return EditActionHandled(NS_ERROR_EDITOR_DESTROYED);
     }
-    // Join blocks
-    Result<EditorDOMPoint, nsresult> atFirstChildOfTheLastRightNodeOrError =
-        JoinNodesDeepWithTransaction(*leftBlockElement, *rightBlockElement);
-    if (atFirstChildOfTheLastRightNodeOrError.isErr()) {
-      NS_WARNING("HTMLEditor::JoinNodesDeepWithTransaction() failed");
-      return EditActionHandled(
-          atFirstChildOfTheLastRightNodeOrError.unwrapErr());
-    }
-    MOZ_ASSERT(atFirstChildOfTheLastRightNodeOrError.inspect().IsSet());
-    // Fix up selection
-    rv = CollapseSelectionTo(atFirstChildOfTheLastRightNodeOrError.inspect());
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                         "HTMLEditor::CollapseSelectionTo() failed");
+    NS_WARNING_ASSERTION(
+        NS_SUCCEEDED(rv),
+        "EditorBase::DeleteRangesWithTransaction() failed, but ignored");
+  }
+  nsresult rv = aHTMLEditor.DeleteUnnecessaryNodesAndCollapseSelection(
+      aDirectionAndAmount,
+      EditorDOMPoint(aRangesToDelete.FirstRangeRef()->StartRef()),
+      EditorDOMPoint(aRangesToDelete.FirstRangeRef()->EndRef()));
+  NS_WARNING_ASSERTION(
+      NS_SUCCEEDED(rv),
+      "HTMLEditor::DeleteUnnecessaryNodesAndCollapseSelection() failed");
+  return EditActionHandled(rv);
+}
+
+EditActionResult
+HTMLEditor::AutoBlockElementsJoiner::JoinBlockElementsInSameParent(
+    HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+    nsIEditor::EStripWrappers aStripWrappers, AutoRangeArray& aRangesToDelete) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+  MOZ_ASSERT(!aRangesToDelete.IsCollapsed());
+  MOZ_ASSERT(mMode == Mode::JoinBlocksInSameParent);
+  MOZ_ASSERT(mLeftContent);
+  MOZ_ASSERT(mLeftContent->IsElement());
+  MOZ_ASSERT(aRangesToDelete.FirstRangeRef()
+                 ->GetStartContainer()
+                 ->IsInclusiveDescendantOf(mLeftContent));
+  MOZ_ASSERT(mRightContent);
+  MOZ_ASSERT(mRightContent->IsElement());
+  MOZ_ASSERT(aRangesToDelete.FirstRangeRef()
+                 ->GetEndContainer()
+                 ->IsInclusiveDescendantOf(mRightContent));
+  MOZ_ASSERT(mLeftContent->GetParentNode() == mRightContent->GetParentNode());
+
+  nsresult rv = aHTMLEditor.DeleteRangesWithTransaction(
+      aDirectionAndAmount, aStripWrappers, aRangesToDelete);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("EditorBase::DeleteRangesWithTransaction() failed");
     return EditActionHandled(rv);
   }
+
+  Result<EditorDOMPoint, nsresult> atFirstChildOfTheLastRightNodeOrError =
+      JoinNodesDeepWithTransaction(aHTMLEditor, MOZ_KnownLive(*mLeftContent),
+                                   MOZ_KnownLive(*mRightContent));
+  if (atFirstChildOfTheLastRightNodeOrError.isErr()) {
+    NS_WARNING("HTMLEditor::JoinNodesDeepWithTransaction() failed");
+    return EditActionHandled(atFirstChildOfTheLastRightNodeOrError.unwrapErr());
+  }
+  MOZ_ASSERT(atFirstChildOfTheLastRightNodeOrError.inspect().IsSet());
+
+  rv = aHTMLEditor.CollapseSelectionTo(
+      atFirstChildOfTheLastRightNodeOrError.inspect());
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "HTMLEditor::CollapseSelectionTo() failed");
+  return EditActionHandled(rv);
+}
+
+Result<bool, nsresult> HTMLEditor::AutoBlockElementsJoiner::
+    DeleteNodesEntirelyInRangeButKeepTableStructure(
+        HTMLEditor& aHTMLEditor, nsRange& aRange,
+        HTMLEditor::SelectionWasCollapsed aSelectionWasCollapsed) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+
+  // Build a list of direct child nodes in the range
+  AutoTArray<OwningNonNull<nsIContent>, 10> arrayOfTopChildren;
+  DOMSubtreeIterator iter;
+  nsresult rv = iter.Init(aRange);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("DOMSubtreeIterator::Init() failed");
+    return Err(rv);
+  }
+  iter.AppendAllNodesToArray(arrayOfTopChildren);
+
+  // Now that we have the list, delete non-table elements
+  bool join = true;
+  for (auto& content : arrayOfTopChildren) {
+    // XXX After here, the child contents in the array may have been moved
+    //     to somewhere or removed.  We should handle it.
+    //
+    // MOZ_KnownLive because 'arrayOfTopChildren' is guaranteed to
+    // keep it alive.
+    //
+    // Even with https://bugzilla.mozilla.org/show_bug.cgi?id=1620312 fixed
+    // this might need to stay, because 'arrayOfTopChildren' is not const,
+    // so it's not obvious how to prove via static analysis that it won't
+    // change and release us.
+    nsresult rv =
+        DeleteContentButKeepTableStructure(aHTMLEditor, MOZ_KnownLive(content));
+    if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
+      return Err(NS_ERROR_EDITOR_DESTROYED);
+    }
+    NS_WARNING_ASSERTION(
+        NS_SUCCEEDED(rv),
+        "AutoBlockElementsJoiner::DeleteContentButKeepTableStructure() failed, "
+        "but ignored");
+    // If something visible is deleted, no need to join.  Visible means
+    // all nodes except non-visible textnodes and breaks.
+    // XXX Odd.  Why do we check the visibility after removing the node
+    //     from the DOM tree?
+    if (!join ||
+        aSelectionWasCollapsed == HTMLEditor::SelectionWasCollapsed::No) {
+      continue;
+    }
+    if (content->IsText()) {
+      join = !aHTMLEditor.IsInVisibleTextFrames(*content->AsText());
+      continue;
+    }
+    if (!content->IsElement() ||
+        aHTMLEditor.IsEmptyNode(*content->AsElement())) {
+      continue;
+    }
+    join = content->IsHTMLElement(nsGkAtoms::br) &&
+           !aHTMLEditor.IsVisibleBRElement(content);
+  }
+  return join;
+}
+
+nsresult HTMLEditor::AutoBlockElementsJoiner::DeleteTextAtStartAndEndOfRange(
+    HTMLEditor& aHTMLEditor, nsRange& aRange) {
+  EditorDOMPoint rangeStart(aRange.StartRef());
+  EditorDOMPoint rangeEnd(aRange.EndRef());
+  if (rangeStart.IsInTextNode() && !rangeStart.IsEndOfContainer()) {
+    // Delete to last character
+    OwningNonNull<Text> textNode = *rangeStart.GetContainerAsText();
+    nsresult rv = aHTMLEditor.DeleteTextWithTransaction(
+        textNode, rangeStart.Offset(),
+        rangeStart.GetContainer()->Length() - rangeStart.Offset());
+    if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
+      return NS_ERROR_EDITOR_DESTROYED;
+    }
+    if (NS_FAILED(rv)) {
+      NS_WARNING("HTMLEditor::DeleteTextWithTransaction() failed");
+      return rv;
+    }
+  }
+  if (rangeEnd.IsInTextNode() && !rangeEnd.IsStartOfContainer()) {
+    // Delete to first character
+    OwningNonNull<Text> textNode = *rangeEnd.GetContainerAsText();
+    nsresult rv =
+        aHTMLEditor.DeleteTextWithTransaction(textNode, 0, rangeEnd.Offset());
+    if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
+      return NS_ERROR_EDITOR_DESTROYED;
+    }
+    if (NS_FAILED(rv)) {
+      NS_WARNING("HTMLEditor::DeleteTextWithTransaction() failed");
+      return rv;
+    }
+  }
+  return NS_OK;
+}
+
+EditActionResult
+HTMLEditor::AutoBlockElementsJoiner::HandleDeleteNonCollapsedRanges(
+    HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+    nsIEditor::EStripWrappers aStripWrappers, AutoRangeArray& aRangesToDelete,
+    HTMLEditor::SelectionWasCollapsed aSelectionWasCollapsed) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
+  MOZ_ASSERT(!aRangesToDelete.IsCollapsed());
+  MOZ_ASSERT(mLeftContent);
+  MOZ_ASSERT(mLeftContent->IsElement());
+  MOZ_ASSERT(aRangesToDelete.FirstRangeRef()
+                 ->GetStartContainer()
+                 ->IsInclusiveDescendantOf(mLeftContent));
+  MOZ_ASSERT(mRightContent);
+  MOZ_ASSERT(mRightContent->IsElement());
+  MOZ_ASSERT(aRangesToDelete.FirstRangeRef()
+                 ->GetEndContainer()
+                 ->IsInclusiveDescendantOf(mRightContent));
 
   // Otherwise, delete every nodes in all ranges, then, clean up something.
   EditActionResult result(NS_OK);
   result.MarkAsHandled();
   {
-    AutoTrackDOMRange firstRangeTracker(RangeUpdaterRef(),
+    AutoTrackDOMRange firstRangeTracker(aHTMLEditor.RangeUpdaterRef(),
                                         &aRangesToDelete.FirstRangeRef());
 
-    // Else blocks not same type, or not siblings.  Delete everything
-    // except table elements.
-    bool join = true;
-
+    bool joinInclusiveAncestorBlockElements = true;
     for (auto& range : aRangesToDelete.Ranges()) {
-      // Build a list of direct child nodes in the range
-      AutoTArray<OwningNonNull<nsIContent>, 10> arrayOfTopChildren;
-      DOMSubtreeIterator iter;
-      nsresult rv = iter.Init(range);
-      if (NS_FAILED(rv)) {
-        NS_WARNING("DOMSubtreeIterator::Init() failed");
-        return result.SetResult(rv);
+      Result<bool, nsresult> deleteResult =
+          DeleteNodesEntirelyInRangeButKeepTableStructure(
+              aHTMLEditor, MOZ_KnownLive(range), aSelectionWasCollapsed);
+      if (deleteResult.isErr()) {
+        NS_WARNING(
+            "AutoBlockElementsJoiner::"
+            "DeleteNodesEntirelyInRangeButKeepTableStructure() failed");
+        return result.SetResult(deleteResult.unwrapErr());
       }
-      iter.AppendAllNodesToArray(arrayOfTopChildren);
-
-      // Now that we have the list, delete non-table elements
-      for (auto& content : arrayOfTopChildren) {
-        // XXX After here, the child contents in the array may have been moved
-        //     to somewhere or removed.  We should handle it.
-        //
-        // MOZ_KnownLive because 'arrayOfTopChildren' is guaranteed to
-        // keep it alive.
-        //
-        // Even with https://bugzilla.mozilla.org/show_bug.cgi?id=1620312 fixed
-        // this might need to stay, because 'arrayOfTopChildren' is not const,
-        // so it's not obvious how to prove via static analysis that it won't
-        // change and release us.
-        nsresult rv =
-            DeleteElementsExceptTableRelatedElements(MOZ_KnownLive(content));
-        if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
-          return result.SetResult(NS_ERROR_EDITOR_DESTROYED);
-        }
-        NS_WARNING_ASSERTION(
-            NS_SUCCEEDED(rv),
-            "HTMLEditor::DeleteElementsExceptTableRelatedElements() failed, "
-            "but ignored");
-        // If something visible is deleted, no need to join.  Visible means
-        // all nodes except non-visible textnodes and breaks.
-        // XXX Odd.  Why do we check the visibility after removing the node
-        //     from the DOM tree?
-        if (join && aSelectionWasCollapsed == SelectionWasCollapsed::Yes) {
-          if (Text* text = content->GetAsText()) {
-            join = !IsInVisibleTextFrames(*text);
-          } else if (content->IsElement()) {
-            if (IsEmptyNode(*content->AsElement())) {
-              join = true;
-            } else {
-              join = content->IsHTMLElement(nsGkAtoms::br) &&
-                     !IsVisibleBRElement(content);
-            }
-          }
-        }
-      }
+      // XXX Completely odd.  Why don't we join blocks around each range?
+      joinInclusiveAncestorBlockElements &= deleteResult.unwrap();
     }
 
     // Check endpoints for possible text deletion.  We can assume that if
     // text node is found, we can delete to end or to begining as
     // appropriate, since the case where both sel endpoints in same text
     // node was already handled (we wouldn't be here)
-    EditorDOMPoint firstRangeStart(aRangesToDelete.FirstRangeRef()->StartRef());
-    EditorDOMPoint firstRangeEnd(aRangesToDelete.FirstRangeRef()->EndRef());
-    if (firstRangeStart.IsInTextNode() && !firstRangeStart.IsEndOfContainer()) {
-      // Delete to last character
-      OwningNonNull<Text> textNode = *firstRangeStart.GetContainerAsText();
-      nsresult rv = DeleteTextWithTransaction(
-          textNode, firstRangeStart.Offset(),
-          firstRangeStart.GetContainer()->Length() - firstRangeStart.Offset());
-      if (NS_WARN_IF(Destroyed())) {
-        return result.SetResult(NS_ERROR_EDITOR_DESTROYED);
-      }
-      if (NS_FAILED(rv)) {
-        NS_WARNING("HTMLEditor::DeleteTextWithTransaction() failed");
-        return result.SetResult(rv);
-      }
-    }
-    if (firstRangeEnd.IsInTextNode() && !firstRangeEnd.IsStartOfContainer()) {
-      // Delete to first character
-      OwningNonNull<Text> textNode = *firstRangeEnd.GetContainerAsText();
-      nsresult rv =
-          DeleteTextWithTransaction(textNode, 0, firstRangeEnd.Offset());
-      if (NS_WARN_IF(Destroyed())) {
-        return result.SetResult(NS_ERROR_EDITOR_DESTROYED);
-      }
-      if (NS_FAILED(rv)) {
-        NS_WARNING("HTMLEditor::DeleteTextWithTransaction() failed");
-        return result.SetResult(rv);
-      }
+    nsresult rv = DeleteTextAtStartAndEndOfRange(
+        aHTMLEditor, MOZ_KnownLive(aRangesToDelete.FirstRangeRef()));
+    if (NS_FAILED(rv)) {
+      NS_WARNING(
+          "AutoBlockElementsJoiner::DeleteTextAtStartAndEndOfRange() failed");
+      return EditActionHandled(rv);
     }
 
-    if (join) {
-      result |=
-          TryToJoinBlocksWithTransaction(*leftBlockElement, *rightBlockElement);
+    if (joinInclusiveAncestorBlockElements) {
+      result |= aHTMLEditor.TryToJoinBlocksWithTransaction(
+          MOZ_KnownLive(*mLeftContent), MOZ_KnownLive(*mRightContent));
       if (result.Failed()) {
         NS_WARNING("HTMLEditor::TryToJoinBlocksWithTransaction() failed");
         return result;
@@ -3610,7 +3720,7 @@ EditActionResult HTMLEditor::HandleDeleteNonCollapsedRanges(
     }
   }
 
-  nsresult rv = DeleteUnnecessaryNodesAndCollapseSelection(
+  nsresult rv = aHTMLEditor.DeleteUnnecessaryNodesAndCollapseSelection(
       aDirectionAndAmount,
       EditorDOMPoint(aRangesToDelete.FirstRangeRef()->StartRef()),
       EditorDOMPoint(aRangesToDelete.FirstRangeRef()->EndRef()));
@@ -4407,8 +4517,10 @@ EditorDOMPoint HTMLEditor::GetGoodCaretPointFor(
   return EditorDOMPoint(&aContent);
 }
 
-Result<EditorDOMPoint, nsresult> HTMLEditor::JoinNodesDeepWithTransaction(
-    nsIContent& aLeftContent, nsIContent& aRightContent) {
+Result<EditorDOMPoint, nsresult>
+HTMLEditor::AutoBlockElementsJoiner::JoinNodesDeepWithTransaction(
+    HTMLEditor& aHTMLEditor, nsIContent& aLeftContent,
+    nsIContent& aRightContent) {
   // While the rightmost children and their descendants of the left node match
   // the leftmost children and their descendants of the right node, join them
   // up.
@@ -4419,17 +4531,17 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::JoinNodesDeepWithTransaction(
 
   EditorDOMPoint ret;
   const HTMLEditUtils::StyleDifference kCompareStyle =
-      IsCSSEnabled() ? StyleDifference::CompareIfSpanElements
-                     : StyleDifference::Ignore;
+      aHTMLEditor.IsCSSEnabled() ? StyleDifference::CompareIfSpanElements
+                                 : StyleDifference::Ignore;
   while (leftContentToJoin && rightContentToJoin && parentNode &&
          HTMLEditUtils::CanContentsBeJoined(
              *leftContentToJoin, *rightContentToJoin, kCompareStyle)) {
     uint32_t length = leftContentToJoin->Length();
 
     // Do the join
-    nsresult rv =
-        JoinNodesWithTransaction(*leftContentToJoin, *rightContentToJoin);
-    if (NS_WARN_IF(Destroyed())) {
+    nsresult rv = aHTMLEditor.JoinNodesWithTransaction(*leftContentToJoin,
+                                                       *rightContentToJoin);
+    if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
       return Err(NS_ERROR_EDITOR_DESTROYED);
     }
     if (NS_FAILED(rv)) {
@@ -4891,12 +5003,14 @@ void HTMLEditor::MovePreviousSiblings(nsIContent& aChild,
                        "HTMLEditor::MoveChildrenBetween() failed");
 }
 
-nsresult HTMLEditor::DeleteElementsExceptTableRelatedElements(nsINode& aNode) {
-  MOZ_ASSERT(IsEditActionDataAvailable());
+nsresult
+HTMLEditor::AutoBlockElementsJoiner::DeleteContentButKeepTableStructure(
+    HTMLEditor& aHTMLEditor, nsIContent& aContent) {
+  MOZ_ASSERT(aHTMLEditor.IsEditActionDataAvailable());
 
-  if (!HTMLEditUtils::IsAnyTableElementButNotTable(&aNode)) {
-    nsresult rv = DeleteNodeWithTransaction(MOZ_KnownLive(*aNode.AsContent()));
-    if (NS_WARN_IF(Destroyed())) {
+  if (!HTMLEditUtils::IsAnyTableElementButNotTable(&aContent)) {
+    nsresult rv = aHTMLEditor.DeleteNodeWithTransaction(aContent);
+    if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
       return NS_ERROR_EDITOR_DESTROYED;
     }
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
@@ -4905,12 +5019,12 @@ nsresult HTMLEditor::DeleteElementsExceptTableRelatedElements(nsINode& aNode) {
   }
 
   // XXX For performance, this should just call
-  //     DeleteElementsExceptTableRelatedElements() while there are children
-  //     in aNode.  If we need to avoid infinite loop because mutation event
-  //     listeners can add unexpected nodes into aNode, we should just loop
+  //     DeleteContentButKeepTableStructure() while there are children in
+  //     aContent.  If we need to avoid infinite loop because mutation event
+  //     listeners can add unexpected nodes into aContent, we should just loop
   //     only original count of the children.
   AutoTArray<OwningNonNull<nsIContent>, 10> childList;
-  for (nsIContent* child = aNode.GetFirstChild(); child;
+  for (nsIContent* child = aContent.GetFirstChild(); child;
        child = child->GetNextSibling()) {
     childList.AppendElement(*child);
   }
@@ -4919,10 +5033,9 @@ nsresult HTMLEditor::DeleteElementsExceptTableRelatedElements(nsINode& aNode) {
     // MOZ_KnownLive because 'childList' is guaranteed to
     // keep it alive.
     nsresult rv =
-        DeleteElementsExceptTableRelatedElements(MOZ_KnownLive(child));
+        DeleteContentButKeepTableStructure(aHTMLEditor, MOZ_KnownLive(child));
     if (NS_FAILED(rv)) {
-      NS_WARNING(
-          "HTMLEditor::DeleteElementsExceptTableRelatedElements() failed");
+      NS_WARNING("HTMLEditor::DeleteContentButKeepTableStructure() failed");
       return rv;
     }
   }

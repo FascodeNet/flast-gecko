@@ -5948,14 +5948,55 @@ IntrinsicSize nsIFrame::GetIntrinsicSize() {
 /* virtual */
 AspectRatio nsIFrame::GetIntrinsicRatio() { return AspectRatio(); }
 
+static nscoord ComputeInlineSizeFromAspectRatio(
+    WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aBlockSize,
+    const LogicalSize& aBoxSizingAdjustment) {
+  MOZ_ASSERT(aAspectRatio.ratio.IsRatio());
+  // FIXME: We have to handle zero and infinity for aspect-ratio later.
+  // https://github.com/w3c/csswg-drafts/issues/4572
+  MOZ_ASSERT(aAspectRatio.HasFiniteRatio(),
+             "Infinite or zero ratio may have undefined behavior when "
+             "computing the size");
+  return aAspectRatio.ratio.AsRatio()
+             .ToLayoutRatio()
+             .ConvertToWritingMode(aWM)
+             .ApplyTo(aBlockSize + aBoxSizingAdjustment.BSize(aWM)) -
+         aBoxSizingAdjustment.ISize(aWM);
+}
+
+static nscoord ComputeBlockSizeFromAspectRatio(
+    WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aInlineSize,
+    const LogicalSize& aBoxSizingAdjustment) {
+  MOZ_ASSERT(aAspectRatio.ratio.IsRatio());
+  // FIXME: We have to handle zero and infinity for aspect-ratio later.
+  // https://github.com/w3c/csswg-drafts/issues/4572
+  MOZ_ASSERT(aAspectRatio.HasFiniteRatio(),
+             "Infinite or zero ratio may have undefined behavior when "
+             "computing the size");
+  return aAspectRatio.ratio.AsRatio()
+             .ToLayoutRatio()
+             .ConvertToWritingMode(aWM)
+             .Inverted()
+             .ApplyTo(aInlineSize + aBoxSizingAdjustment.ISize(aWM)) -
+         aBoxSizingAdjustment.BSize(aWM);
+}
+
+static bool ShouldApplyAutomaticMinimumOnInlineAxis(
+    WritingMode aWM, const nsStyleDisplay* aDisplay,
+    const nsStylePosition* aPosition) {
+  // Apply the automatic minimum size for aspect ratio:
+  // Note: The replaced elements shouldn't be here, so we only check the scroll
+  // container.
+  // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
+  return !aDisplay->IsScrollableOverflow() && aPosition->MinISize(aWM).IsAuto();
+}
+
 /* virtual */
-LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
-                                  WritingMode aWM, const LogicalSize& aCBSize,
-                                  nscoord aAvailableISize,
-                                  const LogicalSize& aMargin,
-                                  const LogicalSize& aBorder,
-                                  const LogicalSize& aPadding,
-                                  ComputeSizeFlags aFlags) {
+nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
+    gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
+    nscoord aAvailableISize, const LogicalSize& aMargin,
+    const LogicalSize& aBorder, const LogicalSize& aPadding,
+    ComputeSizeFlags aFlags) {
   MOZ_ASSERT(!GetIntrinsicRatio(),
              "Please override this method and call "
              "nsIFrame::ComputeSizeWithIntrinsicDimensions instead.");
@@ -5963,6 +6004,8 @@ LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
       ComputeAutoSize(aRenderingContext, aWM, aCBSize, aAvailableISize, aMargin,
                       aBorder, aPadding, aFlags);
   const nsStylePosition* stylePos = StylePosition();
+  const nsStyleDisplay* disp = StyleDisplay();
+  auto aspectRatioUsage = AspectRatioUsage::None;
 
   LogicalSize boxSizingAdjust(aWM);
   if (stylePos->mBoxSizing == StyleBoxSizing::Border) {
@@ -6044,6 +6087,15 @@ LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
     result.ISize(aWM) = ComputeISizeValue(
         aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
         boxSizingToMarginEdgeISize, *inlineStyleCoord, aFlags);
+  } else if (stylePos->mAspectRatio.HasFiniteRatio() &&
+             !nsLayoutUtils::IsAutoBSize(*blockStyleCoord,
+                                         aCBSize.BSize(aWM))) {
+    auto bSize = nsLayoutUtils::ComputeBSizeValue(
+        aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
+        blockStyleCoord->AsLengthPercentage());
+    result.ISize(aWM) = ComputeInlineSizeFromAspectRatio(
+        aWM, stylePos->mAspectRatio, bSize, boxSizingAdjust);
+    aspectRatioUsage = AspectRatioUsage::ToComputeISize;
   } else if (MOZ_UNLIKELY(isGridItem) && !IS_TRUE_OVERFLOW_CONTAINER(this)) {
     // 'auto' inline-size for grid-level box - fill the CB for 'stretch' /
     // 'normal' and clamp it to the CB if requested:
@@ -6105,6 +6157,17 @@ LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
                                    aBorder.ISize(aWM) - aMargin.ISize(aWM));
       minISize = std::min(minISize, maxMinISize);
     }
+  } else if (aspectRatioUsage == AspectRatioUsage::ToComputeISize &&
+             ShouldApplyAutomaticMinimumOnInlineAxis(aWM, disp, stylePos)) {
+    // This means we successfully applied aspect-ratio and now need to check
+    // if we need to apply the implied minimum size:
+    // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
+    MOZ_ASSERT(!IsFrameOfType(eReplaced),
+               "aspect-ratio minimums should not apply to replaced elements");
+    // We use min-content on the inline-axis as the minimum size.
+    minISize = ComputeISizeValue(
+        aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
+        boxSizingToMarginEdgeISize, StyleExtremumLength::MinContent, aFlags);
   } else {
     // Treat "min-width: auto" as 0.
     // NOTE: Technically, "auto" is supposed to behave like "min-content" on
@@ -6124,6 +6187,12 @@ LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
       result.BSize(aWM) = nsLayoutUtils::ComputeBSizeValue(
           aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
           blockStyleCoord->AsLengthPercentage());
+    } else if (stylePos->mAspectRatio.HasFiniteRatio() &&
+               result.ISize(aWM) != NS_UNCONSTRAINEDSIZE) {
+      result.BSize(aWM) = ComputeBlockSizeFromAspectRatio(
+          aWM, stylePos->mAspectRatio, result.ISize(aWM), boxSizingAdjust);
+      MOZ_ASSERT(aspectRatioUsage == AspectRatioUsage::None);
+      aspectRatioUsage = AspectRatioUsage::ToComputeBSize;
     } else if (MOZ_UNLIKELY(isGridItem) && blockStyleCoord->IsAuto() &&
                !IS_TRUE_OVERFLOW_CONTAINER(this) &&
                !alignCB->IsMasonry(isOrthogonal ? eLogicalAxisInline
@@ -6176,7 +6245,6 @@ LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
     }
   }
 
-  const nsStyleDisplay* disp = StyleDisplay();
   if (IsThemed(disp)) {
     LayoutDeviceIntSize widget;
     bool canOverride = true;
@@ -6204,7 +6272,7 @@ LogicalSize nsIFrame::ComputeSize(gfxContext* aRenderingContext,
   result.ISize(aWM) = std::max(0, result.ISize(aWM));
   result.BSize(aWM) = std::max(0, result.BSize(aWM));
 
-  return result;
+  return {result, aspectRatioUsage};
 }
 
 nsRect nsIFrame::ComputeTightBounds(DrawTarget* aDrawTarget) const {
@@ -10326,7 +10394,7 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
                             reflowInput.ComputedLogicalPadding().Size(wm),
                         reflowInput.ComputedLogicalPadding().Size(wm),
                         ComputeSizeFlags::eDefault)
-                .Height(wm));
+                .mLogicalSize.Height(wm));
       }
     }
 
