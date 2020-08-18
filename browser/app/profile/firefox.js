@@ -499,10 +499,9 @@ pref("browser.tabs.tabClipWidth", 140);
 pref("browser.tabs.tabMinWidth", 76);
 // Initial titlebar state is managed by -moz-gtk-csd-hide-titlebar-by-default
 // on Linux.
-#ifdef UNIX_BUT_NOT_MAC
+#ifndef UNIX_BUT_NOT_MAC
   pref("browser.tabs.drawInTitlebar", true);
 #endif
-Services.prefs.setBoolPref("browser.tabs.drawInTitlebar",true)
 //Control the visibility of Tab Manager Menu.
 pref("browser.tabs.tabmanager.enabled", false);
 
