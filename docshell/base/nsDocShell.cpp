@@ -3940,6 +3940,7 @@ nsresult nsDocShell::ReloadDocument(nsDocShell* aDocShell, Document* aDocument,
   Maybe<nsCOMPtr<nsIURI>> emplacedResultPrincipalURI;
   emplacedResultPrincipalURI.emplace(std::move(resultPrincipalURI));
 
+  RefPtr<WindowContext> context = aBrowsingContext->GetCurrentWindowContext();
   RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(currentURI);
   loadState->SetReferrerInfo(aReferrerInfo);
   loadState->SetOriginalURI(originalURI);
@@ -3957,8 +3958,7 @@ nsresult nsDocShell::ReloadDocument(nsDocShell* aDocShell, Document* aDocument,
   loadState->SetSourceBrowsingContext(aBrowsingContext);
   loadState->SetBaseURI(baseURI);
   loadState->SetHasValidUserGestureActivation(
-      aBrowsingContext &&
-      aBrowsingContext->HasValidTransientUserGestureActivation());
+      context && context->HasValidTransientUserGestureActivation());
   return aDocShell->InternalLoad(loadState);
 }
 
@@ -6767,15 +6767,6 @@ nsresult nsDocShell::CaptureState() {
     nsCOMPtr<nsIURI> uri;
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       uri = mActiveEntry->GetURI();
-#ifdef DEBUG
-      nsCOMPtr<nsIURI> debugURI(mOSHE->GetURI());
-      MOZ_ASSERT(!uri == !debugURI);
-      if (uri && debugURI) {
-        bool debugURIEquals;
-        debugURI->Equals(uri, &debugURIEquals);
-        MOZ_ASSERT(debugURIEquals);
-      }
-#endif
     } else {
       uri = mOSHE->GetURI();
     }
@@ -8379,8 +8370,6 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
       nsCOMPtr<nsIInputStream> currentPostData;
       if (StaticPrefs::fission_sessionHistoryInParent()) {
         currentPostData = mActiveEntry->GetPostData();
-        MOZ_ASSERT(!(nsCOMPtr<nsIInputStream>(mOSHE->GetPostData())) ==
-                   !currentPostData);
       } else {
         currentPostData = mOSHE->GetPostData();
       }
@@ -8494,8 +8483,6 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
     mOSHE->SetScrollPosition(scrollPos.x, scrollPos.y);
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       scrollRestorationIsManual = mActiveEntry->GetScrollRestorationIsManual();
-      MOZ_ASSERT(mOSHE->GetScrollRestorationIsManual() ==
-                 scrollRestorationIsManual);
     } else {
       scrollRestorationIsManual = mOSHE->GetScrollRestorationIsManual();
     }
@@ -8614,11 +8601,6 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
     needsScrollPosUpdate = true;
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       mActiveEntry->GetScrollPosition(&bx, &by);
-#ifdef DEBUG
-      nscoord x, y;
-      mOSHE->GetScrollPosition(&x, &y);
-      MOZ_ASSERT(x == bx && y == by);
-#endif
     } else {
       mOSHE->GetScrollPosition(&bx, &by);
     }
@@ -9723,13 +9705,17 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
                          Maybe<mozilla::dom::ClientInfo>(),
                          Maybe<mozilla::dom::ServiceWorkerDescriptor>(),
                          sandboxFlags);
+  RefPtr<WindowContext> context = mBrowsingContext->GetCurrentWindowContext();
+
+  if (mLoadType != LOAD_ERROR_PAGE && context &&
+      context->HasValidTransientUserGestureActivation()) {
+    aLoadState->SetHasValidUserGestureActivation(true);
+  }
 
   // in case this docshell load was triggered by a valid transient user gesture,
   // or also the load originates from external, then we pass that information on
   // to the loadinfo, which allows e.g. setting Sec-Fetch-User request headers.
-  if ((mLoadType != LOAD_ERROR_PAGE &&
-       mBrowsingContext->HasValidTransientUserGestureActivation()) ||
-      aLoadState->HasValidUserGestureActivation() ||
+  if (aLoadState->HasValidUserGestureActivation() ||
       aLoadState->HasLoadFlags(LOAD_FLAGS_FROM_EXTERNAL)) {
     loadInfo->SetHasValidUserGestureActivation(true);
   }
@@ -9747,7 +9733,6 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   if (mLSHE) {
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       uriModified = mLoadingEntry->mInfo.GetURIWasModified();
-      MOZ_ASSERT(uriModified == mLSHE->GetURIWasModified());
     } else {
       uriModified = mLSHE->GetURIWasModified();
     }
@@ -10645,8 +10630,6 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     bool scrollRestorationIsManual;
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       scrollRestorationIsManual = mActiveEntry->GetScrollRestorationIsManual();
-      MOZ_ASSERT(mOSHE->GetScrollRestorationIsManual() ==
-                 scrollRestorationIsManual);
     } else {
       scrollRestorationIsManual = mOSHE->GetScrollRestorationIsManual();
     }
@@ -10675,11 +10658,6 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     nsString title;
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       title = mActiveEntry->GetTitle();
-#ifdef DEBUG
-      nsString debugTitle;
-      mOSHE->GetTitle(debugTitle);
-      MOZ_ASSERT(title.Equals(debugTitle));
-#endif
     } else {
       mOSHE->GetTitle(title);
     }
@@ -10788,7 +10766,6 @@ nsDocShell::GetCurrentScrollRestorationIsManual(bool* aIsManual) {
   if (mOSHE) {
     if (StaticPrefs::fission_sessionHistoryInParent()) {
       *aIsManual = mActiveEntry->GetScrollRestorationIsManual();
-      MOZ_ASSERT(mOSHE->GetScrollRestorationIsManual() == *aIsManual);
       return NS_OK;
     }
     return mOSHE->GetScrollRestorationIsManual(aIsManual);
@@ -11192,12 +11169,11 @@ NS_IMETHODIMP
 nsDocShell::PersistLayoutHistoryState() {
   nsresult rv = NS_OK;
 
-  if (mOSHE) {
+  if (StaticPrefs::fission_sessionHistoryInParent() ? !!mActiveEntry
+                                                    : !!mOSHE) {
     bool scrollRestorationIsManual;
-    if (StaticPrefs::fission_sessionHistoryInParent() && mActiveEntry) {
+    if (StaticPrefs::fission_sessionHistoryInParent()) {
       scrollRestorationIsManual = mActiveEntry->GetScrollRestorationIsManual();
-      MOZ_ASSERT(mOSHE->GetScrollRestorationIsManual() ==
-                 scrollRestorationIsManual);
     } else {
       scrollRestorationIsManual = mOSHE->GetScrollRestorationIsManual();
     }
@@ -12172,6 +12148,7 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
       isElementAnchorOrArea ? new ReferrerInfo(*aContent->AsElement())
                             : new ReferrerInfo(*referrerDoc);
+  RefPtr<WindowContext> context = mBrowsingContext->GetCurrentWindowContext();
 
   aLoadState->SetTriggeringSandboxFlags(triggeringSandboxFlags);
   aLoadState->SetReferrerInfo(referrerInfo);
@@ -12180,8 +12157,7 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
   aLoadState->SetLoadType(loadType);
   aLoadState->SetSourceBrowsingContext(mBrowsingContext);
   aLoadState->SetHasValidUserGestureActivation(
-      mBrowsingContext &&
-      mBrowsingContext->HasValidTransientUserGestureActivation());
+      context && context->HasValidTransientUserGestureActivation());
 
   nsresult rv = InternalLoad(aLoadState);
 

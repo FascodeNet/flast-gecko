@@ -835,7 +835,9 @@ renaming_overrides_prefixing = true
 
 "GenericAspectRatio" = """
   bool HasRatio() const { return ratio.IsRatio(); }
-  bool HasMappedRatio() const { return auto_ && HasRatio(); }
+  bool HasFiniteRatio() const {
+    return HasRatio() && ratio.AsRatio().ToLayoutRatio();
+  }
 
   static StyleGenericAspectRatio Auto() {
     return {true, StylePreferredRatio<N>::None()};

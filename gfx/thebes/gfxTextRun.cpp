@@ -2990,7 +2990,7 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
   // preceding character if possible. This is preferable to using the font
   // group because it avoids breaks in shaping within a cluster.
   if (aPrevMatchedFont && IsClusterExtender(aCh)) {
-    if (aPrevMatchedFont->HasCharacter(aCh)) {
+    if (aPrevMatchedFont->HasCharacter(aCh) || IsDefaultIgnorable(aCh)) {
       return aPrevMatchedFont;
     }
     // Get the singleton NFC normalizer; this does not need to be deleted.
@@ -3085,15 +3085,12 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
     }
   }
 
-  // if this character is a variation selector,
-  // use the previous font regardless of whether it supports VS or not.
-  // otherwise the text run will be divided.
-  if (isVarSelector) {
-    if (aPrevMatchedFont) {
-      return aPrevMatchedFont;
-    }
-    // VS alone. it's meaningless to search different fonts
-    return nullptr;
+  // If this character is a variation selector or default-ignorable, use the
+  // previous font regardless of whether it supports the codepoint or not.
+  // (We don't want to unnecessarily split glyph runs, and the character will
+  // not be visibly rendered.)
+  if (isVarSelector || IsDefaultIgnorable(aCh)) {
+    return aPrevMatchedFont;
   }
 
   // 1. check remaining fonts in the font group
@@ -3202,11 +3199,15 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
     }
   }
 
-  // If character is in Private Use Area, don't do matching against pref or
-  // system fonts.
-  // Also don't attempt any fallback for control characters and noncharacters,
-  // or codepoints where global fallback has already noted a failure.
-  if (gfxPlatformFontList::PlatformFontList()->SkipFontFallbackForChar(aCh)) {
+  // If character is in Private Use Area, or is unassigned in Unicode, don't do
+  // matching against pref or system fonts. We only support such codepoints
+  // when used with an explicitly-specified font, as they have no standard/
+  // interoperable meaning.
+  // Also don't attempt any fallback for control characters or noncharacters,
+  // where we won't be rendering a glyph anyhow, or for codepoints where global
+  // fallback has already noted a failure.
+  if (gfxPlatformFontList::PlatformFontList()->SkipFontFallbackForChar(aCh) ||
+      GetGeneralCategory(aCh) == HB_UNICODE_GENERAL_CATEGORY_UNASSIGNED) {
     return nullptr;
   }
 
