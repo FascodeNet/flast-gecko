@@ -6313,6 +6313,95 @@ class LProxySetByValue
   MProxySetByValue* mir() const { return mir_->toProxySetByValue(); }
 };
 
+class LMegamorphicLoadSlot : public LCallInstructionHelper<BOX_PIECES, 1, 3> {
+ public:
+  LIR_HEADER(MegamorphicLoadSlot)
+
+  LMegamorphicLoadSlot(const LAllocation& obj, const LDefinition& temp1,
+                       const LDefinition& temp2, const LDefinition& temp3)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
+    setTemp(2, temp3);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+  const LDefinition* temp3() { return getTemp(2); }
+
+  MMegamorphicLoadSlot* mir() const { return mir_->toMegamorphicLoadSlot(); }
+};
+
+class LMegamorphicLoadSlotByValue
+    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 1> {
+ public:
+  LIR_HEADER(MegamorphicLoadSlotByValue)
+
+  LMegamorphicLoadSlotByValue(const LAllocation& obj,
+                              const LBoxAllocation& idVal,
+                              const LDefinition& temp)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setBoxOperand(IdIndex, idVal);
+    setTemp(0, temp);
+  }
+
+  static const size_t IdIndex = 1;
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+
+  MMegamorphicLoadSlotByValue* mir() const {
+    return mir_->toMegamorphicLoadSlotByValue();
+  }
+};
+
+class LMegamorphicStoreSlot
+    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 2> {
+ public:
+  LIR_HEADER(MegamorphicStoreSlot)
+
+  LMegamorphicStoreSlot(const LAllocation& obj, const LBoxAllocation& rhs,
+                        const LDefinition& temp1, const LDefinition& temp2)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setBoxOperand(RhsIndex, rhs);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
+  }
+
+  static const size_t RhsIndex = 1;
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+
+  MMegamorphicStoreSlot* mir() const { return mir_->toMegamorphicStoreSlot(); }
+};
+
+class LMegamorphicHasProp
+    : public LCallInstructionHelper<1, 1 + BOX_PIECES, 1> {
+ public:
+  LIR_HEADER(MegamorphicHasProp)
+
+  LMegamorphicHasProp(const LAllocation& obj, const LBoxAllocation& idVal,
+                      const LDefinition& temp)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setBoxOperand(IdIndex, idVal);
+    setTemp(0, temp);
+  }
+
+  static const size_t IdIndex = 1;
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+
+  MMegamorphicHasProp* mir() const { return mir_->toMegamorphicHasProp(); }
+};
+
 class LGuardIsNotArrayBufferMaybeShared : public LInstructionHelper<0, 1, 1> {
  public:
   LIR_HEADER(GuardIsNotArrayBufferMaybeShared)

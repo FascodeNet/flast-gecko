@@ -404,6 +404,78 @@ bool WarpCacheIRTranspiler::emitProxySetByValue(ObjOperandId objId,
   return resumeAfter(ins);
 }
 
+bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
+                                                          uint32_t nameOffset,
+                                                          bool handleMissing) {
+  MDefinition* obj = getOperand(objId);
+  PropertyName* name = stringStubField(nameOffset)->asAtom().asPropertyName();
+
+  MOZ_ASSERT(handleMissing);
+
+  auto* ins = MMegamorphicLoadSlot::New(alloc(), obj, name);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotByValueResult(
+    ObjOperandId objId, ValOperandId idId, bool handleMissing) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* id = getOperand(idId);
+
+  MOZ_ASSERT(handleMissing);
+
+  auto* ins = MMegamorphicLoadSlotByValue::New(alloc(), obj, id);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMegamorphicStoreSlot(ObjOperandId objId,
+                                                     uint32_t nameOffset,
+                                                     ValOperandId rhsId,
+                                                     bool needsTypeBarrier) {
+  MDefinition* obj = getOperand(objId);
+  PropertyName* name = stringStubField(nameOffset)->asAtom().asPropertyName();
+  MDefinition* rhs = getOperand(rhsId);
+
+  MOZ_ASSERT(!needsTypeBarrier);
+
+  auto* ins = MMegamorphicStoreSlot::New(alloc(), obj, name, rhs);
+  addEffectful(ins);
+
+  return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitMegamorphicHasPropResult(ObjOperandId objId,
+                                                         ValOperandId idId,
+                                                         bool hasOwn) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* id = getOperand(idId);
+
+  auto* ins = MMegamorphicHasProp::New(alloc(), obj, id, hasOwn);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMegamorphicSetElement(ObjOperandId objId,
+                                                      ValOperandId idId,
+                                                      ValOperandId rhsId,
+                                                      bool strict) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* id = getOperand(idId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* ins = MCallSetElement::New(alloc(), obj, id, rhs, strict);
+  addEffectful(ins);
+
+  return resumeAfter(ins);
+}
+
 bool WarpCacheIRTranspiler::emitGuardIsNotArrayBufferMaybeShared(
     ObjOperandId objId) {
   MDefinition* obj = getOperand(objId);

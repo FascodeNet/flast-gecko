@@ -4219,6 +4219,46 @@ void LIRGenerator::visitProxySetByValue(MProxySetByValue* ins) {
   assignSafepoint(lir, ins);
 }
 
+void LIRGenerator::visitMegamorphicLoadSlot(MMegamorphicLoadSlot* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+  auto* lir = new (alloc()) LMegamorphicLoadSlot(
+      useRegisterAtStart(ins->object()), tempFixed(CallTempReg0),
+      tempFixed(CallTempReg1), tempFixed(CallTempReg2));
+  assignSnapshot(lir, BailoutKind::MegamorphicAccess);
+  defineReturn(lir, ins);
+}
+
+void LIRGenerator::visitMegamorphicLoadSlotByValue(
+    MMegamorphicLoadSlotByValue* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LMegamorphicLoadSlotByValue(
+      useRegisterAtStart(ins->object()), useBoxAtStart(ins->idVal()),
+      tempFixed(CallTempReg0));
+  assignSnapshot(lir, BailoutKind::MegamorphicAccess);
+  defineReturn(lir, ins);
+}
+
+void LIRGenerator::visitMegamorphicStoreSlot(MMegamorphicStoreSlot* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->rhs()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LMegamorphicStoreSlot(
+      useRegisterAtStart(ins->object()), useBoxAtStart(ins->rhs()),
+      tempFixed(CallTempReg0), tempFixed(CallTempReg1));
+  assignSnapshot(lir, BailoutKind::MegamorphicAccess);
+  add(lir, ins);
+}
+
+void LIRGenerator::visitMegamorphicHasProp(MMegamorphicHasProp* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
+  auto* lir = new (alloc())
+      LMegamorphicHasProp(useRegisterAtStart(ins->object()),
+                          useBoxAtStart(ins->idVal()), tempFixed(CallTempReg0));
+  assignSnapshot(lir, BailoutKind::MegamorphicAccess);
+  defineReturn(lir, ins);
+}
+
 void LIRGenerator::visitGuardIsNotArrayBufferMaybeShared(
     MGuardIsNotArrayBufferMaybeShared* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);

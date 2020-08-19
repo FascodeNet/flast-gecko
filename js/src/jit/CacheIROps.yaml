@@ -717,7 +717,7 @@
 
 - name: MegamorphicLoadSlotResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     obj: ObjId
@@ -726,7 +726,7 @@
 
 - name: MegamorphicLoadSlotByValueResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     obj: ObjId
@@ -735,7 +735,7 @@
 
 - name: MegamorphicStoreSlot
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     obj: ObjId
@@ -745,7 +745,7 @@
 
 - name: MegamorphicSetElement
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
@@ -755,7 +755,7 @@
 
 - name: MegamorphicHasPropResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     obj: ObjId

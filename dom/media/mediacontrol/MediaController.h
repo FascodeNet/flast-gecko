@@ -88,9 +88,12 @@ class MediaController final : public DOMEventTargetHelper,
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
   void GetSupportedKeys(nsTArray<MediaControlKey>& aRetVal) const;
+  void GetMetadata(MediaMetadataInit& aMetadata, ErrorResult& aRv);
   IMPL_EVENT_HANDLER(activated);
   IMPL_EVENT_HANDLER(deactivated);
+  IMPL_EVENT_HANDLER(metadatachange);
   IMPL_EVENT_HANDLER(supportedkeyschange);
+  IMPL_EVENT_HANDLER(playbackstatechange);
   IMPL_EVENT_HANDLER(positionstatechange);
 
   // IMediaController's methods
@@ -151,6 +154,7 @@ class MediaController final : public DOMEventTargetHelper,
       const nsTArray<MediaSessionAction>& aSupportedAction);
 
   void HandlePositionStateChanged(const PositionState& aState);
+  void HandleMetadataChanged(const MediaMetadataBase& aMetadata);
 
   // This would register controller to the media control service that takes a
   // responsibility to manage all active controllers.
@@ -183,6 +187,7 @@ class MediaController final : public DOMEventTargetHelper,
   MediaEventProducer<nsTArray<MediaControlKey>> mSupportedKeysChangedEvent;
 
   MediaEventListener mPositionStateChangedListener;
+  MediaEventListener mMetadataChangedListener;
 
   MediaEventProducer<bool> mFullScreenChangedEvent;
   MediaEventProducer<bool> mPictureInPictureModeChangedEvent;

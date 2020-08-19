@@ -31,18 +31,32 @@ interface MediaController : EventTarget {
   readonly attribute boolean isActive;
   readonly attribute boolean isAudible;
   readonly attribute boolean isPlaying;
+  readonly attribute MediaSessionPlaybackState playbackState;
+
+  [Throws]
+  MediaMetadataInit getMetadata();
 
   [Frozen, Cached, Pure]
   readonly attribute sequence<MediaControlKey> supportedKeys;
 
   attribute EventHandler onactivated;
   attribute EventHandler ondeactivated;
+
+  // Following events would only be dispatched after controller is active.
+  attribute EventHandler onmetadatachange;
+  attribute EventHandler onplaybackstatechange;
   attribute EventHandler onpositionstatechange;
   attribute EventHandler onsupportedkeyschange;
 
-  // TODO : expose other media controller methods to webidl in order to support
-  // the plan of controlling media directly from the chrome JS.
-  // eg. play(), pause().
+  void focus();
+  void play();
+  void pause();
+  void stop();
+  void prevTrack();
+  void nextTrack();
+  void seekBackward();
+  void seekForward();
+  void skipAd();
   void seekTo(double seekTime, optional boolean fastSeek = false);
 };
 
