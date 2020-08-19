@@ -1276,7 +1276,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
         if (!env.gcTypesEnabled()) {
           return iter.unrecognizedOpcode(&op);
         }
-        CHECK(iter.readComparison(RefType::any(), &nothing, &nothing));
+        CHECK(iter.readComparison(RefType::extern_(), &nothing, &nothing));
       }
 #endif
 #ifdef ENABLE_WASM_REFTYPES
@@ -1689,7 +1689,7 @@ static bool DecodeStructType(Decoder& d, ModuleEnvironment* env,
             offset = layout.addReference(ReferenceType::TYPE_OBJECT);
             break;
           case RefType::Func:
-          case RefType::Any:
+          case RefType::Extern:
             offset = layout.addReference(ReferenceType::TYPE_WASM_ANYREF);
             break;
         }
@@ -1883,28 +1883,18 @@ static bool DecodeLimits(Decoder& d, Limits* limits,
 }
 
 static bool DecodeTableTypeAndLimits(Decoder& d, bool refTypesEnabled,
+                                     bool gcTypesEnabled,
+                                     const TypeDefVector& types,
                                      TableDescVector* tables) {
-  uint8_t elementType;
-  if (!d.readFixedU8(&elementType)) {
-    return d.fail("expected table element type");
+  RefType tableElemType;
+  if (!d.readRefType(types, gcTypesEnabled, &tableElemType)) {
+    return false;
   }
-
-  TableKind tableKind;
-  if (elementType == uint8_t(TypeCode::FuncRef)) {
-    tableKind = TableKind::FuncRef;
-#ifdef ENABLE_WASM_REFTYPES
-  } else if (elementType == uint8_t(TypeCode::AnyRef)) {
-    if (!refTypesEnabled) {
-      return d.fail("expected 'funcref' element type");
-    }
-    tableKind = TableKind::AnyRef;
-#endif
-  } else {
-#ifdef ENABLE_WASM_REFTYPES
-    return d.fail("expected reference element type");
-#else
+  if (!refTypesEnabled && !tableElemType.isFunc()) {
     return d.fail("expected 'funcref' element type");
-#endif
+  }
+  if (!tableElemType.isNullable()) {
+    return d.fail("non-nullable references not supported in tables");
   }
 
   Limits limits;
@@ -1933,7 +1923,7 @@ static bool DecodeTableTypeAndLimits(Decoder& d, bool refTypesEnabled,
     maximumLength = Some(uint32_t(*limits.maximum));
   }
 
-  return tables->emplaceBack(tableKind, initialLength, maximumLength);
+  return tables->emplaceBack(tableElemType, initialLength, maximumLength, /* isAsmJS */ false);
 }
 
 static bool GlobalIsJSCompatible(Decoder& d, ValType type) {
@@ -1947,7 +1937,7 @@ static bool GlobalIsJSCompatible(Decoder& d, ValType type) {
     case ValType::Ref:
       switch (type.refTypeKind()) {
         case RefType::Func:
-        case RefType::Any:
+        case RefType::Extern:
           break;
         case RefType::TypeIndex:
 #ifdef WASM_PRIVATE_REFTYPES
@@ -1972,6 +1962,10 @@ static bool DecodeGlobalType(Decoder& d, const TypeDefVector& types,
   if (!d.readValType(types, refTypesEnabled, gcTypesEnabled, v128Enabled,
                      type)) {
     return d.fail("expected global type");
+  }
+
+  if (type->isReference() && !type->isNullable()) {
+    return d.fail("non-nullable references not supported in globals");
   }
 
   uint8_t flags;
@@ -2066,7 +2060,9 @@ static bool DecodeImport(Decoder& d, ModuleEnvironment* env) {
       break;
     }
     case DefinitionKind::Table: {
-      if (!DecodeTableTypeAndLimits(d, env->refTypesEnabled(), &env->tables)) {
+      if (!DecodeTableTypeAndLimits(d, env->refTypesEnabled(),
+                                    env->gcTypesEnabled(), env->types,
+                                    &env->tables)) {
         return false;
       }
       env->tables.back().importedOrExported = true;
@@ -2192,7 +2188,9 @@ static bool DecodeTableSection(Decoder& d, ModuleEnvironment* env) {
   }
 
   for (uint32_t i = 0; i < numTables; ++i) {
-    if (!DecodeTableTypeAndLimits(d, env->refTypesEnabled(), &env->tables)) {
+    if (!DecodeTableTypeAndLimits(d, env->refTypesEnabled(),
+                                  env->gcTypesEnabled(), env->types,
+                                  &env->tables)) {
       return false;
     }
   }
@@ -2287,11 +2285,11 @@ static bool DecodeInitializerExpression(Decoder& d, ModuleEnvironment* env,
     case uint16_t(Op::RefNull): {
       MOZ_ASSERT_IF(env->isStructType(expected), env->gcTypesEnabled());
       RefType initType;
-      if (!d.readRefType(env->types, env->gcTypesEnabled(), &initType)) {
+      if (!d.readHeapType(env->types, env->gcTypesEnabled(), true, &initType)) {
         return false;
       }
       if (!expected.isReference() ||
-          !env->isRefSubtypeOf(ValType(initType), ValType(expected))) {
+          !env->isRefSubtypeOf(initType, expected.refType())) {
         return d.fail(
             "type mismatch: initializer type and expected type don't match");
       }
@@ -2338,7 +2336,8 @@ static bool DecodeInitializerExpression(Decoder& d, ModuleEnvironment* env,
                     env->isStructType(globals[i].type())) &&
                    !env->gcTypesEnabled()) {
           fail = true;
-        } else if (!env->isRefSubtypeOf(globals[i].type(), expected)) {
+        } else if (!env->isRefSubtypeOf(globals[i].type().refType(),
+                                        expected.refType())) {
           fail = true;
         }
         if (fail) {
@@ -2670,7 +2669,7 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
     }
 
     ElemSegmentPayload payload = flags->payload();
-    ValType elemType;
+    RefType elemType;
 
     // `ActiveWithTableIndex`, `Declared`, and `Passive` element segments encode
     // the type or definition kind of the payload. `Active` element segments are
@@ -2678,28 +2677,19 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
     if (kind == ElemSegmentKind::Active) {
       elemType = RefType::func();
     } else {
-      uint8_t form;
-      if (!d.readFixedU8(&form)) {
-        return d.fail("expected type or extern kind");
-      }
-
       switch (payload) {
         case ElemSegmentPayload::ElemExpression: {
-          switch (form) {
-            case uint8_t(TypeCode::FuncRef):
-              elemType = RefType::func();
-              break;
-            case uint8_t(TypeCode::AnyRef):
-              elemType = RefType::any();
-              break;
-            default:
-              return d.fail(
-                  "segments with element expressions can only contain "
-                  "references");
+          if (!d.readRefType(env->types, env->gcTypesEnabled(), &elemType)) {
+            return false;
           }
           break;
         }
         case ElemSegmentPayload::ExternIndex: {
+          uint8_t form;
+          if (!d.readFixedU8(&form)) {
+            return d.fail("expected type or extern kind");
+          }
+
           if (form != uint8_t(DefinitionKind::Function)) {
             return d.fail(
                 "segments with extern indices can only contain function "
@@ -2714,10 +2704,8 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
     switch (kind) {
       case ElemSegmentKind::Active:
       case ElemSegmentKind::ActiveWithTableIndex: {
-        ValType tblElemType = ToElemValType(env->tables[seg->tableIndex].kind);
-        if (!(elemType == tblElemType ||
-              (elemType.isReference() && tblElemType.isReference() &&
-               env->isRefSubtypeOf(elemType, tblElemType)))) {
+        RefType tblElemType = env->tables[seg->tableIndex].elemType;
+        if (!env->isRefSubtypeOf(elemType, tblElemType)) {
           return d.fail(
               "segment's element type must be subtype of table's element type");
         }
@@ -2725,12 +2713,12 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
       }
       case ElemSegmentKind::Declared:
       case ElemSegmentKind::Passive: {
-        // By construction, above.
-        MOZ_ASSERT(elemType.isReference());
+        // Passive segment element types are checked when used with a
+        // `table.init` instruction.
         break;
       }
     }
-    seg->elementType = elemType;
+    seg->elemType = elemType;
 
     uint32_t numElems;
     if (!d.readVarU32(&numElems)) {
@@ -2768,7 +2756,7 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
           return d.fail("failed to read initializer operation");
         }
 
-        RefType initType = RefType::any();
+        RefType initType = RefType::extern_();
         switch (op.b0) {
           case uint16_t(Op::RefFunc):
             initType = RefType::func();
@@ -2782,7 +2770,7 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
           default:
             return d.fail("failed to read initializer operation");
         }
-        if (!env->isRefSubtypeOf(ValType(initType), ValType(elemType))) {
+        if (!env->isRefSubtypeOf(initType, elemType)) {
           return d.fail("initializer type must be subtype of element type");
         }
       }

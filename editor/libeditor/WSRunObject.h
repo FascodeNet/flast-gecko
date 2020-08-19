@@ -1226,12 +1226,6 @@ class WhiteSpaceVisibilityKeeper final {
     return rv;
   }
 
-  // PrepareToDeleteNode fixes up ws before and after aContent in preparation
-  // for aContent to be deleted.  Example of fixup: trailingws before
-  // aContent needs to be removed.
-  MOZ_CAN_RUN_SCRIPT static nsresult PrepareToDeleteNode(
-      HTMLEditor& aHTMLEditor, nsIContent* aContent);
-
   // PrepareToSplitAcrossBlocks fixes up ws before and after
   // {aSplitNode,aSplitOffset} in preparation for a block parent to be split.
   // Note that the aSplitNode and aSplitOffset are adjusted in response to
@@ -1388,6 +1382,17 @@ class WhiteSpaceVisibilityKeeper final {
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT static nsresult
   DeleteInclusiveNextWhiteSpace(HTMLEditor& aHTMLEditor,
                                 const EditorDOMPoint& aPoint);
+
+  /**
+   * DeleteContentNodeAndJoinTextNodesAroundIt() deletes aContentToDelete and
+   * may remove/replace white-spaces around it.  Then, if deleting content makes
+   * 2 text nodes around it are adjacent siblings, this joins them and put
+   * selection at the joined point.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT static nsresult
+  DeleteContentNodeAndJoinTextNodesAroundIt(HTMLEditor& aHTMLEditor,
+                                            nsIContent& aContentToDelete,
+                                            const EditorDOMPoint& aCaretPoint);
 
   /**
    * NormalizeVisibleWhiteSpacesAt() tries to normalize visible white-space

@@ -223,8 +223,7 @@ void AppendToString(std::stringstream& aStream, const FrameMetrics& m,
   aStream << pfx;
   AppendToString(aStream, m.GetCompositionBounds(), "{ [cb=");
   AppendToString(aStream, m.GetScrollableRect(), "] [sr=");
-  AppendToString(aStream, m.GetScrollOffset(), "] [s=");
-  AppendToString(aStream, m.GetVisualViewportOffset(), "] [vs=");
+  AppendToString(aStream, m.GetVisualScrollOffset(), "] [s=");
   if (m.GetDoSmoothScroll()) {
     AppendToString(aStream, m.GetSmoothScrollOffset(), "] [ss=");
   }

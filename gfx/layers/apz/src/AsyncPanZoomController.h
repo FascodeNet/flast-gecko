@@ -23,6 +23,7 @@
 #include "mozilla/UniquePtr.h"
 #include "InputData.h"
 #include "Axis.h"  // for Axis, Side, etc.
+#include "ExpectedGeckoMetrics.h"
 #include "InputQueue.h"
 #include "APZUtils.h"
 #include "Layers.h"  // for Layer::ScrollDirection
@@ -689,13 +690,13 @@ class AsyncPanZoomController {
   /**
    * Scroll the scroll frame to an X,Y offset.
    */
-  void SetScrollOffset(const CSSPoint& aOffset);
+  void SetVisualScrollOffset(const CSSPoint& aOffset);
 
   /**
    * Scroll the scroll frame to an X,Y offset, clamping the resulting scroll
    * offset to the scroll range.
    */
-  void ClampAndSetScrollOffset(const CSSPoint& aOffset);
+  void ClampAndSetVisualScrollOffset(const CSSPoint& aOffset);
 
   /**
    * Scroll the scroll frame by an X,Y offset.

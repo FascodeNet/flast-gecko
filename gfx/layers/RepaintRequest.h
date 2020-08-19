@@ -68,7 +68,7 @@ struct RepaintRequest {
         mCompositionBounds(aOther.GetCompositionBounds()),
         mCumulativeResolution(aOther.GetCumulativeResolution()),
         mDevPixelsPerCSSPixel(aOther.GetDevPixelsPerCSSPixel()),
-        mScrollOffset(aOther.GetScrollOffset()),
+        mScrollOffset(aOther.GetVisualScrollOffset()),
         mZoom(aOther.GetZoom()),
         mScrollGeneration(aOther.GetScrollGeneration()),
         mDisplayPortMargins(aOther.GetDisplayPortMargins()),
@@ -155,7 +155,9 @@ struct RepaintRequest {
 
   bool IsRootContent() const { return mIsRootContent; }
 
-  const CSSPoint& GetScrollOffset() const { return mScrollOffset; }
+  CSSPoint GetLayoutScrollOffset() const { return mLayoutViewport.TopLeft(); }
+
+  const CSSPoint& GetVisualScrollOffset() const { return mScrollOffset; }
 
   const CSSToParentLayerScale2D& GetZoom() const { return mZoom; }
 

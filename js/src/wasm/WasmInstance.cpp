@@ -200,10 +200,19 @@ static bool ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
     case ValType::V128:
       MOZ_CRASH("unexpected v128 in ToWebAssemblyValue");
     case ValType::Ref:
+#ifdef ENABLE_WASM_GC
+      if (!type.isNullable() && val.isNull()) {
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                 JSMSG_WASM_BAD_REF_NONNULLABLE_VALUE);
+        return false;
+      }
+#else
+      MOZ_ASSERT(type.isNullable());
+#endif
       switch (type.refTypeKind()) {
         case RefType::Func:
           return ToWebAssemblyValue_funcref<Debug>(cx, val, (void**)loc);
-        case RefType::Any:
+        case RefType::Extern:
           return ToWebAssemblyValue_anyref<Debug>(cx, val, (void**)loc);
         case RefType::TypeIndex:
           return ToWebAssemblyValue_typeref<Debug>(cx, val, (void**)loc);
@@ -310,7 +319,7 @@ static bool ToJSValue(JSContext* cx, const void* src, ValType type,
         case RefType::Func:
           return ToJSValue_funcref<Debug>(
               cx, *reinterpret_cast<void* const*>(src), dst);
-        case RefType::Any:
+        case RefType::Extern:
           return ToJSValue_anyref<Debug>(
               cx, *reinterpret_cast<void* const*>(src), dst);
         case RefType::TypeIndex:
@@ -546,7 +555,7 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
           break;
         case ValType::Ref:
           switch (importArgs[i].refTypeKind()) {
-            case RefType::Any:
+            case RefType::Extern:
               // We don't know what type the value will be, so we can't really
               // check whether the callee will accept it.  It doesn't make much
               // sense to see if the callee accepts all of the types an AnyRef
@@ -1150,7 +1159,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
       table.fillAnyRef(start, len, AnyRef::fromCompiledCode(value));
       break;
     case TableRepr::Func:
-      MOZ_RELEASE_ASSERT(table.kind() == TableKind::FuncRef);
+      MOZ_RELEASE_ASSERT(!table.isAsmJS());
       table.fillFuncRef(start, len, FuncRef::fromCompiledCode(value), cx);
       break;
   }
@@ -1173,7 +1182,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
     return table.getAnyRef(index).forCompiledCode();
   }
 
-  MOZ_RELEASE_ASSERT(table.kind() == TableKind::FuncRef);
+  MOZ_RELEASE_ASSERT(!table.isAsmJS());
 
   JSContext* cx = TlsContext.get();
   RootedFunction fun(cx);
@@ -1199,7 +1208,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
         table.fillAnyRef(oldSize, delta, ref);
         break;
       case TableRepr::Func:
-        MOZ_RELEASE_ASSERT(table.kind() == TableKind::FuncRef);
+        MOZ_RELEASE_ASSERT(!table.isAsmJS());
         table.fillFuncRef(oldSize, delta, FuncRef::fromAnyRefUnchecked(ref),
                           TlsContext.get());
         break;
@@ -1225,7 +1234,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
       table.fillAnyRef(index, 1, AnyRef::fromCompiledCode(value));
       break;
     case TableRepr::Func:
-      MOZ_RELEASE_ASSERT(table.kind() == TableKind::FuncRef);
+      MOZ_RELEASE_ASSERT(!table.isAsmJS());
       table.fillFuncRef(index, 1, FuncRef::fromCompiledCode(value),
                         TlsContext.get());
       break;
@@ -2174,7 +2183,7 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
           }
           break;
         }
-        case RefType::Any: {
+        case RefType::Extern: {
           RootedAnyRef ref(cx, AnyRef::fromCompiledCode(ptr));
           ASSERT_ANYREF_IS_JSOBJECT;
           if (!refs.emplaceBack(ref.get().asJSObject())) {

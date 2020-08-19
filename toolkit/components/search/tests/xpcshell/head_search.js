@@ -31,6 +31,8 @@ const { ExtensionTestUtils } = ChromeUtils.import(
   "resource://testing-common/ExtensionXPCShellUtils.jsm"
 );
 
+SearchTestUtils.init(Assert, registerCleanupFunction);
+
 const PREF_SEARCH_URL = "geoSpecificDefaults.url";
 const NS_APP_SEARCH_DIR = "SrchPlugns";
 
@@ -48,6 +50,8 @@ var XULRuntime = Cc["@mozilla.org/xre/runtime;1"].getService(Ci.nsIXULRuntime);
 // Expand the amount of information available in error logs
 Services.prefs.setBoolPref("browser.search.log", true);
 Services.prefs.setBoolPref("browser.region.log", true);
+
+Services.prefs.setBoolPref("browser.search.modernConfig", true);
 
 AddonTestUtils.init(this, false);
 AddonTestUtils.createAppInfo(

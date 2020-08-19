@@ -22,6 +22,11 @@
   margin-inline-start: 4px;
 }
 
+#PopupAutoComplete > richlistbox > richlistitem[originaltype="importableLearnMore"] {
+  padding-bottom: 3px;
+  padding-inline-start: 21px;
+}
+
 #PopupAutoComplete > richlistbox {
   padding: 0;
 }
@@ -30,6 +35,11 @@
 
 .autocomplete-richlistitem:hover {
   background-color: var(--arrowpanel-dimmed);
+}
+
+/* Override items that are always light theme to match page content */
+#PopupAutoComplete > richlistbox > .autocomplete-richlistitem:hover {
+  background-color: hsla(0,0%,80%,.35); /* match light theme arrowpanel-dimmed */
 }
 
 .autocomplete-richlistitem[selected] {
@@ -72,6 +82,7 @@
 }
 
 #PopupAutoComplete > richlistbox > richlistitem[originaltype="generatedPassword"] > .two-line-wrapper > .labels-wrapper > .generated-password-autosave,
+#PopupAutoComplete > richlistbox > richlistitem[originaltype="importableLearnMore"] > .ac-title,
 #PopupAutoComplete > richlistbox > richlistitem > .two-line-wrapper > .labels-wrapper > .line2-label {
   padding-top: 2px !important;
   opacity: .6;
@@ -90,21 +101,8 @@
   list-style-image: url(chrome://browser/skin/import.svg);
 }
 
-#PopupAutoComplete > richlistbox > richlistitem[originaltype="importableLogins"] > .two-line-wrapper > .ac-info-icon {
-  background: url(chrome://global/skin/icons/identity-icon.svg) center no-repeat;
-  -moz-context-properties: fill;
-  cursor: pointer;
-  fill: GrayText;
-  width: 20px;
-}
-
-#PopupAutoComplete > richlistbox > richlistitem[originaltype="importableLogins"] > .two-line-wrapper > .ac-info-icon:hover {
-  fill: -moz-DialogText;
-}
-
 #PopupAutoComplete > richlistbox > richlistitem[originaltype="generatedPassword"][selected] > .two-line-wrapper > .ac-site-icon,
 #PopupAutoComplete > richlistbox > richlistitem[originaltype="importableLogins"][selected] > .two-line-wrapper > .ac-site-icon,
-#PopupAutoComplete > richlistbox > richlistitem[originaltype="importableLogins"][selected] > .two-line-wrapper > .ac-info-icon,
 #PopupAutoComplete > richlistbox > richlistitem[originaltype="loginWithOrigin"][selected] > .two-line-wrapper > .ac-site-icon,
 #PopupAutoComplete > richlistbox > richlistitem[originaltype="login"] > .ac-site-icon[selected] {
   fill: HighlightText;

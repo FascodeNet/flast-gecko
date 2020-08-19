@@ -383,13 +383,12 @@ bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata,
   for (const ElemSegment* seg : env_->elemSegments) {
     // For now, the segments always carry function indices regardless of the
     // segment's declared element type; this works because the only legal
-    // element types are funcref and anyref and the only legal values are
+    // element types are funcref and externref and the only legal values are
     // functions and null.  We always add functions in segments as exported
     // functions, regardless of the segment's type.  In the future, if we make
     // the representation of AnyRef segments different, we will have to consider
     // function values in those segments specially.
-    bool isAsmJS =
-        seg->active() && env_->tables[seg->tableIndex].kind == TableKind::AsmJS;
+    bool isAsmJS = seg->active() && env_->tables[seg->tableIndex].isAsmJS;
     if (!isAsmJS) {
       for (uint32_t funcIndex : seg->elemFuncIndices) {
         if (funcIndex != NullFuncIndex) {

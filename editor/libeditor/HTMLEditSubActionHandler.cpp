@@ -2560,14 +2560,16 @@ EditActionResult HTMLEditor::HandleDeleteSelectionInternal(
           //       the caret point and use `HandleDeleteNonCollapsedRanges()`
           //       instead after we would create delete range computation
           //       method at switching to the new white-space normalizer.
-          nsresult rv = DeleteNodeWithTransaction(
-              MOZ_KnownLive(*scanFromCaretPointResult.BRElementPtr()));
-          if (NS_WARN_IF(Destroyed())) {
-            return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
-          }
+          nsresult rv = WhiteSpaceVisibilityKeeper::
+              DeleteContentNodeAndJoinTextNodesAroundIt(
+                  *this,
+                  MOZ_KnownLive(*scanFromCaretPointResult.BRElementPtr()),
+                  caretPoint);
           if (NS_FAILED(rv)) {
-            NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed");
-            return EditActionResult(rv);
+            NS_WARNING(
+                "WhiteSpaceVisibilityKeeper::"
+                "DeleteContentNodeAndJoinTextNodesAroundIt() failed");
+            return EditActionHandled(rv);
           }
           if (SelectionRefPtr()->RangeCount() != 1) {
             NS_WARNING(
@@ -2676,19 +2678,32 @@ EditActionResult HTMLEditor::HandleDeleteAroundCollapsedRanges(
   }
 
   if (aScanFromCaretPointResult.ReachedSpecialContent() ||
-      aScanFromCaretPointResult.ReachedBRElement() ||
-      aScanFromCaretPointResult.ReachedHRElement()) {
+      aScanFromCaretPointResult.ReachedBRElement()) {
     if (aScanFromCaretPointResult.GetContent() ==
         aWSRunScannerAtCaret.GetEditingHost()) {
       return EditActionHandled();
     }
     EditActionResult result = HandleDeleteCollapsedSelectionAtAtomicContent(
-        aDirectionAndAmount, aStripWrappers,
         MOZ_KnownLive(*aScanFromCaretPointResult.GetContent()),
         aWSRunScannerAtCaret.ScanStartRef(), aWSRunScannerAtCaret);
     NS_WARNING_ASSERTION(
         result.Succeeded(),
         "HTMLEditor::HandleDeleteCollapsedSelectionAtAtomicContent() failed");
+    return result;
+  }
+
+  if (aScanFromCaretPointResult.ReachedHRElement()) {
+    if (aScanFromCaretPointResult.GetContent() ==
+        aWSRunScannerAtCaret.GetEditingHost()) {
+      return EditActionHandled();
+    }
+    EditActionResult result = HandleDeleteCollapsedSelectionAtHRElement(
+        aDirectionAndAmount,
+        MOZ_KnownLive(*aScanFromCaretPointResult.ElementPtr()),
+        aWSRunScannerAtCaret.ScanStartRef(), aWSRunScannerAtCaret);
+    NS_WARNING_ASSERTION(
+        result.Succeeded(),
+        "HTMLEditor::HandleDeleteCollapsedSelectionAtHRElement() failed");
     return result;
   }
 
@@ -2976,167 +2991,133 @@ EditActionResult HTMLEditor::HandleDeleteCollapsedSelectionAtVisibleChar(
   return EditActionHandled();
 }
 
-EditActionResult HTMLEditor::HandleDeleteCollapsedSelectionAtAtomicContent(
-    nsIEditor::EDirection aDirectionAndAmount,
-    nsIEditor::EStripWrappers aStripWrappers, nsIContent& aAtomicContent,
+Result<bool, nsresult> HTMLEditor::ShouldDeleteHRElement(
+    nsIEditor::EDirection aDirectionAndAmount, Element& aHRElement,
+    const EditorDOMPoint& aCaretPoint) const {
+  MOZ_ASSERT(IsEditActionDataAvailable());
+
+  if (aDirectionAndAmount != nsIEditor::ePrevious) {
+    return true;
+  }
+
+  // Only if the caret is positioned at the end-of-hr-line position, we
+  // want to delete the <hr>.
+  //
+  // In other words, we only want to delete, if our selection position
+  // (indicated by aCaretPoint) is the position directly
+  // after the <hr>, on the same line as the <hr>.
+  //
+  // To detect this case we check:
+  // aCaretPoint's container == parent of `<hr>` element
+  // and
+  // aCaretPoint's offset -1 == `<hr>` element offset
+  // and
+  // interline position is false (left)
+  //
+  // In any other case we set the position to aCaretPoint's container -1
+  // and interlineposition to false, only moving the caret to the
+  // end-of-hr-line position.
+  EditorRawDOMPoint atHRElement(&aHRElement);
+
+  ErrorResult error;
+  bool interLineIsRight = SelectionRefPtr()->GetInterlinePosition(error);
+  if (error.Failed()) {
+    NS_WARNING("Selection::GetInterlinePosition() failed");
+    nsresult rv = error.StealNSResult();
+    return Err(rv);
+  }
+
+  return !interLineIsRight &&
+         aCaretPoint.GetContainer() == atHRElement.GetContainer() &&
+         aCaretPoint.Offset() - 1 == atHRElement.Offset();
+}
+
+EditActionResult HTMLEditor::HandleDeleteCollapsedSelectionAtHRElement(
+    nsIEditor::EDirection aDirectionAndAmount, Element& aHRElement,
     const EditorDOMPoint& aCaretPoint,
+    const WSRunScanner& aWSRunScannerAtCaret) {
+  MOZ_ASSERT(IsEditActionDataAvailable());
+  MOZ_ASSERT(aHRElement.IsHTMLElement(nsGkAtoms::hr));
+  MOZ_ASSERT(&aHRElement != aWSRunScannerAtCaret.GetEditingHost());
+
+  Result<bool, nsresult> canDeleteHRElement =
+      ShouldDeleteHRElement(aDirectionAndAmount, aHRElement, aCaretPoint);
+  if (canDeleteHRElement.isErr()) {
+    NS_WARNING("HTMLEditor::ShouldDeleteHRElement() failed");
+    return EditActionHandled(canDeleteHRElement.unwrapErr());
+  }
+  if (canDeleteHRElement.inspect()) {
+    EditActionResult result = HandleDeleteCollapsedSelectionAtAtomicContent(
+        aHRElement, aCaretPoint, aWSRunScannerAtCaret);
+    NS_WARNING_ASSERTION(
+        result.Succeeded(),
+        "HTMLEditor::HandleDeleteCollapsedSelectionAtAtomicContent() failed");
+    return result;
+  }
+
+  // Go to the position after the <hr>, but to the end of the <hr> line
+  // by setting the interline position to left.
+  EditorDOMPoint atNextOfHRElement(EditorDOMPoint::After(aHRElement));
+  NS_WARNING_ASSERTION(atNextOfHRElement.IsSet(),
+                       "Failed to set after <hr> element");
+
+  {
+    AutoEditorDOMPointChildInvalidator lockOffset(atNextOfHRElement);
+
+    nsresult rv = CollapseSelectionTo(atNextOfHRElement);
+    if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
+      return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
+    }
+    NS_WARNING_ASSERTION(
+        NS_SUCCEEDED(rv),
+        "HTMLEditor::CollapseSelectionTo() failed, but ignored");
+  }
+
+  IgnoredErrorResult ignoredError;
+  SelectionRefPtr()->SetInterlinePosition(false, ignoredError);
+  NS_WARNING_ASSERTION(
+      !ignoredError.Failed(),
+      "Selection::SetInterlinePosition(false) failed, but ignored");
+  TopLevelEditSubActionDataRef().mDidExplicitlySetInterLine = true;
+
+  // There is one exception to the move only case.  If the <hr> is
+  // followed by a <br> we want to delete the <br>.
+
+  WSScanResult forwardScanFromCaretResult =
+      aWSRunScannerAtCaret.ScanNextVisibleNodeOrBlockBoundaryFrom(aCaretPoint);
+  if (!forwardScanFromCaretResult.ReachedBRElement()) {
+    return EditActionHandled();
+  }
+
+  // Delete the <br>
+  nsresult rv =
+      WhiteSpaceVisibilityKeeper::DeleteContentNodeAndJoinTextNodesAroundIt(
+          *this, MOZ_KnownLive(*forwardScanFromCaretResult.BRElementPtr()),
+          aCaretPoint);
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "WhiteSpaceVisibilityKeeper::"
+                       "DeleteContentNodeAndJoinTextNodesAroundIt() failed");
+  return EditActionHandled(rv);
+}
+
+EditActionResult HTMLEditor::HandleDeleteCollapsedSelectionAtAtomicContent(
+    nsIContent& aAtomicContent, const EditorDOMPoint& aCaretPoint,
     const WSRunScanner& aWSRunScannerAtCaret) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT_IF(aAtomicContent.IsHTMLElement(nsGkAtoms::br),
                 IsVisibleBRElement(&aAtomicContent));
   MOZ_ASSERT(&aAtomicContent != aWSRunScannerAtCaret.GetEditingHost());
 
-  // Special handling for backspace when positioned after <hr>
-  if (aDirectionAndAmount == nsIEditor::ePrevious &&
-      aAtomicContent.IsHTMLElement(nsGkAtoms::hr)) {
-    // Only if the caret is positioned at the end-of-hr-line position, we
-    // want to delete the <hr>.
-    //
-    // In other words, we only want to delete, if our selection position
-    // (indicated by aCaretPoint) is the position directly
-    // after the <hr>, on the same line as the <hr>.
-    //
-    // To detect this case we check:
-    // aCaretPoint's container == parent of `<hr>` element
-    // and
-    // aCaretPoint's offset -1 == `<hr>` element offset
-    // and
-    // interline position is false (left)
-    //
-    // In any other case we set the position to aCaretPoint's container -1
-    // and interlineposition to false, only moving the caret to the
-    // end-of-hr-line position.
-    bool moveOnly = true;
-
-    EditorRawDOMPoint atHRElement(&aAtomicContent);
-
-    ErrorResult error;
-    bool interLineIsRight = SelectionRefPtr()->GetInterlinePosition(error);
-    if (error.Failed()) {
-      NS_WARNING("Selection::GetInterlinePosition() failed");
-      return EditActionResult(error.StealNSResult());
-    }
-
-    if (aCaretPoint.GetContainer() == atHRElement.GetContainer() &&
-        aCaretPoint.Offset() - 1 == atHRElement.Offset() && !interLineIsRight) {
-      moveOnly = false;
-    }
-
-    if (moveOnly) {
-      // Go to the position after the <hr>, but to the end of the <hr> line
-      // by setting the interline position to left.
-      EditorDOMPoint atNextOfHRElement(EditorDOMPoint::After(aAtomicContent));
-      NS_WARNING_ASSERTION(atNextOfHRElement.IsSet(),
-                           "Failed to set after <hr> element");
-
-      {
-        AutoEditorDOMPointChildInvalidator lockOffset(atNextOfHRElement);
-
-        nsresult rv = CollapseSelectionTo(atNextOfHRElement);
-        if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
-          return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
-        }
-        NS_WARNING_ASSERTION(
-            NS_SUCCEEDED(rv),
-            "HTMLEditor::CollapseSelectionTo() failed, but ignored");
-      }
-
-      IgnoredErrorResult ignoredError;
-      SelectionRefPtr()->SetInterlinePosition(false, ignoredError);
-      NS_WARNING_ASSERTION(
-          !ignoredError.Failed(),
-          "Selection::SetInterlinePosition(false) failed, but ignored");
-      TopLevelEditSubActionDataRef().mDidExplicitlySetInterLine = true;
-
-      // There is one exception to the move only case.  If the <hr> is
-      // followed by a <br> we want to delete the <br>.
-
-      WSScanResult forwardScanFromCaretResult =
-          aWSRunScannerAtCaret.ScanNextVisibleNodeOrBlockBoundaryFrom(
-              aCaretPoint);
-      if (!forwardScanFromCaretResult.ReachedBRElement()) {
-        return EditActionHandled();
-      }
-
-      // Delete the <br>
-      nsresult rv = WhiteSpaceVisibilityKeeper::PrepareToDeleteNode(
-          *this, MOZ_KnownLive(forwardScanFromCaretResult.BRElementPtr()));
-      if (NS_WARN_IF(Destroyed())) {
-        return EditActionHandled(NS_ERROR_EDITOR_DESTROYED);
-      }
-      if (NS_FAILED(rv)) {
-        NS_WARNING("WhiteSpaceVisibilityKeeper::PrepareToDeleteNode() failed");
-        return EditActionHandled(rv);
-      }
-      rv = DeleteNodeWithTransaction(
-          MOZ_KnownLive(*forwardScanFromCaretResult.BRElementPtr()));
-      if (NS_WARN_IF(Destroyed())) {
-        return EditActionHandled(NS_ERROR_EDITOR_DESTROYED);
-      }
-      NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                           "HTMLEditor::DeleteNodeWithTransaction() failed");
-      return EditActionHandled(rv);
-    }
-    // Else continue with normal delete code
+  nsresult rv =
+      WhiteSpaceVisibilityKeeper::DeleteContentNodeAndJoinTextNodesAroundIt(
+          *this, aAtomicContent, aCaretPoint);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    NS_WARNING(
+        "WhiteSpaceVisibilityKeeper::DeleteContentNodeAndJoinTextNodesAroundIt("
+        ") failed");
+    return EditActionHandled(rv);
   }
 
-  // Found break or image, or hr.
-  // XXX Oddly, this requires `MOZ_KnownLive()` for `&aAtomicContent` here...
-  nsresult rv = WhiteSpaceVisibilityKeeper::PrepareToDeleteNode(
-      *this, MOZ_KnownLive(&aAtomicContent));
-  if (NS_WARN_IF(Destroyed())) {
-    return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
-  }
-  if (NS_FAILED(rv)) {
-    NS_WARNING("WhiteSpaceVisibilityKeeper::PrepareToDeleteNode() failed");
-    return EditActionResult(rv);
-  }
-  // Remember sibling to visnode, if any
-  nsCOMPtr<nsIContent> previousEditableSibling =
-      GetPriorHTMLSibling(&aAtomicContent);
-  // Delete the node, and join like nodes if appropriate
-  rv = DeleteNodeWithTransaction(aAtomicContent);
-  if (NS_WARN_IF(Destroyed())) {
-    return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
-  }
-  if (NS_FAILED(rv)) {
-    NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed");
-    return EditActionResult(rv);
-  }
-  // Is there a prior node and are they siblings?
-  nsCOMPtr<nsINode> nextEditableSibling;
-  if (previousEditableSibling) {
-    nextEditableSibling = GetNextHTMLSibling(previousEditableSibling);
-  }
-  // Are they both text nodes?  If so, join them!
-  // XXX This may cause odd behavior if there is non-editable nodes
-  //     around the atomic content.
-  if (aCaretPoint.GetContainer() == nextEditableSibling &&
-      aCaretPoint.GetContainerAsText() &&
-      previousEditableSibling->GetAsText()) {
-    EditorDOMPoint atFirstChildOfRightNode;
-    nsresult rv = JoinNearestEditableNodesWithTransaction(
-        *previousEditableSibling,
-        MOZ_KnownLive(*aCaretPoint.GetContainerAsContent()),
-        &atFirstChildOfRightNode);
-    if (NS_FAILED(rv)) {
-      NS_WARNING(
-          "HTMLEditor::JoinNearestEditableNodesWithTransaction() failed");
-      return EditActionHandled(rv);
-    }
-    if (!atFirstChildOfRightNode.IsSet()) {
-      NS_WARNING(
-          "HTMLEditor::JoinNearestEditableNodesWithTransaction() didn't return "
-          "right node position");
-      return EditActionHandled(NS_ERROR_FAILURE);
-    }
-    // Fix up selection
-    rv = CollapseSelectionTo(atFirstChildOfRightNode);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("HTMLEditor::CollapseSelectionTo() failed");
-      return EditActionHandled(rv);
-    }
-  }
   rv = InsertBRElementIfHardLineIsEmptyAndEndsWithBlockBoundary(
       EditorBase::GetStartPoint(*SelectionRefPtr()));
   NS_WARNING_ASSERTION(

@@ -392,6 +392,17 @@ void AsyncCompositionManager::AlignFixedAndStickyLayers(
                            aClipPartsCache, aGeckoFixedLayerMargins);
 }
 
+// Determine the amount of overlap between the 1D vector |aTranslation|
+// and the interval [aMin, aMax].
+static gfxFloat IntervalOverlap(gfxFloat aTranslation, gfxFloat aMin,
+                                gfxFloat aMax) {
+  if (aTranslation > 0) {
+    return std::max(0.0, std::min(aMax, aTranslation) - std::max(aMin, 0.0));
+  }
+
+  return std::min(0.0, std::max(aMin, aTranslation) - std::min(aMax, 0.0));
+}
+
 void AsyncCompositionManager::AdjustFixedOrStickyLayer(
     Layer* aTransformedSubtreeRoot, Layer* aFixedOrSticky, SideBits aStuckSides,
     ScrollableLayerGuid::ViewID aTransformScrollId,
@@ -461,7 +472,7 @@ void AsyncCompositionManager::AdjustFixedOrStickyLayer(
 
   // Offset the layer's anchor point to make sure fixed position content
   // respects content document fixed position margins.
-  ScreenPoint offset = ComputeFixedMarginsOffset(
+  ScreenPoint offset = apz::ComputeFixedMarginsOffset(
       aFixedLayerMargins, sideBits,
       // For sticky layers, we don't need to factor aGeckoFixedLayerMargins
       // because Gecko doesn't shift the position of sticky elements for dynamic
@@ -506,14 +517,12 @@ void AsyncCompositionManager::AdjustFixedOrStickyLayer(
     const LayerRectAbsolute& stickyInner = layer->GetStickyScrollRangeInner();
 
     LayerPoint originalTranslation = translation;
-    translation.y = apz::IntervalOverlap(translation.y, stickyOuter.Y(),
-                                         stickyOuter.YMost()) -
-                    apz::IntervalOverlap(translation.y, stickyInner.Y(),
-                                         stickyInner.YMost());
-    translation.x = apz::IntervalOverlap(translation.x, stickyOuter.X(),
-                                         stickyOuter.XMost()) -
-                    apz::IntervalOverlap(translation.x, stickyInner.X(),
-                                         stickyInner.XMost());
+    translation.y =
+        IntervalOverlap(translation.y, stickyOuter.Y(), stickyOuter.YMost()) -
+        IntervalOverlap(translation.y, stickyInner.Y(), stickyInner.YMost());
+    translation.x =
+        IntervalOverlap(translation.x, stickyOuter.X(), stickyOuter.XMost()) -
+        IntervalOverlap(translation.x, stickyInner.X(), stickyInner.XMost());
     unconsumedTranslation = translation - originalTranslation;
   }
 
@@ -856,6 +865,10 @@ bool AsyncCompositionManager::ApplyAsyncContentTransformToTree(
                 if (CompositorBridgeParent* bridge =
                         compositor->GetCompositorBridgeParent()) {
                   LayersId rootLayerTreeId = bridge->RootLayerTreeId();
+                  // XXX: This should be using the APZ metrics, not the
+                  // layer tree metrics. (And possibly, both this code and
+                  // the WR equivalent should be using the "effective"
+                  // metrics matching the values being composited.)
                   if (mIsFirstPaint || FrameMetricsHaveUpdated(metrics)) {
                     if (RefPtr<UiCompositorControllerParent> uiController =
                             UiCompositorControllerParent::
@@ -1114,10 +1127,9 @@ bool AsyncCompositionManager::ApplyAsyncContentTransformToTree(
 #if defined(MOZ_WIDGET_ANDROID)
 bool AsyncCompositionManager::FrameMetricsHaveUpdated(
     const FrameMetrics& aMetrics) {
-  return RoundedToInt(mLastMetrics.GetScrollOffset()) !=
-             RoundedToInt(aMetrics.GetScrollOffset()) ||
+  return RoundedToInt(mLastMetrics.GetVisualScrollOffset()) !=
+             RoundedToInt(aMetrics.GetVisualScrollOffset()) ||
          mLastMetrics.GetZoom() != aMetrics.GetZoom();
-  ;
 }
 #endif
 
@@ -1298,34 +1310,6 @@ ScreenMargin AsyncCompositionManager::GetFixedLayerMargins() const {
     result.bottom = StaticPrefs::apz_fixed_margin_override_bottom();
   }
   return result;
-}
-
-/*static*/
-ScreenPoint AsyncCompositionManager::ComputeFixedMarginsOffset(
-    const ScreenMargin& aCompositorFixedLayerMargins, SideBits aFixedSides,
-    const ScreenMargin& aGeckoFixedLayerMargins) {
-  // Work out the necessary translation, in screen space.
-  ScreenPoint translation;
-
-  ScreenMargin effectiveMargin =
-      aCompositorFixedLayerMargins - aGeckoFixedLayerMargins;
-  if ((aFixedSides & SideBits::eLeftRight) == SideBits::eLeftRight) {
-    translation.x += (effectiveMargin.left - effectiveMargin.right) / 2;
-  } else if (aFixedSides & SideBits::eRight) {
-    translation.x -= effectiveMargin.right;
-  } else if (aFixedSides & SideBits::eLeft) {
-    translation.x += effectiveMargin.left;
-  }
-
-  if ((aFixedSides & SideBits::eTopBottom) == SideBits::eTopBottom) {
-    translation.y += (effectiveMargin.top - effectiveMargin.bottom) / 2;
-  } else if (aFixedSides & SideBits::eBottom) {
-    translation.y -= effectiveMargin.bottom;
-  } else if (aFixedSides & SideBits::eTop) {
-    translation.y += effectiveMargin.top;
-  }
-
-  return translation;
 }
 
 }  // namespace layers

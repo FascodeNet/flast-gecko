@@ -31,28 +31,6 @@ class AutoResolveRefLayers;
 class CompositorBridgeParent;
 class SampleTime;
 
-// Represents async transforms consisting of a scale and a translation.
-struct AsyncTransform {
-  explicit AsyncTransform(
-      LayerToParentLayerScale aScale = LayerToParentLayerScale(),
-      ParentLayerPoint aTranslation = ParentLayerPoint())
-      : mScale(aScale), mTranslation(aTranslation) {}
-
-  operator AsyncTransformComponentMatrix() const {
-    return AsyncTransformComponentMatrix::Scaling(mScale.scale, mScale.scale, 1)
-        .PostTranslate(mTranslation.x, mTranslation.y, 0);
-  }
-
-  bool operator==(const AsyncTransform& rhs) const {
-    return mTranslation == rhs.mTranslation && mScale == rhs.mScale;
-  }
-
-  bool operator!=(const AsyncTransform& rhs) const { return !(*this == rhs); }
-
-  LayerToParentLayerScale mScale;
-  ParentLayerPoint mTranslation;
-};
-
 /**
  * Manage async composition effects. This class is only used with OMTC and only
  * lives on the compositor thread. It is a layer on top of the layer manager
@@ -128,14 +106,6 @@ class AsyncCompositionManager final {
   };
 
   typedef std::map<Layer*, ClipParts> ClipPartsCache;
-
-  /**
-   * Compute the translation that should be applied to a layer that's fixed
-   * at |eFixedSides|, to respect the fixed layer margins |aFixedMargins|.
-   */
-  static ScreenPoint ComputeFixedMarginsOffset(
-      const ScreenMargin& aFixedMargins, SideBits eFixedSides,
-      const ScreenMargin& aGeckoFixedLayerMargins);
 
  private:
   // Return true if an AsyncPanZoomController content transform was

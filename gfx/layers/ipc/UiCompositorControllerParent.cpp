@@ -217,7 +217,7 @@ void UiCompositorControllerParent::NotifyUpdateScreenMetrics(
   CSSToScreenScale scale = ViewTargetAs<ScreenPixel>(
       aMetrics.GetZoom().ToScaleFactor(),
       PixelCastJustification::ScreenIsParentLayerForRoot);
-  ScreenPoint scrollOffset = aMetrics.GetScrollOffset() * scale;
+  ScreenPoint scrollOffset = aMetrics.GetVisualScrollOffset() * scale;
   CompositorThread()->Dispatch(NewRunnableMethod<ScreenPoint, CSSToScreenScale>(
       "UiCompositorControllerParent::SendRootFrameMetrics", this,
       &UiCompositorControllerParent::SendRootFrameMetrics, scrollOffset,

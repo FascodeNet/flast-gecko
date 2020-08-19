@@ -61,7 +61,7 @@
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/PathHelpers.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
-#include "mozilla/layers/APZUtils.h"  // for apz::CalculatePendingDisplayPort
+#include "mozilla/layers/APZPublicUtils.h"  // for apz::CalculatePendingDisplayPort
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/PAPZ.h"
 #include "mozilla/layers/StackingContextHelper.h"
@@ -3450,8 +3450,10 @@ FrameMetrics nsLayoutUtils::CalculateBasicFrameMetrics(
   PresShell* presShell = presContext->PresShell();
   CSSToLayoutDeviceScale deviceScale = presContext->CSSToDevPixelScale();
   float resolution = 1.0f;
-  if (frame == presShell->GetRootScrollFrame()) {
-    // Only the root scrollable frame for a given presShell should pick up
+  bool isRcdRsf = aScrollFrame->IsRootScrollFrameOfDocument() &&
+                  presContext->IsRootContentDocumentCrossProcess();
+  if (isRcdRsf) {
+    // Only the root content document's root scrollable frame should pick up
     // the presShell's resolution. All the other frames are 1.0.
     resolution = presShell->GetResolution();
   }
@@ -3496,8 +3498,12 @@ FrameMetrics nsLayoutUtils::CalculateBasicFrameMetrics(
   metrics.SetRootCompositionSize(
       nsLayoutUtils::CalculateRootCompositionSize(frame, false, metrics));
 
-  metrics.SetScrollOffset(
-      CSSPoint::FromAppUnits(aScrollFrame->GetScrollPosition()));
+  metrics.SetLayoutViewport(
+      CSSRect::FromAppUnits(nsRect(aScrollFrame->GetScrollPosition(),
+                                   aScrollFrame->GetScrollPortRect().Size())));
+  metrics.SetVisualScrollOffset(
+      isRcdRsf ? CSSPoint::FromAppUnits(presShell->GetVisualViewportOffset())
+               : metrics.GetLayoutViewport().TopLeft());
 
   metrics.SetScrollableRect(CSSRect::FromAppUnits(
       nsLayoutUtils::CalculateScrollableRectForFrame(aScrollFrame, nullptr)));
@@ -9266,16 +9272,16 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
           scrollableFrame, aForFrame)));
 
   if (scrollableFrame) {
-    CSSPoint scrollPosition =
+    CSSPoint layoutScrollOffset =
         CSSPoint::FromAppUnits(scrollableFrame->GetScrollPosition());
     CSSPoint apzScrollPosition =
         CSSPoint::FromAppUnits(scrollableFrame->GetApzScrollPosition());
-    metrics.SetScrollOffset(scrollPosition);
-    metrics.SetBaseScrollOffset(apzScrollPosition);
-    metrics.SetVisualViewportOffset(
+    CSSPoint visualScrollOffset =
         aIsRootContent && presShell->IsVisualViewportOffsetSet()
             ? CSSPoint::FromAppUnits(presShell->GetVisualViewportOffset())
-            : scrollPosition);
+            : layoutScrollOffset;
+    metrics.SetVisualScrollOffset(visualScrollOffset);
+    metrics.SetBaseScrollOffset(apzScrollPosition);
 
     if (aIsRootContent) {
       if (aLayerManager->GetIsFirstPaint() &&
@@ -9288,7 +9294,7 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
 
       if (const Maybe<PresShell::VisualScrollUpdate>& visualUpdate =
               presShell->GetPendingVisualScrollUpdate()) {
-        metrics.SetVisualViewportOffset(
+        metrics.SetVisualScrollOffset(
             CSSPoint::FromAppUnits(visualUpdate->mVisualScrollOffset));
         metrics.SetVisualScrollUpdateType(visualUpdate->mUpdateType);
         presShell->AcknowledgePendingVisualScrollUpdate();
@@ -9330,7 +9336,7 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
     }
 
     CSSRect viewport = metrics.GetLayoutViewport();
-    viewport.MoveTo(scrollPosition);
+    viewport.MoveTo(layoutScrollOffset);
     metrics.SetLayoutViewport(viewport);
 
     nsPoint smoothScrollPosition = scrollableFrame->LastScrollDestination();
@@ -9885,7 +9891,7 @@ static void UpdateDisplayPortMarginsForPendingMetrics(
 
   CSSPoint frameScrollOffset =
       CSSPoint::FromAppUnits(frame->GetScrollPosition());
-  CSSPoint scrollDelta = aMetrics.GetScrollOffset() - frameScrollOffset;
+  CSSPoint scrollDelta = aMetrics.GetVisualScrollOffset() - frameScrollOffset;
   ScreenMargin displayPortMargins =
       APZCCallbackHelper::AdjustDisplayPortForScrollDelta(
           aMetrics.GetDisplayPortMargins(),

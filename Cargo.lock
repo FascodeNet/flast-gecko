@@ -769,7 +769,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 dependencies = [
  "cranelift-entity 0.66.0",
 ]
@@ -777,7 +777,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 dependencies = [
  "byteorder",
  "cranelift-bforest",
@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 dependencies = [
  "cranelift-codegen-shared",
  "cranelift-entity 0.66.0",
@@ -803,7 +803,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 
 [[package]]
 name = "cranelift-entity"
@@ -813,12 +813,12 @@ source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a6
 [[package]]
 name = "cranelift-entity"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 
 [[package]]
 name = "cranelift-frontend"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -829,7 +829,7 @@ dependencies = [
 [[package]]
 name = "cranelift-wasm"
 version = "0.66.0"
-source = "git+https://github.com/bytecodealliance/wasmtime?rev=279534e27611ee4a13e4590a0a10ffc0fdb95a33#279534e27611ee4a13e4590a0a10ffc0fdb95a33"
+source = "git+https://github.com/bytecodealliance/wasmtime?rev=924782191b1cdd85438b707d20a82fbcc8ad40e1#924782191b1cdd85438b707d20a82fbcc8ad40e1"
 dependencies = [
  "cranelift-codegen",
  "cranelift-entity 0.66.0",
@@ -1331,9 +1331,9 @@ dependencies = [
 
 [[package]]
 name = "euclid"
-version = "0.20.14"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bb7ef65b3777a325d1eeefefab5b6d4959da54747e33bd6258e789640f307ad"
+checksum = "7ab0e07e345fb061928646949fdf5fb888e5d75a57385e7f5856e45be289e745"
 dependencies = [
  "num-traits",
  "serde",
@@ -3176,8 +3176,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-common"
-version = "0.4.9"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.9#422197c2bc2010647cd9c156deea18fb543079c6"
+version = "0.4.10"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.10#d41b4b3ee922f03eab32328a8163f0cece69a468"
 dependencies = [
  "chrono",
  "env_logger 0.6.2",
@@ -3189,8 +3189,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-crypto"
-version = "0.4.9"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.9#422197c2bc2010647cd9c156deea18fb543079c6"
+version = "0.4.10"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.10#d41b4b3ee922f03eab32328a8163f0cece69a468"
 dependencies = [
  "bindgen",
  "log",
@@ -3202,8 +3202,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-http3"
-version = "0.4.9"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.9#422197c2bc2010647cd9c156deea18fb543079c6"
+version = "0.4.10"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.10#d41b4b3ee922f03eab32328a8163f0cece69a468"
 dependencies = [
  "log",
  "neqo-common",
@@ -3217,8 +3217,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-qpack"
-version = "0.4.9"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.9#422197c2bc2010647cd9c156deea18fb543079c6"
+version = "0.4.10"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.10#d41b4b3ee922f03eab32328a8163f0cece69a468"
 dependencies = [
  "lazy_static",
  "log",
@@ -3232,8 +3232,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-transport"
-version = "0.4.9"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.9#422197c2bc2010647cd9c156deea18fb543079c6"
+version = "0.4.10"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.10#d41b4b3ee922f03eab32328a8163f0cece69a468"
 dependencies = [
  "indexmap",
  "lazy_static",
@@ -3736,9 +3736,9 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plane-split"
-version = "0.15.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffe16a646a08f4b4dd74035b9ff8e378eb1a4012a74f14f5889e7001cdbece33"
+checksum = "2211e7ccc9b6260779dd9bad59f7b10889d6361974623b9e405afd7e7e764654"
 dependencies = [
  "binary-space-partition",
  "euclid",
@@ -4043,9 +4043,9 @@ dependencies = [
 
 [[package]]
 name = "regalloc"
-version = "0.0.29"
+version = "0.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c178c51068338acd359c6e1ed356fcffe6b6cb3c162f68f70e251ca29bfe0eba"
+checksum = "2041c2d34f6ff346d6f428974f03d8bf12679b0c816bb640dc5eb1d48848d8d1"
 dependencies = [
  "log",
  "rustc-hash",
@@ -5518,18 +5518,18 @@ checksum = "a950e6a618f62147fd514ff445b2a0b53120d382751960797f85f058c7eda9b9"
 
 [[package]]
 name = "wast"
-version = "20.0.0"
+version = "23.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fb95ce157a8c779ec301ef3e4c0a7caeb6f9f902f813f1f5f7e464367048924"
+checksum = "26b080a48623c1b15193eac2e28c7b8d0e6b2e1c6c67ed46ddcd86063e78e504"
 dependencies = [
  "leb128",
 ]
 
 [[package]]
 name = "wat"
-version = "1.0.21"
+version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9afa9815ddfb592fb97bb2b817a514c6995e5c171b05037b91d0d831f3a2a9c0"
+checksum = "6c350d7431aa486488d28cdf75b57d59c02fab9cde20d93c52424510afe18ecc"
 dependencies = [
  "wast",
 ]
