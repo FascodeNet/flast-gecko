@@ -1660,6 +1660,30 @@ MDefinition* MConcat::foldsTo(TempAllocator& alloc) {
   return this;
 }
 
+MDefinition* MCharCodeAt::foldsTo(TempAllocator& alloc) {
+  MDefinition* string = this->string();
+  if (!string->isConstant()) {
+    return this;
+  }
+
+  MDefinition* index = this->index();
+  if (index->isSpectreMaskIndex()) {
+    index = index->toSpectreMaskIndex()->index();
+  }
+  if (!index->isConstant()) {
+    return this;
+  }
+
+  JSAtom* atom = &string->toConstant()->toString()->asAtom();
+  int32_t idx = index->toConstant()->toInt32();
+  if (idx < 0 || uint32_t(idx) >= atom->length()) {
+    return this;
+  }
+
+  char16_t ch = atom->latin1OrTwoByteChar(idx);
+  return MConstant::New(alloc, Int32Value(ch));
+}
+
 static bool EnsureFloatInputOrConvert(MUnaryInstruction* owner,
                                       TempAllocator& alloc) {
   MDefinition* input = owner->input();
@@ -4454,6 +4478,69 @@ bool MCompare::evaluateConstantOperands(TempAllocator& alloc, bool* result) {
   return false;
 }
 
+MDefinition* MCompare::tryFoldCharCompare(TempAllocator& alloc) {
+  if (compareType() != Compare_String) {
+    return this;
+  }
+
+  MDefinition* left = lhs();
+  MOZ_ASSERT(left->type() == MIRType::String);
+
+  MDefinition* right = rhs();
+  MOZ_ASSERT(right->type() == MIRType::String);
+
+  // |str[i]| is compiled as |MFromCharCode(MCharCodeAt(str, i))|.
+  auto isCharAccess = [](MDefinition* ins) {
+    return ins->isFromCharCode() &&
+           ins->toFromCharCode()->input()->isCharCodeAt();
+  };
+
+  if (left->isConstant() || right->isConstant()) {
+    // Try to optimize |MConstant(string) <compare> (MFromCharCode MCharCodeAt)|
+    // as |MConstant(charcode) <compare> MCharCodeAt|.
+    MConstant* constant;
+    MDefinition* operand;
+    if (left->isConstant()) {
+      constant = left->toConstant();
+      operand = right;
+    } else {
+      constant = right->toConstant();
+      operand = left;
+    }
+
+    if (constant->toString()->length() != 1 || !isCharAccess(operand)) {
+      return this;
+    }
+
+    char16_t charCode = constant->toString()->asAtom().latin1OrTwoByteChar(0);
+    MConstant* charCodeConst = MConstant::New(alloc, Int32Value(charCode));
+    block()->insertBefore(this, charCodeConst);
+
+    MDefinition* charCodeAt = operand->toFromCharCode()->input();
+
+    if (left->isConstant()) {
+      left = charCodeConst;
+      right = charCodeAt;
+    } else {
+      left = charCodeAt;
+      right = charCodeConst;
+    }
+  } else if (isCharAccess(left) && isCharAccess(right)) {
+    // Try to optimize |(MFromCharCode MCharCodeAt) <compare> (MFromCharCode
+    // MCharCodeAt)| as |MCharCodeAt <compare> MCharCodeAt|.
+
+    left = left->toFromCharCode()->input();
+    right = right->toFromCharCode()->input();
+  } else {
+    return this;
+  }
+
+  MCompare* ins = MCompare::New(alloc, left, right, jsop());
+  ins->setCompareType(MCompare::Compare_Int32);
+
+  return ins;
+}
+
 MDefinition* MCompare::foldsTo(TempAllocator& alloc) {
   bool result;
 
@@ -4464,6 +4551,10 @@ MDefinition* MCompare::foldsTo(TempAllocator& alloc) {
 
     MOZ_ASSERT(type() == MIRType::Boolean);
     return MConstant::New(alloc, BooleanValue(result));
+  }
+
+  if (MDefinition* folded = tryFoldCharCompare(alloc); folded != this) {
+    return folded;
   }
 
   return this;
@@ -5831,6 +5922,81 @@ MDefinition* MIsNullOrUndefined::foldsTo(TempAllocator& alloc) {
   if (!input->mightBeType(MIRType::Null) &&
       !input->mightBeType(MIRType::Undefined)) {
     return MConstant::New(alloc, BooleanValue(false));
+  }
+
+  return this;
+}
+
+static MDefinition* SkipObjectGuards(MDefinition* ins) {
+  // These instructions don't modify the object and just guard specific
+  // properties.
+  while (true) {
+    if (ins->isGuardShape()) {
+      ins = ins->toGuardShape()->object();
+      continue;
+    }
+    if (ins->isGuardObjectGroup()) {
+      ins = ins->toGuardObjectGroup()->object();
+      continue;
+    }
+
+    break;
+  }
+
+  return ins;
+}
+
+MDefinition* MGuardShape::foldsTo(TempAllocator& alloc) {
+  MDefinition* ins = dependency();
+  if (!ins) {
+    return this;
+  }
+
+  if (!ins->block()->dominates(block())) {
+    return this;
+  }
+
+  if (ins->isAddAndStoreSlot()) {
+    auto* add = ins->toAddAndStoreSlot();
+
+    if (SkipObjectGuards(add->object()) != SkipObjectGuards(object()) ||
+        add->shape() != shape()) {
+      return this;
+    }
+
+    // TODO(Warp): Here and below add MAssertShape.
+    return object();
+  }
+
+  if (ins->isAllocateAndStoreSlot()) {
+    auto* allocate = ins->toAllocateAndStoreSlot();
+
+    if (SkipObjectGuards(allocate->object()) != SkipObjectGuards(object()) ||
+        allocate->shape() != shape()) {
+      return this;
+    }
+
+    return object();
+  }
+
+  if (ins->isStart()) {
+    // The guard doesn't depend on any other instruction that is modifying
+    // the object operand, so check it directly.
+    auto* obj = SkipObjectGuards(object());
+    if (!obj->isNewObject()) {
+      return this;
+    }
+
+    JSObject* templateObject = obj->toNewObject()->templateObject();
+    if (!templateObject) {
+      return this;
+    }
+
+    if (templateObject->shape() != shape()) {
+      return this;
+    }
+
+    return object();
   }
 
   return this;

@@ -1757,6 +1757,28 @@ class StoragePressureRunnable final : public Runnable {
   NS_DECL_NSIRUNNABLE
 };
 
+class RecordQuotaInfoLoadTimeHelper final : public Runnable {
+  // TimeStamps that are set on the IO thread.
+  LazyInitializedOnceNotNull<const TimeStamp> mStartTime;
+  LazyInitializedOnceNotNull<const TimeStamp> mEndTime;
+
+  // A TimeStamp that is set on the main thread.
+  LazyInitializedOnceNotNull<const TimeStamp> mInitializedTime;
+
+ public:
+  RecordQuotaInfoLoadTimeHelper()
+      : Runnable("dom::quota::RecordQuotaInfoLoadTimeHelper") {}
+
+  void Start();
+
+  void End();
+
+ private:
+  ~RecordQuotaInfoLoadTimeHelper() = default;
+
+  NS_DECL_NSIRUNNABLE
+};
+
 /*******************************************************************************
  * Helper classes
  ******************************************************************************/
@@ -1979,6 +2001,9 @@ bool gQuotaManagerInitialized = false;
 StaticRefPtr<QuotaManager> gInstance;
 bool gCreateFailed = false;
 mozilla::Atomic<bool> gShutdown(false);
+
+// A time stamp that can only be accessed on the main thread.
+TimeStamp gLastOSWake;
 
 typedef nsTArray<CheckedUnsafePtr<NormalOriginOperationBase>>
     NormalOriginOpArray;
@@ -3104,6 +3129,7 @@ nsresult QuotaManager::Observer::Init() {
     return NS_ERROR_FAILURE;
   }
 
+  // XXX: Improve the way that we remove observer in failure cases.
   nsresult rv = obs->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
@@ -3122,6 +3148,14 @@ nsresult QuotaManager::Observer::Init() {
     return rv;
   }
 
+  rv = obs->AddObserver(this, NS_WIDGET_WAKE_OBSERVER_TOPIC, false);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    obs->RemoveObserver(this, kProfileDoChangeTopic);
+    obs->RemoveObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID);
+    obs->RemoveObserver(this, PROFILE_BEFORE_CHANGE_QM_OBSERVER_ID);
+    return rv;
+  }
+
   return NS_OK;
 }
 
@@ -3133,6 +3167,7 @@ nsresult QuotaManager::Observer::Shutdown() {
     return NS_ERROR_FAILURE;
   }
 
+  MOZ_ALWAYS_SUCCEEDS(obs->RemoveObserver(this, NS_WIDGET_WAKE_OBSERVER_TOPIC));
   MOZ_ALWAYS_SUCCEEDS(
       obs->RemoveObserver(this, PROFILE_BEFORE_CHANGE_QM_OBSERVER_ID));
   MOZ_ALWAYS_SUCCEEDS(obs->RemoveObserver(this, kProfileDoChangeTopic));
@@ -3250,6 +3285,12 @@ QuotaManager::Observer::Observe(nsISupports* aSubject, const char* aTopic,
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
+
+    return NS_OK;
+  }
+
+  if (!strcmp(aTopic, NS_WIDGET_WAKE_OBSERVER_TOPIC)) {
+    gLastOSWake = TimeStamp::Now();
 
     return NS_OK;
   }
@@ -4323,6 +4364,10 @@ nsresult QuotaManager::LoadQuota() {
   MOZ_ASSERT(mStorageConnection);
   MOZ_ASSERT(!mTemporaryStorageInitialized);
 
+  auto recordQuotaInfoLoadTimeHelper =
+      MakeRefPtr<RecordQuotaInfoLoadTimeHelper>();
+  recordQuotaInfoLoadTimeHelper->Start();
+
   auto LoadQuotaFromCache = [&]() {
     nsCOMPtr<mozIStorageStatement> stmt;
     nsresult rv = mStorageConnection->CreateStatement(
@@ -4532,8 +4577,6 @@ nsresult QuotaManager::LoadQuota() {
 
   auto autoRemoveQuota = MakeScopeExit([&] { RemoveQuota(); });
 
-  TimeStamp startTime = TimeStamp::Now();
-
   if (!loadQuotaFromCache ||
       !StaticPrefs::dom_quotaManager_loadQuotaFromCache() ||
       NS_WARN_IF(NS_FAILED(LoadQuotaFromCache()))) {
@@ -4569,16 +4612,14 @@ nsresult QuotaManager::LoadQuota() {
 #endif
   }
 
-  const auto now = TimeStamp::Now();
-  Telemetry::AccumulateTimeDelta(
-      Telemetry::QM_REPOSITORIES_INITIALIZATION_TIME_V2, startTime, now);
-
   if (mCacheUsable) {
     rv = InvalidateCache(mStorageConnection);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
   }
+
+  recordQuotaInfoLoadTimeHelper->End();
 
   autoRemoveQuota.release();
 
@@ -8540,6 +8581,61 @@ StoragePressureRunnable::Run() {
   wrapper->SetData(mUsage);
 
   obsSvc->NotifyObservers(wrapper, "QuotaManager::StoragePressure", u"");
+
+  return NS_OK;
+}
+
+void RecordQuotaInfoLoadTimeHelper::Start() {
+  AssertIsOnIOThread();
+
+  // XXX: If a OS sleep/wake occur after mStartTime is initialized but before
+  // gLastOSWake is set, then this time duration would still be recorded with
+  // key "Normal". We are assumming this is rather rare to happen.
+  mStartTime.init(TimeStamp::Now());
+  MOZ_ALWAYS_SUCCEEDS(NS_DispatchToMainThread(this));
+}
+
+void RecordQuotaInfoLoadTimeHelper::End() {
+  AssertIsOnIOThread();
+
+  mEndTime.init(TimeStamp::Now());
+  MOZ_ALWAYS_SUCCEEDS(NS_DispatchToMainThread(this));
+}
+
+NS_IMETHODIMP
+RecordQuotaInfoLoadTimeHelper::Run() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (mInitializedTime.isSome()) {
+    const auto key = [this, wasSuspended = gLastOSWake > *mInitializedTime]() {
+      if (wasSuspended) {
+        return "WasSuspended"_ns;
+      }
+
+      // XXX File a bug if we have data for this key.
+      // We found negative values in our query in STMO for
+      // ScalarID::QM_REPOSITORIES_INITIALIZATION_TIME. This shouldn't happen
+      // because the documentation for TimeStamp::Now() says it returns a
+      // monotonically increasing number.
+      if (*mStartTime > *mEndTime) {
+        return "TimeStampErr1"_ns;
+      }
+
+      if (*mInitializedTime > gLastOSWake) {
+        return "TimeStampErr2"_ns;
+      }
+
+      return "Normal"_ns;
+    }();
+
+    Telemetry::AccumulateTimeDelta(Telemetry::QM_QUOTA_INFO_LOAD_TIME_V0, key,
+                                   *mStartTime, *mEndTime);
+
+    return NS_OK;
+  }
+
+  gLastOSWake = TimeStamp::Now();
+  mInitializedTime.init(gLastOSWake);
 
   return NS_OK;
 }

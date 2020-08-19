@@ -1599,7 +1599,26 @@ void nsPresContext::SetPaginatedScrolling(bool aPaginated) {
 }
 
 void nsPresContext::SetPrintSettings(nsIPrintSettings* aPrintSettings) {
-  if (mMedium == nsGkAtoms::print) mPrintSettings = aPrintSettings;
+  if (mMedium != nsGkAtoms::print) {
+    return;
+  }
+
+  mPrintSettings = aPrintSettings;
+  mDefaultPageMargin = nsMargin();
+  if (!mPrintSettings) {
+    return;
+  }
+
+  nsIntMargin unwriteableTwips;
+  mPrintSettings->GetUnwriteableMarginInTwips(unwriteableTwips);
+  NS_ASSERTION(unwriteableTwips.top >= 0 && unwriteableTwips.right >= 0 &&
+                   unwriteableTwips.bottom >= 0 && unwriteableTwips.left >= 0,
+               "Unwriteable twips should be non-negative");
+
+  nsIntMargin marginTwips;
+  mPrintSettings->GetMarginInTwips(marginTwips);
+  mDefaultPageMargin =
+      nsPresContext::CSSTwipsToAppUnits(marginTwips + unwriteableTwips);
 }
 
 bool nsPresContext::EnsureVisible() {
@@ -2345,6 +2364,16 @@ void nsPresContext::NotifyContentfulPaint() {
       }
     }
   }
+}
+
+void nsPresContext::NotifyPaintStatusReset() {
+  mHadNonBlankPaint = false;
+  mHadContentfulPaint = false;
+#if defined(MOZ_WIDGET_ANDROID)
+  (new AsyncEventDispatcher(mDocument, u"MozPaintStatusReset"_ns,
+                            CanBubble::eYes, ChromeOnlyDispatch::eYes))
+      ->PostDOMEvent();
+#endif
 }
 
 void nsPresContext::NotifyDOMContentFlushed() {

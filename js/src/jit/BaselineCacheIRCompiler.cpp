@@ -1600,6 +1600,58 @@ bool BaselineCacheIRCompiler::emitIsTypedArrayResult(ObjOperandId objId,
   return true;
 }
 
+bool BaselineCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
+                                                       Int32OperandId indexId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoOutputRegister output(*this);
+  Register str = allocator.useRegister(masm, strId);
+  Register index = allocator.useRegister(masm, indexId);
+  AutoScratchRegisterMaybeOutput scratch1(allocator, masm, output);
+  AutoScratchRegister scratch2(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Bounds check, load string char.
+  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                            scratch1, failure->label());
+  masm.loadStringChar(str, index, scratch1, scratch2, failure->label());
+
+  allocator.discardStack(masm);
+
+  // Load StaticString for this char. For larger code units perform a VM call.
+  Label vmCall;
+  masm.boundsCheck32PowerOfTwo(scratch1, StaticStrings::UNIT_STATIC_LIMIT,
+                               &vmCall);
+  masm.movePtr(ImmPtr(&cx_->staticStrings().unitStaticTable), scratch2);
+  masm.loadPtr(BaseIndex(scratch2, scratch1, ScalePointer), scratch2);
+
+  Label done;
+  masm.jump(&done);
+
+  {
+    masm.bind(&vmCall);
+
+    AutoStubFrame stubFrame(*this);
+    stubFrame.enter(masm, scratch2);
+
+    masm.Push(scratch1);
+
+    using Fn = JSLinearString* (*)(JSContext*, int32_t);
+    callVM<Fn, jit::StringFromCharCode>(masm);
+
+    stubFrame.leave(masm);
+
+    masm.storeCallPointerResult(scratch2);
+  }
+
+  masm.bind(&done);
+  masm.tagValue(JSVAL_TYPE_STRING, scratch2, output.valueReg());
+  return true;
+}
+
 bool BaselineCacheIRCompiler::emitStringFromCodeResult(Int32OperandId codeId,
                                                        StringCode stringCode) {
   AutoOutputRegister output(*this);

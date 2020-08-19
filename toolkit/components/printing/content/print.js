@@ -195,7 +195,7 @@ var PrintEventHandler = {
 
   async _updatePrintPreview() {
     let numPages = await PrintUtils.updatePrintPreview(
-      this.sourceBrowser,
+      this.getSourceBrowsingContext(),
       this.previewBrowser,
       this.settings
     );
@@ -213,17 +213,21 @@ var PrintEventHandler = {
     }
   },
 
-  getSourceBrowser() {
+  getSourceBrowsingContext() {
     let params = new URLSearchParams(location.search);
     let browsingContextId = params.get("browsingContextId");
     if (!browsingContextId) {
       return null;
     }
-    let browsingContext = BrowsingContext.get(browsingContextId);
+    return BrowsingContext.get(browsingContextId);
+  },
+
+  getSourceBrowser() {
+    let browsingContext = this.getSourceBrowsingContext();
     if (!browsingContext) {
       return null;
     }
-    return browsingContext.embedderElement;
+    return browsingContext.top.embedderElement;
   },
 
   getPreviewBrowser() {
@@ -577,14 +581,16 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
       return;
     }
 
-    window.clearTimeout(this.invalidTimeoutId);
+    if (e.type == "input") {
+      window.clearTimeout(this.invalidTimeoutId);
 
-    if (this._percentScale.checkValidity() && e.type == "input") {
-      this.invalidTimeoutId = window.setTimeout(() => {
-        this.dispatchSettingsChange({
-          scaling: Number(this._percentScale.value / 100),
-        });
-      }, INVALID_INPUT_DELAY_MS);
+      if (this._percentScale.checkValidity()) {
+        this.invalidTimeoutId = window.setTimeout(() => {
+          this.dispatchSettingsChange({
+            scaling: Number(this._percentScale.value / 100),
+          });
+        }, INVALID_INPUT_DELAY_MS);
+      }
     }
     this._scaleError.hidden = this._percentScale.validity.valid;
   }
@@ -754,7 +760,9 @@ async function pickFileName(sourceBrowser, pageSettings) {
   );
   picker.appendFilter("PDF", "*.pdf");
   picker.defaultExtension = "pdf";
-  picker.defaultString = filename;
+  // macOS and linux don't set the extension based on the default. Windows will
+  // only include the filename once, so we can add it there too.
+  picker.defaultString = filename + ".pdf";
 
   let retval = await new Promise(resolve => picker.open(resolve));
 

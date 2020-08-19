@@ -27,19 +27,19 @@ class TestSwitchFrameChrome(WindowManagerMixin, MarionetteTestCase):
     def test_switch_simple(self):
         self.assertIn("test.xhtml", self.marionette.get_url(), "Initial navigation has failed")
         self.marionette.switch_to_frame(0)
-        self.assertIn("test2.xhtml", self.marionette.get_url(), "Switching by index failed")
+        self.assertIn("test.xhtml", self.marionette.get_url(), "Switching by index failed")
         self.marionette.find_element(By.ID, "testBox")
         self.marionette.switch_to_frame()
         self.assertIn("test.xhtml", self.marionette.get_url(), "Switching by null failed")
         iframe = self.marionette.find_element(By.ID, "iframe")
         self.marionette.switch_to_frame(iframe)
-        self.assertIn("test2.xhtml", self.marionette.get_url(), "Switching by element failed")
+        self.assertIn("test.xhtml", self.marionette.get_url(), "Switching by element failed")
         self.marionette.find_element(By.ID, "testBox")
 
     def test_stack_trace(self):
         self.assertIn("test.xhtml", self.marionette.get_url(), "Initial navigation has failed")
         self.marionette.switch_to_frame(0)
-        self.assertRaises(JavascriptException, self.marionette.execute_async_script, "foo();")
+        self.marionette.find_element(By.ID, "testBox")
         try:
             self.marionette.execute_async_script("foo();")
         except JavascriptException as e:

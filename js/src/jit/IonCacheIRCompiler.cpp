@@ -1866,6 +1866,66 @@ bool IonCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
   return true;
 }
 
+bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
+                                                  Int32OperandId indexId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoOutputRegister output(*this);
+  Register str = allocator.useRegister(masm, strId);
+  Register index = allocator.useRegister(masm, indexId);
+  AutoScratchRegisterMaybeOutput scratch1(allocator, masm, output);
+  AutoScratchRegister scratch2(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Bounds check, load string char.
+  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                            scratch1, failure->label());
+  masm.loadStringChar(str, index, scratch1, scratch2, failure->label());
+
+  // Load StaticString for this char. For larger code units perform a VM call.
+  Label vmCall;
+  masm.boundsCheck32PowerOfTwo(scratch1, StaticStrings::UNIT_STATIC_LIMIT,
+                               &vmCall);
+  masm.movePtr(ImmPtr(&cx_->staticStrings().unitStaticTable), scratch2);
+  masm.loadPtr(BaseIndex(scratch2, scratch1, ScalePointer), scratch2);
+
+  Label done;
+  masm.jump(&done);
+
+  {
+    masm.bind(&vmCall);
+
+    // FailurePath and AutoSaveLiveRegisters don't get along very well. Both are
+    // modifying the stack and expect that no other stack manipulations are
+    // made. Therefore we need to use an ABI call instead of a VM call here.
+
+    LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
+                                 liveVolatileFloatRegs());
+    volatileRegs.takeUnchecked(scratch1);
+    volatileRegs.takeUnchecked(scratch2);
+    volatileRegs.takeUnchecked(output);
+    masm.PushRegsInMask(volatileRegs);
+
+    masm.setupUnalignedABICall(scratch2);
+    masm.loadJSContext(scratch2);
+    masm.passABIArg(scratch2);
+    masm.passABIArg(scratch1);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::StringFromCharCodeNoGC));
+    masm.storeCallPointerResult(scratch2);
+
+    masm.PopRegsInMask(volatileRegs);
+
+    masm.branchPtr(Assembler::Equal, scratch2, ImmWord(0), failure->label());
+  }
+
+  masm.bind(&done);
+  masm.tagValue(JSVAL_TYPE_STRING, scratch2, output.valueReg());
+  return true;
+}
+
 bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId objId,
                                               uint32_t setterOffset,
                                               ValOperandId rhsId) {

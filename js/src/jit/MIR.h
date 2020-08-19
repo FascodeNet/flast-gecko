@@ -3293,10 +3293,12 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
 
   ALLOW_CLONE(MCompare)
 
- protected:
+ private:
   MOZ_MUST_USE bool tryFoldEqualOperands(bool* result);
   MOZ_MUST_USE bool tryFoldTypeOf(bool* result);
+  MOZ_MUST_USE MDefinition* tryFoldCharCompare(TempAllocator& alloc);
 
+ public:
   bool congruentTo(const MDefinition* ins) const override {
     if (!binaryCongruentTo(ins)) {
       return false;
@@ -5846,6 +5848,7 @@ class MCharCodeAt
  public:
   INSTRUCTION_HEADER(CharCodeAt)
   TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, string), (1, index))
 
   bool congruentTo(const MDefinition* ins) const override {
     return congruentIfOperandsEqual(ins);
@@ -5855,6 +5858,8 @@ class MCharCodeAt
     // Strings are immutable, so there is no implicit dependency.
     return AliasSet::None();
   }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
 
   void computeRange(TempAllocator& alloc) override;
 
@@ -9082,6 +9087,7 @@ class MGuardShape : public MUnaryInstruction, public SingleObjectPolicy::Data {
     }
     return congruentIfOperandsEqual(ins);
   }
+  MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
   }
