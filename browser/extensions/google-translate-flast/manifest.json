@@ -1,0 +1,20 @@
+{
+    "background": {
+       "scripts": [ "js/background.js" ]
+    },
+    "description": "This Application can Translate by Google",
+    "icons": {
+       "512": "img/icon.png"
+    },
+    "applications": {
+      "gecko": {
+        "id": "google-translate-flast@kokkiemouse.github.io",
+        "strict_min_version": "57.0a1"
+      }
+    },
+    "manifest_version": 2,
+    "name": "Google Translater For Flast",
+    "permissions": [ "contextMenus"],
+    "version": "1.4"
+ }
+ 
