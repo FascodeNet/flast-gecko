@@ -18,6 +18,8 @@ browser.jar:
     content/browser/places/browserPlacesViews.js         (content/browserPlacesViews.js)
 *   content/browser/places/historySidebar.xhtml          (content/historySidebar.xhtml)
     content/browser/places/historySidebar.js             (content/historySidebar.js)
+*   content/browser/places/history_flast.xhtml          (content/history_flast.xhtml)
+    content/browser/places/history_flast.js             (content/history_flast.js)
 *   content/browser/places/bookmarksSidebar.xhtml        (content/bookmarksSidebar.xhtml)
     content/browser/places/bookmarksSidebar.js           (content/bookmarksSidebar.js)
     content/browser/places/editBookmark.js               (content/editBookmark.js)
