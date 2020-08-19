@@ -1,10 +1,11 @@
 /*! THIS FILE IS AUTO-GENERATED: webpack.system-addon.config.js */
-function randomBackround(){
-    var elementkun=document.getElementsByClassName("outer-wrapper")[0];
-    var url_head="resource://activity-stream/background-images/"
-    var n = 1+ Math.floor(Math.random() * 99);
-    var background_url=url_head + n + ".jpg";
-    elementkun.style.backgroundImage="url("  + background_url +")"; 
+
+function randomBackground(){
+  var elementkun=document.getElementsByClassName("outer-wrapper")[0];
+  var url_head="resource://activity-stream/background-images/"
+  var n = 1+ Math.floor(Math.random() * 99);
+  var background_url=url_head + n + ".jpg";
+  elementkun.style.backgroundImage="url("  + background_url +")"; 
 }
 var NewtabRenderUtils =
 /******/ (function(modules) { // webpackBootstrap
@@ -775,7 +776,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       onClick: this.openPreferences
     })),*/ react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))),
     react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("main",{
-      onLoad: "randomBackround();"
+      onload: "randomBackground();"
     },
     react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
       className: `body-wrapper${initialized ? " on" : ""}`
