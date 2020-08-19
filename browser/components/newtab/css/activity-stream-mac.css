@@ -372,6 +372,8 @@ input[type='text'], input[type='search'] {
   display: flex;
   flex-grow: 1;
   min-height: 100vh;
+  background-repeat:no-repeat;
+  background-size: cover;
   padding: 30px 32px 32px; }
   .outer-wrapper.ds-outer-wrapper-breakpoint-override {
     padding: 30px 0 32px; }

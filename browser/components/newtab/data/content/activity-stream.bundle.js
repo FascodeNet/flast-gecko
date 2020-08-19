@@ -729,7 +729,14 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       event: "OPEN_NEWTAB_PREFS"
     }));
   }
+  randomBackground(){
+    var elementkun=document.getElementsByClassName("outer-wrapper")[0];
+    var url_head="resource://activity-stream/background-images/"
+    var n = 1+ Math.floor(Math.random() * 99);
+    var background_url=url_head + n + ".jpg";
+    elementkun.style.backgroundImage="url("  + background_url + +")";
 
+  }
   render() {
     const {
       props
@@ -768,7 +775,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       onClick: this.openPreferences
     })),*/ react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))),
     react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("main",{
-
+      onLoad: this.randomBackground
     },
     react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
       className: `body-wrapper${initialized ? " on" : ""}`

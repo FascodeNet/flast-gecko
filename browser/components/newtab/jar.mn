@@ -39,3 +39,4 @@ browser.jar:
   res/activity-stream/prerendered/activity-stream-debug.html (./prerendered/activity-stream-debug.html)
 #endif
   res/activity-stream/prerendered/activity-stream-noscripts.html (./prerendered/activity-stream-noscripts.html)
+  res/activity-stream/background-images/ (./backgrounds/*)
