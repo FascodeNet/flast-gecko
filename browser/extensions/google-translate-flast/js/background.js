@@ -1,5 +1,5 @@
 browser.contextMenus.create({
-    "title": "Translate For Google",
+    "title": "Translate by Google Translate",
     "contexts": ["all"],
     "onclick": function(info)
     {
