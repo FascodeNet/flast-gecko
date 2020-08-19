@@ -768,6 +768,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       onClick: this.openPreferences
     })),*/ react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))),
     react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div",{
+      className: "center-other-view"
 
     },
     react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {

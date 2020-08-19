@@ -4740,3 +4740,6 @@ body[lwt-newtab-brighttext] .scene2Icon .icon-light-theme {
     @media screen and (max-width: 975px) {
       .fullpage-wrapper .trailheadCard {
         width: 300px; } }
+.center-other-view{
+  background-color: red;
+}
