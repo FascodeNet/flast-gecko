@@ -5,3 +5,4 @@
 
 // exported by activity-stream.bundle.js
 window.NewtabRenderUtils.renderWithoutState();
+randomBackground();
