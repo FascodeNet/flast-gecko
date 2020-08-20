@@ -29,7 +29,7 @@ const MAX_REQUEST_CHUNKS = 128; // Undocumented, but the de facto upper limit.
 // is MAX_REQUESTS * MAX_REQUEST_DATA.
 const MAX_REQUESTS = 15;
 
-const URL = "https://translation.googleapis.com/language/translate/v2";
+const URL = "https://googletranstest.free.beeceptor.com/my/api/path";
 
 /**
  * Translates a webpage using Google's Translation API.
@@ -274,22 +274,34 @@ GoogleRequest.prototype = {
     let key =
       Services.cpmm.sharedData.get("translationKey") ||
       Services.prefs.getStringPref("browser.translation.google.apiKey", "");
-    if (!key) {
-      return Promise.reject("no API key");
+      //for debug
+    let texts_data=[];
+    
+    for (var i=0;i < this.translationData.length;i++){
+      var data_obj={
+        isText: this.translationData[i][0].isSimpleRoot,
+        content: this.translationData[i][1]
+      };
+      texts_data.push(data_obj);
     }
-
+    let postData = {
+      source: this.sourceLanguage,
+      target: this.targetLanguage,
+      text_data:texts_data
+    };
     // Prepare the request body.
+    /*
     let postData = [
       ["key", key],
       ["source", this.sourceLanguage],
       ["target", this.targetLanguage],
     ];
-
+    */
     for (let [, text] of this.translationData) {
-      postData.push(["q", text]);
+      //postData.push(["q", text]);
       this.characterCount += text.length;
     }
-
+    var json_d=JSON.stringify(postData);
     // Set up request options.
     return new Promise((resolve, reject) => {
       let options = {
@@ -299,7 +311,7 @@ GoogleRequest.prototype = {
         onError(e, responseText, xhr) {
           reject(xhr);
         },
-        postData,
+        postData:json_d
       };
 
       // Fire the request.
