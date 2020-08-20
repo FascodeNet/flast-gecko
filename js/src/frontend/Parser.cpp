@@ -346,8 +346,8 @@ template <class ParseHandler, typename Unit>
 typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   MOZ_ASSERT(checkOptionsCalled_);
 
-  SourceExtent extent =
-      SourceExtent::makeGlobalExtent(/* len = */ 0, options());
+  SourceExtent extent = SourceExtent::makeGlobalExtent(
+      /* len = */ 0, options().lineno, options().column);
   Directives directives(options().forceStrictMode());
   GlobalSharedContext globalsc(cx_, ScopeKind::Global,
                                this->getCompilationInfo(), directives, extent);
@@ -11427,10 +11427,16 @@ template class Parser<SyntaxParseHandler, char16_t>;
 
 CompilationInfo::RewindToken CompilationInfo::getRewindToken() {
   MOZ_ASSERT(functions.empty());
-  return RewindToken{traceListHead, funcData.length()};
+  return RewindToken{traceListHead, funcData.length(), asmJS.count()};
 }
 
 void CompilationInfo::rewind(const CompilationInfo::RewindToken& pos) {
+  if (asmJS.count() != pos.asmJSCount) {
+    for (size_t i = pos.funcDataLength; i < funcData.length(); i++) {
+      asmJS.remove(FunctionIndex(i));
+    }
+    MOZ_ASSERT(asmJS.count() == pos.asmJSCount);
+  }
   traceListHead = pos.funbox;
   funcData.get().shrinkTo(pos.funcDataLength);
 }

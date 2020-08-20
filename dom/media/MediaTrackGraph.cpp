@@ -864,7 +864,8 @@ void MediaTrackGraphImpl::ProcessInputData() {
       mInputDeviceUsers.GetValue(mInputDeviceID);
   MOZ_ASSERT(listeners);
   for (auto& listener : *listeners) {
-    listener->NotifyInputData(this, mInputData, mInputFrames, GraphRate(), mInputChannelCount);
+    listener->NotifyInputData(this, mInputData, mInputFrames, GraphRate(),
+                              mInputChannelCount);
   }
 
   mInputData = nullptr;
@@ -2180,7 +2181,7 @@ void MediaTrack::AddListenerImpl(
   if (mNotifiedEnded) {
     mTrackListeners.LastElement()->NotifyEnded(Graph());
   }
-  if (mDisabledMode == DisabledTrackMode::SILENCE_BLACK) {
+  if (CombinedDisabledMode() == DisabledTrackMode::SILENCE_BLACK) {
     mTrackListeners.LastElement()->NotifyEnabledStateChanged(Graph(), false);
   }
 }
@@ -2315,31 +2316,22 @@ void MediaTrack::RunAfterPendingUpdates(
   graph->AppendMessage(MakeUnique<Message>(this, runnable.forget()));
 }
 
-void MediaTrack::SetEnabledImpl(DisabledTrackMode aMode) {
-  if (aMode == DisabledTrackMode::ENABLED) {
-    mDisabledMode = DisabledTrackMode::ENABLED;
-    for (const auto& l : mTrackListeners) {
-      l->NotifyEnabledStateChanged(Graph(), true);
-    }
-  } else {
-    MOZ_DIAGNOSTIC_ASSERT(
-        mDisabledMode == DisabledTrackMode::ENABLED,
-        "Changing disabled track mode for a track is not allowed");
-    mDisabledMode = aMode;
-    if (aMode == DisabledTrackMode::SILENCE_BLACK) {
-      for (const auto& l : mTrackListeners) {
-        l->NotifyEnabledStateChanged(Graph(), false);
-      }
-    }
-  }
+void MediaTrack::SetDisabledTrackModeImpl(DisabledTrackMode aMode) {
+  MOZ_DIAGNOSTIC_ASSERT(
+      aMode == DisabledTrackMode::ENABLED ||
+          mDisabledMode == DisabledTrackMode::ENABLED,
+      "Changing disabled track mode for a track is not allowed");
+  DisabledTrackMode oldMode = CombinedDisabledMode();
+  mDisabledMode = aMode;
+  NotifyIfDisabledModeChangedFrom(oldMode);
 }
 
-void MediaTrack::SetEnabled(DisabledTrackMode aMode) {
+void MediaTrack::SetDisabledTrackMode(DisabledTrackMode aMode) {
   class Message : public ControlMessage {
    public:
     Message(MediaTrack* aTrack, DisabledTrackMode aMode)
         : ControlMessage(aTrack), mMode(aMode) {}
-    void Run() override { mTrack->SetEnabledImpl(mMode); }
+    void Run() override { mTrack->SetDisabledTrackModeImpl(mMode); }
     DisabledTrackMode mMode;
   };
   if (mMainThreadDestroyed) {
@@ -2421,6 +2413,24 @@ void MediaTrack::AdvanceTimeVaryingValuesToCurrentTime(GraphTime aCurrentTime,
 
   mForgottenTime = std::min(GetEnd() - 1, time);
   mSegment->ForgetUpTo(mForgottenTime);
+}
+
+void MediaTrack::NotifyIfDisabledModeChangedFrom(DisabledTrackMode aOldMode) {
+  DisabledTrackMode mode = CombinedDisabledMode();
+  if (aOldMode == mode) {
+    return;
+  }
+
+  for (const auto& listener : mTrackListeners) {
+    listener->NotifyEnabledStateChanged(
+        Graph(), mode != DisabledTrackMode::SILENCE_BLACK);
+  }
+
+  for (const auto& c : mConsumers) {
+    if (c->GetDestination()) {
+      c->GetDestination()->OnInputDisabledModeChanged(mode);
+    }
+  }
 }
 
 SourceMediaTrack::SourceMediaTrack(MediaSegment::Type aType,
@@ -2756,6 +2766,10 @@ void SourceMediaTrack::AddDirectListenerImpl(
   listener->NotifyDirectListenerInstalled(
       DirectMediaTrackListener::InstallationResult::SUCCESS);
 
+  if (mDisabledMode != DisabledTrackMode::ENABLED) {
+    listener->IncreaseDisabled(mDisabledMode);
+  }
+
   if (mEnded) {
     return;
   }
@@ -2802,6 +2816,9 @@ void SourceMediaTrack::RemoveDirectListenerImpl(
   for (int32_t i = mDirectTrackListeners.Length() - 1; i >= 0; --i) {
     const RefPtr<DirectMediaTrackListener>& l = mDirectTrackListeners[i];
     if (l == aListener) {
+      if (mDisabledMode != DisabledTrackMode::ENABLED) {
+        aListener->DecreaseDisabled(mDisabledMode);
+      }
       aListener->NotifyDirectListenerUninstalled();
       mDirectTrackListeners.RemoveElementAt(i);
     }
@@ -2823,7 +2840,7 @@ void SourceMediaTrack::End() {
   }
 }
 
-void SourceMediaTrack::SetEnabledImpl(DisabledTrackMode aMode) {
+void SourceMediaTrack::SetDisabledTrackModeImpl(DisabledTrackMode aMode) {
   {
     MutexAutoLock lock(mMutex);
     for (const auto& l : mDirectTrackListeners) {
@@ -2842,7 +2859,7 @@ void SourceMediaTrack::SetEnabledImpl(DisabledTrackMode aMode) {
       }
     }
   }
-  MediaTrack::SetEnabledImpl(aMode);
+  MediaTrack::SetDisabledTrackModeImpl(aMode);
 }
 
 void SourceMediaTrack::RemoveAllDirectListenersImpl() {

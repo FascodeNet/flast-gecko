@@ -47,6 +47,7 @@
 #include "mozilla/WeakPtr.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_javascript.h"
+#include "mozilla/StaticPrefs_print.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 
@@ -399,6 +400,11 @@ class nsDocumentViewer final : public nsIContentViewer,
   // are sharing/recycling a single base widget and not creating multiple
   // child widgets.
   bool ShouldAttachToTopLevel();
+
+  nsresult PrintPreviewScrollToPageForOldUI(int16_t aType, int32_t aPageNum);
+
+  std::tuple<const nsIFrame*, int32_t> GetCurrentSheetFrameAndPageNumber()
+      const;
 
  protected:
   // Returns the current viewmanager.  Might be null.
@@ -3228,15 +3234,15 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
 #  endif  // NS_PRINT_PREVIEW
 }
 
-//----------------------------------------------------------------------
-NS_IMETHODIMP
-nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
-  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview())
-    return NS_ERROR_FAILURE;
+nsresult nsDocumentViewer::PrintPreviewScrollToPageForOldUI(int16_t aType,
+                                                            int32_t aPageNum) {
+  MOZ_ASSERT(GetIsPrintPreview() && !mPrintJob->GetIsCreatingPrintPreview());
 
   nsIScrollableFrame* sf =
       mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
-  if (!sf) return NS_OK;
+  if (!sf) {
+    return NS_OK;
+  }
 
   // Check to see if we can short circut scrolling to the top
   if (aType == nsIWebBrowserPrint::PRINTPREVIEW_HOME ||
@@ -3312,38 +3318,142 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
   return NS_OK;
 }
 
+static const nsIFrame* GetTargetPageFrame(int32_t aTargetPageNum,
+                                          nsPageSequenceFrame* aSequenceFrame) {
+  MOZ_ASSERT(aTargetPageNum > 0 &&
+             aTargetPageNum < aSequenceFrame->PrincipalChildList().GetLength());
+
+  int32_t pageNum = 1;
+  for (const nsIFrame* sheetFrame : aSequenceFrame->PrincipalChildList()) {
+    if (pageNum == aTargetPageNum) {
+      return sheetFrame;
+    }
+    pageNum++;
+  }
+
+  MOZ_ASSERT_UNREACHABLE("Should have found the target frame");
+
+  return nullptr;
+}
+
+// Calculate the scroll position where the center of |aFrame| is positioned at
+// the center of |aScrollable|'s scroll port for the print preview.
+// So what we do for that is;
+// 1) Calculate the position of the center of |aFrame| in the print preview
+//    coordinates.
+// 2) Reduce the half height of the scroll port from the result of 1.
+static nscoord ScrollPositionForFrame(
+    const nsIFrame* aFrame, nsIScrollableFrame* aScrollable,
+    float aPreviewScale) {
+  // Note that even if the computed scroll position is out of the range of
+  // the scroll port, it gets clamped in nsIScrollableFrame::ScrollTo.
+  return nscoord(aPreviewScale * aFrame->GetRect().Center().y -
+                 float(aScrollable->GetScrollPortRect().height) / 2.0f);
+}
+
+//----------------------------------------------------------------------
 NS_IMETHODIMP
-nsDocumentViewer::GetPrintPreviewCurrentPageNumber(int32_t* aNumber) {
-  NS_ENSURE_ARG_POINTER(aNumber);
-  NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
-  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview()) {
+nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
+  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview())
     return NS_ERROR_FAILURE;
+
+  if (!StaticPrefs::print_tab_modal_enabled()) {
+    return PrintPreviewScrollToPageForOldUI(aType, aPageNum);
   }
 
   nsIScrollableFrame* sf =
       mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
-  if (!sf) {
-    // No scrollable contents, returns 1 even if there are multiple pages.
-    *aNumber = 1;
-    return NS_OK;
-  }
+  if (!sf) return NS_OK;
 
-  // in PP mPrtPreview->mPrintObject->mSeqFrame is null
   auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
   Unused << pageCount;
   if (!seqFrame) {
     return NS_ERROR_FAILURE;
   }
 
+  float previewScale = seqFrame->GetPrintPreviewScale();
+
+  nsPoint dest = sf->GetScrollPosition();
+
+  switch (aType) {
+    case nsIWebBrowserPrint::PRINTPREVIEW_HOME:
+      dest.y = 0;
+      break;
+    case nsIWebBrowserPrint::PRINTPREVIEW_END:
+      dest.y = sf->GetScrollRange().YMost();
+      break;
+    case nsIWebBrowserPrint::PRINTPREVIEW_PREV_PAGE:
+    case nsIWebBrowserPrint::PRINTPREVIEW_NEXT_PAGE: {
+      auto [currentFrame, currentPageNumber] =
+          GetCurrentSheetFrameAndPageNumber();
+      Unused << currentPageNumber;
+      if (!currentFrame) {
+        return NS_OK;
+      }
+
+      const nsIFrame* targetFrame = nullptr;
+      if (aType == nsIWebBrowserPrint::PRINTPREVIEW_PREV_PAGE) {
+        targetFrame = currentFrame->GetPrevInFlow();
+      } else {
+        targetFrame = currentFrame->GetNextInFlow();
+      }
+      if (!targetFrame) {
+        return NS_OK;
+      }
+
+      dest.y = ScrollPositionForFrame(targetFrame, sf, previewScale);
+      break;
+    }
+    case nsIWebBrowserPrint::PRINTPREVIEW_GOTO_PAGENUM: {
+      if (aPageNum < 0 || aPageNum > pageCount) {
+        return NS_ERROR_INVALID_ARG;
+      }
+
+      const nsIFrame* targetFrame = GetTargetPageFrame(aPageNum, seqFrame);
+      MOZ_ASSERT(targetFrame);
+
+      dest.y = ScrollPositionForFrame(targetFrame, sf, previewScale);
+      break;
+    }
+    default:
+      return NS_ERROR_INVALID_ARG;
+      break;
+  }
+
+  sf->ScrollTo(dest, ScrollMode::Instant);
+
+  return NS_OK;
+}
+
+std::tuple<const nsIFrame*, int32_t>
+nsDocumentViewer::GetCurrentSheetFrameAndPageNumber() const {
+  MOZ_ASSERT(mPrintJob);
+  MOZ_ASSERT(GetIsPrintPreview() && !mPrintJob->GetIsCreatingPrintPreview());
+
+  // in PP mPrtPreview->mPrintObject->mSeqFrame is null
+  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
+  if (!seqFrame) {
+    return {nullptr, 0};
+  }
+
+  nsIScrollableFrame* sf =
+      mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
+  if (!sf) {
+    // No scrollable contents, returns 1 even if there are multiple pages.
+    return {seqFrame->PrincipalChildList().FirstChild(), 1};
+  }
+
   nsPoint currentScrollPosition = sf->GetScrollPosition();
   float halfwayPoint =
       currentScrollPosition.y + float(sf->GetScrollPortRect().height) / 2.0f;
   float lastDistanceFromHalfwayPoint = std::numeric_limits<float>::max();
-  *aNumber = 0;
+  int32_t pageNumber = 0;
+  const nsIFrame* currentSheet = nullptr;
   float previewScale = seqFrame->GetPrintPreviewScale();
   for (const nsIFrame* sheetFrame : seqFrame->PrincipalChildList()) {
     nsRect sheetRect = sheetFrame->GetRect();
-    (*aNumber)++;
+    pageNumber++;
+    currentSheet = sheetFrame;
 
     float bottomOfSheet = sheetRect.YMost() * previewScale;
     if (bottomOfSheet < halfwayPoint) {
@@ -3366,13 +3476,34 @@ nsDocumentViewer::GetPrintPreviewCurrentPageNumber(int32_t* aNumber) {
     if ((topOfSheet - halfwayPoint) >= lastDistanceFromHalfwayPoint) {
       // If the previous page distance is less than or equal to the current page
       // distance, choose the previous one as the current.
-      (*aNumber)--;
-      MOZ_ASSERT(*aNumber > 0);
+      pageNumber--;
+      MOZ_ASSERT(pageNumber > 0);
+      currentSheet = currentSheet->GetPrevInFlow();
+      MOZ_ASSERT(currentSheet);
     }
     break;
   }
 
-  MOZ_ASSERT(*aNumber <= pageCount);
+  MOZ_ASSERT(pageNumber <= pageCount);
+  return {currentSheet, pageNumber};
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::GetPrintPreviewCurrentPageNumber(int32_t* aNumber) {
+  NS_ENSURE_ARG_POINTER(aNumber);
+  NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
+  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  auto [currentFrame, currentPageNumber] = GetCurrentSheetFrameAndPageNumber();
+  Unused << currentFrame;
+  if (!currentPageNumber) {
+    return NS_ERROR_FAILURE;
+  }
+
+  *aNumber = currentPageNumber;
+
   return NS_OK;
 }
 

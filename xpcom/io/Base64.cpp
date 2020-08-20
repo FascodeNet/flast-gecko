@@ -18,7 +18,7 @@
 namespace {
 
 // BEGIN base64 encode code copied and modified from NSPR
-const unsigned char* base =
+const unsigned char* const base =
   (unsigned char*)"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                   "abcdefghijklmnopqrstuvwxyz"
                   "0123456789+/";
@@ -391,12 +391,11 @@ static nsresult Base64EncodeHelper(const T* const aBinary,
   }
   const uint32_t base64Len = base64LenOrErr.inspect();
 
-  auto handleOrErr = aBase64.BulkWrite(base64Len, prefixLen, false);
-  if (handleOrErr.isErr()) {
-    return handleOrErr.unwrapErr();
+  nsresult rv;
+  auto handle = aBase64.BulkWrite(base64Len, prefixLen, false, rv);
+  if (NS_FAILED(rv)) {
+    return rv;
   }
-
-  auto handle = handleOrErr.unwrap();
 
   Encode(aBinary, aBinaryLen, handle.Elements() + prefixLen);
   handle.Finish(base64Len, false);
@@ -408,7 +407,36 @@ nsresult Base64EncodeAppend(const char* aBinary, uint32_t aBinaryLen,
   return Base64EncodeHelper<true>(aBinary, aBinaryLen, aBase64);
 }
 
+nsresult Base64EncodeAppend(const char* aBinary, uint32_t aBinaryLen,
+                            nsACString& aBase64) {
+  return Base64EncodeHelper<true>(aBinary, aBinaryLen, aBase64);
+}
+
+nsresult Base64EncodeAppend(const nsACString& aBinary, nsACString& aBase64) {
+  return Base64EncodeHelper<true>(aBinary.BeginReading(), aBinary.Length(),
+                                  aBase64);
+}
+
+nsresult Base64EncodeAppend(const nsACString& aBinary, nsAString& aBase64) {
+  return Base64EncodeHelper<true>(aBinary.BeginReading(), aBinary.Length(),
+                                  aBase64);
+}
+
+nsresult Base64Encode(const char* aBinary, uint32_t aBinaryLen,
+                      nsACString& aBase64) {
+  return Base64EncodeHelper(aBinary, aBinaryLen, aBase64);
+}
+
+nsresult Base64Encode(const char* aBinary, uint32_t aBinaryLen,
+                      nsAString& aBase64) {
+  return Base64EncodeHelper(aBinary, aBinaryLen, aBase64);
+}
+
 nsresult Base64Encode(const nsACString& aBinary, nsACString& aBase64) {
+  return Base64EncodeHelper(aBinary.BeginReading(), aBinary.Length(), aBase64);
+}
+
+nsresult Base64Encode(const nsACString& aBinary, nsAString& aBase64) {
   return Base64EncodeHelper(aBinary.BeginReading(), aBinary.Length(), aBase64);
 }
 
@@ -559,18 +587,17 @@ static nsresult Base64DecodeString(const T& aBase64, T& aBinary) {
 
   uint32_t binaryLen = ((aBase64.Length() * 3) / 4);
 
-  auto handleOrErr = aBinary.BulkWrite(binaryLen, 0, false);
-  if (handleOrErr.isErr()) {
+  nsresult rv;
+  auto handle = aBinary.BulkWrite(binaryLen, 0, false, rv);
+  if (NS_FAILED(rv)) {
     // Must not touch the handle if failing here, but we
     // already truncated the string at the top, so it's
     // unchanged.
-    return handleOrErr.unwrapErr();
+    return rv;
   }
 
-  auto handle = handleOrErr.unwrap();
-
-  nsresult rv = Base64DecodeHelper(aBase64.BeginReading(), aBase64.Length(),
-                                   handle.Elements(), &binaryLen);
+  rv = Base64DecodeHelper(aBase64.BeginReading(), aBase64.Length(),
+                          handle.Elements(), &binaryLen);
   if (NS_FAILED(rv)) {
     // Retruncate to match old semantics of this method.
     handle.Finish(0, true);
@@ -688,12 +715,11 @@ nsresult Base64URLEncode(uint32_t aBinaryLen, const uint8_t* aBinary,
   }
   const uint32_t base64Len = base64LenOrErr.inspect();
 
-  auto handleOrErr = aBase64.BulkWrite(base64Len, 0, false);
-  if (handleOrErr.isErr()) {
-    return handleOrErr.unwrapErr();
+  nsresult rv;
+  auto handle = aBase64.BulkWrite(base64Len, 0, false, rv);
+  if (NS_FAILED(rv)) {
+    return rv;
   }
-
-  auto handle = handleOrErr.unwrap();
 
   char* base64 = handle.Elements();
 

@@ -313,25 +313,10 @@ class nsFlexContainerFrame final : public nsContainerFrame {
    *                             any baseline-aligned flex items in the first
    *                             flex line, if any such items exist. Otherwise,
    *                             nscoord_MIN.
-   * @param aAvailableBSizeForContent the fragmentainer's available block-size
-   *                                  for our content, when we run the flex
-   *                                  layout algorithm. This may be
-   *                                  unconstrained, even in a context where the
-   *                                  flex container is ultimately being
-   *                                  fragmented, because flex container
-   *                                  fragmentation usually starts out by
-   *                                  performing flex layout without regard to
-   *                                  pagination.
-   * @param aColumnWrapThreshold the block-size threshold to wrap to a new line.
-   *                             Used only by multi-line column-oriented flex
-   *                             container if the available block-size is
-   *                             constrained.
    */
-  void DoFlexLayout(const ReflowInput& aReflowInput, nsReflowStatus& aStatus,
+  void DoFlexLayout(const ReflowInput& aReflowInput,
                     nscoord& aContentBoxMainSize, nscoord& aContentBoxCrossSize,
-                    nscoord& aFlexContainerAscent,
-                    nscoord aAvailableBSizeForContent,
-                    nscoord aColumnWrapThreshold, nsTArray<FlexLine>& aLines,
+                    nscoord& aFlexContainerAscent, nsTArray<FlexLine>& aLines,
                     nsTArray<StrutInfo>& aStruts,
                     nsTArray<nsIFrame*>& aPlaceholders,
                     const FlexboxAxisTracker& aAxisTracker,
@@ -447,7 +432,6 @@ class nsFlexContainerFrame final : public nsContainerFrame {
    */
   void GenerateFlexLines(const ReflowInput& aReflowInput,
                          nscoord aContentBoxMainSize,
-                         nscoord aColumnWrapThreshold,
                          const nsTArray<StrutInfo>& aStruts,
                          const FlexboxAxisTracker& aAxisTracker,
                          nscoord aMainGapSize, bool aHasLineClampEllipsis,
@@ -469,9 +453,12 @@ class nsFlexContainerFrame final : public nsContainerFrame {
    * Resolves the content-box main-size of a flex container frame,
    * primarily based on:
    * - the "tentative" main size, taken from the reflow input ("tentative"
-   *    because it may be unconstrained or may run off the page).
-   * - the available BSize (needed if the main axis is the block axis).
+   *   because it may be unconstrained or may run off the page).
    * - the sizes of our lines of flex items.
+   *
+   * We assume the available block-size is always *unconstrained* because this
+   * is called only in flex algorithm to measure the flex container's size
+   * without regards to pagination.
    *
    * Guaranteed to return a definite length, i.e. not NS_UNCONSTRAINEDSIZE,
    * aside from cases with huge lengths which happen to compute to that value.
@@ -486,15 +473,11 @@ class nsFlexContainerFrame final : public nsContainerFrame {
   nscoord ComputeMainSize(const ReflowInput& aReflowInput,
                           const FlexboxAxisTracker& aAxisTracker,
                           nscoord aTentativeMainSize,
-                          nscoord aAvailableBSizeForContent,
-                          nsTArray<FlexLine>& aLines,
-                          nsReflowStatus& aStatus) const;
+                          nsTArray<FlexLine>& aLines) const;
 
   nscoord ComputeCrossSize(const ReflowInput& aReflowInput,
                            const FlexboxAxisTracker& aAxisTracker,
-                           nscoord aSumLineCrossSizes,
-                           nscoord aAvailableBSizeForContent, bool* aIsDefinite,
-                           nsReflowStatus& aStatus) const;
+                           nscoord aSumLineCrossSizes, bool* aIsDefinite) const;
 
   /**
    * Compute the size of the available space that we'll give to our children to

@@ -2013,24 +2013,6 @@
   value: 0
   mirror: always
 
-# Don't use new input types.
-- name: dom.experimental_forms
-  type: bool
-  value: false
-  mirror: always
-
-# Enable <input type=color> by default. It will be turned off for remaining
-# platforms which don't have a color picker implemented yet.
-- name: dom.forms.color
-  type: bool
-  value: true
-  mirror: always
-# Is support for input type=date and type=time enabled?
-- name: dom.forms.datetime
-  type: bool
-  value: true
-  mirror: always
-
 # Support for input type=month, type=week and type=datetime-local. By default,
 # disabled.
 - name: dom.forms.datetime.others
@@ -4508,12 +4490,10 @@
 
 - name: gfx.webrender.enable-low-priority-pool
   type: RelaxedAtomicBool
-#if defined(XP_WIN)
-  value: true
-#elif defined(XP_LINUX) && !defined(ANDROID)
-  value: true
-#else
+#if defined(ANDROID)
   value: false
+#else
+  value: true
 #endif
   mirror: always
 
@@ -7421,6 +7401,13 @@
 - name: media.getdisplaymedia.enabled
   type: bool
   value: @IS_NOT_ANDROID@
+  mirror: always
+
+# Turn off any cameras (but not mics) while in the background. This is desirable
+# on mobile.
+- name: media.getusermedia.camera.background.mute.enabled
+  type: bool
+  value: @IS_ANDROID@
   mirror: always
 
 # WebRTC prefs follow

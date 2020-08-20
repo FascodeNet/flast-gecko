@@ -618,6 +618,8 @@ static const char* sObserverTopics[] = {
     NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC,
     NS_IPC_IOSERVICE_SET_CONNECTIVITY_TOPIC,
     NS_IPC_CAPTIVE_PORTAL_SET_STATE,
+    "application-background",
+    "application-foreground",
     "memory-pressure",
     "child-gc-request",
     "child-cc-request",
@@ -3291,6 +3293,10 @@ ContentParent::Observe(nsISupports* aSubject, const char* aTopic,
   // listening for memory pressure event
   if (!strcmp(aTopic, "memory-pressure")) {
     Unused << SendFlushMemory(nsDependentString(aData));
+  } else if (!strcmp(aTopic, "application-background")) {
+    Unused << SendApplicationBackground();
+  } else if (!strcmp(aTopic, "application-foreground")) {
+    Unused << SendApplicationForeground();
   } else if (!strcmp(aTopic, NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC)) {
     NS_ConvertUTF16toUTF8 dataStr(aData);
     const char* offline = dataStr.get();
@@ -6886,11 +6892,10 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyOnHistoryReload(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
-    const MaybeDiscarded<BrowsingContext>& aContext,
-    const uint64_t& aSessionHistoryEntryID, const nsID& aChangeID) {
+    const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
+    const nsID& aChangeID) {
   if (!aContext.IsDiscarded()) {
-    aContext.get_canonical()->SessionHistoryCommit(aSessionHistoryEntryID,
-                                                   aChangeID);
+    aContext.get_canonical()->SessionHistoryCommit(aLoadID, aChangeID);
   }
 
   return IPC_OK();

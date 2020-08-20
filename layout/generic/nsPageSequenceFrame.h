@@ -39,6 +39,10 @@ class nsSharedPageData {
   nsString mDocURL;
   nsFont mHeadFootFont;
 
+  // Total number of pages (populated by PrintedSheetFrame when it determines
+  // that it's reflowed the final page):
+  int32_t mTotNumPages = 0;
+
   // Margin for headers and footers; it defaults to 4/100 of an inch on UNIX
   // and 0 elsewhere; I think it has to do with some inconsistency in page size
   // computations
@@ -87,7 +91,7 @@ class nsPageSequenceFrame final : public nsContainerFrame {
   nsresult PrintNextPage();
   void ResetPrintCanvasList();
   int32_t GetCurrentPageNum() const { return mPageNum; }
-  int32_t GetNumPages() const { return mTotalPages; }
+  int32_t GetNumPages() const { return mPageData->mTotNumPages; }
   bool IsDoingPrintRange() const { return mDoingPageRange; }
   void GetPrintRange(int32_t* aFromPage, int32_t* aToPage) const;
   nsresult DoPageEnd();
@@ -151,7 +155,6 @@ class nsPageSequenceFrame final : public nsContainerFrame {
 
   // Async Printing
   int32_t mPageNum;
-  int32_t mTotalPages;
   int32_t mFromPageNum;
   int32_t mToPageNum;
 

@@ -196,14 +196,52 @@ this.TopSitesFeed = class TopSitesFeed {
       return;
     }
 
+    // Read override pref if present.
     let sites;
     try {
       sites = Services.prefs.getStringPref(REMOTE_SETTING_OVERRIDE_PREF);
-    } catch (e) {
-      // Placeholder for the actual remote setting (bug 1653937).
-      sites = "https://mozilla.org/#%YYYYMMDDHH%,https://firefox.com";
+    } catch (e) {}
+    if (sites) {
+      this.refreshDefaults(sites);
+      return;
     }
-    this.refreshDefaults(sites);
+
+    // Read defaults from remote settings.
+    // Placeholder for the actual remote setting (bug 1653937).
+    let remoteSettingData = [
+      {
+        title: "Mozilla!",
+        url: "https://mozilla.org/#%YYYYMMDDHH%",
+        send_attribution_request: true,
+      },
+      {
+        url: "https://firefox.com",
+      },
+      {
+        url: "https://foobar.com",
+        keyword: "@foobar",
+      },
+    ];
+
+    // Clear out the array of any previous defaults.
+    DEFAULT_TOP_SITES.length = 0;
+
+    for (let siteData of remoteSettingData) {
+      let link = {
+        isDefault: true,
+        url: siteData.url,
+        hostname: shortURL(siteData),
+        sendTopSiteAttributionRequest: !!siteData.send_attribution_request,
+      };
+      if (siteData.title) {
+        link.label = siteData.title;
+      }
+      if (siteData.keyword) {
+        link.searchTopSite = true;
+        link.label = siteData.keyword;
+      }
+      DEFAULT_TOP_SITES.push(link);
+    }
   }
 
   refreshDefaults(sites) {
@@ -376,8 +414,6 @@ this.TopSitesFeed = class TopSitesFeed {
       if (this._useRemoteSetting) {
         link = {
           ...link,
-          // This should be optional (bug 1657083):
-          sendTopSiteAttributionRequest: link.isDefault,
           url: link.url.replace("%YYYYMMDDHH%", yyyymmddhh),
         };
       }
@@ -405,12 +441,18 @@ this.TopSitesFeed = class TopSitesFeed {
     }
 
     // Get pinned links augmented with desired properties
+    if (this._useRemoteSetting) {
+      this.disableSearchImprovements();
+    }
     let plainPinned = await this.pinnedCache.request();
 
     // Insert search shortcuts if we need to.
     // _maybeInsertSearchShortcuts returns true if any search shortcuts are
     // inserted, meaning we need to expire and refresh the pinnedCache
-    if (await this._maybeInsertSearchShortcuts(plainPinned)) {
+    if (
+      !this._useRemoteSetting &&
+      (await this._maybeInsertSearchShortcuts(plainPinned))
+    ) {
       this.pinnedCache.expire();
       plainPinned = await this.pinnedCache.request();
     }

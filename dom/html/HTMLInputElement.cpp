@@ -437,13 +437,6 @@ void GetDOMFileOrDirectoryPath(const OwningFileOrDirectory& aData,
 
 }  // namespace
 
-/* static */
-bool HTMLInputElement::ValueAsDateEnabled(JSContext* cx, JSObject* obj) {
-  return StaticPrefs::dom_experimental_forms() ||
-         StaticPrefs::dom_forms_datetime() ||
-         StaticPrefs::dom_forms_datetime_others();
-}
-
 NS_IMETHODIMP
 HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult) {
   mInput->PickerClosed();
@@ -1291,8 +1284,7 @@ nsresult HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       mAutocompleteInfoState = nsContentUtils::eAutocompleteAttrState_Unknown;
     }
 
-    if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-        !IsExperimentalMobileType(mType)) {
+    if (CreatesDateTimeWidget()) {
       if (aName == nsGkAtoms::value || aName == nsGkAtoms::readonly ||
           aName == nsGkAtoms::tabindex || aName == nsGkAtoms::required ||
           aName == nsGkAtoms::disabled) {
@@ -1426,10 +1418,8 @@ uint32_t HTMLInputElement::Width() {
 }
 
 bool HTMLInputElement::SanitizesOnValueGetter() const {
-  // Don't return non-sanitized value for types that are experimental on mobile
-  // or datetime types or number.
-  return mType == NS_FORM_INPUT_NUMBER || IsExperimentalMobileType(mType) ||
-         IsDateTimeInputType(mType);
+  // Don't return non-sanitized value for datetime types or number.
+  return mType == NS_FORM_INPUT_NUMBER || IsDateTimeInputType(mType);
 }
 
 void HTMLInputElement::GetValue(nsAString& aValue, CallerType aCallerType) {
@@ -1966,12 +1956,6 @@ nsresult HTMLInputElement::ApplyStep(int32_t aStep) {
   return rv;
 }
 
-/* static */
-bool HTMLInputElement::IsExperimentalMobileType(uint8_t aType) {
-  return (aType == NS_FORM_INPUT_DATE || aType == NS_FORM_INPUT_TIME) &&
-         !StaticPrefs::dom_forms_datetime();
-}
-
 bool HTMLInputElement::IsDateTimeInputType(uint8_t aType) {
   return aType == NS_FORM_INPUT_DATE || aType == NS_FORM_INPUT_TIME ||
          aType == NS_FORM_INPUT_MONTH || aType == NS_FORM_INPUT_WEEK ||
@@ -2189,8 +2173,7 @@ bool HTMLInputElement::MozIsTextField(bool aExcludePassword) {
   //
   // FIXME: Historically we never returned true for `number`, we should consider
   // changing that now that it is similar to other inputs.
-  if (IsExperimentalMobileType(mType) || IsDateTimeInputType(mType) ||
-      mType == NS_FORM_INPUT_NUMBER) {
+  if (IsDateTimeInputType(mType) || mType == NS_FORM_INPUT_NUMBER) {
     return false;
   }
 
@@ -2672,9 +2655,7 @@ nsresult HTMLInputElement::SetValueInternal(const nsAString& aValue,
           if (frame) {
             frame->UpdateForValueChange();
           }
-        } else if ((mType == NS_FORM_INPUT_TIME ||
-                    mType == NS_FORM_INPUT_DATE) &&
-                   !IsExperimentalMobileType(mType) &&
+        } else if (CreatesDateTimeWidget() &&
                    !(aFlags & TextControlState::eSetValue_BySetUserInput)) {
           if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
             AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
@@ -2944,8 +2925,7 @@ void HTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify) {
 }
 
 void HTMLInputElement::Blur(ErrorResult& aError) {
-  if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-      !IsExperimentalMobileType(mType)) {
+  if (CreatesDateTimeWidget()) {
     if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
       AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
           dateTimeBoxElement, u"MozBlurInnerTextBox"_ns, CanBubble::eNo,
@@ -2960,8 +2940,7 @@ void HTMLInputElement::Blur(ErrorResult& aError) {
 
 void HTMLInputElement::Focus(const FocusOptions& aOptions,
                              CallerType aCallerType, ErrorResult& aError) {
-  if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-      !IsExperimentalMobileType(mType)) {
+  if (CreatesDateTimeWidget()) {
     if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
       AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
           dateTimeBoxElement, u"MozFocusInnerTextBox"_ns, CanBubble::eNo,
@@ -3221,8 +3200,7 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
     }
   }
 
-  if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-      !IsExperimentalMobileType(mType) && aVisitor.mEvent->mMessage == eFocus &&
+  if (CreatesDateTimeWidget() && aVisitor.mEvent->mMessage == eFocus &&
       aVisitor.mEvent->mOriginalTarget == this) {
     // If original target is this and not the inner text control, we should
     // pass the focus to the inner text control.
@@ -3286,8 +3264,7 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
   // inside of the same element).
   //
   // FIXME(emilio): Is this still needed now that we use Shadow DOM for this?
-  if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-      !IsExperimentalMobileType(mType) && aVisitor.mEvent->IsTrusted() &&
+  if (CreatesDateTimeWidget() && aVisitor.mEvent->IsTrusted() &&
       (aVisitor.mEvent->mMessage == eFocus ||
        aVisitor.mEvent->mMessage == eFocusIn ||
        aVisitor.mEvent->mMessage == eFocusOut ||
@@ -3306,18 +3283,8 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
 }
 
 nsresult HTMLInputElement::PreHandleEvent(EventChainVisitor& aVisitor) {
-  nsresult rv;
   if (aVisitor.mItemFlags & NS_PRE_HANDLE_BLUR_EVENT) {
     MOZ_ASSERT(aVisitor.mEvent->mMessage == eBlur);
-    // Experimental mobile types rely on the system UI to prevent users to not
-    // set invalid values but we have to be extra-careful. Especially if the
-    // option has been enabled on desktop.
-    if (IsExperimentalMobileType(mType)) {
-      nsAutoString aValue;
-      GetNonFileValueInternal(aValue);
-      rv = SetValueInternal(aValue, TextControlState::eSetValue_Internal);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
     FireChangeEventIfNeeded();
   }
   return nsGenericHTMLFormElementWithState::PreHandleEvent(aVisitor);
@@ -3851,8 +3818,7 @@ nsresult HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
           if (aVisitor.mEvent->mMessage == eKeyPress &&
               keyEvent->mKeyCode == NS_VK_RETURN &&
               (IsSingleLineTextControl(false, mType) ||
-               mType == NS_FORM_INPUT_NUMBER ||
-               IsExperimentalMobileType(mType) || IsDateTimeInputType(mType))) {
+               mType == NS_FORM_INPUT_NUMBER || IsDateTimeInputType(mType))) {
             FireChangeEventIfNeeded();
             if (aVisitor.mPresContext) {
               rv = MaybeSubmitForm(MOZ_KnownLive(aVisitor.mPresContext));
@@ -4233,8 +4199,7 @@ nsresult HTMLInputElement::BindToTree(BindContext& aContext, nsINode& aParent) {
   // And now make sure our state is up to date
   UpdateState(false);
 
-  if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-      IsInComposedDoc()) {
+  if (CreatesDateTimeWidget() && IsInComposedDoc()) {
     // Construct Shadow Root so web content can be hidden in the DOM.
     AttachAndSetUAShadowRoot();
   }
@@ -4265,8 +4230,7 @@ void HTMLInputElement::UnbindFromTree(bool aNullParent) {
     WillRemoveFromRadioGroup();
   }
 
-  if ((mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) &&
-      IsInComposedDoc()) {
+  if (CreatesDateTimeWidget() && IsInComposedDoc()) {
     NotifyUAWidgetTeardown();
   }
 
@@ -4490,15 +4454,15 @@ void HTMLInputElement::HandleTypeChange(uint8_t aNewType, bool aNotify) {
   }
 
   if (IsInComposedDoc()) {
-    if (oldType == NS_FORM_INPUT_TIME || oldType == NS_FORM_INPUT_DATE) {
-      if (mType != NS_FORM_INPUT_TIME && mType != NS_FORM_INPUT_DATE) {
+    if (CreatesDateTimeWidget(oldType)) {
+      if (!CreatesDateTimeWidget()) {
         // Switch away from date/time type.
         NotifyUAWidgetTeardown();
       } else {
         // Switch between date and time.
         NotifyUAWidgetSetupOrChange();
       }
-    } else if (mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) {
+    } else if (CreatesDateTimeWidget()) {
       // Switch to date/time type.
       AttachAndSetUAShadowRoot();
     }
@@ -5053,10 +5017,8 @@ bool HTMLInputElement::ParseTime(const nsAString& aValue, uint32_t* aResult) {
 
 /* static */
 bool HTMLInputElement::IsDateTimeTypeSupported(uint8_t aDateTimeInputType) {
-  return ((aDateTimeInputType == NS_FORM_INPUT_DATE ||
-           aDateTimeInputType == NS_FORM_INPUT_TIME) &&
-          (StaticPrefs::dom_forms_datetime() ||
-           StaticPrefs::dom_experimental_forms())) ||
+  return aDateTimeInputType == NS_FORM_INPUT_DATE ||
+         aDateTimeInputType == NS_FORM_INPUT_TIME ||
          ((aDateTimeInputType == NS_FORM_INPUT_MONTH ||
            aDateTimeInputType == NS_FORM_INPUT_WEEK ||
            aDateTimeInputType == NS_FORM_INPUT_DATETIME_LOCAL) &&
@@ -5082,8 +5044,7 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     if (aAttribute == nsGkAtoms::type) {
       aResult.ParseEnumValue(aValue, kInputTypeTable, false, kInputDefaultType);
       int32_t newType = aResult.GetEnumValue();
-      if ((newType == NS_FORM_INPUT_COLOR && !StaticPrefs::dom_forms_color()) ||
-          (IsDateTimeInputType(newType) && !IsDateTimeTypeSupported(newType))) {
+      if (IsDateTimeInputType(newType) && !IsDateTimeTypeSupported(newType)) {
         // There's no public way to set an nsAttrValue to an enum value, but we
         // can just re-parse with a table that doesn't have any types other than
         // "text" in it.
@@ -6135,8 +6096,7 @@ bool HTMLInputElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
   const bool defaultFocusable = true;
 #endif
 
-  if (mType == NS_FORM_INPUT_NUMBER || mType == NS_FORM_INPUT_TIME ||
-      mType == NS_FORM_INPUT_DATE) {
+  if (CreatesDateTimeWidget()) {
     if (aTabIndex) {
       // We only want our native anonymous child to be tabable to, not ourself.
       *aTabIndex = -1;

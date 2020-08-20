@@ -4887,19 +4887,27 @@ const FrameMetrics& AsyncPanZoomController::Metrics() const {
   return mScrollMetadata.GetMetrics();
 }
 
+GeckoViewMetrics AsyncPanZoomController::GetGeckoViewMetrics() const {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+  return GeckoViewMetrics{GetEffectiveScrollOffset(eForCompositing, lock),
+                          GetEffectiveZoom(eForCompositing, lock)};
+}
+
 bool AsyncPanZoomController::UpdateRootFrameMetricsIfChanged(
-    FrameMetrics& metrics) {
+    GeckoViewMetrics& aMetrics) {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
 
-  const FrameMetrics& aMetrics = Metrics();
-  if (!aMetrics.IsRootContent()) return false;
+  if (!Metrics().IsRootContent()) {
+    return false;
+  }
 
-  bool hasChanged = RoundedToInt(metrics.GetVisualScrollOffset()) !=
-                        RoundedToInt(aMetrics.GetVisualScrollOffset()) ||
-                    metrics.GetZoom() != aMetrics.GetZoom();
+  GeckoViewMetrics newMetrics = GetGeckoViewMetrics();
+  bool hasChanged = RoundedToInt(aMetrics.mVisualScrollOffset) !=
+                        RoundedToInt(newMetrics.mVisualScrollOffset) ||
+                    aMetrics.mZoom != newMetrics.mZoom;
 
   if (hasChanged) {
-    metrics = aMetrics;
+    aMetrics = newMetrics;
   }
 
   return hasChanged;

@@ -1271,6 +1271,10 @@ this.VideoControlsImplWidget = class {
 
         this.scrubber.value = currentTime;
         this.positionDurationBox.position = positionTime;
+        this.scrubber.setAttribute(
+          "aria-valuetext",
+          this.positionDurationBox.textContent.trim()
+        );
         this.updateScrubberProgress();
       },
 
@@ -1319,6 +1323,14 @@ this.VideoControlsImplWidget = class {
         }
         this.bufferBar.max = duration;
         this.bufferBar.value = endTime;
+        // Progress bars are automatically reported by screen readers even when
+        // they aren't focused, which intrudes on the audio being played.
+        // Ideally, we'd just change the a11y role of bufferBar, but there's
+        // no role which will let us just expose text via an ARIA attribute.
+        // Therefore, we hide bufferBar for a11y and expose the info as
+        // off-screen text.
+        this.bufferA11yVal.textContent =
+          (this.bufferBar.position * 100).toFixed() + "%";
       },
 
       _controlsHiddenByTimeout: false,
@@ -1513,6 +1525,8 @@ this.VideoControlsImplWidget = class {
         if (fadeIn) {
           if (element == this.controlBar) {
             this.controlsSpacer.removeAttribute("hideCursor");
+            // Ensure the Full Screen button is in the tab order.
+            this.fullscreenButton.removeAttribute("tabindex");
           }
 
           // hidden state should be controlled by adjustControlSize
@@ -1529,12 +1543,14 @@ this.VideoControlsImplWidget = class {
           // Unhide
           element.hidden = false;
         } else {
-          if (
-            element == this.controlBar &&
-            !this.hasError() &&
-            this.isVideoInFullScreen
-          ) {
-            this.controlsSpacer.setAttribute("hideCursor", true);
+          if (element == this.controlBar) {
+            if (!this.hasError() && this.isVideoInFullScreen) {
+              this.controlsSpacer.setAttribute("hideCursor", true);
+            }
+            // The Full Screen button is currently the only tabbable button
+            // when the controls are shown. Remove it from the tab order when
+            // visually hidden to prevent visual confusion.
+            this.fullscreenButton.setAttribute("tabindex", "-1");
           }
 
           // No need to fade out if the hidden property returns true
@@ -2371,6 +2387,7 @@ this.VideoControlsImplWidget = class {
         this.volumeControl = this.shadowRoot.getElementById("volumeControl");
         this.progressBar = this.shadowRoot.getElementById("progressBar");
         this.bufferBar = this.shadowRoot.getElementById("bufferBar");
+        this.bufferA11yVal = this.shadowRoot.getElementById("bufferA11yVal");
         this.scrubberStack = this.shadowRoot.getElementById("scrubberStack");
         this.scrubber = this.shadowRoot.getElementById("scrubber");
         this.durationLabel = this.shadowRoot.getElementById("durationLabel");
@@ -2737,11 +2754,15 @@ this.VideoControlsImplWidget = class {
               <div id="scrubberStack" class="scrubberStack progressContainer" role="none">
                 <div class="progressBackgroundBar stackItem" role="none">
                   <div class="progressStack" role="none">
-                    <progress id="bufferBar" class="bufferBar" value="0" max="100" tabindex="-1"></progress>
-                    <progress id="progressBar" class="progressBar" value="0" max="100" tabindex="-1"></progress>
+                    <progress id="bufferBar" class="bufferBar" value="0" max="100" aria-hidden="true"></progress>
+                    <span class="a11y-only" role="status" aria-live="off">
+                      <span data-l10n-id="videocontrols-buffer-bar-label"></span>
+                      <span id="bufferA11yVal"></span>
+                    </span>
+                    <progress id="progressBar" class="progressBar" value="0" max="100" aria-hidden="true"></progress>
                   </div>
                 </div>
-                <input type="range" id="scrubber" class="scrubber" tabindex="-1"/>
+                <input type="range" id="scrubber" class="scrubber" tabindex="-1" data-l10n-id="videocontrols-scrubber"/>
               </div>
               <bdi id="positionLabel" class="positionLabel" role="presentation"></bdi>
               <bdi id="durationLabel" class="durationLabel" role="presentation"></bdi>
@@ -2756,7 +2777,7 @@ this.VideoControlsImplWidget = class {
                       tabindex="-1"/>
               <div id="volumeStack" class="volumeStack progressContainer" role="none">
                 <input type="range" id="volumeControl" class="volumeControl" min="0" max="100" step="1" tabindex="-1"
-                       aria-label="&volumeScrubber.label;"/>
+                       data-l10n-id="videocontrols-volume-control"/>
               </div>
               <button id="castingButton" class="button castingButton"
                       aria-label="&castingButton.castingLabel;"/>
@@ -2774,6 +2795,10 @@ this.VideoControlsImplWidget = class {
       </div>`,
       "application/xml"
     );
+    this.l10n = new this.window.DOMLocalization([
+      "toolkit/global/videocontrols.ftl",
+    ]);
+    this.l10n.connectRoot(this.shadowRoot);
     this.shadowRoot.importNodeAndAppendChildAt(
       this.shadowRoot,
       parserDoc.documentElement,
@@ -2790,6 +2815,8 @@ this.VideoControlsImplWidget = class {
     this.Utils.terminate();
     this.TouchUtils.terminate();
     this.Utils.updateOrientationState(false);
+    this.l10n.disconnectRoot(this.shadowRoot);
+    this.l10n = null;
   }
 
   onPrefChange(prefName, prefValue) {

@@ -329,7 +329,7 @@ class MediaTrack : public mozilla::LinkedListElement<MediaTrack> {
 
   // A disabled track has video replaced by black, and audio replaced by
   // silence.
-  void SetEnabled(DisabledTrackMode aMode);
+  void SetDisabledTrackMode(DisabledTrackMode aMode);
 
   // End event will be notified by calling methods of aListener. It is the
   // responsibility of the caller to remove aListener before it is destroyed.
@@ -411,7 +411,7 @@ class MediaTrack : public mozilla::LinkedListElement<MediaTrack> {
   virtual void AddDirectListenerImpl(
       already_AddRefed<DirectMediaTrackListener> aListener);
   virtual void RemoveDirectListenerImpl(DirectMediaTrackListener* aListener);
-  virtual void SetEnabledImpl(DisabledTrackMode aMode);
+  virtual void SetDisabledTrackModeImpl(DisabledTrackMode aMode);
 
   void AddConsumer(MediaInputPort* aPort) { mConsumers.AppendElement(aPort); }
   void RemoveConsumer(MediaInputPort* aPort) {
@@ -419,6 +419,12 @@ class MediaTrack : public mozilla::LinkedListElement<MediaTrack> {
   }
   GraphTime StartTime() const { return mStartTime; }
   bool Ended() const { return mEnded; }
+
+  // The DisabledTrackMode after combining the explicit mode and that of the
+  // input, if any.
+  virtual DisabledTrackMode CombinedDisabledMode() const {
+    return mDisabledMode;
+  }
 
   template <class SegmentType>
   SegmentType* GetData() const {
@@ -525,6 +531,10 @@ class MediaTrack : public mozilla::LinkedListElement<MediaTrack> {
     mEndedNotificationSent = true;
     return true;
   }
+
+  // Notifies listeners and consumers of the change in disabled mode when the
+  // current combined mode is different from aMode.
+  void NotifyIfDisabledModeChangedFrom(DisabledTrackMode aOldMode);
 
   // This state is all initialized on the main thread but
   // otherwise modified only on the media graph thread.
@@ -671,7 +681,7 @@ class SourceMediaTrack : public MediaTrack {
 
   // Overriding allows us to hold the mMutex lock while changing the track
   // enable status
-  void SetEnabledImpl(DisabledTrackMode aMode) override;
+  void SetDisabledTrackModeImpl(DisabledTrackMode aMode) override;
 
   // Overriding allows us to ensure mMutex is locked while changing the track
   // enable status
@@ -960,6 +970,9 @@ class ProcessedMediaTrack : public MediaTrack {
   // A DelayNode is considered to break a cycle and so this will not return
   // true for echo loops, only for muted cycles.
   bool InMutedCycle() const { return mCycleMarker; }
+
+  // Used by ForwardedInputTrack to propagate the disabled mode along the graph.
+  virtual void OnInputDisabledModeChanged(DisabledTrackMode aMode) {}
 
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const override {
     size_t amount = MediaTrack::SizeOfExcludingThis(aMallocSizeOf);

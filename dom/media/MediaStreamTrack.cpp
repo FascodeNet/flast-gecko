@@ -295,8 +295,8 @@ void MediaStreamTrack::SetEnabled(bool aEnabled) {
     return;
   }
 
-  mTrack->SetEnabled(mEnabled ? DisabledTrackMode::ENABLED
-                              : DisabledTrackMode::SILENCE_BLACK);
+  mTrack->SetDisabledTrackMode(mEnabled ? DisabledTrackMode::ENABLED
+                                        : DisabledTrackMode::SILENCE_BLACK);
   NotifyEnabledChanged();
 }
 
@@ -459,6 +459,11 @@ void MediaStreamTrack::MutedChanged(bool aNewState) {
       ("MediaStreamTrack %p became %s", this, aNewState ? "muted" : "unmuted"));
 
   mMuted = aNewState;
+
+  if (Ended()) {
+    return;
+  }
+
   nsString eventName = aNewState ? u"mute"_ns : u"unmute"_ns;
   DispatchTrustedEvent(eventName);
 }
