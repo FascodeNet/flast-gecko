@@ -29,7 +29,7 @@ const MAX_REQUEST_CHUNKS = 128; // Undocumented, but the de facto upper limit.
 // is MAX_REQUESTS * MAX_REQUEST_DATA.
 const MAX_REQUESTS = 15;
 
-const URL = "https://googletranstest.free.beeceptor.com/my/api/path";
+const URL = "http://127.0.0.1:5000/";
 
 /**
  * Translates a webpage using Google's Translation API.
