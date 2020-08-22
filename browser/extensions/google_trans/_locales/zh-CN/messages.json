@@ -1,0 +1,131 @@
+{
+  "extensionName": {
+    "message": "翻译网页"
+  },
+  "extensionDescription": {
+    "message": "使用Google或Yandex实时翻译您的页面。"
+  },
+  "pageActionTitle": {
+    "message": "翻译此页面"
+  },
+  "lblTranslate": {
+    "message": "翻译此页面？"
+  },
+  "lblTranslating": {
+    "message": "翻译中..."
+  },
+  "lblTranslated": {
+    "message": "已翻译"
+  },
+  "lblError": {
+    "message": "此页面无法翻译"
+  },
+  "lblAlwaysTranslate": {
+    "message": "一律翻译自"
+  },
+  "lblTargetLanguage": {
+    "message": "目标语言"
+  },
+  "btnReset": {
+    "message": "重启"
+  },
+  "btnTranslate": {
+    "message": "翻译"
+  },
+  "btnOptions": {
+    "message": "选项"
+  },
+  "btnRestore": {
+    "message": "显示原文"
+  },
+  "btnTryAgain": {
+    "message": "再试一次"
+  },
+  "btnOpenOnGoogleTranslate": {
+    "message": "在Google翻译器中打开"
+  },
+  "btnDonate": {
+    "message": "捐"
+  },
+  "btnNeverTranslate": {
+    "message": "永远不要翻译这个网站"
+  },
+  "btnChangeLanguages": {
+    "message": "更改语言"
+  },
+  "btnMobileOriginal": {
+    "message": "原版的"
+  },
+  "btnMobileTranslated": {
+    "message": "已翻译"
+  },
+  "btnMobileNeverTranslate": {
+    "message": "永远不要翻译这个网站"
+  },
+  "btnMobileDonate": {
+    "message": "捐赠"
+  },
+  "optionsNeverTranslate": {
+    "message": "永远不要翻译这些网站"
+  },
+  "optionsAlwaysTranslate": {
+    "message": "自动翻译这些语言"
+  },
+  "optionPopupConfig": {
+    "message": "显示手机弹出窗口"
+  },
+  "optionPopupAuto": {
+    "message": "自动地"
+  },
+  "optionPopupThreeFingers": {
+    "message": "当我触摸屏幕上的三个手指时"
+  },
+  "lblTranslationEngine": {
+    "message": "翻译引擎"
+  },
+  "msgOpenOnYandexTranslator": {
+    "message": "在yandex中打开翻译"
+  },
+  "lblOthers": {
+    "message": "其它"
+  },
+  "btnMoreOptions": {
+    "message": "更多选项"
+  },
+  "lblPlsDonate": {
+    "message": "用捐款帮助开发者"
+  },
+  "msgTranslateFor": {
+    "message": "翻译成"
+  },
+  "lblShowContextMenu": {
+    "message": "在上下文菜单中显示翻译页面的选项"
+  },
+  "msgYes": {
+    "message": "是"
+  },
+  "msgNo": {
+    "message": "否"
+  },
+  "lblUseNewAlgorithm": {
+    "message": "使用新的翻译算法？"
+  },
+  "msgYesRecommended": {
+    "message": "是（推荐）"
+  },
+  "msgNoUseWidgets": {
+    "message": "否（使用小部件）"
+  },
+  "optionsPageTitle": {
+    "message": "翻译网页-选项"
+  },
+  "optionPopupjustWhenIClickTranlateThisSite": {
+    "message": "Only when I click \"Translate this site\""
+  },
+  "msgEmptyListNeverTranslateSites": {
+    "message": "You have not added any sites to this list."
+  },
+  "msgEmptyListAlwaysTranslateLanguages": {
+    "message": "You have not added any languages to this list."
+  }
+}

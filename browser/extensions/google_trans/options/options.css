@@ -1,0 +1,68 @@
+body {
+  max-width: 800px;
+  margin: 10px auto;
+}
+
+a, button {
+  white-space: pre-wrap !important;
+}
+
+i {
+    border: solid black;
+    border-width: 0 3px 3px 0;
+    display: inline-block;
+    padding: 3px;
+}
+
+.right {
+  transform: rotate(-45deg);
+  -webkit-transform: rotate(-45deg);
+}
+
+.left {
+  transform: rotate(135deg);
+  -webkit-transform: rotate(135deg);
+}
+
+.up {
+  transform: rotate(-135deg);
+  -webkit-transform: rotate(-135deg);
+}
+
+.down {
+  transform: rotate(45deg);
+  -webkit-transform: rotate(45deg);
+}
+
+ul:empty:after {
+  content: attr(placeholder);
+}
+
+body {
+  padding: 10px;
+}
+
+select {
+  cursor: pointer;
+}
+
+/* DARK MODE */
+@media (prefers-color-scheme: dark) {
+  * {
+    scrollbar-color: #202324 #454a4d;
+  }
+  
+  body {
+    color: #e8e6e3 !important;
+    background-color: #181a1b !important;
+    border: 1px solid #454a4d;
+  }
+  
+  
+  #selectTargetLanguage, #neverTranslateListButton, #alwaysTranslateListButton, #selectTranslationEngine, #selectShowContextMenu, select, option {
+    color: #e8e6e3 !important;
+    background-color: #181a1b !important;
+    border: 1px solid #305c80 !important;
+  }
+  
+}
