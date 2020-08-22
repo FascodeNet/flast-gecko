@@ -14,7 +14,7 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/DownloadPaths.jsm"
 );
 
-const INVALID_INPUT_DELAY_MS = 500;
+const INPUT_DELAY_MS = 500;
 
 document.addEventListener(
   "DOMContentLoaded",
@@ -44,6 +44,9 @@ var PrintEventHandler = {
   settingFlags: {
     margins: Ci.nsIPrintSettings.kInitSaveMargins,
     orientation: Ci.nsIPrintSettings.kInitSaveOrientation,
+    paperName:
+      Ci.nsIPrintSettings.kInitSavePaperSize |
+      Ci.nsIPrintSettings.kInitSaveUnwriteableMargins,
     printInColor: Ci.nsIPrintSettings.kInitSaveInColor,
     printerName: Ci.nsIPrintSettings.kInitSavePrinterName,
     scaling: Ci.nsIPrintSettings.kInitSaveScaling,
@@ -84,7 +87,12 @@ var PrintEventHandler = {
 
     // First check the available destinations to ensure we get settings for an
     // accessible printer.
-    let { destinations, selectedPrinter } = await this.getPrintDestinations();
+    let {
+      destinations,
+      selectedPrinter,
+      printersByName,
+    } = await this.getPrintDestinations();
+    PrintSettingsViewProxy.availablePrinters = printersByName;
 
     document.addEventListener("print", e => this.print({ silent: true }));
     document.addEventListener("update-print-settings", e =>
@@ -95,7 +103,7 @@ var PrintEventHandler = {
       this.print({ silent: false })
     );
 
-    this.refreshSettings(selectedPrinter.value);
+    await this.refreshSettings(selectedPrinter.value);
     this.updatePrintPreview(sourceBrowsingContext);
 
     document.dispatchEvent(
@@ -146,18 +154,23 @@ var PrintEventHandler = {
     return printPreviewBrowser;
   },
 
-  refreshSettings(printerName) {
+  async refreshSettings(printerName) {
     this.settings = PrintUtils.getPrintSettings(printerName);
     this.defaultSettings = PrintUtils.getPrintSettings(printerName, true);
     // restore settings which do not have a corresponding flag
-    Object.assign(this.settings, this._nonFlaggedChangedSettings);
+    for (let key of Object.keys(this._nonFlaggedChangedSettings)) {
+      if (key in this.settings) {
+        this.settings[key] = this._nonFlaggedChangedSettings[key];
+      }
+    }
+    await PrintSettingsViewProxy.resolvePropertiesForPrinter(printerName);
 
     // Some settings are only used by the UI
     // assigning new values should update the underlying settings
     this.viewSettings = new Proxy(this.settings, PrintSettingsViewProxy);
 
     // Ensure the output format is set properly
-    this.viewSettings.printerName = this.settings.printerName;
+    this.viewSettings.printerName = printerName;
   },
 
   async print({ silent } = {}) {
@@ -188,7 +201,7 @@ var PrintEventHandler = {
     window.close();
   },
 
-  updateSettings(changedSettings = {}) {
+  async updateSettings(changedSettings = {}) {
     let didSettingsChange = false;
     let updatePreviewWithoutFlag = false;
     let flags = 0;
@@ -233,7 +246,7 @@ var PrintEventHandler = {
         PSSVC.savePrintSettingsToPrefs(this.settings, true, flags);
       }
       if (printerChanged) {
-        this.refreshSettings(this.settings.printerName);
+        await this.refreshSettings(this.settings.printerName);
       }
       if (flags || printerChanged || updatePreviewWithoutFlag) {
         this.updatePrintPreview();
@@ -313,6 +326,7 @@ var PrintEventHandler = {
     const lastUsedPrinterName = PrintUtils._getLastUsedPrinterName();
     const defaultPrinterName = printerList.systemDefaultPrinterName;
     const printers = await printerList.printers;
+    const printersByName = {};
 
     let lastUsedPrinter;
     let defaultPrinter;
@@ -320,6 +334,10 @@ var PrintEventHandler = {
     let saveToPdfPrinter = {
       nameId: "printui-destination-pdf-label",
       value: PrintUtils.SAVE_TO_PDF_PRINTER,
+    };
+    printersByName[PrintUtils.SAVE_TO_PDF_PRINTER] = {
+      supportsColor: true,
+      name: PrintUtils.SAVE_TO_PDF_PRINTER,
     };
 
     if (lastUsedPrinterName == PrintUtils.SAVE_TO_PDF_PRINTER) {
@@ -331,6 +349,7 @@ var PrintEventHandler = {
       ...printers.map(printer => {
         printer.QueryInterface(Ci.nsIPrinter);
         const { name } = printer;
+        printersByName[printer.name] = { printer };
         const destination = { name, value: name };
 
         if (name == lastUsedPrinterName) {
@@ -346,7 +365,7 @@ var PrintEventHandler = {
 
     let selectedPrinter = lastUsedPrinter || defaultPrinter || saveToPdfPrinter;
 
-    return { destinations, selectedPrinter };
+    return { destinations, selectedPrinter, printersByName };
   },
 
   getMarginPresets(marginSize) {
@@ -400,6 +419,18 @@ const PrintSettingsViewProxy = {
     headerStrRight: "print.print_headerright",
   },
 
+  async resolvePropertiesForPrinter(printerName) {
+    // resolve any async properties we need on the printer
+    let printer = this.availablePrinters[printerName];
+    // Await the async printer data.
+    if (printer.printer) {
+      [printer.supportsColor, printer.paperList] = await Promise.all([
+        printer.printer.supportsColor,
+        printer.printer.paperList,
+      ]);
+    }
+  },
+
   get(target, name) {
     switch (name) {
       case "margins":
@@ -437,6 +468,9 @@ const PrintSettingsViewProxy = {
         return target.printRange == Ci.nsIPrintSettings.kRangeAllPages
           ? "all"
           : "custom";
+
+      case "supportsColor":
+        return this.availablePrinters[target.printerName].supportsColor;
     }
     return target[name];
   },
@@ -604,7 +638,17 @@ customElements.define("destination-picker", DestinationPicker, {
 class ColorModePicker extends PrintSettingSelect {
   update(settings) {
     let value = settings[this.settingName];
+    let supportsColor = settings.supportsColor;
+    let forceChange;
+    if (value && !supportsColor) {
+      forceChange = true;
+      value = false;
+    }
     this.value = value ? "color" : "bw";
+    this.options.namedItem("color-option").hidden = !supportsColor;
+    if (forceChange) {
+      this.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   }
 
   handleEvent(e) {
@@ -613,9 +657,6 @@ class ColorModePicker extends PrintSettingSelect {
       this.dispatchSettingsChange({
         [this.settingName]: this.value == "color",
       });
-    } else if (e.type == "available-destinations") {
-      this.setOptions(e.detail);
-      this.required = true;
     }
   }
 }
@@ -750,6 +791,9 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
 
   handleEvent(e) {
     if (e.target == this._shrinkToFitChoice || e.target == this._scaleChoice) {
+      if (!this._percentScale.checkValidity()) {
+        this._percentScale.value = 100;
+      }
       let scale =
         e.target == this._shrinkToFitChoice
           ? 1
@@ -759,21 +803,26 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
         scaling: scale,
       });
       this._scaleError.hidden = true;
-      return;
-    }
-
-    if (e.type == "input") {
-      window.clearTimeout(this.invalidTimeoutId);
+    } else if (e.type == "input") {
+      window.clearTimeout(this.updateSettingsTimeoutId);
 
       if (this._percentScale.checkValidity()) {
-        this.invalidTimeoutId = window.setTimeout(() => {
+        this.updateSettingsTimeoutId = window.setTimeout(() => {
           this.dispatchSettingsChange({
             scaling: Number(this._percentScale.value / 100),
           });
-        }, INVALID_INPUT_DELAY_MS);
+        }, INPUT_DELAY_MS);
       }
     }
-    this._scaleError.hidden = this._percentScale.validity.valid;
+
+    window.clearTimeout(this.showErrorTimeoutId);
+    if (this._percentScale.validity.valid) {
+      this._scaleError.hidden = true;
+    } else {
+      this.showErrorTimeoutId = window.setTimeout(() => {
+        this._scaleError.hidden = false;
+      }, INPUT_DELAY_MS);
+    }
   }
 }
 customElements.define("scale-input", ScaleInput);
@@ -812,7 +861,7 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
         this.dispatchSettingsChange({
           endPageRange: this._endRange.value,
         });
-        this.endRange.dispatchEvent(new Event("change", { bubbles: true }));
+        this._endRange.dispatchEvent(new Event("change", { bubbles: true }));
       }
       return;
     }
@@ -864,15 +913,38 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
       }
     );
 
+    window.clearTimeout(this.showErrorTimeoutId);
+    let hasShownOverflowError = false;
     let startValidity = this._startRange.validity;
     let endValidity = this._endRange.validity;
-    this._startRangeOverflowError.hidden = !(
-      (startValidity.rangeOverflow && endValidity.valid) ||
-      (endValidity.rangeUnderflow && startValidity.valid)
-    );
-    this._rangeError.hidden =
-      !this._startRangeOverflowError.hidden ||
-      (startValidity.valid && endValidity.valid);
+
+    // Display the startRangeOverflowError if the start range exceeds
+    // the end range. This means either the start range is greater than its
+    // max constraint, whiich is determined by the end range, or the end range
+    // is less than its minimum constraint, determined by the start range.
+    if (
+      !(
+        (startValidity.rangeOverflow && endValidity.valid) ||
+        (endValidity.rangeUnderflow && startValidity.valid)
+      )
+    ) {
+      this._startRangeOverflowError.hidden = true;
+    } else {
+      hasShownOverflowError = true;
+      this.showErrorTimeoutId = window.setTimeout(() => {
+        this._startRangeOverflowError.hidden = false;
+      }, INPUT_DELAY_MS);
+    }
+
+    // Display the generic error if the startRangeOverflowError is not already
+    // showing and a range input is invalid.
+    if (hasShownOverflowError || (startValidity.valid && endValidity.valid)) {
+      this._rangeError.hidden = true;
+    } else {
+      this.showErrorTimeoutId = window.setTimeout(() => {
+        this._rangeError.hidden = false;
+      }, INPUT_DELAY_MS);
+    }
   }
 }
 customElements.define("page-range-input", PageRangeInput);

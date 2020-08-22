@@ -83,6 +83,26 @@ add_task(async function restrictionCharBeforeAlias() {
   );
 });
 
+// Types a space while typing an alias to ensure we stop autofilling.
+add_task(async function spaceWhileTypingAlias() {
+  let value = ALIAS.substring(0, ALIAS.length - 1);
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value,
+    selectionStart: value.length,
+    selectionEnd: value.length,
+  });
+  await UrlbarTestUtils.waitForAutocompleteResultAt(window, 0);
+  await assertAlias(true);
+
+  gURLBar.value = value + " ";
+  let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+  UrlbarTestUtils.fireInputEvent(window);
+  await searchPromise;
+
+  await assertAlias(false);
+});
+
 // Aliases are case insensitive, and the alias in the result uses the case that
 // the user typed in the input.  Make sure that searching with an alias using a
 // weird case still causes the alias to be highlighted.
@@ -669,7 +689,6 @@ add_task(async function hiddenEngine() {
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: "@",
-    fireInptuEvent: true,
   });
 
   const defaultEngine = await Services.search.getDefault();
@@ -716,4 +735,53 @@ add_task(async function hiddenEngine() {
   );
 
   defaultEngine.hidden = false;
+});
+
+/**
+ * This test checks that if an engines alias is not prefixed with
+ * @ it still appears in the popup when using the "@" token
+ * alias in the search bar.
+ */
+add_task(async function nonPrefixedKeyword() {
+  let name = "Custom";
+  let alias = "customkeyword";
+  let engine = await Services.search.addEngineWithDetails(name, {
+    alias,
+    template: "http://example.com/?search={searchTerms}",
+  });
+
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "@",
+  });
+
+  let foundEngineInPopup = false;
+
+  // Checks that the default engine appears in the urlbar's popup.
+  for (let i = 0; i < UrlbarTestUtils.getResultCount(window); i++) {
+    let details = await UrlbarTestUtils.getDetailsOfResultAt(window, i);
+    if (details.searchParams.engine === name) {
+      foundEngineInPopup = true;
+      break;
+    }
+  }
+  Assert.ok(foundEngineInPopup, "Custom engine appears in the popup.");
+
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "@" + alias,
+  });
+
+  let keywordOfferResult = await UrlbarTestUtils.getDetailsOfResultAt(
+    window,
+    0
+  );
+
+  Assert.equal(
+    keywordOfferResult.searchParams.engine,
+    name,
+    "The first result should be a keyword search result with the correct engine."
+  );
+
+  await Services.search.removeEngine(engine);
 });

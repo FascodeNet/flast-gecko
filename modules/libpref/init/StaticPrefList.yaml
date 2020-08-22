@@ -3769,12 +3769,12 @@
 
 - name: general.smoothScroll.mouseWheel.durationMaxMS
   type: RelaxedAtomicInt32
-  value: 200
+  value: 400
   mirror: always
 
 - name: general.smoothScroll.mouseWheel.durationMinMS
   type: RelaxedAtomicInt32
-  value: 50
+  value: 200
   mirror: always
 
 - name: general.smoothScroll.other.durationMaxMS
@@ -8307,6 +8307,19 @@
 - name: network.http.http3.recvBufferSize
   type: RelaxedAtomicInt32
   value: 1048576
+  mirror: always
+
+# When true, a http request will be upgraded to https when HTTPS RR is
+# available.
+- name: network.dns.upgrade_with_https_rr
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+  # Whether to use HTTPS RR as AltSvc
+- name: network.dns.use_https_rr_as_altsvc
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 #---------------------------------------------------------------------------

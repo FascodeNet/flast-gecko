@@ -520,6 +520,7 @@ NS_IMPL_ISUPPORTS_INHERITED(TypeHostRecord, nsHostRecord, TypeHostRecord,
 
 TypeHostRecord::TypeHostRecord(const nsHostKey& key)
     : nsHostRecord(key),
+      DNSHTTPSSVCRecordBase(key.host),
       mTrrLock("TypeHostRecord.mTrrLock"),
       mResultsLock("TypeHostRecord.mResultsLock") {}
 
@@ -601,6 +602,25 @@ TypeHostRecord::GetRecords(nsTArray<RefPtr<nsISVCBRecord>>& aRecords) {
     aRecords.AppendElement(rec);
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
+                                     nsISVCBRecord** aRecord) {
+  MutexAutoLock lock(mResultsLock);
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  auto& results = mResults.as<TypeRecordHTTPSSVC>();
+  nsCOMPtr<nsISVCBRecord> result =
+      GetServiceModeRecordInternal(aNoHttp2, aNoHttp3, results);
+  if (!result) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  result.forget(aRecord);
   return NS_OK;
 }
 
