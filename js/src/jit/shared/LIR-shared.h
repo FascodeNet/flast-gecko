@@ -4028,6 +4028,19 @@ class LInArray : public LInstructionHelper<1, 4, 0> {
   const LAllocation* object() { return getOperand(3); }
 };
 
+class LGuardElementNotHole : public LInstructionHelper<0, 2, 0> {
+ public:
+  LIR_HEADER(GuardElementNotHole)
+
+  LGuardElementNotHole(const LAllocation& elements, const LAllocation& index)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+  }
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+};
+
 // Load a value from an array's elements vector, loading |undefined| if we hit a
 // hole. Bail out if we get a negative index.
 class LLoadElementHole : public LInstructionHelper<BOX_PIECES, 3, 0> {
@@ -7698,6 +7711,36 @@ class LGuardNullOrUndefined : public LInstructionHelper<0, BOX_PIECES, 0> {
   static const size_t Input = 0;
 
   MGuardNullOrUndefined* mir() { return mir_->toGuardNullOrUndefined(); }
+};
+
+class LGuardFunctionFlags : public LInstructionHelper<0, 1, 0> {
+ public:
+  LIR_HEADER(GuardFunctionFlags)
+
+  explicit LGuardFunctionFlags(const LAllocation& fun)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, fun);
+  }
+
+  const LAllocation* function() { return getOperand(0); }
+
+  MGuardFunctionFlags* mir() { return mir_->toGuardFunctionFlags(); }
+};
+
+class LGuardFunctionKind : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardFunctionKind)
+
+  explicit LGuardFunctionKind(const LAllocation& fun, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, fun);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* function() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+
+  MGuardFunctionKind* mir() { return mir_->toGuardFunctionKind(); }
 };
 
 class LRecompileCheck : public LInstructionHelper<0, 0, 1> {

@@ -5045,6 +5045,29 @@ void CodeGenerator::visitGuardNullOrUndefined(LGuardNullOrUndefined* lir) {
   masm.bind(&done);
 }
 
+void CodeGenerator::visitGuardFunctionFlags(LGuardFunctionFlags* lir) {
+  Register function = ToRegister(lir->function());
+
+  Assembler::Condition cond =
+      lir->mir()->bailWhenSet() ? Assembler::NonZero : Assembler::Zero;
+
+  Label bail;
+  masm.branchTestFunctionFlags(function, lir->mir()->flags(), cond, &bail);
+  bailoutFrom(&bail, lir->snapshot());
+}
+
+void CodeGenerator::visitGuardFunctionKind(LGuardFunctionKind* lir) {
+  Register function = ToRegister(lir->function());
+  Register temp = ToRegister(lir->temp());
+
+  Assembler::Condition cond =
+      lir->mir()->bailOnEquality() ? Assembler::Equal : Assembler::NotEqual;
+
+  Label bail;
+  masm.branchFunctionKind(cond, lir->mir()->expected(), function, temp, &bail);
+  bailoutFrom(&bail, lir->snapshot());
+}
+
 // Out-of-line path to update the store buffer.
 class OutOfLineCallPostWriteBarrier : public OutOfLineCodeBase<CodeGenerator> {
   LInstruction* lir_;
@@ -6343,17 +6366,11 @@ void CodeGenerator::emitApplyGeneric(T* apply) {
 }
 
 void CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric* apply) {
-  // Limit the number of parameters we can handle to a number that does not risk
-  // us allocating too much stack, notably on Windows where there is a 4K guard
-  // page that has to be touched to extend the stack.  See bug 1351278.  The
-  // value "3000" is the size of the guard page minus an arbitrary, but large,
-  // safety margin.
-
   LSnapshot* snapshot = apply->snapshot();
   Register argcreg = ToRegister(apply->getArgc());
 
-  uint32_t limit = 3000 / sizeof(Value);
-  bailoutCmp32(Assembler::Above, argcreg, Imm32(limit), snapshot);
+  // Ensure that we have a reasonable number of arguments.
+  bailoutCmp32(Assembler::Above, argcreg, Imm32(JIT_ARGS_LENGTH_MAX), snapshot);
 
   emitApplyGeneric(apply);
 }
@@ -6366,10 +6383,8 @@ void CodeGenerator::visitApplyArrayGeneric(LApplyArrayGeneric* apply) {
                  ObjectElements::offsetOfLength());
   masm.load32(length, tmp);
 
-  // See comment in visitApplyArgsGeneric, above.
-
-  uint32_t limit = 3000 / sizeof(Value);
-  bailoutCmp32(Assembler::Above, tmp, Imm32(limit), snapshot);
+  // Ensure that we have a reasonable number of arguments.
+  bailoutCmp32(Assembler::Above, tmp, Imm32(JIT_ARGS_LENGTH_MAX), snapshot);
 
   // Ensure that the array does not contain an uninitialized tail.
 
@@ -6389,10 +6404,8 @@ void CodeGenerator::visitConstructArrayGeneric(LConstructArrayGeneric* lir) {
                  ObjectElements::offsetOfLength());
   masm.load32(length, tmp);
 
-  // See comment in visitApplyArgsGeneric, above.
-
-  uint32_t limit = 3000 / sizeof(Value);
-  bailoutCmp32(Assembler::Above, tmp, Imm32(limit), snapshot);
+  // Ensure that we have a reasonable number of arguments.
+  bailoutCmp32(Assembler::Above, tmp, Imm32(JIT_ARGS_LENGTH_MAX), snapshot);
 
   // Ensure that the array does not contain an uninitialized tail.
 
@@ -13226,7 +13239,7 @@ void CodeGenerator::visitInArray(LInArray* lir) {
 
     MOZ_ASSERT_IF(index < 0, mir->needsNegativeIntCheck());
     if (mir->needsNegativeIntCheck()) {
-      using Fn = bool (*)(JSContext*, uint32_t, HandleObject, bool*);
+      using Fn = bool (*)(JSContext*, int32_t, HandleObject, bool*);
       ool = oolCallVM<Fn, OperatorInI>(
           lir, ArgList(Imm32(index), ToRegister(lir->object())),
           StoreRegisterTo(output));
@@ -13257,7 +13270,7 @@ void CodeGenerator::visitInArray(LInArray* lir) {
 
     if (mir->needsNegativeIntCheck()) {
       masm.bind(&negativeIntCheck);
-      using Fn = bool (*)(JSContext*, uint32_t, HandleObject, bool*);
+      using Fn = bool (*)(JSContext*, int32_t, HandleObject, bool*);
       ool = oolCallVM<Fn, OperatorInI>(
           lir, ArgList(index, ToRegister(lir->object())),
           StoreRegisterTo(output));
@@ -13278,6 +13291,21 @@ void CodeGenerator::visitInArray(LInArray* lir) {
   if (ool) {
     masm.bind(ool->rejoin());
   }
+}
+
+void CodeGenerator::visitGuardElementNotHole(LGuardElementNotHole* lir) {
+  Register elements = ToRegister(lir->elements());
+  const LAllocation* index = lir->index();
+
+  Label testMagic;
+  if (index->isConstant()) {
+    Address address(elements, ToInt32(index) * sizeof(js::Value));
+    masm.branchTestMagic(Assembler::Equal, address, &testMagic);
+  } else {
+    BaseObjectElementIndex address(elements, ToRegister(index));
+    masm.branchTestMagic(Assembler::Equal, address, &testMagic);
+  }
+  bailoutFrom(&testMagic, lir->snapshot());
 }
 
 void CodeGenerator::visitInstanceOfO(LInstanceOfO* ins) {

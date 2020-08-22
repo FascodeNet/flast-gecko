@@ -109,16 +109,18 @@ void PreloaderBase::NotifyOpen(const PreloadHashKey& aKey,
 
   mKey = aKey;
   mIsUsed = !aIsPreload;
+
+  if (!mIsUsed && !mUsageTimer) {
+    auto callback = MakeRefPtr<UsageTimer>(this, aDocument);
+    NS_NewTimerWithCallback(getter_AddRefs(mUsageTimer), callback, 10000,
+                            nsITimer::TYPE_ONE_SHOT);
+  }
 }
 
 void PreloaderBase::NotifyOpen(const PreloadHashKey& aKey, nsIChannel* aChannel,
                                dom::Document* aDocument, bool aIsPreload) {
   NotifyOpen(aKey, aDocument, aIsPreload);
   mChannel = aChannel;
-
-  auto callback = MakeRefPtr<UsageTimer>(this, aDocument);
-  NS_NewTimerWithCallback(getter_AddRefs(mUsageTimer), callback, 10000,
-                          nsITimer::TYPE_ONE_SHOT);
 
   nsCOMPtr<nsIInterfaceRequestor> callbacks;
   mChannel->GetNotificationCallbacks(getter_AddRefs(callbacks));
@@ -313,13 +315,13 @@ NS_IMETHODIMP PreloaderBase::UsageTimer::Notify(nsITimer* aTimer) {
   if (!uri) {
     return NS_OK;
   }
-  nsString spec = NS_ConvertUTF8toUTF16(uri->GetSpecOrDefault());
 
+  nsString spec;
+  NS_GetSanitizedURIStringFromURI(uri, spec);
   nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
                                   mDocument, nsContentUtils::eDOM_PROPERTIES,
                                   "UnusedLinkPreloadPending",
-                                  nsTArray<nsString>({spec}));
-
+                                  nsTArray<nsString>({std::move(spec)}));
   return NS_OK;
 }
 

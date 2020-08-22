@@ -1197,6 +1197,23 @@ bool BaselineCacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
   return true;
 }
 
+static void EmitAssertExtensibleAndWritableArrayLength(MacroAssembler& masm,
+                                                       Register elementsReg) {
+#ifdef DEBUG
+  // Preceding shape guards ensure the object is extensible and the array length
+  // is writable.
+  Address elementsFlags(elementsReg, ObjectElements::offsetOfFlags());
+  Label ok;
+  masm.branchTest32(Assembler::Zero, elementsFlags,
+                    Imm32(ObjectElements::Flags::NOT_EXTENSIBLE |
+                          ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH),
+                    &ok);
+  masm.assumeUnreachable(
+      "Unexpected non-extensible object or non-writable array length");
+  masm.bind(&ok);
+#endif
+}
+
 bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
                                                         Int32OperandId indexId,
                                                         ValOperandId rhsId,
@@ -1218,6 +1235,8 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
 
   // Load obj->elements in scratch.
   masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
+
+  EmitAssertExtensibleAndWritableArrayLength(masm, scratch);
 
   BaseObjectElementIndex element(scratch, index);
   Address initLength(scratch, ObjectElements::offsetOfInitializedLength());
@@ -1252,12 +1271,7 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
     masm.spectreBoundsCheck32(index, capacity, spectreTemp, &allocElement);
     masm.jump(&capacityOk);
 
-    // Check for non-writable array length. We only have to do this if
-    // index >= capacity.
     masm.bind(&allocElement);
-    masm.branchTest32(Assembler::NonZero, elementsFlags,
-                      Imm32(ObjectElements::NONWRITABLE_ARRAY_LENGTH),
-                      failure->label());
 
     LiveRegisterSet save(GeneralRegisterSet::Volatile(),
                          liveVolatileFloatRegs());
@@ -1367,6 +1381,8 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
   // Load obj->elements in scratch.
   masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
 
+  EmitAssertExtensibleAndWritableArrayLength(masm, scratch);
+
   Address elementsInitLength(scratch,
                              ObjectElements::offsetOfInitializedLength());
   Address elementsLength(scratch, ObjectElements::offsetOfLength());
@@ -1392,12 +1408,7 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
   masm.spectreBoundsCheck32(scratchLength, capacity, InvalidReg, &allocElement);
   masm.jump(&capacityOk);
 
-  // Check for non-writable array length. We only have to do this if
-  // index >= capacity.
   masm.bind(&allocElement);
-  masm.branchTest32(Assembler::NonZero, elementsFlags,
-                    Imm32(ObjectElements::NONWRITABLE_ARRAY_LENGTH),
-                    failure->label());
 
   LiveRegisterSet save(GeneralRegisterSet::Volatile(), liveVolatileFloatRegs());
   save.takeUnchecked(scratch);
@@ -2567,10 +2578,6 @@ bool BaselineCacheIRCompiler::emitCallStringObjectConcatResult(
 // blowing the stack limit.
 bool BaselineCacheIRCompiler::updateArgc(CallFlags flags, Register argcReg,
                                          Register scratch) {
-  static_assert(CacheIRCompiler::MAX_ARGS_ARRAY_LENGTH <= ARGS_LENGTH_MAX,
-                "maximum arguments length for optimized stub should be <= "
-                "ARGS_LENGTH_MAX");
-
   CallFlags::ArgFormat format = flags.getArgFormat();
   switch (format) {
     case CallFlags::Standard:
@@ -2620,8 +2627,7 @@ bool BaselineCacheIRCompiler::updateArgc(CallFlags flags, Register argcReg,
   }
 
   // Ensure that callee argc does not exceed the limit.
-  masm.branch32(Assembler::Above, scratch,
-                Imm32(CacheIRCompiler::MAX_ARGS_ARRAY_LENGTH),
+  masm.branch32(Assembler::Above, scratch, Imm32(JIT_ARGS_LENGTH_MAX),
                 failure->label());
 
   // We're past the final guard. Update argc with the new value.
@@ -2630,10 +2636,8 @@ bool BaselineCacheIRCompiler::updateArgc(CallFlags flags, Register argcReg,
   return true;
 }
 
-bool BaselineCacheIRCompiler::emitGuardFunApply(Int32OperandId argcId,
-                                                CallFlags flags) {
+bool BaselineCacheIRCompiler::emitGuardFunApplyArray() {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register argcReg = allocator.useRegister(masm, argcId);
   AutoScratchRegister scratch(allocator, masm);
   AutoScratchRegister scratch2(allocator, masm);
 
@@ -2642,75 +2646,53 @@ bool BaselineCacheIRCompiler::emitGuardFunApply(Int32OperandId argcId,
     return false;
   }
 
-  // Ensure argc == 2
-  masm.branch32(Assembler::NotEqual, argcReg, Imm32(2), failure->label());
-
   // Stack layout is (bottom to top):
   //   Callee (fun_apply)
   //   ThisValue (target)
   //   Arg0 (new this)
   //   Arg1 (argument array)
 
+  // Ensure that args is an array object.
   Address argsAddr = allocator.addressOf(masm, BaselineFrameSlot(0));
-  switch (flags.getArgFormat()) {
-    case CallFlags::FunApplyArgs: {
-      // Ensure that args is magic |arguments|.
-      masm.branchTestMagic(Assembler::NotEqual, argsAddr, failure->label());
+  masm.fallibleUnboxObject(argsAddr, scratch, failure->label());
+  const JSClass* clasp = &ArrayObject::class_;
+  masm.branchTestObjClass(Assembler::NotEqual, scratch, clasp, scratch2,
+                          scratch, failure->label());
 
-      // Ensure that this frame doesn't have an arguments object.
-      Address flagAddr(BaselineFrameReg, BaselineFrame::reverseOffsetOfFlags());
-      masm.branchTest32(Assembler::NonZero, flagAddr,
-                        Imm32(BaselineFrame::HAS_ARGS_OBJ), failure->label());
-    } break;
-    case CallFlags::FunApplyArray: {
-      // Ensure that args is an array object.
-      masm.fallibleUnboxObject(argsAddr, scratch, failure->label());
-      const JSClass* clasp = &ArrayObject::class_;
-      masm.branchTestObjClass(Assembler::NotEqual, scratch, clasp, scratch2,
-                              scratch, failure->label());
+  // Get the array elements and length
+  Register elementsReg = scratch;
+  masm.loadPtr(Address(scratch, NativeObject::offsetOfElements()), elementsReg);
+  Register calleeArgcReg = scratch2;
+  masm.load32(Address(elementsReg, ObjectElements::offsetOfLength()),
+              calleeArgcReg);
 
-      // Get the array elements and length
-      Register elementsReg = scratch;
-      masm.loadPtr(Address(scratch, NativeObject::offsetOfElements()),
-                   elementsReg);
-      Register calleeArgcReg = scratch2;
-      masm.load32(Address(elementsReg, ObjectElements::offsetOfLength()),
-                  calleeArgcReg);
+  // Ensure that callee argc does not exceed the limit.  Note that
+  // we do this earlier for FunApplyArray than for FunApplyArgs,
+  // because we don't want to loop over every element of the array
+  // looking for holes if we already know it is too long.
+  masm.branch32(Assembler::Above, calleeArgcReg, Imm32(JIT_ARGS_LENGTH_MAX),
+                failure->label());
 
-      // Ensure that callee argc does not exceed the limit.  Note that
-      // we do this earlier for FunApplyArray than for FunApplyArgs,
-      // because we don't want to loop over every element of the array
-      // looking for holes if we already know it is too long.
-      masm.branch32(Assembler::Above, calleeArgcReg,
-                    Imm32(CacheIRCompiler::MAX_ARGS_ARRAY_LENGTH),
-                    failure->label());
+  // Ensure that length == initializedLength
+  Address initLenAddr(elementsReg, ObjectElements::offsetOfInitializedLength());
+  masm.branch32(Assembler::NotEqual, initLenAddr, calleeArgcReg,
+                failure->label());
 
-      // Ensure that length == initializedLength
-      Address initLenAddr(elementsReg,
-                          ObjectElements::offsetOfInitializedLength());
-      masm.branch32(Assembler::NotEqual, initLenAddr, calleeArgcReg,
-                    failure->label());
+  // Ensure no holes. Loop through array and verify no elements are magic.
+  Register start = elementsReg;
+  Register end = scratch2;
+  BaseValueIndex endAddr(elementsReg, calleeArgcReg);
+  masm.computeEffectiveAddress(endAddr, end);
 
-      // Ensure no holes. Loop through array and verify no elements are magic.
-      Register start = elementsReg;
-      Register end = scratch2;
-      BaseValueIndex endAddr(elementsReg, calleeArgcReg);
-      masm.computeEffectiveAddress(endAddr, end);
+  Label loop;
+  Label endLoop;
+  masm.bind(&loop);
+  masm.branchPtr(Assembler::AboveOrEqual, start, end, &endLoop);
+  masm.branchTestMagic(Assembler::Equal, Address(start, 0), failure->label());
+  masm.addPtr(Imm32(sizeof(Value)), start);
+  masm.jump(&loop);
+  masm.bind(&endLoop);
 
-      Label loop;
-      Label endLoop;
-      masm.bind(&loop);
-      masm.branchPtr(Assembler::AboveOrEqual, start, end, &endLoop);
-      masm.branchTestMagic(Assembler::Equal, Address(start, 0),
-                           failure->label());
-      masm.addPtr(Imm32(sizeof(Value)), start);
-      masm.jump(&loop);
-      masm.bind(&endLoop);
-    } break;
-    default:
-      MOZ_CRASH("Invalid arg format");
-      break;
-  }
   return true;
 }
 

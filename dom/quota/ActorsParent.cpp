@@ -265,36 +265,33 @@ nsresult CreateTables(mozIStorageConnection* aConnection) {
   return NS_OK;
 }
 
-nsresult LoadCacheVersion(mozIStorageConnection* aConnection,
-                          int32_t& aVersion) {
+Result<int32_t, nsresult> LoadCacheVersion(mozIStorageConnection& aConnection) {
   AssertIsOnIOThread();
-  MOZ_ASSERT(aConnection);
 
   nsCOMPtr<mozIStorageStatement> stmt;
-  nsresult rv = aConnection->CreateStatement(
+  nsresult rv = aConnection.CreateStatement(
       "SELECT cache_version FROM database"_ns, getter_AddRefs(stmt));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   bool hasResult;
   rv = stmt->ExecuteStep(&hasResult);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   if (NS_WARN_IF(!hasResult)) {
-    return NS_ERROR_FILE_CORRUPTED;
+    return Err(NS_ERROR_FILE_CORRUPTED);
   }
 
   int32_t version;
   rv = stmt->GetInt32(0, &version);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
-  aVersion = version;
-  return NS_OK;
+  return version;
 }
 
 nsresult SaveCacheVersion(mozIStorageConnection* aConnection,
@@ -367,12 +364,7 @@ nsresult CreateCacheTables(mozIStorageConnection* aConnection) {
 
 #ifdef DEBUG
   {
-    int32_t cacheVersion;
-    rv = LoadCacheVersion(aConnection, cacheVersion);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
+    QM_TRY_VAR(const int32_t cacheVersion, LoadCacheVersion(*aConnection));
     MOZ_ASSERT(cacheVersion == 0);
   }
 #endif
@@ -572,51 +564,47 @@ nsresult InitializeLocalStorageArchive(mozIStorageConnection* aConnection,
   return NS_OK;
 }
 
-nsresult IsLocalStorageArchiveInitialized(mozIStorageConnection* aConnection,
-                                          bool& aInitialized) {
+Result<bool, nsresult> IsLocalStorageArchiveInitialized(
+    mozIStorageConnection& aConnection) {
   AssertIsOnIOThread();
-  MOZ_ASSERT(aConnection);
 
   bool exists;
-  nsresult rv = aConnection->TableExists("database"_ns, &exists);
+  nsresult rv = aConnection.TableExists("database"_ns, &exists);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
-  aInitialized = exists;
-  return NS_OK;
+  return exists;
 }
 
-nsresult LoadLocalStorageArchiveVersion(mozIStorageConnection* aConnection,
-                                        uint32_t& aVersion) {
+Result<int32_t, nsresult> LoadLocalStorageArchiveVersion(
+    mozIStorageConnection& aConnection) {
   AssertIsOnIOThread();
-  MOZ_ASSERT(aConnection);
 
   nsCOMPtr<mozIStorageStatement> stmt;
-  nsresult rv = aConnection->CreateStatement("SELECT version FROM database"_ns,
-                                             getter_AddRefs(stmt));
+  nsresult rv = aConnection.CreateStatement("SELECT version FROM database"_ns,
+                                            getter_AddRefs(stmt));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   bool hasResult;
   rv = stmt->ExecuteStep(&hasResult);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   if (NS_WARN_IF(!hasResult)) {
-    return NS_ERROR_FILE_CORRUPTED;
+    return Err(NS_ERROR_FILE_CORRUPTED);
   }
 
   int32_t version;
   rv = stmt->GetInt32(0, &version);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
-  aVersion = version;
-  return NS_OK;
+  return version;
 }
 
 /*
@@ -5386,51 +5374,58 @@ QuotaManager::UpgradeFromIndexedDBDirectoryToPersistentStorageDirectory(
   AssertIsOnIOThread();
   MOZ_ASSERT(aIndexedDBDir);
 
-  bool isDirectory;
-  QM_TRY(aIndexedDBDir->IsDirectory(&isDirectory));
+  auto rv = [this, &aIndexedDBDir]() -> nsresult {
+    bool isDirectory;
+    QM_TRY(aIndexedDBDir->IsDirectory(&isDirectory));
 
-  if (!isDirectory) {
-    NS_WARNING("indexedDB entry is not a directory!");
-    return NS_OK;
-  }
-
-  auto persistentStorageDirOrErr = QM_NewLocalFile(mStoragePath);
-  if (NS_WARN_IF(persistentStorageDirOrErr.isErr())) {
-    return persistentStorageDirOrErr.unwrapErr();
-  }
-
-  nsCOMPtr<nsIFile> persistentStorageDir = persistentStorageDirOrErr.unwrap();
-
-  QM_TRY(
-      persistentStorageDir->Append(nsLiteralString(PERSISTENT_DIRECTORY_NAME)));
-
-  bool exists;
-  QM_TRY(persistentStorageDir->Exists(&exists));
-
-  if (exists) {
-    QM_WARNING("Deleting old <profile>/indexedDB directory!");
-
-    nsresult rv = aIndexedDBDir->Remove(/* aRecursive */ true);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
+    if (!isDirectory) {
+      NS_WARNING("indexedDB entry is not a directory!");
+      return NS_OK;
     }
 
+    auto persistentStorageDirOrErr = QM_NewLocalFile(mStoragePath);
+    if (NS_WARN_IF(persistentStorageDirOrErr.isErr())) {
+      return persistentStorageDirOrErr.unwrapErr();
+    }
+
+    nsCOMPtr<nsIFile> persistentStorageDir = persistentStorageDirOrErr.unwrap();
+
+    QM_TRY(persistentStorageDir->Append(
+        nsLiteralString(PERSISTENT_DIRECTORY_NAME)));
+
+    bool exists;
+    QM_TRY(persistentStorageDir->Exists(&exists));
+
+    if (exists) {
+      QM_WARNING("Deleting old <profile>/indexedDB directory!");
+
+      nsresult rv = aIndexedDBDir->Remove(/* aRecursive */ true);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
+
+      return NS_OK;
+    }
+
+    nsCOMPtr<nsIFile> storageDir;
+    QM_TRY(persistentStorageDir->GetParent(getter_AddRefs(storageDir)));
+
+    // MoveTo() is atomic if the move happens on the same volume which should
+    // be our case, so even if we crash in the middle of the operation nothing
+    // breaks next time we try to initialize.
+    // However there's a theoretical possibility that the indexedDB directory
+    // is on different volume, but it should be rare enough that we don't have
+    // to worry about it.
+    QM_TRY(aIndexedDBDir->MoveTo(storageDir,
+                                 nsLiteralString(PERSISTENT_DIRECTORY_NAME)));
+
     return NS_OK;
-  }
+  }();
 
-  nsCOMPtr<nsIFile> storageDir;
-  QM_TRY(persistentStorageDir->GetParent(getter_AddRefs(storageDir)));
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeFromIndexedDBDirectory, rv);
 
-  // MoveTo() is atomic if the move happens on the same volume which should
-  // be our case, so even if we crash in the middle of the operation nothing
-  // breaks next time we try to initialize.
-  // However there's a theoretical possibility that the indexedDB directory
-  // is on different volume, but it should be rare enough that we don't have
-  // to worry about it.
-  QM_TRY(aIndexedDBDir->MoveTo(storageDir,
-                               nsLiteralString(PERSISTENT_DIRECTORY_NAME)));
-
-  return NS_OK;
+  return rv;
 }
 
 nsresult
@@ -5439,93 +5434,100 @@ QuotaManager::UpgradeFromPersistentStorageDirectoryToDefaultStorageDirectory(
   AssertIsOnIOThread();
   MOZ_ASSERT(aPersistentStorageDir);
 
-  bool isDirectory;
-  nsresult rv = aPersistentStorageDir->IsDirectory(&isDirectory);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  if (!isDirectory) {
-    NS_WARNING("persistent entry is not a directory!");
-    return NS_OK;
-  }
-
-  auto defaultStorageDirOrErr = QM_NewLocalFile(mDefaultStoragePath);
-  if (NS_WARN_IF(defaultStorageDirOrErr.isErr())) {
-    return defaultStorageDirOrErr.unwrapErr();
-  }
-
-  nsCOMPtr<nsIFile> defaultStorageDir = defaultStorageDirOrErr.unwrap();
-
-  bool exists;
-  rv = defaultStorageDir->Exists(&exists);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  if (exists) {
-    QM_WARNING("Deleting old <profile>/storage/persistent directory!");
-
-    rv = aPersistentStorageDir->Remove(/* aRecursive */ true);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
-    return NS_OK;
-  }
-
-  // Create real metadata files for origin directories in persistent storage.
-  RefPtr<CreateOrUpgradeDirectoryMetadataHelper> helper =
-      new CreateOrUpgradeDirectoryMetadataHelper(aPersistentStorageDir,
-                                                 /* aPersistent */ true);
-
-  rv = helper->ProcessRepository();
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  // Upgrade metadata files for origin directories in temporary storage.
-  auto temporaryStorageDirOrErr = QM_NewLocalFile(mTemporaryStoragePath);
-  if (NS_WARN_IF(temporaryStorageDirOrErr.isErr())) {
-    return temporaryStorageDirOrErr.unwrapErr();
-  }
-
-  nsCOMPtr<nsIFile> temporaryStorageDir = temporaryStorageDirOrErr.unwrap();
-
-  rv = temporaryStorageDir->Exists(&exists);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  if (exists) {
-    rv = temporaryStorageDir->IsDirectory(&isDirectory);
+  auto rv = [this, &aPersistentStorageDir]() -> nsresult {
+    bool isDirectory;
+    nsresult rv = aPersistentStorageDir->IsDirectory(&isDirectory);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
 
     if (!isDirectory) {
-      NS_WARNING("temporary entry is not a directory!");
+      NS_WARNING("persistent entry is not a directory!");
       return NS_OK;
     }
 
-    helper =
-        new CreateOrUpgradeDirectoryMetadataHelper(temporaryStorageDir,
-                                                   /* aPersistent */ false);
+    auto defaultStorageDirOrErr = QM_NewLocalFile(mDefaultStoragePath);
+    if (NS_WARN_IF(defaultStorageDirOrErr.isErr())) {
+      return defaultStorageDirOrErr.unwrapErr();
+    }
+
+    nsCOMPtr<nsIFile> defaultStorageDir = defaultStorageDirOrErr.unwrap();
+
+    bool exists;
+    rv = defaultStorageDir->Exists(&exists);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    if (exists) {
+      QM_WARNING("Deleting old <profile>/storage/persistent directory!");
+
+      rv = aPersistentStorageDir->Remove(/* aRecursive */ true);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
+
+      return NS_OK;
+    }
+
+    // Create real metadata files for origin directories in persistent storage.
+    RefPtr<CreateOrUpgradeDirectoryMetadataHelper> helper =
+        new CreateOrUpgradeDirectoryMetadataHelper(aPersistentStorageDir,
+                                                   /* aPersistent */ true);
 
     rv = helper->ProcessRepository();
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
-  }
 
-  // And finally rename persistent to default.
-  rv = aPersistentStorageDir->RenameTo(nullptr,
-                                       nsLiteralString(DEFAULT_DIRECTORY_NAME));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+    // Upgrade metadata files for origin directories in temporary storage.
+    auto temporaryStorageDirOrErr = QM_NewLocalFile(mTemporaryStoragePath);
+    if (NS_WARN_IF(temporaryStorageDirOrErr.isErr())) {
+      return temporaryStorageDirOrErr.unwrapErr();
+    }
 
-  return NS_OK;
+    nsCOMPtr<nsIFile> temporaryStorageDir = temporaryStorageDirOrErr.unwrap();
+
+    rv = temporaryStorageDir->Exists(&exists);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    if (exists) {
+      rv = temporaryStorageDir->IsDirectory(&isDirectory);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
+
+      if (!isDirectory) {
+        NS_WARNING("temporary entry is not a directory!");
+        return NS_OK;
+      }
+
+      helper =
+          new CreateOrUpgradeDirectoryMetadataHelper(temporaryStorageDir,
+                                                     /* aPersistent */ false);
+
+      rv = helper->ProcessRepository();
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
+    }
+
+    // And finally rename persistent to default.
+    rv = aPersistentStorageDir->RenameTo(
+        nullptr, nsLiteralString(DEFAULT_DIRECTORY_NAME));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    return NS_OK;
+  }();
+
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeFromPersistentStorageDirectory, rv);
+
+  return rv;
 }
 
 template <typename Helper>
@@ -5590,13 +5592,20 @@ nsresult QuotaManager::UpgradeStorageFrom0_0To1_0(
   AssertIsOnIOThread();
   MOZ_ASSERT(aConnection);
 
-  nsresult rv = UpgradeStorage<UpgradeStorageFrom0_0To1_0Helper>(
-      0, MakeStorageVersion(1, 0), aConnection);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  auto rv = [this, &aConnection]() -> nsresult {
+    nsresult rv = UpgradeStorage<UpgradeStorageFrom0_0To1_0Helper>(
+        0, MakeStorageVersion(1, 0), aConnection);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
 
-  return NS_OK;
+    return NS_OK;
+  }();
+
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeStorageFrom0_0To1_0, rv);
+
+  return rv;
 }
 
 nsresult QuotaManager::UpgradeStorageFrom1_0To2_0(
@@ -5671,13 +5680,20 @@ nsresult QuotaManager::UpgradeStorageFrom1_0To2_0(
   // manager directories without the ".files" suffix then prevent current
   // Firefox from initializing and using the storage.
 
-  nsresult rv = UpgradeStorage<UpgradeStorageFrom1_0To2_0Helper>(
-      MakeStorageVersion(1, 0), MakeStorageVersion(2, 0), aConnection);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  auto rv = [this, &aConnection]() -> nsresult {
+    nsresult rv = UpgradeStorage<UpgradeStorageFrom1_0To2_0Helper>(
+        MakeStorageVersion(1, 0), MakeStorageVersion(2, 0), aConnection);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
 
-  return NS_OK;
+    return NS_OK;
+  }();
+
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeStorageFrom1_0To2_0, rv);
+
+  return rv;
 }
 
 nsresult QuotaManager::UpgradeStorageFrom2_0To2_1(
@@ -5688,13 +5704,20 @@ nsresult QuotaManager::UpgradeStorageFrom2_0To2_1(
   // The upgrade is mainly to create a directory padding file in DOM Cache
   // directory to record the overall padding size of an origin.
 
-  nsresult rv = UpgradeStorage<UpgradeStorageFrom2_0To2_1Helper>(
-      MakeStorageVersion(2, 0), MakeStorageVersion(2, 1), aConnection);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  auto rv = [this, &aConnection]() -> nsresult {
+    nsresult rv = UpgradeStorage<UpgradeStorageFrom2_0To2_1Helper>(
+        MakeStorageVersion(2, 0), MakeStorageVersion(2, 1), aConnection);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
 
-  return NS_OK;
+    return NS_OK;
+  }();
+
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeStorageFrom2_0To2_1, rv);
+
+  return rv;
 }
 
 nsresult QuotaManager::UpgradeStorageFrom2_1To2_2(
@@ -5705,13 +5728,20 @@ nsresult QuotaManager::UpgradeStorageFrom2_1To2_2(
   // The upgrade is mainly to clean obsolete origins in the repositoies, remove
   // asmjs client, and ".tmp" file in the idb folers.
 
-  nsresult rv = UpgradeStorage<UpgradeStorageFrom2_1To2_2Helper>(
-      MakeStorageVersion(2, 1), MakeStorageVersion(2, 2), aConnection);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  auto rv = [this, &aConnection]() -> nsresult {
+    nsresult rv = UpgradeStorage<UpgradeStorageFrom2_1To2_2Helper>(
+        MakeStorageVersion(2, 1), MakeStorageVersion(2, 2), aConnection);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
 
-  return NS_OK;
+    return NS_OK;
+  }();
+
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeStorageFrom2_1To2_2, rv);
+
+  return rv;
 }
 
 nsresult QuotaManager::UpgradeStorageFrom2_2To2_3(
@@ -5719,40 +5749,47 @@ nsresult QuotaManager::UpgradeStorageFrom2_2To2_3(
   AssertIsOnIOThread();
   MOZ_ASSERT(aConnection);
 
-  // Table `database`
-  nsresult rv = aConnection->ExecuteSimpleSQL(
-      nsLiteralCString("CREATE TABLE database"
-                       "( cache_version INTEGER NOT NULL DEFAULT 0"
-                       ");"));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  rv = aConnection->ExecuteSimpleSQL(
-      nsLiteralCString("INSERT INTO database (cache_version) "
-                       "VALUES (0)"));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-#ifdef DEBUG
-  {
-    int32_t storageVersion;
-    rv = aConnection->GetSchemaVersion(&storageVersion);
+  auto rv = [&aConnection]() -> nsresult {
+    // Table `database`
+    nsresult rv = aConnection->ExecuteSimpleSQL(
+        nsLiteralCString("CREATE TABLE database"
+                         "( cache_version INTEGER NOT NULL DEFAULT 0"
+                         ");"));
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
 
-    MOZ_ASSERT(storageVersion == MakeStorageVersion(2, 2));
-  }
+    rv = aConnection->ExecuteSimpleSQL(
+        nsLiteralCString("INSERT INTO database (cache_version) "
+                         "VALUES (0)"));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+#ifdef DEBUG
+    {
+      int32_t storageVersion;
+      rv = aConnection->GetSchemaVersion(&storageVersion);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
+
+      MOZ_ASSERT(storageVersion == MakeStorageVersion(2, 2));
+    }
 #endif
 
-  rv = aConnection->SetSchemaVersion(MakeStorageVersion(2, 3));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+    rv = aConnection->SetSchemaVersion(MakeStorageVersion(2, 3));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
 
-  return NS_OK;
+    return NS_OK;
+  }();
+
+  mInitializationInfo.RecordFirstInitializationAttempt(
+      Initialization::UpgradeStorageFrom2_2To2_3, rv);
+
+  return rv;
 }
 
 nsresult QuotaManager::MaybeRemoveLocalStorageData() {
@@ -6130,29 +6167,28 @@ nsresult QuotaManager::CreateLocalStorageArchiveConnectionFromWebAppsStore(
   return NS_OK;
 }
 
-nsresult QuotaManager::CreateLocalStorageArchiveConnection(
-    mozIStorageConnection** aConnection, bool& aNewlyCreated) {
+Result<std::pair<nsCOMPtr<mozIStorageConnection>, bool>, nsresult>
+QuotaManager::CreateLocalStorageArchiveConnection() {
   AssertIsOnIOThread();
   MOZ_ASSERT(CachedNextGenLocalStorageEnabled());
-  MOZ_ASSERT(aConnection);
 
   nsCOMPtr<nsIFile> lsArchiveTmpFile;
   nsresult rv = GetLocalStorageArchiveTmpFile(mStoragePath,
                                               getter_AddRefs(lsArchiveTmpFile));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   bool exists;
   rv = lsArchiveTmpFile->Exists(&exists);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   if (exists) {
     rv = lsArchiveTmpFile->Remove(false);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
+      return Err(rv);
     }
   }
 
@@ -6160,12 +6196,12 @@ nsresult QuotaManager::CreateLocalStorageArchiveConnection(
   nsCOMPtr<nsIFile> lsArchiveFile;
   rv = GetLocalStorageArchiveFile(mStoragePath, getter_AddRefs(lsArchiveFile));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   rv = lsArchiveFile->Exists(&exists);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
   if (exists) {
@@ -6174,13 +6210,13 @@ nsresult QuotaManager::CreateLocalStorageArchiveConnection(
     bool isDirectory;
     rv = lsArchiveFile->IsDirectory(&isDirectory);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
+      return Err(rv);
     }
 
     if (isDirectory) {
       rv = lsArchiveFile->Remove(true);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
+        return Err(rv);
       }
 
       removed = true;
@@ -6189,7 +6225,7 @@ nsresult QuotaManager::CreateLocalStorageArchiveConnection(
     nsCOMPtr<mozIStorageService> ss =
         do_GetService(MOZ_STORAGE_SERVICE_CONTRACTID, &rv);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
+      return Err(rv);
     }
 
     nsCOMPtr<mozIStorageConnection> connection;
@@ -6197,7 +6233,7 @@ nsresult QuotaManager::CreateLocalStorageArchiveConnection(
     if (!removed && rv == NS_ERROR_FILE_CORRUPTED) {
       rv = lsArchiveFile->Remove(false);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
+        return Err(rv);
       }
 
       removed = true;
@@ -6205,49 +6241,45 @@ nsresult QuotaManager::CreateLocalStorageArchiveConnection(
       rv = ss->OpenUnsharedDatabase(lsArchiveFile, getter_AddRefs(connection));
     }
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
+      return Err(rv);
     }
 
     rv = StorageDBUpdater::Update(connection);
     if (!removed && NS_FAILED(rv)) {
       rv = connection->Close();
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
+        return Err(rv);
       }
 
       rv = lsArchiveFile->Remove(false);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
+        return Err(rv);
       }
 
       removed = true;
 
       rv = ss->OpenUnsharedDatabase(lsArchiveFile, getter_AddRefs(connection));
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
+        return Err(rv);
       }
 
       rv = StorageDBUpdater::Update(connection);
     }
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
+      return Err(rv);
     }
 
-    connection.forget(aConnection);
-    aNewlyCreated = removed;
-    return NS_OK;
+    return std::pair{std::move(connection), removed};
   }
 
   nsCOMPtr<mozIStorageConnection> connection;
   rv = CreateLocalStorageArchiveConnectionFromWebAppsStore(
       getter_AddRefs(connection));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return Err(rv);
   }
 
-  connection.forget(aConnection);
-  aNewlyCreated = true;
-  return NS_OK;
+  return std::pair{std::move(connection), true};
 }
 
 nsresult QuotaManager::RecreateLocalStorageArchive(
@@ -6382,15 +6414,8 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
                ToResultInvoke(indexedDBDir, &nsIFile::Exists));
 
     if (indexedDBDirExists) {
-      // TODO: Convert to QM_TRY once upgrade functions record first
-      //       initialization attempts directly.
-      nsresult rv = UpgradeFromIndexedDBDirectoryToPersistentStorageDirectory(
-          indexedDBDir);
-      mInitializationInfo.RecordFirstInitializationAttempt(
-          Initialization::UpgradeFromIndexedDBDirectory, rv);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+      QM_TRY(UpgradeFromIndexedDBDirectoryToPersistentStorageDirectory(
+          indexedDBDir));
     }
 
     QM_TRY_VAR(auto persistentStorageDir, QM_NewLocalFile(mStoragePath));
@@ -6402,16 +6427,8 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
                ToResultInvoke(persistentStorageDir, &nsIFile::Exists));
 
     if (persistentStorageDirExists) {
-      // TODO: Convert to QM_TRY once upgrade functions record first
-      //       initialization attempts directly.
-      nsresult rv =
-          UpgradeFromPersistentStorageDirectoryToDefaultStorageDirectory(
-              persistentStorageDir);
-      mInitializationInfo.RecordFirstInitializationAttempt(
-          Initialization::UpgradeFromPersistentStorageDirectory, rv);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+      QM_TRY(UpgradeFromPersistentStorageDirectoryToDefaultStorageDirectory(
+          persistentStorageDir));
     }
   }
 
@@ -6512,39 +6529,22 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
                     "Upgrade function needed due to storage version increase.");
 
       while (storageVersion != kStorageVersion) {
-        // TODO: Convert to QM_TRY once upgrade functions record first
-        //       initialization attempts directly.
-        nsresult rv;
         if (storageVersion == 0) {
-          rv = UpgradeStorageFrom0_0To1_0(connection);
-          mInitializationInfo.RecordFirstInitializationAttempt(
-              Initialization::UpgradeStorageFrom0_0To1_0, rv);
+          QM_TRY(UpgradeStorageFrom0_0To1_0(connection));
         } else if (storageVersion == MakeStorageVersion(1, 0)) {
-          rv = UpgradeStorageFrom1_0To2_0(connection);
-          mInitializationInfo.RecordFirstInitializationAttempt(
-              Initialization::UpgradeStorageFrom1_0To2_0, rv);
+          QM_TRY(UpgradeStorageFrom1_0To2_0(connection));
         } else if (storageVersion == MakeStorageVersion(2, 0)) {
-          rv = UpgradeStorageFrom2_0To2_1(connection);
-          mInitializationInfo.RecordFirstInitializationAttempt(
-              Initialization::UpgradeStorageFrom2_0To2_1, rv);
+          QM_TRY(UpgradeStorageFrom2_0To2_1(connection));
         } else if (storageVersion == MakeStorageVersion(2, 1)) {
-          rv = UpgradeStorageFrom2_1To2_2(connection);
-          mInitializationInfo.RecordFirstInitializationAttempt(
-              Initialization::UpgradeStorageFrom2_1To2_2, rv);
+          QM_TRY(UpgradeStorageFrom2_1To2_2(connection));
         } else if (storageVersion == MakeStorageVersion(2, 2)) {
-          rv = UpgradeStorageFrom2_2To2_3(connection);
-          mInitializationInfo.RecordFirstInitializationAttempt(
-              Initialization::UpgradeStorageFrom2_2To2_3, rv);
+          QM_TRY(UpgradeStorageFrom2_2To2_3(connection));
         } else {
           // TODO: This should use QM_TRY too.
           NS_WARNING(
               "Unable to initialize storage, no upgrade path is "
               "available!");
           return NS_ERROR_FAILURE;
-        }
-
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return rv;
         }
 
         QM_TRY_VAR(storageVersion,
@@ -6559,34 +6559,28 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
   }
 
   if (CachedNextGenLocalStorageEnabled()) {
-    // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-    nsCOMPtr<mozIStorageConnection> connection;
-    bool newlyCreated;
-    QM_TRY(CreateLocalStorageArchiveConnection(getter_AddRefs(connection),
-                                               newlyCreated));
+    QM_TRY_VAR((auto [connection, newlyCreatedOrRecreated]),
+               CreateLocalStorageArchiveConnection());
 
     uint32_t version = 0;
 
-    if (!newlyCreated) {
-      // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-      bool initialized;
-      QM_TRY(IsLocalStorageArchiveInitialized(connection, initialized));
+    if (!newlyCreatedOrRecreated) {
+      QM_TRY_VAR(const auto initialized,
+                 IsLocalStorageArchiveInitialized(*connection));
 
       if (initialized) {
-        // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-        QM_TRY(LoadLocalStorageArchiveVersion(connection, version));
+        QM_TRY_VAR(version, LoadLocalStorageArchiveVersion(*connection));
       }
     }
 
     if (version > kLocalStorageArchiveVersion) {
       QM_TRY(DowngradeLocalStorageArchive(connection));
 
-      // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-      QM_TRY(LoadLocalStorageArchiveVersion(connection, version));
+      QM_TRY_VAR(version, LoadLocalStorageArchiveVersion(*connection));
 
       MOZ_ASSERT(version == kLocalStorageArchiveVersion);
     } else if (version != kLocalStorageArchiveVersion) {
-      if (newlyCreated) {
+      if (newlyCreatedOrRecreated) {
         MOZ_ASSERT(version == 0);
 
         QM_TRY(InitializeLocalStorageArchive(connection,
@@ -6610,8 +6604,7 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
             return NS_ERROR_FAILURE;
           }
 
-          // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-          QM_TRY(LoadLocalStorageArchiveVersion(connection, version));
+          QM_TRY_VAR(version, LoadLocalStorageArchiveVersion(*connection));
         }
 
         MOZ_ASSERT(version == kLocalStorageArchiveVersion);
@@ -6623,9 +6616,7 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
 
   bool cacheUsable = true;
 
-  // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-  int32_t cacheVersion;
-  QM_TRY(LoadCacheVersion(connection, cacheVersion));
+  QM_TRY_VAR(int32_t cacheVersion, LoadCacheVersion(*connection));
 
   if (cacheVersion > kCacheVersion) {
     cacheUsable = false;
@@ -6638,8 +6629,12 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
     if (newCache) {
       QM_TRY(CreateCacheTables(connection));
 
-      MOZ_ASSERT(NS_SUCCEEDED(LoadCacheVersion(connection, cacheVersion)));
-      MOZ_ASSERT(cacheVersion == kCacheVersion);
+#ifdef DEBUG
+      {
+        QM_TRY_VAR(const int32_t cacheVersion, LoadCacheVersion(*connection));
+        MOZ_ASSERT(cacheVersion == kCacheVersion);
+      }
+#endif
 
       QM_TRY(connection->ExecuteSimpleSQL(
           nsLiteralCString("INSERT INTO cache (valid, build_id) "
@@ -6683,8 +6678,7 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
           return NS_ERROR_FAILURE;
         }
 
-        // TODO: Use QM_TRY_VAR once the return type is Result<V, E>.
-        QM_TRY(LoadCacheVersion(connection, cacheVersion));
+        QM_TRY_VAR(cacheVersion, LoadCacheVersion(*connection));
       }
 
       MOZ_ASSERT(cacheVersion == kCacheVersion);

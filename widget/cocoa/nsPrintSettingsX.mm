@@ -123,6 +123,17 @@ NS_IMETHODIMP nsPrintSettingsX::InitAdjustedPaperSize() {
   mAdjustedPaperWidth = paperRect.right - paperRect.left;
   mAdjustedPaperHeight = paperRect.bottom - paperRect.top;
 
+  int32_t orientation;
+  GetOrientation(&orientation);
+  if (kLandscapeOrientation == orientation) {
+    // Depending whether we're coming from the old system UI or the tab-modal
+    // preview UI, the orientation may not actually have been set yet. So for
+    // consistency, we always store physical (portrait-mode) width and height
+    // here. They will be swapped if needed in GetEffectivePageSize (in line
+    // with other implementations).
+    std::swap(mAdjustedPaperWidth, mAdjustedPaperHeight);
+  }
+
   return NS_OK;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
@@ -250,7 +261,9 @@ nsPrintSettingsX::GetEffectivePageSize(double* aWidth, double* aHeight) {
     *aWidth = NS_MILLIMETERS_TO_TWIPS(mAdjustedPaperWidth / mWidthScale);
     *aHeight = NS_MILLIMETERS_TO_TWIPS(mAdjustedPaperHeight / mHeightScale);
   }
-  if (kLandscapeOrientation == mOrientation) {
+  int32_t orientation;
+  GetOrientation(&orientation);
+  if (kLandscapeOrientation == orientation) {
     std::swap(*aWidth, *aHeight);
   }
   return NS_OK;
@@ -475,6 +488,41 @@ nsPrintSettingsX::SetOrientation(int32_t aOrientation) {
     }
   } else {
     nsPrintSettings::SetOrientation(aOrientation);
+  }
+
+  return NS_OK;
+
+  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+}
+
+NS_IMETHODIMP
+nsPrintSettingsX::GetNumCopies(int32_t* aCopies) {
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+
+  // Only use NSPrintInfo data in the parent process. The
+  // child process' instance is not needed or used.
+  if (XRE_IsParentProcess()) {
+    NSDictionary* dict = [mPrintInfo dictionary];
+    *aCopies = [[dict objectForKey:NSPrintCopies] intValue];
+  } else {
+    nsPrintSettings::GetNumCopies(aCopies);
+  }
+  return NS_OK;
+
+  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+}
+
+NS_IMETHODIMP
+nsPrintSettingsX::SetNumCopies(int32_t aCopies) {
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+
+  // Only use NSPrintInfo data in the parent process. The
+  // child process' instance is not needed or used.
+  if (XRE_IsParentProcess()) {
+    NSMutableDictionary* dict = [mPrintInfo dictionary];
+    [dict setObject:[NSNumber numberWithInt:aCopies] forKey:NSPrintCopies];
+  } else {
+    nsPrintSettings::SetNumCopies(aCopies);
   }
 
   return NS_OK;

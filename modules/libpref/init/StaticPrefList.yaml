@@ -3510,7 +3510,7 @@
 # between process swaps.
 - name: fission.preserve_browsing_contexts
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 # Store the session history in the parent process, and access it over IPC
@@ -9755,7 +9755,7 @@
 # Global user preference for disabling native theme in content processes.
 - name: widget.disable-native-theme-for-content
   type: RelaxedAtomicBool
-  value: @IS_ANDROID@
+  value: false
   mirror: always
 
 # Preference to disable dark scrollbar implementation.

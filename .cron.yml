@@ -15,9 +15,9 @@ jobs:
           by-project:
               # No default
               mozilla-beta:
-                  - {weekday: 'Monday', hour: 2, minute: 0}
-                  - {weekday: 'Wednesday', hour: 2, minute: 0}
-                  - {weekday: 'Friday', hour: 2, minute: 0}
+                  - {weekday: 'Sunday', hour: 21, minute: 0}
+                  - {weekday: 'Tuesday', hour: 21, minute: 0}
+                  - {weekday: 'Thursday', hour: 21, minute: 0}
 
     - name: nightly-desktop
       job:
@@ -291,8 +291,6 @@ jobs:
       run-on-projects:
           - mozilla-central
           - mozilla-beta
-          - mozilla-esr68
-          # no mozilla-esr78
       when:
           - {minute: 45}
 

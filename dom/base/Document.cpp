@@ -1197,7 +1197,9 @@ void Document::SelectorCache::NotifyExpired(SelectorCacheKey* aSelector) {
 
 Document::FrameRequest::FrameRequest(FrameRequestCallback& aCallback,
                                      int32_t aHandle)
-    : mCallback(&aCallback), mHandle(aHandle) {}
+    : mCallback(&aCallback), mHandle(aHandle) {
+  LogFrameRequestCallback::LogDispatch(mCallback);
+}
 
 Document::FrameRequest::~FrameRequest() = default;
 
@@ -8524,6 +8526,7 @@ nsresult Document::FinalizeFrameLoader(nsFrameLoader* aLoader,
     return NS_ERROR_FAILURE;
   }
 
+  LogRunnable::LogDispatch(aFinalizer);
   mFrameLoaderFinalizers.AppendElement(aFinalizer);
   if (!mFrameLoaderRunner) {
     mFrameLoaderRunner =
@@ -8572,6 +8575,7 @@ void Document::MaybeInitializeFinalizeFrameLoaders() {
     nsTArray<nsCOMPtr<nsIRunnable>> finalizers =
         std::move(mFrameLoaderFinalizers);
     for (uint32_t i = 0; i < length; ++i) {
+      LogRunnable::Run run(finalizers[i]);
       finalizers[i]->Run();
     }
   }
@@ -16779,7 +16783,14 @@ void Document::AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
 }
 
 bool Document::ShouldAvoidNativeTheme() const {
-  return StaticPrefs::widget_disable_native_theme_for_content() &&
+  bool nativeThemeIsPrefDisabled = false;
+
+#ifndef ANDROID
+  nativeThemeIsPrefDisabled =
+      StaticPrefs::widget_disable_native_theme_for_content();
+#endif
+
+  return nativeThemeIsPrefDisabled &&
          (!IsInChromeDocShell() || XRE_IsContentProcess());
 }
 

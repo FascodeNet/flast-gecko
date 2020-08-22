@@ -42,9 +42,11 @@ printui-destination-pdf-label = Save to PDF
 printui-more-settings = More settings
 printui-less-settings = Fewer settings
 
+printui-paper-size-label = Paper size
+
 # Section title (noun) for the print scaling options
 printui-scale = Scale
-printui-scale-fit-to-page = Fit to page
+printui-scale-fit-to-page-width = Fit to page width
 # Label for input control where user can set the scale percentage
 printui-scale-pcent = Scale
 
@@ -77,3 +79,4 @@ printui-error-invalid-scale = Scale must be a number between 10 and 200.
 # Variables
 # $numPages (integer) - Number of pages
 printui-error-invalid-range = Range must be a number between 1 and { $numPages }.
+printui-error-invalid-start-overflow = The “from” page number must be smaller than the “to” page number.

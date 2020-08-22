@@ -2926,23 +2926,6 @@ void ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange,
       FrameLayerBuilder::GetPaintedLayerScaleForFrame(mScrolledFrame);
   nsPoint curPos = GetScrollPosition();
 
-  // Below, we clamp |aPt| to the layout scroll range, compare the clamped
-  // value with the current scroll position, and early exit if they are the
-  // same. The early exit bypasses the update of |mLastScrollOrigin|, which
-  // is important to avoid sending a main-thread layout scroll update to APZ,
-  // which can clobber the visual scroll offset as well.
-  // If the layout viewport has shrunk in size since the last scroll, the
-  // clamped target position can be different from the current position, so
-  // we don't take the early exit, but conceptually we still want to avoid
-  // updating |mLastScrollOrigin| and clobbering the visual scroll offset.
-  // We only do this if the visual and layout scroll offsets can diverge
-  // in the first place, because it causes various regressions (bug 1543485
-  // tracks a proper fix).
-  bool suppressScrollOriginChange = false;
-  if (StaticPrefs::apz_allow_zooming() && aPt == curPos) {
-    suppressScrollOriginChange = true;
-  }
-
   nsPoint alignWithPos = mScrollPosForLayerPixelAlignment == nsPoint(-1, -1)
                              ? curPos
                              : mScrollPosForLayerPixelAlignment;
@@ -3026,8 +3009,7 @@ void ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange,
   // legitimate scroll offset updates because the origin has been masked by
   // a later change within the same refresh driver tick.
   allowScrollOriginChange =
-      (mAllowScrollOriginDowngrade || !isScrollOriginDowngrade) &&
-      !suppressScrollOriginChange;
+      (mAllowScrollOriginDowngrade || !isScrollOriginDowngrade);
 
   if (allowScrollOriginChange) {
     mLastScrollOrigin = aOrigin;
@@ -3045,22 +3027,17 @@ void ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange,
   }
 
   // If the new scroll offset is going to clobber APZ's scroll offset, for
-  // the RCD-RSF this will have the effect of resetting the visual viewport
-  // offset to be the same as the new scroll (= layout viewport) offset.
-  // The APZ callback transform, which reflects the difference between these
-  // offsets, will subsequently be cleared. However, if we wait for APZ to
-  // clear it, the main thread could end up using the old value and get
-  // incorrect results, so just clear it now.
+  // the RCD-RSF this will have the effect of updating the visual viewport
+  // offset in a way that keeps the relative offset between the layout and
+  // visual viewports constant. This will cause APZ to send us a new visual
+  // viewport offset, but instead of waiting for  that, just set the value
+  // we expect APZ will set ourselves, to minimize the chances of
+  // inconsistencies from querying a stale value.
   if (mIsRoot && nsLayoutUtils::CanScrollOriginClobberApz(mLastScrollOrigin)) {
-    content->SetProperty(nsGkAtoms::apzCallbackTransform, new CSSPoint(),
-                         nsINode::DeleteProperty<CSSPoint>);
-
-    // Similarly, update the main thread's view of the visual viewport
-    // offset. Otherwise, if we perform calculations that depend on this
-    // offset (e.g. by using nsIDOMWindowUtils.getVisualViewportOffset()
-    // in chrome JS code) before it's updated by the next APZ repaint,
-    // we could get incorrect results.
-    presContext->PresShell()->SetVisualViewportOffset(pt, curPos);
+    nsPoint relativeOffset =
+        presContext->PresShell()->GetVisualViewportOffset() - curPos;
+    presContext->PresShell()->SetVisualViewportOffset(pt + relativeOffset,
+                                                      curPos);
   }
 
   ScrollVisual();

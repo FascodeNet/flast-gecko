@@ -19,6 +19,10 @@
 #include "js/Exception.h"
 #include "js/friend/ErrorMessages.h"
 #include "js/HeapAPI.h"
+#include "js/shadow/Function.h"     // JS::shadow::Function
+#include "js/shadow/Object.h"       // JS::shadow::Object
+#include "js/shadow/ObjectGroup.h"  // JS::shadow::ObjectGroup
+#include "js/shadow/String.h"  // JS::shadow::String
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
@@ -361,84 +365,12 @@ extern JS_FRIEND_API bool CompartmentHasLiveGlobal(JS::Compartment* comp);
 // when we're looking for an existing compartment to place a new Realm in.
 extern JS_FRIEND_API bool IsSharableCompartment(JS::Compartment* comp);
 
-/*
- * Shadow declarations of JS internal structures, for access by inline access
- * functions below. Do not use these structures in any other way. When adding
- * new fields for access by inline methods, make sure to add static asserts to
- * the original header file to ensure that offsets are consistent.
- */
-namespace shadow {
-
-struct ObjectGroup {
-  const JSClass* clasp;
-  JSObject* proto;
-  JS::Realm* realm;
-};
-
-struct BaseShape {
-  const JSClass* clasp_;
-  JSObject* parent;
-};
-
-class Shape {
- public:
-  shadow::BaseShape* base;
-  jsid _1;
-  uint32_t immutableFlags;
-
-  static const uint32_t FIXED_SLOTS_SHIFT = 24;
-  static const uint32_t FIXED_SLOTS_MASK = 0x1f << FIXED_SLOTS_SHIFT;
-};
-
-/**
- * This layout is shared by all native objects. For non-native objects, the
- * group may always be accessed safely, and other members may be as well,
- * depending on the object's specific layout.
- */
-struct Object {
-  shadow::ObjectGroup* group;
-  shadow::Shape* shape;
-  JS::Value* slots;
-  void* _1;
-
-  static constexpr size_t MAX_FIXED_SLOTS = 16;
-
-  size_t numFixedSlots() const {
-    return (shape->immutableFlags & Shape::FIXED_SLOTS_MASK) >>
-           Shape::FIXED_SLOTS_SHIFT;
-  }
-
-  JS::Value* fixedSlots() const {
-    return (JS::Value*)(uintptr_t(this) + sizeof(shadow::Object));
-  }
-
-  JS::Value& slotRef(size_t slot) const {
-    size_t nfixed = numFixedSlots();
-    if (slot < nfixed) {
-      return fixedSlots()[slot];
-    }
-    return slots[slot - nfixed];
-  }
-};
-
-struct Function {
-  Object base;
-  uint16_t nargs;
-  uint16_t flags;
-  /* Used only for natives */
-  JSNative native;
-  const JSJitInfo* jitinfo;
-  void* _1;
-};
-
-} /* namespace shadow */
-
 // This is equal to |&JSObject::class_|.  Use it in places where you don't want
 // to #include vm/JSObject.h.
 extern JS_FRIEND_DATA const JSClass* const ObjectClassPtr;
 
 inline const JSClass* GetObjectClass(const JSObject* obj) {
-  return reinterpret_cast<const shadow::Object*>(obj)->group->clasp;
+  return reinterpret_cast<const JS::shadow::Object*>(obj)->group->clasp;
 }
 
 JS_FRIEND_API const JSClass* ProtoKeyToClass(JSProtoKey key);
@@ -473,7 +405,7 @@ JS_FRIEND_API bool IsFunctionObject(JSObject* obj);
 JS_FRIEND_API bool UninlinedIsCrossCompartmentWrapper(const JSObject* obj);
 
 static MOZ_ALWAYS_INLINE JS::Compartment* GetObjectCompartment(JSObject* obj) {
-  JS::Realm* realm = reinterpret_cast<shadow::Object*>(obj)->group->realm;
+  JS::Realm* realm = reinterpret_cast<JS::shadow::Object*>(obj)->group->realm;
   return JS::GetCompartmentForRealm(realm);
 }
 
@@ -481,7 +413,7 @@ static MOZ_ALWAYS_INLINE JS::Compartment* GetObjectCompartment(JSObject* obj) {
 // getting a wrapper's realm usually doesn't make sense.
 static MOZ_ALWAYS_INLINE JS::Realm* GetNonCCWObjectRealm(JSObject* obj) {
   MOZ_ASSERT(!js::UninlinedIsCrossCompartmentWrapper(obj));
-  return reinterpret_cast<shadow::Object*>(obj)->group->realm;
+  return reinterpret_cast<JS::shadow::Object*>(obj)->group->realm;
 }
 
 JS_FRIEND_API JSObject* GetPrototypeNoProxy(JSObject* obj);
@@ -530,7 +462,7 @@ JS_FRIEND_API bool GetRealmOriginalEval(JSContext* cx,
 
 inline void* GetObjectPrivate(JSObject* obj) {
   MOZ_ASSERT(GetObjectClass(obj)->flags & JSCLASS_HAS_PRIVATE);
-  const shadow::Object* nobj = reinterpret_cast<const shadow::Object*>(obj);
+  const auto* nobj = reinterpret_cast<const JS::shadow::Object*>(obj);
   void** addr =
       reinterpret_cast<void**>(&nobj->fixedSlots()[nobj->numFixedSlots()]);
   return *addr;
@@ -543,7 +475,7 @@ inline void* GetObjectPrivate(JSObject* obj) {
  */
 inline const JS::Value& GetReservedSlot(JSObject* obj, size_t slot) {
   MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
-  return reinterpret_cast<const shadow::Object*>(obj)->slotRef(slot);
+  return reinterpret_cast<const JS::shadow::Object*>(obj)->slotRef(slot);
 }
 
 JS_FRIEND_API void SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
@@ -557,7 +489,7 @@ JS_FRIEND_API void SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
 inline void SetReservedSlot(JSObject* obj, size_t slot,
                             const JS::Value& value) {
   MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
-  shadow::Object* sobj = reinterpret_cast<shadow::Object*>(obj);
+  auto* sobj = reinterpret_cast<JS::shadow::Object*>(obj);
   if (sobj->slotRef(slot).isGCThing() || value.isGCThing()) {
     SetReservedSlotWithBarrier(obj, slot, value);
   } else {
@@ -569,7 +501,7 @@ JS_FRIEND_API uint32_t GetObjectSlotSpan(JSObject* obj);
 
 inline const JS::Value& GetObjectSlot(JSObject* obj, size_t slot) {
   MOZ_ASSERT(slot < GetObjectSlotSpan(obj));
-  return reinterpret_cast<const shadow::Object*>(obj)->slotRef(slot);
+  return reinterpret_cast<const JS::shadow::Object*>(obj)->slotRef(slot);
 }
 
 MOZ_ALWAYS_INLINE size_t GetAtomLength(JSAtom* atom) {
@@ -1310,10 +1242,10 @@ struct JSTypedMethodJitInfo {
 
 namespace js {
 
-static MOZ_ALWAYS_INLINE shadow::Function* FunctionObjectToShadowFunction(
+static MOZ_ALWAYS_INLINE JS::shadow::Function* FunctionObjectToShadowFunction(
     JSObject* fun) {
   MOZ_ASSERT(GetObjectClass(fun) == FunctionClassPtr);
-  return reinterpret_cast<shadow::Function*>(fun);
+  return reinterpret_cast<JS::shadow::Function*>(fun);
 }
 
 /* Statically asserted in FunctionFlags.cpp. */
@@ -1340,7 +1272,7 @@ static MOZ_ALWAYS_INLINE const JSJitInfo* FUNCTION_VALUE_TO_JITINFO(
 
 static MOZ_ALWAYS_INLINE void SET_JITINFO(JSFunction* func,
                                           const JSJitInfo* info) {
-  js::shadow::Function* fun = reinterpret_cast<js::shadow::Function*>(func);
+  auto* fun = reinterpret_cast<JS::shadow::Function*>(func);
   MOZ_ASSERT(!(fun->flags & js::JS_FUNCTION_INTERPRETED_BITS));
   fun->jitinfo = info;
 }

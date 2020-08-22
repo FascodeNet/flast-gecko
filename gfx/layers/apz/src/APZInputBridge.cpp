@@ -25,9 +25,7 @@ namespace layers {
 
 APZEventResult::APZEventResult()
     : mStatus(nsEventStatus_eIgnore),
-      mTargetIsRoot(false),
-      mInputBlockId(InputBlockState::NO_BLOCK_ID),
-      mHitRegionWithApzAwareListeners(false) {}
+      mInputBlockId(InputBlockState::NO_BLOCK_ID) {}
 
 static bool WillHandleMouseEvent(const WidgetMouseEventBase& aEvent) {
   return aEvent.mMessage == eMouseMove || aEvent.mMessage == eMouseDown ||

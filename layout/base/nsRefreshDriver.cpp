@@ -75,7 +75,6 @@
 #include "mozilla/layout/VsyncChild.h"
 #include "VsyncSource.h"
 #include "mozilla/VsyncDispatcher.h"
-#include "nsThreadUtils.h"
 #include "mozilla/Unused.h"
 #include "mozilla/TimelineConsumers.h"
 #include "nsAnimationManager.h"
@@ -1844,6 +1843,7 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
         // MOZ_KnownLive is OK, because the stack array frameRequestCallbacks
         // keeps callback alive and the mCallback strong reference can't be
         // mutated by the call.
+        LogFrameRequestCallback::Run run(callback.mCallback);
         MOZ_KnownLive(callback.mCallback)->Call(timeStamp);
       }
     }
@@ -2107,6 +2107,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
           if (!mStyleFlushObservers.RemoveElement(rawPresShell)) {
             continue;
           }
+
+          LogPresShellObserver::Run run(rawPresShell, this);
+
           RefPtr<PresShell> presShell = rawPresShell;
           presShell->mObservingStyleFlushes = false;
           presShell->FlushPendingNotifications(
@@ -2133,6 +2136,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
         if (!mLayoutFlushObservers.RemoveElement(rawPresShell)) {
           continue;
         }
+
+        LogPresShellObserver::Run run(rawPresShell, this);
+
         RefPtr<PresShell> presShell = rawPresShell;
         presShell->mObservingLayoutFlushes = false;
         presShell->mWasLastReflowInterrupted = false;

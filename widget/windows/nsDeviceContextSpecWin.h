@@ -87,12 +87,16 @@ class nsPrinterListWin final : public nsPrinterListBase {
  public:
   NS_IMETHOD InitPrintSettingsFromPrinter(const nsAString&,
                                           nsIPrintSettings*) final;
-  NS_IMETHOD GetSystemDefaultPrinterName(nsAString&) final;
 
   nsTArray<PrinterInfo> Printers() const final;
   RefPtr<nsIPrinter> CreatePrinter(PrinterInfo) const final;
 
   nsPrinterListWin() = default;
+
+ protected:
+  nsresult SystemDefaultPrinterName(nsAString&) const final;
+
+  Maybe<PrinterInfo> NamedPrinter(nsString) const final;
 
  private:
   ~nsPrinterListWin();

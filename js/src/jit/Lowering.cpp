@@ -3223,6 +3223,17 @@ void LIRGenerator::visitInArray(MInArray* ins) {
   assignSafepoint(lir, ins);
 }
 
+void LIRGenerator::visitGuardElementNotHole(MGuardElementNotHole* ins) {
+  MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
+  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+
+  auto* guard = new (alloc())
+      LGuardElementNotHole(useRegisterAtStart(ins->elements()),
+                           useRegisterOrConstantAtStart(ins->index()));
+  assignSnapshot(guard, BailoutKind::Hole);
+  add(guard, ins);
+}
+
 void LIRGenerator::visitLoadElement(MLoadElement* ins) {
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
   MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
@@ -4365,6 +4376,25 @@ void LIRGenerator::visitGuardNullOrUndefined(MGuardNullOrUndefined* ins) {
   assignSnapshot(lir, BailoutKind::NullOrUndefinedGuard);
   add(lir, ins);
   redefine(ins, ins->value());
+}
+
+void LIRGenerator::visitGuardFunctionFlags(MGuardFunctionFlags* ins) {
+  MOZ_ASSERT(ins->function()->type() == MIRType::Object);
+
+  auto* lir = new (alloc()) LGuardFunctionFlags(useRegister(ins->function()));
+  assignSnapshot(lir, BailoutKind::FunctionFlagsGuard);
+  add(lir, ins);
+  redefine(ins, ins->function());
+}
+
+void LIRGenerator::visitGuardFunctionKind(MGuardFunctionKind* ins) {
+  MOZ_ASSERT(ins->function()->type() == MIRType::Object);
+
+  auto* lir =
+      new (alloc()) LGuardFunctionKind(useRegister(ins->function()), temp());
+  assignSnapshot(lir, BailoutKind::FunctionKindGuard);
+  add(lir, ins);
+  redefine(ins, ins->function());
 }
 
 void LIRGenerator::visitAssertRange(MAssertRange* ins) {
