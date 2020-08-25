@@ -20,6 +20,10 @@ document.addEventListener(
   "DOMContentLoaded",
   e => {
     document.mozSubdialogReady = PrintEventHandler.init();
+    let ourBrowser = window.docShell.chromeEventHandler;
+    ourBrowser.setAttribute("flex", "0");
+    ourBrowser.classList.add("printSettingsBrowser");
+    ourBrowser.closest(".dialogBox").classList.add("printDialogBox");
   },
   { once: true }
 );
@@ -135,6 +139,7 @@ var PrintEventHandler = {
       skipLoad: false,
     });
     printPreviewBrowser.classList.add("printPreviewBrowser");
+    printPreviewBrowser.setAttribute("flex", "1");
 
     // Create the stack for the loading indicator.
     let ourBrowser = window.docShell.chromeEventHandler;
@@ -281,19 +286,53 @@ var PrintEventHandler = {
     }
   },
 
+  /**
+   * Create a print preview for the provided source browsingContext, or refresh
+   * the preview with new settings when omitted.
+   *
+   * @param browsingContext {BrowsingContext} [optional]
+   *        The source BrowsingContext (the one associated with a tab or
+   *        subdocument) that should be previewed.
+   *
+   * @return {Promise} Resolves when the preview has been updated.
+   */
   async _updatePrintPreview(browsingContext) {
-    let totalPages = await PrintUtils.updatePrintPreview(
-      browsingContext || this.previewBrowser.browsingContext,
-      this.previewBrowser,
-      this.settings
-    );
+    let { previewBrowser, settings } = this;
+    let stack = previewBrowser.parentElement;
+    stack.setAttribute("rendering", true);
+
+    let totalPages = await new Promise(resolve => {
+      previewBrowser.messageManager.addMessageListener(
+        "Printing:Preview:UpdatePageCount",
+        function done(message) {
+          previewBrowser.messageManager.removeMessageListener(
+            "Printing:Preview:UpdatePageCount",
+            done
+          );
+
+          resolve(message.data.numPages);
+        }
+      );
+
+      previewBrowser.messageManager.sendAsyncMessage("Printing:Preview:Enter", {
+        changingBrowsers: false,
+        lastUsedPrinterName: settings.printerName,
+        simplifiedMode: false,
+        browsingContextId:
+          browsingContext?.id || previewBrowser.browsingContext.id,
+        outputFormat: settings.outputFormat,
+        startPageRange: settings.startPageRange,
+        endPageRange: settings.endPageRange,
+        printRange: settings.printRange,
+      });
+    });
+
+    stack.removeAttribute("rendering");
 
     let numPages = totalPages;
     // Adjust number of pages if the user specifies the pages they want printed
-    if (
-      this.settings.printRange == Ci.nsIPrintSettings.kRangeSpecifiedPageRange
-    ) {
-      numPages = this.settings.endPageRange - this.settings.startPageRange + 1;
+    if (settings.printRange == Ci.nsIPrintSettings.kRangeSpecifiedPageRange) {
+      numPages = settings.endPageRange - settings.startPageRange + 1;
     }
     document.dispatchEvent(
       new CustomEvent("page-count", { detail: { numPages, totalPages } })
@@ -322,10 +361,16 @@ var PrintEventHandler = {
     const printerList = Cc["@mozilla.org/gfx/printerlist;1"].createInstance(
       Ci.nsIPrinterList
     );
+    let printers;
+
+    if (Cu.isInAutomation) {
+      printers = [];
+    } else {
+      printers = await printerList.printers;
+    }
 
     const lastUsedPrinterName = PrintUtils._getLastUsedPrinterName();
     const defaultPrinterName = printerList.systemDefaultPrinterName;
-    const printers = await printerList.printers;
     const printersByName = {};
 
     let lastUsedPrinter;
