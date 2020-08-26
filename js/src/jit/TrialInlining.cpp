@@ -26,6 +26,10 @@ bool DoTrialInlining(JSContext* cx, BaselineFrame* frame) {
   ICScript* icScript = frame->icScript();
   bool isRecursive = !!icScript->inliningRoot();
 
+  if (!script->canIonCompile()) {
+    return true;
+  }
+
   const uint32_t MAX_INLINING_DEPTH = 5;
   if (icScript->depth() > MAX_INLINING_DEPTH) {
     return true;
@@ -166,7 +170,8 @@ bool TrialInliner::canInline(JSFunction* target, HandleScript caller) {
   }
   JSScript* script = target->nonLazyScript();
   if (!script->jitScript()->hasBaselineScript() || script->uninlineable() ||
-      script->needsArgsObj() || script->isDebuggee()) {
+      !script->canIonCompile() || script->needsArgsObj() ||
+      script->isDebuggee()) {
     return false;
   }
   // Don't inline cross-realm calls.
@@ -291,8 +296,14 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
     return true;
   }
 
+  // We only inline FunCall if we are calling the js::fun_call builtin.
+  MOZ_ASSERT_IF(loc.getOp() == JSOp::FunCall,
+                data->callFlags.getArgFormat() == CallFlags::FunCall);
+
   // TODO: The arguments rectifier is not yet supported.
-  if (loc.getCallArgc() < data->target->nargs()) {
+  uint32_t argc =
+      loc.getOp() == JSOp::FunCall ? loc.getCallArgc() - 1 : loc.getCallArgc();
+  if (argc < data->target->nargs()) {
     return true;
   }
 
@@ -321,6 +332,7 @@ bool TrialInliner::tryInlining() {
       case JSOp::Call:
       case JSOp::CallIgnoresRv:
       case JSOp::CallIter:
+      case JSOp::FunCall:
         if (!maybeInlineCall(icScript_->icEntry(icIndex), loc)) {
           return false;
         }

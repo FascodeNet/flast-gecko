@@ -6,6 +6,7 @@ const {
   gBrowser,
   PrintUtils,
   Services,
+  AppConstants,
 } = window.docShell.chromeEventHandler.ownerGlobal;
 
 ChromeUtils.defineModuleGetter(
@@ -83,11 +84,27 @@ var PrintEventHandler = {
     // is initiated and the print preview clone must be a snapshot from the
     // time that the print was started.
     let sourceBrowsingContext = this.getSourceBrowsingContext();
+    this.previewBrowser = this._createPreviewBrowser(sourceBrowsingContext);
+
+    // Get the temporary browser that will previously have been created for the
+    // platform code to generate the static clone printing doc into if this
+    // print is for a window.print() call.  In that case we steal the browser's
+    // docshell to get the static clone, then discard it.
+    let existingBrowser = window.arguments[0].getProperty("previewBrowser");
+    if (existingBrowser) {
+      sourceBrowsingContext = existingBrowser.browsingContext;
+      this.previewBrowser.swapDocShells(existingBrowser);
+      existingBrowser.remove();
+    } else {
+      this.previewBrowser.loadURI("about:printpreview", {
+        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+      });
+    }
+
     this.originalSourceContentTitle =
       sourceBrowsingContext.currentWindowContext.documentTitle;
     this.originalSourceCurrentURI =
       sourceBrowsingContext.currentWindowContext.documentURI.spec;
-    this.previewBrowser = this._createPreviewBrowser(sourceBrowsingContext);
 
     // First check the available destinations to ensure we get settings for an
     // accessible printer.
@@ -98,14 +115,30 @@ var PrintEventHandler = {
     } = await this.getPrintDestinations();
     PrintSettingsViewProxy.availablePrinters = printersByName;
 
-    document.addEventListener("print", e => this.print({ silent: true }));
+    document.addEventListener("print", e => this.print());
     document.addEventListener("update-print-settings", e =>
       this.updateSettings(e.detail)
     );
     document.addEventListener("cancel-print", () => this.cancelPrint());
-    document.addEventListener("open-system-dialog", () =>
-      this.print({ silent: false })
-    );
+    document.addEventListener("open-system-dialog", () => {
+      // This file in only used if pref print.always_print_silent is false, so
+      // no need to check that here.
+
+      // Use our settings to prepopulate the system dialog
+      let settings = this.settings.clone();
+      const PRINTPROMPTSVC = Cc[
+        "@mozilla.org/embedcomp/printingprompt-service;1"
+      ].getService(Ci.nsIPrintingPromptService);
+      try {
+        PRINTPROMPTSVC.showPrintDialog(window, settings);
+      } catch (e) {
+        if (e.result == Cr.NS_ERROR_ABORT) {
+          return; // user cancelled
+        }
+        throw e;
+      }
+      this.print(settings);
+    });
 
     await this.refreshSettings(selectedPrinter.value);
     this.updatePrintPreview(sourceBrowsingContext);
@@ -152,10 +185,6 @@ var PrintEventHandler = {
     previewStack.append(printPreviewBrowser);
     ourBrowser.parentElement.prepend(previewStack);
 
-    printPreviewBrowser.loadURI("about:printpreview", {
-      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
-    });
-
     return printPreviewBrowser;
   },
 
@@ -178,9 +207,9 @@ var PrintEventHandler = {
     this.viewSettings.printerName = printerName;
   },
 
-  async print({ silent } = {}) {
-    let settings = this.settings;
-    settings.printSilent = silent;
+  async print(systemDialogSettings) {
+    let settings = systemDialogSettings || this.settings;
+    settings.printSilent = true;
 
     if (settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER) {
       try {
@@ -194,10 +223,8 @@ var PrintEventHandler = {
       }
     }
 
-    if (silent) {
-      // This seems like it should be handled automatically but it isn't.
-      Services.prefs.setStringPref("print_printer", settings.printerName);
-    }
+    // This seems like it should be handled automatically but it isn't.
+    Services.prefs.setStringPref("print_printer", settings.printerName);
 
     PrintUtils.printWindow(this.previewBrowser.browsingContext, settings);
   },
@@ -301,17 +328,51 @@ var PrintEventHandler = {
     let stack = previewBrowser.parentElement;
     stack.setAttribute("rendering", true);
 
+    let networkDone = false;
+    let documentDone = false;
+
     let totalPages = await new Promise(resolve => {
+      let numPages;
+
+      function onStateChange(msg) {
+        // We get 2 STATE_STOP events, make sure they've both completed.
+        if (msg.data.stateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
+          networkDone =
+            networkDone ||
+            msg.data.stateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK;
+          documentDone =
+            documentDone ||
+            msg.data.stateFlags & Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
+
+          if (networkDone && documentDone) {
+            cleanup();
+            resolve(numPages);
+          }
+        }
+      }
+
+      function onUpdatePageCount(msg) {
+        numPages = msg.data.numPages;
+      }
+
+      function cleanup() {
+        previewBrowser.messageManager.removeMessageListener(
+          "Printing:Preview:UpdatePageCount",
+          onUpdatePageCount
+        );
+        previewBrowser.messageManager.removeMessageListener(
+          "Printing:Preview:StateChange",
+          onStateChange
+        );
+      }
+
+      previewBrowser.messageManager.addMessageListener(
+        "Printing:Preview:StateChange",
+        onStateChange
+      );
       previewBrowser.messageManager.addMessageListener(
         "Printing:Preview:UpdatePageCount",
-        function done(message) {
-          previewBrowser.messageManager.removeMessageListener(
-            "Printing:Preview:UpdatePageCount",
-            done
-          );
-
-          resolve(message.data.numPages);
-        }
+        onUpdatePageCount
       );
 
       previewBrowser.messageManager.sendAsyncMessage("Printing:Preview:Enter", {
@@ -327,23 +388,22 @@ var PrintEventHandler = {
       });
     });
 
-    stack.removeAttribute("rendering");
-
-    let numPages = totalPages;
-    // Adjust number of pages if the user specifies the pages they want printed
-    if (settings.printRange == Ci.nsIPrintSettings.kRangeSpecifiedPageRange) {
-      numPages = settings.endPageRange - settings.startPageRange + 1;
-    }
-    document.dispatchEvent(
-      new CustomEvent("page-count", { detail: { numPages, totalPages } })
-    );
-
     if (this._queuedPreviewUpdatePromise) {
       // Now that we're done, the queued update (if there is one) will start.
       this._previewUpdatingPromise = this._queuedPreviewUpdatePromise;
       this._queuedPreviewUpdatePromise = null;
     } else {
-      // Nothing queued so throw our promise away.
+      // No other update queued, send the page count and show the preview.
+      let numPages = totalPages;
+      // Adjust number of pages if the user specifies the pages they want printed
+      if (settings.printRange == Ci.nsIPrintSettings.kRangeSpecifiedPageRange) {
+        numPages = settings.endPageRange - settings.startPageRange + 1;
+      }
+      document.dispatchEvent(
+        new CustomEvent("page-count", { detail: { numPages, totalPages } })
+      );
+
+      stack.removeAttribute("rendering");
       this._previewUpdatingPromise = null;
     }
   },
@@ -739,9 +799,11 @@ class CopiesInput extends PrintUIControlMixin(HTMLInputElement) {
   }
 
   handleEvent(e) {
-    this.dispatchSettingsChange({
-      numCopies: e.target.value,
-    });
+    if (this.checkValidity()) {
+      this.dispatchSettingsChange({
+        numCopies: e.target.value,
+      });
+    }
   }
 }
 customElements.define("copy-count-input", CopiesInput, {
@@ -751,6 +813,8 @@ customElements.define("copy-count-input", CopiesInput, {
 class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
   initialize() {
     super.initialize();
+
+    this.setAttribute("platform", AppConstants.platform);
 
     this.addEventListener("change", this);
     this.addEventListener("submit", this);

@@ -18,18 +18,17 @@ const coep_header = '|header(Cross-Origin-Embedder-Policy,require-corp)';
 
 promise_test(async t => {
   const report_token = token();
-  const executor_token = token();
-  const callback_token = token();
+  const openee_token = token();
 
   const reportTo = reportToHeaders(report_token);
   const openee_url = cross_origin + executor_path +
     reportTo.header + reportTo.coopReportOnlySameOriginHeader + coep_header +
-    `&uuid=${executor_token}`;
+    `&uuid=${openee_token}`;
   const openee = window.open(openee_url);
-  t.add_cleanup(() => send(executor_token, "window.close()"))
+  t.add_cleanup(() => send(openee_token, "window.close()"))
 
   // 1. Try to access the opener. A report is sent, because of COOP-RO+COEP.
-  send(executor_token, `
+  send(openee_token, `
     tryAccess(opener);
   `);
 
@@ -38,10 +37,10 @@ promise_test(async t => {
   assert_not_equals(report, "timeout", "Report not received");
   assert_equals(report.type, "coop");
   assert_equals(report.url, openee_url.replace(/"/g, '%22'));
-  assert_equals(report.body["violation-type"], "access-from-coop-page");
-  assert_equals(report.body["disposition"], "reporting");
-  assert_equals(report.body["effective-policy"], "same-origin-plus-coep");
-  assert_equals(report.body["property"], "blur");
+  assert_equals(report.body.type, "access-from-coop-page");
+  assert_equals(report.body.disposition, "reporting");
+  assert_equals(report.body.effectivePolicy, "same-origin-plus-coep");
+  assert_equals(report.body.property, "blur");
   assert_source_location_found(report);
 }, "Openee (COOP-RO+COEP) accesses opener. Report to openee");
 

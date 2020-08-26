@@ -137,7 +137,8 @@ nsHttpTransaction::nsHttpTransaction()
       mEarlyDataDisposition(EARLY_NONE),
       mFastOpenStatus(TFO_NOT_TRIED),
       mTrafficCategory(HttpTrafficCategory::eInvalid),
-      mProxyConnectResponseCode(0) {
+      mProxyConnectResponseCode(0),
+      m421Received(false) {
   this->mSelfAddr.inet = {};
   this->mPeerAddr.inet = {};
   LOG(("Creating nsHttpTransaction @%p\n", this));
@@ -429,6 +430,8 @@ nsresult nsHttpTransaction::Init(
   }
 
   if (gHttpHandler->UseHTTPSRRAsAltSvcEnabled()) {
+    mHTTPSSVCReceivedStage.emplace(HTTPSSVC_NOT_PRESENT);
+
     nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
     nsCOMPtr<nsIEventTarget> target;
     Unused << gHttpHandler->GetSocketThreadTarget(getter_AddRefs(target));
@@ -544,11 +547,6 @@ void nsHttpTransaction::OnActivated() {
 
   if (mActivated) {
     return;
-  }
-
-  if (mDNSRequest) {
-    mDNSRequest->Cancel(NS_ERROR_ABORT);
-    mDNSRequest = nullptr;
   }
 
   if (mTrafficCategory != HttpTrafficCategory::eInvalid) {
@@ -1077,6 +1075,27 @@ HttpTransactionParent* nsHttpTransaction::AsHttpTransactionParent() {
   return nullptr;
 }
 
+nsHttpTransaction::HTTPSSVC_CONNECTION_FAILED_REASON
+nsHttpTransaction::ErrorCodeToFailedReason(nsresult aErrorCode) {
+  HTTPSSVC_CONNECTION_FAILED_REASON reason = HTTPSSVC_CONNECTION_OTHERS;
+  switch (aErrorCode) {
+    case NS_ERROR_UNKNOWN_HOST:
+      reason = HTTPSSVC_CONNECTION_UNKNOWN_HOST;
+      break;
+    case NS_ERROR_CONNECTION_REFUSED:
+      reason = HTTPSSVC_CONNECTION_UNREACHABLE;
+      break;
+    default:
+      if (m421Received) {
+        reason = HTTPSSVC_CONNECTION_421_RECEIVED;
+      } else if (NS_ERROR_GET_MODULE(aErrorCode) == NS_ERROR_MODULE_SECURITY) {
+        reason = HTTPSSVC_CONNECTION_SECURITY_ERROR;
+      }
+      break;
+  }
+  return reason;
+}
+
 void nsHttpTransaction::Close(nsresult reason) {
   LOG(("nsHttpTransaction::Close [this=%p reason=%" PRIx32 "]\n", this,
        static_cast<uint32_t>(reason)));
@@ -1084,6 +1103,11 @@ void nsHttpTransaction::Close(nsresult reason) {
   if (!mClosed) {
     gHttpHandler->ConnMgr()->RemoveActiveTransaction(this);
     mActivated = false;
+  }
+
+  if (mDNSRequest) {
+    mDNSRequest->Cancel(reason);
+    mDNSRequest = nullptr;
   }
 
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
@@ -1230,6 +1254,8 @@ void nsHttpTransaction::Close(nsresult reason) {
                             !reallySentData || connReused)) ||
         restartToFallbackConnInfo) {
       if (restartToFallbackConnInfo) {
+        Telemetry::Accumulate(Telemetry::DNS_HTTPSSVC_CONNECTION_FAILED_REASON,
+                              ErrorCodeToFailedReason(reason));
         nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
         if (dns) {
           LOG(("add failed domain name [%s] -> [%s] to exclusion list",
@@ -1329,6 +1355,13 @@ void nsHttpTransaction::Close(nsresult reason) {
     if (mProxyConnectFailed) {
       LOG(("  keeping the connection because of mProxyConnectFailed"));
       relConn = false;
+    }
+
+    // Use mFallbackConnInfo as an indicator that this transaction is completed
+    // successfully with an HTTPSSVC record.
+    if (mFallbackConnInfo) {
+      Telemetry::Accumulate(Telemetry::DNS_HTTPSSVC_CONNECTION_FAILED_REASON,
+                            HTTPSSVC_CONNECTION_OK);
     }
   }
 
@@ -1811,6 +1844,8 @@ nsresult nsHttpTransaction::HandleContentStart() {
       case 421:
         LOG(("Misdirected Request.\n"));
         gHttpHandler->ClearHostMapping(mConnInfo);
+
+        m421Received = true;
 
         // Unsticky the connection to allow restart.  This can get set when an
         // NTLM proxy is successfully authenticated.
@@ -2703,20 +2738,36 @@ NS_IMETHODIMP nsHttpTransaction::OnLookupComplete(nsICancelable* aRequest,
 
   MakeDontWaitHTTPSSVC();
 
-  if (mActivated) {
-    return NS_OK;
-  }
-
   nsCOMPtr<nsIDNSHTTPSSVCRecord> record = do_QueryInterface(aRecord);
   if (!record || NS_FAILED(aStatus)) {
     return NS_ERROR_FAILURE;
   }
+
+  bool hasIPAddress = false;
+  Unused << record->GetHasIPAddresses(&hasIPAddress);
+
+  if (mActivated) {
+    mHTTPSSVCReceivedStage =
+        Some(hasIPAddress ? HTTPSSVC_WITH_IPHINT_RECEIVED_STAGE_2
+                          : HTTPSSVC_WITHOUT_IPHINT_RECEIVED_STAGE_2);
+    return NS_OK;
+  }
+
+  mHTTPSSVCReceivedStage =
+      Some(hasIPAddress ? HTTPSSVC_WITH_IPHINT_RECEIVED_STAGE_1
+                        : HTTPSSVC_WITHOUT_IPHINT_RECEIVED_STAGE_1);
 
   nsCOMPtr<nsISVCBRecord> svcbRecord;
   if (NS_FAILED(record->GetServiceModeRecord(mCaps & NS_HTTP_DISALLOW_SPDY,
                                              mCaps & NS_HTTP_DISALLOW_HTTP3,
                                              getter_AddRefs(svcbRecord)))) {
     LOG(("  no usable record!"));
+    bool allRecordsExcluded = false;
+    Unused << record->GetAllRecordsExcluded(&allRecordsExcluded);
+    Telemetry::Accumulate(Telemetry::DNS_HTTPSSVC_CONNECTION_FAILED_REASON,
+                          allRecordsExcluded
+                              ? HTTPSSVC_CONNECTION_ALL_RECORDS_EXCLUDED
+                              : HTTPSSVC_CONNECTION_NO_USABLE_RECORD);
     return NS_ERROR_FAILURE;
   }
 
@@ -2731,6 +2782,10 @@ NS_IMETHODIMP nsHttpTransaction::OnLookupComplete(nsICancelable* aRequest,
     UpdateConnectionInfo(newInfo);
   }
   return NS_OK;
+}
+
+Maybe<uint32_t> nsHttpTransaction::HTTPSSVCReceivedStage() {
+  return mHTTPSSVCReceivedStage;
 }
 
 }  // namespace net

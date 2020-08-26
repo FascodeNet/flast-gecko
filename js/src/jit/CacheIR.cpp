@@ -4543,17 +4543,22 @@ bool SetPropIRGenerator::canAttachAddSlotStub(HandleObject obj, HandleId id) {
   if (obj->is<JSFunction>() && JSID_IS_ATOM(id, cx_->names().prototype)) {
     MOZ_ASSERT(ClassMayResolveId(cx_->names(), obj->getClass(), id, obj));
 
-    // We check group->maybeInterpretedFunction() here and guard on the
-    // group. The group is unique for a particular function so this ensures
-    // we don't add the default prototype property to functions that don't
-    // have it.
+    // We're only interested in functions that have a builtin .prototype
+    // property (needsPrototypeProperty). The stub will guard on this because
+    // the builtin .prototype property is non-configurable/non-enumerable and it
+    // would be wrong to add a property with those attributes to a function that
+    // doesn't have a builtin .prototype.
+    //
+    // Inlining needsPrototypeProperty in JIT code is complicated so we use
+    // isNonBuiltinConstructor as a stronger condition that's easier to check
+    // from JIT code.
     JSFunction* fun = &obj->as<JSFunction>();
-    if (!obj->group()->maybeInterpretedFunction() ||
-        !fun->needsPrototypeProperty()) {
+    if (!fun->isNonBuiltinConstructor()) {
       return false;
     }
+    MOZ_ASSERT(fun->needsPrototypeProperty());
 
-    // If property exists this isn't an "add"
+    // If property exists this isn't an "add".
     if (fun->lookupPure(id)) {
       return false;
     }
@@ -4675,12 +4680,10 @@ AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
   ObjOperandId objId = writer.guardToObject(objValId);
   maybeEmitIdGuard(id);
 
-  // In addition to guarding for type barrier, we need this group guard (or
-  // shape guard below) to ensure class is unchanged. This group guard may also
-  // imply maybeInterpretedFunction() for the special-case of function
-  // prototype property set.
-  // TODO(Warp): Figure out if this can be removed without TI.
-  writer.guardGroup(objId, oldGroup);
+  if (IsTypeInferenceEnabled()) {
+    // Guard on the group for the property type barrier and group change.
+    writer.guardGroup(objId, oldGroup);
+  }
 
   // If we are adding a property to an object for which the new script
   // properties analysis hasn't been performed yet, make sure the stub fails
@@ -4696,9 +4699,15 @@ AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
     preliminaryObjectAction_ = PreliminaryObjectAction::Unlink;
   }
 
-  // Shape guard the holder.
-  ObjOperandId holderId = objId;
-  writer.guardShape(holderId, oldShape);
+  // Shape guard the object.
+  writer.guardShape(objId, oldShape);
+
+  // If this is the special function.prototype case, we need to guard the
+  // function is a non-builtin constructor. See canAttachAddSlotStub.
+  if (obj->is<JSFunction>() && JSID_IS_ATOM(id, cx_->names().prototype)) {
+    MOZ_ASSERT(obj->as<JSFunction>().isNonBuiltinConstructor());
+    writer.guardFunctionIsNonBuiltinCtor(objId);
+  }
 
   ShapeGuardProtoChain(writer, obj, objId);
 
@@ -4711,22 +4720,21 @@ AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
 
   if (holder->isFixedSlot(propShape->slot())) {
     size_t offset = NativeObject::getFixedSlotOffset(propShape->slot());
-    writer.addAndStoreFixedSlot(holderId, offset, rhsValId, changeGroup,
-                                newGroup, propShape);
+    writer.addAndStoreFixedSlot(objId, offset, rhsValId, changeGroup, newGroup,
+                                propShape);
     trackAttached("AddSlot");
   } else {
     size_t offset = holder->dynamicSlotIndex(propShape->slot()) * sizeof(Value);
     uint32_t numOldSlots = NativeObject::dynamicSlotsCount(oldShape);
     uint32_t numNewSlots = NativeObject::dynamicSlotsCount(propShape);
     if (numOldSlots == numNewSlots) {
-      writer.addAndStoreDynamicSlot(holderId, offset, rhsValId, changeGroup,
+      writer.addAndStoreDynamicSlot(objId, offset, rhsValId, changeGroup,
                                     newGroup, propShape);
       trackAttached("AddSlot");
     } else {
       MOZ_ASSERT(numNewSlots > numOldSlots);
-      writer.allocateAndStoreDynamicSlot(holderId, offset, rhsValId,
-                                         changeGroup, newGroup, propShape,
-                                         numNewSlots);
+      writer.allocateAndStoreDynamicSlot(objId, offset, rhsValId, changeGroup,
+                                         newGroup, propShape, numNewSlots);
       trackAttached("AllocateSlot");
     }
   }

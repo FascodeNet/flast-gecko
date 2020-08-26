@@ -11,6 +11,7 @@
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/Telemetry.h"
+#include "nsThreadUtils.h"
 #include "nscore.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
@@ -463,12 +464,6 @@ class nsDocumentViewer final : public nsIContentViewer,
   unsigned mClosingWhilePrinting : 1;
 
 #  if NS_PRINT_PREVIEW
-  // These data members support delayed printing when the document is loading
-  unsigned mPrintIsPending : 1;
-  unsigned mPrintDocIsFullyLoaded : 1;
-  nsCOMPtr<nsIPrintSettings> mCachedPrintSettings;
-  nsCOMPtr<nsIWebProgressListener> mCachedPrintWebProgressListner;
-
   RefPtr<nsPrintJob> mPrintJob;
 #  endif  // NS_PRINT_PREVIEW
 
@@ -514,8 +509,6 @@ void nsDocumentViewer::PrepareToStartLoad() {
   mDeferredWindowClose = false;
 
 #ifdef NS_PRINTING
-  mPrintIsPending = false;
-  mPrintDocIsFullyLoaded = false;
   mClosingWhilePrinting = false;
 
   // Make sure we have destroyed it and cleared the data member
@@ -541,11 +534,7 @@ nsDocumentViewer::nsDocumentViewer()
       mInPermitUnloadPrompt(false),
 #ifdef NS_PRINTING
       mClosingWhilePrinting(false),
-#  if NS_PRINT_PREVIEW
-      mPrintIsPending(false),
-      mPrintDocIsFullyLoaded(false),
-#  endif  // NS_PRINT_PREVIEW
-#endif    // NS_PRINTING
+#endif  // NS_PRINTING
       mHintCharsetSource(kCharsetUninitialized),
       mHintCharset(nullptr),
       mIsPageMode(false),
@@ -1176,12 +1165,16 @@ nsDocumentViewer::LoadComplete(nsresult aStatus) {
 
 #ifdef NS_PRINTING
   // Check to see if someone tried to print during the load
-  if (mPrintIsPending) {
-    mPrintIsPending = false;
-    mPrintDocIsFullyLoaded = true;
-    Print(mCachedPrintSettings, mCachedPrintWebProgressListner);
-    mCachedPrintSettings = nullptr;
-    mCachedPrintWebProgressListner = nullptr;
+  if (window) {
+    auto* outerWin = nsGlobalWindowOuter::Cast(window);
+    outerWin->StopDelayingPrintingUntilAfterLoad();
+    if (outerWin->DelayedPrintUntilAfterLoad()) {
+      // We call into the inner because it ensures there's an active document
+      // and such.
+      if (RefPtr<nsPIDOMWindowInner> inner = window->GetCurrentInnerWindow()) {
+        nsGlobalWindowInner::Cast(inner)->Print(IgnoreErrors());
+      }
+    }
   }
 #endif
 
@@ -2223,14 +2216,15 @@ nsDocumentViewer::SetSticky(bool aSticky) {
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::RequestWindowClose(bool* aCanClose) {
+nsDocumentViewer::RequestWindowClose(bool aIsPrintPending, bool* aCanClose) {
+  *aCanClose = true;
+
 #ifdef NS_PRINTING
-  if (mPrintIsPending || (mPrintJob && mPrintJob->GetIsPrinting())) {
+  if (aIsPrintPending || (mPrintJob && mPrintJob->GetIsPrinting())) {
     *aCanClose = false;
     mDeferredWindowClose = true;
-  } else
+  }
 #endif
-    *aCanClose = true;
 
   return NS_OK;
 }
@@ -3112,25 +3106,6 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIDocShell> docShell(mContainer);
-  NS_ENSURE_STATE(docShell);
-
-  // Check to see if this document is still busy
-  // If it is busy and we aren't already "queued" up to print then
-  // Indicate there is a print pending and cache the args for later
-  auto busyFlags = docShell->GetBusyFlags();
-  if (busyFlags != nsIDocShell::BUSY_FLAGS_NONE &&
-      busyFlags & nsIDocShell::BUSY_FLAGS_PAGE_LOADING &&
-      !mPrintDocIsFullyLoaded) {
-    if (!mPrintIsPending) {
-      mCachedPrintSettings = aPrintSettings;
-      mCachedPrintWebProgressListner = aWebProgressListener;
-      mPrintIsPending = true;
-    }
-    PR_PL(("Printing Stopped - document is still busy!"));
-    return NS_ERROR_GFX_PRINTER_DOC_IS_BUSY;
-  }
-
   if (!mDocument || !mDeviceContext) {
     PR_PL(("Can't Print without a document and a device context"));
     return NS_ERROR_FAILURE;
@@ -3174,14 +3149,11 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
 
 NS_IMETHODIMP
 nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
-                               mozIDOMWindowProxy* aChildDOMWin,
                                nsIWebProgressListener* aWebProgressListener) {
 #  ifdef NS_PRINT_PREVIEW
-  MOZ_ASSERT(IsInitializedForPrintPreview(),
-             "For print preview nsIWebBrowserPrint must be from "
-             "docshell.initOrReusePrintPreviewViewer!");
+  RefPtr<Document> doc = mDocument.get();
+  NS_ENSURE_STATE(doc);
 
-  NS_ENSURE_ARG_POINTER(aChildDOMWin);
   if (GetIsPrinting()) {
     nsPrintJob::CloseProgressDialog(aWebProgressListener);
     return NS_ERROR_FAILURE;
@@ -3192,11 +3164,6 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
     PR_PL(("Can't Print Preview without device context and docshell"));
     return NS_ERROR_FAILURE;
   }
-
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryInterface(aChildDOMWin);
-  MOZ_ASSERT(window);
-  nsCOMPtr<Document> doc = window->GetDoc();
-  NS_ENSURE_STATE(doc);
 
   NS_ENSURE_STATE(!GetIsPrinting());
   // beforeprint event may have caused ContentViewer to be shutdown.
@@ -3714,11 +3681,10 @@ void nsDocumentViewer::SetIsPrinting(bool aIsPrinting) {
 // XXX it always returns false for subdocuments
 bool nsDocumentViewer::GetIsPrintPreview() const {
 #ifdef NS_PRINTING
-  if (mPrintJob) {
-    return mPrintJob->CreatedForPrintPreview();
-  }
-#endif
+  return mPrintJob && mPrintJob->CreatedForPrintPreview();
+#else
   return false;
+#endif
 }
 
 //------------------------------------------------------------
@@ -3787,8 +3753,13 @@ void nsDocumentViewer::OnDonePrinting() {
       printJob->Destroy();
     }
 
-    // We are done printing, now cleanup
-    if (mDeferredWindowClose) {
+    // We are done printing, now cleanup. For non-print-preview jobs, we are
+    // actually responsible for cleaning up our whole <browser> or window (see
+    // the OPEN_PRINT_BROWSER code), so gotta run window.close() too.
+    //
+    // For print preview jobs the front-end code is responsible for cleaning the
+    // UI.
+    if (mDeferredWindowClose || !printJob->CreatedForPrintPreview()) {
       mDeferredWindowClose = false;
       if (mContainer) {
         if (nsCOMPtr<nsPIDOMWindowOuter> win = mContainer->GetWindow()) {
@@ -3908,14 +3879,6 @@ void nsDocumentViewer::InvalidatePotentialSubDocDisplayItem() {
 void nsDocumentViewer::DestroyPresContext() {
   InvalidatePotentialSubDocDisplayItem();
   mPresContext = nullptr;
-}
-
-bool nsDocumentViewer::IsInitializedForPrintPreview() {
-  return mInitializedForPrintPreview;
-}
-
-void nsDocumentViewer::InitializeForPrintPreview() {
-  mInitializedForPrintPreview = true;
 }
 
 void nsDocumentViewer::SetPrintPreviewPresentation(nsViewManager* aViewManager,
