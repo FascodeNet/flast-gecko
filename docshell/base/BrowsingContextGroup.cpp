@@ -94,6 +94,7 @@ void BrowsingContextGroup::EnsureHostProcess(ContentParent* aProcess) {
 
 void BrowsingContextGroup::RemoveHostProcess(ContentParent* aProcess) {
   MOZ_DIAGNOSTIC_ASSERT(aProcess);
+  MOZ_DIAGNOSTIC_ASSERT(aProcess->GetRemoteType() != PREALLOC_REMOTE_TYPE);
   auto entry = mHosts.Lookup(aProcess->GetRemoteType());
   if (entry && entry.Data() == aProcess) {
     entry.Remove();
@@ -118,6 +119,7 @@ static void CollectContextInitializers(
 void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
   MOZ_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(aProcess && !aProcess->IsLaunching());
+  MOZ_DIAGNOSTIC_ASSERT(aProcess->GetRemoteType() != PREALLOC_REMOTE_TYPE);
 
   // Check if we're already subscribed to this process.
   if (!mSubscribers.EnsureInserted(aProcess)) {
@@ -125,9 +127,14 @@ void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
   }
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-  auto hostEntry = mHosts.Lookup(aProcess->GetRemoteType());
-  MOZ_DIAGNOSTIC_ASSERT(hostEntry && hostEntry.Data() == aProcess,
-                        "Cannot subscribe a non-host process");
+  // If the process is already marked as dead, we won't be the host, but may
+  // still need to subscribe to the process due to creating a popup while
+  // shutting down.
+  if (!aProcess->IsDead()) {
+    auto hostEntry = mHosts.Lookup(aProcess->GetRemoteType());
+    MOZ_DIAGNOSTIC_ASSERT(hostEntry && hostEntry.Data() == aProcess,
+                          "Cannot subscribe a non-host process");
+  }
 #endif
 
   // FIXME: This won't send non-discarded children of discarded BCs, but those
@@ -159,6 +166,7 @@ void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
 
 void BrowsingContextGroup::Unsubscribe(ContentParent* aProcess) {
   MOZ_DIAGNOSTIC_ASSERT(aProcess);
+  MOZ_DIAGNOSTIC_ASSERT(aProcess->GetRemoteType() != PREALLOC_REMOTE_TYPE);
   mSubscribers.RemoveEntry(aProcess);
   aProcess->RemoveBrowsingContextGroup(this);
 

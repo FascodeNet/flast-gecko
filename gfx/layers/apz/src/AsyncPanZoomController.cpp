@@ -4710,13 +4710,6 @@ void AsyncPanZoomController::NotifyLayersUpdated(
         aScrollMetadata.GetOverscrollBehavior());
 
     if (scrollOffsetUpdated) {
-      // Send an acknowledgement with the new scroll generation so that any
-      // repaint requests later in this function go through.
-      // Because of the scroll generation update, any inflight paint requests
-      // are going to be ignored by layout, and so mExpectedGeckoMetrics becomes
-      // incorrect for the purposes of calculating the LD transform. To correct
-      // this we need to update mExpectedGeckoMetrics to be the last thing we
-      // know was painted by Gecko.
       Maybe<CSSPoint> relativeDelta;
       if (StaticPrefs::apz_relative_update_enabled() &&
           aLayerMetrics.IsRelative()) {
@@ -4750,6 +4743,12 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       for (auto& sampledState : mSampledState) {
         sampledState.UpdateScrollProperties(Metrics());
       }
+
+      // Because of the scroll generation update, any inflight paint requests
+      // are going to be ignored by layout, and so mExpectedGeckoMetrics becomes
+      // incorrect for the purposes of calculating the LD transform. To correct
+      // this we need to update mExpectedGeckoMetrics to be the last thing we
+      // know was painted by Gecko.
       mExpectedGeckoMetrics.UpdateFrom(aLayerMetrics);
 
       // If an animation is underway, tell it about the scroll offset update.

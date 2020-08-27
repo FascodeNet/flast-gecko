@@ -352,7 +352,7 @@ var PrintEventHandler = {
       }
 
       function onUpdatePageCount(msg) {
-        numPages = msg.data.numPages;
+        numPages = msg.data.totalPages;
       }
 
       function cleanup() {
@@ -524,6 +524,26 @@ const PrintSettingsViewProxy = {
     headerStrRight: "print.print_headerright",
   },
 
+  // This list was taken from nsDeviceContextSpecWin.cpp which records telemetry on print target type
+  knownSaveToFilePrinters: new Set([
+    "Microsoft Print to PDF",
+    "Adobe PDF",
+    "Bullzip PDF Printer",
+    "CutePDF Writer",
+    "doPDF",
+    "Foxit Reader PDF Printer",
+    "Nitro PDF Creator",
+    "novaPDF",
+    "PDF-XChange",
+    "PDF24 PDF",
+    "PDFCreator",
+    "PrimoPDF",
+    "Soda PDF",
+    "Solid PDF Creator",
+    "Universal Document Converter",
+    "Microsoft XPS Document Writer",
+  ]),
+
   async resolvePropertiesForPrinter(printerName) {
     // resolve any async properties we need on the printer
     let printer = this.availablePrinters[printerName];
@@ -576,6 +596,12 @@ const PrintSettingsViewProxy = {
 
       case "supportsColor":
         return this.availablePrinters[target.printerName].supportsColor;
+
+      case "willSaveToFile":
+        return (
+          target.outputFormat == Ci.nsIPrintSettings.kOutputFormatPDF ||
+          this.knownSaveToFilePrinters.has(target.printerName)
+        );
     }
     return target[name];
   },
@@ -820,6 +846,13 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
     this.addEventListener("submit", this);
     this.addEventListener("click", this);
     this.addEventListener("input", this);
+  }
+
+  update(settings) {
+    this.querySelector("#system-print").hidden =
+      settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER &&
+      AppConstants.platform != "macosx";
+    this.querySelector("#copies").hidden = settings.willSaveToFile;
   }
 
   handleEvent(e) {

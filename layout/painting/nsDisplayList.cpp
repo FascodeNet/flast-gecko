@@ -38,6 +38,7 @@
 #include "mozilla/ViewportUtils.h"
 #include "nsCSSRendering.h"
 #include "nsCSSRenderingGradients.h"
+#include "nsRefreshDriver.h"
 #include "nsRegion.h"
 #include "nsStyleStructInlines.h"
 #include "nsStyleTransformMatrix.h"
@@ -804,8 +805,14 @@ void nsDisplayListBuilder::SetIsRelativeToLayoutViewport() {
 
 void nsDisplayListBuilder::UpdateShouldBuildAsyncZoomContainer() {
   Document* document = mReferenceFrame->PresContext()->Document();
+  // On desktop, we want to disable zooming in fullscreen mode (bug 1650488).
+  // On mobile (and RDM), we need zooming even in fullscreen mode to respect
+  // mobile viewport sizing (bug 1659761).
+  bool disableZoomingForFullscreen =
+      document->Fullscreen() &&
+      !document->GetPresShell()->UsesMobileViewportSizing();
   mBuildAsyncZoomContainer = !mIsRelativeToLayoutViewport &&
-                             !document->Fullscreen() &&
+                             !disableZoomingForFullscreen &&
                              nsLayoutUtils::AllowZoomingForDocument(document);
 }
 
@@ -7091,13 +7098,10 @@ LayerState nsDisplayScrollInfoLayer::GetLayerState(
 UniquePtr<ScrollMetadata> nsDisplayScrollInfoLayer::ComputeScrollMetadata(
     LayerManager* aLayerManager,
     const ContainerLayerParameters& aContainerParameters) {
-  nsRect viewport = mScrollFrame->GetRect() - mScrollFrame->GetPosition() +
-                    mScrollFrame->GetOffsetToCrossDoc(ReferenceFrame());
-
   ScrollMetadata metadata = nsLayoutUtils::ComputeScrollMetadata(
       mScrolledFrame, mScrollFrame, mScrollFrame->GetContent(),
-      ReferenceFrame(), aLayerManager, mScrollParentId, viewport, Nothing(),
-      false, Some(aContainerParameters));
+      ReferenceFrame(), aLayerManager, mScrollParentId, mScrollFrame->GetSize(),
+      Nothing(), false, Some(aContainerParameters));
   metadata.GetMetrics().SetIsScrollInfoLayer(true);
   nsIScrollableFrame* scrollableFrame = mScrollFrame->GetScrollTargetFrame();
   if (scrollableFrame) {

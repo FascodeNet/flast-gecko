@@ -500,6 +500,7 @@ class TouchBlockState : public CancelableBlockState {
    */
   bool UpdateSlopState(const MultiTouchInput& aInput,
                        bool aApzcCanConsumeEvents);
+  bool IsInSlop() const;
 
   /**
    * Based on the slop origin and the given input event, return a best guess
@@ -517,6 +518,7 @@ class TouchBlockState : public CancelableBlockState {
   void DispatchEvent(const InputData& aEvent) const override;
   bool MustStayActive() override;
   const char* Type() override;
+  TimeDuration GetTimeSinceBlockStart() const;
 
  private:
   nsTArray<TouchBehaviorFlags> mAllowedTouchBehaviors;
@@ -527,6 +529,7 @@ class TouchBlockState : public CancelableBlockState {
   ScreenIntPoint mSlopOrigin;
   // A reference to the InputQueue's touch counter
   TouchCounter& mTouchCounter;
+  TimeStamp mStartTime;
 };
 
 /**
