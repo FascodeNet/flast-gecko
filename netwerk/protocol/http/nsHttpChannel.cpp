@@ -1931,8 +1931,6 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     return mStatus;
   }
 
-  mTracingEnabled = false;
-
   // Ensure mListener->OnStartRequest will be invoked before exiting
   // this function.
   auto onStartGuard = MakeScopeExit([&] {
@@ -2031,6 +2029,7 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   // so we only need to insert this using the response header's mime type.
   // We only do this for document loads, since we might want to send parts
   // to the external protocol handler without leaving the parent process.
+  bool mustRunStreamFilterInParent = false;
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
   RefPtr<DocumentLoadListener> docListener = do_QueryObject(parentChannel);
@@ -2050,10 +2049,38 @@ nsresult nsHttpChannel::CallOnStartRequest() {
                                         getter_AddRefs(fromListener));
         if (NS_SUCCEEDED(rv)) {
           mListener = fromListener;
+          mustRunStreamFilterInParent = true;
         }
       }
     }
   }
+
+  // If we installed a multipart converter, then we need to add StreamFilter
+  // object before it, so that extensions see the un-parsed original stream.
+  // We may want to add an option for extensions to opt-in to proper multipart
+  // handling.
+  // If not, then pass the StreamFilter promise on to DocumentLoadListener,
+  // where it'll be added in the content process.
+  for (StreamFilterRequest& request : mStreamFilterRequests) {
+    if (mustRunStreamFilterInParent) {
+      mozilla::ipc::Endpoint<extensions::PStreamFilterParent> parent;
+      mozilla::ipc::Endpoint<extensions::PStreamFilterChild> child;
+      nsresult rv = extensions::PStreamFilter::CreateEndpoints(
+          base::GetCurrentProcId(), request.mChildProcessId, &parent, &child);
+      if (NS_FAILED(rv)) {
+        request.mPromise->Reject(false, __func__);
+      } else {
+        extensions::StreamFilterParent::Attach(this, std::move(parent));
+        request.mPromise->Resolve(std::move(child), __func__);
+      }
+    } else {
+      docListener->AttachStreamFilter(request.mChildProcessId)
+          ->ChainTo(request.mPromise.forget(), __func__);
+    }
+    request.mPromise = nullptr;
+  }
+  mStreamFilterRequests.Clear();
+  mTracingEnabled = false;
 
   if (mResponseHead && !mResponseHead->HasContentCharset())
     mResponseHead->SetContentCharset(mContentCharsetHint);
@@ -2081,9 +2108,16 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   }
 
   // Install stream converter if required.
-  // If we use unknownDecoder, stream converters will be installed later (in
-  // nsUnknownDecoder) after OnStartRequest is called for the real listener.
-  if (!unknownDecoderStarted) {
+  // Normally, we expect the listener to disable content conversion during
+  // OnStartRequest if it wants to handle it itself (which is common case with
+  // HttpChannelParent, disabling so that it can be done in the content
+  // process). If we've installed an nsUnknownDecoder, then we won't yet have
+  // called OnStartRequest on the final listener (that happens after we send
+  // OnDataAvailable to the nsUnknownDecoder), so it can't yet have disabled
+  // content conversion.
+  // In that case, assume that the listener will disable content conversion,
+  // unless it's specifically told us that it won't.
+  if (!unknownDecoderStarted || mListenerRequiresContentConversion) {
     nsCOMPtr<nsIStreamListener> listener;
     rv =
         DoApplyContentConversions(mListener, getter_AddRefs(listener), nullptr);
@@ -7165,15 +7199,23 @@ auto nsHttpChannel::AttachStreamFilter(base::ProcessId aChildProcessId)
   LOG(("nsHttpChannel::AttachStreamFilter [this=%p]", this));
   MOZ_ASSERT(!mOnStartRequestCalled);
 
+  if (!ProcessId()) {
+    return ChildEndpointPromise::CreateAndReject(false, __func__);
+  }
+
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
 
+  // If our listener is a DocumentLoadListener, then we might handle
+  // multi-part responses here in the parent process. The current extension
+  // API doesn't understand the parsed multipart format, so we defer responding
+  // here until CallOnStartRequest, and attach the StreamFilter before the
+  // multipart handler (in the parent process!) if applicable.
   if (RefPtr<DocumentLoadListener> docParent = do_QueryObject(parentChannel)) {
-    return docParent->AttachStreamFilter(aChildProcessId);
-  }
-
-  if (!ProcessId()) {
-    return ChildEndpointPromise::CreateAndReject(false, __func__);
+    StreamFilterRequest* request = mStreamFilterRequests.AppendElement();
+    request->mPromise = new ChildEndpointPromise::Private(__func__);
+    request->mChildProcessId = aChildProcessId;
+    return request->mPromise;
   }
 
   mozilla::ipc::Endpoint<extensions::PStreamFilterParent> parent;
@@ -7968,6 +8010,7 @@ nsHttpChannel::OnStopRequest(nsIRequest* request, nsresult status) {
       mTransactionTimings.domainLookupStart = mDNSPrefetch->StartTimestamp();
       mTransactionTimings.domainLookupEnd = mDNSPrefetch->EndTimestamp();
     }
+    mDNSPrefetch = nullptr;
 
     // handle auth retry...
     if (authRetry) {
@@ -9186,20 +9229,6 @@ nsHttpChannel::OnLookupComplete(nsICancelable* request, nsIDNSRecord* rec,
        static_cast<uint32_t>(status), !!httpSSVCRecord));
 
   if (!httpSSVCRecord) {
-    // We no longer need the dns prefetch object. Note: mDNSPrefetch could be
-    // validly null if OnStopRequest has already been called.
-    // We only need the domainLookup timestamps when not loading from cache
-    if (mDNSPrefetch && mDNSPrefetch->TimingsValid() && mTransaction) {
-      TimeStamp connectStart = mTransaction->GetConnectStart();
-      TimeStamp requestStart = mTransaction->GetRequestStart();
-      // We only set the domainLookup timestamps if we're not using a
-      // persistent connection.
-      if (requestStart.IsNull() && connectStart.IsNull()) {
-        mTransaction->SetDomainLookupStart(mDNSPrefetch->StartTimestamp());
-        mTransaction->SetDomainLookupEnd(mDNSPrefetch->EndTimestamp());
-      }
-    }
-
     // Unset DNS cache refresh if it was requested,
     if (mCaps & NS_HTTP_REFRESH_DNS) {
       mCaps &= ~NS_HTTP_REFRESH_DNS;

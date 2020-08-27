@@ -379,53 +379,13 @@ bool CSSEditUtils::IsCSSEditableProperty(nsINode* aNode, nsAtom* aProperty,
 }
 
 // The lowest level above the transaction; adds the CSS declaration
-// "aProperty : aValue" to the inline styles carried by aElement
-nsresult CSSEditUtils::SetCSSProperty(Element& aElement, nsAtom& aProperty,
-                                      const nsAString& aValue,
-                                      bool aSuppressTxn) {
-  nsCOMPtr<nsStyledElement> styledElement = do_QueryInterface(&aElement);
-  if (NS_WARN_IF(!styledElement)) {
-    return NS_ERROR_INVALID_ARG;
-  }
+// "aProperty : aValue" to the inline styles carried by aStyledElement
+nsresult CSSEditUtils::SetCSSPropertyInternal(nsStyledElement& aStyledElement,
+                                              nsAtom& aProperty,
+                                              const nsAString& aValue,
+                                              bool aSuppressTxn) {
   RefPtr<ChangeStyleTransaction> transaction =
-      ChangeStyleTransaction::Create(*styledElement, aProperty, aValue);
-  if (aSuppressTxn) {
-    return transaction->DoTransaction();
-  }
-  if (NS_WARN_IF(!mHTMLEditor)) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  RefPtr<HTMLEditor> htmlEditor(mHTMLEditor);
-  nsresult rv = htmlEditor->DoTransactionInternal(transaction);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "EditorBase::DoTransactionInternal() failed");
-  return rv;
-}
-
-nsresult CSSEditUtils::SetCSSPropertyPixels(Element& aElement,
-                                            nsAtom& aProperty,
-                                            int32_t aIntValue) {
-  nsAutoString s;
-  s.AppendInt(aIntValue);
-  nsresult rv = SetCSSProperty(aElement, aProperty, s + u"px"_ns,
-                               /* suppress txn */ false);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "CSSEditUtils::SetCSSProperty() failed");
-  return rv;
-}
-
-// The lowest level above the transaction; removes the value aValue from the
-// list of values specified for the CSS property aProperty, or totally remove
-// the declaration if this property accepts only one value
-nsresult CSSEditUtils::RemoveCSSProperty(Element& aElement, nsAtom& aProperty,
-                                         const nsAString& aValue,
-                                         bool aSuppressTxn) {
-  nsCOMPtr<nsStyledElement> styledElement = do_QueryInterface(&aElement);
-  if (NS_WARN_IF(!styledElement)) {
-    return NS_ERROR_INVALID_ARG;
-  }
-  RefPtr<ChangeStyleTransaction> transaction =
-      ChangeStyleTransaction::CreateToRemove(*styledElement, aProperty, aValue);
+      ChangeStyleTransaction::Create(aStyledElement, aProperty, aValue);
   if (aSuppressTxn) {
     nsresult rv = transaction->DoTransaction();
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
@@ -437,6 +397,47 @@ nsresult CSSEditUtils::RemoveCSSProperty(Element& aElement, nsAtom& aProperty,
   }
   RefPtr<HTMLEditor> htmlEditor(mHTMLEditor);
   nsresult rv = htmlEditor->DoTransactionInternal(transaction);
+  if (NS_WARN_IF(htmlEditor->Destroyed())) {
+    return NS_ERROR_EDITOR_DESTROYED;
+  }
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "EditorBase::DoTransactionInternal() failed");
+  return rv;
+}
+
+nsresult CSSEditUtils::SetCSSPropertyPixelsWithTransaction(
+    nsStyledElement& aStyledElement, nsAtom& aProperty, int32_t aIntValue) {
+  nsAutoString s;
+  s.AppendInt(aIntValue);
+  nsresult rv =
+      SetCSSPropertyWithTransaction(aStyledElement, aProperty, s + u"px"_ns);
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "CSSEditUtils::SetCSSPropertyWithTransaction() failed");
+  return rv;
+}
+
+// The lowest level above the transaction; removes the value aValue from the
+// list of values specified for the CSS property aProperty, or totally remove
+// the declaration if this property accepts only one value
+nsresult CSSEditUtils::RemoveCSSPropertyInternal(
+    nsStyledElement& aStyledElement, nsAtom& aProperty, const nsAString& aValue,
+    bool aSuppressTxn) {
+  RefPtr<ChangeStyleTransaction> transaction =
+      ChangeStyleTransaction::CreateToRemove(aStyledElement, aProperty, aValue);
+  if (aSuppressTxn) {
+    nsresult rv = transaction->DoTransaction();
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "ChangeStyleTransaction::DoTransaction() failed");
+    return rv;
+  }
+  if (NS_WARN_IF(!mHTMLEditor)) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+  RefPtr<HTMLEditor> htmlEditor(mHTMLEditor);
+  nsresult rv = htmlEditor->DoTransactionInternal(transaction);
+  if (NS_WARN_IF(htmlEditor->Destroyed())) {
+    return NS_ERROR_EDITOR_DESTROYED;
+  }
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "EditorBase::DoTransactionInternal() failed");
   return rv;
@@ -535,24 +536,27 @@ already_AddRefed<nsComputedDOMStyle> CSSEditUtils::GetComputedStyle(
 
 // remove the CSS style "aProperty : aPropertyValue" and possibly remove the
 // whole node if it is a span and if its only attribute is _moz_dirty
-nsresult CSSEditUtils::RemoveCSSInlineStyle(nsINode& aNode, nsAtom* aProperty,
-                                            const nsAString& aPropertyValue) {
-  OwningNonNull<Element> element(*aNode.AsElement());
-
+nsresult CSSEditUtils::RemoveCSSInlineStyleWithTransaction(
+    nsStyledElement& aStyledElement, nsAtom* aProperty,
+    const nsAString& aPropertyValue) {
   // remove the property from the style attribute
-  nsresult rv = RemoveCSSProperty(element, *aProperty, aPropertyValue);
+  nsresult rv = RemoveCSSPropertyWithTransaction(aStyledElement, *aProperty,
+                                                 aPropertyValue);
   if (NS_FAILED(rv)) {
-    NS_WARNING("CSSEditUtils::RemoveCSSProperty() failed");
+    NS_WARNING("CSSEditUtils::RemoveCSSPropertyWithTransaction() failed");
     return rv;
   }
 
-  if (!element->IsHTMLElement(nsGkAtoms::span) ||
-      HTMLEditor::HasAttributes(element)) {
+  if (!aStyledElement.IsHTMLElement(nsGkAtoms::span) ||
+      HTMLEditor::HasAttributes(&aStyledElement)) {
     return NS_OK;
   }
 
   OwningNonNull<HTMLEditor> htmlEditor(*mHTMLEditor);
-  rv = htmlEditor->RemoveContainerWithTransaction(element);
+  rv = htmlEditor->RemoveContainerWithTransaction(aStyledElement);
+  if (NS_WARN_IF(htmlEditor->Destroyed())) {
+    return NS_ERROR_EDITOR_DESTROYED;
+  }
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "HTMLEditor::RemoveContainerWithTransaction() failed");
   return rv;
@@ -815,14 +819,10 @@ void CSSEditUtils::GenerateCSSDeclarationsFromHTMLStyle(
 // Add to aNode the CSS inline style equivalent to HTMLProperty/aAttribute/
 // aValue for the node, and return in aCount the number of CSS properties set
 // by the call.  The Element version returns aCount instead.
-int32_t CSSEditUtils::SetCSSEquivalentToHTMLStyle(Element* aElement,
-                                                  nsAtom* aHTMLProperty,
-                                                  nsAtom* aAttribute,
-                                                  const nsAString* aValue,
-                                                  bool aSuppressTransaction) {
-  MOZ_ASSERT(aElement);
-
-  if (!IsCSSEditableProperty(aElement, aHTMLProperty, aAttribute)) {
+Result<int32_t, nsresult> CSSEditUtils::SetCSSEquivalentToHTMLStyleInternal(
+    nsStyledElement& aStyledElement, nsAtom* aHTMLProperty, nsAtom* aAttribute,
+    const nsAString* aValue, bool aSuppressTransaction) {
+  if (!IsCSSEditableProperty(&aStyledElement, aHTMLProperty, aAttribute)) {
     return 0;
   }
 
@@ -832,19 +832,19 @@ int32_t CSSEditUtils::SetCSSEquivalentToHTMLStyle(Element* aElement,
   // Find the CSS equivalence to the HTML style
   nsTArray<nsStaticAtom*> cssPropertyArray;
   nsTArray<nsString> cssValueArray;
-  GenerateCSSDeclarationsFromHTMLStyle(*aElement, aHTMLProperty, aAttribute,
-                                       aValue, cssPropertyArray, cssValueArray,
-                                       false);
+  GenerateCSSDeclarationsFromHTMLStyle(aStyledElement, aHTMLProperty,
+                                       aAttribute, aValue, cssPropertyArray,
+                                       cssValueArray, false);
 
   // set the individual CSS inline styles
-  size_t count = cssPropertyArray.Length();
+  const size_t count = cssPropertyArray.Length();
   for (size_t index = 0; index < count; index++) {
-    nsresult rv =
-        SetCSSProperty(*aElement, MOZ_KnownLive(*cssPropertyArray[index]),
-                       cssValueArray[index], aSuppressTransaction);
+    nsresult rv = SetCSSPropertyInternal(
+        aStyledElement, MOZ_KnownLive(*cssPropertyArray[index]),
+        cssValueArray[index], aSuppressTransaction);
     if (NS_FAILED(rv)) {
-      NS_WARNING("CSSEditUtils::SetCSSProperty() failed");
-      return 0;
+      NS_WARNING("CSSEditUtils::SetCSSPropertyInternal() failed");
+      return Err(rv);
     }
   }
   return count;
@@ -852,14 +852,10 @@ int32_t CSSEditUtils::SetCSSEquivalentToHTMLStyle(Element* aElement,
 
 // Remove from aNode the CSS inline style equivalent to
 // HTMLProperty/aAttribute/aValue for the node
-nsresult CSSEditUtils::RemoveCSSEquivalentToHTMLStyle(
-    Element* aElement, nsAtom* aHTMLProperty, nsAtom* aAttribute,
+nsresult CSSEditUtils::RemoveCSSEquivalentToHTMLStyleInternal(
+    nsStyledElement& aStyledElement, nsAtom* aHTMLProperty, nsAtom* aAttribute,
     const nsAString* aValue, bool aSuppressTransaction) {
-  if (NS_WARN_IF(!aElement)) {
-    return NS_OK;
-  }
-
-  if (!IsCSSEditableProperty(aElement, aHTMLProperty, aAttribute)) {
+  if (!IsCSSEditableProperty(&aStyledElement, aHTMLProperty, aAttribute)) {
     return NS_OK;
   }
 
@@ -869,18 +865,21 @@ nsresult CSSEditUtils::RemoveCSSEquivalentToHTMLStyle(
   // Find the CSS equivalence to the HTML style
   nsTArray<nsStaticAtom*> cssPropertyArray;
   nsTArray<nsString> cssValueArray;
-  GenerateCSSDeclarationsFromHTMLStyle(*aElement, aHTMLProperty, aAttribute,
-                                       aValue, cssPropertyArray, cssValueArray,
-                                       true);
+  GenerateCSSDeclarationsFromHTMLStyle(aStyledElement, aHTMLProperty,
+                                       aAttribute, aValue, cssPropertyArray,
+                                       cssValueArray, true);
 
   // remove the individual CSS inline styles
-  int32_t count = cssPropertyArray.Length();
-  for (int32_t index = 0; index < count; index++) {
-    nsresult rv =
-        RemoveCSSProperty(*aElement, MOZ_KnownLive(*cssPropertyArray[index]),
-                          cssValueArray[index], aSuppressTransaction);
+  const size_t count = cssPropertyArray.Length();
+  if (!count) {
+    return NS_OK;
+  }
+  for (size_t index = 0; index < count; index++) {
+    nsresult rv = RemoveCSSPropertyInternal(
+        aStyledElement, MOZ_KnownLive(*cssPropertyArray[index]),
+        cssValueArray[index], aSuppressTransaction);
     if (NS_FAILED(rv)) {
-      NS_WARNING("CSSEditUtils::RemoveCSSProperty() failed");
+      NS_WARNING("CSSEditUtils::RemoveCSSPropertyWithoutTransaction() failed");
       return rv;
     }
   }
@@ -1167,10 +1166,10 @@ bool CSSEditUtils::IsCSSPrefChecked() const { return mIsCSSPrefChecked; }
 // class
 
 // static
-bool CSSEditUtils::DoElementsHaveSameStyle(const Element& aElement,
-                                           const Element& aOtherElement) {
-  if (aElement.HasAttr(kNameSpaceID_None, nsGkAtoms::id) ||
-      aOtherElement.HasAttr(kNameSpaceID_None, nsGkAtoms::id)) {
+bool CSSEditUtils::DoStyledElementsHaveSameStyle(
+    nsStyledElement& aStyledElement, nsStyledElement& aOtherStyledElement) {
+  if (aStyledElement.HasAttr(kNameSpaceID_None, nsGkAtoms::id) ||
+      aOtherStyledElement.HasAttr(kNameSpaceID_None, nsGkAtoms::id)) {
     // at least one of the spans carries an ID ; suspect a CSS rule applies to
     // it and refuse to merge the nodes
     return false;
@@ -1178,9 +1177,9 @@ bool CSSEditUtils::DoElementsHaveSameStyle(const Element& aElement,
 
   nsAutoString firstClass, otherClass;
   bool isElementClassSet =
-      aElement.GetAttr(kNameSpaceID_None, nsGkAtoms::_class, firstClass);
-  bool isOtherElementClassSet =
-      aOtherElement.GetAttr(kNameSpaceID_None, nsGkAtoms::_class, otherClass);
+      aStyledElement.GetAttr(kNameSpaceID_None, nsGkAtoms::_class, firstClass);
+  bool isOtherElementClassSet = aOtherStyledElement.GetAttr(
+      kNameSpaceID_None, nsGkAtoms::_class, otherClass);
   if (isElementClassSet && isOtherElementClassSet) {
     // both spans carry a class, let's compare them
     if (!firstClass.Equals(otherClass)) {
@@ -1197,21 +1196,21 @@ bool CSSEditUtils::DoElementsHaveSameStyle(const Element& aElement,
     return false;
   }
 
-  nsCOMPtr<nsICSSDeclaration> firstCSSDecl, otherCSSDecl;
-  uint32_t firstLength, otherLength;
-  nsresult rv =
-      GetInlineStyles(aElement, getter_AddRefs(firstCSSDecl), &firstLength);
-  if (NS_FAILED(rv) || !firstCSSDecl) {
-    NS_WARNING("CSSEditUtils::GetInlineStyles() failed");
+  // XXX If `GetPropertyValue()` won't run script, we can stop using
+  //     nsCOMPtr here.
+  nsCOMPtr<nsICSSDeclaration> firstCSSDecl = aStyledElement.Style();
+  if (!firstCSSDecl) {
+    NS_WARNING("nsStyledElement::Style() failed");
     return false;
   }
-  rv = GetInlineStyles(aOtherElement, getter_AddRefs(otherCSSDecl),
-                       &otherLength);
-  if (NS_FAILED(rv) || !otherCSSDecl) {
-    NS_WARNING("CSSEditUtils::GetInlineStyles() failed");
+  nsCOMPtr<nsICSSDeclaration> otherCSSDecl = aOtherStyledElement.Style();
+  if (!otherCSSDecl) {
+    NS_WARNING("nsStyledElement::Style() failed");
     return false;
   }
 
+  const uint32_t firstLength = firstCSSDecl->Length();
+  const uint32_t otherLength = otherCSSDecl->Length();
   if (firstLength != otherLength) {
     // early way out if we can
     return false;
@@ -1256,29 +1255,6 @@ bool CSSEditUtils::DoElementsHaveSameStyle(const Element& aElement,
   }
 
   return true;
-}
-
-// static
-nsresult CSSEditUtils::GetInlineStyles(const Element& aElement,
-                                       nsICSSDeclaration** aCssDecl,
-                                       uint32_t* aLength) {
-  if (NS_WARN_IF(!aLength)) {
-    return NS_ERROR_INVALID_ARG;
-  }
-  *aLength = 0;
-  // TODO: Perhaps, this method should take nsStyledElement& instead.
-  nsCOMPtr<nsStyledElement> styledElement =
-      do_QueryInterface(const_cast<Element*>(&aElement));
-  if (NS_WARN_IF(!styledElement)) {
-    return NS_ERROR_INVALID_ARG;
-  }
-
-  nsCOMPtr<nsICSSDeclaration> cssDecl = styledElement->Style();
-  MOZ_ASSERT(cssDecl);
-
-  cssDecl.forget(aCssDecl);
-  *aLength = (*aCssDecl)->Length();
-  return NS_OK;
 }
 
 }  // namespace mozilla

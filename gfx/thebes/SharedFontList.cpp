@@ -33,7 +33,8 @@ static double WSSDistance(const Face* aFace, const gfxFontStyle& aStyle) {
   // weight/style/stretch priority: stretch >> style >> weight
   // so we multiply the stretch and style values to make them dominate
   // the result
-  return stretchDist * 1.0e8 + styleDist * 1.0e4 + weightDist;
+  return stretchDist * kStretchFactor + styleDist * kStyleFactor +
+         weightDist * kWeightFactor;
 }
 
 void* Pointer::ToPtr(FontList* aFontList) const {
@@ -399,6 +400,21 @@ void Family::SearchAllFontsForChar(FontList* aList,
         if (!charmap && !fe->HasCharacter(aMatchData->mCh)) {
           continue;
         }
+        if (aMatchData->mPresentation != eFontPresentation::Any) {
+          gfxFont* font = fe->FindOrMakeFont(&aMatchData->mStyle);
+          if (!font) {
+            continue;
+          }
+          bool hasColorGlyph =
+              font->HasColorGlyphFor(aMatchData->mCh, aMatchData->mNextCh);
+          if (hasColorGlyph !=
+              (aMatchData->mPresentation == eFontPresentation::Emoji)) {
+            distance += kPresentationMismatch;
+            if (distance >= aMatchData->mMatchDistance) {
+              continue;
+            }
+          }
+        }
         aMatchData->mBestMatch = fe;
         aMatchData->mMatchDistance = distance;
         aMatchData->mMatchedSharedFamily = this;
@@ -486,8 +502,8 @@ void Family::SetupFamilyCharMap(FontList* aList) {
     }
     auto faceMap = static_cast<SharedBitSet*>(f->mCharacterMap.ToPtr(aList));
     if (!faceMap) {
-      return;  // If there's a face where setting up the cmap failed or is not
-               // yet complete, just bail out of creating the family charmap.
+      continue;  // If there's a face where setting up the cmap failed, we skip
+                 // it as unusable.
     }
     if (!firstMap) {
       firstMap = faceMap;
@@ -500,10 +516,14 @@ void Family::SetupFamilyCharMap(FontList* aList) {
       familyMap.Union(*faceMap);
     }
   }
-  if (merged) {
+  // If we created a merged cmap, we need to save that on the family; or if we
+  // found no usable cmaps at all, we need to store the empty familyMap so that
+  // we won't repeatedly attempt this for an unusable family.
+  if (merged || firstMapShmPointer.IsNull()) {
     mCharacterMap =
         gfxPlatformFontList::PlatformFontList()->GetShmemCharMap(&familyMap);
   } else {
+    // If all [usable] faces had the same cmap, we can just share it.
     mCharacterMap = firstMapShmPointer;
   }
 }

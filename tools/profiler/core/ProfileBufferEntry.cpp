@@ -217,9 +217,8 @@ UniqueJSONStrings::UniqueJSONStrings(const UniqueJSONStrings& aOther) {
       mStringHashToIndexMap.putNewInfallible(iter.get().key(),
                                              iter.get().value());
     }
-    UniquePtr<char[]> stringTableJSON =
-        aOther.mStringTableWriter.ChunkedWriteFunc()->CopyData();
-    mStringTableWriter.Splice(stringTableJSON.get());
+    mStringTableWriter.CopyAndSplice(
+        aOther.mStringTableWriter.ChunkedWriteFunc());
   }
 }
 
@@ -357,7 +356,8 @@ UniqueStacks::LookupFramesForJITAddressFromBufferPos(void* aJITAddress,
       auto frameJSON =
           jitFrameInfoRange.mJITFrameToFrameJSONMap.lookup(jitFrameKey);
       MOZ_RELEASE_ASSERT(frameJSON, "Should have cached JSON for this frame");
-      mFrameTableWriter.Splice(frameJSON->value().get());
+      mFrameTableWriter.Splice(frameJSON->value().get(),
+                               frameJSON->value().Length());
       MOZ_RELEASE_ASSERT(mFrameToIndexMap.add(entry, frameKey, index));
     }
     MOZ_RELEASE_ASSERT(frameKeys.append(std::move(frameKey)));
@@ -380,12 +380,12 @@ uint32_t UniqueStacks::GetOrAddFrameIndex(const FrameKey& aFrame) {
 
 void UniqueStacks::SpliceFrameTableElements(SpliceableJSONWriter& aWriter) {
   mFrameTableWriter.EndBareList();
-  aWriter.TakeAndSplice(mFrameTableWriter.ChunkedWriteFunc());
+  aWriter.TakeAndSplice(mFrameTableWriter.TakeChunkedWriteFunc());
 }
 
 void UniqueStacks::SpliceStackTableElements(SpliceableJSONWriter& aWriter) {
   mStackTableWriter.EndBareList();
-  aWriter.TakeAndSplice(mStackTableWriter.ChunkedWriteFunc());
+  aWriter.TakeAndSplice(mStackTableWriter.TakeChunkedWriteFunc());
 }
 
 void UniqueStacks::StreamStack(const StackKey& aStack) {

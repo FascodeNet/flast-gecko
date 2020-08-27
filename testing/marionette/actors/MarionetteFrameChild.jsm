@@ -10,16 +10,12 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { element } = ChromeUtils.import(
-  "chrome://marionette/content/element.js"
-);
-const { error, NoSuchFrameError } = ChromeUtils.import(
-  "chrome://marionette/content/error.js"
-);
-const { evaluate } = ChromeUtils.import(
-  "chrome://marionette/content/evaluate.js"
-);
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  element: "chrome://marionette/content/element.js",
+  error: "chrome://marionette/content/error.js",
+  evaluate: "chrome://marionette/content/evaluate.js",
+  Log: "chrome://marionette/content/log.js",
+});
 
 XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
 
@@ -182,7 +178,9 @@ class MarionetteFrameChild extends JSWindowActorChild {
       browsingContext = this.browsingContext.top;
     } else if (typeof id == "number") {
       if (id < 0 || id >= childContexts.length) {
-        throw new NoSuchFrameError(`Unable to locate frame with index: ${id}`);
+        throw new error.NoSuchFrameError(
+          `Unable to locate frame with index: ${id}`
+        );
       }
       browsingContext = childContexts[id];
       this.seenEls.add(browsingContext.embedderElement);
@@ -192,7 +190,9 @@ class MarionetteFrameChild extends JSWindowActorChild {
         return context.embedderElement === frameElement;
       });
       if (!context) {
-        throw new NoSuchFrameError(`Unable to locate frame for element: ${id}`);
+        throw new error.NoSuchFrameError(
+          `Unable to locate frame for element: ${id}`
+        );
       }
       browsingContext = context;
     }

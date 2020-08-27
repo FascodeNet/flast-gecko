@@ -16,15 +16,6 @@
 #include "vm/Runtime.h"
 #include "vm/StringType.h"
 
-//
-// Parser-Atoms should be disabled for now.  This check ensures that.
-// NOTE: This will be removed when the final transition patches from
-//   JS-atoms to parser-atoms lands.
-//
-#ifdef JS_PARSER_ATOMS
-#  error "Parser atoms define should remain disabled until this is removed."
-#endif
-
 using namespace js;
 using namespace js::frontend;
 
@@ -335,18 +326,28 @@ static void FillChar16Buffer(char16_t* buf, const ParserAtomEntry* ent) {
 }
 
 JS::Result<const ParserAtom*, OOM&> ParserAtomsTable::concatAtoms(
-    JSContext* cx, const ParserAtom* prefix, const ParserAtom* suffix) {
-  bool latin1 = prefix->hasLatin1Chars() && suffix->hasLatin1Chars();
-  size_t prefixLength = prefix->length();
-  size_t suffixLength = suffix->length();
-  size_t catLen = prefixLength + suffixLength;
+    JSContext* cx, mozilla::Range<const ParserAtom*> atoms) {
+  bool latin1 = true;
+  uint32_t catLen = 0;
+  for (const ParserAtom* atom : atoms) {
+    if (!atom->hasLatin1Chars()) {
+      latin1 = false;
+    }
+    // Overflow check here, length
+    if (atom->length() >= (ParserAtomEntry::MAX_LENGTH - catLen)) {
+      return RaiseParserAtomsOOMError(cx);
+    }
+    catLen += atom->length();
+  }
 
   if (latin1) {
     if (catLen <= ParserAtomEntry::MaxInline<Latin1Char>()) {
       Latin1Char buf[ParserAtomEntry::MaxInline<Latin1Char>()];
-      mozilla::PodCopy(buf, prefix->latin1Chars(), prefixLength);
-      mozilla::PodCopy(buf + prefixLength, suffix->latin1Chars(), suffixLength);
-
+      size_t offset = 0;
+      for (const ParserAtom* atom : atoms) {
+        mozilla::PodCopy(buf + offset, atom->latin1Chars(), atom->length());
+        offset += atom->length();
+      }
       return internLatin1(cx, buf, catLen);
     }
 
@@ -355,9 +356,12 @@ JS::Result<const ParserAtom*, OOM&> ParserAtomsTable::concatAtoms(
     if (!copy) {
       return RaiseParserAtomsOOMError(cx);
     }
-    mozilla::PodCopy(copy.get(), prefix->latin1Chars(), prefixLength);
-    mozilla::PodCopy(copy.get() + prefixLength, suffix->latin1Chars(),
-                     suffixLength);
+    size_t offset = 0;
+    for (const ParserAtom* atom : atoms) {
+      mozilla::PodCopy(copy.get() + offset, atom->latin1Chars(),
+                       atom->length());
+      offset += atom->length();
+    }
 
     InflatedChar16Sequence<Latin1Char> seq(copy.get(), catLen);
 
@@ -376,8 +380,11 @@ JS::Result<const ParserAtom*, OOM&> ParserAtomsTable::concatAtoms(
 
   if (catLen <= ParserAtomEntry::MaxInline<char16_t>()) {
     char16_t buf[ParserAtomEntry::MaxInline<char16_t>()];
-    FillChar16Buffer(buf, prefix);
-    FillChar16Buffer(buf + prefixLength, suffix);
+    size_t offset = 0;
+    for (const ParserAtom* atom : atoms) {
+      FillChar16Buffer(buf + offset, atom);
+      offset += atom->length();
+    }
 
     InflatedChar16Sequence<char16_t> seq(buf, catLen);
 
@@ -399,8 +406,11 @@ JS::Result<const ParserAtom*, OOM&> ParserAtomsTable::concatAtoms(
   if (!copy) {
     return RaiseParserAtomsOOMError(cx);
   }
-  FillChar16Buffer(copy.get(), prefix);
-  FillChar16Buffer(copy.get() + prefixLength, suffix);
+  size_t offset = 0;
+  for (const ParserAtom* atom : atoms) {
+    FillChar16Buffer(copy.get() + offset, atom);
+    offset += atom->length();
+  }
 
   InflatedChar16Sequence<char16_t> seq(copy.get(), catLen);
 
@@ -429,7 +439,7 @@ const ParserAtom* WellKnownParserAtoms::lookupChar16Seq(
 }
 
 bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
-                                      const char* str) {
+                                      const char* str, JSAtom* jsatom) {
   MOZ_ASSERT(name != nullptr);
 
   unsigned int len = strlen(str);
@@ -466,6 +476,7 @@ bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
     }
     entry = maybeEntry.unwrap();
   }
+  entry->jsatom_ = jsatom;
 
   // Save name for returning after moving entry into set.
   const ParserName* nm = entry.get()->asName();
@@ -478,16 +489,16 @@ bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
 }
 
 bool WellKnownParserAtoms::init(JSContext* cx) {
-#define COMMON_NAME_INIT_(idpart, id, text) \
-  if (!initSingle(cx, &(id), text)) {       \
-    return false;                           \
+#define COMMON_NAME_INIT_(idpart, id, text)           \
+  if (!initSingle(cx, &(id), text, cx->names().id)) { \
+    return false;                                     \
   }
   FOR_EACH_COMMON_PROPERTYNAME(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_
 
-#define COMMON_NAME_INIT_(name, clasp)   \
-  if (!initSingle(cx, &(name), #name)) { \
-    return false;                        \
+#define COMMON_NAME_INIT_(name, clasp)                     \
+  if (!initSingle(cx, &(name), #name, cx->names().name)) { \
+    return false;                                          \
   }
   JS_FOR_EACH_PROTOTYPE(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_
@@ -499,7 +510,6 @@ bool WellKnownParserAtoms::init(JSContext* cx) {
 } /* namespace js */
 
 bool JSRuntime::initializeParserAtoms(JSContext* cx) {
-#ifdef JS_PARSER_ATOMS
   MOZ_ASSERT(!commonParserNames);
 
   if (parentRuntime) {
@@ -514,18 +524,11 @@ bool JSRuntime::initializeParserAtoms(JSContext* cx) {
   }
 
   commonParserNames = names.release();
-#else
-  commonParserNames = nullptr;
-#endif  // JS_PARSER_ATOMS
   return true;
 }
 
 void JSRuntime::finishParserAtoms() {
-#ifdef JS_PARSER_ATOMS
   if (!parentRuntime) {
     js_delete(commonParserNames.ref());
   }
-#else
-  MOZ_ASSERT(!commonParserNames);
-#endif  // JS_PARSER_ATOMS
 }

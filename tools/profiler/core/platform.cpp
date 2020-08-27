@@ -4261,7 +4261,7 @@ UniquePtr<char[]> profiler_get_profile(double aSinceTime,
                                 service.get())) {
     return nullptr;
   }
-  return b.ChunkedWriteFunc()->CopyData();
+  return b.ChunkedWriteFunc().CopyData();
 }
 
 void profiler_get_profile_json_into_lazily_allocated_buffer(
@@ -4278,7 +4278,7 @@ void profiler_get_profile_json_into_lazily_allocated_buffer(
     return;
   }
 
-  b.ChunkedWriteFunc()->CopyDataIntoLazilyAllocatedBuffer(aAllocator);
+  b.ChunkedWriteFunc().CopyDataIntoLazilyAllocatedBuffer(aAllocator);
 }
 
 void profiler_get_start_params(int* aCapacity, Maybe<double>* aDuration,
@@ -4418,7 +4418,7 @@ static void locked_profiler_save_profile_to_file(
       Vector<nsCString> exitProfiles = ActivePS::MoveExitProfiles(aLock);
       for (auto& exitProfile : exitProfiles) {
         if (!exitProfile.IsEmpty()) {
-          w.Splice(exitProfile.get());
+          w.Splice(exitProfile.get(), exitProfile.Length());
         }
       }
       w.EndArray();

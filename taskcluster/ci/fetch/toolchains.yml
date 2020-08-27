@@ -424,6 +424,13 @@ clang-10:
         repo: https://github.com/llvm/llvm-project
         revision: d32170dbd5b0d54436537b6b75beaf44324e0c28
 
+clang-11:
+    description: clang 11.0.0 rc2 source code
+    fetch:
+        type: git
+        repo: https://github.com/llvm/llvm-project
+        revision: 414f32a9e862b11f51063b75729278f8d81b12e9
+
 civet-source:
     description: Repository for external static analysis checks
     fetch:
@@ -436,8 +443,8 @@ wasi-sdk:
     description: wasi-sdk source code
     fetch:
         type: git
-        repo: https://github.com/CraneStation/wasi-sdk
-        revision: 5225b05436ce57f01fe649f411f3ff701246628b
+        repo: https://github.com/WebAssembly/wasi-sdk
+        revision: 8446a3f8d49f70d17e38cefd9990a9e79bf3e78a
 
 ninja:
     description: ninja 1.9.0
