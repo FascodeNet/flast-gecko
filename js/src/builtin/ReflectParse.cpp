@@ -3281,8 +3281,8 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
     }
 
     case ParseNodeKind::RegExpExpr: {
-      RegExpObject* re =
-          pn->as<RegExpLiteral>().create(cx, parser->getCompilationInfo());
+      RegExpObject* re = pn->as<RegExpLiteral>().create(
+          cx, parser->getCompilationInfo().stencil);
       if (!re) {
         return false;
       }
@@ -3765,15 +3765,24 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
   options.allowHTMLComments = target == ParseGoal::Script;
   mozilla::Range<const char16_t> chars = linearChars.twoByteRange();
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  CompilationInfo compilationInfo(cx, allocScope, options);
-  if (!compilationInfo.init(cx)) {
-    return false;
+  CompilationInfo compilationInfo(cx, options);
+  if (target == ParseGoal::Script) {
+    if (!compilationInfo.input.initForGlobal(cx)) {
+      return false;
+    }
+  } else {
+    if (!compilationInfo.input.initForModule(cx)) {
+      return false;
+    }
   }
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, options);
 
   Parser<FullParseHandler, char16_t> parser(
       cx, options, chars.begin().get(), chars.length(),
-      /* foldConstants = */ false, compilationInfo, nullptr, nullptr);
+      /* foldConstants = */ false, compilationInfo, compilationState, nullptr,
+      nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -3787,8 +3796,6 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
       return false;
     }
   } else {
-    compilationInfo.setEnclosingScope(&cx->global()->emptyGlobalScope());
-
     if (!GlobalObject::ensureModulePrototypesCreated(cx, cx->global())) {
       return false;
     }

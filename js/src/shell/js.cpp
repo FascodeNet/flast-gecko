@@ -4687,6 +4687,15 @@ static bool SetJitCompilerOption(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  // Similarly, don't allow enabling or disabling Warp at runtime. Bytecode and
+  // VM data structures depend on whether TI is enabled/disabled.
+  if (opt == JSJITCOMPILER_WARP_ENABLE &&
+      bool(number) != jit::JitOptions.warpBuilder) {
+    JS_ReportErrorASCII(
+        cx, "Enabling or disabling Warp at runtime is not supported.");
+    return false;
+  }
+
   // Throw if disabling the JITs and there's JIT code on the stack, to avoid
   // assertion failures.
   if ((opt == JSJITCOMPILER_BASELINE_ENABLE ||
@@ -5131,21 +5140,23 @@ static bool FrontendTest(JSContext* cx,
                          const JS::ReadOnlyCompileOptions& options,
                          const Unit* units, size_t length,
                          js::frontend::CompilationInfo& compilationInfo,
+                         js::frontend::CompilationState& compilationState,
                          js::frontend::ParseGoal goal, DumpType dumpType) {
   using namespace js::frontend;
 
   bool foldConstants = dumpType == DumpType::Stencil;
 
-  Parser<SyntaxParseHandler, Unit> syntaxParser(cx, options, units, length,
-                                                foldConstants, compilationInfo,
-                                                nullptr, nullptr);
+  Parser<SyntaxParseHandler, Unit> syntaxParser(
+      cx, options, units, length, foldConstants, compilationInfo,
+      compilationState, nullptr, nullptr);
   if (!syntaxParser.checkOptions()) {
     return false;
   }
 
   Parser<FullParseHandler, Unit> parser(
       cx, options, units, length, foldConstants, compilationInfo,
-      dumpType == DumpType::Stencil ? &syntaxParser : nullptr, nullptr);
+      compilationState, dumpType == DumpType::Stencil ? &syntaxParser : nullptr,
+      nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -5177,7 +5188,7 @@ static bool FrontendTest(JSContext* cx,
         }
 
         BytecodeEmitter bce(/* parent = */ nullptr, &parser, &globalsc,
-                            compilationInfo);
+                            compilationInfo, compilationState);
         if (!bce.init()) {
           return false;
         }
@@ -5186,7 +5197,7 @@ static bool FrontendTest(JSContext* cx,
         }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-        compilationInfo.dumpStencil();
+        compilationInfo.stencil.dump();
 #endif
         break;
       }
@@ -5215,7 +5226,7 @@ static bool FrontendTest(JSContext* cx,
       }
       case DumpType::Stencil: {
         BytecodeEmitter bce(/* parent = */ nullptr, &parser, &modulesc,
-                            compilationInfo);
+                            compilationInfo, compilationState);
         if (!bce.init()) {
           return false;
         }
@@ -5223,12 +5234,10 @@ static bool FrontendTest(JSContext* cx,
           return false;
         }
 
-        StencilModuleMetadata& moduleMetadata =
-            compilationInfo.moduleMetadata.get();
-        builder.finishFunctionDecls(moduleMetadata);
+        builder.finishFunctionDecls(compilationInfo.stencil.moduleMetadata);
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-        compilationInfo.dumpStencil();
+        compilationInfo.stencil.dump();
 #endif
         break;
       }
@@ -5373,10 +5382,15 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
     options.allowHTMLComments = false;
   }
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  js::frontend::CompilationInfo compilationInfo(cx, allocScope, options);
-  if (!compilationInfo.init(cx)) {
-    return false;
+  js::frontend::CompilationInfo compilationInfo(cx, options);
+  if (goal == frontend::ParseGoal::Script) {
+    if (!compilationInfo.input.initForGlobal(cx)) {
+      return false;
+    }
+  } else {
+    if (!compilationInfo.input.initForModule(cx)) {
+      return false;
+    }
   }
 
 #ifdef JS_ENABLE_SMOOSH
@@ -5398,7 +5412,7 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
           }
 
 #  ifdef DEBUG
-          compilationInfo.dumpStencil();
+          compilationInfo.stencil.dump();
 #  endif
         } else {
           JS_ReportErrorASCII(cx,
@@ -5415,18 +5429,22 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
   }
 #endif  // JS_ENABLE_SMOOSH
 
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, options);
+
   if (isAscii) {
     const Latin1Char* latin1 = stableChars.latin1Range().begin().get();
     auto utf8 = reinterpret_cast<const mozilla::Utf8Unit*>(latin1);
     if (!FrontendTest<mozilla::Utf8Unit>(cx, options, utf8, length,
-                                         compilationInfo, goal, dumpType)) {
+                                         compilationInfo, compilationState,
+                                         goal, dumpType)) {
       return false;
     }
   } else {
     MOZ_ASSERT(stableChars.isTwoByte());
     const char16_t* chars = stableChars.twoByteRange().begin().get();
     if (!FrontendTest<char16_t>(cx, options, chars, length, compilationInfo,
-                                goal, dumpType)) {
+                                compilationState, goal, dumpType)) {
       return false;
     }
   }
@@ -5470,14 +5488,17 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
   const char16_t* chars = stableChars.twoByteRange().begin().get();
   size_t length = scriptContents->length();
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  js::frontend::CompilationInfo compilationInfo(cx, allocScope, options);
-  if (!compilationInfo.init(cx)) {
+  js::frontend::CompilationInfo compilationInfo(cx, options);
+  if (!compilationInfo.input.initForGlobal(cx)) {
     return false;
   }
 
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, options);
+
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
-      cx, options, chars, length, false, compilationInfo, nullptr, nullptr);
+      cx, options, chars, length, false, compilationInfo, compilationState,
+      nullptr, nullptr);
   if (!parser.checkOptions()) {
     return false;
   }

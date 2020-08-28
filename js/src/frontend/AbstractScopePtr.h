@@ -26,6 +26,7 @@ class GCMarker;
 
 namespace frontend {
 struct CompilationInfo;
+struct CompilationGCOutput;
 class ScopeStencil;
 }  // namespace frontend
 
@@ -84,12 +85,12 @@ class AbstractScopePtr {
   bool isScopeStencil() const { return scope_.is<Deferred>(); }
 
   // Note: this handle is rooted in the CompilationInfo.
-  MutableHandle<frontend::ScopeStencil> scopeData() const;
+  frontend::ScopeStencil& scopeData() const;
   frontend::CompilationInfo& compilationInfo() const;
 
   // Concrete GC scope. If a deferred scope, the target must already have been
   // converted to a GC scope.
-  Scope* existingScope() const;
+  Scope* existingScope(frontend::CompilationGCOutput& gcOutput) const;
 
   // This allows us to check whether or not this provider wraps
   // or otherwise would reify to a particular scope type.

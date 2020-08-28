@@ -18,10 +18,10 @@
 #include "jstypes.h"      // JS_PUBLIC_API
 
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
-#include "frontend/CompilationInfo.h"      // for frontened::CompilationInfo
-#include "frontend/FullParseHandler.h"     // frontend::FullParseHandler
-#include "frontend/ParseContext.h"         // frontend::UsedNameTracker
-#include "frontend/Parser.h"       // frontend::Parser, frontend::ParseGoal
+#include "frontend/CompilationInfo.h"  // for frontened::CompilationInfo, frontened::CompilationGCOutput
+#include "frontend/FullParseHandler.h"  // frontend::FullParseHandler
+#include "frontend/ParseContext.h"      // frontend::UsedNameTracker
+#include "frontend/Parser.h"            // frontend::Parser, frontend::ParseGoal
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, JS::UTF8CharsToNewTwoByteCharsZ
 #include "js/RootingAPI.h"         // JS::Rooted
 #include "js/SourceText.h"         // JS::SourceText
@@ -67,17 +67,18 @@ static JSScript* CompileSourceBuffer(JSContext* cx,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationInfo compilationInfo(cx, allocScope, options);
-  if (!compilationInfo.init(cx)) {
+  frontend::CompilationInfo compilationInfo(cx, options);
+  if (!compilationInfo.input.initForGlobal(cx)) {
     return nullptr;
   }
 
-  SourceExtent extent = SourceExtent::makeGlobalExtent(
-      srcBuf.length(), options.lineno, options.column);
-  frontend::GlobalSharedContext globalsc(cx, scopeKind, compilationInfo,
-                                         compilationInfo.directives, extent);
-  return frontend::CompileGlobalScript(compilationInfo, globalsc, srcBuf);
+  frontend::CompilationGCOutput gcOutput(cx);
+  if (!frontend::CompileGlobalScript(compilationInfo, srcBuf, scopeKind,
+                                     gcOutput)) {
+    return nullptr;
+  }
+
+  return gcOutput.script;
 }
 
 JSScript* JS::Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
@@ -164,16 +165,19 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   using frontend::Parser;
 
   CompileOptions options(cx);
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  CompilationInfo compilationInfo(cx, allocScope, options);
-  if (!compilationInfo.init(cx)) {
+  CompilationInfo compilationInfo(cx, options);
+  if (!compilationInfo.input.initForGlobal(cx)) {
     return false;
   }
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, options);
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   Parser<FullParseHandler, char16_t> parser(cx, options, chars.get(), length,
                                             /* foldConstants = */ true,
-                                            compilationInfo, nullptr, nullptr);
+                                            compilationInfo, compilationState,
+                                            nullptr, nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of source, we
     // return false so our caller knows to try to collect more buffered
@@ -478,20 +482,17 @@ static bool EvaluateSourceBuffer(JSContext* cx, ScopeKind scopeKind,
 
   RootedScript script(cx);
   {
-    LifoAllocScope allocScope(&cx->tempLifoAlloc());
-    frontend::CompilationInfo compilationInfo(cx, allocScope, options);
-    if (!compilationInfo.init(cx)) {
+    frontend::CompilationInfo compilationInfo(cx, options);
+    if (!compilationInfo.input.initForGlobal(cx)) {
       return false;
     }
 
-    SourceExtent extent = SourceExtent::makeGlobalExtent(
-        srcBuf.length(), options.lineno, options.column);
-    frontend::GlobalSharedContext globalsc(cx, scopeKind, compilationInfo,
-                                           compilationInfo.directives, extent);
-    script = frontend::CompileGlobalScript(compilationInfo, globalsc, srcBuf);
-    if (!script) {
+    frontend::CompilationGCOutput gcOutput(cx);
+    if (!frontend::CompileGlobalScript(compilationInfo, srcBuf, scopeKind,
+                                       gcOutput)) {
       return false;
     }
+    script = gcOutput.script;
   }
 
   return Execute(cx, script, env, rval);

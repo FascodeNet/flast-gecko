@@ -118,6 +118,7 @@ static bool NeedsMethodInitializer(ParseNode* member, bool isStatic) {
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
                                  CompilationInfo& compilationInfo,
+                                 CompilationState& compilationState,
                                  EmitterMode emitterMode)
     : sc(sc),
       cx(sc->cx_),
@@ -125,6 +126,7 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
       bytecodeSection_(cx, sc->extent().lineno),
       perScriptData_(cx, compilationInfo),
       compilationInfo(compilationInfo),
+      compilationState(compilationState),
       emitterMode(emitterMode) {
   if (IsTypeInferenceEnabled() && sc->isFunctionBox()) {
     // Functions have IC entries for type monitoring |this| and arguments.
@@ -135,8 +137,10 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  BCEParserHandle* handle, SharedContext* sc,
                                  CompilationInfo& compilationInfo,
+                                 CompilationState& compilationState,
                                  EmitterMode emitterMode)
-    : BytecodeEmitter(parent, sc, compilationInfo, emitterMode) {
+    : BytecodeEmitter(parent, sc, compilationInfo, compilationState,
+                      emitterMode) {
   parser = handle;
   instrumentationKinds = parser->options().instrumentationKinds;
 }
@@ -144,8 +148,10 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  const EitherParser& parser, SharedContext* sc,
                                  CompilationInfo& compilationInfo,
+                                 CompilationState& compilationState,
                                  EmitterMode emitterMode)
-    : BytecodeEmitter(parent, sc, compilationInfo, emitterMode) {
+    : BytecodeEmitter(parent, sc, compilationInfo, compilationState,
+                      emitterMode) {
   ep_.emplace(parser);
   this->parser = ep_.ptr();
   instrumentationKinds = this->parser->options().instrumentationKinds;
@@ -1649,11 +1655,11 @@ bool BytecodeEmitter::iteratorResultShape(GCThingIndex* shape) {
   // with |NewObject|.
   ObjLiteralFlags flags{ObjLiteralFlag::NoValues};
 
-  ObjLiteralIndex objIndex(compilationInfo.objLiteralData.length());
-  if (!compilationInfo.objLiteralData.emplaceBack(cx)) {
+  ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (!compilationInfo.stencil.objLiteralData.emplaceBack(cx)) {
     return false;
   }
-  ObjLiteralStencil& data = compilationInfo.objLiteralData.back();
+  ObjLiteralStencil& data = compilationInfo.stencil.objLiteralData.back();
 
   data.writer().beginObject(flags);
 
@@ -2478,7 +2484,8 @@ bool BytecodeEmitter::emitScript(ParseNode* body) {
   }
 
   // Create a Stencil and convert it into a JSScript.
-  return intoScriptStencil(&compilationInfo.topLevel.get());
+  return intoScriptStencil(
+      &compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex]);
 }
 
 js::UniquePtr<ImmutableScriptData> BytecodeEmitter::createImmutableScriptData(
@@ -4613,11 +4620,11 @@ bool BytecodeEmitter::emitCallSiteObjectArray(ListNode* cookedOrRaw,
     MOZ_ASSERT(cookedOrRaw->isKind(ParseNodeKind::ArrayExpr));
   }
 
-  ObjLiteralIndex objIndex(compilationInfo.objLiteralData.length());
-  if (!compilationInfo.objLiteralData.emplaceBack(cx)) {
+  ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (!compilationInfo.stencil.objLiteralData.emplaceBack(cx)) {
     return false;
   }
-  ObjLiteralStencil& data = compilationInfo.objLiteralData.back();
+  ObjLiteralStencil& data = compilationInfo.stencil.objLiteralData.back();
 
   ObjLiteralFlags flags(ObjLiteralFlag::Array);
   data.writer().beginObject(flags);
@@ -5757,7 +5764,8 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       return false;
     }
 
-    BytecodeEmitter bce2(this, parser, funbox, compilationInfo, emitterMode);
+    BytecodeEmitter bce2(this, parser, funbox, compilationInfo,
+                         compilationState, emitterMode);
     if (!bce2.init(funNode->pn_pos)) {
       return false;
     }
@@ -8824,11 +8832,11 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
 
 bool BytecodeEmitter::emitPropertyListObjLiteral(ListNode* obj,
                                                  ObjLiteralFlags flags) {
-  ObjLiteralIndex objIndex(compilationInfo.objLiteralData.length());
-  if (!compilationInfo.objLiteralData.emplaceBack(cx)) {
+  ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (!compilationInfo.stencil.objLiteralData.emplaceBack(cx)) {
     return false;
   }
-  ObjLiteralStencil& data = compilationInfo.objLiteralData.back();
+  ObjLiteralStencil& data = compilationInfo.stencil.objLiteralData.back();
 
   data.writer().beginObject(flags);
   bool noValues = flags.contains(ObjLiteralFlag::NoValues);
@@ -8892,11 +8900,11 @@ bool BytecodeEmitter::emitDestructuringRestExclusionSetObjLiteral(
   // with |NewObject|.
   ObjLiteralFlags flags{ObjLiteralFlag::NoValues};
 
-  ObjLiteralIndex objIndex(compilationInfo.objLiteralData.length());
-  if (!compilationInfo.objLiteralData.emplaceBack(cx)) {
+  ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (!compilationInfo.stencil.objLiteralData.emplaceBack(cx)) {
     return false;
   }
-  ObjLiteralStencil& data = compilationInfo.objLiteralData.back();
+  ObjLiteralStencil& data = compilationInfo.stencil.objLiteralData.back();
 
   data.writer().beginObject(flags);
 
@@ -8944,11 +8952,11 @@ bool BytecodeEmitter::emitDestructuringRestExclusionSetObjLiteral(
 }
 
 bool BytecodeEmitter::emitObjLiteralArray(ParseNode* arrayHead, bool isCow) {
-  ObjLiteralIndex objIndex(compilationInfo.objLiteralData.length());
-  if (!compilationInfo.objLiteralData.emplaceBack(cx)) {
+  ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (!compilationInfo.stencil.objLiteralData.emplaceBack(cx)) {
     return false;
   }
-  ObjLiteralStencil& data = compilationInfo.objLiteralData.back();
+  ObjLiteralStencil& data = compilationInfo.stencil.objLiteralData.back();
 
   ObjLiteralFlags flags(ObjLiteralFlag::Array);
   if (isCow) {
@@ -9313,7 +9321,8 @@ bool BytecodeEmitter::emitPrivateMethodInitializer(
     return false;
   }
 
-  BytecodeEmitter bce2(this, parser, funbox, compilationInfo, emitterMode);
+  BytecodeEmitter bce2(this, parser, funbox, compilationInfo, compilationState,
+                       emitterMode);
   if (!bce2.init(funNode->pn_pos)) {
     return false;
   }
@@ -9432,8 +9441,8 @@ const MemberInitializers& BytecodeEmitter::findMemberInitializersForCall() {
     }
   }
 
-  MOZ_RELEASE_ASSERT(compilationInfo.scopeContext.memberInitializers);
-  return *compilationInfo.scopeContext.memberInitializers;
+  MOZ_RELEASE_ASSERT(compilationState.scopeContext.memberInitializers);
+  return *compilationState.scopeContext.memberInitializers;
 }
 
 bool BytecodeEmitter::emitInitializeInstanceMembers() {
@@ -11223,7 +11232,7 @@ bool BytecodeEmitter::newSrcNoteOperand(ptrdiff_t operand) {
   return SrcNoteWriter::writeOperand(operand, allocator);
 }
 
-bool BytecodeEmitter::intoScriptStencil(ScriptStencil* stencil) {
+bool BytecodeEmitter::intoScriptStencil(ScriptStencil* script) {
   js::UniquePtr<ImmutableScriptData> immutableScriptData =
       createImmutableScriptData(cx);
   if (!immutableScriptData) {
@@ -11233,18 +11242,18 @@ bool BytecodeEmitter::intoScriptStencil(ScriptStencil* stencil) {
   MOZ_ASSERT(outermostScope().hasOnChain(ScopeKind::NonSyntactic) ==
              sc->hasNonSyntacticScope());
 
-  stencil->gcThings = perScriptData().gcThingList().stealGCThings();
+  script->gcThings = perScriptData().gcThingList().stealGCThings();
 
   // Hand over the ImmutableScriptData instance generated by BCE.
-  stencil->immutableScriptData = std::move(immutableScriptData);
+  script->immutableScriptData = std::move(immutableScriptData);
 
   // Update flags specific to functions.
   if (sc->isFunctionBox()) {
     FunctionBox* funbox = sc->asFunctionBox();
-    funbox->copyScriptFields(*stencil);
-    MOZ_ASSERT(stencil->isFunction());
+    funbox->copyScriptFields(*script);
+    MOZ_ASSERT(script->isFunction());
   } else {
-    sc->copyScriptFields(*stencil);
+    sc->copyScriptFields(*script);
   }
 
   return true;

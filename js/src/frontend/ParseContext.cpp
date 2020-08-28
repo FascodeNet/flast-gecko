@@ -213,7 +213,12 @@ bool ParseContext::Scope::propagateAndMarkAnnexBFunctionBoxes(
     Maybe<DeclarationKind> redeclaredKind;
     uint32_t unused;
     for (FunctionBox* funbox : *possibleAnnexBFunctionBoxes_) {
-      if (pc->annexBAppliesToLexicalFunctionInInnermostScope(funbox)) {
+      bool annexBApplies;
+      if (!pc->computeAnnexBAppliesToLexicalFunctionInInnermostScope(
+              funbox, &annexBApplies)) {
+        return false;
+      }
+      if (annexBApplies) {
         const ParserName* name = funbox->explicitName()->asName();
         if (!pc->tryDeclareVar(
                 name, DeclarationKind::VarForAnnexBLexicalFunction,
@@ -229,7 +234,12 @@ bool ParseContext::Scope::propagateAndMarkAnnexBFunctionBoxes(
     // Inner scope case: propagate still applicable function boxes to the
     // enclosing scope.
     for (FunctionBox* funbox : *possibleAnnexBFunctionBoxes_) {
-      if (pc->annexBAppliesToLexicalFunctionInInnermostScope(funbox)) {
+      bool annexBApplies;
+      if (!pc->computeAnnexBAppliesToLexicalFunctionInInnermostScope(
+              funbox, &annexBApplies)) {
+        return false;
+      }
+      if (annexBApplies) {
         if (!enclosing()->addPossibleAnnexBFunctionBox(pc, funbox)) {
           return false;
         }
@@ -288,7 +298,7 @@ void ParseContext::Scope::removeCatchParameters(ParseContext* pc,
 
 ParseContext::ParseContext(JSContext* cx, ParseContext*& parent,
                            SharedContext* sc, ErrorReporter& errorReporter,
-                           CompilationInfo& compilationInfo,
+                           CompilationState& compilationState,
                            Directives* newDirectives, bool isFull)
     : Nestable<ParseContext>(&parent),
       traceLog_(sc->cx_,
@@ -305,13 +315,13 @@ ParseContext::ParseContext(JSContext* cx, ParseContext*& parent,
       newDirectives(newDirectives),
       lastYieldOffset(NoYieldOffset),
       lastAwaitOffset(NoAwaitOffset),
-      scriptId_(compilationInfo.usedNames.nextScriptId()),
+      scriptId_(compilationState.usedNames.nextScriptId()),
       superScopeNeedsHomeObject_(false) {
   if (isFunctionBox()) {
     if (functionBox()->isNamedLambda()) {
-      namedLambdaScope_.emplace(cx, parent, compilationInfo.usedNames);
+      namedLambdaScope_.emplace(cx, parent, compilationState.usedNames);
     }
-    functionScope_.emplace(cx, parent, compilationInfo.usedNames);
+    functionScope_.emplace(cx, parent, compilationState.usedNames);
   }
 }
 
@@ -358,13 +368,17 @@ bool ParseContext::init() {
   return true;
 }
 
-bool ParseContext::annexBAppliesToLexicalFunctionInInnermostScope(
-    FunctionBox* funbox) {
+bool ParseContext::computeAnnexBAppliesToLexicalFunctionInInnermostScope(
+    FunctionBox* funbox, bool* annexBApplies) {
   MOZ_ASSERT(!sc()->strict());
 
   const ParserName* name = funbox->explicitName()->asName();
-  Maybe<DeclarationKind> redeclaredKind = isVarRedeclaredInInnermostScope(
-      name, DeclarationKind::VarForAnnexBLexicalFunction);
+  Maybe<DeclarationKind> redeclaredKind;
+  if (!isVarRedeclaredInInnermostScope(
+          name, DeclarationKind::VarForAnnexBLexicalFunction,
+          &redeclaredKind)) {
+    return false;
+  }
 
   if (!redeclaredKind && isFunctionBox()) {
     Scope& funScope = functionScope();
@@ -387,16 +401,16 @@ bool ParseContext::annexBAppliesToLexicalFunctionInInnermostScope(
 
   // If an early error would have occurred already, this function should not
   // exhibit Annex B.3.3 semantics.
-  return !redeclaredKind;
+  *annexBApplies = !redeclaredKind;
+  return true;
 }
 
-Maybe<DeclarationKind> ParseContext::isVarRedeclaredInInnermostScope(
-    const ParserName* name, DeclarationKind kind) {
-  Maybe<DeclarationKind> redeclaredKind;
+bool ParseContext::isVarRedeclaredInInnermostScope(
+    const ParserName* name, DeclarationKind kind,
+    mozilla::Maybe<DeclarationKind>* out) {
   uint32_t unused;
-  MOZ_ALWAYS_TRUE(tryDeclareVarHelper<DryRunInnermostScopeOnly>(
-      name, kind, DeclaredNameInfo::npos, &redeclaredKind, &unused));
-  return redeclaredKind;
+  return tryDeclareVarHelper<DryRunInnermostScopeOnly>(
+      name, kind, DeclaredNameInfo::npos, out, &unused);
 }
 
 bool ParseContext::isVarRedeclaredInEval(const ParserName* name,
@@ -407,7 +421,7 @@ bool ParseContext::isVarRedeclaredInEval(const ParserName* name,
   MOZ_ASSERT(sc()->isEvalContext());
 
   // TODO-Stencil: After scope snapshotting, this can be done away with.
-  auto mbNameAtom = name->toJSAtom(sc()->cx_);
+  auto mbNameAtom = name->toJSAtom(sc()->cx_, sc()->compilationInfo());
   if (mbNameAtom.isErr()) {
     return false;
   }
@@ -415,7 +429,7 @@ bool ParseContext::isVarRedeclaredInEval(const ParserName* name,
 
   // In the case of eval, we also need to check enclosing VM scopes to see
   // if the var declaration is allowed in the context.
-  js::Scope* enclosingScope = sc()->compilationInfo().enclosingScope;
+  js::Scope* enclosingScope = sc()->compilationInfo().input.enclosingScope;
   js::Scope* varScope = EvalScope::nearestVarScopeForDirectEval(enclosingScope);
   MOZ_ASSERT(varScope);
   for (ScopeIter si(enclosingScope); si; si++) {

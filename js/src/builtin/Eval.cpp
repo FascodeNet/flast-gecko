@@ -330,25 +330,18 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
       return false;
     }
 
-    LifoAllocScope allocScope(&cx->tempLifoAlloc());
-    frontend::CompilationInfo compilationInfo(cx, allocScope, options,
-                                              enclosing, env);
-    if (!compilationInfo.init(cx)) {
-      return false;
-    }
-    compilationInfo.setEnclosingScope(enclosing);
-
-    uint32_t len = srcBuf.length();
-    SourceExtent extent = SourceExtent::makeGlobalExtent(len);
-    frontend::EvalSharedContext evalsc(cx, compilationInfo,
-                                       compilationInfo.directives, extent);
-    RootedScript compiled(
-        cx, frontend::CompileEvalScript(compilationInfo, evalsc, srcBuf));
-    if (!compiled) {
+    frontend::CompilationInfo compilationInfo(cx, options);
+    if (!compilationInfo.input.initForEval(cx, enclosing)) {
       return false;
     }
 
-    esg.setNewScript(compiled);
+    frontend::CompilationGCOutput gcOutput(cx);
+    if (!frontend::CompileEvalScript(compilationInfo, srcBuf, enclosing, env,
+                                     gcOutput)) {
+      return false;
+    }
+
+    esg.setNewScript(gcOutput.script);
   }
 
   // If this is a direct eval we need to use the caller's newTarget.
@@ -439,25 +432,18 @@ bool js::DirectEvalStringFromIon(JSContext* cx, HandleObject env,
       return false;
     }
 
-    LifoAllocScope allocScope(&cx->tempLifoAlloc());
-    frontend::CompilationInfo compilationInfo(cx, allocScope, options,
-                                              enclosing, env);
-    if (!compilationInfo.init(cx)) {
-      return false;
-    }
-    compilationInfo.setEnclosingScope(enclosing);
-
-    uint32_t len = srcBuf.length();
-    SourceExtent extent = SourceExtent::makeGlobalExtent(len);
-    frontend::EvalSharedContext evalsc(cx, compilationInfo,
-                                       compilationInfo.directives, extent);
-    JSScript* compiled =
-        frontend::CompileEvalScript(compilationInfo, evalsc, srcBuf);
-    if (!compiled) {
+    frontend::CompilationInfo compilationInfo(cx, options);
+    if (!compilationInfo.input.initForEval(cx, enclosing)) {
       return false;
     }
 
-    esg.setNewScript(compiled);
+    frontend::CompilationGCOutput gcOutput(cx);
+    if (!frontend::CompileEvalScript(compilationInfo, srcBuf, enclosing, env,
+                                     gcOutput)) {
+      return false;
+    }
+
+    esg.setNewScript(gcOutput.script);
   }
 
   return ExecuteKernel(cx, esg.script(), env, newTargetValue,

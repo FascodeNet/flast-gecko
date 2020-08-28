@@ -60,14 +60,10 @@ const EMIT_MEDIA_RULES_THROTTLING = 500;
  *   'source-editor-load': The source editor for this editor has been loaded
  *   'error': An error has occured
  *
- * @param {StyleSheet|OriginalSource}  styleSheet
- *        Stylesheet or original source to show
+ * @param  {Resource} resource
+ *         The STYLESHEET resource which is received from resource watcher.
  * @param {DOMWindow}  win
  *        panel window for style editor
- * @param {nsIFile}  file
- *        Optional file that the sheet was imported from
- * @param {boolean} isNew
- *        Optional whether the sheet was created by the user
  * @param {Walker} walker
  *        Optional walker used for selectors autocompletion
  * @param {CustomHighlighterFront} highlighter
@@ -78,21 +74,19 @@ const EMIT_MEDIA_RULES_THROTTLING = 500;
  *        among all stylesheets of its type (inline or user-created)
  */
 function StyleSheetEditor(
-  styleSheet,
+  resource,
   win,
-  file,
-  isNew,
   walker,
   highlighter,
   styleSheetFriendlyIndex
 ) {
   EventEmitter.decorate(this);
 
-  this.styleSheet = styleSheet;
+  this._resource = resource;
   this._inputElement = null;
   this.sourceEditor = null;
   this._window = win;
-  this._isNew = isNew;
+  this._isNew = this.styleSheet.isNew;
   this.walker = walker;
   this.highlighter = highlighter;
   this.styleSheetFriendlyIndex = styleSheetFriendlyIndex;
@@ -114,16 +108,15 @@ function StyleSheetEditor(
 
   this._styleSheetFilePath = null;
   if (
-    styleSheet.href &&
+    this.styleSheet.href &&
     Services.io.extractScheme(this.styleSheet.href) == "file"
   ) {
     this._styleSheetFilePath = this.styleSheet.href;
   }
 
-  this._onPropertyChange = this._onPropertyChange.bind(this);
+  this.onPropertyChange = this.onPropertyChange.bind(this);
   this._onError = this._onError.bind(this);
-  this._onMediaRulesChanged = this._onMediaRulesChanged.bind(this);
-  this._onStyleApplied = this._onStyleApplied.bind(this);
+  this.onMediaRulesChanged = this.onMediaRulesChanged.bind(this);
   this.checkLinkedFileForChanges = this.checkLinkedFileForChanges.bind(this);
   this.markLinkedFileBroken = this.markLinkedFileBroken.bind(this);
   this.saveToFile = this.saveToFile.bind(this);
@@ -131,28 +124,29 @@ function StyleSheetEditor(
   this._updateStyleSheet = this._updateStyleSheet.bind(this);
   this._onMouseMove = this._onMouseMove.bind(this);
 
+  this._focusOnSourceEditorReady = false;
+  this.styleSheet.on("error", this._onError);
+  this.savedFile = this.styleSheet.file;
+  this.linkCSSFile();
+
   this.emitMediaRulesChanged = throttle(
     this.emitMediaRulesChanged,
     EMIT_MEDIA_RULES_THROTTLING,
     this
   );
 
-  this._focusOnSourceEditorReady = false;
-  this.cssSheet.on("property-change", this._onPropertyChange);
-  this.styleSheet.on("error", this._onError);
   this.mediaRules = [];
-  if (this.cssSheet.getMediaRules) {
-    this.cssSheet
-      .getMediaRules()
-      .then(this._onMediaRulesChanged, console.error);
-  }
-  this.cssSheet.on("media-rules-changed", this._onMediaRulesChanged);
-  this.cssSheet.on("style-applied", this._onStyleApplied);
-  this.savedFile = file;
-  this.linkCSSFile();
 }
 
 StyleSheetEditor.prototype = {
+  get resourceId() {
+    return this._resource.resourceId;
+  },
+
+  get styleSheet() {
+    return this._resource;
+  },
+
   /**
    * Whether there are unsaved changes in the editor
    */
@@ -384,14 +378,14 @@ StyleSheetEditor.prototype = {
    * @param  {string} property
    *         Property that has changed on sheet
    */
-  _onPropertyChange: function(property, value) {
+  onPropertyChange: function(property, value) {
     this.emit("property-change", property, value);
   },
 
   /**
    * Called when the stylesheet text changes.
    */
-  _onStyleApplied: function() {
+  onStyleApplied: function() {
     if (this._isUpdating) {
       // We just applied an edit in the editor, so we can drop this
       // notification.
@@ -417,7 +411,7 @@ StyleSheetEditor.prototype = {
    * @param  {array} rules
    *         Array of MediaRuleFronts for new media rules of sheet.
    */
-  _onMediaRulesChanged: function(rules) {
+  onMediaRulesChanged: function(rules) {
     if (!rules.length && !this.mediaRules.length) {
       return;
     }
@@ -483,7 +477,7 @@ StyleSheetEditor.prototype = {
     };
     const sourceEditor = (this._sourceEditor = new Editor(config));
 
-    sourceEditor.on("dirty-change", this._onPropertyChange);
+    sourceEditor.on("dirty-change", this.onPropertyChange);
 
     return sourceEditor.appendTo(inputElement).then(() => {
       sourceEditor.on("saveRequested", this.saveToFile);
@@ -852,7 +846,7 @@ StyleSheetEditor.prototype = {
    */
   destroy: function() {
     if (this._sourceEditor) {
-      this._sourceEditor.off("dirty-change", this._onPropertyChange);
+      this._sourceEditor.off("dirty-change", this.onPropertyChange);
       this._sourceEditor.off("saveRequested", this.saveToFile);
       this._sourceEditor.off("change", this.updateStyleSheet);
       if (
@@ -868,9 +862,6 @@ StyleSheetEditor.prototype = {
       }
       this._sourceEditor.destroy();
     }
-    this.cssSheet.off("property-change", this._onPropertyChange);
-    this.cssSheet.off("media-rules-changed", this._onMediaRulesChanged);
-    this.cssSheet.off("style-applied", this._onStyleApplied);
     this.styleSheet.off("error", this._onError);
     this._isDestroyed = true;
   },

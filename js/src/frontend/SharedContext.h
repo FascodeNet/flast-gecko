@@ -28,6 +28,8 @@
 namespace js {
 namespace frontend {
 
+struct CompilationInfo;
+struct CompilationState;
 class ParseContext;
 class ScriptStencil;
 struct ScopeContext;
@@ -278,7 +280,7 @@ class SharedContext {
   inline JSAtom* liftParserAtomToJSAtom(const ParserAtom* atomId);
   inline const ParserAtom* lowerJSAtomToParserAtom(JSAtom* atom);
 
-  void copyScriptFields(ScriptStencil& stencil);
+  void copyScriptFields(ScriptStencil& script);
 };
 
 class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
@@ -289,14 +291,7 @@ class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
 
   GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
                       CompilationInfo& compilationInfo, Directives directives,
-                      SourceExtent extent)
-      : SharedContext(cx, Kind::Global, compilationInfo, directives, extent),
-        scopeKind_(scopeKind),
-        bindings(nullptr) {
-    MOZ_ASSERT(scopeKind == ScopeKind::Global ||
-               scopeKind == ScopeKind::NonSyntactic);
-    MOZ_ASSERT(thisBinding_ == ThisBinding::Global);
-  }
+                      SourceExtent extent);
 
   ScopeKind scopeKind() const { return scopeKind_; }
 };
@@ -311,7 +306,7 @@ class MOZ_STACK_CLASS EvalSharedContext : public SharedContext {
   ParserEvalScopeData* bindings;
 
   EvalSharedContext(JSContext* cx, CompilationInfo& compilationInfo,
-                    Directives directives, SourceExtent extent);
+                    CompilationState& compilationState, SourceExtent extent);
 };
 
 inline EvalSharedContext* SharedContext::asEvalContext() {
@@ -427,13 +422,14 @@ class FunctionBox : public SharedContext {
 
   // End of fields.
 
-  FunctionBox(JSContext* cx, FunctionBox* traceListHead, SourceExtent extent,
-              CompilationInfo& compilationInfo, Directives directives,
+  FunctionBox(JSContext* cx, SourceExtent extent,
+              CompilationInfo& compilationInfo,
+              CompilationState& compilationState, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
-              const ParserAtom* explicitName, FunctionFlags flags,
-              FunctionIndex index, TopLevelFunction isTopLevel);
+              const ParserAtom* atom, FunctionFlags flags, FunctionIndex index,
+              TopLevelFunction isTopLevel);
 
-  MutableHandle<ScriptStencil> functionStencil() const;
+  ScriptStencil& functionStencil() const;
 
 #ifdef DEBUG
   bool atomsAreKept();
@@ -707,15 +703,11 @@ class FunctionBox : public SharedContext {
 
   FunctionIndex index() { return funcDataIndex_; }
 
-  void trace(JSTracer* trc);
-
-  static void TraceList(JSTracer* trc, FunctionBox* listHead);
-
   FunctionBox* traceLink() { return traceLink_; }
 
   void finishScriptFlags();
-  void copyScriptFields(ScriptStencil& stencil);
-  void copyFunctionFields(ScriptStencil& stencil);
+  void copyScriptFields(ScriptStencil& script);
+  void copyFunctionFields(ScriptStencil& script);
 
   // * setTreatAsRunOnce can be called to a lazy function, while emitting
   //   enclosing script

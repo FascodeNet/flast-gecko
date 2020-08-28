@@ -33,44 +33,45 @@
 #include "debugger/Object.h"               // for DebuggerObject
 #include "debugger/Script.h"               // for DebuggerScript
 #include "frontend/BytecodeCompilation.h"  // for CompileEvalScript
-#include "frontend/SharedContext.h"        // for GlobalScharedContext
-#include "gc/Barrier.h"                    // for HeapPtr
-#include "gc/FreeOp.h"                     // for JSFreeOp
-#include "gc/GC.h"                         // for MemoryUse
-#include "gc/Marking.h"                    // for IsAboutToBeFinalized
-#include "gc/Rooting.h"                    // for RootedDebuggerFrame
-#include "gc/Tracer.h"                     // for TraceCrossCompartmentEdge
-#include "gc/ZoneAllocator.h"              // for AddCellMemory
-#include "jit/JSJitFrameIter.h"            // for InlineFrameIterator
-#include "jit/RematerializedFrame.h"       // for RematerializedFrame
-#include "js/Proxy.h"                      // for PrivateValue
-#include "js/SourceText.h"                 // for SourceText, SourceOwnership
-#include "js/StableStringChars.h"          // for AutoStableStringChars
-#include "vm/ArgumentsObject.h"            // for ArgumentsObject
-#include "vm/ArrayObject.h"                // for ArrayObject
-#include "vm/AsyncFunction.h"              // for AsyncFunctionGeneratorObject
-#include "vm/AsyncIteration.h"             // for AsyncGeneratorObject
-#include "vm/BytecodeUtil.h"               // for JSDVG_SEARCH_STACK
-#include "vm/Compartment.h"                // for Compartment
-#include "vm/EnvironmentObject.h"          // for IsGlobalLexicalEnvironment
-#include "vm/GeneratorObject.h"            // for AbstractGeneratorObject
-#include "vm/GlobalObject.h"               // for GlobalObject
-#include "vm/Interpreter.h"                // for Call, ExecuteKernel
-#include "vm/JSAtom.h"                     // for Atomize
-#include "vm/JSContext.h"                  // for JSContext, ReportValueError
-#include "vm/JSFunction.h"                 // for JSFunction, NewNativeFunction
-#include "vm/JSObject.h"                   // for JSObject, RequireObject
-#include "vm/JSScript.h"                   // for JSScript
-#include "vm/NativeObject.h"               // for NativeDefineDataProperty
-#include "vm/Realm.h"                      // for AutoRealm
-#include "vm/Runtime.h"                    // for JSAtomState
-#include "vm/Scope.h"                      // for PositionalFormalParameterIter
-#include "vm/Stack.h"                      // for AbstractFramePtr, FrameIter
-#include "vm/StringType.h"                 // for PropertyName, JSString
-#include "wasm/WasmDebug.h"                // for DebugState
-#include "wasm/WasmInstance.h"             // for Instance
-#include "wasm/WasmJS.h"                   // for WasmInstanceObject
-#include "wasm/WasmTypes.h"                // for DebugFrame
+#include "frontend/CompilationInfo.h"  // for CompilationInfo, CompilationGCOutput
+#include "frontend/SharedContext.h"    // for GlobalScharedContext
+#include "gc/Barrier.h"                // for HeapPtr
+#include "gc/FreeOp.h"                 // for JSFreeOp
+#include "gc/GC.h"                     // for MemoryUse
+#include "gc/Marking.h"                // for IsAboutToBeFinalized
+#include "gc/Rooting.h"                // for RootedDebuggerFrame
+#include "gc/Tracer.h"                 // for TraceCrossCompartmentEdge
+#include "gc/ZoneAllocator.h"          // for AddCellMemory
+#include "jit/JSJitFrameIter.h"        // for InlineFrameIterator
+#include "jit/RematerializedFrame.h"  // for RematerializedFrame
+#include "js/Proxy.h"                 // for PrivateValue
+#include "js/SourceText.h"            // for SourceText, SourceOwnership
+#include "js/StableStringChars.h"     // for AutoStableStringChars
+#include "vm/ArgumentsObject.h"       // for ArgumentsObject
+#include "vm/ArrayObject.h"           // for ArrayObject
+#include "vm/AsyncFunction.h"         // for AsyncFunctionGeneratorObject
+#include "vm/AsyncIteration.h"        // for AsyncGeneratorObject
+#include "vm/BytecodeUtil.h"          // for JSDVG_SEARCH_STACK
+#include "vm/Compartment.h"           // for Compartment
+#include "vm/EnvironmentObject.h"     // for IsGlobalLexicalEnvironment
+#include "vm/GeneratorObject.h"       // for AbstractGeneratorObject
+#include "vm/GlobalObject.h"          // for GlobalObject
+#include "vm/Interpreter.h"           // for Call, ExecuteKernel
+#include "vm/JSAtom.h"                // for Atomize
+#include "vm/JSContext.h"             // for JSContext, ReportValueError
+#include "vm/JSFunction.h"            // for JSFunction, NewNativeFunction
+#include "vm/JSObject.h"              // for JSObject, RequireObject
+#include "vm/JSScript.h"              // for JSScript
+#include "vm/NativeObject.h"          // for NativeDefineDataProperty
+#include "vm/Realm.h"                 // for AutoRealm
+#include "vm/Runtime.h"               // for JSAtomState
+#include "vm/Scope.h"                 // for PositionalFormalParameterIter
+#include "vm/Stack.h"                 // for AbstractFramePtr, FrameIter
+#include "vm/StringType.h"            // for PropertyName, JSString
+#include "wasm/WasmDebug.h"           // for DebugState
+#include "wasm/WasmInstance.h"        // for Instance
+#include "wasm/WasmJS.h"              // for WasmInstanceObject
+#include "wasm/WasmTypes.h"           // for DebugFrame
 
 #include "debugger/Debugger-inl.h"  // for Debugger::fromJSObject
 #include "gc/WeakMap-inl.h"         // for WeakMap::remove
@@ -925,9 +926,6 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
     options.setForceStrictMode();
   }
 
-  SourceExtent extent = SourceExtent::makeGlobalExtent(
-      chars.length(), options.lineno, options.column);
-
   SourceText<char16_t> srcBuf;
   if (!srcBuf.init(cx, chars.begin().get(), chars.length(),
                    SourceOwnership::Borrowed)) {
@@ -954,20 +952,17 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
       return false;
     }
 
-    LifoAllocScope allocScope(&cx->tempLifoAlloc());
-    frontend::CompilationInfo compilationInfo(cx, allocScope, options, scope,
-                                              env);
-    if (!compilationInfo.init(cx)) {
+    frontend::CompilationInfo compilationInfo(cx, options);
+    if (!compilationInfo.input.initForEval(cx, scope)) {
       return false;
     }
-    compilationInfo.setEnclosingScope(scope);
 
-    frontend::EvalSharedContext evalsc(cx, compilationInfo,
-                                       compilationInfo.directives, extent);
-    script = frontend::CompileEvalScript(compilationInfo, evalsc, srcBuf);
-    if (!script) {
+    frontend::CompilationGCOutput gcOutput(cx);
+    if (!frontend::CompileEvalScript(compilationInfo, srcBuf, scope, env,
+                                     gcOutput)) {
       return false;
     }
+    script = gcOutput.script;
   } else {
     // Do not consider executeInGlobal{WithBindings} as an eval, but instead
     // as executing a series of statements at the global level. This is to
@@ -975,20 +970,20 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
     // users of executeInGlobal, like the web console, may add new bindings to
     // the global scope.
 
-    LifoAllocScope allocScope(&cx->tempLifoAlloc());
-    frontend::CompilationInfo compilationInfo(cx, allocScope, options);
-    if (!compilationInfo.init(cx)) {
+    frontend::CompilationInfo compilationInfo(cx, options);
+    if (!compilationInfo.input.initForGlobal(cx)) {
       return false;
     }
+
     MOZ_ASSERT(scopeKind == ScopeKind::Global ||
                scopeKind == ScopeKind::NonSyntactic);
 
-    frontend::GlobalSharedContext globalsc(cx, scopeKind, compilationInfo,
-                                           compilationInfo.directives, extent);
-    script = frontend::CompileGlobalScript(compilationInfo, globalsc, srcBuf);
-    if (!script) {
+    frontend::CompilationGCOutput gcOutput(cx);
+    if (!frontend::CompileGlobalScript(compilationInfo, srcBuf, scopeKind,
+                                       gcOutput)) {
       return false;
     }
+    script = gcOutput.script;
   }
 
   // Note: pass NullHandleValue for newTarget because the parser doesn't accept

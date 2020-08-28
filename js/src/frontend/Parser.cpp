@@ -146,13 +146,16 @@ bool GeneralParser<ParseHandler, Unit>::mustMatchTokenInternal(
 }
 
 ParserSharedBase::ParserSharedBase(JSContext* cx,
-                                   CompilationInfo& compilationInfo, Kind kind)
+                                   CompilationInfo& compilationInfo,
+                                   CompilationState& compilationState,
+                                   Kind kind)
     : JS::CustomAutoRooter(cx),
       cx_(cx),
-      alloc_(compilationInfo.allocScope.alloc()),
+      alloc_(compilationState.allocScope.alloc()),
       compilationInfo_(compilationInfo),
+      compilationState_(compilationState),
       pc_(nullptr),
-      usedNames_(compilationInfo.usedNames) {
+      usedNames_(compilationState.usedNames) {
   cx->frontendCollectionPool().addActiveCompilation();
 }
 
@@ -161,8 +164,10 @@ ParserSharedBase::~ParserSharedBase() {
 }
 
 ParserBase::ParserBase(JSContext* cx, const ReadOnlyCompileOptions& options,
-                       bool foldConstants, CompilationInfo& compilationInfo)
-    : ParserSharedBase(cx, compilationInfo, ParserSharedBase::Kind::Parser),
+                       bool foldConstants, CompilationInfo& compilationInfo,
+                       CompilationState& compilationState)
+    : ParserSharedBase(cx, compilationInfo, compilationState,
+                       ParserSharedBase::Kind::Parser),
       anyChars(cx, options, this),
       ss(nullptr),
       foldConstants_(foldConstants),
@@ -187,19 +192,20 @@ ParserBase::~ParserBase() { MOZ_ASSERT(checkOptionsCalled_); }
 template <class ParseHandler>
 PerHandlerParser<ParseHandler>::PerHandlerParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, bool foldConstants,
-    CompilationInfo& compilationInfo, BaseScript* lazyOuterFunction,
-    void* internalSyntaxParser)
-    : ParserBase(cx, options, foldConstants, compilationInfo),
-      handler_(cx, compilationInfo.allocScope.alloc(), lazyOuterFunction),
+    CompilationInfo& compilationInfo, CompilationState& compilationState,
+    BaseScript* lazyOuterFunction, void* internalSyntaxParser)
+    : ParserBase(cx, options, foldConstants, compilationInfo, compilationState),
+      handler_(cx, compilationState.allocScope.alloc(), lazyOuterFunction),
       internalSyntaxParser_(internalSyntaxParser) {}
 
 template <class ParseHandler, typename Unit>
 GeneralParser<ParseHandler, Unit>::GeneralParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, const Unit* units,
     size_t length, bool foldConstants, CompilationInfo& compilationInfo,
-    SyntaxParser* syntaxParser, BaseScript* lazyOuterFunction)
-    : Base(cx, options, foldConstants, compilationInfo, syntaxParser,
-           lazyOuterFunction),
+    CompilationState& compilationState, SyntaxParser* syntaxParser,
+    BaseScript* lazyOuterFunction)
+    : Base(cx, options, foldConstants, compilationInfo, compilationState,
+           syntaxParser, lazyOuterFunction),
       tokenStream(cx, &compilationInfo, options, units, length) {}
 
 template <typename Unit>
@@ -252,13 +258,12 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     TopLevelFunction isTopLevel) {
   MOZ_ASSERT(funNode);
 
-  FunctionIndex index = FunctionIndex(compilationInfo_.funcData.length());
+  FunctionIndex index =
+      FunctionIndex(compilationInfo_.stencil.scriptData.length());
   MOZ_ASSERT_IF(isTopLevel == TopLevelFunction::Yes,
-                index == CompilationInfo::TopLevelFunctionIndex);
+                index == CompilationInfo::TopLevelIndex);
 
-  // Allocate `funcData` item even if isTopLevel == Yes, to use same index
-  // with `compilationInfo_.functions` and `compilationInfo_.asmJS`.
-  if (!compilationInfo_.funcData.emplaceBack(cx_)) {
+  if (!compilationInfo_.stencil.scriptData.emplaceBack(cx_)) {
     return nullptr;
   }
 
@@ -274,22 +279,16 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
    * function.
    */
   FunctionBox* funbox = alloc_.new_<FunctionBox>(
-      cx_, compilationInfo_.traceListHead, extent, compilationInfo_,
-      inheritedDirectives, generatorKind, asyncKind, explicitName, flags, index,
-      isTopLevel);
+      cx_, extent, compilationInfo_, compilationState_, inheritedDirectives,
+      generatorKind, asyncKind, explicitName, flags, index, isTopLevel);
   if (!funbox) {
     ReportOutOfMemory(cx_);
     return nullptr;
   }
 
-  compilationInfo_.traceListHead = funbox;
   handler_.setFunctionBox(funNode, funbox);
 
   return funbox;
-}
-
-void CompilationInfo::trace(JSTracer* trc) {
-  FunctionBox::TraceList(trc, traceListHead);
 }
 
 bool ParserBase::setSourceMapInfo() {
@@ -840,7 +839,8 @@ bool PerHandlerParser<ParseHandler>::
       // TODO-Stencil
       //   After closed-over-bindings are snapshotted in the handler,
       //   remove this.
-      auto mbNameId = compilationInfo_.parserAtoms.internJSAtom(cx_, name);
+      auto mbNameId = compilationInfo_.stencil.parserAtoms.internJSAtom(
+          cx_, this->getCompilationInfo(), name);
       if (mbNameId.isErr()) {
         return false;
       }
@@ -1439,7 +1439,7 @@ bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
   }
 
   Vector<UnboundPrivateName, 8> unboundPrivateNames(cx_);
-  if (!this->getCompilationInfo().usedNames.getUnboundPrivateNames(
+  if (!this->compilationState_.usedNames.getUnboundPrivateNames(
           unboundPrivateNames)) {
     return false;
   }
@@ -1502,9 +1502,9 @@ bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     // Debugger.Frame.prototype.eval call. In order to find the declared private
     // names, we must use the effective scope that was determined when creating
     // the scopeContext.
-    if (!verifyPrivateName(
-            cx_, this, this->getCompilationInfo().scopeContext.effectiveScope,
-            unboundName)) {
+    if (!verifyPrivateName(cx_, this,
+                           compilationState_.scopeContext.effectiveScope,
+                           unboundName)) {
       return false;
     }
   }
@@ -1555,12 +1555,12 @@ LexicalScopeNode* Parser<FullParseHandler, Unit>::evalBody(
 
 #ifdef DEBUG
   if (evalpc.superScopeNeedsHomeObject() &&
-      this->getCompilationInfo().enclosingScope) {
+      this->getCompilationInfo().input.enclosingScope) {
     // If superScopeNeedsHomeObject_ is set and we are an entry-point
     // ParseContext, then we must be emitting an eval script, and the
     // outer function must already be marked as needing a home object
     // since it contains an eval.
-    ScopeIter si(this->getCompilationInfo().enclosingScope);
+    ScopeIter si(this->getCompilationInfo().input.enclosingScope);
     for (; si; si++) {
       if (si.kind() == ScopeKind::Function) {
         JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
@@ -1713,13 +1713,13 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
 
   // Generate the Import/Export tables and store in CompilationInfo.
   if (!modulesc->builder.buildTables(
-          this->compilationInfo_.moduleMetadata.get())) {
+          this->compilationInfo_.stencil.moduleMetadata)) {
     return null();
   }
 
   // Check exported local bindings exist and mark them as closed over.
   StencilModuleMetadata& moduleMetadata =
-      this->compilationInfo_.moduleMetadata.get();
+      this->compilationInfo_.stencil.moduleMetadata;
   for (auto entry : moduleMetadata.localExportEntries) {
     const ParserAtom* nameId = entry.localName;
     MOZ_ASSERT(nameId);
@@ -1867,7 +1867,7 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
   }
 
   FunctionBox* funbox = pc_->functionBox();
-  ScriptStencil& stencil = funbox->functionStencil().get();
+  ScriptStencil& script = funbox->functionStencil();
 
   if (funbox->isInterpreted()) {
     // BCE will need to generate bytecode for this.
@@ -1907,7 +1907,7 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
   }
 
   funbox->finishScriptFlags();
-  funbox->copyFunctionFields(stencil);
+  funbox->copyFunctionFields(script);
 
   return true;
 }
@@ -1925,11 +1925,11 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   }
 
   FunctionBox* funbox = pc_->functionBox();
-  ScriptStencil& stencil = funbox->functionStencil().get();
+  ScriptStencil& script = funbox->functionStencil();
 
   funbox->finishScriptFlags();
-  funbox->copyFunctionFields(stencil);
-  funbox->copyScriptFields(stencil);
+  funbox->copyFunctionFields(script);
+  funbox->copyScriptFields(script);
 
   // Elide nullptr sentinels from end of binding list. These are inserted for
   // each scope regardless of if any bindings are actually closed over.
@@ -1949,7 +1949,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
     return false;
   }
 
-  ScriptThingsVector& gcthings = stencil.gcThings;
+  ScriptThingsVector& gcthings = script.gcThings;
   if (!gcthings.reserve(ngcthings.value())) {
     return false;
   }
@@ -2113,7 +2113,7 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneFunction(
   // Function is not syntactically part of another script.
   funbox->setIsStandalone(true);
 
-  funbox->initStandalone(this->compilationInfo_.scopeContext, flags,
+  funbox->initStandalone(this->compilationState_.scopeContext, flags,
                          syntaxKind);
 
   SourceParseContext funpc(this, funbox, newDirectives);
@@ -2351,7 +2351,7 @@ const ParserAtom* ParserBase::prefixAccessorName(PropertyType propType,
 
   const ParserAtom* atoms[2] = {prefix, propAtom};
   auto atomsRange = mozilla::Range(atoms, 2);
-  return compilationInfo_.parserAtoms.concatAtoms(cx_, atomsRange)
+  return compilationInfo_.stencil.parserAtoms.concatAtoms(cx_, atomsRange)
       .unwrapOr(nullptr);
 }
 
@@ -2705,10 +2705,10 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
     return false;
   }
 
-  ScriptStencil& stencil = funbox->functionStencil().get();
+  ScriptStencil& script = funbox->functionStencil();
   funbox->initFromLazyFunction(fun);
-  funbox->copyFunctionFields(stencil);
-  funbox->copyScriptFields(stencil);
+  funbox->copyFunctionFields(script);
+  funbox->copyScriptFields(script);
 
   MOZ_ASSERT_IF(pc_->isFunctionBox(),
                 pc_->functionBox()->index() < funbox->index());
@@ -2869,7 +2869,7 @@ GeneralParser<ParseHandler, Unit>::functionDefinition(
   Directives directives(pc_);
   Directives newDirectives = directives;
 
-  Position start(this->compilationInfo_.keepAtoms, tokenStream);
+  Position start(this->compilationState_.keepAtoms, tokenStream);
   CompilationInfo::RewindToken startObj =
       this->compilationInfo_.getRewindToken();
 
@@ -2913,7 +2913,7 @@ bool Parser<FullParseHandler, Unit>::advancePastSyntaxParsedFunction(
   MOZ_ASSERT(getSyntaxParser() == syntaxParser);
 
   // Advance this parser over tokens processed by the syntax parser.
-  Position currentSyntaxPosition(this->compilationInfo_.keepAtoms,
+  Position currentSyntaxPosition(this->compilationState_.keepAtoms,
                                  syntaxParser->tokenStream);
   if (!tokenStream.fastForward(currentSyntaxPosition, syntaxParser->anyChars)) {
     return false;
@@ -2961,7 +2961,7 @@ bool Parser<FullParseHandler, Unit>::trySyntaxParseInnerFunction(
     //   var x = (y = z => 2) => q;
     //   //           ^ we first seek to here to syntax-parse this function
     //   //      ^ then we seek back to here to syntax-parse the outer function
-    Position currentPosition(this->compilationInfo_.keepAtoms, tokenStream);
+    Position currentPosition(this->compilationState_.keepAtoms, tokenStream);
     if (!syntaxParser->tokenStream.seekTo(currentPosition, anyChars)) {
       return false;
     }
@@ -2996,7 +2996,7 @@ bool Parser<FullParseHandler, Unit>::trySyntaxParseInnerFunction(
       return false;
     }
 
-    if (!advancePastSyntaxParsedFunction(this->compilationInfo_.keepAtoms,
+    if (!advancePastSyntaxParsedFunction(this->compilationState_.keepAtoms,
                                          syntaxParser)) {
       return false;
     }
@@ -3198,7 +3198,7 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
     return null();
   }
   funbox->initFromLazyFunction(fun);
-  funbox->initStandalone(this->getCompilationInfo().scopeContext, fun->flags(),
+  funbox->initStandalone(this->compilationState_.scopeContext, fun->flags(),
                          syntaxKind);
   if (fun->isClassConstructor()) {
     funbox->setMemberInitializers(fun->baseScript()->getMemberInitializers());
@@ -7607,7 +7607,7 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
   // We're leaving a class definition that was not itself nested within a class
   if (!isInClass) {
     mozilla::Maybe<UnboundPrivateName> maybeUnboundName;
-    if (!this->getCompilationInfo().usedNames.hasUnboundPrivateNames(
+    if (!this->compilationState_.usedNames.hasUnboundPrivateNames(
             cx_, maybeUnboundName)) {
       return null();
     }
@@ -8993,7 +8993,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
 
   // Save the tokenizer state in case we find an arrow function and have to
   // rewind.
-  Position start(this->compilationInfo_.keepAtoms, tokenStream);
+  Position start(this->compilationState_.keepAtoms, tokenStream);
 
   PossibleError possibleErrorInner(*this);
   Node lhs;
@@ -10245,12 +10245,13 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
     }
   }
 
-  RegExpIndex index(this->getCompilationInfo().regExpData.length());
-  if (!this->getCompilationInfo().regExpData.emplaceBack()) {
+  RegExpIndex index(this->getCompilationInfo().stencil.regExpData.length());
+  if (!this->getCompilationInfo().stencil.regExpData.emplaceBack()) {
     return nullptr;
   }
 
-  if (!this->getCompilationInfo().regExpData[index].init(cx_, range, flags)) {
+  if (!this->getCompilationInfo().stencil.regExpData[index].init(cx_, range,
+                                                                 flags)) {
     return nullptr;
   }
 
@@ -10296,18 +10297,19 @@ BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   // productions start with 0[bBoOxX], indicating binary/octal/hex.
   const auto& chars = tokenStream.getCharBuffer();
 
-  BigIntIndex index(this->getCompilationInfo().bigIntData.length());
-  if (!this->getCompilationInfo().bigIntData.emplaceBack()) {
+  BigIntIndex index(this->getCompilationInfo().stencil.bigIntData.length());
+  if (!this->getCompilationInfo().stencil.bigIntData.emplaceBack()) {
     return null();
   }
 
-  if (!this->getCompilationInfo().bigIntData[index].init(this->cx_, chars)) {
+  if (!this->getCompilationInfo().stencil.bigIntData[index].init(this->cx_,
+                                                                 chars)) {
     return null();
   }
 
   // Should the operations below fail, the buffer held by data will
   // be cleaned up by the CompilationInfo destructor.
-  return handler_.newBigInt(index, this->getCompilationInfo(), pos());
+  return handler_.newBigInt(index, this->getCompilationInfo().stencil, pos());
 }
 
 template <typename Unit>
@@ -11487,19 +11489,18 @@ template class Parser<FullParseHandler, char16_t>;
 template class Parser<SyntaxParseHandler, char16_t>;
 
 CompilationInfo::RewindToken CompilationInfo::getRewindToken() {
-  MOZ_ASSERT(functions.empty());
-  return RewindToken{traceListHead, funcData.length(), asmJS.count()};
+  return RewindToken{stencil.scriptData.length(), stencil.asmJS.count()};
 }
 
 void CompilationInfo::rewind(const CompilationInfo::RewindToken& pos) {
-  if (asmJS.count() != pos.asmJSCount) {
-    for (size_t i = pos.funcDataLength; i < funcData.length(); i++) {
-      asmJS.remove(FunctionIndex(i));
+  if (stencil.asmJS.count() != pos.asmJSCount) {
+    for (size_t i = pos.scriptDataLength; i < stencil.scriptData.length();
+         i++) {
+      stencil.asmJS.remove(FunctionIndex(i));
     }
-    MOZ_ASSERT(asmJS.count() == pos.asmJSCount);
+    MOZ_ASSERT(stencil.asmJS.count() == pos.asmJSCount);
   }
-  traceListHead = pos.funbox;
-  funcData.get().shrinkTo(pos.funcDataLength);
+  stencil.scriptData.shrinkTo(pos.scriptDataLength);
 }
 
 }  // namespace js::frontend

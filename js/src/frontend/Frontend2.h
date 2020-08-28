@@ -26,15 +26,18 @@ class ScriptSourceObject;
 
 namespace frontend {
 
-class GlobalScriptInfo;
+struct CompilationInfo;
+struct CompilationGCOutput;
+struct CompilationState;
 
 // This is declarated as a class mostly to solve dependency around `friend`
 // declarations in the simple way.
 class Smoosh {
  public:
-  static JSScript* compileGlobalScript(
-      CompilationInfo& compilationInfo,
-      JS::SourceText<mozilla::Utf8Unit>& srcBuf, bool* unimplemented);
+  static bool compileGlobalScript(CompilationInfo& compilationInfo,
+                                  JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+                                  CompilationGCOutput& gcOutput,
+                                  bool* unimplemented);
 
   static bool compileGlobalScriptToStencil(
       CompilationInfo& compilationInfo,

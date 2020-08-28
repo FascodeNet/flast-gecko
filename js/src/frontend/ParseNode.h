@@ -58,7 +58,7 @@ class RegExpObject;
 namespace frontend {
 
 class ParseContext;
-struct CompilationInfo;
+struct CompilationStencil;
 class ParserSharedBase;
 class FullParseHandler;
 
@@ -563,7 +563,7 @@ inline bool IsTypeofKind(ParseNodeKind kind) {
  * NumberExpr (NumericLiteral)
  *   value: double value of numeric literal
  * BigIntExpr (BigIntLiteral)
- *   compilationInfo: script compilation struct
+ *   stencil: script compilation struct that has |bigIntData| vector
  *   index: index into the script compilation's |bigIntData| vector
  * TrueExpr, FalseExpr (BooleanLiteral)
  * NullExpr (NullLiteral)
@@ -1557,14 +1557,14 @@ class NumericLiteral : public ParseNode {
 };
 
 class BigIntLiteral : public ParseNode {
-  CompilationInfo& compilationInfo_;
+  CompilationStencil& stencil_;
   BigIntIndex index_;
 
  public:
-  BigIntLiteral(BigIntIndex index, CompilationInfo& compilationInfo,
+  BigIntLiteral(BigIntIndex index, CompilationStencil& stencil,
                 const TokenPos& pos)
       : ParseNode(ParseNodeKind::BigIntExpr, pos),
-        compilationInfo_(compilationInfo),
+        stencil_(stencil),
         index_(index) {}
 
   static bool test(const ParseNode& node) {
@@ -1870,7 +1870,7 @@ class RegExpLiteral : public ParseNode {
       : ParseNode(ParseNodeKind::RegExpExpr, pos), index_(dataIndex) {}
 
   // Create a RegExp object of this RegExp literal.
-  RegExpObject* create(JSContext* cx, CompilationInfo& compilationInfo) const;
+  RegExpObject* create(JSContext* cx, CompilationStencil& stencil) const;
 
 #ifdef DEBUG
   void dumpImpl(GenericPrinter& out, int indent);
