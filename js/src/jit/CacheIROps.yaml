@@ -1398,22 +1398,27 @@
 
 - name: CallNativeSetter
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
+  custom_writer: true
   args:
-    obj: ObjId
-    setter: ObjectField
-    rhs: ValId
-
-- name: CallScriptedSetter
-  shared: false
-  transpile: false
-  cost_estimate: 3
-  args:
-    obj: ObjId
+    receiver: ObjId
     setter: ObjectField
     rhs: ValId
     sameRealm: BoolImm
+    nargsAndFlags: RawWordField
+
+- name: CallScriptedSetter
+  shared: false
+  transpile: true
+  cost_estimate: 3
+  custom_writer: true
+  args:
+    receiver: ObjId
+    setter: ObjectField
+    rhs: ValId
+    sameRealm: BoolImm
+    nargsAndFlags: RawWordField
 
 - name: CallSetArrayLength
   shared: false
@@ -1815,37 +1820,25 @@
 
 - name: CallScriptedGetterResult
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
+  custom_writer: true
   args:
-    obj: ObjId
+    receiver: ValId
     getter: ObjectField
     sameRealm: BoolImm
-
-- name: CallScriptedGetterByValueResult
-  shared: false
-  transpile: false
-  cost_estimate: 5
-  args:
-    val: ValId
-    getter: ObjectField
-    sameRealm: BoolImm
+    nargsAndFlags: RawWordField
 
 - name: CallNativeGetterResult
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
+  custom_writer: true
   args:
-    obj: ObjId
+    receiver: ValId
     getter: ObjectField
-
-- name: CallNativeGetterByValueResult
-  shared: false
-  transpile: false
-  cost_estimate: 5
-  args:
-    val: ValId
-    getter: ObjectField
+    sameRealm: BoolImm
+    nargsAndFlags: RawWordField
 
 - name: ProxyGetResult
   shared: false

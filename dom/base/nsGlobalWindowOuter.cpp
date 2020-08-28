@@ -26,6 +26,8 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentFrameMessageManager.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/EventTarget.h"
@@ -5119,14 +5121,22 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
   // Don't look for a presshell if we're a root chrome window that's got
   // about:blank loaded.  We don't want to focus our widget in that case.
   // XXXbz should we really be checking for IsInitialDocument() instead?
-  nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-  mDocShell->GetInProcessParent(getter_AddRefs(parentDsti));
-
-  // set the parent's current focus to the frame containing this window.
-  nsCOMPtr<nsPIDOMWindowOuter> parent =
-      parentDsti ? parentDsti->GetWindow() : nullptr;
+  RefPtr<BrowsingContext> parent;
+  BrowsingContext* bc = GetBrowsingContext();
+  if (bc) {
+    parent = bc->GetParent();
+    if (!parent && XRE_IsParentProcess()) {
+      parent = bc->Canonical()->GetParentCrossChromeBoundary();
+    }
+  }
   if (parent) {
-    nsCOMPtr<Document> parentdoc = parent->GetDoc();
+    if (!parent->IsInProcess()) {
+      ContentChild* contentChild = ContentChild::GetSingleton();
+      MOZ_ASSERT(contentChild);
+      contentChild->SendFinalizeFocusOuter(bc, canFocus, aCallerType);
+      return;
+    }
+    nsCOMPtr<Document> parentdoc = parent->GetDocument();
     if (!parentdoc) {
       return;
     }
@@ -5233,9 +5243,30 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     }
   }
 
+  nsCOMPtr<nsIPrintSettingsService> printSettingsService =
+      do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (!printSettingsService) {
+    // we currently return here in headless mode - should we?
+    aError.ThrowNotSupportedError("No print settings service");
+    return;
+  }
+
+  nsCOMPtr<nsIPrintSettings> settings;
+  aError = printSettingsService->GetDefaultPrintSettingsForPrinting(
+      getter_AddRefs(settings));
+  if (aError.Failed()) {
+    return;
+  }
+
   const bool isPreview = StaticPrefs::print_tab_modal_enabled() &&
                          !StaticPrefs::print_always_print_silent();
-  Print(nullptr, nullptr, nullptr, isPreview, aError);
+  if (isPreview) {
+    // When printing with the new UI, we don't want to show the print progress
+    // dialog no matter what.
+    settings->SetShowPrintProgress(false);
+  }
+
+  Print(settings, nullptr, nullptr, isPreview, aError);
 }
 
 Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(

@@ -335,49 +335,15 @@ static nsresult EnsureSettingsHasPrinterNameSet(
 #endif
 }
 
-static nsresult GetGlobalPrintSettings(
-    nsIPrintSettings** aGlobalPrintSettings) {
-  *aGlobalPrintSettings = nullptr;
+static nsresult GetDefaultPrintSettings(nsIPrintSettings** aSettings) {
+  *aSettings = nullptr;
 
   nsresult rv = NS_ERROR_FAILURE;
   nsCOMPtr<nsIPrintSettingsService> printSettingsService =
       do_GetService(sPrintSettingsServiceContractID, &rv);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIPrintSettings> settings;
-  rv = printSettingsService->GetGlobalPrintSettings(getter_AddRefs(settings));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  nsAutoString printerName;
-  settings->GetPrinterName(printerName);
-
-  bool shouldGetLastUsedPrinterName = printerName.IsEmpty();
-#ifdef MOZ_X11
-  // In Linux, GTK backend does not support per printer settings.
-  // Calling GetLastUsedPrinterName causes a sandbox violation (see Bug
-  // 1329216). The printer name is not needed anywhere else on Linux
-  // before it gets to the parent. In the parent, we will then query the
-  // last-used printer name if no name is set. Unless we are in the parent,
-  // we will skip this part.
-  if (!XRE_IsParentProcess()) {
-    shouldGetLastUsedPrinterName = false;
-  }
-#endif
-  if (shouldGetLastUsedPrinterName) {
-    printSettingsService->GetLastUsedPrinterName(printerName);
-    settings->SetPrinterName(printerName);
-  }
-  printSettingsService->InitPrintSettingsFromPrinter(printerName, settings);
-  printSettingsService->InitPrintSettingsFromPrefs(
-      settings, true, nsIPrintSettings::kInitSaveAll);
-
-  *aGlobalPrintSettings = settings.forget().take();
-
-  return NS_OK;
+  return printSettingsService->GetDefaultPrintSettingsForPrinting(aSettings);
 }
 
 //-------------------------------------------------------
@@ -630,7 +596,7 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
   // if they don't pass in a PrintSettings, then get the Global PS
   printData->mPrintSettings = aPrintSettings;
   if (!printData->mPrintSettings) {
-    MOZ_TRY(GetGlobalPrintSettings(getter_AddRefs(printData->mPrintSettings)));
+    MOZ_TRY(GetDefaultPrintSettings(getter_AddRefs(printData->mPrintSettings)));
   }
 
   MOZ_TRY(EnsureSettingsHasPrinterNameSet(printData->mPrintSettings));
@@ -934,19 +900,13 @@ void nsPrintJob::ShowPrintProgress(bool aIsForPrinting, bool& aDoNotify,
   // reflowing the doc for printing.
   aDoNotify = false;
 
-  // Assume we can't do progress and then see if we can
-  bool showProgresssDialog = false;
-
-  // if it is already being shown then don't bother to find out if it should be
-  // so skip this and leave mShowProgressDialog set to FALSE
-  if (!mProgressDialogIsShown) {
-    showProgresssDialog = Preferences::GetBool("print.show_print_progress");
-  }
-
   // Guarantee that mPrt and the objects it owns won't be deleted.  If this
   // method shows a progress dialog and spins the event loop.  So, mPrt may be
   // cleared or recreated.
   RefPtr<nsPrintData> printData = mPrt;
+
+  bool showProgresssDialog =
+      !mProgressDialogIsShown && StaticPrefs::print_show_print_progress();
 
   // Turning off the showing of Print Progress in Prefs overrides
   // whether the calling PS desire to have it on or off, so only check PS if

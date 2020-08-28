@@ -30,14 +30,14 @@ namespace embedding {
 interface nsIPrintSettingsService : nsISupports
 {
   /**
-   * Returns a "global" PrintSettings object
-   * Creates a new the first time, if one doesn't exist.
-   *
-   * Then returns the same object each time after that.
-   *
-   * Initializes the globalPrintSettings from the default printer
+   * Legacy alias for newPrintSettings.
    */
   readonly attribute nsIPrintSettings globalPrintSettings;
+
+  /**
+   * Returns the default print settings as used for printing.
+   */
+  [noscript] readonly attribute nsIPrintSettings defaultPrintSettingsForPrinting;
 
   /**
    * Returns a new, unique PrintSettings object each time.

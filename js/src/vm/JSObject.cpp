@@ -1471,8 +1471,6 @@ bool NativeObject::fillInAfterSwap(JSContext* cx, HandleNativeObject obj,
   MOZ_ASSERT(obj->slotSpan() == values.length());
   MOZ_ASSERT(!IsInsideNursery(obj));
 
-  size_t oldSlotCount = obj->numDynamicSlots();
-
   // Make sure the shape's numFixedSlots() is correct.
   size_t nfixed =
       gc::GetGCKindSlots(obj->asTenured().getAllocKind(), obj->getClass());
@@ -1490,25 +1488,26 @@ bool NativeObject::fillInAfterSwap(JSContext* cx, HandleNativeObject obj,
   }
 
   Zone* zone = obj->zone();
-  if (obj->slots_) {
-    size_t size = oldSlotCount * sizeof(HeapSlot);
+  if (obj->hasDynamicSlots()) {
+    ObjectSlots* slotsHeader = obj->getSlotsHeader();
+    uint32_t oldDictionarySlotSpan = slotsHeader->dictionarySlotSpan();
+    size_t size = ObjectSlots::allocSize(slotsHeader->capacity());
     zone->removeCellMemory(old, size, MemoryUse::ObjectSlots);
-    js_free(obj->slots_);
-    obj->slots_ = nullptr;
+    js_free(slotsHeader);
+    obj->setEmptyDynamicSlots(oldDictionarySlotSpan);
   }
 
-  if (size_t ndynamic =
-          dynamicSlotsCount(nfixed, values.length(), obj->getClass())) {
-    obj->slots_ = cx->pod_malloc<HeapSlot>(ndynamic);
-    if (!obj->slots_) {
+  size_t ndynamic =
+      calculateDynamicSlots(nfixed, values.length(), obj->getClass());
+  MOZ_ASSERT(ndynamic >= obj->numDynamicSlots());
+  if (ndynamic > obj->numDynamicSlots()) {
+    if (!obj->growSlots(cx, obj->numDynamicSlots(), ndynamic)) {
       return false;
     }
-    size_t size = ndynamic * sizeof(HeapSlot);
-    zone->addCellMemory(obj, size, MemoryUse::ObjectSlots);
-    Debug_SetSlotRangeToCrashOnTouch(obj->slots_, ndynamic);
   }
 
   obj->initSlotRange(0, values.begin(), values.length());
+
   return true;
 }
 
@@ -3870,7 +3869,8 @@ js::gc::AllocKind JSObject::allocKindForTenure(
 void JSObject::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                       JS::ClassInfo* info) {
   if (is<NativeObject>() && as<NativeObject>().hasDynamicSlots()) {
-    info->objectsMallocHeapSlots += mallocSizeOf(as<NativeObject>().slots_);
+    info->objectsMallocHeapSlots +=
+        mallocSizeOf(as<NativeObject>().getSlotsHeader());
   }
 
   if (is<NativeObject>() && as<NativeObject>().hasDynamicElements()) {

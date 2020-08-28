@@ -869,16 +869,41 @@ nsresult nsPrintSettingsService::_CreatePrintSettings(
 }
 
 NS_IMETHODIMP
-nsPrintSettingsService::GetGlobalPrintSettings(
+nsPrintSettingsService::GetDefaultPrintSettingsForPrinting(
     nsIPrintSettings** aGlobalPrintSettings) {
-  nsresult rv;
-
-  rv = _CreatePrintSettings(getter_AddRefs(mGlobalPrintSettings));
+  nsresult rv = GetGlobalPrintSettings(aGlobalPrintSettings);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  NS_ADDREF(*aGlobalPrintSettings = mGlobalPrintSettings.get());
+  nsIPrintSettings* settings = *aGlobalPrintSettings;
 
-  return rv;
+  nsAutoString printerName;
+  settings->GetPrinterName(printerName);
+
+  bool shouldGetLastUsedPrinterName = printerName.IsEmpty();
+#ifdef MOZ_X11
+  // In Linux, GTK backend does not support per printer settings.
+  // Calling GetLastUsedPrinterName causes a sandbox violation (see Bug
+  // 1329216). The printer name is not needed anywhere else on Linux
+  // before it gets to the parent. In the parent, we will then query the
+  // last-used printer name if no name is set. Unless we are in the parent,
+  // we will skip this part.
+  if (!XRE_IsParentProcess()) {
+    shouldGetLastUsedPrinterName = false;
+  }
+#endif
+  if (shouldGetLastUsedPrinterName) {
+    GetLastUsedPrinterName(printerName);
+    settings->SetPrinterName(printerName);
+  }
+  InitPrintSettingsFromPrinter(printerName, settings);
+  InitPrintSettingsFromPrefs(settings, true, nsIPrintSettings::kInitSaveAll);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPrintSettingsService::GetGlobalPrintSettings(
+    nsIPrintSettings** aGlobalPrintSettings) {
+  return GetNewPrintSettings(aGlobalPrintSettings);
 }
 
 NS_IMETHODIMP

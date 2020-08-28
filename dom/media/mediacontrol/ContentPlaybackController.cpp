@@ -39,7 +39,8 @@ void ContentPlaybackController::NotifyContentMediaControlKeyReceiver(
     MediaControlKey aKey) {
   if (RefPtr<ContentMediaControlKeyReceiver> receiver =
           ContentMediaControlKeyReceiver::Get(mBC)) {
-    LOG("Handle '%s' in default behavior", ToMediaControlKeyStr(aKey));
+    LOG("Handle '%s' in default behavior for BC %" PRIu64,
+        ToMediaControlKeyStr(aKey), mBC->Id());
     receiver->HandleMediaKey(aKey);
   }
 }
@@ -53,8 +54,9 @@ void ContentPlaybackController::NotifyMediaSession(MediaSessionAction aAction) {
 void ContentPlaybackController::NotifyMediaSession(
     const MediaSessionActionDetails& aDetails) {
   if (RefPtr<MediaSession> session = GetMediaSession()) {
-    LOG("Handle '%s' in media session behavior",
-        ToMediaSessionActionStr(aDetails.mAction));
+    LOG("Handle '%s' in media session behavior for BC %" PRIu64,
+        ToMediaSessionActionStr(aDetails.mAction), mBC->Id());
+    MOZ_ASSERT(session->IsActive(), "Notify inactive media session!");
     session->NotifyHandler(aDetails);
   }
 }
@@ -69,7 +71,13 @@ void ContentPlaybackController::NotifyMediaSessionWhenActionIsSupported(
 bool ContentPlaybackController::IsMediaSessionActionSupported(
     MediaSessionAction aAction) const {
   RefPtr<MediaSession> session = GetMediaSession();
-  return session ? session->IsSupportedAction(aAction) : false;
+  return session ? session->IsActive() && session->IsSupportedAction(aAction)
+                 : false;
+}
+
+Maybe<uint64_t> ContentPlaybackController::GetActiveMediaSessionId() const {
+  RefPtr<WindowContext> wc = mBC->GetTopWindowContext();
+  return wc ? wc->GetActiveMediaSessionContextId() : Nothing();
 }
 
 void ContentPlaybackController::Focus() {
@@ -82,9 +90,17 @@ void ContentPlaybackController::Focus() {
 
 void ContentPlaybackController::Play() {
   const MediaSessionAction action = MediaSessionAction::Play;
+  RefPtr<MediaSession> session = GetMediaSession();
   if (IsMediaSessionActionSupported(action)) {
     NotifyMediaSession(action);
-  } else {
+  }
+  // We don't want to arbitrarily call play default handler, because we want to
+  // resume the frame which a user really gets interest in, not all media in the
+  // same page. Therefore, we would only call default handler for `play` when
+  // (1) We don't have an active media session (If we have one, the play action
+  // handler should only be triggered on that session)
+  // (2) Active media session without setting action handler for `play`
+  else if (!GetActiveMediaSessionId() || (session && session->IsActive())) {
     NotifyContentMediaControlKeyReceiver(MediaControlKey::Play);
   }
 }
@@ -141,6 +157,11 @@ void ContentPlaybackController::SeekTo(double aSeekTime, bool aFastSeek) {
 
 void ContentMediaControlKeyHandler::HandleMediaControlAction(
     BrowsingContext* aContext, const MediaControlAction& aAction) {
+  MOZ_ASSERT(aContext);
+  // The web content doesn't exist in this browsing context.
+  if (!aContext->GetDocShell()) {
+    return;
+  }
   ContentPlaybackController controller(aContext);
   switch (aAction.mKey) {
     case MediaControlKey::Focus:
@@ -176,7 +197,7 @@ void ContentMediaControlKeyHandler::HandleMediaControlAction(
       return;
     }
     default:
-      MOZ_ASSERT_UNREACHABLE("Invalid event.");
+      MOZ_ASSERT_UNREACHABLE("Invalid media control key.");
   };
 }
 

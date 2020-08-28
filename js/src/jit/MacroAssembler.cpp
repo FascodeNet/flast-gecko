@@ -667,7 +667,7 @@ void MacroAssembler::nurseryAllocateObject(Register result, Register temp,
   // with the nursery's end will always fail in such cases.
   CompileZone* zone = GetJitContext()->realm()->zone();
   size_t thingSize = gc::Arena::thingSize(allocKind);
-  size_t totalSize = thingSize + nDynamicSlots * sizeof(HeapSlot);
+  size_t totalSize = thingSize + ObjectSlots::allocSize(nDynamicSlots);
   MOZ_ASSERT(totalSize < INT32_MAX);
   MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
 
@@ -676,7 +676,13 @@ void MacroAssembler::nurseryAllocateObject(Register result, Register temp,
       zone->addressOfNurseryCurrentEnd(), JS::TraceKind::Object, totalSize);
 
   if (nDynamicSlots) {
-    computeEffectiveAddress(Address(result, thingSize), temp);
+    store32(Imm32(nDynamicSlots),
+            Address(result, thingSize + ObjectSlots::offsetOfCapacity()));
+    store32(
+        Imm32(0),
+        Address(result, thingSize + ObjectSlots::offsetOfDictionarySlotSpan()));
+    computeEffectiveAddress(
+        Address(result, thingSize + ObjectSlots::offsetOfSlots()), temp);
     storePtr(temp, Address(result, NativeObject::offsetOfSlots()));
   }
 }
@@ -1208,7 +1214,8 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
     // If the object has dynamic slots, the slots member has already been
     // filled in.
     if (!ntemplate.hasDynamicSlots()) {
-      storePtr(ImmPtr(nullptr), Address(obj, NativeObject::offsetOfSlots()));
+      storePtr(ImmPtr(emptyObjectSlots),
+               Address(obj, NativeObject::offsetOfSlots()));
     }
 
     if (ntemplate.denseElementsAreCopyOnWrite()) {

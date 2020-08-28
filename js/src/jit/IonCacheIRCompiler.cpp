@@ -902,9 +902,15 @@ bool IonCacheIRCompiler::emitGuardHasGetterSetter(ObjOperandId objId,
   return true;
 }
 
-bool IonCacheIRCompiler::emitCallScriptedGetterResultShared(
-    TypedOrValueRegister receiver, uint32_t getterOffset, bool sameRealm,
-    TypedOrValueRegister output) {
+bool IonCacheIRCompiler::emitCallScriptedGetterResult(
+    ValOperandId receiverId, uint32_t getterOffset, bool sameRealm,
+    uint32_t nargsAndFlagsOffset) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoSaveLiveRegisters save(*this);
+  AutoOutputRegister output(*this);
+
+  ValueOperand receiver = allocator.useValueRegister(masm, receiverId);
+
   JSFunction* target = &objectStubField(getterOffset)->as<JSFunction>();
   AutoScratchRegister scratch(allocator, masm);
 
@@ -967,35 +973,15 @@ bool IonCacheIRCompiler::emitCallScriptedGetterResultShared(
   return true;
 }
 
-bool IonCacheIRCompiler::emitCallScriptedGetterResult(ObjOperandId objId,
-                                                      uint32_t getterOffset,
-                                                      bool sameRealm) {
+bool IonCacheIRCompiler::emitCallNativeGetterResult(
+    ValOperandId receiverId, uint32_t getterOffset, bool sameRealm,
+    uint32_t nargsAndFlagsOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoSaveLiveRegisters save(*this);
   AutoOutputRegister output(*this);
 
-  Register obj = allocator.useRegister(masm, objId);
+  ValueOperand receiver = allocator.useValueRegister(masm, receiverId);
 
-  return emitCallScriptedGetterResultShared(
-      TypedOrValueRegister(MIRType::Object, AnyRegister(obj)), getterOffset,
-      sameRealm, output);
-}
-
-bool IonCacheIRCompiler::emitCallScriptedGetterByValueResult(
-    ValOperandId valId, uint32_t getterOffset, bool sameRealm) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoSaveLiveRegisters save(*this);
-  AutoOutputRegister output(*this);
-
-  ValueOperand val = allocator.useValueRegister(masm, valId);
-
-  return emitCallScriptedGetterResultShared(val, getterOffset, sameRealm,
-                                            output);
-}
-
-bool IonCacheIRCompiler::emitCallNativeGetterResultShared(
-    TypedOrValueRegister receiver, uint32_t getterOffset,
-    const AutoOutputRegister& output, AutoSaveLiveRegisters& save) {
   JSFunction* target = &objectStubField(getterOffset)->as<JSFunction>();
   MOZ_ASSERT(target->isNative());
 
@@ -1031,7 +1017,7 @@ bool IonCacheIRCompiler::emitCallNativeGetterResultShared(
   }
   masm.enterFakeExitFrame(argJSContext, scratch, ExitFrameType::IonOOLNative);
 
-  if (target->realm() != cx_->realm()) {
+  if (!sameRealm) {
     masm.switchToRealm(target->realm(), scratch);
   }
 
@@ -1047,7 +1033,7 @@ bool IonCacheIRCompiler::emitCallNativeGetterResultShared(
   // Test for failure.
   masm.branchIfFalseBool(ReturnReg, masm.exceptionLabel());
 
-  if (target->realm() != cx_->realm()) {
+  if (!sameRealm) {
     masm.switchToRealm(cx_->realm(), ReturnReg);
   }
 
@@ -1062,30 +1048,6 @@ bool IonCacheIRCompiler::emitCallNativeGetterResultShared(
 
   masm.adjustStack(IonOOLNativeExitFrameLayout::Size(0));
   return true;
-}
-
-bool IonCacheIRCompiler::emitCallNativeGetterResult(ObjOperandId objId,
-                                                    uint32_t getterOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoSaveLiveRegisters save(*this);
-  AutoOutputRegister output(*this);
-
-  Register obj = allocator.useRegister(masm, objId);
-
-  return emitCallNativeGetterResultShared(
-      TypedOrValueRegister(MIRType::Object, AnyRegister(obj)), getterOffset,
-      output, save);
-}
-
-bool IonCacheIRCompiler::emitCallNativeGetterByValueResult(
-    ValOperandId valId, uint32_t getterOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoSaveLiveRegisters save(*this);
-  AutoOutputRegister output(*this);
-
-  ValueOperand val = allocator.useValueRegister(masm, valId);
-
-  return emitCallNativeGetterResultShared(val, getterOffset, output, save);
 }
 
 bool IonCacheIRCompiler::emitProxyGetResult(ObjOperandId objId,
@@ -1939,13 +1901,15 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   return true;
 }
 
-bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId objId,
+bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId receiverId,
                                               uint32_t setterOffset,
-                                              ValOperandId rhsId) {
+                                              ValOperandId rhsId,
+                                              bool sameRealm,
+                                              uint32_t nargsAndFlagsOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoSaveLiveRegisters save(*this);
 
-  Register obj = allocator.useRegister(masm, objId);
+  Register receiver = allocator.useRegister(masm, receiverId);
   JSFunction* target = &objectStubField(setterOffset)->as<JSFunction>();
   MOZ_ASSERT(target->isNative());
   ConstantOrRegister val = allocator.useConstantOrRegister(masm, rhsId);
@@ -1965,7 +1929,7 @@ bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId objId,
 
   // Build vp and move the base into argVpReg.
   masm.Push(val);
-  masm.Push(TypedOrValueRegister(MIRType::Object, AnyRegister(obj)));
+  masm.Push(TypedOrValueRegister(MIRType::Object, AnyRegister(receiver)));
   masm.Push(ObjectValue(*target));
   masm.moveStackPtrTo(argVp.get());
 
@@ -1982,7 +1946,7 @@ bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId objId,
   }
   masm.enterFakeExitFrame(argJSContext, scratch, ExitFrameType::IonOOLNative);
 
-  if (target->realm() != cx_->realm()) {
+  if (!sameRealm) {
     masm.switchToRealm(target->realm(), scratch);
   }
 
@@ -1998,7 +1962,7 @@ bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId objId,
   // Test for failure.
   masm.branchIfFalseBool(ReturnReg, masm.exceptionLabel());
 
-  if (target->realm() != cx_->realm()) {
+  if (!sameRealm) {
     masm.switchToRealm(cx_->realm(), ReturnReg);
   }
 
@@ -2006,14 +1970,15 @@ bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId objId,
   return true;
 }
 
-bool IonCacheIRCompiler::emitCallScriptedSetter(ObjOperandId objId,
+bool IonCacheIRCompiler::emitCallScriptedSetter(ObjOperandId receiverId,
                                                 uint32_t setterOffset,
                                                 ValOperandId rhsId,
-                                                bool sameRealm) {
+                                                bool sameRealm,
+                                                uint32_t nargsAndFlagsOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoSaveLiveRegisters save(*this);
 
-  Register obj = allocator.useRegister(masm, objId);
+  Register receiver = allocator.useRegister(masm, receiverId);
   JSFunction* target = &objectStubField(setterOffset)->as<JSFunction>();
   ConstantOrRegister val = allocator.useConstantOrRegister(masm, rhsId);
 
@@ -2047,7 +2012,7 @@ bool IonCacheIRCompiler::emitCallScriptedSetter(ObjOperandId objId,
     masm.Push(UndefinedValue());
   }
   masm.Push(val);
-  masm.Push(TypedOrValueRegister(MIRType::Object, AnyRegister(obj)));
+  masm.Push(TypedOrValueRegister(MIRType::Object, AnyRegister(receiver)));
 
   if (!sameRealm) {
     masm.switchToRealm(target->realm(), scratch);

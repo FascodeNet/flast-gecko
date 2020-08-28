@@ -2741,8 +2741,8 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   masm.bind(&matchResultJoin);
 
   MOZ_ASSERT(nativeTemplateObj.numFixedSlots() == 0);
-  // Dynamic slot count is always rounded to a power of 2
-  MOZ_ASSERT(nativeTemplateObj.numDynamicSlots() == 4);
+  // Dynamic slot count is always one less than a power of 2.
+  MOZ_ASSERT(nativeTemplateObj.numDynamicSlots() == 3);
   static_assert(RegExpRealm::MatchResultObjectIndexSlot == 0,
                 "First slot holds the 'index' property");
   static_assert(RegExpRealm::MatchResultObjectInputSlot == 1,
@@ -11751,10 +11751,10 @@ void CodeGenerator::visitAddAndStoreSlot(LAddAndStoreSlot* ins) {
   const ValueOperand value = ToValue(ins, LAddAndStoreSlot::Value);
   const Register maybeTemp = ToTempRegisterOrInvalid(ins->getTemp(0));
 
-  masm.storeObjShape(ins->mir()->shape(), obj,
-                     [](MacroAssembler& masm, const Address& addr) {
-                       EmitPreBarrier(masm, addr, MIRType::Shape);
-                     });
+  Shape* shape = ins->mir()->shape();
+  masm.storeObjShape(shape, obj, [](MacroAssembler& masm, const Address& addr) {
+    EmitPreBarrier(masm, addr, MIRType::Shape);
+  });
 
   // Perform the store. No pre-barrier required since this is a new
   // initialization.

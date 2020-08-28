@@ -510,7 +510,7 @@ inline bool NativeObject::isInWholeCellBuffer() const {
   MOZ_ASSERT(!clasp->isJSFunction(), "should use JSFunction::create");
 
   size_t nDynamicSlots =
-      dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), clasp);
+      calculateDynamicSlots(shape->numFixedSlots(), shape->slotSpan(), clasp);
 
   JSObject* obj = js::AllocateObject(cx, kind, nDynamicSlots, heap, clasp);
   if (!obj) {
@@ -522,7 +522,7 @@ inline bool NativeObject::isInWholeCellBuffer() const {
   nobj->initShape(shape);
   // NOTE: Dynamic slots are created internally by Allocate<JSObject>.
   if (!nDynamicSlots) {
-    nobj->initSlots(nullptr);
+    nobj->initEmptyDynamicSlots();
   }
   nobj->setEmptyElements();
 
@@ -550,11 +550,12 @@ MOZ_ALWAYS_INLINE bool NativeObject::updateSlotsForSpan(JSContext* cx,
                                                         size_t newSpan) {
   MOZ_ASSERT(oldSpan != newSpan);
 
-  size_t oldCount = dynamicSlotsCount(numFixedSlots(), oldSpan, getClass());
-  size_t newCount = dynamicSlotsCount(numFixedSlots(), newSpan, getClass());
+  size_t oldCapacity = numDynamicSlots();
+  size_t newCapacity =
+      calculateDynamicSlots(numFixedSlots(), newSpan, getClass());
 
   if (oldSpan < newSpan) {
-    if (oldCount < newCount && !growSlots(cx, oldCount, newCount)) {
+    if (oldCapacity < newCapacity && !growSlots(cx, oldCapacity, newCapacity)) {
       return false;
     }
 
@@ -568,12 +569,36 @@ MOZ_ALWAYS_INLINE bool NativeObject::updateSlotsForSpan(JSContext* cx,
     prepareSlotRangeForOverwrite(newSpan, oldSpan);
     invalidateSlotRange(newSpan, oldSpan - newSpan);
 
-    if (oldCount > newCount) {
-      shrinkSlots(cx, oldCount, newCount);
+    if (oldCapacity > newCapacity) {
+      shrinkSlots(cx, oldCapacity, newCapacity);
     }
   }
 
   return true;
+}
+
+MOZ_ALWAYS_INLINE void NativeObject::initEmptyDynamicSlots() {
+  setEmptyDynamicSlots(0);
+}
+
+MOZ_ALWAYS_INLINE void NativeObject::setDictionaryModeSlotSpan(uint32_t span) {
+  MOZ_ASSERT(inDictionaryMode());
+
+  if (!hasDynamicSlots()) {
+    setEmptyDynamicSlots(span);
+    return;
+  }
+
+  getSlotsHeader()->setDictionarySlotSpan(span);
+}
+
+MOZ_ALWAYS_INLINE void NativeObject::setEmptyDynamicSlots(
+    uint32_t dictionarySlotSpan) {
+  MOZ_ASSERT_IF(!inDictionaryMode(), dictionarySlotSpan == 0);
+  MOZ_ASSERT(dictionarySlotSpan <= MAX_FIXED_SLOTS);
+  slots_ = emptyObjectSlotsForDictionaryObject[dictionarySlotSpan];
+  MOZ_ASSERT(getSlotsHeader()->capacity() == 0);
+  MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == dictionarySlotSpan);
 }
 
 MOZ_ALWAYS_INLINE bool NativeObject::setLastProperty(JSContext* cx,

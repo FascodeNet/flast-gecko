@@ -766,6 +766,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     return NumberOperandId(input.id());
   }
 
+  ValOperandId boxObject(ObjOperandId input) {
+    return ValOperandId(input.id());
+  }
+
   void guardShapeForClass(ObjOperandId obj, Shape* shape) {
     // Guard shape to ensure that object class is unchanged. This is true
     // for all shapes.
@@ -801,17 +805,18 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     guardGroup(obj, group);
   }
 
+  static uint32_t encodeNargsAndFlags(JSFunction* fun) {
+    static_assert(JSFunction::NArgsBits == 16);
+    static_assert(sizeof(decltype(fun->flags().toRaw())) == sizeof(uint16_t));
+    return (uint32_t(fun->nargs()) << 16) | fun->flags().toRaw();
+  }
+
   void guardSpecificFunction(ObjOperandId obj, JSFunction* expected) {
     // Guard object is a specific function. This implies immutable fields on
     // the JSFunction struct itself are unchanged.
     // Bake in the nargs and FunctionFlags so Warp can use them off-main thread,
     // instead of directly using the JSFunction fields.
-    static_assert(JSFunction::NArgsBits == 16);
-    static_assert(sizeof(decltype(expected->flags().toRaw())) ==
-                  sizeof(uint16_t));
-
-    uint32_t nargsAndFlags =
-        (uint32_t(expected->nargs()) << 16) | expected->flags().toRaw();
+    uint32_t nargsAndFlags = encodeNargsAndFlags(expected);
     guardSpecificFunction_(obj, expected, nargsAndFlags);
   }
 
@@ -905,6 +910,34 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     target = Simulator::RedirectNativeFunction(target, Args_General3);
 #endif
     callClassHook_(calleeId, argc, flags, target);
+  }
+
+  void callScriptedGetterResult(ValOperandId receiver, JSFunction* getter,
+                                bool sameRealm) {
+    MOZ_ASSERT(getter->hasJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(getter);
+    callScriptedGetterResult_(receiver, getter, sameRealm, nargsAndFlags);
+  }
+
+  void callNativeGetterResult(ValOperandId receiver, JSFunction* getter,
+                              bool sameRealm) {
+    MOZ_ASSERT(getter->isNativeWithoutJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(getter);
+    callNativeGetterResult_(receiver, getter, sameRealm, nargsAndFlags);
+  }
+
+  void callScriptedSetter(ObjOperandId receiver, JSFunction* setter,
+                          ValOperandId rhs, bool sameRealm) {
+    MOZ_ASSERT(setter->hasJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(setter);
+    callScriptedSetter_(receiver, setter, rhs, sameRealm, nargsAndFlags);
+  }
+
+  void callNativeSetter(ObjOperandId receiver, JSFunction* setter,
+                        ValOperandId rhs, bool sameRealm) {
+    MOZ_ASSERT(setter->isNativeWithoutJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(setter);
+    callNativeSetter_(receiver, setter, rhs, sameRealm, nargsAndFlags);
   }
 
   // These generate no code, but save the template object in a stub
@@ -1179,7 +1212,7 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
   PreliminaryObjectAction preliminaryObjectAction_;
 
   AttachDecision tryAttachNative(HandleObject obj, ObjOperandId objId,
-                                 HandleId id);
+                                 HandleId id, ValOperandId receiverId);
   AttachDecision tryAttachUnboxed(HandleObject obj, ObjOperandId objId,
                                   HandleId id);
   AttachDecision tryAttachUnboxedExpando(HandleObject obj, ObjOperandId objId,
@@ -1199,20 +1232,22 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                                   HandleId id);
   AttachDecision tryAttachXrayCrossCompartmentWrapper(HandleObject obj,
                                                       ObjOperandId objId,
-                                                      HandleId id);
+                                                      HandleId id,
+                                                      ValOperandId receiverId);
   AttachDecision tryAttachFunction(HandleObject obj, ObjOperandId objId,
                                    HandleId id);
 
   AttachDecision tryAttachGenericProxy(HandleObject obj, ObjOperandId objId,
                                        HandleId id, bool handleDOMProxies);
   AttachDecision tryAttachDOMProxyExpando(HandleObject obj, ObjOperandId objId,
-                                          HandleId id);
+                                          HandleId id, ValOperandId receiverId);
   AttachDecision tryAttachDOMProxyShadowed(HandleObject obj, ObjOperandId objId,
                                            HandleId id);
   AttachDecision tryAttachDOMProxyUnshadowed(HandleObject obj,
-                                             ObjOperandId objId, HandleId id);
+                                             ObjOperandId objId, HandleId id,
+                                             ValOperandId receiverId);
   AttachDecision tryAttachProxy(HandleObject obj, ObjOperandId objId,
-                                HandleId id);
+                                HandleId id, ValOperandId receiverId);
 
   AttachDecision tryAttachPrimitive(ValOperandId valId, HandleId id);
   AttachDecision tryAttachStringChar(ValOperandId valId, ValOperandId indexId);

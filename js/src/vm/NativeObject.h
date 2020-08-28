@@ -447,12 +447,69 @@ static_assert(ObjectElements::VALUES_PER_HEADER * sizeof(HeapSlot) ==
               "ObjectElements doesn't fit in the given number of slots");
 
 /*
+ * Slots header used for native objects. The header stores the capacity and the
+ * slot data follows in memory.
+ */
+class alignas(HeapSlot) ObjectSlots {
+  uint32_t capacity_;
+  uint32_t dictionarySlotSpan_;
+
+ public:
+  static constexpr size_t VALUES_PER_HEADER = 1;
+
+  static inline size_t allocCount(size_t slotCount) {
+    static_assert(sizeof(ObjectSlots) ==
+                  ObjectSlots::VALUES_PER_HEADER * sizeof(HeapSlot));
+    return slotCount + VALUES_PER_HEADER;
+  }
+
+  static inline size_t allocSize(size_t slotCount) {
+    return allocCount(slotCount) * sizeof(HeapSlot);
+  }
+
+  static ObjectSlots* fromSlots(HeapSlot* slots) {
+    MOZ_ASSERT(slots);
+    return reinterpret_cast<ObjectSlots*>(uintptr_t(slots) -
+                                          sizeof(ObjectSlots));
+  }
+
+  static constexpr size_t offsetOfCapacity() {
+    return offsetof(ObjectSlots, capacity_);
+  }
+  static constexpr size_t offsetOfDictionarySlotSpan() {
+    return offsetof(ObjectSlots, dictionarySlotSpan_);
+  }
+  static constexpr size_t offsetOfSlots() { return sizeof(ObjectSlots); }
+  static constexpr int32_t offsetOfDictionarySlotSpanFromSlots() {
+    return int32_t(offsetOfDictionarySlotSpan()) - int32_t(offsetOfSlots());
+  }
+
+  constexpr explicit ObjectSlots(uint32_t capacity, uint32_t dictionarySlotSpan)
+      : capacity_(capacity), dictionarySlotSpan_(dictionarySlotSpan) {}
+
+  uint32_t capacity() const { return capacity_; }
+  uint32_t dictionarySlotSpan() const { return dictionarySlotSpan_; }
+
+  void setDictionarySlotSpan(uint32_t span) { dictionarySlotSpan_ = span; }
+
+  HeapSlot* slots() const {
+    return reinterpret_cast<HeapSlot*>(uintptr_t(this) + sizeof(ObjectSlots));
+  }
+};
+
+/*
  * Shared singletons for objects with no elements.
  * emptyObjectElementsShared is used only for TypedArrays, when the TA
  * maps shared memory.
  */
 extern HeapSlot* const emptyObjectElements;
 extern HeapSlot* const emptyObjectElementsShared;
+
+/*
+ * Shared singletons for objects with no dynamic slots.
+ */
+extern HeapSlot* const emptyObjectSlots;
+extern HeapSlot* const emptyObjectSlotsForDictionaryObject[];
 
 class AutoCheckShapeConsistency;
 class GCMarker;
@@ -623,12 +680,16 @@ class NativeObject : public JSObject {
    * Update the slot span directly for a dictionary object, and allocate
    * slots to cover the new span if necessary.
    */
-  bool setSlotSpan(JSContext* cx, uint32_t span);
+  bool ensureSlotsForDictionaryObject(JSContext* cx, uint32_t span);
 
   static MOZ_MUST_USE bool toDictionaryMode(JSContext* cx,
                                             HandleNativeObject obj);
 
  private:
+  inline void setEmptyDynamicSlots(uint32_t dictonarySlotSpan);
+
+  inline void setDictionaryModeSlotSpan(uint32_t span);
+
   friend class TenuringTracer;
 
   /*
@@ -719,7 +780,7 @@ class NativeObject : public JSObject {
    * ArrayObjects don't use this limit and can have a lower slot capacity,
    * since they normally don't have a lot of slots.
    */
-  static const uint32_t SLOT_CAPACITY_MIN = 8;
+  static const uint32_t SLOT_CAPACITY_MIN = 8 - ObjectSlots::VALUES_PER_HEADER;
 
   HeapSlot* fixedSlots() const {
     return reinterpret_cast<HeapSlot*>(uintptr_t(this) + sizeof(NativeObject));
@@ -727,7 +788,11 @@ class NativeObject : public JSObject {
 
  public:
   /* Object allocation may directly initialize slots so this is public. */
-  void initSlots(HeapSlot* slots) { slots_ = slots; }
+  void initSlots(HeapSlot* slots) {
+    MOZ_ASSERT(slots);
+    slots_ = slots;
+  }
+  inline void initEmptyDynamicSlots();
 
   static MOZ_MUST_USE bool generateOwnShape(JSContext* cx,
                                             HandleNativeObject obj,
@@ -778,11 +843,18 @@ class NativeObject : public JSObject {
 
   uint32_t slotSpan() const {
     if (inDictionaryMode()) {
-      return lastProperty()->base()->slotSpan();
+      return dictionaryModeSlotSpan();
+    } else {
+      MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == 0);
+      // Get the class from the object group rather than the base shape to avoid
+      // a race between Shape::ensureOwnBaseShape and background sweeping.
+      return lastProperty()->slotSpan(getClass());
     }
-    // Get the class from the object group rather than the base shape to avoid a
-    // race between Shape::ensureOwnBaseShape and background sweeping.
-    return lastProperty()->slotSpan(getClass());
+  }
+
+  uint32_t dictionaryModeSlotSpan() const {
+    MOZ_ASSERT(inDictionaryMode());
+    return getSlotsHeader()->dictionarySlotSpan();
   }
 
   /* Whether a slot is at a fixed offset from this object. */
@@ -837,15 +909,17 @@ class NativeObject : public JSObject {
    * The number of allocated slots is not stored explicitly, and changes to
    * the slots must track changes in the slot span.
    */
-  bool growSlots(JSContext* cx, uint32_t oldCount, uint32_t newCount);
-  void shrinkSlots(JSContext* cx, uint32_t oldCount, uint32_t newCount);
+  bool growSlots(JSContext* cx, uint32_t oldCapacity, uint32_t newCapacity);
+  void shrinkSlots(JSContext* cx, uint32_t oldCapacity, uint32_t newCapacity);
+
+  bool allocateSlots(JSContext* cx, uint32_t newCapacity);
 
   /*
    * This method is static because it's called from JIT code. On OOM, returns
    * false without leaving a pending exception on the context.
    */
   static bool growSlotsPure(JSContext* cx, NativeObject* obj,
-                            uint32_t newCount);
+                            uint32_t newCapacity);
 
   /*
    * Like growSlotsPure but for dense elements. This will return
@@ -854,9 +928,11 @@ class NativeObject : public JSObject {
    */
   static bool addDenseElementPure(JSContext* cx, NativeObject* obj);
 
-  bool hasDynamicSlots() const { return !!slots_; }
+  bool hasDynamicSlots() const { return getSlotsHeader()->capacity(); }
 
-  /* Compute dynamicSlotsCount() for this object. */
+  /* Compute the number of dynamic slots required for this object. */
+  MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots() const;
+
   MOZ_ALWAYS_INLINE uint32_t numDynamicSlots() const;
 
   bool empty() const { return lastProperty()->isEmptyShape(); }
@@ -1155,15 +1231,15 @@ class NativeObject : public JSObject {
   }
 
   /*
-   * Get the number of dynamic slots to allocate to cover the properties in
-   * an object with the given number of fixed slots and slot span. The slot
-   * capacity is not stored explicitly, and the allocated size of the slot
-   * array is kept in sync with this count.
+   * Calculate the number of dynamic slots to allocate to cover the properties
+   * in an object with the given number of fixed slots and slot span.
    */
-  static MOZ_ALWAYS_INLINE uint32_t dynamicSlotsCount(uint32_t nfixed,
-                                                      uint32_t span,
-                                                      const JSClass* clasp);
-  static MOZ_ALWAYS_INLINE uint32_t dynamicSlotsCount(Shape* shape);
+  static MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots(uint32_t nfixed,
+                                                          uint32_t span,
+                                                          const JSClass* clasp);
+  static MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots(Shape* shape);
+
+  ObjectSlots* getSlotsHeader() const { return ObjectSlots::fromSlots(slots_); }
 
   /* Elements accessors. */
 
