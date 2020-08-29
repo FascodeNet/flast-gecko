@@ -3055,9 +3055,6 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
     }
 
     case ParseNodeKind::ComputedName: {
-      if (pn->as<UnaryNode>().isSyntheticComputedName()) {
-        return literal(pn->as<UnaryNode>().kid(), dst);
-      }
       RootedValue name(cx);
       return expression(pn->as<UnaryNode>().kid(), &name) &&
              builder.computedName(name, &pn->pn_pos, dst);
