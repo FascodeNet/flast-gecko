@@ -146,7 +146,7 @@ bool ParserAtomEntry::isIndex(uint32_t* indexp) const {
 JS::Result<JSAtom*, OOM&> ParserAtomEntry::toJSAtom(
     JSContext* cx, CompilationInfo& compilationInfo) const {
   if (atomIndex_.constructed<AtomIndex>()) {
-    return compilationInfo.input.atoms[atomIndex_.ref<AtomIndex>()].get();
+    return compilationInfo.input.atoms[atomIndex_.ref<AtomIndex>()];
   }
   if (atomIndex_.constructed<WellKnownAtomId>()) {
     return GetWellKnownAtom(cx, atomIndex_.ref<WellKnownAtomId>());
@@ -163,7 +163,7 @@ JS::Result<JSAtom*, OOM&> ParserAtomEntry::toJSAtom(
   }
   auto index = compilationInfo.input.atoms.length();
   if (!compilationInfo.input.atoms.append(atom)) {
-    return mozilla::Err(PARSER_ATOMS_OOM);
+    return RaiseParserAtomsOOMError(cx);
   }
   atomIndex_.construct<AtomIndex>(index);
   return atom;
@@ -184,8 +184,8 @@ void ParserAtomEntry::dumpCharsNoQuote(js::GenericPrinter& out) const {
 }
 #endif
 
-ParserAtomsTable::ParserAtomsTable(JSContext* cx)
-    : entrySet_(cx), wellKnownTable_(*cx->runtime()->commonParserNames) {}
+ParserAtomsTable::ParserAtomsTable(JSRuntime* rt)
+    : wellKnownTable_(*rt->commonParserNames) {}
 
 JS::Result<const ParserAtom*, OOM&> ParserAtomsTable::addEntry(
     JSContext* cx, AddPtr& addPtr, UniquePtr<ParserAtomEntry> entry) {
@@ -348,7 +348,7 @@ JS::Result<const ParserAtom*, OOM&> ParserAtomsTable::internJSAtom(
 
     auto index = AtomIndex(compilationInfo.input.atoms.length());
     if (!compilationInfo.input.atoms.append(atom)) {
-      return mozilla::Err(PARSER_ATOMS_OOM);
+      return RaiseParserAtomsOOMError(cx);
     }
     id->setAtomIndex(index);
   } else {
@@ -529,6 +529,7 @@ bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
   // Save name for returning after moving entry into set.
   const ParserName* nm = entry.get()->asName();
   if (!entrySet_.putNew(lookup, std::move(entry))) {
+    js::ReportOutOfMemory(cx);
     return false;
   }
 
@@ -566,7 +567,7 @@ bool JSRuntime::initializeParserAtoms(JSContext* cx) {
   }
 
   UniquePtr<js::frontend::WellKnownParserAtoms> names(
-      js_new<js::frontend::WellKnownParserAtoms>(cx));
+      js_new<js::frontend::WellKnownParserAtoms>());
   if (!names || !names->init(cx)) {
     return false;
   }

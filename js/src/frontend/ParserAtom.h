@@ -385,16 +385,16 @@ class WellKnownParserAtoms {
 
  private:
   using EntrySet = HashSet<UniquePtr<ParserAtomEntry>, ParserAtomLookupHasher,
-                           TempAllocPolicy>;
+                           js::SystemAllocPolicy>;
   EntrySet entrySet_;
 
   bool initSingle(JSContext* cx, const ParserName** name, const char* str,
                   WellKnownAtomId kind);
 
  public:
-  explicit WellKnownParserAtoms(JSContext* cx) : entrySet_(cx) {}
+  WellKnownParserAtoms() = default;
 
-  bool init(JSContext* cx);
+  bool init(JSContext * cx);
 
   template <typename CharT>
   const ParserAtom* lookupChar16Seq(InflatedChar16Sequence<CharT> seq) const;
@@ -407,12 +407,12 @@ class WellKnownParserAtoms {
 class ParserAtomsTable {
  private:
   using EntrySet = HashSet<UniquePtr<ParserAtomEntry>, ParserAtomLookupHasher,
-                           TempAllocPolicy>;
+                           js::SystemAllocPolicy>;
   EntrySet entrySet_;
   const WellKnownParserAtoms& wellKnownTable_;
 
  public:
-  explicit ParserAtomsTable(JSContext* cx);
+  explicit ParserAtomsTable(JSRuntime* rt);
 
  private:
   // Custom AddPtr for the ParserAtomsTable.

@@ -5,44 +5,30 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 from taskgraph.optimize import OptimizationStrategy, register_strategy
-from taskgraph.util.attributes import match_run_on_projects
-from taskgraph.util.backstop import is_backstop, BACKSTOP_PUSH_INTERVAL, BACKSTOP_TIME_INTERVAL
 
 
-@register_strategy('backstop', args=(BACKSTOP_PUSH_INTERVAL, BACKSTOP_TIME_INTERVAL, {'all'}))
-@register_strategy("push-interval-10", args=(10, 0, {'try'}))
-@register_strategy("backstop-10-pushes-2-hours", args=(10, 120, {'try'}))
-@register_strategy("backstop-20-pushes-4-hours", args=(20, 240, {'try'}))
-@register_strategy("push-interval-20", args=(20, 0, {'try'}))
-@register_strategy("push-interval-25", args=(25, 0, {'try'}))
+@register_strategy("backstop")
 class Backstop(OptimizationStrategy):
     """Ensures that no task gets left behind.
 
-    Will schedule all tasks either every Nth push, or M minutes. This behaviour
-    is only enabled on autoland. For all other projects, the
-    `remove_on_projects` flag determines what will happen.
+    Will schedule all tasks if this is a backstop push.
+    """
+    def should_remove_task(self, task, params, _):
+        return not params["backstop"]
+
+
+@register_strategy("push-interval-10", args=(10,))
+@register_strategy("push-interval-20", args=(20,))
+@register_strategy("push-interval-25", args=(25,))
+class PushInterval(OptimizationStrategy):
+    """Runs tasks every N pushes.
 
     Args:
         push_interval (int): Number of pushes
-        time_interval (int): Minutes between forced schedules.
-                             Use 0 to disable.
-        remove_on_projects (set): For non-autoland projects, the task will
-            be removed if we're running on one of these projects, otherwise
-            it will be kept.
     """
-    def __init__(self, push_interval, time_interval, remove_on_projects):
+    def __init__(self, push_interval):
         self.push_interval = push_interval
-        self.time_interval = time_interval
-        self.remove_on_projects = remove_on_projects
 
     def should_remove_task(self, task, params, _):
-        project = params["project"]
-
-        # Scheduling on a backstop only makes sense on autoland. For other projects,
-        # remove the task if the project matches self.remove_on_projects.
-        if project != 'autoland':
-            return match_run_on_projects(project, self.remove_on_projects)
-
-        if is_backstop(params, self.push_interval, self.time_interval):
-            return False
-        return True
+        # On every Nth push, want to run all tasks.
+        return int(params["pushlog_id"]) % self.push_interval != 0

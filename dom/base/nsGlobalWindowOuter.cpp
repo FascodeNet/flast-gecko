@@ -2432,7 +2432,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
 
   // Update the current window for our BrowsingContext.
   RefPtr<BrowsingContext> bc = GetBrowsingContext();
-  MOZ_ALWAYS_SUCCEEDS(bc->SetCurrentInnerWindowId(mInnerWindow->WindowID()));
+
+  if (bc->IsOwnedByProcess()) {
+    MOZ_ALWAYS_SUCCEEDS(bc->SetCurrentInnerWindowId(mInnerWindow->WindowID()));
+  }
 
   // We no longer need the old inner window.  Start its destruction if
   // its not being reused and clear our reference.
@@ -5282,11 +5285,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
   }
 
   RefPtr<Document> docToPrint = mDoc;
-  MOZ_DIAGNOSTIC_ASSERT(docToPrint,
-                        "This gets forwarded from the inner when "
-                        "we have an active window, so there should "
-                        "be a document");
-  if (!docToPrint) {
+  if (NS_WARN_IF(!docToPrint)) {
     aError.ThrowNotSupportedError("Document is gone");
     return nullptr;
   }

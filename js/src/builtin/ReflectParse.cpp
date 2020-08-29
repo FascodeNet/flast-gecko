@@ -3055,6 +3055,9 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
     }
 
     case ParseNodeKind::ComputedName: {
+      if (pn->as<UnaryNode>().isSyntheticComputedName()) {
+        return literal(pn->as<UnaryNode>().kid(), dst);
+      }
       RootedValue name(cx);
       return expression(pn->as<UnaryNode>().kid(), &name) &&
              builder.computedName(name, &pn->pn_pos, dst);
@@ -3765,13 +3768,13 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
   options.allowHTMLComments = target == ParseGoal::Script;
   mozilla::Range<const char16_t> chars = linearChars.twoByteRange();
 
-  CompilationInfo compilationInfo(cx, options);
+  Rooted<CompilationInfo> compilationInfo(cx, CompilationInfo(cx, options));
   if (target == ParseGoal::Script) {
-    if (!compilationInfo.input.initForGlobal(cx)) {
+    if (!compilationInfo.get().input.initForGlobal(cx)) {
       return false;
     }
   } else {
-    if (!compilationInfo.input.initForModule(cx)) {
+    if (!compilationInfo.get().input.initForModule(cx)) {
       return false;
     }
   }
@@ -3781,8 +3784,8 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
 
   Parser<FullParseHandler, char16_t> parser(
       cx, options, chars.begin().get(), chars.length(),
-      /* foldConstants = */ false, compilationInfo, compilationState, nullptr,
-      nullptr);
+      /* foldConstants = */ false, compilationInfo.get(), compilationState,
+      nullptr, nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -3805,7 +3808,7 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
     uint32_t len = chars.length();
     SourceExtent extent =
         SourceExtent::makeGlobalExtent(len, options.lineno, options.column);
-    ModuleSharedContext modulesc(cx, compilationInfo, builder, extent);
+    ModuleSharedContext modulesc(cx, compilationInfo.get(), builder, extent);
     pn = parser.moduleBody(&modulesc);
     if (!pn) {
       return false;

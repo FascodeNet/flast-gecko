@@ -176,7 +176,6 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   static void Init();
   static LogModule* GetLog();
-  static void CleanupContexts(uint64_t aProcessId);
 
   // Look up a BrowsingContext in the current process by ID.
   static already_AddRefed<BrowsingContext> Get(uint64_t aId);
@@ -226,6 +225,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // process? This may be true with a null mDocShell after the Window has been
   // closed.
   bool IsInProcess() const { return mIsInProcess; }
+
+  bool IsOwnedByProcess() const;
 
   bool CanHaveRemoteOuterProxies() const {
     return !mIsInProcess || mDanglingRemoteOuterProxies;
@@ -652,6 +653,15 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // Removes entries corresponding to this BrowsingContext from session history.
   void RemoveFromSessionHistory();
 
+  void SetTriggeringAndInheritPrincipals(nsIPrincipal* aTriggeringPrincipal,
+                                         nsIPrincipal* aPrincipalToInherit,
+                                         uint64_t aLoadIdentifier);
+
+  // Return mTriggeringPrincipal and mPrincipalToInherit if the load id
+  // saved with the principal matches the current load identifier of this BC.
+  Tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
+  GetTriggeringAndInheritPrincipalsForCurrentLoad();
+
  protected:
   virtual ~BrowsingContext();
   BrowsingContext(WindowContext* aParentWindow, BrowsingContextGroup* aGroup,
@@ -831,6 +841,12 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void CreateChildSHistory();
 
+  using PrincipalWithLoadIdentifierTuple =
+      Tuple<nsCOMPtr<nsIPrincipal>, uint64_t>;
+
+  nsIPrincipal* GetSavedPrincipal(
+      Maybe<PrincipalWithLoadIdentifierTuple> aPrincipalTuple);
+
   // Type of BrowsingContent
   const Type mType;
 
@@ -906,6 +922,13 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // The start time of user gesture, this is only available if the browsing
   // context is in process.
   TimeStamp mUserGestureStart;
+
+  // Triggering principal and principal to inherit need to point to original
+  // principal instances if the document is loaded in the same process as the
+  // process that initiated the load. When the load starts we save the
+  // principals along with the current load id.
+  Maybe<PrincipalWithLoadIdentifierTuple> mTriggeringPrincipal;
+  Maybe<PrincipalWithLoadIdentifierTuple> mPrincipalToInherit;
 
   class DeprioritizedLoadRunner
       : public mozilla::Runnable,

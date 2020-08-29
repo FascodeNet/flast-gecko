@@ -23,12 +23,12 @@ const TEST_EXPERIMENT = {
       {
         slug: "treatment",
         ratio: 1,
-        value: null,
+        feature: { featureId: "treatment", enabled: true, value: null },
       },
       {
         slug: "control",
         ratio: 1,
-        value: null,
+        feature: { featureId: "control", enabled: true, value: null },
       },
     ],
     bucketConfig: {
@@ -64,7 +64,7 @@ add_task(async function setup() {
   await SpecialPowers.pushPrefEnv({
     set: [["messaging-system.log", "all"]],
   });
-  rsClient = RemoteSettings("messaging-experiments");
+  rsClient = RemoteSettings("nimbus-experiments-desktop");
 
   registerCleanupFunction(async () => {
     await SpecialPowers.popPrefEnv();

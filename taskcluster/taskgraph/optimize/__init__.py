@@ -115,33 +115,112 @@ def remove_tasks(target_task_graph, requested_tasks, params, optimizations, do_n
     opt_counts = defaultdict(int)
     opt_reasons = {}
     removed = set()
-    reverse_links_dict = target_task_graph.graph.reverse_links_dict()
+    dependents_of = target_task_graph.graph.reverse_links_dict()
+    tasks = target_task_graph.tasks
+    prune_candidates = set()
 
+    # Traverse graph so dependents (child nodes) are guaranteed to be processed
+    # first.
     for label in target_task_graph.graph.visit_preorder():
+        # Dependents that can be pruned away (shouldn't cause this task to run).
+        # Only dependents that either:
+        #   A) Explicitly reference this task in their 'if_dependencies' list, or
+        #   B) Don't have an 'if_dependencies' attribute (i.e are in 'prune_candidates'
+        #      because they should be removed but have prune_deps themselves)
+        # should be considered.
+        prune_deps = {l for l in dependents_of[label]
+                      if l in prune_candidates
+                      if not tasks[l].if_dependencies or label in tasks[l].if_dependencies}
+
+        def _keep(reason):
+            """Mark a task as being kept in the graph. Also recursively removes
+            any dependents from `prune_candidates`, assuming they should be
+            kept because of this task.
+            """
+            opt_reasons[label] = ("kept", reason)
+
+            # Removes dependents that were in 'prune_candidates' from a task
+            # that ended up being kept (and therefore the dependents should
+            # also be kept).
+            queue = list(prune_deps)
+            while queue:
+                l = queue.pop()
+
+                # If l is a prune_dep of multiple tasks it could be queued up
+                # multiple times. Guard against it being already removed.
+                if l not in prune_candidates:
+                    continue
+
+                # If a task doesn't set 'if_dependencies' itself (rather it was
+                # added to 'prune_candidates' due to one of its depenendents),
+                # then we shouldn't remove it.
+                if not tasks[l].if_dependencies:
+                    continue
+
+                prune_candidates.remove(l)
+                queue.extend([r for r in dependents_of[l] if r in prune_candidates])
+
+        def _remove(reason):
+            """Potentially mark a task as being removed from the graph. If the
+            task has dependents that can be pruned, add this task to
+            `prune_candidates` rather than removing it.
+            """
+            if prune_deps:
+                # If there are prune_deps, unsure if we can remove this task yet.
+                prune_candidates.add(label)
+            else:
+                opt_reasons[label] = ("removed", reason)
+                opt_counts[reason] += 1
+                removed.add(label)
+
         # if we're not allowed to optimize, that's easy..
         if label in do_not_optimize:
-            opt_reasons[label] = ("kept", "do not optimize")
+            _keep("do not optimize")
             continue
 
-        # if there are remaining tasks depending on this one, do not remove..
-        if any(l not in removed for l in reverse_links_dict[label]):
-            opt_reasons[label] = ("kept", "dependent tasks")
+        # If there are remaining tasks depending on this one, do not remove.
+        if any(l for l in dependents_of[label] if l not in removed and l not in prune_deps):
+            _keep("dependent tasks")
             continue
 
         # Some tasks in the task graph only exist because they were required
         # by a task that has just been optimized away. They can now be removed.
         if label not in requested_tasks:
-            opt_counts['dependents-optimized'] += 1
-            opt_reasons[label] = ("removed", "dependents optimized")
-            removed.add(label)
+            _remove("dependents optimized")
+            continue
 
-        # call the optimization strategy
-        task = target_task_graph.tasks[label]
+        # Call the optimization strategy.
+        task = tasks[label]
         opt_by, opt, arg = optimizations(label)
         if opt.should_remove_task(task, params, arg):
-            opt_counts[opt_by] += 1
-            opt_reasons[label] = ("removed", "'{}' strategy".format(opt_by))
+            _remove(opt_by)
+            continue
+
+        # Some tasks should only run if their dependency was also run. Since we
+        # haven't processed dependencies yet, we add them to a list of
+        # candidate tasks for pruning.
+        if task.if_dependencies:
+            opt_reasons[label] = ("kept", opt_by)
+            prune_candidates.add(label)
+        else:
+            _keep(opt_by)
+
+    if prune_candidates:
+        reason = "if-dependencies pruning"
+        for label in prune_candidates:
+            # There's an edge case where a triangle graph can cause a
+            # dependency to stay in 'prune_candidates' when the dependent
+            # remains. Do a final check to ensure we don't create any bad
+            # edges.
+            dependents = any(d for d in dependents_of[label]
+                             if d not in prune_candidates
+                             if d not in removed)
+            if dependents:
+                opt_reasons[label] = ("kept", "dependent tasks")
+                continue
             removed.add(label)
+            opt_counts[reason] += 1
+            opt_reasons[label] = ("removed", reason)
 
     _log_optimization('removed', opt_counts, opt_reasons)
     return removed
@@ -411,7 +490,7 @@ import_sibling_modules()
 
 # Register composite strategies.
 register_strategy('build', args=('skip-unless-schedules',))(Alias)
-register_strategy('build-fuzzing', args=('backstop-10-pushes-2-hours',))(Alias)
+register_strategy('build-fuzzing', args=('push-interval-10', 'backstop'))(All)
 register_strategy('test', args=('skip-unless-schedules',))(Alias)
 register_strategy('test-inclusive', args=('skip-unless-schedules',))(Alias)
 
@@ -422,15 +501,12 @@ register_strategy('test-inclusive', args=('skip-unless-schedules',))(Alias)
 class project(object):
     """Strategies that should be applied per-project."""
 
-    # Optimize everything away, except on 20th pushes.
-    register_strategy('full-backstop', args=('backstop-20-pushes-4-hours',))(Alias)
-
     # Optimize everything away, except on 10th pushes, where we run everything that was selected by
     # bugbug for the last 10 pushes.
     register_strategy(
         'optimized-backstop',
         args=(
-            'backstop-10-pushes-2-hours',
+            'push-interval-10',
             Any(
                 'skip-unless-schedules',
                 Any(
@@ -444,19 +520,19 @@ class project(object):
 
     # The three strategies are part of an All composite strategy, which means they are linked
     # by AND.
-    # - On 20th pushes, "full-backstop" will not allow the strategy to optimize anything away.
-    # - On 10th pushes, "full-backstop" allows the strategy to optimize things away, but
+    # - On 20th pushes, "backstop" will not allow the strategy to optimize anything away.
+    # - On 10th pushes, "backstop" allows the strategy to optimize things away, but
     #   "optimized-backstop" will apply the relaxed bugbug optimization and will not allow the
     #   normal bugbug optimization to apply.
     # - On all other pushes, the normal bugbug optimization is applied.
     autoland = {
         'test': All(
-            'full-backstop',
+            'backstop',
             'optimized-backstop',
             Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
         ),
         'build': All(
-            'backstop-10-pushes-2-hours',
+            'push-interval-10',
             Any(
                 'skip-unless-schedules',
                 'bugbug-reduced-fallback',
