@@ -24,6 +24,8 @@
 #include "mozilla/NullPrincipal.h"
 #include "nsIWebNavigation.h"
 #include "mozilla/MozPromiseInlines.h"
+#include "nsDocShell.h"
+#include "nsFrameLoader.h"
 #include "nsGlobalWindowOuter.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsNetUtil.h"
@@ -285,6 +287,20 @@ SessionHistoryEntry* CanonicalBrowsingContext::GetActiveSessionHistoryEntry() {
   return mActiveEntry;
 }
 
+bool CanonicalBrowsingContext::HasHistoryEntry(nsISHEntry* aEntry) {
+  // XXX Should we check also loading entries?
+  return aEntry && mActiveEntry == aEntry;
+}
+
+void CanonicalBrowsingContext::SwapHistoryEntries(nsISHEntry* aOldEntry,
+                                                  nsISHEntry* aNewEntry) {
+  // XXX Should we check also loading entries?
+  if (mActiveEntry == aOldEntry) {
+    nsCOMPtr<SessionHistoryEntry> newEntry = do_QueryInterface(aNewEntry);
+    mActiveEntry = newEntry.forget();
+  }
+}
+
 UniquePtr<LoadingSessionHistoryInfo>
 CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
     nsDocShellLoadState* aLoadState, nsIChannel* aChannel) {
@@ -295,6 +311,8 @@ CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
     entry = SessionHistoryEntry::GetByLoadId(existingLoadingInfo->mLoadId);
   } else {
     entry = new SessionHistoryEntry(aLoadState, aChannel);
+    entry->SetDocshellID(GetHistoryID());
+    entry->SetForInitialLoad(true);
   }
   MOZ_DIAGNOSTIC_ASSERT(entry);
 
@@ -322,15 +340,17 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
         return;
       }
 
-      RefPtr<SessionHistoryEntry> oldActiveEntry = mActiveEntry.forget();
-      mActiveEntry = mLoadingEntries[i].mEntry;
+      RefPtr<SessionHistoryEntry> oldActiveEntry = mActiveEntry;
+      RefPtr<SessionHistoryEntry> newActiveEntry = mLoadingEntries[i].mEntry;
 
+      bool loadFromSessionHistory = !newActiveEntry->ForInitialLoad();
+      newActiveEntry->SetForInitialLoad(false);
       SessionHistoryEntry::RemoveLoadId(aLoadId);
       mLoadingEntries.RemoveElementAt(i);
       if (IsTop()) {
-        nsCOMPtr<nsISHistory> existingSHistory = mActiveEntry->GetShistory();
-        if (existingSHistory) {
-          MOZ_ASSERT(existingSHistory == shistory);
+        mActiveEntry = newActiveEntry;
+        if (loadFromSessionHistory) {
+          // XXX Synchronize browsing context tree and session history tree?
           shistory->UpdateIndex();
         } else {
           shistory->AddEntry(mActiveEntry,
@@ -341,16 +361,24 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
         // FIXME The old implementations adds it to the parent's mLSHE if there
         //       is one, need to figure out if that makes sense here (peterv
         //       doesn't think it would).
-        // FIXME if the loading entry is already in the session history, we
-        // shouldn't add a new entry.
-        if (oldActiveEntry) {
+        if (loadFromSessionHistory) {
+          oldActiveEntry->SyncTreesForSubframeNavigation(newActiveEntry, Top(),
+                                                         this);
+          mActiveEntry = newActiveEntry;
+          shistory->UpdateIndex();
+        } else if (oldActiveEntry) {
+          // AddChildSHEntryHelper does update the index of the session history!
           // FIXME Need to figure out the right value for aCloneChildren.
-          shistory->AddChildSHEntryHelper(oldActiveEntry, mActiveEntry, Top(),
+          shistory->AddChildSHEntryHelper(oldActiveEntry, newActiveEntry, Top(),
                                           true);
+          mActiveEntry = newActiveEntry;
         } else {
           SessionHistoryEntry* parentEntry =
               static_cast<CanonicalBrowsingContext*>(GetParent())->mActiveEntry;
+          // XXX What should happen if parent doesn't have mActiveEntry?
+          //     Or can that even happen ever?
           if (parentEntry) {
+            mActiveEntry = newActiveEntry;
             // FIXME The docshell code sometime uses -1 for aChildOffset!
             // FIXME Using IsInProcess for aUseRemoteSubframes isn't quite
             //       right, but aUseRemoteSubframes should be going away.
@@ -419,6 +447,7 @@ void CanonicalBrowsingContext::SetActiveSessionHistoryEntryForTop(
                                       aPreviousScrollPos.ref().y);
   }
   RefPtr<SessionHistoryEntry> newEntry = new SessionHistoryEntry(aInfo);
+  newEntry->SetDocshellID(GetHistoryID());
   mActiveEntry = newEntry;
   Maybe<int32_t> previousEntryIndex, loadedEntryIndex;
   nsISHistory* shistory = GetSessionHistory();
@@ -446,6 +475,7 @@ void CanonicalBrowsingContext::SetActiveSessionHistoryEntryForFrame(
                                       aPreviousScrollPos.ref().y);
   }
   RefPtr<SessionHistoryEntry> newEntry = new SessionHistoryEntry(aInfo);
+  newEntry->SetDocshellID(GetHistoryID());
   mActiveEntry = newEntry;
   nsISHistory* shistory = GetSessionHistory();
   if (oldActiveEntry) {
@@ -720,28 +750,6 @@ void CanonicalBrowsingContext::Stop(uint32_t aStopFlags) {
   }
 }
 
-// While process switching, we need to check if any of our ancestors are
-// discarded or no longer current, in which case the process switch needs to be
-// aborted.
-static bool AncestorsAreCurrent(CanonicalBrowsingContext* aContext) {
-  if (aContext->IsDiscarded()) {
-    return false;
-  }
-
-  RefPtr<WindowGlobalParent> ancestorWindow(aContext->GetParentWindowContext());
-  while (ancestorWindow) {
-    // If our ancestor window is no longer the current window, or if any of our
-    // ancestors have been discarded, return `false` to abort the process
-    // switch.
-    if (ancestorWindow->IsCached() || ancestorWindow->IsDiscarded() ||
-        ancestorWindow->GetBrowsingContext()->IsDiscarded()) {
-      return false;
-    }
-    ancestorWindow = ancestorWindow->GetParentWindowContext();
-  }
-  return true;
-}
-
 void CanonicalBrowsingContext::PendingRemotenessChange::ProcessReady() {
   if (!mPromise) {
     return;
@@ -770,7 +778,10 @@ void CanonicalBrowsingContext::PendingRemotenessChange::Finish() {
     return;
   }
 
-  if (!AncestorsAreCurrent(target)) {
+  // While process switching, we need to check if any of our ancestors are
+  // discarded or no longer current, in which case the process switch needs to be
+  // aborted.
+  if (!target->AncestorsAreCurrent()) {
     NS_WARNING("Ancestor context is no longer current");
     Cancel(NS_ERROR_FAILURE);
     return;
@@ -1026,7 +1037,7 @@ CanonicalBrowsingContext::ChangeRemoteness(const nsACString& aRemoteType,
   MOZ_DIAGNOSTIC_ASSERT(aSpecificGroupId == 0 || aReplaceBrowsingContext,
                         "Cannot specify group ID unless replacing BC");
 
-  if (!AncestorsAreCurrent(this)) {
+  if (!AncestorsAreCurrent()) {
     NS_WARNING("An ancestor context is no longer current");
     return RemotenessPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
   }

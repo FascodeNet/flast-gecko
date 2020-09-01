@@ -455,7 +455,8 @@ class nsContainerFrame : public nsSplittableFrame {
 #define NS_DECLARE_FRAME_PROPERTY_FRAMELIST(prop) \
   NS_DECLARE_FRAME_PROPERTY_WITH_DTOR_NEVER_CALLED(prop, nsFrameList)
 
-  typedef PropertyDescriptor<nsFrameList> FrameListPropertyDescriptor;
+  using FrameListPropertyDescriptor =
+      mozilla::FrameProperties::Descriptor<nsFrameList>;
 
   NS_DECLARE_FRAME_PROPERTY_FRAMELIST(OverflowProperty)
   NS_DECLARE_FRAME_PROPERTY_FRAMELIST(OverflowContainersProperty)
@@ -536,45 +537,115 @@ class nsContainerFrame : public nsSplittableFrame {
    */
 
   /**
-   * Get the frames on the overflow list.  Can return null if there are no
-   * overflow frames.  The caller does NOT take ownership of the list; it's
-   * still owned by this frame.  A non-null return value indicates that the
-   * list is nonempty.
+   * Get the frames on the overflow list, overflow containers list, or excess
+   * overflow containers list. Can return null if there are no frames in the
+   * list.
+   *
+   * The caller does NOT take ownership of the list; it's still owned by this
+   * frame. A non-null return value indicates that the list is non-empty.
    */
-  nsFrameList* GetOverflowFrames() const {
+  [[nodiscard]] nsFrameList* GetOverflowFrames() const {
     nsFrameList* list = GetProperty(OverflowProperty());
     NS_ASSERTION(!list || !list->IsEmpty(), "Unexpected empty overflow list");
     return list;
   }
+  [[nodiscard]] nsFrameList* GetOverflowContainers() const {
+    nsFrameList* list = GetProperty(OverflowContainersProperty());
+    NS_ASSERTION(!list || !list->IsEmpty(),
+                 "Unexpected empty overflow containers list");
+    return list;
+  }
+  [[nodiscard]] nsFrameList* GetExcessOverflowContainers() const {
+    nsFrameList* list = GetProperty(ExcessOverflowContainersProperty());
+    NS_ASSERTION(!list || !list->IsEmpty(),
+                 "Unexpected empty overflow containers list");
+    return list;
+  }
 
   /**
-   * As GetOverflowFrames, but removes the overflow frames property.  The
-   * caller is responsible for deleting nsFrameList and either passing
-   * ownership of the frames to someone else or destroying the frames.
-   * A non-null return value indicates that the list is nonempty.  The
-   * recommended way to use this function it to assign its return value
-   * into an AutoFrameListPtr.
+   * Same as the Get methods above, but also remove and the property from this
+   * frame.
+   *
+   * The caller is responsible for deleting nsFrameList and either passing
+   * ownership of the frames to someone else or destroying the frames. A
+   * non-null return value indicates that the list is non-empty. The recommended
+   * way to use this function it to assign its return value into an
+   * AutoFrameListPtr.
    */
   [[nodiscard]] nsFrameList* StealOverflowFrames() {
     nsFrameList* list = TakeProperty(OverflowProperty());
     NS_ASSERTION(!list || !list->IsEmpty(), "Unexpected empty overflow list");
     return list;
   }
-
-  /**
-   * Set the overflow list.  aOverflowFrames must not be an empty list.
-   */
-  void SetOverflowFrames(const nsFrameList& aOverflowFrames) {
-    MOZ_ASSERT(aOverflowFrames.NotEmpty(), "Shouldn't be called");
-    SetProperty(OverflowProperty(),
-                new (PresShell()) nsFrameList(aOverflowFrames));
+  [[nodiscard]] nsFrameList* StealOverflowContainers() {
+    nsFrameList* list = TakeProperty(OverflowContainersProperty());
+    NS_ASSERTION(!list || !list->IsEmpty(), "Unexpected empty overflow list");
+    return list;
+  }
+  [[nodiscard]] nsFrameList* StealExcessOverflowContainers() {
+    nsFrameList* list = TakeProperty(ExcessOverflowContainersProperty());
+    NS_ASSERTION(!list || !list->IsEmpty(), "Unexpected empty overflow list");
+    return list;
   }
 
   /**
-   * Destroy the overflow list, which must be empty.
+   * Set the overflow list, overflow containers list, or excess overflow
+   * containers list. The argument must be a *non-empty* list.
+   *
+   * After this operation, the argument becomes an empty list.
+   *
+   * @return the frame list associated with the property.
+   */
+  nsFrameList* SetOverflowFrames(nsFrameList&& aOverflowFrames) {
+    MOZ_ASSERT(aOverflowFrames.NotEmpty(), "Shouldn't be called");
+    auto* list = new (PresShell()) nsFrameList(std::move(aOverflowFrames));
+    SetProperty(OverflowProperty(), list);
+    return list;
+  }
+  nsFrameList* SetOverflowContainers(nsFrameList&& aOverflowContainers) {
+    MOZ_ASSERT(aOverflowContainers.NotEmpty(), "Shouldn't set an empty list!");
+    MOZ_ASSERT(!GetProperty(OverflowContainersProperty()),
+               "Shouldn't override existing list!");
+    MOZ_ASSERT(IsFrameOfType(nsIFrame::eCanContainOverflowContainers),
+               "This type of frame can't have overflow containers!");
+    auto* list = new (PresShell()) nsFrameList(std::move(aOverflowContainers));
+    SetProperty(OverflowContainersProperty(), list);
+    return list;
+  }
+  nsFrameList* SetExcessOverflowContainers(
+      nsFrameList&& aExcessOverflowContainers) {
+    MOZ_ASSERT(aExcessOverflowContainers.NotEmpty(),
+               "Shouldn't set an empty list!");
+    MOZ_ASSERT(!GetProperty(ExcessOverflowContainersProperty()),
+               "Shouldn't override existing list!");
+    MOZ_ASSERT(IsFrameOfType(nsIFrame::eCanContainOverflowContainers),
+               "This type of frame can't have overflow containers!");
+    auto* list =
+        new (PresShell()) nsFrameList(std::move(aExcessOverflowContainers));
+    SetProperty(ExcessOverflowContainersProperty(), list);
+    return list;
+  }
+
+  /**
+   * Destroy the overflow list, overflow containers list, or excess overflow
+   * containers list.
+   *
+   * The list to be destroyed must be empty. That is, the caller is responsible
+   * for either passing ownership of the frames to someone else or destroying
+   * the frames before calling these methods.
    */
   void DestroyOverflowList() {
-    nsFrameList* list = RemovePropTableFrames(OverflowProperty());
+    nsFrameList* list = TakeProperty(OverflowProperty());
+    MOZ_ASSERT(list && list->IsEmpty());
+    list->Delete(PresShell());
+  }
+  void DestroyOverflowContainers() {
+    nsFrameList* list = TakeProperty(OverflowContainersProperty());
+    MOZ_ASSERT(list && list->IsEmpty());
+    list->Delete(PresShell());
+  }
+  void DestroyExcessOverflowContainers() {
+    nsFrameList* list = TakeProperty(ExcessOverflowContainersProperty());
     MOZ_ASSERT(list && list->IsEmpty());
     list->Delete(PresShell());
   }
@@ -736,34 +807,6 @@ class nsContainerFrame : public nsSplittableFrame {
    * append it to this frame's principal child list.
    */
   nsIFrame* PullNextInFlowChild(ContinuationTraversingState& aState);
-
-  // ==========================================================================
-  /*
-   * Convenience methods for nsFrameLists stored in the
-   * PresContext's proptable
-   */
-
-  /**
-   * Get the PresContext-stored nsFrameList named aPropID for this frame.
-   * May return null.
-   */
-  nsFrameList* GetPropTableFrames(FrameListPropertyDescriptor aProperty) const;
-
-  /**
-   * Remove and return the PresContext-stored nsFrameList named aPropID for
-   * this frame. May return null. The caller is responsible for deleting
-   * nsFrameList and either passing ownership of the frames to someone else or
-   * destroying the frames.
-   */
-  [[nodiscard]] nsFrameList* RemovePropTableFrames(
-      FrameListPropertyDescriptor aProperty);
-
-  /**
-   * Set the PresContext-stored nsFrameList named aPropID for this frame
-   * to the given aFrameList, which must not be null.
-   */
-  void SetPropTableFrames(nsFrameList* aFrameList,
-                          FrameListPropertyDescriptor aProperty);
 
   /**
    * Safely destroy the frames on the nsFrameList stored on aProp for this

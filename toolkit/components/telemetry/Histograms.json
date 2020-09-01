@@ -9530,6 +9530,32 @@
      "releaseChannelCollection": "opt-out",
      "description": "A counter incremented every time the user prints a document."
    },
+  "PRINT_BACKGROUND_TASK_TIME_MS" : {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["jwatt@jwatt.org"],
+    "expires_in_version": "88",
+    "description": "Milliseconds taken on the background thread only for print background tasks. Keys describe the task, usually the information being retrieved, current possible keys are: DefaultSettings, MarginsForPaper, Printers, NamedPrinter, NamedOrDefaultPrinter, SupportsDuplex, SupportsColor, SupportsCollation, PaperList.",
+    "keyed": true,
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 50,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1660686]
+  },
+  "PRINT_BACKGROUND_TASK_ROUND_TRIP_TIME_MS" : {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["jwatt@jwatt.org"],
+    "expires_in_version": "88",
+    "description": "Milliseconds taken for print background tasks from spawning to background thread back to before resolving or rejecting on the main thread. See PRINT_BACKGROUND_TASK_TIME_MS for key description.",
+    "keyed": true,
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 50,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1660686]
+  },
   "DEVTOOLS_COLD_TOOLBOX_OPEN_DELAY_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -11249,14 +11275,6 @@
     "n_values": 7,
     "description": "Final status of the CacheFileInputStream (0=ok, 1=other error, 2=out of memory, 3=disk full, 4=file corrupted, 5=file not found, 6=binding aborted)"
   },
-  "NETWORK_CACHE_FS_TYPE": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "42",
-    "kind": "enumerated",
-    "n_values": 5,
-    "description": "Type of FS that the cache is stored on (0=NTFS (Win), 1=FAT32 (Win), 2=FAT (Win), 3=other FS (Win), 4=other OS)"
-  },
   "NETWORK_CACHE_SIZE_FULL_FAT": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -11311,14 +11329,6 @@
     "high": 66560,
     "n_buckets": 66,
     "description": "Size of the metadata in bytes parsed from the disk."
-  },
-  "NETWORK_CACHE_HASH_STATS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "46",
-    "kind": "enumerated",
-    "n_values": 160,
-    "description": "The longest hash match between a newly added entry and all the existing entries."
   },
   "NETWORK_CACHE_SIZE" : {
     "record_in_processes": ["main"],
@@ -11391,18 +11401,6 @@
       "WASM"
     ],
     "description": "Percentage of the entries with the given content type. Numbers are sampled periodically, every time 2GB of data is written to the cache."
-  },
-  "SHELLEXECUTEBYEXPLORER_DURATION_MS" : {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["tkikuchi@mozilla.com"],
-    "bug_numbers": [1654100],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 100000,
-    "n_buckets": 20,
-    "description": "Time spent executing a downloaded file via explorer.exe (ms)",
-    "operating_systems": ["windows"]
   },
   "SSL_TLS13_INTOLERANCE_REASON_PRE": {
     "record_in_processes": ["main", "content"],

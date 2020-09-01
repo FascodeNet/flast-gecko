@@ -359,6 +359,7 @@ StyleEditorUI.prototype = {
             original.relatedStyleSheet = resource;
             original.relatedEditorName = parentEditorName;
             original.resourceId = resource.resourceId;
+            original.targetFront = resource.targetFront;
             original.mediaRules = resource.mediaRules;
             await this._addStyleSheetEditor(original);
           }
@@ -1199,7 +1200,7 @@ StyleEditorUI.prototype = {
     }
   },
 
-  async _onResourceAvailable({ targetFront, resource }) {
+  async _onResourceAvailable({ resource }) {
     if (
       resource.resourceType === this._toolbox.resourceWatcher.TYPES.STYLESHEET
     ) {

@@ -3666,6 +3666,20 @@ bool CacheIRCompiler::emitGuardNotClassConstructor(ObjOperandId funId) {
   return true;
 }
 
+bool CacheIRCompiler::emitGuardArrayIsPacked(ObjOperandId arrayId) {
+  Register array = allocator.useRegister(masm, arrayId);
+  AutoScratchRegister scratch(allocator, masm);
+  AutoScratchRegister scratch2(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.branchArrayIsNotPacked(array, scratch, scratch2, failure->label());
+  return true;
+}
+
 bool CacheIRCompiler::emitLoadDenseElementHoleResult(ObjOperandId objId,
                                                      Int32OperandId indexId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -3797,53 +3811,6 @@ bool CacheIRCompiler::emitLoadDenseElementHoleExistsResult(
   EmitStoreBoolean(masm, false, output);
 
   masm.bind(&done);
-  return true;
-}
-
-bool CacheIRCompiler::emitArrayJoinResult(ObjOperandId objId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-
-  AutoOutputRegister output(*this);
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch(allocator, masm);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Load obj->elements in scratch.
-  masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
-  Address lengthAddr(scratch, ObjectElements::offsetOfLength());
-
-  // If array length is 0, return empty string.
-  Label finished;
-
-  {
-    Label arrayNotEmpty;
-    masm.branch32(Assembler::NotEqual, lengthAddr, Imm32(0), &arrayNotEmpty);
-    masm.movePtr(ImmGCPtr(cx_->names().empty), scratch);
-    masm.tagValue(JSVAL_TYPE_STRING, scratch, output.valueReg());
-    masm.jump(&finished);
-    masm.bind(&arrayNotEmpty);
-  }
-
-  // Otherwise, handle array length 1 case.
-  masm.branch32(Assembler::NotEqual, lengthAddr, Imm32(1), failure->label());
-
-  // But only if initializedLength is also 1.
-  Address initLength(scratch, ObjectElements::offsetOfInitializedLength());
-  masm.branch32(Assembler::NotEqual, initLength, Imm32(1), failure->label());
-
-  // And only if elem0 is a string.
-  Address elementAddr(scratch, 0);
-  masm.branchTestString(Assembler::NotEqual, elementAddr, failure->label());
-
-  // Store the value.
-  masm.loadValue(elementAddr, output.valueReg());
-
-  masm.bind(&finished);
-
   return true;
 }
 
@@ -7135,6 +7102,15 @@ bool CacheIRCompiler::emitLoadUndefined(ValOperandId resultId) {
 
   ValueOperand reg = allocator.defineValueRegister(masm, resultId);
   masm.moveValue(UndefinedValue(), reg);
+  return true;
+}
+
+bool CacheIRCompiler::emitLoadConstantString(uint32_t strOffset,
+                                             StringOperandId resultId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  Register reg = allocator.defineRegister(masm, resultId);
+  StubFieldOffset str(strOffset, StubField::Type::String);
+  emitLoadStubField(str, reg);
   return true;
 }
 

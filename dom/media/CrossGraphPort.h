@@ -10,6 +10,7 @@
 #include "AudioSegment.h"
 #include "ForwardedInputTrack.h"
 #include "mozilla/SPSCQueue.h"
+#include "mozilla/UniquePtr.h"
 
 namespace mozilla {
 class CrossGraphReceiver;
@@ -24,20 +25,16 @@ namespace mozilla {
 /**
  * See MediaTrackGraph::CreateCrossGraphTransmitter()
  */
-class CrossGraphTransmitter : public ForwardedInputTrack {
-  friend class CrossGraphManager;
-
+class CrossGraphTransmitter : public ProcessedMediaTrack {
  public:
-  CrossGraphTransmitter(TrackRate aSampleRate, CrossGraphReceiver* aReceiver);
-  virtual CrossGraphTransmitter* AsCrossGraphTransmitter() override {
-    return this;
-  }
+  CrossGraphTransmitter(TrackRate aSampleRate,
+                        RefPtr<CrossGraphReceiver> aReceiver);
+  CrossGraphTransmitter* AsCrossGraphTransmitter() override { return this; }
 
   void ProcessInput(GraphTime aFrom, GraphTime aTo, uint32_t aFlags) override;
-  void Destroy() override;
 
  private:
-  RefPtr<CrossGraphReceiver> mReceiver;
+  const RefPtr<CrossGraphReceiver> mReceiver;
 };
 
 /**
@@ -45,9 +42,8 @@ class CrossGraphTransmitter : public ForwardedInputTrack {
  */
 class CrossGraphReceiver : public ProcessedMediaTrack {
  public:
-  explicit CrossGraphReceiver(TrackRate aSampleRate,
-                              TrackRate aTransmitterRate);
-  virtual CrossGraphReceiver* AsCrossGraphReceiver() override { return this; }
+  CrossGraphReceiver(TrackRate aSampleRate, TrackRate aTransmitterRate);
+  CrossGraphReceiver* AsCrossGraphReceiver() override { return this; }
 
   void ProcessInput(GraphTime aFrom, GraphTime aTo, uint32_t aFlags) override;
 
@@ -65,15 +61,15 @@ class CrossGraphReceiver : public ProcessedMediaTrack {
   AudioDriftCorrection mDriftCorrection;
 };
 
-class CrossGraphManager final {
+class CrossGraphPort final {
  public:
-  static CrossGraphManager* Connect(
+  static UniquePtr<CrossGraphPort> Connect(
       const RefPtr<dom::AudioStreamTrack>& aStreamTrack,
       MediaTrackGraph* aPartnerGraph);
-  static CrossGraphManager* Connect(
+  static UniquePtr<CrossGraphPort> Connect(
       const RefPtr<dom::AudioStreamTrack>& aStreamTrack, AudioDeviceInfo* aSink,
       nsPIDOMWindowInner* aWindow);
-  ~CrossGraphManager() = default;
+  ~CrossGraphPort() = default;
 
   void AddAudioOutput(void* aKey);
   void RemoveAudioOutput(void* aKey);
@@ -82,14 +78,23 @@ class CrossGraphManager final {
 
   RefPtr<GenericPromise> EnsureConnected();
 
- private:
-  explicit CrossGraphManager(const RefPtr<MediaInputPort>& aPort)
-      : mSourcePort(aPort) {}
-  RefPtr<CrossGraphTransmitter> GetTransmitter();
-  RefPtr<CrossGraphReceiver> GetReceiver();
+  const RefPtr<CrossGraphTransmitter> mTransmitter;
+  const RefPtr<CrossGraphReceiver> mReceiver;
 
-  // The port that connect the transmitter with the source track.
-  RefPtr<MediaInputPort> mSourcePort;
+ private:
+  explicit CrossGraphPort(RefPtr<MediaInputPort> aTransmitterPort,
+                          RefPtr<CrossGraphTransmitter> aTransmitter,
+                          RefPtr<CrossGraphReceiver> aReceiver)
+      : mTransmitter(std::move(aTransmitter)),
+        mReceiver(std::move(aReceiver)),
+        mTransmitterPort(std::move(aTransmitterPort)) {
+    MOZ_ASSERT(mTransmitter);
+    MOZ_ASSERT(mReceiver);
+    MOZ_ASSERT(mTransmitterPort);
+  }
+
+  // The port that connects the input track to the transmitter.
+  const RefPtr<MediaInputPort> mTransmitterPort;
 };
 
 }  // namespace mozilla

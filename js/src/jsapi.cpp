@@ -3466,6 +3466,7 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   nonSyntacticScope = rhs.nonSyntacticScope;
   privateClassFields = rhs.privateClassFields;
   privateClassMethods = rhs.privateClassMethods;
+  useOffThreadParseGlobal = rhs.useOffThreadParseGlobal;
 };
 
 void JS::ReadOnlyCompileOptions::copyPODNonTransitiveOptions(
@@ -3559,6 +3560,7 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
       cx->options().throwOnAsmJSValidationFailure();
   privateClassFields = cx->options().privateClassFields();
   privateClassMethods = cx->options().privateClassMethods();
+  useOffThreadParseGlobal = cx->options().useOffThreadParseGlobal();
 
   sourcePragmas_ = cx->options().sourcePragmas();
 
@@ -5321,10 +5323,7 @@ JS_PUBLIC_API void JS_SetGlobalJitCompilerOption(JSContext* cx,
       jit::JitOptions.spectreJitToCxxCalls = !!value;
       break;
     case JSJITCOMPILER_WARP_ENABLE:
-#ifdef NIGHTLY_BUILD
-      jit::JitOptions.warpBuilder = !!value;
-      jit::JitOptions.typeInference = !value;
-#endif
+      jit::JitOptions.setWarpEnabled(!!value);
       break;
     case JSJITCOMPILER_WASM_FOLD_OFFSETS:
       jit::JitOptions.wasmFoldOffsets = !!value;

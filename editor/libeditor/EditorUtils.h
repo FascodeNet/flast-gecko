@@ -783,6 +783,24 @@ class MOZ_STACK_CLASS AutoRangeArray final {
     return EditorDOMPoint(mRanges[0]->EndRef());
   }
 
+  nsresult SelectNode(nsINode& aNode) {
+    mRanges.Clear();
+    if (!mAnchorFocusRange) {
+      mAnchorFocusRange = nsRange::Create(&aNode);
+      if (!mAnchorFocusRange) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+    ErrorResult error;
+    mAnchorFocusRange->SelectNode(aNode, error);
+    if (error.Failed()) {
+      mAnchorFocusRange = nullptr;
+      return error.StealNSResult();
+    }
+    mRanges.AppendElement(*mAnchorFocusRange);
+    return NS_OK;
+  }
+
   /**
    * ExtendAnchorFocusRangeFor() extends the anchor-focus range for deleting
    * content for aDirectionAndAmount.  The range won't be extended to outer of
@@ -800,6 +818,50 @@ class MOZ_STACK_CLASS AutoRangeArray final {
   bool IsCollapsed() const {
     return mRanges.IsEmpty() ||
            (mRanges.Length() == 1 && mRanges[0]->Collapsed());
+  }
+  template <typename PT, typename CT>
+  nsresult Collapse(const EditorDOMPointBase<PT, CT>& aPoint) {
+    mRanges.Clear();
+    if (!mAnchorFocusRange) {
+      ErrorResult error;
+      mAnchorFocusRange = nsRange::Create(aPoint.ToRawRangeBoundary(),
+                                          aPoint.ToRawRangeBoundary(), error);
+      if (error.Failed()) {
+        mAnchorFocusRange = nullptr;
+        return error.StealNSResult();
+      }
+    } else {
+      nsresult rv = mAnchorFocusRange->CollapseTo(aPoint.ToRawRangeBoundary());
+      if (NS_FAILED(rv)) {
+        mAnchorFocusRange = nullptr;
+        return rv;
+      }
+    }
+    mRanges.AppendElement(*mAnchorFocusRange);
+    return NS_OK;
+  }
+  template <typename SPT, typename SCT, typename EPT, typename ECT>
+  nsresult SetStartAndEnd(const EditorDOMPointBase<SPT, SCT>& aStart,
+                          const EditorDOMPointBase<EPT, ECT>& aEnd) {
+    mRanges.Clear();
+    if (!mAnchorFocusRange) {
+      ErrorResult error;
+      mAnchorFocusRange = nsRange::Create(aStart.ToRawRangeBoundary(),
+                                          aEnd.ToRawRangeBoundary(), error);
+      if (error.Failed()) {
+        mAnchorFocusRange = nullptr;
+        return error.StealNSResult();
+      }
+    } else {
+      nsresult rv = mAnchorFocusRange->SetStartAndEnd(
+          aStart.ToRawRangeBoundary(), aEnd.ToRawRangeBoundary());
+      if (NS_FAILED(rv)) {
+        mAnchorFocusRange = nullptr;
+        return rv;
+      }
+    }
+    mRanges.AppendElement(*mAnchorFocusRange);
+    return NS_OK;
   }
   const nsRange* GetAnchorFocusRange() const { return mAnchorFocusRange; }
   nsDirection GetDirection() const { return mDirection; }

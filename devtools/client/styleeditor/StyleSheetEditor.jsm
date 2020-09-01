@@ -115,7 +115,6 @@ function StyleSheetEditor(
   }
 
   this.onPropertyChange = this.onPropertyChange.bind(this);
-  this._onError = this._onError.bind(this);
   this.onMediaRulesChanged = this.onMediaRulesChanged.bind(this);
   this.checkLinkedFileForChanges = this.checkLinkedFileForChanges.bind(this);
   this.markLinkedFileBroken = this.markLinkedFileBroken.bind(this);
@@ -125,7 +124,6 @@ function StyleSheetEditor(
   this._onMouseMove = this._onMouseMove.bind(this);
 
   this._focusOnSourceEditorReady = false;
-  this.styleSheet.on("error", this._onError);
   this.savedFile = this.styleSheet.file;
   this.linkCSSFile();
 
@@ -276,26 +274,34 @@ StyleSheetEditor.prototype = {
    *
    * @return {Promise} a promise that resolves to the new text
    */
-  _getSourceTextAndPrettify: function() {
-    return this.styleSheet
-      .getText()
-      .then(longStr => {
-        return longStr.string();
-      })
-      .then(source => {
-        const ruleCount = this.styleSheet.ruleCount;
-        if (!this.styleSheet.isOriginalSource) {
-          const { result, mappings } = prettifyCSS(source, ruleCount);
-          source = result;
-          // Store the list of objects with mappings between CSS token positions from the
-          // original source to the prettified source. These will be used when requested to
-          // jump to a specific position within the editor.
-          this._mappings = mappings;
-        }
+  async _getSourceTextAndPrettify() {
+    const styleSheetsFront = await this._getStyleSheetsFront();
 
-        this._state.text = source;
-        return source;
-      });
+    let longStr = null;
+    if (this.styleSheet.isOriginalSource) {
+      // If the stylesheet is OriginalSource, we should get the texts from SourceMapService.
+      // So, for now, we use OriginalSource.getText() as it is.
+      longStr = await this.styleSheet.getText();
+    } else if (!styleSheetsFront.traits.supportResourceRequests) {
+      // Backward compat, can be removed when FF 81 hits release.
+      longStr = await this.styleSheet.getText();
+    } else {
+      longStr = await styleSheetsFront.getText(this.resourceId);
+    }
+
+    let source = await longStr.string();
+    const ruleCount = this.styleSheet.ruleCount;
+    if (!this.styleSheet.isOriginalSource) {
+      const { result, mappings } = prettifyCSS(source, ruleCount);
+      source = result;
+      // Store the list of objects with mappings between CSS token positions from the
+      // original source to the prettified source. These will be used when requested to
+      // jump to a specific position within the editor.
+      this._mappings = mappings;
+    }
+
+    this._state.text = source;
+    return source;
   },
 
   /**
@@ -435,15 +441,6 @@ StyleSheetEditor.prototype = {
   },
 
   /**
-   * Forward error event from stylesheet.
-   *
-   * @param  {Object} data: The parameters to customize the error message
-   */
-  _onError: function(data) {
-    this.emit("error", data);
-  },
-
-  /**
    * Create source editor and load state into it.
    * @param  {DOMElement} inputElement
    *         Element to load source editor in
@@ -482,7 +479,7 @@ StyleSheetEditor.prototype = {
     return sourceEditor.appendTo(inputElement).then(() => {
       sourceEditor.on("saveRequested", this.saveToFile);
 
-      if (this.styleSheet.update) {
+      if (!this.styleSheet.isOriginalSource) {
         sourceEditor.on("change", this.updateStyleSheet);
       }
 
@@ -563,8 +560,13 @@ StyleSheetEditor.prototype = {
   /**
    * Toggled the disabled state of the underlying stylesheet.
    */
-  toggleDisabled: function() {
-    this.styleSheet.toggleDisabled().catch(console.error);
+  async toggleDisabled() {
+    const styleSheetsFront = await this._getStyleSheetsFront();
+    if (styleSheetsFront.traits.supportResourceRequests) {
+      styleSheetsFront.toggleDisabled(this.resourceId).catch(console.error);
+    } else {
+      this.styleSheet.toggleDisabled().catch(console.error);
+    }
   },
 
   /**
@@ -585,7 +587,7 @@ StyleSheetEditor.prototype = {
   /**
    * Update live style sheet according to modifications.
    */
-  _updateStyleSheet: function() {
+  async _updateStyleSheet() {
     if (this.styleSheet.disabled) {
       // TODO: do we want to do this?
       return;
@@ -607,14 +609,24 @@ StyleSheetEditor.prototype = {
     }
 
     this._isUpdating = true;
-    this.styleSheet
-      .update(this._state.text, this.transitionsEnabled)
-      .then(() => {
-        // Clear any existing mappings from automatic CSS prettification
-        // because they were likely invalided by manually editing the stylesheet.
-        this._mappings = null;
-      })
-      .catch(console.error);
+
+    try {
+      const styleSheetsFront = await this._getStyleSheetsFront();
+      if (styleSheetsFront.traits.supportResourceRequests) {
+        await styleSheetsFront.update(
+          this.resourceId,
+          this._state.text,
+          this.transitionsEnabled
+        );
+      } else {
+        await this.styleSheet.update(this._state.text, this.transitionsEnabled);
+      }
+      // Clear any existing mappings from automatic CSS prettification
+      // because they were likely invalided by manually editing the stylesheet.
+      this._mappings = null;
+    } catch (e) {
+      console.error(e);
+    }
   },
 
   /**
@@ -806,15 +818,25 @@ StyleSheetEditor.prototype = {
    * file from disk and live update the stylesheet object with the contents.
    */
   updateLinkedStyleSheet: function() {
-    OS.File.read(this.linkedCSSFile).then(array => {
+    OS.File.read(this.linkedCSSFile).then(async array => {
       const decoder = new TextDecoder();
       const text = decoder.decode(array);
 
       // Ensure we don't re-fetch the text from the original source
       // actor when we're notified that the style sheet changed.
       this._isUpdating = true;
-      const relatedSheet = this.styleSheet.relatedStyleSheet;
-      relatedSheet.update(text, this.transitionsEnabled);
+
+      const styleSheetsFront = await this._getStyleSheetsFront();
+      if (styleSheetsFront.traits.supportResourceRequests) {
+        await styleSheetsFront.update(
+          this.resourceId,
+          text,
+          this.transitionsEnabled
+        );
+      } else {
+        const relatedSheet = this.styleSheet.relatedStyleSheet;
+        await relatedSheet.update(text, this.transitionsEnabled);
+      }
     }, this.markLinkedFileBroken);
   },
 
@@ -841,6 +863,10 @@ StyleSheetEditor.prototype = {
     return bindings;
   },
 
+  _getStyleSheetsFront() {
+    return this._resource.targetFront.getFront("stylesheets");
+  },
+
   /**
    * Clean up for this editor.
    */
@@ -862,7 +888,6 @@ StyleSheetEditor.prototype = {
       }
       this._sourceEditor.destroy();
     }
-    this.styleSheet.off("error", this._onError);
     this._isDestroyed = true;
   },
 };

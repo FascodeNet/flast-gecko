@@ -16,12 +16,12 @@ ChromeUtils.defineModuleGetter(
 );
 
 const INPUT_DELAY_MS = 500;
+const ourBrowser = window.docShell.chromeEventHandler;
 
 document.addEventListener(
   "DOMContentLoaded",
   e => {
-    document.mozSubdialogReady = PrintEventHandler.init();
-    let ourBrowser = window.docShell.chromeEventHandler;
+    PrintEventHandler.init();
     ourBrowser.setAttribute("flex", "0");
     ourBrowser.classList.add("printSettingsBrowser");
     ourBrowser.closest(".dialogBox").classList.add("printDialogBox");
@@ -106,14 +106,19 @@ var PrintEventHandler = {
     this.originalSourceCurrentURI =
       sourceBrowsingContext.currentWindowContext.documentURI.spec;
 
+    // Let the dialog appear before doing any potential main thread work.
+    await ourBrowser._dialogReady;
+
     // First check the available destinations to ensure we get settings for an
     // accessible printer.
     let {
       destinations,
+      defaultSystemPrinter,
       selectedPrinter,
       printersByName,
     } = await this.getPrintDestinations();
     PrintSettingsViewProxy.availablePrinters = printersByName;
+    PrintSettingsViewProxy.defaultSystemPrinter = defaultSystemPrinter;
 
     document.addEventListener("print", e => this.print());
     document.addEventListener("update-print-settings", e =>
@@ -124,8 +129,14 @@ var PrintEventHandler = {
       // This file in only used if pref print.always_print_silent is false, so
       // no need to check that here.
 
-      // Use our settings to prepopulate the system dialog
-      let settings = this.settings.clone();
+      // Use our settings to prepopulate the system dialog.
+      // The system print dialog won't recognize our internal save-to-pdf
+      // pseudo-printer.  We need to pass it a settings object from any
+      // system recognized printer.
+      let settings =
+        this.settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER
+          ? PrintUtils.getPrintSettings(this.viewSettings.defaultSystemPrinter)
+          : this.settings.clone();
       const PRINTPROMPTSVC = Cc[
         "@mozilla.org/embedcomp/printingprompt-service;1"
       ].getService(Ci.nsIPrintingPromptService);
@@ -158,6 +169,12 @@ var PrintEventHandler = {
     await document.l10n.translateElements([this.previewBrowser]);
 
     document.body.removeAttribute("loading");
+
+    window.requestAnimationFrame(() => {
+      window.focus();
+      // Now that we're showing the form, select the destination select.
+      document.getElementById("printer-picker").focus();
+    });
   },
 
   unload() {
@@ -170,6 +187,7 @@ var PrintEventHandler = {
     // Create a preview browser.
     let printPreviewBrowser = gBrowser.createBrowser({
       remoteType: sourceBrowsingContext.currentRemoteType,
+      userContextId: sourceBrowsingContext.originAttributes.userContextId,
       initialBrowsingContextGroupId: sourceBrowsingContext.group.id,
       skipLoad: false,
     });
@@ -179,7 +197,6 @@ var PrintEventHandler = {
     document.l10n.setAttributes(printPreviewBrowser, "printui-preview-label");
 
     // Create the stack for the loading indicator.
-    let ourBrowser = window.docShell.chromeEventHandler;
     let doc = ourBrowser.ownerDocument;
     let previewStack = doc.importNode(
       doc.getElementById("printPreviewStackTemplate").content,
@@ -209,6 +226,21 @@ var PrintEventHandler = {
 
     // Ensure the output format is set properly
     this.viewSettings.printerName = printerName;
+
+    // Ensure the color option is correct, if either of the supportsX flags are
+    // false then the user cannot change the value through the UI.
+    let flags = 0;
+    if (!this.viewSettings.supportsColor) {
+      flags |= this.settingFlags.printInColor;
+      this.viewSettings.printInColor = false;
+    } else if (!this.viewSettings.supportsMonochrome) {
+      flags |= this.settingFlags.printInColor;
+      this.viewSettings.printInColor = true;
+    }
+
+    if (flags) {
+      this.saveSettingsToPrefs(flags);
+    }
   },
 
   async print(systemDialogSettings) {
@@ -267,9 +299,6 @@ var PrintEventHandler = {
 
     let printerChanged = flags & this.settingFlags.printerName;
     if (didSettingsChange) {
-      let PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
-        Ci.nsIPrintSettingsService
-      );
       this._printerSettingsChangedFlags |= flags;
 
       if (printerChanged) {
@@ -279,7 +308,7 @@ var PrintEventHandler = {
       }
 
       if (flags) {
-        PSSVC.savePrintSettingsToPrefs(this.settings, true, flags);
+        this.saveSettingsToPrefs(flags);
       }
       if (printerChanged) {
         await this.refreshSettings(this.settings.printerName);
@@ -294,6 +323,13 @@ var PrintEventHandler = {
         })
       );
     }
+  },
+
+  saveSettingsToPrefs(flags) {
+    let PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
+      Ci.nsIPrintSettingsService
+    );
+    PSSVC.savePrintSettingsToPrefs(this.settings, true, flags);
   },
 
   /**
@@ -331,6 +367,7 @@ var PrintEventHandler = {
     let { previewBrowser, settings } = this;
     let stack = previewBrowser.parentElement;
     stack.setAttribute("rendering", true);
+    document.body.setAttribute("rendering", true);
 
     let networkDone = false;
     let documentDone = false;
@@ -408,6 +445,7 @@ var PrintEventHandler = {
       );
 
       stack.removeAttribute("rendering");
+      document.body.removeAttribute("rendering");
       this._previewUpdatingPromise = null;
     }
   },
@@ -438,7 +476,7 @@ var PrintEventHandler = {
     const printersByName = {};
 
     let lastUsedPrinter;
-    let defaultPrinter;
+    let defaultSystemPrinter;
 
     let saveToPdfPrinter = {
       nameId: "printui-destination-pdf-label",
@@ -465,16 +503,22 @@ var PrintEventHandler = {
           lastUsedPrinter = destination;
         }
         if (name == defaultPrinterName) {
-          defaultPrinter = destination;
+          defaultSystemPrinter = destination;
         }
 
         return destination;
       }),
     ];
 
-    let selectedPrinter = lastUsedPrinter || defaultPrinter || saveToPdfPrinter;
+    let selectedPrinter =
+      lastUsedPrinter || defaultSystemPrinter || saveToPdfPrinter;
 
-    return { destinations, selectedPrinter, printersByName };
+    return {
+      destinations,
+      selectedPrinter,
+      printersByName,
+      defaultSystemPrinter,
+    };
   },
 
   getMarginPresets(marginSize) {
@@ -606,18 +650,25 @@ const PrintSettingsViewProxy = {
           target.outputFormat == Ci.nsIPrintSettings.kOutputFormatPDF ||
           this.knownSaveToFilePrinters.has(target.printerName)
         );
-      // We allow switching colors except:
+      // Black and white is always supported except:
       //
       //  * For PDF printing, where it'd require rasterization and thus bad
       //    quality.
       //
       //  * For Mac, where there's no API to print in monochrome.
       //
-      case "supportsColorSwitch":
+      case "supportsMonochrome":
         return (
-          target.printerName != PrintUtils.SAVE_TO_PDF_PRINTER &&
-          AppConstants.platform !== "macosx" &&
-          this.get(target, "supportsColor")
+          !this.get(target, "supportsColor") ||
+          (target.printerName != PrintUtils.SAVE_TO_PDF_PRINTER &&
+            AppConstants.platform !== "macosx")
+        );
+      case "defaultSystemPrinter":
+        return (
+          this.defaultSystemPrinter?.value ||
+          Object.getOwnPropertyNames(this.availablePrinters).find(
+            p => p.name != PrintUtils.SAVE_TO_PDF_PRINTER
+          )?.value
         );
     }
     return target[name];
@@ -785,21 +836,10 @@ customElements.define("destination-picker", DestinationPicker, {
 
 class ColorModePicker extends PrintSettingSelect {
   update(settings) {
-    let value = settings[this.settingName];
-    let supportsColor = settings.supportsColor;
-    let supportsColorSwitch = settings.supportsColorSwitch;
-    // If we're switching to a printer that either doesn't allow us to switch
-    // to monochrome, or doesn't support color, force a value change.
-    let forceChange = value != supportsColor && (!supportsColorSwitch || value);
-    if (forceChange) {
-      value = !value;
-    }
-    this.value = value ? "color" : "bw";
-    this.toggleAttribute("disallowed", !supportsColorSwitch);
-    this.disabled = !supportsColorSwitch;
-    if (forceChange) {
-      this.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+    this.value = settings[this.settingName] ? "color" : "bw";
+    let canSwitch = settings.supportsColor && settings.supportsMonochrome;
+    this.toggleAttribute("disallowed", !canSwitch);
+    this.disabled = !canSwitch;
   }
 
   handleEvent(e) {
@@ -869,9 +909,13 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
   }
 
   update(settings) {
+    // If there are no default system printers available and we are not on mac,
+    // we should hide the system dialog because it won't be populated with
+    // the correct settings. Mac supports save to pdf functionality
+    // in the native dialog, so it can be shown regardless.
     this.querySelector("#system-print").hidden =
-      settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER &&
-      AppConstants.platform != "macosx";
+      !settings.defaultSystemPrinter && AppConstants.platform !== "macosx";
+
     this.querySelector("#copies").hidden = settings.willSaveToFile;
   }
 
@@ -897,8 +941,7 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
     } else if (e.type == "change" || e.type == "input") {
       let isValid = this.checkValidity();
       let section = e.target.closest(".section-block");
-      const sheetCount = document.querySelector("#sheet-count");
-      sheetCount.toggleAttribute("loading", !isValid);
+      document.body.toggleAttribute("invalid", !isValid);
       if (isValid) {
         // aria-describedby will usually cause the first value to be reported.
         // Unfortunately, screen readers don't pick up description changes from
@@ -908,7 +951,9 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
         // aria-live is set on the parent because sheetCount itself might be
         // hidden and then shown, and updates are only reported for live
         // regions that were already visible.
-        sheetCount.parentNode.setAttribute("aria-live", "polite");
+        document
+          .querySelector("#sheet-count")
+          .parentNode.setAttribute("aria-live", "polite");
       } else {
         // We're hiding the sheet count and aria-describedby includes the
         // content of hidden elements, so remove aria-describedby.
@@ -945,6 +990,7 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
 
     this._percentScale.addEventListener("input", this);
     this._percentScale.addEventListener("keypress", this);
+    this._percentScale.addEventListener("paste", this);
     this.addEventListener("input", this);
   }
 
@@ -978,6 +1024,17 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
         e.preventDefault();
       }
       return;
+    }
+
+    if (e.type === "paste") {
+      let paste = (e.clipboardData || window.clipboardData)
+        .getData("text")
+        .trim();
+
+      if (paste.match(/^[0-9]*$/)) {
+        this._percentScale.value = paste;
+      }
+      e.preventDefault();
     }
 
     if (e.target == this._shrinkToFitChoice || e.target == this._scaleChoice) {
@@ -1060,20 +1117,14 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
       let printAll = e.target.value == "all";
       this._startRange.required = this._endRange.required = !printAll;
       this.querySelector(".range-group").hidden = printAll;
-      if (printAll) {
-        this.dispatchSettingsChange({
-          printAllOrCustomRange: "all",
-        });
-      } else {
-        this._startRange.value = 1;
-        this._endRange.value = this._numPages || 1;
+      this._startRange.value = 1;
+      this._endRange.value = this._numPages || 1;
 
-        this.dispatchSettingsChange({
-          printAllOrCustomRange: "custom",
-          startPageRange: this._startRange.value,
-          endPageRange: this._endRange.value,
-        });
-      }
+      this.dispatchSettingsChange({
+        printAllOrCustomRange: e.target.value,
+        startPageRange: this._startRange.value,
+        endPageRange: this._endRange.value,
+      });
       this._rangeError.hidden = true;
       this._startRangeOverflowError.hidden = true;
       return;
@@ -1234,7 +1285,6 @@ class PageCount extends PrintUIControlMixin(HTMLElement) {
     document.l10n.setAttributes(this, "printui-sheets-count", {
       sheetCount: this.numPages * this.numCopies,
     });
-    this.removeAttribute("loading");
     if (this.id) {
       // We're showing the sheet count, so let it describe the dialog.
       document.body.setAttribute("aria-describedby", this.id);

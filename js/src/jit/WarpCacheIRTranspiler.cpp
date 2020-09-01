@@ -171,20 +171,13 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   // (scripted function or native function with a JitEntry).
   enum class CallKind { Native, Scripted };
 
-  // For some argument formats (normal calls, FunCall, FunApplyArgs in an
-  // inlined function) we can shuffle around definitions in the CallInfo
-  // and use a normal MCall. For others, we need to use a specialized call.
-  // TODO: Support spread calls.
-  enum class ArgumentLocation { OOM, Standard, FunApplyArgs };
-
-  MOZ_MUST_USE ArgumentLocation updateCallInfo(MDefinition* callee,
-                                               CallFlags flags);
+  MOZ_MUST_USE bool updateCallInfo(MDefinition* callee, CallFlags flags);
 
   MOZ_MUST_USE bool emitCallFunction(ObjOperandId calleeId,
                                      Int32OperandId argcId, CallFlags flags,
                                      CallKind kind);
-  MOZ_MUST_USE bool emitFunApplyArgs(MDefinition* callee, CallFlags flags,
-                                     CallKind kind);
+  MOZ_MUST_USE bool emitFunApplyArgs(WrappedFunction* wrappedTarget,
+                                     CallFlags flags);
 
   WrappedFunction* maybeWrappedFunction(MDefinition* callee, CallKind kind,
                                         uint16_t nargs, FunctionFlags flags);
@@ -675,6 +668,16 @@ bool WarpCacheIRTranspiler::emitGuardNotClassConstructor(ObjOperandId funId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitGuardArrayIsPacked(ObjOperandId arrayId) {
+  MDefinition* array = getOperand(arrayId);
+
+  auto* ins = MGuardArrayIsPacked::New(alloc(), array);
+  add(ins);
+
+  setOperand(arrayId, ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitLoadFrameCalleeResult() {
   if (const CallInfo* callInfo = builder_->inlineCallInfo()) {
     pushResult(callInfo->callee());
@@ -1005,6 +1008,13 @@ bool WarpCacheIRTranspiler::emitLoadUndefined(ValOperandId resultId) {
   return defineOperand(resultId, valConst);
 }
 
+bool WarpCacheIRTranspiler::emitLoadConstantString(uint32_t strOffset,
+                                                   StringOperandId resultId) {
+  JSString* val = stringStubField(strOffset);
+  auto* valConst = constant(StringValue(val));
+  return defineOperand(resultId, valConst);
+}
+
 bool WarpCacheIRTranspiler::emitLoadEnclosingEnvironment(
     ObjOperandId objId, ObjOperandId resultId) {
   MDefinition* env = getOperand(objId);
@@ -1029,6 +1039,18 @@ bool WarpCacheIRTranspiler::emitLoadProto(ObjOperandId objId,
   add(ins);
 
   return defineOperand(resultId, ins);
+}
+
+bool WarpCacheIRTranspiler::emitLoadInstanceOfObjectResult(
+    ValOperandId lhsId, ObjOperandId protoId) {
+  MDefinition* lhs = getOperand(lhsId);
+  MDefinition* proto = getOperand(protoId);
+
+  auto* instanceOf = MInstanceOf::New(alloc(), lhs, proto);
+  addEffectful(instanceOf);
+
+  pushResult(instanceOf);
+  return resumeAfter(instanceOf);
 }
 
 bool WarpCacheIRTranspiler::emitLoadValueTag(ValOperandId valId,
@@ -2960,8 +2982,7 @@ bool WarpCacheIRTranspiler::emitLoadValueTruthyResult(ValOperandId inputId) {
 
 bool WarpCacheIRTranspiler::emitLoadArgumentSlot(ValOperandId resultId,
                                                  uint32_t slotIndex) {
-  // Reverse of GetIndexOfArgument specialized to !hasArgumentArray.
-  MOZ_ASSERT(!loc_.isSpreadOp());
+  // Reverse of GetIndexOfArgument.
 
   // Layout:
   // NewTarget | Args.. (reversed)      | ThisValue | Callee
@@ -3050,10 +3071,10 @@ WrappedFunction* WarpCacheIRTranspiler::maybeCallTarget(MDefinition* callee,
                               guard->flags());
 }
 
-// If it is possible to use MCall for this call, update callInfo_ to
-// use the correct arguments.
-WarpCacheIRTranspiler::ArgumentLocation WarpCacheIRTranspiler::updateCallInfo(
-    MDefinition* callee, CallFlags flags) {
+// If it is possible to use MCall for this call, update callInfo_ to use
+// the correct arguments. Otherwise, update the ArgFormat of callInfo_.
+bool WarpCacheIRTranspiler::updateCallInfo(MDefinition* callee,
+                                           CallFlags flags) {
   // The transpilation will add various guards to the callee.
   // We replace the callee referenced by the CallInfo, so that
   // the resulting call instruction depends on these guards.
@@ -3061,11 +3082,16 @@ WarpCacheIRTranspiler::ArgumentLocation WarpCacheIRTranspiler::updateCallInfo(
 
   switch (flags.getArgFormat()) {
     case CallFlags::Standard:
-      return ArgumentLocation::Standard;
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Standard);
+      break;
+    case CallFlags::Spread:
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Array);
+      break;
     case CallFlags::FunCall:
       // Note: setCallee above already changed the callee to the target
       // function instead of the |call| function.
       MOZ_ASSERT(!callInfo_->constructing());
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Standard);
 
       if (callInfo_->argc() == 0) {
         // Special case for fun.call() with no arguments.
@@ -3078,26 +3104,38 @@ WarpCacheIRTranspiler::ArgumentLocation WarpCacheIRTranspiler::updateCallInfo(
         // Shift down all other arguments by removing the first.
         callInfo_->removeArg(0);
       }
-      return ArgumentLocation::Standard;
+      break;
     case CallFlags::FunApplyArgs:
+      MOZ_ASSERT(!callInfo_->constructing());
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Standard);
+
       // If we are building an inlined function, we know the arguments
       // being used.
-      MOZ_ASSERT(!callInfo_->constructing());
       if (const CallInfo* outerCallInfo = builder_->inlineCallInfo()) {
         MDefinition* argFunc = callInfo_->thisArg();
         MDefinition* argThis = callInfo_->getArg(0);
 
         if (!callInfo_->replaceArgs(outerCallInfo->argv())) {
-          return ArgumentLocation::OOM;
+          return false;
         }
         callInfo_->setCallee(argFunc);
         callInfo_->setThis(argThis);
-        return ArgumentLocation::Standard;
+      } else {
+        callInfo_->setArgFormat(CallInfo::ArgFormat::FunApplyArgs);
       }
-      return ArgumentLocation::FunApplyArgs;
+      break;
+    case CallFlags::FunApplyArray: {
+      MDefinition* argFunc = callInfo_->thisArg();
+      MDefinition* argThis = callInfo_->getArg(0);
+      callInfo_->setCallee(argFunc);
+      callInfo_->setThis(argThis);
+      callInfo_->setArgFormat(CallInfo::ArgFormat::Array);
+      break;
+    }
     default:
       MOZ_CRASH("Unsupported arg format");
   }
+  return true;
 }
 
 bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
@@ -3110,13 +3148,8 @@ bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
              static_cast<int32_t>(callInfo_->argc()));
 #endif
 
-  switch (updateCallInfo(callee, flags)) {
-    case ArgumentLocation::Standard:
-      break;
-    case ArgumentLocation::FunApplyArgs:
-      return emitFunApplyArgs(callee, flags, kind);
-    case ArgumentLocation::OOM:
-      return false;
+  if (!updateCallInfo(callee, flags)) {
+    return false;
   }
 
   WrappedFunction* wrappedTarget = maybeCallTarget(callee, kind);
@@ -3159,27 +3192,44 @@ bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
     }
   }
 
-  MCall* call = makeCall(*callInfo_, needsThisCheck, wrappedTarget);
-  if (!call) {
-    return false;
+  switch (callInfo_->argFormat()) {
+    case CallInfo::ArgFormat::Standard: {
+      MCall* call = makeCall(*callInfo_, needsThisCheck, wrappedTarget);
+      if (!call) {
+        return false;
+      }
+
+      if (flags.isSameRealm()) {
+        call->setNotCrossRealm();
+      }
+
+      addEffectful(call);
+      pushResult(call);
+
+      return resumeAfter(call);
+    }
+    case CallInfo::ArgFormat::Array: {
+      MInstruction* call =
+          makeSpreadCall(*callInfo_, flags.isSameRealm(), wrappedTarget);
+      if (!call) {
+        return false;
+      }
+      addEffectful(call);
+      pushResult(call);
+
+      return resumeAfter(call);
+    }
+    case CallInfo::ArgFormat::FunApplyArgs: {
+      return emitFunApplyArgs(wrappedTarget, flags);
+    }
   }
-
-  if (flags.isSameRealm()) {
-    call->setNotCrossRealm();
-  }
-
-  addEffectful(call);
-  pushResult(call);
-
-  return resumeAfter(call);
+  MOZ_CRASH("unreachable");
 }
 
-bool WarpCacheIRTranspiler::emitFunApplyArgs(MDefinition* callee,
-                                             CallFlags flags, CallKind kind) {
+bool WarpCacheIRTranspiler::emitFunApplyArgs(WrappedFunction* wrappedTarget,
+                                             CallFlags flags) {
   MOZ_ASSERT(!callInfo_->constructing());
   MOZ_ASSERT(!builder_->inlineCallInfo());
-
-  WrappedFunction* wrappedTarget = maybeCallTarget(callee, kind);
 
   MDefinition* argFunc = callInfo_->thisArg();
   MDefinition* argThis = callInfo_->getArg(0);
@@ -3236,13 +3286,14 @@ bool WarpCacheIRTranspiler::emitCallInlinedFunction(ObjOperandId calleeId,
     // inlined function itself will be generated in
     // WarpBuilder::buildInlinedCall.
     MDefinition* callee = getOperand(calleeId);
-    switch (updateCallInfo(callee, flags)) {
-      case ArgumentLocation::Standard:
+    if (!updateCallInfo(callee, flags)) {
+      return false;
+    }
+    switch (callInfo_->argFormat()) {
+      case CallInfo::ArgFormat::Standard:
         break;
-      case ArgumentLocation::OOM:
-        return false;
       default:
-        MOZ_CRASH("Unsupported argument location");
+        MOZ_CRASH("Unsupported arg format");
     }
     return true;
   }

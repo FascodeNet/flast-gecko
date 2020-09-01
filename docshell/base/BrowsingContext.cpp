@@ -632,12 +632,13 @@ void BrowsingContext::Attach(bool aFromIPC, ContentParent* aOriginProcess) {
 }
 
 void BrowsingContext::Detach(bool aFromIPC) {
-  MOZ_DIAGNOSTIC_ASSERT(mEverAttached);
-
   MOZ_LOG(GetLog(), LogLevel::Debug,
           ("%s: Detaching 0x%08" PRIx64 " from 0x%08" PRIx64,
            XRE_IsParentProcess() ? "Parent" : "Child", Id(),
            GetParent() ? GetParent()->Id() : 0));
+
+  MOZ_DIAGNOSTIC_ASSERT(mEverAttached);
+  MOZ_DIAGNOSTIC_ASSERT(!mIsDiscarded);
 
   nsCOMPtr<nsIRequestContextService> rcsvc =
       net::RequestContextService::GetOrCreate();
@@ -767,6 +768,25 @@ bool BrowsingContext::IsTargetable() {
 
 bool BrowsingContext::HasOpener() const {
   return sBrowsingContexts->Contains(GetOpenerId());
+}
+
+bool BrowsingContext::AncestorsAreCurrent() const {
+  const BrowsingContext* bc = this;
+  while (true) {
+    if (bc->IsDiscarded()) {
+      return false;
+    }
+
+    if (WindowContext* wc = bc->GetParentWindowContext()) {
+      if (wc->IsCached() || wc->IsDiscarded()) {
+        return false;
+      }
+
+      bc = wc->GetBrowsingContext();
+    } else {
+      return true;
+    }
+  }
 }
 
 Span<RefPtr<BrowsingContext>> BrowsingContext::Children() const {
@@ -1160,6 +1180,25 @@ BrowsingContext::~BrowsingContext() {
     sBrowsingContexts->Remove(Id());
   }
   UnregisterBrowserId(this);
+}
+
+/* static */
+void BrowsingContext::DiscardFromContentParent(ContentParent* aCP) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  if (sBrowsingContexts) {
+    AutoTArray<RefPtr<BrowsingContext>, 8> toDiscard;
+    for (const auto& entry : *sBrowsingContexts) {
+      auto* bc = entry.GetData()->Canonical();
+      if (!bc->IsDiscarded() && bc->IsEmbeddedInProcess(aCP->ChildID())) {
+        toDiscard.AppendElement(bc);
+      }
+    }
+
+    for (BrowsingContext* bc : toDiscard) {
+      bc->Detach(/* aFromIPC */ true);
+    }
+  }
 }
 
 nsISupports* BrowsingContext::GetParentObject() const {
@@ -1588,6 +1627,15 @@ void BrowsingContext::Location(JSContext* aCx,
   if (!aLocation) {
     aError.StealExceptionFromJSContext(aCx);
   }
+}
+
+bool BrowsingContext::RemoveRootFromBFCacheSync() {
+  if (WindowContext* wc = GetParentWindowContext()) {
+    if (RefPtr<Document> doc = wc->TopWindowContext()->GetDocument()) {
+      return doc->RemoveFromBFCacheSync();
+    }
+  }
+  return false;
 }
 
 nsresult BrowsingContext::CheckSandboxFlags(nsDocShellLoadState* aLoadState) {

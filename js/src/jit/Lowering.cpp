@@ -4644,16 +4644,20 @@ void LIRGenerator::visitCheckPrivateFieldCache(MCheckPrivateFieldCache* ins) {
 }
 
 void LIRGenerator::visitInstanceOf(MInstanceOf* ins) {
-  MDefinition* lhs = ins->getOperand(0);
+  MDefinition* lhs = ins->lhs();
+  MDefinition* rhs = ins->rhs();
 
   MOZ_ASSERT(lhs->type() == MIRType::Value || lhs->type() == MIRType::Object);
+  MOZ_ASSERT(rhs->type() == MIRType::Object);
 
   if (lhs->type() == MIRType::Object) {
-    LInstanceOfO* lir = new (alloc()) LInstanceOfO(useRegister(lhs));
+    auto* lir = new (alloc())
+        LInstanceOfO(useRegister(lhs), useRegisterOrConstant(rhs));
     define(lir, ins);
     assignSafepoint(lir, ins);
   } else {
-    LInstanceOfV* lir = new (alloc()) LInstanceOfV(useBox(lhs));
+    auto* lir =
+        new (alloc()) LInstanceOfV(useBox(lhs), useRegisterOrConstant(rhs));
     define(lir, ins);
     assignSafepoint(lir, ins);
   }
@@ -5337,6 +5341,16 @@ void LIRGenerator::visitIsPackedArray(MIsPackedArray* ins) {
 
   auto lir = new (alloc()) LIsPackedArray(useRegister(ins->object()), temp());
   define(lir, ins);
+}
+
+void LIRGenerator::visitGuardArrayIsPacked(MGuardArrayIsPacked* ins) {
+  MOZ_ASSERT(ins->array()->type() == MIRType::Object);
+
+  auto* lir = new (alloc())
+      LGuardArrayIsPacked(useRegister(ins->array()), temp(), temp());
+  assignSnapshot(lir, BailoutKind::PackedArrayGuard);
+  add(lir, ins);
+  redefine(ins, ins->array());
 }
 
 void LIRGenerator::visitGetPrototypeOf(MGetPrototypeOf* ins) {

@@ -9645,7 +9645,9 @@ class MGuardFunctionFlags : public MUnaryInstruction,
     }
     return congruentIfOperandsEqual(ins);
   }
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
 };
 
 // Guard on function kind
@@ -9686,7 +9688,9 @@ class MGuardFunctionKind : public MUnaryInstruction,
     }
     return congruentIfOperandsEqual(ins);
   }
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
 };
 
 // Bail if the object's shape or unboxed group is not in the input list.
@@ -11012,23 +11016,17 @@ class MHasOwnCache : public MBinaryInstruction,
 };
 
 // Implementation for instanceof operator with specific rhs.
-class MInstanceOf : public MUnaryInstruction, public InstanceOfPolicy::Data {
-  CompilerObject protoObj_;
-
-  MInstanceOf(MDefinition* obj, JSObject* proto)
-      : MUnaryInstruction(classOpcode, obj), protoObj_(proto) {
+class MInstanceOf : public MBinaryInstruction,
+                    public MixPolicy<BoxExceptPolicy<0, MIRType::Object>,
+                                     ObjectPolicy<1>>::Data {
+  MInstanceOf(MDefinition* obj, MDefinition* proto)
+      : MBinaryInstruction(classOpcode, obj, proto) {
     setResultType(MIRType::Boolean);
   }
 
  public:
   INSTRUCTION_HEADER(InstanceOf)
   TRIVIAL_NEW_WRAPPERS
-
-  JSObject* prototypeObject() { return protoObj_; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(protoObj_);
-  }
 };
 
 // Implementation for instanceof operator with unknown rhs.
@@ -12110,6 +12108,29 @@ class MIsPackedArray : public MUnaryInstruction,
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, object))
 
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
+};
+
+class MGuardArrayIsPacked : public MUnaryInstruction,
+                            public SingleObjectPolicy::Data {
+  explicit MGuardArrayIsPacked(MDefinition* array)
+      : MUnaryInstruction(classOpcode, array) {
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Object);
+    setResultTypeSet(array->resultTypeSet());
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardArrayIsPacked)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, array))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
   }

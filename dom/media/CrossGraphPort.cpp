@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "CrossGraphTrack.h"
+#include "CrossGraphPort.h"
 
 #include "AudioDeviceInfo.h"
 #include "AudioStreamTrack.h"
@@ -22,7 +22,7 @@ extern LazyLogModule gForwardedInputTrackLog;
 #define LOG(type, msg) MOZ_LOG(gForwardedInputTrackLog, type, msg)
 #define LOG_TEST(type) MOZ_LOG_TEST(gForwardedInputTrackLog, type)
 
-CrossGraphManager* CrossGraphManager::Connect(
+UniquePtr<CrossGraphPort> CrossGraphPort::Connect(
     const RefPtr<dom::AudioStreamTrack>& aStreamTrack, AudioDeviceInfo* aSink,
     nsPIDOMWindowInner* aWindow) {
   MOZ_ASSERT(aSink);
@@ -30,7 +30,7 @@ CrossGraphManager* CrossGraphManager::Connect(
   uint32_t defaultRate;
   aSink->GetDefaultRate(&defaultRate);
   LOG(LogLevel::Debug,
-      ("CrossGraphManager::Connect: sink id: %p at rate %u, primary rate %d",
+      ("CrossGraphPort::Connect: sink id: %p at rate %u, primary rate %d",
        aSink->DeviceID(), defaultRate, aStreamTrack->Graph()->GraphRate()));
 
   if (!aSink->DeviceID()) {
@@ -41,10 +41,10 @@ CrossGraphManager* CrossGraphManager::Connect(
       MediaTrackGraph::GetInstance(MediaTrackGraph::AUDIO_THREAD_DRIVER,
                                    aWindow, defaultRate, aSink->DeviceID());
 
-  return CrossGraphManager::Connect(aStreamTrack, newGraph);
+  return CrossGraphPort::Connect(aStreamTrack, newGraph);
 }
 
-CrossGraphManager* CrossGraphManager::Connect(
+UniquePtr<CrossGraphPort> CrossGraphPort::Connect(
     const RefPtr<dom::AudioStreamTrack>& aStreamTrack,
     MediaTrackGraph* aPartnerGraph) {
   MOZ_ASSERT(aStreamTrack);
@@ -64,64 +64,52 @@ CrossGraphManager* CrossGraphManager::Connect(
   RefPtr<MediaInputPort> port =
       aStreamTrack->ForwardTrackContentsTo(transmitter);
 
-  return new CrossGraphManager(port);
+  return WrapUnique(new CrossGraphPort(std::move(port), std::move(transmitter),
+                                       std::move(receiver)));
 }
 
-RefPtr<CrossGraphTransmitter> CrossGraphManager::GetTransmitter() {
-  MOZ_ASSERT(mSourcePort);
-  return mSourcePort->GetDestination()->AsCrossGraphTransmitter();
+void CrossGraphPort::AddAudioOutput(void* aKey) {
+  mReceiver->AddAudioOutput(aKey);
 }
 
-RefPtr<CrossGraphReceiver> CrossGraphManager::GetReceiver() {
-  MOZ_ASSERT(mSourcePort);
-  return GetTransmitter()->mReceiver;
+void CrossGraphPort::RemoveAudioOutput(void* aKey) {
+  mReceiver->RemoveAudioOutput(aKey);
 }
 
-void CrossGraphManager::AddAudioOutput(void* aKey) {
-  MOZ_ASSERT(GetTransmitter());
-  GetReceiver()->AddAudioOutput(aKey);
+void CrossGraphPort::SetAudioOutputVolume(void* aKey, float aVolume) {
+  mReceiver->SetAudioOutputVolume(aKey, aVolume);
 }
 
-void CrossGraphManager::RemoveAudioOutput(void* aKey) {
-  MOZ_ASSERT(GetTransmitter());
-  GetReceiver()->RemoveAudioOutput(aKey);
+void CrossGraphPort::Destroy() {
+  mTransmitter->Destroy();
+  mReceiver->Destroy();
+  mTransmitterPort->Destroy();
 }
 
-void CrossGraphManager::SetAudioOutputVolume(void* aKey, float aVolume) {
-  MOZ_ASSERT(GetTransmitter());
-  GetReceiver()->SetAudioOutputVolume(aKey, aVolume);
-}
-
-void CrossGraphManager::Destroy() {
-  MOZ_ASSERT(GetTransmitter());
-  GetTransmitter()->Destroy();
-  mSourcePort->Destroy();
-  mSourcePort = nullptr;
-}
-
-RefPtr<GenericPromise> CrossGraphManager::EnsureConnected() {
+RefPtr<GenericPromise> CrossGraphPort::EnsureConnected() {
   // The primary graph is already working check the partner (receiver's) graph.
-  return GetReceiver()->Graph()->NotifyWhenDeviceStarted(GetReceiver().get());
+  return mReceiver->Graph()->NotifyWhenDeviceStarted(mReceiver.get());
 }
 
 /** CrossGraphTransmitter **/
 
-CrossGraphTransmitter::CrossGraphTransmitter(TrackRate aSampleRate,
-                                             CrossGraphReceiver* aReceiver)
-    : ForwardedInputTrack(aSampleRate, MediaSegment::AUDIO),
-      mReceiver(aReceiver) {}
+CrossGraphTransmitter::CrossGraphTransmitter(
+    TrackRate aSampleRate, RefPtr<CrossGraphReceiver> aReceiver)
+    : ProcessedMediaTrack(aSampleRate, MediaSegment::AUDIO,
+                          nullptr /* aSegment */),
+      mReceiver(std::move(aReceiver)) {}
 
 void CrossGraphTransmitter::ProcessInput(GraphTime aFrom, GraphTime aTo,
                                          uint32_t aFlags) {
-  // Get previous end before mSegment is updated.
-  TrackTime previousEnd = GetEnd();
-  // Update mSegment from source track.
-  ForwardedInputTrack::ProcessInput(aFrom, aTo, aFlags);
+  MOZ_ASSERT(!mInputs.IsEmpty());
+  MOZ_ASSERT(mDisabledMode == DisabledTrackMode::ENABLED);
 
-  MOZ_ASSERT(mInputPort);
-  if (mInputPort->GetSource()->Ended() &&
-      (mInputPort->GetSource()->GetEnd() <=
-       mInputPort->GetSource()->GraphTimeToTrackTimeWithBlocking(aTo))) {
+  MediaTrack* input = mInputs[0]->GetSource();
+
+  if (mInputs[0]->GetSource()->Ended() &&
+      (mInputs[0]->GetSource()->GetEnd() <=
+       mInputs[0]->GetSource()->GraphTimeToTrackTimeWithBlocking(aFrom))) {
+    mEnded = true;
     return;
   }
 
@@ -130,30 +118,40 @@ void CrossGraphTransmitter::ProcessInput(GraphTime aFrom, GraphTime aTo,
        ", to %" PRId64 ", ticks %" PRId64 "",
        this, mSegment->GetDuration(), aFrom, aTo, aTo - aFrom));
 
-  AudioSegment* audio = GetData<AudioSegment>();
-  TrackTime ticks = aTo - aFrom;
-  MOZ_ASSERT(ticks);
-  MOZ_ASSERT(audio->GetDuration() >= ticks);
+  AudioSegment audio;
+  GraphTime next;
+  for (GraphTime t = aFrom; t < aTo; t = next) {
+    MediaInputPort::InputInterval interval =
+        MediaInputPort::GetNextInputInterval(mInputs[0], t);
+    interval.mEnd = std::min(interval.mEnd, aTo);
 
-  AudioSegment transmittingAudio;
-  transmittingAudio.AppendSlice(*audio, previousEnd, GetEnd());
-  MOZ_ASSERT(ticks >= transmittingAudio.GetDuration());
-  if (transmittingAudio.IsNull()) {
-    AudioChunk chunk;
-    chunk.SetNull(ticks);
-    Unused << mReceiver->EnqueueAudio(chunk);
-  } else {
-    for (AudioSegment::ChunkIterator iter(transmittingAudio); !iter.IsEnded();
-         iter.Next()) {
-      Unused << mReceiver->EnqueueAudio(*iter);
+    TrackTime ticks = interval.mEnd - interval.mStart;
+    next = interval.mEnd;
+
+    if (interval.mStart >= interval.mEnd) {
+      break;
+    }
+
+    if (interval.mInputIsBlocked) {
+      audio.AppendNullData(ticks);
+    } else if (input->IsSuspended()) {
+      audio.AppendNullData(ticks);
+    } else {
+      MOZ_ASSERT(GetEnd() == GraphTimeToTrackTimeWithBlocking(interval.mStart),
+                 "Samples missing");
+      TrackTime inputStart =
+          input->GraphTimeToTrackTimeWithBlocking(interval.mStart);
+      TrackTime inputEnd =
+          input->GraphTimeToTrackTimeWithBlocking(interval.mEnd);
+      audio.AppendSlice(*input->GetData(), inputStart, inputEnd);
     }
   }
-}
 
-void CrossGraphTransmitter::Destroy() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MediaTrack::Destroy();
-  mReceiver->Destroy();
+  mStartTime = aTo;
+
+  for (AudioSegment::ChunkIterator iter(audio); !iter.IsEnded(); iter.Next()) {
+    Unused << mReceiver->EnqueueAudio(*iter);
+  }
 }
 
 /** CrossGraphReceiver **/

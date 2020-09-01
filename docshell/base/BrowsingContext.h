@@ -193,6 +193,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return GetFromWindow(aProxy);
   }
 
+  static void DiscardFromContentParent(ContentParent* aCP);
+
   // Create a brand-new toplevel BrowsingContext with no relationships to other
   // BrowsingContexts, and which is not embedded within any <browser> or frame
   // element.
@@ -236,6 +238,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // been destroyed, and may not be available on the other side of an IPC
   // message.
   bool IsDiscarded() const { return mIsDiscarded; }
+
+  // Returns true if none of the BrowsingContext's ancestor BrowsingContexts or
+  // WindowContexts are discarded or cached.
+  bool AncestorsAreCurrent() const;
 
   bool Windowless() const { return mWindowless; }
 
@@ -290,6 +296,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                    bool aSetNavigating = false);
 
   nsresult InternalLoad(nsDocShellLoadState* aLoadState);
+
+  // Removes the root document for this BrowsingContext tree from the BFCache,
+  // if it is cached, and returns true if it was.
+  bool RemoveRootFromBFCacheSync();
 
   // If the load state includes a source BrowsingContext has been passed, check
   // to see if we are sandboxed from it as the result of an iframe or CSP

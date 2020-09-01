@@ -2076,6 +2076,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     return NS_ERROR_UNEXPECTED;
   }
 
+  if (!mBrowsingContext->AncestorsAreCurrent()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Document> oldDoc = mDoc;
   MOZ_RELEASE_ASSERT(oldDoc != aDocument);
 
@@ -5208,8 +5212,8 @@ static CallState CollectDocuments(Document& aDoc,
   return CallState::Continue;
 }
 
-static void DispatchPrintEventToWindowTree(
-    Document& aDoc, const nsAString& aEvent) {
+static void DispatchPrintEventToWindowTree(Document& aDoc,
+                                           const nsAString& aEvent) {
   if (aDoc.IsStaticDocument()) {
     return;
   }

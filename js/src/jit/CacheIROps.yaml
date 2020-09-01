@@ -639,11 +639,12 @@
   args:
     fun: ObjId
 
-- name: GuardFunApplyArray
-  shared: false
-  transpile: false
-  cost_estimate: 3
+- name: GuardArrayIsPacked
+  shared: true
+  transpile: true
+  cost_estimate: 1
   args:
+    array: ObjId
 
 - name: LoadObject
   shared: true
@@ -899,11 +900,12 @@
     rhs: ValId
 
 - name: ArrayJoinResult
-  shared: true
+  shared: false
   transpile: false
-  cost_estimate: 2
+  cost_estimate: 5
   args:
     obj: ObjId
+    sep: StringId
 
 - name: PackedArrayPopResult
   shared: true
@@ -1926,6 +1928,14 @@
   args:
     result: ValId
 
+- name: LoadConstantString
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    str: StringField
+    result: StringId
+
 - name: LoadConstantStringResult
   shared: false
   transpile: false
@@ -1935,7 +1945,7 @@
 
 - name: LoadInstanceOfObjectResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 3
   args:
     lhs: ValId
