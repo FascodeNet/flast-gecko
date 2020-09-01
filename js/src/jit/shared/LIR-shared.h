@@ -6170,6 +6170,49 @@ class LGuardSpecificSymbol : public LInstructionHelper<0, 1, 0> {
   }
 };
 
+class LGuardStringToIndex : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(GuardStringToIndex)
+
+  explicit LGuardStringToIndex(const LAllocation& str)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, str);
+  }
+
+  const LAllocation* string() { return getOperand(0); }
+};
+
+class LGuardStringToInt32 : public LInstructionHelper<1, 1, 1> {
+ public:
+  LIR_HEADER(GuardStringToInt32)
+
+  LGuardStringToInt32(const LAllocation& str, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, str);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* string() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+class LGuardStringToDouble : public LInstructionHelper<1, 1, 2> {
+ public:
+  LIR_HEADER(GuardStringToDouble)
+
+  LGuardStringToDouble(const LAllocation& str, const LDefinition& temp1,
+                       const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, str);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
+  }
+
+  const LAllocation* string() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+};
+
 class LGuardShape : public LInstructionHelper<1, 1, 1> {
  public:
   LIR_HEADER(GuardShape)
@@ -6345,6 +6388,24 @@ class LProxySetByValue
   const LAllocation* proxy() { return getOperand(0); }
 
   MProxySetByValue* mir() const { return mir_->toProxySetByValue(); }
+};
+
+class LCallSetArrayLength
+    : public LCallInstructionHelper<0, 1 + BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(CallSetArrayLength)
+
+  LCallSetArrayLength(const LAllocation& obj, const LBoxAllocation& rhs)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setBoxOperand(RhsIndex, rhs);
+  }
+
+  static const size_t RhsIndex = 1;
+
+  const LAllocation* obj() { return getOperand(0); }
+
+  MCallSetArrayLength* mir() const { return mir_->toCallSetArrayLength(); }
 };
 
 class LMegamorphicLoadSlot : public LCallInstructionHelper<BOX_PIECES, 1, 3> {

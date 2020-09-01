@@ -913,7 +913,7 @@ gfxFont* gfxPlatformFontList::SystemFindFontForChar(
       font = candidate;
     } else {
       bool hasColorGlyph = candidate->HasColorGlyphFor(aCh, aNextCh);
-      if (hasColorGlyph == (aPresentation == eFontPresentation::Emoji)) {
+      if (hasColorGlyph == PrefersColor(aPresentation)) {
         font = candidate;
       }
     }
@@ -930,7 +930,10 @@ gfxFont* gfxPlatformFontList::SystemFindFontForChar(
     // a candidate above, prefer that one.
     if (font && aPresentation != eFontPresentation::Any && candidate) {
       bool hasColorGlyph = font->HasColorGlyphFor(aCh, aNextCh);
-      if (hasColorGlyph != (aPresentation == eFontPresentation::Emoji)) {
+      if (hasColorGlyph != PrefersColor(aPresentation)) {
+        // We're discarding `font` and using `candidate` instead, so ensure
+        // `font` is known to the global cache expiration tracker.
+        RefPtr<gfxFont> autoRefDeref(font);
         font = candidate;
       }
     }
@@ -1039,7 +1042,7 @@ gfxFont* gfxPlatformFontList::GlobalFontFallback(
               return font;
             }
             bool hasColorGlyph = font->HasColorGlyphFor(aCh, aNextCh);
-            if (hasColorGlyph == (aPresentation == eFontPresentation::Emoji)) {
+            if (hasColorGlyph == PrefersColor(aPresentation)) {
               return font;
             }
           }
@@ -1053,7 +1056,7 @@ gfxFont* gfxPlatformFontList::GlobalFontFallback(
               return font;
             }
             bool hasColorGlyph = font->HasColorGlyphFor(aCh, aNextCh);
-            if (hasColorGlyph == (aPresentation == eFontPresentation::Emoji)) {
+            if (hasColorGlyph == PrefersColor(aPresentation)) {
               return font;
             }
           }

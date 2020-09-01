@@ -469,33 +469,33 @@
   args:
     obj: ObjId
 
-- name: GuardAndGetIndexFromString
+- name: GuardStringToIndex
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     str: StringId
     result: Int32Id
 
-- name: GuardAndGetInt32FromString
+- name: GuardStringToInt32
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     str: StringId
     result: Int32Id
 
-- name: GuardAndGetNumberFromString
+- name: GuardStringToNumber
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     str: StringId
     result: NumberId
 
-- name: GuardAndGetNumberFromBoolean
+- name: BooleanToNumber
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     boolean: BooleanId
@@ -1424,7 +1424,7 @@
 
 - name: CallSetArrayLength
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId

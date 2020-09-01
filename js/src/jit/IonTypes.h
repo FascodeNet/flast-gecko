@@ -121,6 +121,15 @@ enum class BailoutKind : uint8_t {
   // Symbol was not equal the expected JS::Symbol.
   SpecificSymbolGuard,
 
+  // Bailout triggered by MGuardStringToIndex.
+  StringToIndexGuard,
+
+  // Bailout triggered by MGuardStringToInt32.
+  StringToInt32Guard,
+
+  // Bailout triggered by MGuardStringToDouble.
+  StringToDoubleGuard,
+
   // Unbox expects a given type, bails out if it doesn't get it.
   NonInt32Input,
   NonNumericInput,  // unboxing a double works with int32 too
@@ -255,7 +264,13 @@ inline const char* BailoutKindString(BailoutKind kind) {
     case BailoutKind::SpecificAtomGuard:
       return "BailoutKind::SpecifcAtomGuard";
     case BailoutKind::SpecificSymbolGuard:
-      return "BailoutKind::SpecifcSymbolGuard";
+      return "BailoutKind::SpecificSymbolGuard";
+    case BailoutKind::StringToIndexGuard:
+      return "BailoutKind::StringToIndexGuard";
+    case BailoutKind::StringToInt32Guard:
+      return "BailoutKind::StringToInt32Guard";
+    case BailoutKind::StringToDoubleGuard:
+      return "BailoutKind::StringToDoubleGuard";
     case BailoutKind::NonInt32Input:
       return "BailoutKind::NonInt32Input";
     case BailoutKind::NonNumericInput:

@@ -423,6 +423,18 @@ bool WarpCacheIRTranspiler::emitProxySetByValue(ObjOperandId objId,
   return resumeAfter(ins);
 }
 
+bool WarpCacheIRTranspiler::emitCallSetArrayLength(ObjOperandId objId,
+                                                   bool strict,
+                                                   ValOperandId rhsId) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* ins = MCallSetArrayLength::New(alloc(), obj, rhs, strict);
+  addEffectful(ins);
+
+  return resumeAfter(ins);
+}
+
 bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
                                                           uint32_t nameOffset,
                                                           bool handleMissing) {
@@ -590,6 +602,36 @@ bool WarpCacheIRTranspiler::emitGuardSpecificFunction(
 
   setOperand(objId, ins);
   return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardStringToIndex(StringOperandId strId,
+                                                   Int32OperandId resultId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringToIndex::New(alloc(), str);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
+bool WarpCacheIRTranspiler::emitGuardStringToInt32(StringOperandId strId,
+                                                   Int32OperandId resultId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringToInt32::New(alloc(), str);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
+bool WarpCacheIRTranspiler::emitGuardStringToNumber(StringOperandId strId,
+                                                    NumberOperandId resultId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringToDouble::New(alloc(), str);
+  add(ins);
+
+  return defineOperand(resultId, ins);
 }
 
 bool WarpCacheIRTranspiler::emitGuardNoDenseElements(ObjOperandId objId) {
@@ -936,6 +978,16 @@ bool WarpCacheIRTranspiler::emitCallNumberToString(NumberOperandId inputId,
 bool WarpCacheIRTranspiler::emitBooleanToString(BooleanOperandId inputId,
                                                 StringOperandId resultId) {
   return emitToString(inputId, resultId);
+}
+
+bool WarpCacheIRTranspiler::emitBooleanToNumber(BooleanOperandId inputId,
+                                                NumberOperandId resultId) {
+  MDefinition* input = getOperand(inputId);
+
+  auto* ins = MToDouble::New(alloc(), input);
+  add(ins);
+
+  return defineOperand(resultId, ins);
 }
 
 bool WarpCacheIRTranspiler::emitLoadInt32Result(Int32OperandId valId) {

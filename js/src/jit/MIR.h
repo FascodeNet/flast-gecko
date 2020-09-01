@@ -9346,6 +9346,24 @@ class MProxySetByValue
   bool possiblyCalls() const override { return true; }
 };
 
+class MCallSetArrayLength
+    : public MBinaryInstruction,
+      public MixPolicy<ObjectPolicy<0>, BoxPolicy<1>>::Data {
+  bool strict_;
+
+  MCallSetArrayLength(MDefinition* obj, MDefinition* rhs, bool strict)
+      : MBinaryInstruction(classOpcode, obj, rhs), strict_(strict) {}
+
+ public:
+  INSTRUCTION_HEADER(CallSetArrayLength)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, obj), (1, rhs))
+
+  bool strict() const { return strict_; }
+
+  bool possiblyCalls() const override { return true; }
+};
+
 class MMegamorphicLoadSlot : public MUnaryInstruction,
                              public SingleObjectPolicy::Data {
   CompilerPropertyName name_;
@@ -9930,6 +9948,79 @@ class MGuardSpecificSymbol : public MUnaryInstruction,
   bool appendRoots(MRootList& roots) const override {
     return roots.append(expected_);
   }
+};
+
+class MGuardStringToIndex : public MUnaryInstruction,
+                            public StringPolicy<0>::Data {
+  explicit MGuardStringToIndex(MDefinition* str)
+      : MUnaryInstruction(classOpcode, str) {
+    // Mark as guard because this instruction must not be eliminated. For
+    // example, if the string is not an index the operation could change from a
+    // typed array load to a getter call.
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Int32);
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardStringToIndex)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, string))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
+class MGuardStringToInt32 : public MUnaryInstruction,
+                            public StringPolicy<0>::Data {
+  explicit MGuardStringToInt32(MDefinition* str)
+      : MUnaryInstruction(classOpcode, str) {
+    // Mark as guard to prevent the issue described in MGuardStringToIndex's
+    // constructor.
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Int32);
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardStringToInt32)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, string))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
+class MGuardStringToDouble : public MUnaryInstruction,
+                             public StringPolicy<0>::Data {
+  explicit MGuardStringToDouble(MDefinition* str)
+      : MUnaryInstruction(classOpcode, str) {
+    // Mark as guard to prevent the issue described in MGuardStringToIndex's
+    // constructor.
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Double);
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardStringToDouble)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, string))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
 class MGuardNoDenseElements : public MUnaryInstruction,

@@ -4119,6 +4119,32 @@ void LIRGenerator::visitGuardSpecificSymbol(MGuardSpecificSymbol* ins) {
   redefine(ins, ins->symbol());
 }
 
+void LIRGenerator::visitGuardStringToIndex(MGuardStringToIndex* ins) {
+  MOZ_ASSERT(ins->string()->type() == MIRType::String);
+  auto* guard = new (alloc()) LGuardStringToIndex(useRegister(ins->string()));
+  assignSnapshot(guard, BailoutKind::StringToIndexGuard);
+  define(guard, ins);
+  assignSafepoint(guard, ins);
+}
+
+void LIRGenerator::visitGuardStringToInt32(MGuardStringToInt32* ins) {
+  MOZ_ASSERT(ins->string()->type() == MIRType::String);
+  auto* guard =
+      new (alloc()) LGuardStringToInt32(useRegister(ins->string()), temp());
+  assignSnapshot(guard, BailoutKind::StringToInt32Guard);
+  define(guard, ins);
+  assignSafepoint(guard, ins);
+}
+
+void LIRGenerator::visitGuardStringToDouble(MGuardStringToDouble* ins) {
+  MOZ_ASSERT(ins->string()->type() == MIRType::String);
+  auto* guard = new (alloc())
+      LGuardStringToDouble(useRegister(ins->string()), temp(), temp());
+  assignSnapshot(guard, BailoutKind::StringToDoubleGuard);
+  define(guard, ins);
+  assignSafepoint(guard, ins);
+}
+
 void LIRGenerator::visitGuardNoDenseElements(MGuardNoDenseElements* ins) {
   auto* guard =
       new (alloc()) LGuardNoDenseElements(useRegister(ins->object()), temp());
@@ -4236,6 +4262,15 @@ void LIRGenerator::visitProxySetByValue(MProxySetByValue* ins) {
   auto* lir = new (alloc())
       LProxySetByValue(useRegisterAtStart(ins->proxy()),
                        useBoxAtStart(ins->idVal()), useBoxAtStart(ins->rhs()));
+  add(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitCallSetArrayLength(MCallSetArrayLength* ins) {
+  MOZ_ASSERT(ins->obj()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->rhs()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LCallSetArrayLength(useRegisterAtStart(ins->obj()),
+                                                useBoxAtStart(ins->rhs()));
   add(lir, ins);
   assignSafepoint(lir, ins);
 }

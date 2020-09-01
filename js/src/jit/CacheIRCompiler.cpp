@@ -2117,8 +2117,8 @@ bool CacheIRCompiler::emitGuardNoDenseElements(ObjOperandId objId) {
   return true;
 }
 
-bool CacheIRCompiler::emitGuardAndGetInt32FromString(StringOperandId strId,
-                                                     Int32OperandId resultId) {
+bool CacheIRCompiler::emitGuardStringToInt32(StringOperandId strId,
+                                             Int32OperandId resultId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Register str = allocator.useRegister(masm, strId);
   Register output = allocator.defineRegister(masm, resultId);
@@ -2129,58 +2129,14 @@ bool CacheIRCompiler::emitGuardAndGetInt32FromString(StringOperandId strId,
     return false;
   }
 
-  Label vmCall, done;
-  // Use indexed value as fast path if possible.
-  masm.loadStringIndexValue(str, output, &vmCall);
-  masm.jump(&done);
-  {
-    masm.bind(&vmCall);
-
-    // Reserve stack for holding the result value of the call.
-    masm.reserveStack(sizeof(int32_t));
-    masm.moveStackPtrTo(output);
-
-    // We cannot use callVM, as callVM expects to be able to clobber all
-    // operands, however, since this op is not the last in the generated IC, we
-    // want to be able to reference other live values.
-    LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
-                                 liveVolatileFloatRegs());
-    masm.PushRegsInMask(volatileRegs);
-
-    masm.setupUnalignedABICall(scratch);
-    masm.loadJSContext(scratch);
-    masm.passABIArg(scratch);
-    masm.passABIArg(str);
-    masm.passABIArg(output);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, GetInt32FromStringPure));
-    masm.mov(ReturnReg, scratch);
-
-    LiveRegisterSet ignore;
-    ignore.add(scratch);
-    masm.PopRegsInMaskIgnore(volatileRegs, ignore);
-
-    Label ok;
-    masm.branchIfTrueBool(scratch, &ok);
-    {
-      // OOM path, recovered by GetInt32FromStringPure.
-      //
-      // Use addToStackPtr instead of freeStack as freeStack tracks stack height
-      // flow-insensitively, and using it twice would confuse the stack height
-      // tracking.
-      masm.addToStackPtr(Imm32(sizeof(int32_t)));
-      masm.jump(failure->label());
-    }
-    masm.bind(&ok);
-
-    masm.load32(Address(output, 0), output);
-    masm.freeStack(sizeof(int32_t));
-  }
-  masm.bind(&done);
+  LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
+                               liveVolatileFloatRegs());
+  masm.guardStringToInt32(str, output, scratch, volatileRegs, failure->label());
   return true;
 }
 
-bool CacheIRCompiler::emitGuardAndGetNumberFromString(
-    StringOperandId strId, NumberOperandId resultId) {
+bool CacheIRCompiler::emitGuardStringToNumber(StringOperandId strId,
+                                              NumberOperandId resultId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Register str = allocator.useRegister(masm, strId);
   ValueOperand output = allocator.defineValueRegister(masm, resultId);
@@ -2246,8 +2202,8 @@ bool CacheIRCompiler::emitGuardAndGetNumberFromString(
   return true;
 }
 
-bool CacheIRCompiler::emitGuardAndGetNumberFromBoolean(
-    BooleanOperandId booleanId, NumberOperandId resultId) {
+bool CacheIRCompiler::emitBooleanToNumber(BooleanOperandId booleanId,
+                                          NumberOperandId resultId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Register boolean = allocator.useRegister(masm, booleanId);
   ValueOperand output = allocator.defineValueRegister(masm, resultId);
@@ -2255,8 +2211,8 @@ bool CacheIRCompiler::emitGuardAndGetNumberFromBoolean(
   return true;
 }
 
-bool CacheIRCompiler::emitGuardAndGetIndexFromString(StringOperandId strId,
-                                                     Int32OperandId resultId) {
+bool CacheIRCompiler::emitGuardStringToIndex(StringOperandId strId,
+                                             Int32OperandId resultId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Register str = allocator.useRegister(masm, strId);
   Register output = allocator.defineRegister(masm, resultId);
@@ -2279,7 +2235,7 @@ bool CacheIRCompiler::emitGuardAndGetIndexFromString(StringOperandId strId,
     masm.setupUnalignedABICall(output);
     masm.passABIArg(str);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, GetIndexFromString));
-    masm.mov(ReturnReg, output);
+    masm.storeCallInt32Result(output);
 
     LiveRegisterSet ignore;
     ignore.add(output);

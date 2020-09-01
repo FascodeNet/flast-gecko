@@ -401,14 +401,13 @@ void Family::SearchAllFontsForChar(FontList* aList,
           continue;
         }
         if (aMatchData->mPresentation != eFontPresentation::Any) {
-          gfxFont* font = fe->FindOrMakeFont(&aMatchData->mStyle);
+          RefPtr<gfxFont> font = fe->FindOrMakeFont(&aMatchData->mStyle);
           if (!font) {
             continue;
           }
           bool hasColorGlyph =
               font->HasColorGlyphFor(aMatchData->mCh, aMatchData->mNextCh);
-          if (hasColorGlyph !=
-              (aMatchData->mPresentation == eFontPresentation::Emoji)) {
+          if (hasColorGlyph != PrefersColor(aMatchData->mPresentation)) {
             distance += kPresentationMismatch;
             if (distance >= aMatchData->mMatchDistance) {
               continue;

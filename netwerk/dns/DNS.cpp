@@ -116,7 +116,7 @@ bool NetAddrToString(const NetAddr* addr, char* buf, uint32_t bufSize) {
     return !!inet_ntop_internal(AF_INET6, &nativeAddr, buf, bufSize);
   }
 #if defined(XP_UNIX)
-  else if (addr->raw.family == AF_LOCAL) {
+  if (addr->raw.family == AF_LOCAL) {
     if (bufSize < sizeof(addr->local.path)) {
       // Many callers don't bother checking our return value, so
       // null-terminate just in case.
@@ -173,6 +173,8 @@ bool IsIPAddrAny(const NetAddr* addr) {
   }
   return false;
 }
+
+NetAddr::NetAddr(const PRNetAddr* prAddr) { PRNetAddrToNetAddr(prAddr, this); }
 
 bool IsIPAddrV4(const NetAddr* addr) { return addr->raw.family == AF_INET; }
 
@@ -285,27 +287,10 @@ bool NetAddr::operator<(const NetAddr& other) const {
   return false;
 }
 
-NetAddrElement::NetAddrElement(const PRNetAddr* prNetAddr) {
-  this->mAddress.raw.family = 0;
-  this->mAddress.inet = {};
-  PRNetAddrToNetAddr(prNetAddr, &mAddress);
-}
-
-NetAddrElement::NetAddrElement(const NetAddrElement& netAddr) {
-  mAddress = netAddr.mAddress;
-}
-
-NetAddrElement::~NetAddrElement() = default;
-
 AddrInfo::AddrInfo(const nsACString& host, const PRAddrInfo* prAddrInfo,
                    bool disableIPv4, bool filterNameCollision,
                    const nsACString& cname)
-    : mHostName(host),
-      mCanonicalName(cname),
-      ttl(NO_TTL_DATA),
-      mFromTRR(false),
-      mTrrFetchDuration(0),
-      mTrrFetchDurationNetworkOnly(0) {
+    : mHostName(host), mCanonicalName(cname) {
   MOZ_ASSERT(prAddrInfo,
              "Cannot construct AddrInfo with a null prAddrInfo pointer!");
   const uint32_t nameCollisionAddr = htonl(0x7f003535);  // 127.0.53.53
@@ -318,28 +303,26 @@ AddrInfo::AddrInfo(const nsACString& host, const PRAddrInfo* prAddrInfo,
                  (!filterNameCollision || tmpAddr.raw.family != PR_AF_INET ||
                   (tmpAddr.inet.ip != nameCollisionAddr));
     if (addIt) {
-      auto* addrElement = new NetAddrElement(&tmpAddr);
-      mAddresses.insertBack(addrElement);
+      NetAddr elem(&tmpAddr);
+      mAddresses.AppendElement(elem);
     }
   } while (iter);
 }
 
 AddrInfo::AddrInfo(const nsACString& host, const nsACString& cname,
-                   unsigned int aTRR)
+                   unsigned int aTRR, nsTArray<NetAddr>&& addresses)
     : mHostName(host),
       mCanonicalName(cname),
-      ttl(NO_TTL_DATA),
       mFromTRR(aTRR),
-      mTrrFetchDuration(0),
-      mTrrFetchDurationNetworkOnly(0) {}
+      mAddresses(std::move(addresses)) {}
 
-AddrInfo::AddrInfo(const nsACString& host, unsigned int aTRR)
-    : mHostName(host),
+AddrInfo::AddrInfo(const nsACString& host, unsigned int aTRR,
+                   nsTArray<NetAddr>&& addresses, uint32_t aTTL)
+    : ttl(aTTL),
+      mHostName(host),
       mCanonicalName(EmptyCString()),
-      ttl(NO_TTL_DATA),
       mFromTRR(aTRR),
-      mTrrFetchDuration(0),
-      mTrrFetchDurationNetworkOnly(0) {}
+      mAddresses(std::move(addresses)) {}
 
 // deep copy constructor
 AddrInfo::AddrInfo(const AddrInfo* src) {
@@ -350,25 +333,16 @@ AddrInfo::AddrInfo(const AddrInfo* src) {
   mTrrFetchDuration = src->mTrrFetchDuration;
   mTrrFetchDurationNetworkOnly = src->mTrrFetchDurationNetworkOnly;
 
-  for (auto element = src->mAddresses.getFirst(); element;
-       element = element->getNext()) {
-    AddAddress(new NetAddrElement(*element));
-  }
+  mAddresses = src->mAddresses.Clone();
 }
 
 AddrInfo::~AddrInfo() = default;
-
-void AddrInfo::AddAddress(NetAddrElement* address) {
-  MOZ_ASSERT(address, "Cannot add the address to an uninitialized list");
-
-  mAddresses.insertBack(address);
-}
 
 size_t AddrInfo::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
   size_t n = mallocSizeOf(this);
   n += mHostName.SizeOfExcludingThisIfUnshared(mallocSizeOf);
   n += mCanonicalName.SizeOfExcludingThisIfUnshared(mallocSizeOf);
-  n += mAddresses.sizeOfExcludingThis(mallocSizeOf);
+  n += mAddresses.ShallowSizeOfExcludingThis(mallocSizeOf);
   return n;
 }
 
