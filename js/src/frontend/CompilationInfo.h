@@ -105,9 +105,16 @@ struct CompilationInput {
 
   ScriptSourceHolder source_;
 
-  // The enclosing scope of the function if we're compiling standalone function.
-  // The enclosing scope of the `eval` if we're compiling eval.
-  // Null otherwise.
+  //  * If we're compiling standalone function, the non-null enclosing scope of
+  //    the function
+  //  * If we're compiling eval, the non-null enclosing scope of the `eval`.
+  //  * If we're compiling module, null that means empty global scope
+  //    (See EmitterScope::checkEnvironmentChainLength)
+  //  * If we're compiling self-hosted JS, an empty global scope.
+  //    This scope is also used for EmptyGlobalScopeType in
+  //    CompilationStencil.gcThings.
+  //    See the comment in initForSelfHostingGlobal.
+  //  * Null otherwise
   Scope* enclosingScope = nullptr;
 
   explicit CompilationInput(const JS::ReadOnlyCompileOptions& options)
@@ -118,6 +125,21 @@ struct CompilationInput {
 
  public:
   bool initForGlobal(JSContext* cx) { return initScriptSource(cx); }
+
+  bool initForSelfHostingGlobal(JSContext* cx) {
+    if (!initScriptSource(cx)) {
+      return false;
+    }
+
+    // This enclosing scope is also recorded as EmptyGlobalScopeType in
+    // CompilationStencil.gcThings even though corresponding ScopeStencil
+    // isn't generated.
+    //
+    // Store the enclosing scope here in order to access it from
+    // inner scopes' ScopeStencil::enclosing.
+    enclosingScope = &cx->global()->emptyGlobalScope();
+    return true;
+  }
 
   bool initForStandaloneFunction(JSContext* cx,
                                  HandleScope functionEnclosingScope) {
@@ -140,7 +162,7 @@ struct CompilationInput {
     if (!initScriptSource(cx)) {
       return false;
     }
-    enclosingScope = &cx->global()->emptyGlobalScope();
+    // The `enclosingScope` is the emptyGlobalScope.
     return true;
   }
 
@@ -167,8 +189,6 @@ struct CompilationInput {
 struct MOZ_RAII CompilationState {
   // Until we have dealt with Atoms in the front end, we need to hold
   // onto them.
-  AutoKeepAtoms keepAtoms;
-
   Directives directives;
 
   ScopeContext scopeContext;
@@ -180,8 +200,7 @@ struct MOZ_RAII CompilationState {
                    const JS::ReadOnlyCompileOptions& options,
                    Scope* enclosingScope = nullptr,
                    JSObject* enclosingEnv = nullptr)
-      : keepAtoms(cx),
-        directives(options.forceStrictMode()),
+      : directives(options.forceStrictMode()),
         scopeContext(cx, enclosingScope, enclosingEnv),
         usedNames(cx),
         allocScope(alloc) {}
@@ -344,11 +363,6 @@ class ScriptStencilIterable {
 struct CompilationInfo {
   static constexpr FunctionIndex TopLevelIndex = FunctionIndex(0);
 
-  // This field is used as temporary storage for accessing current context.
-  // WARNING: Replace this when passing between threads.
-  // FIXME: Remove this field.
-  JSContext* cx;
-
   CompilationInput input;
   CompilationStencil stencil;
 
@@ -365,14 +379,15 @@ struct CompilationInfo {
 
   // Construct a CompilationInfo
   CompilationInfo(JSContext* cx, const JS::ReadOnlyCompileOptions& options)
-      : cx(cx), input(options), stencil(cx->runtime()) {}
+      : input(options), stencil(cx->runtime()) {}
 
-  MOZ_MUST_USE bool instantiateStencils(CompilationGCOutput& gcOutput);
+  MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
+                                        CompilationGCOutput& gcOutput);
 
-  JSAtom* liftParserAtomToJSAtom(const ParserAtom* parserAtom) {
+  JSAtom* liftParserAtomToJSAtom(JSContext* cx, const ParserAtom* parserAtom) {
     return parserAtom->toJSAtom(cx, *this).unwrapOr(nullptr);
   }
-  const ParserAtom* lowerJSAtomToParserAtom(JSAtom* atom) {
+  const ParserAtom* lowerJSAtomToParserAtom(JSContext* cx, JSAtom* atom) {
     auto result = stencil.parserAtoms.internJSAtom(cx, *this, atom);
     return result.unwrapOr(nullptr);
   }

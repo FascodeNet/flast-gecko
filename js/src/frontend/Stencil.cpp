@@ -40,14 +40,6 @@ AbstractScopePtr ScopeStencil::enclosing(CompilationInfo& compilationInfo) {
     return AbstractScopePtr(compilationInfo, *enclosing_);
   }
 
-  // HACK: The self-hosting script uses the EmptyGlobalScopeType placeholder
-  // which does not correspond to a ScopeStencil. This means that the inner
-  // scopes may store Nothing as an enclosing ScopeIndex.
-  if (compilationInfo.input.options.selfHostingMode) {
-    MOZ_ASSERT(compilationInfo.input.enclosingScope == nullptr);
-    return AbstractScopePtr(&compilationInfo.cx->global()->emptyGlobalScope());
-  }
-
   return AbstractScopePtr(compilationInfo.input.enclosingScope);
 }
 
@@ -195,7 +187,7 @@ static JSFunction* CreateFunction(JSContext* cx,
   RootedAtom displayAtom(cx);
   if (script.functionAtom) {
     displayAtom.set(
-        compilationInfo.liftParserAtomToJSAtom(script.functionAtom));
+        compilationInfo.liftParserAtomToJSAtom(cx, script.functionAtom));
     if (!displayAtom) {
       return nullptr;
     }
@@ -363,8 +355,8 @@ static bool SetTypeAndNameForExposedFunctions(JSContext* cx,
       JSAtom* funcAtom = nullptr;
       if (scriptStencil.functionFlags.hasInferredName() ||
           scriptStencil.functionFlags.hasGuessedAtom()) {
-        funcAtom =
-            compilationInfo.liftParserAtomToJSAtom(scriptStencil.functionAtom);
+        funcAtom = compilationInfo.liftParserAtomToJSAtom(
+            cx, scriptStencil.functionAtom);
         if (!funcAtom) {
           return false;
         }
@@ -458,6 +450,14 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInfo& compilationInfo,
     if (!ModuleObject::createEnvironment(cx, gcOutput.module)) {
       return false;
     }
+
+    // Off-thread compilation with parseGlobal will freeze the module object
+    // in GlobalHelperThreadState::finishModuleParseTask instead
+    if (!cx->isHelperThreadContext()) {
+      if (!ModuleObject::Freeze(cx, gcOutput.module)) {
+        return false;
+      }
+    }
   }
 
   return true;
@@ -544,9 +544,17 @@ static void FunctionsFromExistingLazy(CompilationInfo& compilationInfo,
   MOZ_ASSERT(idx == gcOutput.functions.length());
 }
 
-bool CompilationInfo::instantiateStencils(CompilationGCOutput& gcOutput) {
+bool CompilationInfo::instantiateStencils(JSContext* cx,
+                                          CompilationGCOutput& gcOutput) {
   if (!gcOutput.functions.resize(stencil.scriptData.length())) {
     return false;
+  }
+
+  if (stencil.scriptData[CompilationInfo::TopLevelIndex].isModule()) {
+    MOZ_ASSERT(input.enclosingScope == nullptr);
+    input.enclosingScope = &cx->global()->emptyGlobalScope();
+    MOZ_ASSERT(input.enclosingScope->environmentChainLength() ==
+               ModuleScope::EnclosingEnvironmentChainLength);
   }
 
   if (input.lazy) {

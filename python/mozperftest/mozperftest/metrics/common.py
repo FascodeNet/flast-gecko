@@ -27,6 +27,27 @@ COMMON_ARGS = {
         "using browserScripts.pageinfo.url will split the data by the unique "
         "URLs that are found.",
     },
+    "simplify-names": {
+        "action": "store_true",
+        "default": False,
+        "help": "If set, metric names will be simplified to a single word. The PerftestETL "
+        "combines dictionary keys by `.`, and the final key contains that value of the data. "
+        "That final key becomes the new name of the metric.",
+    },
+    "simplify-exclude": {
+        "nargs": "*",
+        "default": ["statistics"],
+        "help": "When renaming/simplifying metric names, entries with these strings "
+        "will be ignored and won't get simplified. These options are only used when "
+        "--simplify-names is set.",
+    },
+    "transformer": {
+        "type": str,
+        "default": None,
+        "help": "The path to the file containing the custom transformer, "
+        "or the module to import along with the class name, "
+        "e.g. mozperftest.test.xpcshell:XpcShellTransformer",
+    },
 }
 
 
@@ -121,9 +142,7 @@ class MetricsStorage(object):
             self.return_code = 1
             raise MetricsMissingResultsError("Could not find any results to process.")
 
-    def get_standardized_data(
-        self, group_name="firefox", transformer="SingleJsonRetriever"
-    ):
+    def get_standardized_data(self, group_name="firefox", transformer=None):
         """Returns a parsed, standardized results data set.
 
         The dataset is computed once then cached unless overwrite is used.
@@ -143,13 +162,14 @@ class MetricsStorage(object):
             return self.stddata
 
         for data_type, data_info in self.results.items():
+            tfm = transformer if transformer is not None else data_info["transformer"]
             prefix = data_type
             if self.prefix:
                 prefix = "{}-{}".format(self.prefix, data_type)
             config = {
                 "output": self.output_path,
                 "prefix": prefix,
-                "customtransformer": data_info["transformer"],
+                "customtransformer": tfm,
                 "file_groups": {data_type: data_info["files"]},
             }
 
@@ -158,7 +178,7 @@ class MetricsStorage(object):
                 config=config,
                 prefix=self.prefix,
                 logger=self.logger,
-                custom_transform=data_info["transformer"],
+                custom_transform=tfm,
             )
             r = ptnb.process(**data_info["options"])
             self.stddata[data_type] = r["data"]
@@ -168,10 +188,12 @@ class MetricsStorage(object):
     def filtered_metrics(
         self,
         group_name="firefox",
-        transformer="SingleJsonRetriever",
+        transformer=None,
         metrics=None,
         exclude=None,
         split_by=None,
+        simplify_names=False,
+        simplify_exclude=["statistics"],
     ):
 
         """Filters the metrics to only those that were requested by `metrics`.
@@ -183,6 +205,11 @@ class MetricsStorage(object):
         contain this string in their name will be kept.
 
         :param metrics list: List of metrics to keep.
+        :param exclude list: List of string matchers to exclude from the metrics
+            gathered/reported.
+        :param split_by str: The name of a metric to use to split up data by.
+        :param simplify_exclude list: List of string matchers to exclude
+            from the naming simplification process.
         :return dict: Standardized notebook data containing the
             requested metrics.
         """
@@ -193,6 +220,8 @@ class MetricsStorage(object):
             return results
         if not exclude:
             exclude = []
+        if not simplify_exclude:
+            simplify_exclude = []
 
         # Get the field to split the results by (if any)
         if split_by is not None:
@@ -217,6 +246,25 @@ class MetricsStorage(object):
                 ):
                     newresults.append(res)
             filtered[data_type] = newresults
+
+        # Simplify the filtered metric names
+        if simplify_names:
+            previous = []
+            for data_type, data_info in filtered.items():
+                for res in data_info:
+                    if any([met in res["subtest"] for met in simplify_exclude]):
+                        continue
+
+                    new = res["subtest"].split(".")[-1]
+                    if new in previous:
+                        self.logger.warning(
+                            f"Another metric which ends with `{new}` was already found. "
+                            f"{res['subtest']} will not be simplified."
+                        )
+                        continue
+
+                    res["subtest"] = new
+                    previous.append(new)
 
         # Split the filtered results
         if split_by is not None:
@@ -252,11 +300,13 @@ def filtered_metrics(
     path,
     prefix,
     group_name="firefox",
-    transformer="SingleJsonRetriever",
+    transformer=None,
     metrics=None,
     settings=False,
     exclude=None,
     split_by=None,
+    simplify_names=False,
+    simplify_exclude=["statistics"],
 ):
     """Returns standardized data extracted from the metadata instance.
 
@@ -276,6 +326,8 @@ def filtered_metrics(
         metrics=metrics,
         exclude=exclude,
         split_by=split_by,
+        simplify_names=simplify_names,
+        simplify_exclude=simplify_exclude,
     )
 
     # XXX returning two different types is a problem

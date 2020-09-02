@@ -264,6 +264,24 @@ class JS_PUBLIC_API OwningCompileOptions final : public ReadOnlyCompileOptions {
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
+  OwningCompileOptions& setIsRunOnce(bool once) {
+    isRunOnce = once;
+    return *this;
+  }
+
+  OwningCompileOptions& setForceStrictMode() {
+    forceStrictMode_ = true;
+    return *this;
+  }
+
+  OwningCompileOptions& setModule() {
+    // ES6 10.2.1 Module code is always strict mode code.
+    setForceStrictMode();
+    setIsRunOnce(true);
+    allowHTMLComments = false;
+    return *this;
+  }
+
  private:
   void release();
 
@@ -431,6 +449,14 @@ class MOZ_STACK_CLASS JS_PUBLIC_API CompileOptions final
 
   CompileOptions& setForceStrictMode() {
     forceStrictMode_ = true;
+    return *this;
+  }
+
+  CompileOptions& setModule() {
+    // ES6 10.2.1 Module code is always strict mode code.
+    setForceStrictMode();
+    setIsRunOnce(true);
+    allowHTMLComments = false;
     return *this;
   }
 

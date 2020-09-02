@@ -56,6 +56,7 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
     this.view = view;
     this.input = view.input;
     UrlbarPrefs.addObserver(this);
+    this._setupOneOffsHorizontalKeyNavigation();
   }
 
   /**
@@ -215,6 +216,16 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
     if (prefs.includes(changedPref)) {
       this._engines = null;
     }
+    this._setupOneOffsHorizontalKeyNavigation();
+  }
+
+  /**
+   * Sets whether LEFT/RIGHT should navigate through one-off buttons.
+   */
+  _setupOneOffsHorizontalKeyNavigation() {
+    this.disableOneOffsHorizontalKeyNavigation =
+      UrlbarPrefs.get("update2") &&
+      UrlbarPrefs.get("update2.disableOneOffsHorizontalKeyNavigation");
   }
 
   /**
@@ -275,5 +286,23 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
       engineName: button.engine?.name,
       source: button.source,
     });
+  }
+
+  /**
+   * Overrides the superclass's contextmenu listener to handle the context menu
+   * for local one-offs in addition to engine one-offs.
+   *
+   * @param {event} event
+   *   The contextmenu event.
+   */
+  _on_contextmenu(event) {
+    // Prevent the context menu from appearing on the local one-offs.
+    let target = event.originalTarget;
+    if (!target.engine) {
+      event.preventDefault();
+      return;
+    }
+
+    super._on_contextmenu(event);
   }
 }

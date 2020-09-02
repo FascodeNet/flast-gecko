@@ -38,8 +38,6 @@
 #include "vm/ScopeKind.h"          // ScopeKind
 #include "vm/SharedStencil.h"  // ImmutableScriptData, ScopeNote, TryNote, GCThingIndex
 
-#include "vm/JSContext-inl.h"  // AutoKeepAtoms (used by BytecodeCompiler)
-
 using mozilla::Utf8Unit;
 
 using namespace js::gc;
@@ -503,7 +501,8 @@ void ReportSmooshCompileError(JSContext* cx, ErrorMetadata&& metadata,
 }
 
 /* static */
-bool Smoosh::compileGlobalScriptToStencil(CompilationInfo& compilationInfo,
+bool Smoosh::compileGlobalScriptToStencil(JSContext* cx,
+                                          CompilationInfo& compilationInfo,
                                           JS::SourceText<Utf8Unit>& srcBuf,
                                           bool* unimplemented) {
   // FIXME: check info members and return with *unimplemented = true
@@ -511,8 +510,6 @@ bool Smoosh::compileGlobalScriptToStencil(CompilationInfo& compilationInfo,
 
   auto bytes = reinterpret_cast<const uint8_t*>(srcBuf.get());
   size_t length = srcBuf.length();
-
-  JSContext* cx = compilationInfo.cx;
 
   const auto& options = compilationInfo.input.options;
   SmooshCompileOptions compileOptions;
@@ -583,20 +580,21 @@ bool Smoosh::compileGlobalScriptToStencil(CompilationInfo& compilationInfo,
 }
 
 /* static */
-bool Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
+bool Smoosh::compileGlobalScript(JSContext* cx,
+                                 CompilationInfo& compilationInfo,
                                  JS::SourceText<Utf8Unit>& srcBuf,
                                  CompilationGCOutput& gcOutput,
                                  bool* unimplemented) {
-  if (!compileGlobalScriptToStencil(compilationInfo, srcBuf, unimplemented)) {
+  if (!compileGlobalScriptToStencil(cx, compilationInfo, srcBuf,
+                                    unimplemented)) {
     return false;
   }
 
-  if (!compilationInfo.instantiateStencils(gcOutput)) {
+  if (!compilationInfo.instantiateStencils(cx, gcOutput)) {
     return false;
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  JSContext* cx = compilationInfo.cx;
   Sprinter sprinter(cx);
   if (!sprinter.init()) {
     return false;

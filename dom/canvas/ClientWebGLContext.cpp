@@ -921,6 +921,9 @@ RefPtr<gfx::SourceSurface> ClientWebGLContext::GetFrontBufferSnapshot(
     const auto format = nonPremultSurf->GetFormat();
     snapshot =
         gfx::Factory::CreateDataSourceSurface(size, format, /*zero=*/false);
+    if (!snapshot) {
+      gfxCriticalNote << "CreateDataSourceSurface failed for size " << size;
+    }
     gfxUtils::PremultiplyDataSurface(nonPremultSurf, snapshot);
   }
 
@@ -6223,8 +6226,9 @@ void ImplCycleCollectionTraverse(
 
 void ImplCycleCollectionUnlink(std::shared_ptr<webgl::NotLostData>& field) {
   if (!field) return;
-  field->extensions = {};
-  field->state = {};
+  const auto keepAlive = field;
+  keepAlive->extensions = {};
+  keepAlive->state = {};
   field = nullptr;
 }
 

@@ -85,8 +85,11 @@ class Notebook(Layer):
             self.get_arg("output"),
             self.get_arg("prefix"),
             metrics=self.get_arg("metrics"),
+            transformer=self.get_arg("transformer"),
             exclude=exclusions,
             split_by=self.get_arg("split-by"),
+            simplify_names=self.get_arg("simplify-names"),
+            simplify_exclude=self.get_arg("simplify-exclude"),
         )
 
         if not results:

@@ -4939,6 +4939,7 @@ static bool ParseModule(JSContext* cx, unsigned argc, Value* vp) {
   } else {
     options.setFileAndLine("<string>", 1);
   }
+  options.setModule();
 
   AutoStableStringChars stableChars(cx);
   if (!stableChars.initTwoByte(cx, scriptContents)) {
@@ -5416,7 +5417,7 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
           }
 
           bool unimplemented;
-          if (!Smoosh::compileGlobalScriptToStencil(compilationInfo.get(),
+          if (!Smoosh::compileGlobalScriptToStencil(cx, compilationInfo.get(),
                                                     srcBuf, &unimplemented)) {
             return false;
           }

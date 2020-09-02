@@ -788,6 +788,7 @@ bool RegExpShared::initializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
   // odd elements store the corresponding capture index. We create a
   // template object with a property for each capture name, and store
   // the capture indices as a heap-allocated array.
+  MOZ_ASSERT(namedCaptures->getDenseInitializedLength() % 2 == 0);
   uint32_t numNamedCaptures = namedCaptures->getDenseInitializedLength() / 2;
 
   // Create a plain template object.
@@ -807,10 +808,11 @@ bool RegExpShared::initializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
   templateObject->setGroup(group);
 
   // Initialize the properties of the template.
+  RootedId id(cx);
   RootedValue dummyString(cx, StringValue(cx->runtime()->emptyString));
   for (uint32_t i = 0; i < numNamedCaptures; i++) {
-    RootedString name(cx, namedCaptures->getDenseElement(i * 2).toString());
-    RootedId id(cx, NameToId(name->asAtom().asPropertyName()));
+    JSString* name = namedCaptures->getDenseElement(i * 2).toString();
+    id = NameToId(name->asAtom().asPropertyName());
     if (!NativeDefineDataProperty(cx, templateObject, id, dummyString,
                                   JSPROP_ENUMERATE)) {
       return false;

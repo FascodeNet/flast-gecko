@@ -7186,7 +7186,7 @@ bool BytecodeEmitter::emitSelfHostedResumeGenerator(BinaryNode* callNode) {
   ParseNode* kindNode = valNode->pn_next;
   MOZ_ASSERT(kindNode->isKind(ParseNodeKind::StringExpr));
   GeneratorResumeKind kind =
-      ParserAtomToResumeKind(compilationInfo, kindNode->as<NameNode>().atom());
+      ParserAtomToResumeKind(cx, kindNode->as<NameNode>().atom());
   MOZ_ASSERT(!kindNode->pn_next);
 
   if (!emitPushResumeKind(kind)) {
@@ -8653,7 +8653,7 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
           MOZ_ASSERT(accessorType == AccessorType::None);
 
           const ParserAtom* keyAtom =
-              key->as<NumericLiteral>().toAtom(compilationInfo);
+              key->as<NumericLiteral>().toAtom(cx, compilationInfo);
           if (!keyAtom) {
             return false;
           }
@@ -10478,8 +10478,8 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationSlow(
   }
   //            [stack] CALLBACK UNDEFINED
 
-  const ParserAtom* atom =
-      RealmInstrumentation::getInstrumentationKindName(compilationInfo, kind);
+  const ParserAtom* atom = RealmInstrumentation::getInstrumentationKindName(
+      cx, compilationInfo, kind);
   if (!atom) {
     return false;
   }

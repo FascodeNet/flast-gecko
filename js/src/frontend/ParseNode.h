@@ -1553,7 +1553,8 @@ class NumericLiteral : public ParseNode {
   void setDecimalPoint(DecimalPoint d) { decimalPoint_ = d; }
 
   // Return the decimal string representation of this numeric literal.
-  const ParserAtom* toAtom(CompilationInfo& compilationInfo) const;
+  const ParserAtom* toAtom(JSContext* cx,
+                           CompilationInfo& compilationInfo) const;
 };
 
 class BigIntLiteral : public ParseNode {
@@ -1620,8 +1621,6 @@ class LexicalScopeNode : public ParseNode {
 
   ParserScopeData<LexicalScope>* scopeBindings() const {
     MOZ_ASSERT(!isEmptyScope());
-    // Bindings' GC safety depend on the presence of an AutoKeepAtoms that
-    // the rest of the frontend also depends on.
     return bindings;
   }
 
