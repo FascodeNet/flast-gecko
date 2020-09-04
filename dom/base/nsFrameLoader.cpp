@@ -2191,6 +2191,8 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     return NS_ERROR_FAILURE;
   }
 
+  NS_ENSURE_STATE(mOwnerContent);
+
   // If we are an in-process browser, we want to set up our session history.
   if (mIsTopLevelContent && mOwnerContent->IsXULElement(nsGkAtoms::browser) &&
       !mOwnerContent->HasAttr(kNameSpaceID_None, nsGkAtoms::disablehistory)) {
@@ -3209,6 +3211,7 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
       PrintPreviewSuccessInfo info;
       info.mSheetCount = aInfo.sheetCount();
       info.mTotalPageCount = aInfo.totalPageCount();
+      info.mHasSelection = aInfo.hasSelection();
       promise->MaybeResolve(info);
     } else {
       promise->MaybeRejectWithUnknownError("Print preview failed");
@@ -3283,7 +3286,8 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
   sourceWindow->Print(
       aPrintSettings,
       /* aListener = */ nullptr, docShellToCloneInto,
-      /* aIsPreview = */ true,
+      nsGlobalWindowOuter::IsPreview::Yes,
+      nsGlobalWindowOuter::BlockUntilDone::No,
       [resolve](const PrintPreviewResultInfo& aInfo) { resolve(aInfo); }, rv);
   if (NS_WARN_IF(rv.Failed())) {
     promise->MaybeReject(std::move(rv));
@@ -3354,7 +3358,8 @@ already_AddRefed<Promise> nsFrameLoader::Print(uint64_t aOuterWindowID,
   ErrorResult rv;
   outerWindow->Print(aPrintSettings, listener,
                      /* aDocShellToCloneInto = */ nullptr,
-                     /* aIsPreview = */ false,
+                     nsGlobalWindowOuter::IsPreview::No,
+                     nsGlobalWindowOuter::BlockUntilDone::No,
                      /* aPrintPreviewCallback = */ nullptr, rv);
   if (rv.Failed()) {
     promise->MaybeReject(std::move(rv));

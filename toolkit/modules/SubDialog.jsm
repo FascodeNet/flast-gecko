@@ -105,13 +105,10 @@ SubDialog.prototype = {
 
   async open(
     aURL,
-    aFeatures = null,
-    aParams = null,
-    aClosingCallback = null,
-    aClosedCallback = null,
-    aOptions = {}
+    { features, closingCallback, closedCallback, sizeTo } = {},
+    ...aParams
   ) {
-    if (aOptions.sizeTo == "available") {
+    if (sizeTo == "available") {
       this._box.setAttribute("sizeto", "available");
     }
 
@@ -148,32 +145,32 @@ SubDialog.prototype = {
 
     // If the parent is chrome we also need open the dialog as chrome, otherwise
     // the openDialog call will fail.
-    let features = `resizable,dialog=no,centerscreen,chrome=${
+    let dialogFeatures = `resizable,dialog=no,centerscreen,chrome=${
       this._window?.isChromeWindow ? "yes" : "no"
     }`;
-    if (aFeatures) {
-      features = `${aFeatures},${features}`;
+    if (features) {
+      dialogFeatures = `${features},${dialogFeatures}`;
     }
 
     let dialog = this._window.openDialog(
       aURL,
       `dialogFrame-${this._id}`,
-      features,
-      aParams
+      dialogFeatures,
+      ...aParams
     );
-    if (aClosingCallback) {
-      this._closingCallback = aClosingCallback.bind(dialog);
+    if (closingCallback) {
+      this._closingCallback = closingCallback.bind(dialog);
     }
-    if (aClosedCallback) {
-      this._closedCallback = aClosedCallback.bind(dialog);
+    if (closedCallback) {
+      this._closedCallback = closedCallback.bind(dialog);
     }
 
     this._closingEvent = null;
     this._isClosing = false;
     this._openedURL = aURL;
 
-    features = features.replace(/,/g, "&");
-    let featureParams = new URLSearchParams(features.toLowerCase());
+    dialogFeatures = dialogFeatures.replace(/,/g, "&");
+    let featureParams = new URLSearchParams(dialogFeatures.toLowerCase());
     this._box.setAttribute(
       "resizable",
       featureParams.has("resizable") &&
@@ -851,15 +848,25 @@ class SubDialogManager {
 
   open(
     aURL,
-    aFeatures = null,
-    aParams = null,
-    aClosingCallback = null,
-    aClosedCallback = null,
-    aOpenOptions
+    {
+      features,
+      closingCallback,
+      closedCallback,
+      allowDuplicateDialogs,
+      sizeTo,
+    } = {},
+    ...aParams
   ) {
+    let allowDuplicates =
+      allowDuplicateDialogs != null
+        ? allowDuplicateDialogs
+        : this._allowDuplicateDialogs;
     // If we're already open/opening on this URL, do nothing.
-    if (!this._allowDuplicateDialogs && this._topDialog?._openedURL == aURL) {
-      return;
+    if (
+      !allowDuplicates &&
+      this._dialogs.some(dialog => dialog._openedURL == aURL)
+    ) {
+      return undefined;
     }
 
     let doc = this._dialogStack.ownerDocument;
@@ -889,13 +896,12 @@ class SubDialogManager {
 
     this._preloadDialog.open(
       aURL,
-      aFeatures,
-      aParams,
-      aClosingCallback,
-      aClosedCallback,
-      aOpenOptions
+      { features, closingCallback, closedCallback, sizeTo },
+      ...aParams
     );
     this._dialogs.push(this._preloadDialog);
+
+    let openedDialog = this._preloadDialog;
 
     this._preloadDialog = new SubDialog({
       template: this._dialogTemplate,
@@ -907,16 +913,22 @@ class SubDialogManager {
     if (this._dialogs.length == 1) {
       this._ensureStackEventListeners();
     }
+
+    return openedDialog;
   }
 
   close() {
     this._topDialog.close();
   }
 
-  abortAll() {
-    // When closing dialogs we splice elements from the dialogs array.
-    // Create a copy to ensure we go all over all dialogs.
-    this._dialogs.slice().forEach(dialog => dialog.abort());
+  /**
+   * Abort open dialogs.
+   * @param {function} [filterFn] - Function which should return true for
+   * dialogs that should be aborted and false for dialogs that should remain
+   * open. Defaults to aborting all dialogs.
+   */
+  abortDialogs(filterFn = () => true) {
+    this._dialogs.filter(filterFn).forEach(dialog => dialog.abort());
   }
 
   get hasDialogs() {

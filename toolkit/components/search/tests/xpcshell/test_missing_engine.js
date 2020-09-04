@@ -63,7 +63,11 @@ add_task(async function setup() {
 });
 
 add_task(async function test_startup_with_missing() {
-  configurationStub = await useTestEngines("data", null, BAD_CONFIG);
+  configurationStub = await SearchTestUtils.useTestEngines(
+    "data",
+    null,
+    BAD_CONFIG
+  );
 
   const result = await Services.search.init();
   Assert.ok(
@@ -81,9 +85,19 @@ add_task(async function test_startup_with_missing() {
 });
 
 add_task(async function test_update_with_missing() {
-  configurationStub.returns(GOOD_CONFIG);
+  let reloadObserved = SearchTestUtils.promiseSearchNotification(
+    "engines-reloaded"
+  );
 
-  await Services.search.reInit();
+  await RemoteSettings(SearchUtils.SETTINGS_KEY).emit("sync", {
+    data: {
+      current: GOOD_CONFIG,
+    },
+  });
+
+  SearchTestUtils.idleService._fireObservers("idle");
+
+  await reloadObserved;
 
   const engines = await Services.search.getEngines();
 
@@ -93,23 +107,19 @@ add_task(async function test_update_with_missing() {
     "Should have just the good engine"
   );
 
-  // TODO: Bug 1542269: When remote settings is enabled, remove the reInit
-  // and uncomment the code below.
-  await Services.search.reInit();
+  reloadObserved = SearchTestUtils.promiseSearchNotification(
+    "engines-reloaded"
+  );
 
-  // const reloadObserved = SearchTestUtils.promiseSearchNotification(
-  //   "engines-reloaded"
-  // );
-  //
-  // await RemoteSettings(SearchUtils.SETTINGS_KEY).emit("sync", {
-  //   data: {
-  //     current: BAD_CONFIG,
-  //   },
-  // });
-  //
-  // idleService._fireObservers("idle");
-  //
-  // await reloadObserved;
+  await RemoteSettings(SearchUtils.SETTINGS_KEY).emit("sync", {
+    data: {
+      current: BAD_CONFIG,
+    },
+  });
+
+  SearchTestUtils.idleService._fireObservers("idle");
+
+  await reloadObserved;
 
   Assert.deepEqual(
     engines.map(e => e.name),

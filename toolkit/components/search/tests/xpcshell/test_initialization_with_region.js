@@ -58,14 +58,13 @@ function listenFor(name, key) {
 
 add_task(async function setup() {
   Services.prefs.setBoolPref("browser.search.separatePrivateDefault", true);
-  Services.prefs.setBoolPref("browser.search.geoSpecificDefaults", true);
   Services.prefs.setBoolPref(
     SearchUtils.BROWSER_SEARCH_PREF + "separatePrivateDefault.ui.enabled",
     true
   );
 
   SearchTestUtils.useMockIdleService();
-  await useTestEngines("data", null, CONFIG);
+  await SearchTestUtils.useTestEngines("data", null, CONFIG);
   await AddonTestUtils.promiseStartupManager();
 });
 

@@ -1835,6 +1835,11 @@ void BrowsingContext::Close(CallerType aCallerType, ErrorResult& aError) {
     return;
   }
 
+  if (IsFrame()) {
+    // .close() on frames is a no-op.
+    return;
+  }
+
   if (GetDOMWindow()) {
     nsGlobalWindowOuter::Cast(GetDOMWindow())
         ->CloseOuter(aCallerType == CallerType::System);
@@ -1855,6 +1860,10 @@ void BrowsingContext::Close(CallerType aCallerType, ErrorResult& aError) {
 }
 
 void BrowsingContext::Focus(CallerType aCallerType, ErrorResult& aError) {
+  if (mEmbedderElement) {
+    // Make the activeElement in this process update synchronously.
+    nsContentUtils::RequestFrameFocus(*mEmbedderElement, true, aCallerType);
+  }
   if (ContentChild* cc = ContentChild::GetSingleton()) {
     cc->SendWindowFocus(this, aCallerType);
   } else if (ContentParent* cp = Canonical()->GetContentParent()) {

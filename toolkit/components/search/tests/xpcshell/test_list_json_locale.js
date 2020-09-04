@@ -6,7 +6,7 @@
 "use strict";
 
 add_task(async function setup() {
-  await useTestEngines();
+  await SearchTestUtils.useTestEngines();
 
   Services.prefs.setBoolPref(
     SearchUtils.BROWSER_SEARCH_PREF + "separatePrivateDefault.ui.enabled",
@@ -33,31 +33,26 @@ add_task(async function test_listJSONlocale() {
 
   Assert.equal(
     Services.search.defaultEngine.name,
-    getDefaultEngineName(false, false),
+    "Test search engine",
     "Should have the correct default engine"
   );
   Assert.equal(
     Services.search.defaultPrivateEngine.name,
     // 'de' only displays google, so we'll be using the same engine as the
     // normal default.
-    getDefaultEngineName(false, false),
+    "Test search engine",
     "Should have the correct private default engine"
   );
 });
 
 // Check that switching locale switches search engines
 add_task(async function test_listJSONlocaleSwitch() {
-  let promise = SearchTestUtils.promiseSearchNotification("reinit-complete");
-
   let defaultBranch = Services.prefs.getDefaultBranch(
     SearchUtils.BROWSER_SEARCH_PREF
   );
   defaultBranch.setCharPref("param.code", "good&id=unique");
 
-  Services.locale.availableLocales = ["fr"];
-  Services.locale.requestedLocales = ["fr"];
-
-  await promise;
+  await promiseSetLocale("fr");
 
   Assert.ok(Services.search.isInitialized, "search initialized");
 
@@ -82,9 +77,7 @@ add_task(async function test_listJSONlocaleSwitch() {
 
 // Check that region overrides apply
 add_task(async function test_listJSONRegionOverride() {
-  Region._setHomeRegion("RU", false);
-
-  await asyncReInit();
+  await promiseSetHomeRegion("RU");
 
   Assert.ok(Services.search.isInitialized, "search initialized");
 

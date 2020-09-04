@@ -149,7 +149,7 @@ class TargetList extends EventEmitter {
       return;
     }
 
-    if (targetFront.isDestroyedOrBeingDestroyed()) {
+    if (this.isDestroyed() || targetFront.isDestroyedOrBeingDestroyed()) {
       return;
     }
 
@@ -179,7 +179,14 @@ class TargetList extends EventEmitter {
     targetFront.setTargetType(targetType);
 
     this._targets.add(targetFront);
-    await targetFront.attachAndInitThread(this);
+    try {
+      await targetFront.attachAndInitThread(this);
+    } catch (e) {
+      console.error("Error when attaching target:", e);
+      this._targets.delete(targetFront);
+      return;
+    }
+
     for (const targetFrontsSet of this._pendingWatchTargetInitialization.values()) {
       targetFrontsSet.delete(targetFront);
     }
@@ -405,7 +412,12 @@ class TargetList extends EventEmitter {
     const promises = targetFronts.map(async targetFront => {
       // Attach the targets that aren't attached yet (e.g. the initial top-level target),
       // and wait for the other ones to be fully attached.
-      await targetFront.attachAndInitThread(this);
+      try {
+        await targetFront.attachAndInitThread(this);
+      } catch (e) {
+        console.error("Error when attaching target:", e);
+        return;
+      }
 
       // It can happen that onAvailable was already called with this targetFront at
       // this time (via _onTargetAvailable). If that's the case, we don't want to call
@@ -558,6 +570,17 @@ class TargetList extends EventEmitter {
 
   isTargetRegistered(targetFront) {
     return this._targets.has(targetFront);
+  }
+
+  isDestroyed() {
+    return this._isDestroyed;
+  }
+
+  destroy() {
+    this.stopListening();
+    this._createListeners.off();
+    this._destroyListeners.off();
+    this._isDestroyed = true;
   }
 }
 

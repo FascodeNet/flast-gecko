@@ -5250,6 +5250,7 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     }
   }
 
+#ifdef NS_PRINTING
   nsCOMPtr<nsIPrintSettingsService> printSettingsService =
       do_GetService("@mozilla.org/gfx/printsettings-service;1");
   if (!printSettingsService) {
@@ -5273,12 +5274,15 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     settings->SetShowPrintProgress(false);
   }
 
-  Print(settings, nullptr, nullptr, isPreview, nullptr, aError);
+  Print(settings, nullptr, nullptr, IsPreview(isPreview),
+        BlockUntilDone(isPreview), nullptr, aError);
+#endif
 }
 
 Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     nsIPrintSettings* aPrintSettings, nsIWebProgressListener* aListener,
-    nsIDocShell* aDocShellToCloneInto, bool aIsPreview,
+    nsIDocShell* aDocShellToCloneInto, IsPreview aIsPreview,
+    BlockUntilDone aBlockUntilDone,
     PrintPreviewResolver&& aPrintPreviewCallback, ErrorResult& aError) {
 #ifdef NS_PRINTING
   nsCOMPtr<nsIPrintSettingsService> printSettingsService =
@@ -5308,7 +5312,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
 
   nsCOMPtr<nsIContentViewer> cv;
   RefPtr<BrowsingContext> bc;
-  if (docToPrint->IsStaticDocument() && aIsPreview) {
+  if (docToPrint->IsStaticDocument() && bool(aIsPreview)) {
     // We're already a print preview window, just reuse our browsing context /
     // content viewer.
     //
@@ -5335,7 +5339,8 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       bc = aDocShellToCloneInto->GetBrowsingContext();
     } else {
       AutoNoJSAPI nojsapi;
-      auto printKind = aIsPreview ? PrintKind::PrintPreview : PrintKind::Print;
+      auto printKind =
+          bool(aIsPreview) ? PrintKind::PrintPreview : PrintKind::Print;
       aError = OpenInternal(EmptyString(), EmptyString(), EmptyString(),
                             false,             // aDialog
                             false,             // aContentModal
@@ -5436,13 +5441,22 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     return nullptr;
   }
 
-  if (aIsPreview) {
+  if (bool(aIsPreview)) {
     aError = webBrowserPrint->PrintPreview(aPrintSettings, aListener,
                                            std::move(aPrintPreviewCallback));
+    if (aError.Failed()) {
+      return nullptr;
+    }
   } else {
     // Historically we've eaten this error.
     webBrowserPrint->Print(aPrintSettings, aListener);
   }
+
+  if (bool(aBlockUntilDone)) {
+    // Wait until print document is closed.
+    SpinEventLoopUntil([&] { return bc->IsDiscarded(); });
+  }
+
   return WindowProxyHolder(std::move(bc));
 #else
   return nullptr;
@@ -6000,7 +6014,7 @@ bool nsGlobalWindowOuter::GatherPostMessageData(
   if (!callerPrin->IsSystemPrincipal()) {
     nsAutoCString asciiOrigin;
     callerPrin->GetAsciiOrigin(asciiOrigin);
-    aOrigin = NS_ConvertUTF8toUTF16(asciiOrigin);
+    CopyUTF8toUTF16(asciiOrigin, aOrigin);
   } else if (callerInnerWin) {
     if (!*aCallerURI) {
       return false;

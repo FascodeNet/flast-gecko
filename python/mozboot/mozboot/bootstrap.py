@@ -402,24 +402,26 @@ class Bootstrapper(object):
         # as possible if this check fails.
         self.instance.ensure_python_modern()
 
-        if self.instance.no_system_changes:
-            state_dir_available, state_dir = self.try_to_create_state_dir()
-            # We need to enable the loading of hgrc in case extensions are
-            # required to open the repo.
-            r = current_firefox_checkout(
-                env=self.instance._hg_cleanenv(load_hgrc=True),
-                hg=self.instance.which('hg'))
-            (checkout_type, checkout_root) = r
-            self.instance.validate_environment(checkout_root)
-            have_clone = bool(checkout_type)
+        state_dir_available, state_dir = self.try_to_create_state_dir()
+        if state_dir_available:
+            self.instance.state_dir = state_dir
 
+        # We need to enable the loading of hgrc in case extensions are
+        # required to open the repo.
+        (checkout_type, checkout_root) = current_firefox_checkout(
+            env=self.instance._hg_cleanenv(load_hgrc=True),
+            hg=self.instance.which('hg'))
+        self.instance.validate_environment(checkout_root)
+        self.instance.ensure_mach_environment(checkout_root)
+        have_clone = bool(checkout_type)
+
+        if self.instance.no_system_changes:
             if state_dir_available:
                 self.check_telemetry_opt_in(state_dir)
             self.maybe_install_private_packages_or_exit(state_dir,
                                                         state_dir_available,
                                                         have_clone,
                                                         checkout_root)
-            self.instance.ensure_mach_environment(checkout_root)
             self._output_mozconfig(application)
             sys.exit(0)
 
@@ -431,16 +433,6 @@ class Bootstrapper(object):
         hg_installed, hg_modern = self.instance.ensure_mercurial_modern()
         if not self.instance.artifact_mode:
             self.instance.ensure_rust_modern()
-
-        state_dir_available, state_dir = self.try_to_create_state_dir()
-
-        # We need to enable the loading of hgrc in case extensions are
-        # required to open the repo.
-        r = current_firefox_checkout(env=self.instance._hg_cleanenv(load_hgrc=True),
-                                     hg=self.instance.which('hg'))
-        (checkout_type, checkout_root) = r
-
-        self.instance.validate_environment(checkout_root)
 
         # If we didn't specify a VCS, and we aren't in an exiting clone,
         # offer a choice
@@ -485,7 +477,6 @@ class Bootstrapper(object):
                                                     state_dir_available,
                                                     have_clone,
                                                     checkout_root)
-        self.instance.ensure_mach_environment(checkout_root)
 
         print(self.finished % name)
         if not (self.instance.which('rustc') and self.instance._parse_version('rustc')

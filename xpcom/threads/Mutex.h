@@ -66,7 +66,7 @@ class OffTheBooksMutex : public detail::MutexImpl, BlockingResourceBase {
   /**
    * Try to lock this mutex, returning true if we were successful.
    **/
-  bool TryLock() { return this->tryLock(); }
+  [[nodiscard]] bool TryLock() { return this->tryLock(); }
 
   /**
    * Unlock this mutex.
@@ -92,7 +92,7 @@ class OffTheBooksMutex : public detail::MutexImpl, BlockingResourceBase {
 
 #else
   void Lock();
-  bool TryLock();
+  [[nodiscard]] bool TryLock();
   void Unlock();
 
   void AssertCurrentThreadOwns() const;
@@ -170,8 +170,8 @@ class MOZ_RAII BaseAutoLock {
    *              mozilla::Mutex::NewMutex.
    * @param aOutAutoLock A Maybe<BaseAutoLock<T>> to fill if TryLock succeeds.
    **/
-  static MOZ_MUST_USE bool TryMake(T aLock,
-                                   Maybe<BaseAutoLock<T>>& aOutAutoLock) {
+  [[nodiscard]] static bool TryMake(T aLock,
+                                    Maybe<BaseAutoLock<T>>& aOutAutoLock) {
     if (aLock.TryLock()) {
       aOutAutoLock.emplace(aLock, /* aPlaceholder: */ true);
       return true;

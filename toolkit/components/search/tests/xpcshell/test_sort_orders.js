@@ -24,7 +24,7 @@ const EXPECTED_ORDER = [
 add_task(async function setup() {
   await AddonTestUtils.promiseStartupManager();
 
-  await useTestEngines();
+  await SearchTestUtils.useTestEngines();
 
   Services.prefs.setBoolPref(
     SearchUtils.BROWSER_SEARCH_PREF + "separatePrivateDefault",
@@ -75,8 +75,7 @@ add_task(async function test_engine_sort_with_non_builtins_sort() {
 });
 
 add_task(async function test_engine_sort_with_locale() {
-  Services.locale.availableLocales = ["gd"];
-  Services.locale.requestedLocales = ["gd"];
+  await promiseSetLocale("gd");
 
   const expected = [
     "engine-resourceicon-gd",
@@ -86,7 +85,7 @@ add_task(async function test_engine_sort_with_locale() {
     "Test search engine (Reordered)",
   ];
 
-  await asyncReInit();
   await checkOrder("getDefaultEngines", expected);
+  expected.push("nonbuiltin1");
   await checkOrder("getEngines", expected);
 });

@@ -6,6 +6,7 @@
 #include "ClientWebGLContext.h"
 
 #include "ClientWebGLExtensions.h"
+#include "gfxCrashReporterUtils.h"
 #include "HostWebGLContext.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "mozilla/dom/ToJSValue.h"
@@ -563,6 +564,10 @@ ClientWebGLContext::SetDimensions(const int32_t signedWidth,
   return NS_OK;
 }
 
+static bool IsWebglOutOfProcessEnabled() {
+  return StaticPrefs::webgl_out_of_process();
+}
+
 bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
   const auto pNotLost = std::make_shared<webgl::NotLostData>(*this);
   auto& notLost = *pNotLost;
@@ -581,7 +586,7 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
 
     // -
 
-    auto useOop = StaticPrefs::webgl_out_of_process();
+    auto useOop = IsWebglOutOfProcessEnabled();
     if (XRE_IsParentProcess()) {
       useOop = false;
     }
@@ -596,6 +601,8 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     }
 
     // -
+
+    ScopedGfxFeatureReporter reporter("IpcWebGL");
 
     webgl::RemotingData outOfProcess;
 
@@ -652,6 +659,7 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     }
 
     notLost.outOfProcess = Some(std::move(outOfProcess));
+    reporter.SetSuccessful();
     return Ok();
   }();
   if (!res.isOk()) {
@@ -2103,7 +2111,13 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
   if (asString) {
     const auto maybe = GetString(pname);
     if (maybe) {
-      retval.set(StringValue(cx, maybe->c_str(), rv));
+      auto str = *maybe;
+      if (pname == dom::MOZ_debug_Binding::WSI_INFO) {
+        nsPrintfCString more("\nIsWebglOutOfProcessEnabled: %i",
+                             int(IsWebglOutOfProcessEnabled()));
+        str += more.BeginReading();
+      }
+      retval.set(StringValue(cx, str.c_str(), rv));
     }
   } else {
     const auto maybe = GetNumber(pname);
@@ -5374,7 +5388,7 @@ void ClientWebGLContext::GetActiveUniformBlockName(const WebGLProgramJS& prog,
   }
 
   const auto& block = list[index];
-  retval = NS_ConvertUTF8toUTF16(block.name.c_str());
+  CopyUTF8toUTF16(block.name, retval);
 }
 
 void ClientWebGLContext::GetActiveUniformBlockParameter(
@@ -5729,7 +5743,7 @@ void ClientWebGLContext::GetProgramInfoLog(const WebGLProgramJS& prog,
   if (!prog.ValidateUsable(*this, "program")) return;
 
   const auto& res = GetLinkResult(prog);
-  retval = NS_ConvertUTF8toUTF16(res.log);
+  CopyUTF8toUTF16(res.log, retval);
 }
 
 void ClientWebGLContext::GetProgramParameter(
@@ -5813,7 +5827,7 @@ void ClientWebGLContext::GetShaderInfoLog(const WebGLShaderJS& shader,
   if (!shader.ValidateUsable(*this, "shader")) return;
 
   const auto& result = GetCompileResult(shader);
-  retval = NS_ConvertUTF8toUTF16(result.log);
+  CopyUTF8toUTF16(result.log, retval);
 }
 
 void ClientWebGLContext::GetShaderParameter(
@@ -5851,7 +5865,7 @@ void ClientWebGLContext::GetShaderSource(const WebGLShaderJS& shader,
   if (IsContextLost()) return;
   if (!shader.ValidateUsable(*this, "shader")) return;
 
-  retval = NS_ConvertUTF8toUTF16(shader.mSource.c_str());
+  CopyUTF8toUTF16(shader.mSource, retval);
 }
 
 void ClientWebGLContext::GetTranslatedShaderSource(const WebGLShaderJS& shader,
@@ -5862,7 +5876,7 @@ void ClientWebGLContext::GetTranslatedShaderSource(const WebGLShaderJS& shader,
   if (!shader.ValidateUsable(*this, "shader")) return;
 
   const auto& result = GetCompileResult(shader);
-  retval = NS_ConvertUTF8toUTF16(result.translatedSource);
+  CopyUTF8toUTF16(result.translatedSource, retval);
 }
 
 void ClientWebGLContext::ShaderSource(WebGLShaderJS& shader,

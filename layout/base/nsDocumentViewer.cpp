@@ -10,6 +10,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/StaticPrefs_print.h"
 #include "mozilla/Telemetry.h"
 #include "nsThreadUtils.h"
 #include "nscore.h"
@@ -708,11 +709,13 @@ nsresult nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow) {
              "InitPresentationStuff must only be called when scripts are "
              "blocked");
 
+#ifdef NS_PRINTING
   // When getting printed, either for print or print preview, the print job
   // takes care of setting up the presentation of the document.
   if (mPrintJob) {
     return NS_OK;
   }
+#endif
 
   NS_ASSERTION(!mPresShell, "Someone should have destroyed the presshell!");
 
@@ -1611,10 +1614,8 @@ nsDocumentViewer::Destroy() {
   //
   // So we flip the bool to remember that the document is going away
   // and we can clean up and abort later after returning from the Print Dialog
-  if (mPrintJob) {
-    if (mPrintJob->CheckBeforeDestroy()) {
-      return NS_OK;
-    }
+  if (mPrintJob && mPrintJob->CheckBeforeDestroy()) {
+    return NS_OK;
   }
 #endif
 
@@ -3202,7 +3203,7 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
   }
   mPrintJob = printJob;
 
-  if (!hadPrintJob) {
+  if (!hadPrintJob && !StaticPrefs::print_tab_modal_enabled()) {
     Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_OPENED, 1);
   }
   rv = printJob->PrintPreview(doc, aPrintSettings, aWebProgressListener,
@@ -3542,7 +3543,7 @@ nsDocumentViewer::ExitPrintPreview() {
     return NS_OK;
   }
 
-  if (!mPrintJob->HasEverPrinted()) {
+  if (!mPrintJob->HasEverPrinted() && !StaticPrefs::print_tab_modal_enabled()) {
     Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_CANCELLED, 1);
   }
 

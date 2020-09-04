@@ -3199,6 +3199,44 @@ nsresult HTMLEditor::AutoDeleteRangesHandler::ComputeRangesToDelete(
       // aRangesToDelete must select some haracters, a word or the line.
       return NS_OK;
     }
+
+    if (aRangesToDelete.IsCollapsed()) {
+      EditorDOMPoint caretPoint(aRangesToDelete.GetStartPointOfFirstRange());
+      if (NS_WARN_IF(!caretPoint.IsInContentNode())) {
+        return NS_ERROR_FAILURE;
+      }
+      if (!EditorUtils::IsEditableContent(*caretPoint.ContainerAsContent(),
+                                          EditorType::HTML)) {
+        return NS_SUCCESS_DOM_NO_OPERATION;
+      }
+      WSRunScanner wsRunScannerAtCaret(aHTMLEditor, caretPoint);
+      WSScanResult scanFromCaretPointResult =
+          aDirectionAndAmount == nsIEditor::eNext
+              ? wsRunScannerAtCaret.ScanNextVisibleNodeOrBlockBoundaryFrom(
+                    caretPoint)
+              : wsRunScannerAtCaret.ScanPreviousVisibleNodeOrBlockBoundaryFrom(
+                    caretPoint);
+      if (!scanFromCaretPointResult.GetContent()) {
+        return NS_SUCCESS_DOM_NO_OPERATION;
+      }
+
+      if (scanFromCaretPointResult.ReachedBRElement()) {
+        if (scanFromCaretPointResult.BRElementPtr() ==
+            wsRunScannerAtCaret.GetEditingHost()) {
+          return NS_OK;
+        }
+        if (!EditorUtils::IsEditableContent(
+                *scanFromCaretPointResult.BRElementPtr(), EditorType::HTML)) {
+          return NS_SUCCESS_DOM_NO_OPERATION;
+        }
+        if (!aHTMLEditor.IsVisibleBRElement(
+                scanFromCaretPointResult.BRElementPtr())) {
+          // TODO: When deleting an invisible `<br>` element, we need to its
+          //       adjacent content too.
+          return NS_OK;
+        }
+      }
+    }
   }
 
   return NS_OK;
@@ -3604,8 +3642,9 @@ HTMLEditor::AutoDeleteRangesHandler::HandleDeleteTextAroundCollapsedSelection(
   const EditorDOMPoint& newCaretPosition = result.inspect();
   MOZ_ASSERT(newCaretPosition.IsSetAndValid());
 
-  DebugOnly<nsresult> rvIgnored = aHTMLEditor.SelectionRefPtr()->Collapse(
-      newCaretPosition.ToRawRangeBoundary());
+  DebugOnly<nsresult> rvIgnored =
+      aHTMLEditor.SelectionRefPtr()->CollapseInLimiter(
+          newCaretPosition.ToRawRangeBoundary());
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
                        "Selection::Collapse() failed, but ignored");
   return EditActionHandled();

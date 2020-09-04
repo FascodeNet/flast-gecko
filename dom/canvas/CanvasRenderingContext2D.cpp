@@ -2065,7 +2065,7 @@ already_AddRefed<CanvasPattern> CanvasRenderingContext2D::CreatePattern(
     }
 
     // Special case for Canvas, which could be an Azure canvas!
-    nsICanvasRenderingContextInternal* srcCanvas = canvas->GetContextAtIndex(0);
+    nsICanvasRenderingContextInternal* srcCanvas = canvas->GetCurrentContext();
     if (srcCanvas) {
       // This might not be an Azure canvas!
       RefPtr<SourceSurface> srcSurf = srcCanvas->GetSurfaceSnapshot();
@@ -2314,7 +2314,7 @@ bool CanvasRenderingContext2D::ParseFilter(
   }
 
   RefPtr<PresShell> presShell = GetPresShell();
-  if (!presShell) {
+  if (NS_WARN_IF(!presShell)) {
     aError.Throw(NS_ERROR_FAILURE);
     return false;
   }
@@ -3186,7 +3186,7 @@ bool CanvasRenderingContext2D::SetFontInternal(const nsAString& aFont,
   }
 
   RefPtr<PresShell> presShell = GetPresShell();
-  if (!presShell) {
+  if (NS_WARN_IF(!presShell)) {
     aError.Throw(NS_ERROR_FAILURE);
     return false;
   }
@@ -3391,8 +3391,8 @@ void CanvasRenderingContext2D::AddHitRegion(const HitRegionOptions& aOptions,
       }
     }
 #ifdef ACCESSIBILITY
-    aOptions.mControl->SetProperty(nsGkAtoms::hitregion, new bool(true),
-                                   nsINode::DeleteProperty<bool>);
+    aOptions.mControl->SetProperty(nsGkAtoms::hitregion,
+                                   reinterpret_cast<void*>(true));
 #endif
   }
 
@@ -3715,7 +3715,7 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
   }
 
   RefPtr<PresShell> presShell = GetPresShell();
-  if (!presShell) {
+  if (NS_WARN_IF(!presShell)) {
     aError = NS_ERROR_FAILURE;
     return nullptr;
   }

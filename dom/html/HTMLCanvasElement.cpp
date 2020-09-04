@@ -497,6 +497,12 @@ nsresult HTMLCanvasElement::DispatchPrintCallback(nsITimerCallback* aCallback) {
 
 MOZ_CAN_RUN_SCRIPT
 void HTMLCanvasElement::CallPrintCallback() {
+  if (!mPrintState) {
+    // `mPrintState` might have been destroyed by cancelling the previous
+    // printing (especially the canvas frame destruction) during processing
+    // event loops in the printing.
+    return;
+  }
   RefPtr<PrintCallback> callback = GetMozPrintCallback();
   RefPtr<HTMLCanvasPrintState> state = mPrintState;
   callback->Call(*state);
@@ -1067,19 +1073,6 @@ void HTMLCanvasElement::InvalidateCanvas() {
   frame->InvalidateFrame();
 }
 
-int32_t HTMLCanvasElement::CountContexts() {
-  if (mCurrentContext) return 1;
-
-  return 0;
-}
-
-nsICanvasRenderingContextInternal* HTMLCanvasElement::GetContextAtIndex(
-    int32_t index) {
-  if (mCurrentContext && index == 0) return mCurrentContext;
-
-  return nullptr;
-}
-
 bool HTMLCanvasElement::GetIsOpaque() {
   if (mCurrentContext) {
     return mCurrentContext->GetIsOpaque();
@@ -1309,7 +1302,7 @@ ClientWebGLContext* HTMLCanvasElement::GetWebGLContext() {
     return nullptr;
   }
 
-  return static_cast<ClientWebGLContext*>(GetContextAtIndex(0));
+  return static_cast<ClientWebGLContext*>(GetCurrentContext());
 }
 
 webgpu::CanvasContext* HTMLCanvasElement::GetWebGPUContext() {
@@ -1317,7 +1310,7 @@ webgpu::CanvasContext* HTMLCanvasElement::GetWebGPUContext() {
     return nullptr;
   }
 
-  return static_cast<webgpu::CanvasContext*>(GetContextAtIndex(0));
+  return static_cast<webgpu::CanvasContext*>(GetCurrentContext());
 }
 
 }  // namespace dom

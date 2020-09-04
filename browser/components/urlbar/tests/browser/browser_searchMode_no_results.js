@@ -134,6 +134,7 @@ add_task(async function autoOpen() {
     win.gURLBar.blur();
     await UrlbarTestUtils.assertSearchMode(win, {
       source: UrlbarUtils.RESULT_SOURCE.BOOKMARKS,
+      entry: "oneoff",
     });
 
     // Click the urlbar.
@@ -212,6 +213,7 @@ add_task(async function backspaceRemainOpen() {
     Assert.ok(UrlbarTestUtils.isPopupOpen(win), "View remains open");
     await UrlbarTestUtils.assertSearchMode(win, {
       source: UrlbarUtils.RESULT_SOURCE.BOOKMARKS,
+      entry: "oneoff",
     });
     Assert.equal(
       UrlbarTestUtils.getResultCount(win),
@@ -254,7 +256,9 @@ add_task(async function spaceToEnterSearchMode() {
       value: engine.alias,
     });
 
-    let searchPromise = UrlbarTestUtils.promiseSearchComplete(win);
+    // We need to wait for two searches: The first enters search mode, the
+    // second does the search in search mode.
+    let searchPromise = UrlbarTestUtils.promiseSearchComplete(win, 2);
     EventUtils.synthesizeKey(" ", {}, win);
     await searchPromise;
 
@@ -266,6 +270,7 @@ add_task(async function spaceToEnterSearchMode() {
     );
     await UrlbarTestUtils.assertSearchMode(win, {
       engineName: engine.name,
+      entry: "typed",
     });
     this.Assert.equal(
       UrlbarTestUtils.getOneOffSearchButtonsVisible(window),

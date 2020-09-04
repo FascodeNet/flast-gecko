@@ -348,7 +348,7 @@ public class GeckoSession implements Parcelable {
                 "GeckoView:ContentKill",
                 "GeckoView:ContextMenu",
                 "GeckoView:DOMMetaViewportFit",
-                "GeckoView:DOMTitleChanged",
+                "GeckoView:PageTitleChanged",
                 "GeckoView:DOMWindowClose",
                 "GeckoView:ExternalResponse",
                 "GeckoView:FocusRequest",
@@ -388,7 +388,7 @@ public class GeckoSession implements Parcelable {
                 } else if ("GeckoView:DOMMetaViewportFit".equals(event)) {
                     delegate.onMetaViewportFitChange(GeckoSession.this,
                                                      message.getString("viewportfit"));
-                } else if ("GeckoView:DOMTitleChanged".equals(event)) {
+                } else if ("GeckoView:PageTitleChanged".equals(event)) {
                     delegate.onTitleChange(GeckoSession.this,
                                            message.getString("title"));
                 } else if ("GeckoView:FocusRequest".equals(event)) {
@@ -1493,6 +1493,9 @@ public class GeckoSession implements Parcelable {
         }
 
         onWindowChanged(WINDOW_CLOSE, /* inProgress */ true);
+
+        // We need to ensure the compositor releases any Surface it currently holds.
+        onSurfaceDestroyed();
 
         mWindow.close();
         mWindow.disposeNative();
@@ -3303,7 +3306,7 @@ public class GeckoSession implements Parcelable {
 
         /**
          * @deprecated Use {@link ContentDelegate#onExternalResponse(GeckoSession, WebResponse)}
-         * instead. This method will be removed in GeckoView 84.
+         * instead. This method will be removed in GeckoView 85.
          */
         @Deprecated // Bug 1530022
         @SuppressWarnings("checkstyle:javadocmethod")

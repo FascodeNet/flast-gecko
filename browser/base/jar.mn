@@ -5,7 +5,6 @@ browser.jar:
 %  content browser %content/browser/ contentaccessible=yes
 
         content/browser/aboutDialog-appUpdater.js     (content/aboutDialog-appUpdater.js)
-        content/browser/aboutDialog-appUpdater-legacy.js     (content/aboutDialog-appUpdater-legacy.js)
 *       content/browser/aboutDialog.xhtml                    (content/aboutDialog.xhtml)
         content/browser/aboutDialog.js                (content/aboutDialog.js)
         content/browser/aboutDialog.css               (content/aboutDialog.css)
@@ -48,7 +47,6 @@ browser.jar:
         content/browser/browser-fullScreenAndPointerLock.js (content/browser-fullScreenAndPointerLock.js)
         content/browser/browser-fullZoom.js           (content/browser-fullZoom.js)
         content/browser/browser-gestureSupport.js     (content/browser-gestureSupport.js)
-        content/browser/browser-media.js              (content/browser-media.js)
         content/browser/browser-pageActions.js        (content/browser-pageActions.js)
         content/browser/browser-places.js             (content/browser-places.js)
         content/browser/browser-safebrowsing.js       (content/browser-safebrowsing.js)

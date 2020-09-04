@@ -190,16 +190,19 @@ class Selection final : public nsSupportsWeakReference,
  public:
   nsresult RemoveCollapsedRanges();
   nsresult Clear(nsPresContext* aPresContext);
-  nsresult Collapse(nsINode* aContainer, int32_t aOffset) {
+  nsresult CollapseInLimiter(nsINode* aContainer, int32_t aOffset) {
     if (!aContainer) {
       return NS_ERROR_INVALID_ARG;
     }
-    return Collapse(RawRangeBoundary(aContainer, aOffset));
+    return CollapseInLimiter(RawRangeBoundary(aContainer, aOffset));
   }
-  nsresult Collapse(const RawRangeBoundary& aPoint) {
+  nsresult CollapseInLimiter(const RawRangeBoundary& aPoint) {
     ErrorResult result;
-    Collapse(aPoint, result);
+    CollapseInLimiter(aPoint, result);
     return result.StealNSResult();
+  }
+  void CollapseInLimiter(const RawRangeBoundary& aPoint, ErrorResult& aRv) {
+    CollapseInternal(InLimiter::eYes, aPoint, aRv);
   }
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
@@ -435,17 +438,29 @@ class Selection final : public nsSupportsWeakReference,
    */
   // TODO: mark as `MOZ_CAN_RUN_SCRIPT`
   // (https://bugzilla.mozilla.org/show_bug.cgi?id=1615296).
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void Collapse(nsINode& aContainer,
-                                            uint32_t aOffset,
-                                            ErrorResult& aRv) {
-    Collapse(RawRangeBoundary(&aContainer, aOffset), aRv);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void CollapseInLimiter(nsINode& aContainer,
+                                                     uint32_t aOffset,
+                                                     ErrorResult& aRv) {
+    CollapseInternal(InLimiter::eYes, RawRangeBoundary(&aContainer, aOffset),
+                     aRv);
   }
 
+ private:
+  enum class InLimiter {
+    // If eYes, the method may reset selection limiter and move focus if the
+    // given range is out of the limiter.
+    eYes,
+    // If eNo, the method won't reset selection limiter.  So, if given range
+    // is out of bounds, the method may return error.
+    eNo,
+  };
   // TODO: this should be `MOZ_CAN_RUN_SCRIPT` instead
   // (https://bugzilla.mozilla.org/show_bug.cgi?id=1615296).
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void Collapse(const RawRangeBoundary& aPoint, ErrorResult& aRv);
+  void CollapseInternal(InLimiter aInLimiter, const RawRangeBoundary& aPoint,
+                        ErrorResult& aRv);
 
+ public:
   /**
    * Collapses the whole selection to a single point at the start
    * of the current selection (irrespective of direction).  If content
@@ -541,7 +556,7 @@ class Selection final : public nsSupportsWeakReference,
   }
 
   /**
-   * SetBaseAndExtentInLimier() is similar to SetBaseAndExtent(), but this
+   * SetBaseAndExtentInLimiter() is similar to SetBaseAndExtent(), but this
    * respects the selection limiter.  If all or part of given range is not in
    * the limiter, this returns error.
    */
@@ -642,14 +657,6 @@ class Selection final : public nsSupportsWeakReference,
   nsresult GetCachedFrameOffset(nsIFrame* aFrame, int32_t inOffset,
                                 nsPoint& aPoint);
 
-  enum class InLimiter {
-    // If eYes, the method may reset selection limiter and move focus if the
-    // given range is out of the limiter.
-    eYes,
-    // If eNo, the method won't reset selection limiter.  So, if given range
-    // is out of bounds, the method may return error.
-    eNo,
-  };
   MOZ_CAN_RUN_SCRIPT
   void SetStartAndEndInternal(InLimiter aInLimiter,
                               const RawRangeBoundary& aStartRef,
