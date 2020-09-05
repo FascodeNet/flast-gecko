@@ -10353,7 +10353,7 @@ const ParserAtom* GeneralParser<ParseHandler, Unit>::bigIntAtom() {
   if (!atom) {
     return nullptr;
   }
-  return this->compilationInfo_.lowerJSAtomToParserAtom(atom.get());
+  return this->compilationInfo_.lowerJSAtomToParserAtom(cx_,atom.get());
 }
 
 // |exprPossibleError| is the PossibleError state within |expr|,
