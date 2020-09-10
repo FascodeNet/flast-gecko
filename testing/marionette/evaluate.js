@@ -4,6 +4,8 @@
 
 "use strict";
 
+const EXPORTED_SYMBOLS = ["evaluate", "sandbox", "Sandboxes"];
+
 const { clearTimeout, setTimeout } = ChromeUtils.import(
   "resource://gre/modules/Timer.jsm"
 );
@@ -11,16 +13,15 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { assert } = ChromeUtils.import("chrome://marionette/content/assert.js");
-const { element, WebElement } = ChromeUtils.import(
-  "chrome://marionette/content/element.js"
-);
-const { error } = ChromeUtils.import("chrome://marionette/content/error.js");
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  assert: "chrome://marionette/content/assert.js",
+  element: "chrome://marionette/content/element.js",
+  error: "chrome://marionette/content/error.js",
+  Log: "chrome://marionette/content/log.js",
+  WebElement: "chrome://marionette/content/element.js",
+});
 
-XPCOMUtils.defineLazyGetter(this, "log", Log.get);
-
-this.EXPORTED_SYMBOLS = ["evaluate", "sandbox", "Sandboxes"];
+XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
 
 const ARGUMENTS = "__webDriverArguments";
 const CALLBACK = "__webDriverCallback";
@@ -311,7 +312,7 @@ evaluate.toJSON = function(obj, seenEls) {
       rv[prop] = evaluate.toJSON(obj[prop], seenEls);
     } catch (e) {
       if (e.result == Cr.NS_ERROR_NOT_IMPLEMENTED) {
-        log.debug(`Skipping ${prop}: ${e.message}`);
+        logger.debug(`Skipping ${prop}: ${e.message}`);
       } else {
         throw e;
       }

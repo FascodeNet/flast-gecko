@@ -3,6 +3,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #ifndef mozilla_dom_Document_h___
 #define mozilla_dom_Document_h___
 
@@ -55,6 +56,7 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
 #include <bitset>  // for member
+#include "js/friend/DOMProxy.h"  // JS::ExpandoAndGeneration
 
 // XXX We need to include this here to ensure that DefaultDeleter for Servo
 // types is specialized before the template is instantiated. Probably, this
@@ -2637,6 +2639,13 @@ class Document : public nsINode,
            IsStaticDocument();
   }
 
+  void SetHasPrintCallbacks() {
+    MOZ_DIAGNOSTIC_ASSERT(IsStaticDocument());
+    mHasPrintCallbacks = true;
+  }
+
+  bool HasPrintCallbacks() const { return mHasPrintCallbacks; }
+
   /**
    * Register/Unregister the ActivityObserver into mActivityObservers to listen
    * the document's activity changes such as OnPageHide, visibility, activity.
@@ -4387,6 +4396,10 @@ class Document : public nsINode,
   // True while this document is being cloned to a static document.
   bool mCreatingStaticClone : 1;
 
+  // True if this static document has any <canvas> element with a
+  // mozPrintCallback property at the time of the clone.
+  bool mHasPrintCallbacks : 1;
+
   // True iff the document is being unlinked or deleted.
   bool mInUnlinkOrDeletion : 1;
 
@@ -5073,7 +5086,7 @@ class Document : public nsINode,
 
  public:
   // Needs to be public because the bindings code pokes at it.
-  js::ExpandoAndGeneration mExpandoAndGeneration;
+  JS::ExpandoAndGeneration mExpandoAndGeneration;
 
   bool HasPendingInitialTranslation();
 

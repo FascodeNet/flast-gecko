@@ -13,6 +13,8 @@
 
 #include "XPCWrapper.h"
 #include "jsfriendapi.h"
+#include "js/AllocationLogging.h"  // JS::SetLogCtorDtorFunctions
+#include "js/Object.h"  // JS::GetClass
 #include "js/ProfilingStack.h"
 #include "GeckoProfiler.h"
 #include "nsJSEnvironment.h"
@@ -135,7 +137,7 @@ void nsXPConnect::InitStatics() {
 #ifdef NS_BUILD_REFCNT_LOGGING
   // These functions are used for reporting leaks, so we register them as early
   // as possible to avoid missing any classes' creations.
-  js::SetLogCtorDtorFunctions(NS_LogCtor, NS_LogDtor);
+  JS::SetLogCtorDtorFunctions(NS_LogCtor, NS_LogDtor);
 #endif
   ReadOnlyPage::Init();
 
@@ -397,7 +399,7 @@ static inline T UnexpectedFailure(T rv) {
 }
 
 void xpc::TraceXPCGlobal(JSTracer* trc, JSObject* obj) {
-  if (js::GetObjectClass(obj)->flags & JSCLASS_DOM_GLOBAL) {
+  if (JS::GetClass(obj)->flags & JSCLASS_DOM_GLOBAL) {
     mozilla::dom::TraceProtoAndIfaceCache(trc, obj);
   }
 
@@ -493,7 +495,7 @@ bool InitGlobalObject(JSContext* aJSContext, JS::Handle<JSObject*> aGlobal,
   JSAutoRealm ar(aJSContext, aGlobal);
 
   // Stuff coming through this path always ends up as a DOM global.
-  MOZ_ASSERT(js::GetObjectClass(aGlobal)->flags & JSCLASS_DOM_GLOBAL);
+  MOZ_ASSERT(JS::GetClass(aGlobal)->flags & JSCLASS_DOM_GLOBAL);
 
   if (!(aFlags & xpc::OMIT_COMPONENTS_OBJECT)) {
     // XPCCallContext gives us an active request needed to save/restore.

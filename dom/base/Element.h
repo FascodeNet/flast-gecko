@@ -623,6 +623,7 @@ class Element : public FragmentOrElement {
   already_AddRefed<ShadowRoot> AttachShadowInternal(ShadowRootMode,
                                                     ErrorResult& aError);
 
+ public:
   MOZ_CAN_RUN_SCRIPT
   nsIScrollableFrame* GetScrollFrame(nsIFrame** aStyledFrame = nullptr,
                                      FlushType aFlushType = FlushType::Layout);
@@ -1171,6 +1172,12 @@ class Element : public FragmentOrElement {
    * pseudo-elements.
    */
   void GetElementsWithGrid(nsTArray<RefPtr<Element>>& aElements);
+
+  /**
+   * Provide a direct way to determine if this Element has visible
+   * scrollbars. Flushes layout.
+   */
+  MOZ_CAN_RUN_SCRIPT bool HasVisibleScrollbars();
 
  private:
   /**

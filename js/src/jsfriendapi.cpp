@@ -23,9 +23,11 @@
 #include "js/experimental/CodeCoverage.h"
 #include "js/friend/StackLimits.h"  // JS_STACK_GROWTH_DIRECTION
 #include "js/friend/WindowProxy.h"  // js::ToWindowIfWindowProxy
+#include "js/Object.h"              // JS::GetClass
 #include "js/Printf.h"
 #include "js/Proxy.h"
 #include "js/shadow/Object.h"  // JS::shadow::Object
+#include "js/String.h"         // JS::detail::StringToLinearStringSlow
 #include "js/Wrapper.h"
 #include "proxy/DeadObjectProxy.h"
 #include "util/Poison.h"
@@ -269,8 +271,8 @@ JS_FRIEND_API bool JS_DefineFunctionsWithHelp(
   return true;
 }
 
-JS_FRIEND_API bool js::GetBuiltinClass(JSContext* cx, HandleObject obj,
-                                       ESClass* cls) {
+JS_FRIEND_API bool JS::GetBuiltinClass(JSContext* cx, HandleObject obj,
+                                       js::ESClass* cls) {
   if (MOZ_UNLIKELY(obj->is<ProxyObject>())) {
     return Proxy::getBuiltinClass(cx, obj, cls);
   }
@@ -320,11 +322,6 @@ JS_FRIEND_API bool js::GetBuiltinClass(JSContext* cx, HandleObject obj,
 
 JS_FRIEND_API bool js::IsArgumentsObject(HandleObject obj) {
   return obj->is<ArgumentsObject>();
-}
-
-JS_FRIEND_API const char* js::ObjectClassName(JSContext* cx, HandleObject obj) {
-  cx->check(obj);
-  return GetObjectClassName(cx, obj);
 }
 
 JS_FRIEND_API JS::Zone* js::GetRealmZone(JS::Realm* realm) {
@@ -387,10 +384,6 @@ JS_FRIEND_API void js::NotifyAnimationActivity(JSObject* obj) {
   auto timeNow = mozilla::TimeStamp::Now();
   obj->as<GlobalObject>().realm()->lastAnimationTime = timeNow;
   obj->runtimeFromMainThread()->lastAnimationTime = timeNow;
-}
-
-JS_FRIEND_API uint32_t js::GetObjectSlotSpan(JSObject* obj) {
-  return obj->as<NativeObject>().slotSpan();
 }
 
 JS_FRIEND_API bool js::IsObjectInContextCompartment(JSObject* obj,
@@ -476,8 +469,8 @@ JS_FRIEND_API bool js::FunctionHasNativeReserved(JSObject* fun) {
   return fun->as<JSFunction>().isExtended();
 }
 
-JS_FRIEND_API bool js::GetObjectProto(JSContext* cx, JS::Handle<JSObject*> obj,
-                                      JS::MutableHandle<JSObject*> proto) {
+bool js::GetObjectProto(JSContext* cx, JS::Handle<JSObject*> obj,
+                        JS::MutableHandle<JSObject*> proto) {
   cx->check(obj);
 
   if (IsProxy(obj)) {
@@ -499,8 +492,8 @@ JS_FRIEND_API bool js::GetRealmOriginalEval(JSContext* cx,
   return GlobalObject::getOrCreateEval(cx, cx->global(), eval);
 }
 
-JS_FRIEND_API void js::SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
-                                                  const js::Value& value) {
+void JS::detail::SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
+                                            const Value& value) {
   if (IsProxy(obj)) {
     obj->as<ProxyObject>().setReservedSlot(slot, value);
   } else {
@@ -567,8 +560,8 @@ JS_FRIEND_API void js::VisitGrayWrapperTargets(Zone* zone,
   }
 }
 
-JS_FRIEND_API JSLinearString* js::StringToLinearStringSlow(JSContext* cx,
-                                                           JSString* str) {
+JSLinearString* JS::detail::StringToLinearStringSlow(JSContext* cx,
+                                                     JSString* str) {
   return str->ensureLinear(cx);
 }
 
@@ -742,42 +735,6 @@ JS_FRIEND_API const DOMCallbacks* js::GetDOMCallbacks(JSContext* cx) {
   return cx->runtime()->DOMcallbacks;
 }
 
-static const void* gDOMProxyHandlerFamily = nullptr;
-static DOMProxyShadowsCheck gDOMProxyShadowsCheck;
-static const void* gDOMRemoteProxyHandlerFamily = nullptr;
-
-JS_FRIEND_API void js::SetDOMProxyInformation(
-    const void* domProxyHandlerFamily,
-    DOMProxyShadowsCheck domProxyShadowsCheck,
-    const void* domRemoteProxyHandlerFamily) {
-  gDOMProxyHandlerFamily = domProxyHandlerFamily;
-  gDOMProxyShadowsCheck = domProxyShadowsCheck;
-  gDOMRemoteProxyHandlerFamily = domRemoteProxyHandlerFamily;
-}
-
-const void* js::GetDOMProxyHandlerFamily() { return gDOMProxyHandlerFamily; }
-
-DOMProxyShadowsCheck js::GetDOMProxyShadowsCheck() {
-  return gDOMProxyShadowsCheck;
-}
-
-const void* js::GetDOMRemoteProxyHandlerFamily() {
-  return gDOMRemoteProxyHandlerFamily;
-}
-
-JS_FRIEND_API bool js::IsDOMRemoteProxyObject(JSObject* object) {
-  return js::IsProxy(object) && js::GetProxyHandler(object)->family() ==
-                                    js::GetDOMRemoteProxyHandlerFamily();
-}
-
-static XrayJitInfo* gXrayJitInfo = nullptr;
-
-JS_FRIEND_API void js::SetXrayJitInfo(XrayJitInfo* info) {
-  gXrayJitInfo = info;
-}
-
-XrayJitInfo* js::GetXrayJitInfo() { return gXrayJitInfo; }
-
 JS_FRIEND_API void js::PrepareScriptEnvironmentAndInvoke(
     JSContext* cx, HandleObject global,
     ScriptEnvironmentPreparer::Closure& closure) {
@@ -832,7 +789,7 @@ JS_FRIEND_API bool js::ReportIsNotFunction(JSContext* cx, HandleValue v) {
 
 #ifdef DEBUG
 bool js::HasObjectMovedOp(JSObject* obj) {
-  return !!GetObjectClass(obj)->extObjectMovedOp();
+  return !!JS::GetClass(obj)->extObjectMovedOp();
 }
 #endif
 
@@ -879,29 +836,6 @@ JS_FRIEND_API void js::SetRealmValidAccessPtr(JSContext* cx,
 }
 
 JS_FRIEND_API bool js::SystemZoneAvailable(JSContext* cx) { return true; }
-
-static LogCtorDtor sLogCtor = nullptr;
-static LogCtorDtor sLogDtor = nullptr;
-
-JS_FRIEND_API void js::SetLogCtorDtorFunctions(LogCtorDtor ctor,
-                                               LogCtorDtor dtor) {
-  MOZ_ASSERT(!sLogCtor && !sLogDtor);
-  MOZ_ASSERT(ctor && dtor);
-  sLogCtor = ctor;
-  sLogDtor = dtor;
-}
-
-JS_FRIEND_API void js::LogCtor(void* self, const char* type, uint32_t sz) {
-  if (LogCtorDtor fun = sLogCtor) {
-    fun(self, type, sz);
-  }
-}
-
-JS_FRIEND_API void js::LogDtor(void* self, const char* type, uint32_t sz) {
-  if (LogCtorDtor fun = sLogDtor) {
-    fun(self, type, sz);
-  }
-}
 
 JS_FRIEND_API JS::Value js::MaybeGetScriptPrivate(JSObject* object) {
   if (!object->is<ScriptSourceObject>()) {

@@ -36,7 +36,7 @@ const EXPERIMENT_PAYLOAD = {
               addon: {
                 id: "954390",
                 icon:
-                  "resource://activity-stream/data/content/assets/cfr_fb_container.png",
+                  "chrome://activity-stream/content/data/content/assets/cfr_fb_container.png",
                 title: "Facebook Container",
                 users: 1455872,
                 author: "Mozilla",
@@ -140,7 +140,7 @@ add_task(async function test_loading_experimentsAPI() {
     set: [
       [
         "browser.newtabpage.activity-stream.asrouter.providers.messaging-experiments",
-        `{"id":"messaging-experiments","enabled":true,"type":"remote-experiments","messageGroups":["cfr","whats-new-panel","moments-page","snippets","cfr-fxa"],"frequency":{"custom":[{"period":"daily","cap":1}]},"updateCycleInMs":0}`,
+        `{"id":"messaging-experiments","enabled":true,"type":"remote-experiments","messageGroups":["cfr","whats-new-panel","moments-page","snippets","cfr-fxa"],"updateCycleInMs":0}`,
       ],
     ],
   });

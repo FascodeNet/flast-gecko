@@ -4134,6 +4134,36 @@ nsDocShell::GetCurrentDescriptor(nsISupports** aPageDescriptor) {
   return NS_ERROR_NOT_AVAILABLE;
 }
 
+already_AddRefed<nsIInputStream> nsDocShell::GetPostDataFromCurrentEntry()
+    const {
+  nsCOMPtr<nsIInputStream> postData;
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    if (mActiveEntry) {
+      postData = mActiveEntry->GetPostData();
+    }
+  } else {
+    if (mOSHE) {
+      postData = mOSHE->GetPostData();
+    }
+  }
+
+  return postData.forget();
+}
+
+Maybe<uint32_t> nsDocShell::GetCacheKeyFromCurrentEntry() const {
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    if (mActiveEntry) {
+      return Some(mActiveEntry->GetCacheKey());
+    }
+  } else {
+    if (mOSHE) {
+      return Some(mOSHE->GetCacheKey());
+    }
+  }
+
+  return Nothing();
+}
+
 //*****************************************************************************
 // nsDocShell::nsIBaseWindow
 //*****************************************************************************
@@ -5014,6 +5044,10 @@ nsresult nsDocShell::SetupRefreshURIFromHeader(nsIURI* aBaseURI,
                                                nsIPrincipal* aPrincipal,
                                                uint64_t aInnerWindowID,
                                                const nsACString& aHeader) {
+  if (mIsBeingDestroyed) {
+    return NS_ERROR_FAILURE;
+  }
+
   // Refresh headers are parsed with the following format in mind
   // <META HTTP-EQUIV=REFRESH CONTENT="5; URL=http://uri">
   // By the time we are here, the following is true:
@@ -10377,7 +10411,9 @@ bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
    *  frameset pages is to add new methods to nsIDocShellTreeItem.
    * Hopefully I don't have to do that.
    */
-  if (equalUri && mOSHE &&
+  if (equalUri &&
+      (StaticPrefs::fission_sessionHistoryInParent() ? !!mActiveEntry
+                                                     : !!mOSHE) &&
       (mLoadType == LOAD_NORMAL || mLoadType == LOAD_LINK ||
        mLoadType == LOAD_STOP_CONTENT) &&
       !inputStream) {
@@ -12967,5 +13003,7 @@ bool nsDocShell::GetIsAttemptingToNavigate() {
 
 void nsDocShell::SetLoadingSessionHistoryInfo(
     const mozilla::dom::LoadingSessionHistoryInfo& aLoadingInfo) {
+  // FIXME Would like to assert this, but can't yet.
+  // MOZ_ASSERT(!mLoadingEntry);
   mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(aLoadingInfo);
 }

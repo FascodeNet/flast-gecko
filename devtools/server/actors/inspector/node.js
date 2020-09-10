@@ -43,7 +43,6 @@ loader.lazyRequireGetter(
     "getNodeDisplayName",
     "imageToImageData",
     "isNodeDead",
-    "scrollbarTreeWalkerFilter",
   ],
   "devtools/server/actors/inspector/utils",
   true
@@ -74,12 +73,6 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "DocumentWalker",
-  "devtools/server/actors/inspector/document-walker",
-  true
-);
-loader.lazyRequireGetter(
-  this,
   "DOMHelpers",
   "devtools/shared/dom-helpers",
   true
@@ -104,11 +97,18 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
 
     // Store the original display type and scrollable state and whether or not the node is
     // displayed to track changes when reflows occur.
+    const wasScrollable = this.isScrollable;
+
     this.currentDisplayType = this.displayType;
     this.wasDisplayed = this.isDisplayed;
-    this.wasScrollable = this.isScrollable;
+    this.wasScrollable = wasScrollable;
 
-    if (this.isScrollable) {
+    // We check this on each call because a static check requires a full browser restart
+    // to pick up changes.
+    const OVERFLOW_DEBUGGING_ENABLED = Services.prefs.getBoolPref(
+      "devtools.overflow.debugging.enabled"
+    );
+    if (OVERFLOW_DEBUGGING_ENABLED && wasScrollable) {
       this.walker.updateOverflowCausingElements(
         this,
         this.walker.overflowCausingElementsMap
@@ -356,27 +356,10 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    * Check whether the node currently has scrollbars and is scrollable.
    */
   get isScrollable() {
-    // Check first if the element has an overflow area, bail out if not.
-    if (
-      this.rawNode.clientHeight === this.rawNode.scrollHeight &&
-      this.rawNode.clientWidth === this.rawNode.scrollWidth
-    ) {
-      return false;
-    }
-
-    // If it does, then check it also has scrollbars.
-    try {
-      const walker = new DocumentWalker(
-        this.rawNode,
-        this.rawNode.ownerGlobal,
-        { filter: scrollbarTreeWalkerFilter }
-      );
-      return !!walker.firstChild();
-    } catch (e) {
-      // We have no access to a DOM object. This is probably due to a CORS
-      // violation. Using try / catch is the only way to avoid this error.
-      return false;
-    }
+    return (
+      this.rawNode.nodeType === Node.ELEMENT_NODE &&
+      this.rawNode.hasVisibleScrollbars
+    );
   },
 
   /**

@@ -19,6 +19,7 @@
 #include "jit/ICState.h"
 #include "jit/MacroAssembler.h"
 #include "jit/Simulator.h"
+#include "js/friend/XrayJitInfo.h"  // JS::XrayJitInfo
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/Iteration.h"
 #include "vm/Shape.h"
@@ -1700,6 +1701,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachSubstringKernel(HandleFunction callee);
   AttachDecision tryAttachObjectHasPrototype(HandleFunction callee);
   AttachDecision tryAttachString(HandleFunction callee);
+  AttachDecision tryAttachStringToStringValueOf(HandleFunction callee);
   AttachDecision tryAttachStringChar(HandleFunction callee, StringChar kind);
   AttachDecision tryAttachStringCharCodeAt(HandleFunction callee);
   AttachDecision tryAttachStringCharAt(HandleFunction callee);
@@ -1747,6 +1749,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachObjectCreate(HandleFunction callee);
   AttachDecision tryAttachArrayConstructor(HandleFunction callee);
   AttachDecision tryAttachTypedArrayConstructor(HandleFunction callee);
+  AttachDecision tryAttachNumberToString(HandleFunction callee);
   AttachDecision tryAttachReflectGetPrototypeOf(HandleFunction callee);
   AttachDecision tryAttachAtomicsCompareExchange(HandleFunction callee);
   AttachDecision tryAttachAtomicsExchange(HandleFunction callee);
@@ -1959,6 +1962,9 @@ inline ReferenceType ReferenceTypeFromSimpleTypeDescrKey(uint32_t key) {
 
 // Returns whether obj is a WindowProxy wrapping the script's global.
 extern bool IsWindowProxyForScriptGlobal(JSScript* script, JSObject* obj);
+
+// Retrieve Xray JIT info set by the embedder.
+extern JS::XrayJitInfo* GetXrayJitInfo();
 
 }  // namespace jit
 }  // namespace js

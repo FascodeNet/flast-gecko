@@ -9,19 +9,44 @@
 
 #include "mozilla/dom/quota/QuotaCommon.h"
 
-// IndexedDB equivalent of QM_TRY.
-#define IDB_TRY(...) QM_TRY_META(mozilla::dom::indexedDB, ##__VA_ARGS__)
+// IndexedDB equivalents of QM_TRY and QM_DEBUG_TRY.
+#define IDB_TRY_GLUE(...) \
+  QM_TRY_META(mozilla::dom::indexedDB, MOZ_UNIQUE_VAR(tryResult), ##__VA_ARGS__)
+#define IDB_TRY(...) IDB_TRY_GLUE(__VA_ARGS__)
 
-// IndexedDB equivalent of QM_TRY_VAR.
-#define IDB_TRY_VAR(...) QM_TRY_VAR_META(mozilla::dom::indexedDB, ##__VA_ARGS__)
+#ifdef DEBUG
+#  define IDB_DEBUG_TRY(...) IDB_TRY(__VA_ARGS__)
+#else
+#  define IDB_DEBUG_TRY(...)
+#endif
 
-// IndexedDB equivalent of QM_FAIL.
-#define IDB_FAIL(...) QM_FAIL_META(mozilla::dom::indexedDB, ##__VA_ARGS__)
+// IndexedDB equivalents of QM_TRY_VAR and QM_DEBUG_TRY_VAR.
+#define IDB_TRY_VAR_GLUE(...)                                         \
+  QM_TRY_VAR_META(mozilla::dom::indexedDB, MOZ_UNIQUE_VAR(tryResult), \
+                  ##__VA_ARGS__)
+#define IDB_TRY_VAR(...) IDB_TRY_VAR_GLUE(__VA_ARGS__)
+
+#ifdef DEBUG
+#  define IDB_DEBUG_TRY_VAR(...) IDB_TRY_VAR(__VA_ARGS__)
+#else
+#  define IDB_DEBUG_TRY_VAR(...)
+#endif
+
+// IndexedDB equivalents of QM_FAIL and QM_DEBUG_FAIL.
+#define IDB_FAIL_GLUE(...) QM_FAIL_META(mozilla::dom::indexedDB, ##__VA_ARGS__)
+#define IDB_FAIL(...) IDB_FAIL_GLUE(__VA_ARGS__)
+
+#ifdef DEBUG
+#  define IDB_DEBUG_FAIL(...) IDB_FAIL(__VA_ARGS__)
+#else
+#  define IDB_DEBUG_FAIL(...)
+#endif
 
 namespace mozilla::dom::indexedDB {
 
-void HandleError(const nsLiteralCString& aExpr,
-                 const nsLiteralCString& aSourceFile, int32_t aSourceLine);
+// See comment on mozilla::dom::quota::HandleError
+MOZ_NEVER_INLINE void HandleError(const char* aExpr, const char* aSourceFile,
+                                  int32_t aSourceLine);
 
 }  // namespace mozilla::dom::indexedDB
 

@@ -9,14 +9,38 @@
 
 #include "mozilla/dom/quota/QuotaCommon.h"
 
-// SimpleDB equivalent of QM_TRY.
-#define SDB_TRY(...) QM_TRY_META(mozilla::dom::simpledb, ##__VA_ARGS__)
+// SimpleDB equivalents of QM_TRY and QM_DEBUG_TRY.
+#define SDB_TRY_GLUE(...) \
+  QM_TRY_META(mozilla::dom::simpledb, MOZ_UNIQUE_VAR(tryResult), ##__VA_ARGS__)
+#define SDB_TRY(...) SDB_TRY_GLUE(__VA_ARGS__)
 
-// SimpleDB equivalent of QM_TRY_VAR.
-#define SDB_TRY_VAR(...) QM_TRY_VAR_META(mozilla::dom::simpledb, ##__VA_ARGS__)
+#ifdef DEBUG
+#  define SDB_DEBUG_TRY(...) SDB_TRY(__VA_ARGS__)
+#else
+#  define SDB_DEBUG_TRY(...)
+#endif
 
-// SimpleDB equivalent of QM_FAIL.
-#define SDB_FAIL(...) QM_FAIL_META(mozilla::dom::simpledb, ##__VA_ARGS__)
+// SimpleDB equivalents of QM_TRY_VAR and QM_DEBUG_TRY_VAR.
+#define SDB_TRY_VAR_GLUE(...)                                        \
+  QM_TRY_VAR_META(mozilla::dom::simpledb, MOZ_UNIQUE_VAR(tryResult), \
+                  ##__VA_ARGS__)
+#define SDB_TRY_VAR(...) SDB_TRY_VAR_GLUE(__VA_ARGS__)
+
+#ifdef DEBUG
+#  define SDB_DEBUG_TRY_VAR(...) SDB_TRY_VAR(__VA_ARGS__)
+#else
+#  define SDB_DEBUG_TRY_VAR(...)
+#endif
+
+// SimpleDB equivalents of QM_FAIL and QM_DEBUG_FAIL.
+#define SDB_FAIL_GLUE(...) QM_FAIL_META(mozilla::dom::simpledb, ##__VA_ARGS__)
+#define SDB_FAIL(...) SDB_FAIL_GLUE(__VA_ARGS__)
+
+#ifdef DEBUG
+#  define SDB_DEBUG_FAIL(...) SDB_FAIL(__VA_ARGS__)
+#else
+#  define SDB_DEBUG_FAIL(...)
+#endif
 
 namespace mozilla {
 namespace dom {
@@ -25,8 +49,9 @@ extern const char* kPrefSimpleDBEnabled;
 
 namespace simpledb {
 
-void HandleError(const nsLiteralCString& aExpr,
-                 const nsLiteralCString& aSourceFile, int32_t aSourceLine);
+// See comment on mozilla::dom::quota::HandleError
+MOZ_NEVER_INLINE void HandleError(const char* aExpr, const char* aSourceFile,
+                                  int32_t aSourceLine);
 
 }  // namespace simpledb
 

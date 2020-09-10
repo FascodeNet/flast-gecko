@@ -19,14 +19,14 @@
 #include "js/Exception.h"
 #include "js/friend/ErrorMessages.h"
 #include "js/HeapAPI.h"
+#include "js/Object.h"              // JS::GetClass
 #include "js/shadow/Function.h"     // JS::shadow::Function
 #include "js/shadow/Object.h"       // JS::shadow::Object
 #include "js/shadow/ObjectGroup.h"  // JS::shadow::ObjectGroup
-#include "js/shadow/String.h"       // JS::shadow::String
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
-struct JSJitInfo;
+class JSJitInfo;
 
 namespace JS {
 template <class T>
@@ -34,10 +34,6 @@ class Heap;
 
 class ExceptionStack;
 } /* namespace JS */
-
-namespace js {
-class JS_FRIEND_API BaseProxyHandler;
-} /* namespace js */
 
 extern JS_FRIEND_API void JS_SetGrayGCRootsTracer(JSContext* cx,
                                                   JSTraceDataOp traceOp,
@@ -152,9 +148,6 @@ extern JS_FRIEND_API bool JS_InitializePropertiesFromCompatibleNativeObject(
     JSContext* cx, JS::HandleObject dst, JS::HandleObject src);
 
 namespace js {
-
-JS_FRIEND_API bool GetBuiltinClass(JSContext* cx, JS::HandleObject obj,
-                                   ESClass* cls);
 
 JS_FRIEND_API bool IsArgumentsObject(JS::HandleObject obj);
 
@@ -369,10 +362,6 @@ extern JS_FRIEND_API bool IsSharableCompartment(JS::Compartment* comp);
 // to #include vm/JSObject.h.
 extern JS_FRIEND_DATA const JSClass* const ObjectClassPtr;
 
-inline const JSClass* GetObjectClass(const JSObject* obj) {
-  return reinterpret_cast<const JS::shadow::Object*>(obj)->group->clasp;
-}
-
 JS_FRIEND_API const JSClass* ProtoKeyToClass(JSProtoKey key);
 
 // Returns the key for the class inherited by a given standard class (that
@@ -403,11 +392,6 @@ JS_FRIEND_API bool ShouldIgnorePropertyDefinition(JSContext* cx, JSProtoKey key,
 JS_FRIEND_API bool IsFunctionObject(JSObject* obj);
 
 JS_FRIEND_API bool UninlinedIsCrossCompartmentWrapper(const JSObject* obj);
-
-static MOZ_ALWAYS_INLINE JS::Compartment* GetObjectCompartment(JSObject* obj) {
-  JS::Realm* realm = reinterpret_cast<JS::shadow::Object*>(obj)->group->realm;
-  return JS::GetCompartmentForRealm(realm);
-}
 
 // CrossCompartmentWrappers are shared by all realms within the compartment, so
 // getting a wrapper's realm usually doesn't make sense.
@@ -459,205 +443,6 @@ extern JS_FRIEND_API JSObject* GetStaticPrototype(JSObject* obj);
 
 JS_FRIEND_API bool GetRealmOriginalEval(JSContext* cx,
                                         JS::MutableHandleObject eval);
-
-inline void* GetObjectPrivate(JSObject* obj) {
-  MOZ_ASSERT(GetObjectClass(obj)->flags & JSCLASS_HAS_PRIVATE);
-  const auto* nobj = reinterpret_cast<const JS::shadow::Object*>(obj);
-  void** addr =
-      reinterpret_cast<void**>(&nobj->fixedSlots()[nobj->numFixedSlots()]);
-  return *addr;
-}
-
-/**
- * Get the value stored in an object's reserved slot. This can be used with
- * both native objects and proxies, but if |obj| is known to be a proxy
- * GetProxyReservedSlot is a bit more efficient.
- */
-inline const JS::Value& GetReservedSlot(JSObject* obj, size_t slot) {
-  MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
-  return reinterpret_cast<const JS::shadow::Object*>(obj)->slotRef(slot);
-}
-
-JS_FRIEND_API void SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
-                                              const JS::Value& value);
-
-/**
- * Store a value in an object's reserved slot. This can be used with
- * both native objects and proxies, but if |obj| is known to be a proxy
- * SetProxyReservedSlot is a bit more efficient.
- */
-inline void SetReservedSlot(JSObject* obj, size_t slot,
-                            const JS::Value& value) {
-  MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
-  auto* sobj = reinterpret_cast<JS::shadow::Object*>(obj);
-  if (sobj->slotRef(slot).isGCThing() || value.isGCThing()) {
-    SetReservedSlotWithBarrier(obj, slot, value);
-  } else {
-    sobj->slotRef(slot) = value;
-  }
-}
-
-JS_FRIEND_API uint32_t GetObjectSlotSpan(JSObject* obj);
-
-inline const JS::Value& GetObjectSlot(JSObject* obj, size_t slot) {
-  MOZ_ASSERT(slot < GetObjectSlotSpan(obj));
-  return reinterpret_cast<const JS::shadow::Object*>(obj)->slotRef(slot);
-}
-
-MOZ_ALWAYS_INLINE size_t GetAtomLength(JSAtom* atom) {
-  return reinterpret_cast<JS::shadow::String*>(atom)->length();
-}
-
-// Maximum length of a JS string. This is chosen so that the number of bytes
-// allocated for a null-terminated TwoByte string still fits in int32_t.
-static const uint32_t MaxStringLength = (1 << 30) - 2;
-
-static_assert((uint64_t(MaxStringLength) + 1) * sizeof(char16_t) <= INT32_MAX,
-              "size of null-terminated JSString char buffer must fit in "
-              "INT32_MAX");
-
-MOZ_ALWAYS_INLINE size_t GetLinearStringLength(JSLinearString* s) {
-  return reinterpret_cast<JS::shadow::String*>(s)->length();
-}
-
-MOZ_ALWAYS_INLINE bool LinearStringHasLatin1Chars(JSLinearString* s) {
-  return reinterpret_cast<JS::shadow::String*>(s)->flags() &
-         JS::shadow::String::LATIN1_CHARS_BIT;
-}
-
-MOZ_ALWAYS_INLINE bool AtomHasLatin1Chars(JSAtom* atom) {
-  return reinterpret_cast<JS::shadow::String*>(atom)->flags() &
-         JS::shadow::String::LATIN1_CHARS_BIT;
-}
-
-MOZ_ALWAYS_INLINE bool StringHasLatin1Chars(JSString* s) {
-  return reinterpret_cast<JS::shadow::String*>(s)->flags() &
-         JS::shadow::String::LATIN1_CHARS_BIT;
-}
-
-MOZ_ALWAYS_INLINE const JS::Latin1Char* GetLatin1LinearStringChars(
-    const JS::AutoRequireNoGC& nogc, JSLinearString* linear) {
-  MOZ_ASSERT(LinearStringHasLatin1Chars(linear));
-
-  using JS::shadow::String;
-  String* s = reinterpret_cast<String*>(linear);
-  if (s->flags() & String::INLINE_CHARS_BIT) {
-    return s->inlineStorageLatin1;
-  }
-  return s->nonInlineCharsLatin1;
-}
-
-MOZ_ALWAYS_INLINE const char16_t* GetTwoByteLinearStringChars(
-    const JS::AutoRequireNoGC& nogc, JSLinearString* linear) {
-  MOZ_ASSERT(!LinearStringHasLatin1Chars(linear));
-
-  using JS::shadow::String;
-  String* s = reinterpret_cast<String*>(linear);
-  if (s->flags() & String::INLINE_CHARS_BIT) {
-    return s->inlineStorageTwoByte;
-  }
-  return s->nonInlineCharsTwoByte;
-}
-
-MOZ_ALWAYS_INLINE char16_t GetLinearStringCharAt(JSLinearString* linear,
-                                                 size_t index) {
-  MOZ_ASSERT(index < GetLinearStringLength(linear));
-  JS::AutoCheckCannotGC nogc;
-  return LinearStringHasLatin1Chars(linear)
-             ? GetLatin1LinearStringChars(nogc, linear)[index]
-             : GetTwoByteLinearStringChars(nogc, linear)[index];
-}
-
-MOZ_ALWAYS_INLINE JSLinearString* AtomToLinearString(JSAtom* atom) {
-  return reinterpret_cast<JSLinearString*>(atom);
-}
-
-MOZ_ALWAYS_INLINE const JS::Latin1Char* GetLatin1AtomChars(
-    const JS::AutoRequireNoGC& nogc, JSAtom* atom) {
-  return GetLatin1LinearStringChars(nogc, AtomToLinearString(atom));
-}
-
-MOZ_ALWAYS_INLINE const char16_t* GetTwoByteAtomChars(
-    const JS::AutoRequireNoGC& nogc, JSAtom* atom) {
-  return GetTwoByteLinearStringChars(nogc, AtomToLinearString(atom));
-}
-
-MOZ_ALWAYS_INLINE bool IsExternalString(
-    JSString* str, const JSExternalStringCallbacks** callbacks,
-    const char16_t** chars) {
-  using JS::shadow::String;
-  String* s = reinterpret_cast<String*>(str);
-
-  if ((s->flags() & String::TYPE_FLAGS_MASK) != String::EXTERNAL_FLAGS) {
-    return false;
-  }
-
-  MOZ_ASSERT(JS_IsExternalString(str));
-  *callbacks = s->externalCallbacks;
-  *chars = s->nonInlineCharsTwoByte;
-  return true;
-}
-
-JS_FRIEND_API JSLinearString* StringToLinearStringSlow(JSContext* cx,
-                                                       JSString* str);
-
-MOZ_ALWAYS_INLINE JSLinearString* StringToLinearString(JSContext* cx,
-                                                       JSString* str) {
-  using JS::shadow::String;
-  String* s = reinterpret_cast<String*>(str);
-  if (MOZ_UNLIKELY(!(s->flags() & String::LINEAR_BIT))) {
-    return StringToLinearStringSlow(cx, str);
-  }
-  return reinterpret_cast<JSLinearString*>(str);
-}
-
-template <typename CharType>
-MOZ_ALWAYS_INLINE void CopyLinearStringChars(CharType* dest, JSLinearString* s,
-                                             size_t len, size_t start = 0);
-
-MOZ_ALWAYS_INLINE void CopyLinearStringChars(char16_t* dest, JSLinearString* s,
-                                             size_t len, size_t start = 0) {
-  MOZ_ASSERT(start + len <= GetLinearStringLength(s));
-  JS::AutoCheckCannotGC nogc;
-  if (LinearStringHasLatin1Chars(s)) {
-    const JS::Latin1Char* src = GetLatin1LinearStringChars(nogc, s);
-    for (size_t i = 0; i < len; i++) {
-      dest[i] = src[start + i];
-    }
-  } else {
-    const char16_t* src = GetTwoByteLinearStringChars(nogc, s);
-    mozilla::PodCopy(dest, src + start, len);
-  }
-}
-
-MOZ_ALWAYS_INLINE void CopyLinearStringChars(char* dest, JSLinearString* s,
-                                             size_t len, size_t start = 0) {
-  MOZ_ASSERT(start + len <= GetLinearStringLength(s));
-  JS::AutoCheckCannotGC nogc;
-  if (LinearStringHasLatin1Chars(s)) {
-    const JS::Latin1Char* src = GetLatin1LinearStringChars(nogc, s);
-    for (size_t i = 0; i < len; i++) {
-      dest[i] = char(src[start + i]);
-    }
-  } else {
-    const char16_t* src = GetTwoByteLinearStringChars(nogc, s);
-    for (size_t i = 0; i < len; i++) {
-      dest[i] = char(src[start + i]);
-    }
-  }
-}
-
-template <typename CharType>
-inline bool CopyStringChars(JSContext* cx, CharType* dest, JSString* s,
-                            size_t len, size_t start = 0) {
-  JSLinearString* linear = StringToLinearString(cx, s);
-  if (!linear) {
-    return false;
-  }
-
-  CopyLinearStringChars(dest, linear, len, start);
-  return true;
-}
 
 /**
  * Add some or all property keys of obj to the id vector *props.
@@ -815,101 +600,6 @@ extern JS_FRIEND_API bool AllowNewWrapper(JS::Compartment* target,
 
 extern JS_FRIEND_API bool NukedObjectRealm(JSObject* obj);
 
-/* Specify information about DOMProxy proxies in the DOM, for use by ICs. */
-
-/*
- * The DOMProxyShadowsCheck function will be called to check if the property for
- * id should be gotten from the prototype, or if there is an own property that
- * shadows it.
- * * If ShadowsViaDirectExpando is returned, then the slot at
- *   listBaseExpandoSlot contains an expando object which has the property in
- *   question.
- * * If ShadowsViaIndirectExpando is returned, then the slot at
- *   listBaseExpandoSlot contains a private pointer to an ExpandoAndGeneration
- *   and the expando object in the ExpandoAndGeneration has the property in
- *   question.
- * * If DoesntShadow is returned then the slot at listBaseExpandoSlot should
- *   either be undefined or point to an expando object that would contain the
- *   own property.
- * * If DoesntShadowUnique is returned then the slot at listBaseExpandoSlot
- *   should contain a private pointer to a ExpandoAndGeneration, which contains
- *   a JS::Value that should either be undefined or point to an expando object,
- *   and a uint64 value. If that value changes then the IC for getting a
- *   property will be invalidated.
- * * If Shadows is returned, that means the property is an own property of the
- *   proxy but doesn't live on the expando object.
- */
-
-struct ExpandoAndGeneration {
-  ExpandoAndGeneration() : expando(JS::UndefinedValue()), generation(0) {}
-
-  void OwnerUnlinked() { ++generation; }
-
-  static size_t offsetOfExpando() {
-    return offsetof(ExpandoAndGeneration, expando);
-  }
-
-  static size_t offsetOfGeneration() {
-    return offsetof(ExpandoAndGeneration, generation);
-  }
-
-  JS::Heap<JS::Value> expando;
-  uint64_t generation;
-};
-
-typedef enum DOMProxyShadowsResult {
-  ShadowCheckFailed,
-  Shadows,
-  DoesntShadow,
-  DoesntShadowUnique,
-  ShadowsViaDirectExpando,
-  ShadowsViaIndirectExpando
-} DOMProxyShadowsResult;
-using DOMProxyShadowsCheck = DOMProxyShadowsResult (*)(JSContext*,
-                                                       JS::HandleObject,
-                                                       JS::HandleId);
-JS_FRIEND_API void SetDOMProxyInformation(
-    const void* domProxyHandlerFamily,
-    DOMProxyShadowsCheck domProxyShadowsCheck,
-    const void* domRemoteProxyHandlerFamily);
-
-const void* GetDOMProxyHandlerFamily();
-DOMProxyShadowsCheck GetDOMProxyShadowsCheck();
-inline bool DOMProxyIsShadowing(DOMProxyShadowsResult result) {
-  return result == Shadows || result == ShadowsViaDirectExpando ||
-         result == ShadowsViaIndirectExpando;
-}
-
-const void* GetDOMRemoteProxyHandlerFamily();
-
-extern JS_FRIEND_API bool IsDOMRemoteProxyObject(JSObject* object);
-
-// Callbacks and other information for use by the JITs when optimizing accesses
-// on xray wrappers.
-struct XrayJitInfo {
-  // Test whether a proxy handler is a cross compartment xray with no
-  // security checks.
-  bool (*isCrossCompartmentXray)(const BaseProxyHandler* handler);
-
-  // Test whether xrays in |obj|'s compartment have expandos of their own,
-  // instead of sharing them with Xrays from other compartments.
-  bool (*compartmentHasExclusiveExpandos)(JSObject* obj);
-
-  // Proxy reserved slot used by xrays in sandboxes to store their holder
-  // object.
-  size_t xrayHolderSlot;
-
-  // Reserved slot used by xray holders to store the xray's expando object.
-  size_t holderExpandoSlot;
-
-  // Reserved slot used by xray expandos to store a custom prototype.
-  size_t expandoProtoSlot;
-};
-
-JS_FRIEND_API void SetXrayJitInfo(XrayJitInfo* info);
-
-XrayJitInfo* GetXrayJitInfo();
-
 /* Implemented in jsdate.cpp. */
 
 /** Detect whether the internal date value is NaN. */
@@ -927,324 +617,14 @@ namespace js {
 /* Implemented in vm/StructuredClone.cpp. */
 extern JS_FRIEND_API uint64_t GetSCOffset(JSStructuredCloneWriter* writer);
 
-namespace jit {
-
-enum class InlinableNative : uint16_t;
-
-}  // namespace jit
-
 }  // namespace js
 
-/**
- * A class, expected to be passed by value, which represents the CallArgs for a
- * JSJitGetterOp.
- */
-class JSJitGetterCallArgs : protected JS::MutableHandleValue {
- public:
-  explicit JSJitGetterCallArgs(const JS::CallArgs& args)
-      : JS::MutableHandleValue(args.rval()) {}
-
-  explicit JSJitGetterCallArgs(JS::RootedValue* rooted)
-      : JS::MutableHandleValue(rooted) {}
-
-  JS::MutableHandleValue rval() { return *this; }
-};
-
-/**
- * A class, expected to be passed by value, which represents the CallArgs for a
- * JSJitSetterOp.
- */
-class JSJitSetterCallArgs : protected JS::MutableHandleValue {
- public:
-  explicit JSJitSetterCallArgs(const JS::CallArgs& args)
-      : JS::MutableHandleValue(args[0]) {}
-
-  JS::MutableHandleValue operator[](unsigned i) {
-    MOZ_ASSERT(i == 0);
-    return *this;
-  }
-
-  unsigned length() const { return 1; }
-
-  // Add get() or maybe hasDefined() as needed
-};
-
-struct JSJitMethodCallArgsTraits;
-
-/**
- * A class, expected to be passed by reference, which represents the CallArgs
- * for a JSJitMethodOp.
- */
-class JSJitMethodCallArgs
-    : protected JS::detail::CallArgsBase<JS::detail::NoUsedRval> {
- private:
-  using Base = JS::detail::CallArgsBase<JS::detail::NoUsedRval>;
-  friend struct JSJitMethodCallArgsTraits;
-
- public:
-  explicit JSJitMethodCallArgs(const JS::CallArgs& args) {
-    argv_ = args.array();
-    argc_ = args.length();
-  }
-
-  JS::MutableHandleValue rval() const { return Base::rval(); }
-
-  unsigned length() const { return Base::length(); }
-
-  JS::MutableHandleValue operator[](unsigned i) const {
-    return Base::operator[](i);
-  }
-
-  bool hasDefined(unsigned i) const { return Base::hasDefined(i); }
-
-  JSObject& callee() const {
-    // We can't use Base::callee() because that will try to poke at
-    // this->usedRval_, which we don't have.
-    return argv_[-2].toObject();
-  }
-
-  JS::HandleValue get(unsigned i) const { return Base::get(i); }
-
-  bool requireAtLeast(JSContext* cx, const char* fnname,
-                      unsigned required) const {
-    // Can just forward to Base, since it only needs the length and we
-    // forward that already.
-    return Base::requireAtLeast(cx, fnname, required);
-  }
-};
-
-struct JSJitMethodCallArgsTraits {
-  static const size_t offsetOfArgv = offsetof(JSJitMethodCallArgs, argv_);
-  static const size_t offsetOfArgc = offsetof(JSJitMethodCallArgs, argc_);
-};
-
-using JSJitGetterOp = bool (*)(JSContext*, JS::HandleObject, void*,
-                               JSJitGetterCallArgs);
-using JSJitSetterOp = bool (*)(JSContext*, JS::HandleObject, void*,
-                               JSJitSetterCallArgs);
-using JSJitMethodOp = bool (*)(JSContext*, JS::HandleObject, void*,
-                               const JSJitMethodCallArgs&);
-
-/**
- * This struct contains metadata passed from the DOM to the JS Engine for JIT
- * optimizations on DOM property accessors. Eventually, this should be made
- * available to general JSAPI users, but we are not currently ready to do so.
- */
-struct JSJitInfo {
-  enum OpType {
-    Getter,
-    Setter,
-    Method,
-    StaticMethod,
-    InlinableNative,
-    IgnoresReturnValueNative,
-    // Must be last
-    OpTypeCount
-  };
-
-  enum ArgType {
-    // Basic types
-    String = (1 << 0),
-    Integer = (1 << 1),  // Only 32-bit or less
-    Double = (1 << 2),   // Maybe we want to add Float sometime too
-    Boolean = (1 << 3),
-    Object = (1 << 4),
-    Null = (1 << 5),
-
-    // And derived types
-    Numeric = Integer | Double,
-    // Should "Primitive" use the WebIDL definition, which
-    // excludes string and null, or the typical JS one that includes them?
-    Primitive = Numeric | Boolean | Null | String,
-    ObjectOrNull = Object | Null,
-    Any = ObjectOrNull | Primitive,
-
-    // Our sentinel value.
-    ArgTypeListEnd = (1 << 31)
-  };
-
-  static_assert(Any & String, "Any must include String.");
-  static_assert(Any & Integer, "Any must include Integer.");
-  static_assert(Any & Double, "Any must include Double.");
-  static_assert(Any & Boolean, "Any must include Boolean.");
-  static_assert(Any & Object, "Any must include Object.");
-  static_assert(Any & Null, "Any must include Null.");
-
-  /**
-   * An enum that describes what this getter/setter/method aliases.  This
-   * determines what things can be hoisted past this call, and if this
-   * call is movable what it can be hoisted past.
-   */
-  enum AliasSet {
-    /**
-     * Alias nothing: a constant value, getting it can't affect any other
-     * values, nothing can affect it.
-     */
-    AliasNone,
-
-    /**
-     * Alias things that can modify the DOM but nothing else.  Doing the
-     * call can't affect the behavior of any other function.
-     */
-    AliasDOMSets,
-
-    /**
-     * Alias the world.  Calling this can change arbitrary values anywhere
-     * in the system.  Most things fall in this bucket.
-     */
-    AliasEverything,
-
-    /** Must be last. */
-    AliasSetCount
-  };
-
-  bool needsOuterizedThisObject() const {
-    return type() != Getter && type() != Setter;
-  }
-
-  bool isTypedMethodJitInfo() const { return isTypedMethod; }
-
-  OpType type() const { return OpType(type_); }
-
-  AliasSet aliasSet() const { return AliasSet(aliasSet_); }
-
-  JSValueType returnType() const { return JSValueType(returnType_); }
-
-  union {
-    JSJitGetterOp getter;
-    JSJitSetterOp setter;
-    JSJitMethodOp method;
-    /** A DOM static method, used for Promise wrappers */
-    JSNative staticMethod;
-    JSNative ignoresReturnValueMethod;
-  };
-
-  static unsigned offsetOfIgnoresReturnValueNative() {
-    return offsetof(JSJitInfo, ignoresReturnValueMethod);
-  }
-
-  union {
-    uint16_t protoID;
-    js::jit::InlinableNative inlinableNative;
-  };
-
-  union {
-    uint16_t depth;
-
-    // Additional opcode for some InlinableNative functions.
-    uint16_t nativeOp;
-  };
-
-  // These fields are carefully packed to take up 4 bytes.  If you need more
-  // bits for whatever reason, please see if you can steal bits from existing
-  // fields before adding more members to this structure.
-
-#define JITINFO_OP_TYPE_BITS 4
-#define JITINFO_ALIAS_SET_BITS 4
-#define JITINFO_RETURN_TYPE_BITS 8
-#define JITINFO_SLOT_INDEX_BITS 10
-
-  /** The OpType that says what sort of function we are. */
-  uint32_t type_ : JITINFO_OP_TYPE_BITS;
-
-  /**
-   * The alias set for this op.  This is a _minimal_ alias set; in
-   * particular for a method it does not include whatever argument
-   * conversions might do.  That's covered by argTypes and runtime
-   * analysis of the actual argument types being passed in.
-   */
-  uint32_t aliasSet_ : JITINFO_ALIAS_SET_BITS;
-
-  /** The return type tag.  Might be JSVAL_TYPE_UNKNOWN. */
-  uint32_t returnType_ : JITINFO_RETURN_TYPE_BITS;
-
-  static_assert(OpTypeCount <= (1 << JITINFO_OP_TYPE_BITS),
-                "Not enough space for OpType");
-  static_assert(AliasSetCount <= (1 << JITINFO_ALIAS_SET_BITS),
-                "Not enough space for AliasSet");
-  static_assert((sizeof(JSValueType) * 8) <= JITINFO_RETURN_TYPE_BITS,
-                "Not enough space for JSValueType");
-
-#undef JITINFO_RETURN_TYPE_BITS
-#undef JITINFO_ALIAS_SET_BITS
-#undef JITINFO_OP_TYPE_BITS
-
-  /** Is op fallible? False in setters. */
-  uint32_t isInfallible : 1;
-
-  /**
-   * Is op movable?  To be movable the op must
-   * not AliasEverything, but even that might
-   * not be enough (e.g. in cases when it can
-   * throw or is explicitly not movable).
-   */
-  uint32_t isMovable : 1;
-
-  /**
-   * Can op be dead-code eliminated? Again, this
-   * depends on whether the op can throw, in
-   * addition to the alias set.
-   */
-  uint32_t isEliminatable : 1;
-
-  // XXXbz should we have a JSValueType for the type of the member?
-  /**
-   * True if this is a getter that can always
-   * get the value from a slot of the "this" object.
-   */
-  uint32_t isAlwaysInSlot : 1;
-
-  /**
-   * True if this is a getter that can sometimes (if the slot doesn't contain
-   * UndefinedValue()) get the value from a slot of the "this" object.
-   */
-  uint32_t isLazilyCachedInSlot : 1;
-
-  /** True if this is an instance of JSTypedMethodJitInfo. */
-  uint32_t isTypedMethod : 1;
-
-  /**
-   * If isAlwaysInSlot or isSometimesInSlot is true,
-   * the index of the slot to get the value from.
-   * Otherwise 0.
-   */
-  uint32_t slotIndex : JITINFO_SLOT_INDEX_BITS;
-
-  static const size_t maxSlotIndex = (1 << JITINFO_SLOT_INDEX_BITS) - 1;
-
-#undef JITINFO_SLOT_INDEX_BITS
-};
-
-static_assert(sizeof(JSJitInfo) == (sizeof(void*) + 2 * sizeof(uint32_t)),
-              "There are several thousand instances of JSJitInfo stored in "
-              "a binary. Please don't increase its space requirements without "
-              "verifying that there is no other way forward (better packing, "
-              "smaller datatypes for fields, subclassing, etc.).");
-
-struct JSTypedMethodJitInfo {
-  // We use C-style inheritance here, rather than C++ style inheritance
-  // because not all compilers support brace-initialization for non-aggregate
-  // classes. Using C++ style inheritance and constructors instead of
-  // brace-initialization would also force the creation of static
-  // constructors (on some compilers) when JSJitInfo and JSTypedMethodJitInfo
-  // structures are declared. Since there can be several thousand of these
-  // structures present and we want to have roughly equivalent performance
-  // across a range of compilers, we do things manually.
-  JSJitInfo base;
-
-  const JSJitInfo::ArgType* const argTypes; /* For a method, a list of sets of
-                                               types that the function
-                                               expects.  This can be used,
-                                               for example, to figure out
-                                               when argument coercions can
-                                               have side-effects. */
-};
 
 namespace js {
 
 static MOZ_ALWAYS_INLINE JS::shadow::Function* FunctionObjectToShadowFunction(
     JSObject* fun) {
-  MOZ_ASSERT(GetObjectClass(fun) == FunctionClassPtr);
+  MOZ_ASSERT(JS::GetClass(fun) == FunctionClassPtr);
   return reinterpret_cast<JS::shadow::Function*>(fun);
 }
 
@@ -1437,67 +817,6 @@ extern JS_FRIEND_API bool ExecuteInFrameScriptEnvironment(
     JSContext* cx, JS::HandleObject obj, JS::HandleScript script,
     JS::MutableHandleObject scope);
 
-// These functions are provided for the JSM component loader in Gecko.
-//
-// A 'JSMEnvironment' refers to an environment chain constructed for JSM loading
-// in a shared global. Internally it is a NonSyntacticVariablesObject with a
-// corresponding extensible LexicalEnvironmentObject that is accessible by
-// JS_ExtensibleLexicalEnvironment. The |this| value of that lexical environment
-// is the NSVO itself.
-//
-// Normal global environment (ES6):     JSM "global" environment:
-//
-//                                      * - extensible lexical environment
-//                                      |   (code runs in this environment;
-//                                      |    `let/const` bindings go here)
-//                                      |
-//                                      * - JSMEnvironment (=== `this`)
-//                                      |   (`var` bindings go here)
-//                                      |
-// * - extensible lexical environment   * - extensible lexical environment
-// |   (code runs in this environment;  |   (empty)
-// |    `let/const` bindings go here)   |
-// |                                    |
-// * - actual global (=== `this`)       * - shared JSM global
-//     (var bindings go here; and           (Object, Math, etc. live here)
-//      Object, Math, etc. live here)
-
-// Allocate a new environment in current compartment that is compatible with JSM
-// shared loading.
-extern JS_FRIEND_API JSObject* NewJSMEnvironment(JSContext* cx);
-
-// Execute the given script (copied into compartment if necessary) in the given
-// JSMEnvironment. The script must have been compiled for hasNonSyntacticScope.
-// The |jsmEnv| must have been previously allocated by NewJSMEnvironment.
-//
-// NOTE: The associated extensible lexical environment is reused.
-extern JS_FRIEND_API bool ExecuteInJSMEnvironment(JSContext* cx,
-                                                  JS::HandleScript script,
-                                                  JS::HandleObject jsmEnv);
-
-// Additionally, target objects may be specified as required by the Gecko
-// subscript loader. These are wrapped in non-syntactic WithEnvironments and
-// temporarily placed on environment chain.
-//
-// See also: JS::CloneAndExecuteScript(...)
-extern JS_FRIEND_API bool ExecuteInJSMEnvironment(
-    JSContext* cx, JS::HandleScript script, JS::HandleObject jsmEnv,
-    JS::HandleObjectVector targetObj);
-
-// Used by native methods to determine the JSMEnvironment of caller if possible
-// by looking at stack frames. Returns nullptr if top frame isn't a scripted
-// caller in a JSM.
-//
-// NOTE: This may find NonSyntacticVariablesObject generated by other embedding
-// such as a Gecko FrameScript. Caller can check the compartment if needed.
-extern JS_FRIEND_API JSObject* GetJSMEnvironmentOfScriptedCaller(JSContext* cx);
-
-// Determine if obj is a JSMEnvironment
-//
-// NOTE: This may return true for an NonSyntacticVariablesObject generated by
-// other embedding such as a Gecko FrameScript. Caller can check compartment.
-extern JS_FRIEND_API bool IsJSMEnvironment(JSObject* obj);
-
 extern JS_FRIEND_API bool IsSavedFrame(JSObject* obj);
 
 // Matches the condition in js/src/jit/ProcessExecutableMemory.cpp
@@ -1592,23 +911,6 @@ extern JS_FRIEND_API void SetRealmValidAccessPtr(JSContext* cx,
 // Returns true if the system zone is available (i.e., if no cooperative
 // contexts are using it now).
 extern JS_FRIEND_API bool SystemZoneAvailable(JSContext* cx);
-
-using LogCtorDtor = void (*)(void*, const char*, uint32_t);
-
-/**
- * Set global function used to monitor a few internal classes to highlight
- * leaks, and to hint at the origin of the leaks.
- */
-extern JS_FRIEND_API void SetLogCtorDtorFunctions(LogCtorDtor ctor,
-                                                  LogCtorDtor dtor);
-
-extern JS_FRIEND_API void LogCtor(void* self, const char* type, uint32_t sz);
-
-extern JS_FRIEND_API void LogDtor(void* self, const char* type, uint32_t sz);
-
-#define JS_COUNT_CTOR(Class) LogCtor((void*)this, #Class, sizeof(Class))
-
-#define JS_COUNT_DTOR(Class) LogDtor((void*)this, #Class, sizeof(Class))
 
 /**
  * This function only reports GC heap memory,

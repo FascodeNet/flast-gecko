@@ -1223,7 +1223,7 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   rv = aOther->PopulateOriginContextIdsFromAttributes(otherOriginAttributes);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (ourOriginAttributes != otherOriginAttributes) {
+  if (!ourOriginAttributes.EqualsIgnoringFPD(otherOriginAttributes)) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
@@ -2787,7 +2787,7 @@ nsresult nsFrameLoader::FinishStaticClone(nsFrameLoader* aStaticCloneOf,
   docShell->GetContentViewer(getter_AddRefs(viewer));
   NS_ENSURE_STATE(viewer);
 
-  nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell(IgnoreErrors());
+  nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell();
   NS_ENSURE_STATE(origDocShell);
 
   nsCOMPtr<Document> doc = origDocShell->GetDocument();

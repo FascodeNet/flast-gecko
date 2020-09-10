@@ -66,33 +66,58 @@ async function generateNetworkEventStubs() {
   const stubs = new Map();
   const tab = await addTab(TEST_URI);
   const resourceWatcher = await createResourceWatcherForTab(tab);
+  const stacktraces = new Map();
 
   let addNetworkStub = function() {};
   let addNetworkUpdateStub = function() {};
 
-  const onAvailable = resource => {
-    addNetworkStub(resource);
+  const onAvailable = resources => {
+    for (const resource of resources) {
+      if (resource.resourceType == resourceWatcher.TYPES.NETWORK_EVENT) {
+        if (stacktraces.has(resource.channelId)) {
+          const { stacktrace, lastFrame } = stacktraces.get(resource.channelId);
+          resource.cause.stacktraceAvailable = stacktrace;
+          resource.cause.lastFrame = lastFrame;
+          stacktraces.delete(resource.channelId);
+        }
+        addNetworkStub(resource);
+        continue;
+      }
+      if (
+        resource.resourceType == resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE
+      ) {
+        stacktraces.set(resource.channelId, resource);
+      }
+    }
   };
-  const onUpdated = resource => {
-    addNetworkUpdateStub(resource);
+  const onUpdated = updates => {
+    for (const { resource } of updates) {
+      addNetworkUpdateStub(resource);
+    }
   };
 
-  await resourceWatcher.watchResources([resourceWatcher.TYPES.NETWORK_EVENT], {
-    onAvailable,
-    onUpdated,
-  });
+  await resourceWatcher.watchResources(
+    [
+      resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
+      resourceWatcher.TYPES.NETWORK_EVENT,
+    ],
+    {
+      onAvailable,
+      onUpdated,
+    }
+  );
 
   for (const [key, code] of getCommands()) {
     const noExpectedUpdates = 7;
     const networkEventDone = new Promise(resolve => {
-      addNetworkStub = ({ resourceType, targetFront, resource }) => {
+      addNetworkStub = resource => {
         stubs.set(key, getCleanedPacket(key, getOrderedResource(resource)));
         resolve();
       };
     });
     const networkEventUpdateDone = new Promise(resolve => {
       let updateCount = 0;
-      addNetworkUpdateStub = ({ resourceType, targetFront, resource }) => {
+      addNetworkUpdateStub = resource => {
         const updateKey = `${key} update`;
         // make sure all the updates have been happened
         if (updateCount >= noExpectedUpdates) {
@@ -124,10 +149,16 @@ async function generateNetworkEventStubs() {
     });
     await Promise.all([networkEventDone, networkEventUpdateDone]);
   }
-  resourceWatcher.unwatchResources([resourceWatcher.TYPES.NETWORK_EVENT], {
-    onAvailable,
-    onUpdated,
-  });
+  resourceWatcher.unwatchResources(
+    [
+      resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
+      resourceWatcher.TYPES.NETWORK_EVENT,
+    ],
+    {
+      onAvailable,
+      onUpdated,
+    }
+  );
   return stubs;
 }
 // Ensures the order of the resource properties
@@ -154,7 +185,6 @@ function getOrderedResource(resource) {
     blockedReason: resource.blockedReason,
     channelId: resource.channelId,
     updates: resource.updates,
-    updateType: resource.updateType,
     totalTime: resource.totalTime,
     securityState: resource.securityState,
   };

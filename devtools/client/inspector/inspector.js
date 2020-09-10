@@ -404,7 +404,7 @@ Inspector.prototype = {
     this._defaultNode = null;
     this.selection.setNodeFront(null);
     this._destroyMarkup();
-    this._pendingSelection = null;
+    this._pendingSelectionUnique = null;
   },
 
   _getCssProperties: async function() {
@@ -420,71 +420,51 @@ Inspector.prototype = {
 
   /**
    * Return a promise that will resolve to the default node for selection.
+   *
+   * @param {NodeFront} rootNodeFront
+   *        The current root node front for the top walker.
    */
-  _getDefaultNodeForSelection: function() {
+  _getDefaultNodeForSelection: async function(rootNodeFront) {
     if (this._defaultNode) {
       return this._defaultNode;
     }
+
+    // Save the _pendingSelectionUnique on the current inspector instance.
+    const pendingSelectionUnique = Symbol("pending-selection");
+    this._pendingSelectionUnique = pendingSelectionUnique;
+
+    if (this._pendingSelectionUnique !== pendingSelectionUnique) {
+      // If this method was called again while waiting, bail out.
+      return null;
+    }
+
     const walker = this.walker;
-    let rootNode = null;
-    const pendingSelection = this._pendingSelection;
+    const cssSelectors = this.selectionCssSelectors;
+    // Try to find a default node using three strategies:
+    const defaultNodeSelectors = [
+      // - first try to match css selectors for the selection
+      () => (cssSelectors.length ? walker.findNodeFront(cssSelectors) : null),
+      // - otherwise try to get the "body" element
+      () => walker.querySelector(rootNodeFront, "body"),
+      // - finally get the documentElement element if nothing else worked.
+      () => walker.documentElement(),
+    ];
 
-    // A helper to tell if the target has or is about to navigate.
-    // this._pendingSelection changes on "will-navigate" and "new-root" events.
-    const hasNavigated = () => {
-      return pendingSelection !== this._pendingSelection;
-    };
-
-    // If available, set either the previously selected node or the body
-    // as default selected, else set documentElement
-    return walker
-      .getRootNode()
-      .then(node => {
-        if (hasNavigated()) {
-          return promise.reject(
-            "navigated; resolution of _defaultNode aborted"
-          );
-        }
-
-        rootNode = node;
-        if (this.selectionCssSelectors.length) {
-          return walker.findNodeFront(this.selectionCssSelectors);
-        }
+    // Try all default node selectors until a valid node is found.
+    for (const selector of defaultNodeSelectors) {
+      const node = await selector();
+      if (this._pendingSelectionUnique !== pendingSelectionUnique) {
+        // If this method was called again while waiting, bail out.
         return null;
-      })
-      .then(front => {
-        if (hasNavigated()) {
-          return promise.reject(
-            "navigated; resolution of _defaultNode aborted"
-          );
-        }
+      }
 
-        if (front) {
-          return front;
-        }
-        return walker.querySelector(rootNode, "body");
-      })
-      .then(front => {
-        if (hasNavigated()) {
-          return promise.reject(
-            "navigated; resolution of _defaultNode aborted"
-          );
-        }
-
-        if (front) {
-          return front;
-        }
-        return this.walker.documentElement();
-      })
-      .then(node => {
-        if (hasNavigated()) {
-          return promise.reject(
-            "navigated; resolution of _defaultNode aborted"
-          );
-        }
+      if (node) {
         this._defaultNode = node;
         return node;
-      });
+      }
+    }
+
+    return null;
   },
 
   /**
@@ -1300,17 +1280,16 @@ Inspector.prototype = {
     }
   },
 
-  onResourceAvailable: function({ resourceType, targetFront, resource }) {
-    if (resourceType === this.toolbox.resourceWatcher.TYPES.ROOT_NODE) {
-      const isTopLevelTarget = !!targetFront.isTopLevel;
-      if (resource.isTopLevelDocument && isTopLevelTarget) {
-        // Note: the resource (ie the root node here) will be fetched from the
-        // walker later on in _getDefaultNodeForSelection.
-        // We should update the inspector to directly use the node front
-        // provided here. Bug 1635461.
-        this.onRootNodeAvailable();
-      } else {
-        this.emit("frame-root-available", resource);
+  onResourceAvailable: function(resources) {
+    for (const resource of resources) {
+      if (
+        resource.resourceType === this.toolbox.resourceWatcher.TYPES.ROOT_NODE
+      ) {
+        const rootNodeFront = resource;
+        const isTopLevelTarget = !!resource.targetFront.isTopLevel;
+        if (rootNodeFront.isTopLevelDocument && isTopLevelTarget) {
+          this.onRootNodeAvailable(rootNodeFront);
+        }
       }
     }
   },
@@ -1318,7 +1297,7 @@ Inspector.prototype = {
   /**
    * Reset the inspector on new root mutation.
    */
-  onRootNodeAvailable: function() {
+  onRootNodeAvailable: async function(rootNodeFront) {
     // Record new-root timing for telemetry
     this._newRootStart = this.panelWin.performance.now();
 
@@ -1326,13 +1305,12 @@ Inspector.prototype = {
     this.selection.setNodeFront(null);
     this._destroyMarkup();
 
-    const onNodeSelected = defaultNode => {
-      // Cancel this promise resolution as a new one had
-      // been queued up.
-      if (this._pendingSelection != onNodeSelected) {
+    try {
+      const defaultNode = await this._getDefaultNodeForSelection(rootNodeFront);
+      if (!defaultNode) {
         return;
       }
-      this._pendingSelection = null;
+
       this.selection.setNodeFront(defaultNode, {
         reason: "inspector-default-selection",
       });
@@ -1341,12 +1319,9 @@ Inspector.prototype = {
 
       // Setup the toolbar again, since its content may depend on the current document.
       this.setupToolbar();
-    };
-    this._pendingSelection = onNodeSelected;
-    this._getDefaultNodeForSelection().then(
-      onNodeSelected,
-      this._handleRejectionIfNotDestroyed
-    );
+    } catch (e) {
+      this._handleRejectionIfNotDestroyed(e);
+    }
   },
 
   /**

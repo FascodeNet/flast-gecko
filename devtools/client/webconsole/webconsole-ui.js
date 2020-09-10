@@ -61,6 +61,8 @@ class WebConsoleUI {
     this.hud = hud;
     this.hudId = this.hud.hudId;
     this.isBrowserConsole = this.hud.isBrowserConsole;
+    // Map of all stacktrace resources keyed by network event's channelId
+    this.netEventStackTraces = new Map();
 
     this.isBrowserToolboxConsole =
       this.hud.currentTarget &&
@@ -201,12 +203,22 @@ class WebConsoleUI {
       this._onTargetDestroy
     );
 
-    // TODO: Re-enable as part of Bug 1627167.
-    // const resourceWatcher = this.hud.resourceWatcher;
-    // resourceWatcher.unwatchResources(
-    //   [resourceWatcher.TYPES.CONSOLE_MESSAGE],
-    //   this._onResourceAvailable
-    // );
+    const resourceWatcher = this.hud.resourceWatcher;
+    resourceWatcher.unwatchResources(
+      [
+        resourceWatcher.TYPES.CONSOLE_MESSAGE,
+        resourceWatcher.TYPES.ERROR_MESSAGE,
+        resourceWatcher.TYPES.PLATFORM_MESSAGE,
+        resourceWatcher.TYPES.NETWORK_EVENT,
+      ],
+      {
+        onAvailable: this._onResourceAvailable,
+        onUpdated: this._onResourceUpdated,
+      }
+    );
+    resourceWatcher.unwatchResources([resourceWatcher.TYPES.CSS_MESSAGE], {
+      onAvailable: this._onResourceAvailable,
+    });
 
     for (const proxy of this.getAllProxies()) {
       proxy.disconnect();
@@ -338,6 +350,7 @@ class WebConsoleUI {
         resourceWatcher.TYPES.ERROR_MESSAGE,
         resourceWatcher.TYPES.PLATFORM_MESSAGE,
         resourceWatcher.TYPES.NETWORK_EVENT,
+        resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
       ],
       {
         onAvailable: this._onResourceAvailable,
@@ -353,29 +366,52 @@ class WebConsoleUI {
     });
   }
 
-  _onResourceAvailable({ resourceType, targetFront, resource }) {
+  _onResourceAvailable(resources) {
     if (!this.hud) {
       return;
     }
+    for (const resource of resources) {
+      const { TYPES } = this.hud.resourceWatcher;
+      // Ignore messages forwarded from content processes if we're in fission browser toolbox.
+      if (
+        !this.wrapper ||
+        ((resource.resourceType === TYPES.ERROR_MESSAGE ||
+          resource.resourceType === TYPES.CSS_MESSAGE) &&
+          resource.pageError?.isForwardedFromContentProcess &&
+          (this.isBrowserToolboxConsole || this.isBrowserConsole) &&
+          this.fissionSupport)
+      ) {
+        continue;
+      }
 
-    const { TYPES } = this.hud.resourceWatcher;
-    // Ignore messages forwarded from content processes if we're in fission browser toolbox.
-    if (
-      !this.wrapper ||
-      ((resourceType === TYPES.ERROR_MESSAGE ||
-        resourceType === TYPES.CSS_MESSAGE) &&
-        resource.pageError?.isForwardedFromContentProcess &&
-        (this.isBrowserToolboxConsole || this.isBrowserConsole) &&
-        this.fissionSupport)
-    ) {
-      return;
+      if (resource.resourceType === TYPES.NETWORK_EVENT_STACKTRACE) {
+        this.netEventStackTraces.set(resource.channelId, resource);
+        continue;
+      }
+
+      if (resource.resourceType === TYPES.NETWORK_EVENT) {
+        // Add the stacktrace
+        if (this.netEventStackTraces.has(resource.channelId)) {
+          const { stacktrace, lastFrame } = this.netEventStackTraces.get(
+            resource.channelId
+          );
+          resource.cause.stacktraceAvailable = stacktrace;
+          resource.cause.lastFrame = lastFrame;
+          this.netEventStackTraces.delete(resource.channelId);
+        }
+      }
+
+      this.wrapper.dispatchMessageAdd(resource);
     }
-    this.wrapper.dispatchMessageAdd(resource);
   }
 
-  _onResourceUpdated({ resourceType, targetFront, resource }) {
-    if (resourceType == this.hud.resourceWatcher.TYPES.NETWORK_EVENT) {
-      this.wrapper.dispatchMessageUpdate(resource);
+  _onResourceUpdated(updates) {
+    for (const { resource } of updates) {
+      if (
+        resource.resourceType == this.hud.resourceWatcher.TYPES.NETWORK_EVENT
+      ) {
+        this.wrapper.dispatchMessageUpdate(resource);
+      }
     }
   }
 

@@ -4,23 +4,7 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
-
-const { error } = ChromeUtils.import("chrome://marionette/content/error.js");
-const { truncate } = ChromeUtils.import(
-  "chrome://marionette/content/format.js"
-);
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
-
-XPCOMUtils.defineLazyGetter(this, "log", Log.get);
-
-this.EXPORTED_SYMBOLS = [
+const EXPORTED_SYMBOLS = [
   "executeSoon",
   "DebounceCallback",
   "IdlePromise",
@@ -32,6 +16,21 @@ this.EXPORTED_SYMBOLS = [
   "waitForMessage",
   "waitForObserverTopic",
 ];
+
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
+
+  error: "chrome://marionette/content/error.js",
+  Log: "chrome://marionette/content/log.js",
+  truncate: "chrome://marionette/content/format.js",
+});
+
+XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
 
 const { TYPE_ONE_SHOT, TYPE_REPEATING_SLACK } = Ci.nsITimer;
 
@@ -235,7 +234,7 @@ function TimedPromise(
         let err = new throws();
         reject(err);
       } else {
-        log.warn(`TimedPromise timed out after ${timeout} ms`, trace);
+        logger.warn(`TimedPromise timed out after ${timeout} ms`, trace);
         resolve();
       }
     };
@@ -278,7 +277,22 @@ function Sleep(timeout) {
   if (typeof timeout != "number") {
     throw new TypeError();
   }
-  return new TimedPromise(() => {}, { timeout, throws: null });
+  if (!Number.isInteger(timeout) || timeout < 0) {
+    throw new RangeError();
+  }
+
+  return new Promise(resolve => {
+    const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+    timer.init(
+      () => {
+        // Bug 1663880 - Explicitely cancel the timer for now to prevent a hang
+        timer.cancel();
+        resolve();
+      },
+      timeout,
+      TYPE_ONE_SHOT
+    );
+  });
 }
 
 /**
@@ -309,7 +323,7 @@ function Sleep(timeout) {
 function MessageManagerDestroyedPromise(messageManager) {
   return new Promise(resolve => {
     function observe(subject, topic) {
-      log.trace(`Received observer notification ${topic}`);
+      logger.trace(`Received observer notification ${topic}`);
 
       if (subject == messageManager) {
         Services.obs.removeObserver(this, "message-manager-disconnect");
@@ -492,7 +506,7 @@ function waitForEvent(
     subject.addEventListener(
       eventName,
       function listener(event) {
-        log.trace(`Received DOM event ${event.type} for ${event.target}`);
+        logger.trace(`Received DOM event ${event.type} for ${event.target}`);
         try {
           if (checkFn && !checkFn(event)) {
             return;
@@ -552,7 +566,7 @@ function waitForMessage(
 
   return new Promise(resolve => {
     messageManager.addMessageListener(messageName, function onMessage(msg) {
-      log.trace(`Received ${messageName} for ${msg.target}`);
+      logger.trace(`Received ${messageName} for ${msg.target}`);
       if (checkFn && !checkFn(msg)) {
         return;
       }
@@ -595,7 +609,7 @@ function waitForObserverTopic(topic, { checkFn = null } = {}) {
 
   return new Promise((resolve, reject) => {
     Services.obs.addObserver(function observer(subject, topic, data) {
-      log.trace(`Received observer notification ${topic}`);
+      logger.trace(`Received observer notification ${topic}`);
       try {
         if (checkFn && !checkFn(subject, data)) {
           return;

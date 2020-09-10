@@ -1889,7 +1889,7 @@ class CGGetWrapperCacheHook(CGAbstractClassHook):
 
 
 def finalizeHook(descriptor, hookName, freeOp, obj):
-    finalize = "js::SetReservedSlot(%s, DOM_OBJECT_SLOT, JS::UndefinedValue());\n" % obj
+    finalize = "JS::SetReservedSlot(%s, DOM_OBJECT_SLOT, JS::UndefinedValue());\n" % obj
     if descriptor.interface.getExtendedAttribute('OverrideBuiltins'):
         finalize += fill(
             """
@@ -3414,7 +3414,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             installUnforgeableHolder = CGGeneric(dedent(
                 """
                 if (*protoCache) {
-                  js::SetReservedSlot(*protoCache, DOM_INTERFACE_PROTO_SLOTS_BASE,
+                  JS::SetReservedSlot(*protoCache, DOM_INTERFACE_PROTO_SLOTS_BASE,
                                       JS::ObjectValue(*unforgeableHolder));
                 }
                 """))
@@ -3554,7 +3554,7 @@ class CGGetNamedPropertiesObjectMethod(CGAbstractStaticMethod):
             """
             /* Make sure our global is sane.  Hopefully we can remove this sometime */
             JSObject* global = JS::CurrentGlobalOrNull(aCx);
-            if (!(js::GetObjectClass(global)->flags & JSCLASS_DOM_GLOBAL)) {
+            if (!(JS::GetClass(global)->flags & JSCLASS_DOM_GLOBAL)) {
               return nullptr;
             }
 
@@ -3566,7 +3566,7 @@ class CGGetNamedPropertiesObjectMethod(CGAbstractStaticMethod):
               $*{getParentProto}
               namedPropertiesObject = ${nativeType}::CreateNamedPropertiesObject(aCx, ${parentProto});
               DebugOnly<const DOMIfaceAndProtoJSClass*> clasp =
-                DOMIfaceAndProtoJSClass::FromJSClass(js::GetObjectClass(namedPropertiesObject));
+                DOMIfaceAndProtoJSClass::FromJSClass(JS::GetClass(namedPropertiesObject));
               MOZ_ASSERT(clasp->mType == eNamedPropertiesObject,
                          "Expected ${nativeType}::CreateNamedPropertiesObject to return a named properties object");
               MOZ_ASSERT(clasp->mNativeHooks,
@@ -3653,7 +3653,7 @@ class CGConstructorEnabled(CGAbstractMethod):
                                       for workerGlobal in workerGlobals), " && ")
             exposedInWorkerCheck = fill(
                 """
-                const char* name = js::GetObjectClass(aObj)->name;
+                const char* name = JS::GetClass(aObj)->name;
                 if (${workerCondition}) {
                   return false;
                 }
@@ -3908,7 +3908,7 @@ def CopyUnforgeablePropertiesToInstance(descriptor, failureCode):
     copyCode.append(CGGeneric(fill(
         """
         JS::Rooted<JSObject*> unforgeableHolder(aCx,
-          &js::GetReservedSlot(canonicalProto, DOM_INTERFACE_PROTO_SLOTS_BASE).toObject());
+          &JS::GetReservedSlot(canonicalProto, DOM_INTERFACE_PROTO_SLOTS_BASE).toObject());
         if (!JS_InitializePropertiesFromCompatibleNativeObject(aCx, ${obj}, unforgeableHolder)) {
           $*{failureCode}
         }
@@ -3983,7 +3983,7 @@ def DeclareProto(descriptor):
           // Unfortunately, while aGivenProto was in the compartment of aCx
           // coming in, we changed compartments to that of "parent" so may need
           // to wrap the proto here.
-          if (js::GetContextCompartment(aCx) != js::GetObjectCompartment(proto)) {
+          if (js::GetContextCompartment(aCx) != JS::GetCompartment(proto)) {
             if (!JS_WrapObject(aCx, &proto)) {
               return false;
             }
@@ -4302,7 +4302,7 @@ class CGClearCachedValueMethod(CGAbstractMethod):
             declObj = "JS::Rooted<JSObject*> obj(aCx);\n"
             noopRetval = " true"
             saveMember = (
-                "JS::Rooted<JS::Value> oldValue(aCx, js::GetReservedSlot(obj, %s));\n" %
+                "JS::Rooted<JS::Value> oldValue(aCx, JS::GetReservedSlot(obj, %s));\n" %
                 slotIndex)
             regetMember = fill(
                 """
@@ -4310,7 +4310,7 @@ class CGClearCachedValueMethod(CGAbstractMethod):
                 JSJitGetterCallArgs args(&temp);
                 JSAutoRealm ar(aCx, obj);
                 if (!get_${name}(aCx, obj, aObject, args)) {
-                  js::SetReservedSlot(obj, ${slotIndex}, oldValue);
+                  JS::SetReservedSlot(obj, ${slotIndex}, oldValue);
                   return false;
                 }
                 return true;
@@ -4341,7 +4341,7 @@ class CGClearCachedValueMethod(CGAbstractMethod):
               return${noopRetval};
             }
             $*{saveMember}
-            js::SetReservedSlot(obj, ${slotIndex}, JS::UndefinedValue());
+            JS::SetReservedSlot(obj, ${slotIndex}, JS::UndefinedValue());
             $*{clearXrayExpandoSlots}
             $*{regetMember}
             """,
@@ -8432,7 +8432,7 @@ class CGPerSignatureCall(CGThing):
                 if (!${maybeWrap}(cx, &storedVal)) {
                   return false;
                 }
-                js::SetReservedSlot(slotStorage, slotIndex, storedVal);
+                JS::SetReservedSlot(slotStorage, slotIndex, storedVal);
                 """,
                 maybeWrap=getMaybeWrapValueFuncForType(self.idlNode.type))
 
@@ -9669,10 +9669,10 @@ class CGSpecializedGetter(CGAbstractStaticMethod):
 
             prefix += fill(
                 """
-                MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(js::GetObjectClass(slotStorage)) > slotIndex);
+                MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(JS::GetClass(slotStorage)) > slotIndex);
                 {
                   // Scope for cachedVal
-                  JS::Value cachedVal = js::GetReservedSlot(slotStorage, slotIndex);
+                  JS::Value cachedVal = JS::GetReservedSlot(slotStorage, slotIndex);
                   if (!cachedVal.isUndefined()) {
                     args.rval().set(cachedVal);
                     // The cached value is in the compartment of slotStorage,
@@ -12359,7 +12359,7 @@ class CGCountMaybeMissingProperty(CGAbstractMethod):
                 """)
 
         lengths = set(len(prop) for prop in instrumentedProps)
-        switchDesc = { 'condition': 'js::GetLinearStringLength(str)',
+        switchDesc = { 'condition': 'JS::GetLinearStringLength(str)',
                        'precondition': '' }
         switchDesc['cases'] = dict()
         for length in sorted(lengths):
@@ -12375,7 +12375,7 @@ class CGCountMaybeMissingProperty(CGAbstractMethod):
             {
               // Scope for our no-GC section, so we don't need to rely on SetUseCounter not GCing.
               JS::AutoCheckCannotGC nogc;
-              JSLinearString* str = js::AtomToLinearString(JSID_TO_ATOM(id));
+              JSLinearString* str = JS::AtomToLinearString(JSID_TO_ATOM(id));
               // Don't waste time fetching the chars until we've done the length switch.
               $*{switch}
             }
@@ -13684,7 +13684,7 @@ class CGDOMJSProxyHandler_EnsureHolder(ClassMethod):
         return dedent(
             """
             return EnsureHolder(cx, proxy,
-                                JSCLASS_RESERVED_SLOTS(js::GetObjectClass(proxy)) - 1,
+                                JSCLASS_RESERVED_SLOTS(JS::GetClass(proxy)) - 1,
                                 sCrossOriginProperties, holder);
             """)
 
@@ -15493,6 +15493,16 @@ class CGBindingRoot(CGThing):
 
         bindingHeaders["js/shadow/Object.h"] = any(d.interface.hasMembersInSlots() for d in descriptors)
 
+        # The symbols supplied by this header are used so ubiquitously it's not
+        # worth the effort delineating the exact dependency, if it can't be done
+        # *at* the places where their definitions are required.
+        bindingHeaders["js/experimental/JitInfo.h"] = True
+
+        # JS::GetClass, JS::GetCompartment, JS::GetReservedSlot, and
+        # JS::SetReservedSlot are also used too many places to restate
+        # dependency logic.
+        bindingHeaders["js/Object.h"] = True
+
         def descriptorDeprecated(desc):
             iface = desc.interface
             return any(m.getExtendedAttribute("Deprecated") for m in iface.members + [iface])
@@ -15502,6 +15512,10 @@ class CGBindingRoot(CGThing):
 
         bindingHeaders["mozilla/dom/DOMJSProxyHandler.h"] = any(
             d.concrete and d.proxy for d in descriptors)
+
+        bindingHeaders["js/String.h"] = any(
+            d.needsMissingPropUseCounters for d in descriptors)
+
         hasCrossOriginObjects = any(
             d.concrete and d.isMaybeCrossOriginObject() for d in descriptors)
         bindingHeaders["mozilla/dom/MaybeCrossOriginObject.h"] = hasCrossOriginObjects
@@ -18683,7 +18697,7 @@ class GlobalGenRoots():
 
         curr = CGList([CGGeneric(define="#include <stdint.h>\n"),
                        CGGeneric(define="#include <type_traits>\n\n"),
-                       CGGeneric(define='#include "jsfriendapi.h"\n\n'),
+                       CGGeneric(define='#include "js/experimental/JitInfo.h"\n\n'),
                        CGGeneric(define='#include "mozilla/dom/PrototypeList.h"\n\n'),
                        idEnum])
 
@@ -18757,6 +18771,7 @@ class GlobalGenRoots():
         defineIncludes.append('mozilla/dom/WebIDLGlobalNameHash.h')
         defineIncludes.append('mozilla/dom/PrototypeList.h')
         defineIncludes.append('mozilla/PerfectHash.h')
+        defineIncludes.append('js/String.h')
         curr = CGHeaders([], [], [], [], [], defineIncludes, 'RegisterBindings',
                          curr)
 

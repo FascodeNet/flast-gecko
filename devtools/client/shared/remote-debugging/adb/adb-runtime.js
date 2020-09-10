@@ -15,6 +15,8 @@ class AdbRuntime {
   constructor(adbDevice, socketPath) {
     this._adbDevice = adbDevice;
     this._socketPath = socketPath;
+    // Set a default version name in case versionName cannot be parsed.
+    this._versionName = "";
   }
 
   async init() {
@@ -89,6 +91,7 @@ class AdbRuntime {
         // Official Firefox Beta app, based on Fenix
         return "Firefox Beta";
       case "org.mozilla.fenix":
+      case "org.mozilla.fenix.nightly":
         // Official Firefox Nightly app, based on Fenix
         return "Firefox Nightly";
       default:

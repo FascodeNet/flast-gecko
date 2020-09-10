@@ -1187,8 +1187,8 @@ function getCurrentTestFilePath() {
  */
 function waitForResourceOnce(resourceWatcher, resourceType) {
   return new Promise(resolve => {
-    const onAvailable = ({ targetFront, resource }) => {
-      resolve({ targetFront, resource });
+    const onAvailable = resources => {
+      resolve(resources[0]);
       resourceWatcher.unwatchResources([resourceType], { onAvailable });
     };
     resourceWatcher.watchResources([resourceType], {

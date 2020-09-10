@@ -45,6 +45,7 @@
 #include "nsCharsetSource.h"
 #include "nsJSEnvironment.h"
 #include "nsJSUtils.h"
+#include "js/Object.h"  // JS::GetClass
 
 #include "mozilla/ChaosMode.h"
 #include "mozilla/CheckedInt.h"
@@ -999,7 +1000,7 @@ nsDOMWindowUtils::SuppressAnimation(bool aSuppress) {
 
 NS_IMETHODIMP
 nsDOMWindowUtils::ClearSharedStyleSheetCache() {
-  SharedStyleSheetCache::ClearForTest();
+  SharedStyleSheetCache::Clear();
   return NS_OK;
 }
 
@@ -2079,7 +2080,7 @@ nsDOMWindowUtils::GetClassName(JS::Handle<JS::Value> aObject, JSContext* aCx,
     return NS_ERROR_XPC_BAD_CONVERT_JS;
   }
 
-  *aName = NS_xstrdup(JS_GetClass(aObject.toObjectOrNull())->name);
+  *aName = NS_xstrdup(JS::GetClass(aObject.toObjectOrNull())->name);
   return NS_OK;
 }
 

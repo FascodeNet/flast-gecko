@@ -164,6 +164,8 @@ void CanonicalBrowsingContext::ReplacedBy(
   if (mSessionHistory) {
     mSessionHistory->SetBrowsingContext(aNewContext);
     mSessionHistory.swap(aNewContext->mSessionHistory);
+    RefPtr<ChildSHistory> childSHistory = ForgetChildSHistory();
+    aNewContext->SetChildSHistory(childSHistory);
   }
 
   MOZ_ASSERT(aNewContext->mLoadingEntries.IsEmpty());
@@ -398,6 +400,23 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
   // aSessionHistoryEntryId?
 }
 
+static already_AddRefed<nsDocShellLoadState> CreateLoadInfo(
+    SessionHistoryEntry* aEntry, Maybe<uint64_t> aLoadId) {
+  const SessionHistoryInfo& info = aEntry->Info();
+  RefPtr<nsDocShellLoadState> loadState(new nsDocShellLoadState(info.GetURI()));
+  info.FillLoadInfo(*loadState);
+  UniquePtr<LoadingSessionHistoryInfo> loadingInfo;
+  if (aLoadId.isSome()) {
+    loadingInfo =
+        MakeUnique<LoadingSessionHistoryInfo>(aEntry, aLoadId.value());
+  } else {
+    loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(aEntry);
+  }
+  loadState->SetLoadingSessionHistoryInfo(std::move(loadingInfo));
+
+  return loadState.forget();
+}
+
 void CanonicalBrowsingContext::NotifyOnHistoryReload(
     bool& aCanReload, Maybe<RefPtr<nsDocShellLoadState>>& aLoadState,
     Maybe<bool>& aReloadActiveEntry) {
@@ -408,13 +427,13 @@ void CanonicalBrowsingContext::NotifyOnHistoryReload(
   }
 
   if (mActiveEntry) {
-    aLoadState.emplace();
-    mActiveEntry->CreateLoadInfo(getter_AddRefs(aLoadState.ref()));
+    aLoadState.emplace(CreateLoadInfo(mActiveEntry, Nothing()));
     aReloadActiveEntry.emplace(true);
   } else if (!mLoadingEntries.IsEmpty()) {
-    aLoadState.emplace();
-    mLoadingEntries.LastElement().mEntry->CreateLoadInfo(
-        getter_AddRefs(aLoadState.ref()));
+    const LoadingSessionHistoryEntry& loadingEntry =
+        mLoadingEntries.LastElement();
+    aLoadState.emplace(
+        CreateLoadInfo(loadingEntry.mEntry, Some(loadingEntry.mLoadId)));
     aReloadActiveEntry.emplace(false);
   }
 
@@ -512,6 +531,23 @@ void CanonicalBrowsingContext::RemoveFromSessionHistory() {
       }
     }
   }
+}
+
+void CanonicalBrowsingContext::HistoryGo(
+    int32_t aIndex, std::function<void(int32_t&&)>&& aResolver) {
+  nsSHistory* shistory = static_cast<nsSHistory*>(GetSessionHistory());
+  if (!shistory) {
+    return;
+  }
+
+  nsTArray<nsSHistory::LoadEntryResult> loadResults;
+  nsresult rv = shistory->GotoIndex(aIndex, loadResults);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  aResolver(shistory->GetRequestedIndex());
+  nsSHistory::LoadURIs(loadResults);
 }
 
 JSObject* CanonicalBrowsingContext::WrapObject(
@@ -764,8 +800,8 @@ void CanonicalBrowsingContext::PendingRemotenessChange::Finish() {
   }
 
   // While process switching, we need to check if any of our ancestors are
-  // discarded or no longer current, in which case the process switch needs to be
-  // aborted.
+  // discarded or no longer current, in which case the process switch needs to
+  // be aborted.
   if (!target->AncestorsAreCurrent()) {
     NS_WARNING("Ancestor context is no longer current");
     Cancel(NS_ERROR_FAILURE);

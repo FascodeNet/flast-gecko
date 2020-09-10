@@ -655,14 +655,14 @@ nsresult WhiteSpaceVisibilityKeeper::ReplaceText(
   RefPtr<Element> editingHost = aHTMLEditor.GetActiveEditingHost();
   TextFragmentData textFragmentDataAtStart(aRangeToBeReplaced.StartRef(),
                                            editingHost);
-  const bool insertionPointEqualsOrIsBeforeStartOfText =
+  const bool isInsertionPointEqualsOrIsBeforeStartOfText =
       aRangeToBeReplaced.StartRef().EqualsOrIsBefore(
           textFragmentDataAtStart.StartRef());
   TextFragmentData textFragmentDataAtEnd =
       aRangeToBeReplaced.Collapsed()
           ? textFragmentDataAtStart
           : TextFragmentData(aRangeToBeReplaced.EndRef(), editingHost);
-  const bool insertionPointAfterEndOfText =
+  const bool isInsertionPointEqualsOrAfterEndOfText =
       textFragmentDataAtEnd.EndRef().EqualsOrIsBefore(
           aRangeToBeReplaced.EndRef());
 
@@ -821,7 +821,7 @@ nsresult WhiteSpaceVisibilityKeeper::ReplaceText(
     // immediately after a hard line break, the first ASCII white-space should
     // be replaced with an NBSP for making it visible.
     else if (textFragmentDataAtStart.StartsFromHardLineBreak() &&
-             insertionPointEqualsOrIsBeforeStartOfText) {
+             isInsertionPointEqualsOrIsBeforeStartOfText) {
       theString.SetCharAt(kNBSP, 0);
     }
   }
@@ -838,12 +838,12 @@ nsresult WhiteSpaceVisibilityKeeper::ReplaceText(
     // If inserting around visible white-spaces, check whether the inclusive
     // next character of end of replaced range is an NBSP or an ASCII
     // white-space.
-    if (pointPositionWithVisibleWhiteSpacesAtStart ==
+    if (pointPositionWithVisibleWhiteSpacesAtEnd ==
             PointPosition::StartOfFragment ||
-        pointPositionWithVisibleWhiteSpacesAtStart ==
+        pointPositionWithVisibleWhiteSpacesAtEnd ==
             PointPosition::MiddleOfFragment) {
       EditorDOMPointInText atNextChar =
-          textFragmentDataAtStart.GetInclusiveNextEditableCharPoint(
+          textFragmentDataAtEnd.GetInclusiveNextEditableCharPoint(
               pointToInsert);
       if (atNextChar.IsSet() && !atNextChar.IsEndOfContainer() &&
           atNextChar.IsCharASCIISpace()) {
@@ -854,7 +854,7 @@ nsresult WhiteSpaceVisibilityKeeper::ReplaceText(
     // immediately before block boundary, the last ASCII white-space should
     // be replaced with an NBSP for making it visible.
     else if (textFragmentDataAtEnd.EndsByBlockBoundary() &&
-             insertionPointAfterEndOfText) {
+             isInsertionPointEqualsOrAfterEndOfText) {
       theString.SetCharAt(kNBSP, lastCharIndex);
     }
   }
@@ -1596,6 +1596,46 @@ WSRunScanner::TextFragmentData::InvisibleTrailingWhiteSpaceRangeRef() const {
   mTrailingWhiteSpaceRange.emplace(mNBSPData.LastPointRef().NextPoint(),
                                    mEnd.PointRef());
   return mTrailingWhiteSpaceRange.ref();
+}
+
+EditorDOMRangeInTexts
+WSRunScanner::TextFragmentData::GetNonCollapsedRangeInTexts(
+    const EditorDOMRange& aRange) const {
+  if (!aRange.IsPositioned()) {
+    return EditorDOMRangeInTexts();
+  }
+  if (aRange.IsInTextNodes()) {
+    if (aRange.Collapsed()) {
+      return EditorDOMRangeInTexts();
+    }
+    // Note that this may return a range which don't include any invisible
+    // white-spaces due to empty text nodes.
+    return aRange.GetAsInTexts();
+  }
+
+  EditorDOMPointInText firstPoint =
+      aRange.StartRef().IsInTextNode()
+          ? aRange.StartRef().AsInText()
+          : GetInclusiveNextEditableCharPoint(aRange.StartRef());
+  if (!firstPoint.IsSet()) {
+    return EditorDOMRangeInTexts();
+  }
+  EditorDOMPointInText endPoint;
+  if (aRange.EndRef().IsInTextNode()) {
+    endPoint = aRange.EndRef().AsInText();
+  } else {
+    // FYI: GetPreviousEditableCharPoint() returns last character's point
+    //      of preceding text node if it's not empty, but we need end of
+    //      the text node here.
+    endPoint = GetPreviousEditableCharPoint(aRange.EndRef());
+    if (endPoint.IsSet() && endPoint.IsAtLastContent()) {
+      MOZ_ALWAYS_TRUE(endPoint.AdvanceOffset());
+    }
+  }
+  if (!endPoint.IsSet() || firstPoint == endPoint) {
+    return EditorDOMRangeInTexts();
+  }
+  return EditorDOMRangeInTexts(firstPoint, endPoint);
 }
 
 const WSRunScanner::VisibleWhiteSpacesData&
@@ -3192,6 +3232,167 @@ WSRunScanner::GetRangeInTextNodesToForwardDeleteFrom(
   MOZ_ASSERT(extendedRangeToDelete.IsPositionedAndValid());
   return extendedRangeToDelete.IsPositioned() ? extendedRangeToDelete
                                               : rangeToDelete;
+}
+
+// static
+EditorDOMRange WSRunScanner::GetRangesForDeletingAtomicContent(
+    const HTMLEditor& aHTMLEditor, const nsIContent& aAtomicContent) {
+  if (aAtomicContent.IsHTMLElement(nsGkAtoms::br)) {
+    // Preceding white-spaces should be preserved, but the following
+    // white-spaces should be invisible around `<br>` element.
+    Element* editingHost = aHTMLEditor.GetActiveEditingHost();
+    TextFragmentData textFragmentDataAfterBRElement(
+        EditorDOMPoint::After(aAtomicContent), editingHost);
+    const EditorDOMRangeInTexts followingInvisibleWhiteSpaces =
+        textFragmentDataAfterBRElement.GetNonCollapsedRangeInTexts(
+            textFragmentDataAfterBRElement
+                .InvisibleLeadingWhiteSpaceRangeRef());
+    return followingInvisibleWhiteSpaces.IsPositioned() &&
+                   !followingInvisibleWhiteSpaces.Collapsed()
+               ? EditorDOMRange(
+                     EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+                     followingInvisibleWhiteSpaces.EndRef())
+               : EditorDOMRange(
+                     EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+                     EditorDOMPoint::After(aAtomicContent));
+  }
+
+  if (!HTMLEditUtils::IsBlockElement(aAtomicContent)) {
+    // Both preceding and following white-spaces around it should be preserved
+    // around inline elements like `<img>`.
+    return EditorDOMRange(
+        EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+        EditorDOMPoint::After(aAtomicContent));
+  }
+
+  // Both preceding and following white-spaces can be invisible around a
+  // block element.
+  Element* editingHost = aHTMLEditor.GetActiveEditingHost();
+  TextFragmentData textFragmentDataBeforeAtomicContent(
+      EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)), editingHost);
+  const EditorDOMRangeInTexts precedingInvisibleWhiteSpaces =
+      textFragmentDataBeforeAtomicContent.GetNonCollapsedRangeInTexts(
+          textFragmentDataBeforeAtomicContent
+              .InvisibleTrailingWhiteSpaceRangeRef());
+  TextFragmentData textFragmentDataAfterAtomicContent(
+      EditorDOMPoint::After(aAtomicContent), editingHost);
+  const EditorDOMRangeInTexts followingInvisibleWhiteSpaces =
+      textFragmentDataAfterAtomicContent.GetNonCollapsedRangeInTexts(
+          textFragmentDataAfterAtomicContent
+              .InvisibleLeadingWhiteSpaceRangeRef());
+  if (precedingInvisibleWhiteSpaces.StartRef().IsSet() &&
+      followingInvisibleWhiteSpaces.EndRef().IsSet()) {
+    return EditorDOMRange(precedingInvisibleWhiteSpaces.StartRef(),
+                          followingInvisibleWhiteSpaces.EndRef());
+  }
+  if (precedingInvisibleWhiteSpaces.StartRef().IsSet()) {
+    return EditorDOMRange(precedingInvisibleWhiteSpaces.StartRef(),
+                          EditorDOMPoint::After(aAtomicContent));
+  }
+  if (followingInvisibleWhiteSpaces.EndRef().IsSet()) {
+    return EditorDOMRange(
+        EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+        followingInvisibleWhiteSpaces.EndRef());
+  }
+  return EditorDOMRange(
+      EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+      EditorDOMPoint::After(aAtomicContent));
+}
+
+/******************************************************************************
+ * Utilities for other things.
+ ******************************************************************************/
+
+// static
+Result<bool, nsresult>
+WSRunScanner::ShrinkRangeIfStartsFromOrEndsAfterAtomicContent(
+    const HTMLEditor& aHTMLEditor, nsRange& aRange,
+    const Element* aEditingHost) {
+  MOZ_ASSERT(aRange.IsPositioned());
+  MOZ_ASSERT(!aRange.IsInSelection(),
+             "Changing range in selection may cause running script");
+
+  if (NS_WARN_IF(!aRange.GetStartContainer()) ||
+      NS_WARN_IF(!aRange.GetEndContainer())) {
+    return Err(NS_ERROR_FAILURE);
+  }
+
+  if (!aRange.GetStartContainer()->IsContent() ||
+      !aRange.GetEndContainer()->IsContent()) {
+    return false;
+  }
+
+  // If the range crosses a block boundary, we should do nothing for now
+  // because it hits a bug of inserting a padding `<br>` element after
+  // joining the blocks.
+  if (HTMLEditUtils::GetInclusiveAncestorBlockElementExceptHRElement(
+          *aRange.GetStartContainer()->AsContent(), aEditingHost) !=
+      HTMLEditUtils::GetInclusiveAncestorBlockElementExceptHRElement(
+          *aRange.GetEndContainer()->AsContent(), aEditingHost)) {
+    return false;
+  }
+
+  nsIContent* startContent = nullptr;
+  if (aRange.GetStartContainer() && aRange.GetStartContainer()->IsText() &&
+      aRange.GetStartContainer()->AsText()->Length() == aRange.StartOffset()) {
+    // If next content is a visible `<br>` element, special inline content
+    // (e.g., `<img>`, non-editable text node, etc) or a block level void
+    // element like `<hr>`, the range should start with it.
+    TextFragmentData textFragmentDataAtStart(
+        EditorRawDOMPoint(aRange.StartRef()), aEditingHost);
+    if (textFragmentDataAtStart.EndsByBRElement()) {
+      if (aHTMLEditor.IsVisibleBRElement(
+              textFragmentDataAtStart.EndReasonBRElementPtr())) {
+        startContent = textFragmentDataAtStart.EndReasonBRElementPtr();
+      }
+    } else if (textFragmentDataAtStart.EndsBySpecialContent() ||
+               (textFragmentDataAtStart.EndsByOtherBlockElement() &&
+                !HTMLEditUtils::IsContainerNode(
+                    *textFragmentDataAtStart
+                         .EndReasonOtherBlockElementPtr()))) {
+      startContent = textFragmentDataAtStart.GetEndReasonContent();
+    }
+  }
+
+  nsIContent* endContent = nullptr;
+  if (aRange.GetEndContainer() && aRange.GetEndContainer()->IsText() &&
+      !aRange.EndOffset()) {
+    // If previous content is a visible `<br>` element, special inline content
+    // (e.g., `<img>`, non-editable text node, etc) or a block level void
+    // element like `<hr>`, the range should end after it.
+    TextFragmentData textFragmentDataAtEnd(EditorRawDOMPoint(aRange.EndRef()),
+                                           aEditingHost);
+    if (textFragmentDataAtEnd.StartsFromBRElement()) {
+      if (aHTMLEditor.IsVisibleBRElement(
+              textFragmentDataAtEnd.StartReasonBRElementPtr())) {
+        endContent = textFragmentDataAtEnd.StartReasonBRElementPtr();
+      }
+    } else if (textFragmentDataAtEnd.StartsFromSpecialContent() ||
+               (textFragmentDataAtEnd.StartsFromOtherBlockElement() &&
+                !HTMLEditUtils::IsContainerNode(
+                    *textFragmentDataAtEnd
+                         .StartReasonOtherBlockElementPtr()))) {
+      endContent = textFragmentDataAtEnd.GetStartReasonContent();
+    }
+  }
+
+  if (!startContent && !endContent) {
+    return false;
+  }
+
+  nsresult rv = aRange.SetStartAndEnd(
+      startContent ? RangeBoundary(
+                         startContent->GetParentNode(),
+                         startContent->GetPreviousSibling())  // at startContent
+                   : aRange.StartRef(),
+      endContent ? RangeBoundary(endContent->GetParentNode(),
+                                 endContent)  // after endContent
+                 : aRange.EndRef());
+  if (NS_FAILED(rv)) {
+    NS_WARNING("nsRange::SetStartAndEnd() failed");
+    return Err(rv);
+  }
+  return true;
 }
 
 }  // namespace mozilla

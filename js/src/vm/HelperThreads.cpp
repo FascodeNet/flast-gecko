@@ -627,25 +627,8 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
 
   ScopeKind scopeKind =
       options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-
-  Rooted<UniquePtr<frontend::CompilationInfo>> compilationInfo(
-      cx, js_new<frontend::CompilationInfo>(cx, options));
-  if (!compilationInfo) {
-    js::ReportOutOfMemory(cx);
-    return;
-  }
-
-  if (!compilationInfo.get()->input.initForGlobal(cx)) {
-    return;
-  }
-
-  if (!frontend::CompileGlobalScriptToStencil(cx, *compilationInfo, data,
-                                              scopeKind)) {
-    return;
-  }
-
-  compilationInfo_.reset(compilationInfo.release());
+  compilationInfo_ =
+      frontend::CompileGlobalScriptToStencil(cx, options, data, scopeKind);
 
   if (options.useOffThreadParseGlobal) {
     Unused << instantiateStencils(cx);
@@ -701,22 +684,7 @@ void ModuleParseTask<Unit>::parse(JSContext* cx) {
 
   options.setModule();
 
-  Rooted<UniquePtr<frontend::CompilationInfo>> compilationInfo(
-      cx, js_new<frontend::CompilationInfo>(cx, options));
-  if (!compilationInfo) {
-    js::ReportOutOfMemory(cx);
-    return;
-  }
-
-  if (!compilationInfo.get()->input.initForModule(cx)) {
-    return;
-  }
-
-  if (!frontend::ParseModuleToStencil(cx, *compilationInfo, data)) {
-    return;
-  }
-
-  compilationInfo_.reset(compilationInfo.release());
+  compilationInfo_ = frontend::ParseModuleToStencil(cx, options, data);
 
   if (options.useOffThreadParseGlobal) {
     Unused << instantiateStencils(cx);
@@ -2136,10 +2104,7 @@ void HelperThread::handleWasmWorkload(AutoLockHelperThreadState& locked,
       HelperThreadState().wasmWorklist(locked, mode).popCopyFront());
 
   wasm::CompileTask* task = wasmTask();
-  {
-    AutoUnlockHelperThreadState unlock(locked);
-    task->runTask();
-  }
+  task->runTaskLocked(locked);
 
   currentTask.reset();
 
@@ -2175,10 +2140,7 @@ void HelperThread::handlePromiseHelperTaskWorkload(
       HelperThreadState().promiseHelperTasks(locked).popCopy();
   currentTask.emplace(task);
 
-  {
-    AutoUnlockHelperThreadState unlock(locked);
-    task->runTask();
-  }
+  task->runTaskLocked(locked);
 
   currentTask.reset();
 
@@ -2390,9 +2352,17 @@ void PromiseHelperTask::executeAndResolveAndDestroy(JSContext* cx) {
   run(cx, JS::Dispatchable::NotShuttingDown);
 }
 
-void PromiseHelperTask::runTask() {
-  execute();
-  dispatchResolveAndDestroy();
+void PromiseHelperTask::runTaskLocked(AutoLockHelperThreadState& lock) {
+  {
+    AutoUnlockHelperThreadState unlock(lock);
+    execute();
+  }
+
+  // Don't release the lock between dispatching the resolve and destroy
+  // operation (which may start immediately on another thread) and returning
+  // from this method.
+
+  dispatchResolveAndDestroy(lock);
 }
 
 bool js::StartOffThreadPromiseHelperTask(JSContext* cx,

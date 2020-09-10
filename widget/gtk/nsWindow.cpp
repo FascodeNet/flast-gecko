@@ -598,10 +598,8 @@ void nsWindow::OnDestroy(void) {
   NotifyWindowDestroyed();
 }
 
-bool nsWindow::AreBoundsSane(void) {
-  if (mBounds.width > 0 && mBounds.height > 0) return true;
-
-  return false;
+bool nsWindow::AreBoundsSane() {
+  return mBounds.width > 0 && mBounds.height > 0;
 }
 
 static GtkWidget* EnsureInvisibleContainer() {
@@ -1098,6 +1096,12 @@ void nsWindow::ResizeInt(int aX, int aY, int aWidth, int aHeight, bool aMove,
 
   ConstrainSize(&aWidth, &aHeight);
 
+  // If we used to have insane bounds, we may have skipped actually positioning
+  // the widget in NativeMoveResizeWaylandPopup, in which case we need to
+  // actually position it now as well.
+  const bool hadInsaneWaylandPopupDimensions =
+      !AreBoundsSane() && IsWaylandPopup();
+
   if (aMove) {
     mBounds.x = aX;
     mBounds.y = aY;
@@ -1119,8 +1123,9 @@ void nsWindow::ResizeInt(int aX, int aY, int aWidth, int aHeight, bool aMove,
 
   if (!mCreated) return;
 
-  if (aMove || mPreferredPopupRectFlushed) {
-    LOG(("  Need also to move, flushed? %d\n", mPreferredPopupRectFlushed));
+  if (aMove || mPreferredPopupRectFlushed || hadInsaneWaylandPopupDimensions) {
+    LOG(("  Need also to move, flushed? %d, bounds were insane: %d\n",
+         mPreferredPopupRectFlushed, hadInsaneWaylandPopupDimensions));
     NativeMoveResize();
   } else {
     NativeResize();
@@ -4161,9 +4166,7 @@ bool nsWindow::IsMainWindowTransparent() {
         sTransparentMainWindow =
             Preferences::GetBool("mozilla.widget.use-argb-visuals");
       } else {
-        sTransparentMainWindow =
-            (gfxPlatformGtk::GetPlatform()->IsWaylandDisplay() &&
-             GetSystemCSDSupportLevel() != CSD_SUPPORT_NONE);
+        sTransparentMainWindow = GetSystemCSDSupportLevel() != CSD_SUPPORT_NONE;
       }
     }
     transparencyConfigured = true;
@@ -7776,7 +7779,7 @@ nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
     } else if (strstr(currentDesktop, "LXQt") != nullptr) {
       sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
     } else if (strstr(currentDesktop, "Deepin") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
     } else {
 // Release or beta builds are not supposed to be broken
 // so disable titlebar rendering on untested/unknown systems.
@@ -7841,15 +7844,37 @@ bool nsWindow::HideTitlebarByDefault() {
     return hideTitlebar;
   }
 
+  // We want to hide the system titlebar by default.
+  hideTitlebar = true;
+
+  // Don't hide titlebar when we can't draw round corners.
+  GdkScreen* screen = gdk_screen_get_default();
+  if (!gdk_screen_is_composited(screen) && !TitlebarCanUseShapeMask()) {
+    hideTitlebar = false;
+    return hideTitlebar;
+  }
+  // Don't hide titlebar when it's disabled on current desktop.
   const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
-  hideTitlebar =
-      (currentDesktop && GetSystemCSDSupportLevel() != CSD_SUPPORT_NONE);
+  if (!currentDesktop || GetSystemCSDSupportLevel() == CSD_SUPPORT_NONE) {
+    hideTitlebar = false;
+    return hideTitlebar;
+  }
 
-  GdkScreen* screen;
-  hideTitlebar = ((screen = gdk_screen_get_default()) &&
-                  gdk_screen_is_composited(screen)) ||
-                 TitlebarCanUseShapeMask();
+  // We hide system titlebar on Gnome/ElementaryOS without any restriction.
+  if ((strstr(currentDesktop, "GNOME-Flashback:GNOME") != nullptr ||
+       strstr(currentDesktop, "GNOME") != nullptr ||
+       strstr(currentDesktop, "Pantheon") != nullptr)) {
+    return hideTitlebar;
+  }
 
+  // We hide system titlebar on KDE on recent enough systems.
+  if (gtk_check_version(3, 24, 0) == nullptr &&
+      strstr(currentDesktop, "KDE") != nullptr) {
+    return hideTitlebar;
+  }
+
+  // Don't hide system titlebar by default for other desktops.
+  hideTitlebar = false;
   return hideTitlebar;
 }
 

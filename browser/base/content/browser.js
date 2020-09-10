@@ -2091,8 +2091,35 @@ var gBrowserInit = {
       }
     }
 
-    if (!Services.policies.isAllowed("hideShowMenuBar")) {
-      document.getElementById("toolbar-menubar").removeAttribute("toolbarname");
+    if (Services.policies.status === Services.policies.ACTIVE) {
+      if (!Services.policies.isAllowed("hideShowMenuBar")) {
+        document
+          .getElementById("toolbar-menubar")
+          .removeAttribute("toolbarname");
+      }
+      let policies = Services.policies.getActivePolicies();
+      if ("ManagedBookmarks" in policies) {
+        let managedBookmarks = policies.ManagedBookmarks;
+        let children = managedBookmarks.filter(
+          child => !("toplevel_name" in child)
+        );
+        if (children.length) {
+          let managedBookmarksButton = document.getElementById(
+            "managed-bookmarks"
+          );
+          let toplevel = managedBookmarks.find(
+            element => "toplevel_name" in element
+          );
+          if (toplevel) {
+            managedBookmarksButton.setAttribute(
+              "label",
+              toplevel.toplevel_name
+            );
+            managedBookmarksButton.removeAttribute("data-l10n-id");
+          }
+          managedBookmarksButton.hidden = false;
+        }
+      }
     }
 
     CaptivePortalWatcher.delayedStartup();
@@ -6030,23 +6057,18 @@ nsBrowserAccess.prototype = {
     }
 
     if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_DEFAULTWINDOW) {
-      let pref;
       if (
         isExternal &&
         Services.prefs.prefHasUserValue(
           "browser.link.open_newwindow.override.external"
         )
       ) {
-        pref = Services.prefs.getIntPref(
+        aWhere = Services.prefs.getIntPref(
           "browser.link.open_newwindow.override.external"
         );
       } else {
-        pref = Services.prefs.getIntPref("browser.link.open_newwindow");
+        aWhere = Services.prefs.getIntPref("browser.link.open_newwindow");
       }
-      aWhere =
-        pref == 3
-          ? Ci.nsIBrowserDOMWindow.OPEN_NEWTAB
-          : Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW;
     }
 
     let referrerInfo;

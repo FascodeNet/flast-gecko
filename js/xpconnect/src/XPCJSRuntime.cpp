@@ -51,11 +51,13 @@
 #include "js/GCAPI.h"
 #include "js/MemoryFunctions.h"
 #include "js/MemoryMetrics.h"
+#include "js/Object.h"  // JS::GetClass
 #include "js/Stream.h"  // JS::AbortSignalIsAborted, JS::InitAbortSignalHandling
 #include "js/UbiNode.h"
 #include "js/UbiNodeUtils.h"
 #include "js/friend/UsageStatistics.h"  // JS_TELEMETRY_*, JS_SetAccumulateTelemetryCallback
 #include "js/friend/WindowProxy.h"  // js::SetWindowProxyClass
+#include "js/friend/XrayJitInfo.h"  // JS::SetXrayJitInfo
 #include "mozilla/dom/AbortSignalBinding.h"
 #include "mozilla/dom/GeneratedAtomList.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -229,7 +231,7 @@ RealmPrivate::RealmPrivate(JS::Realm* realm) : scriptability(realm) {
 /* static */
 void RealmPrivate::Init(HandleObject aGlobal, const SiteIdentifier& aSite) {
   MOZ_ASSERT(aGlobal);
-  DebugOnly<const JSClass*> clasp = js::GetObjectClass(aGlobal);
+  DebugOnly<const JSClass*> clasp = JS::GetClass(aGlobal);
   MOZ_ASSERT(clasp->flags &
                  (JSCLASS_PRIVATE_IS_NSISUPPORTS | JSCLASS_HAS_PRIVATE) ||
              dom::IsDOMClass(clasp));
@@ -242,7 +244,7 @@ void RealmPrivate::Init(HandleObject aGlobal, const SiteIdentifier& aSite) {
   SetRealmPrivate(realm, realmPriv);
 
   nsIPrincipal* principal = GetRealmPrincipal(realm);
-  Compartment* c = js::GetObjectCompartment(aGlobal);
+  Compartment* c = JS::GetCompartment(aGlobal);
 
   // Create the compartment private if needed.
   if (CompartmentPrivate* priv = CompartmentPrivate::Get(c)) {
@@ -513,7 +515,7 @@ bool IsUAWidgetScope(JS::Realm* realm) {
 }
 
 bool IsInUAWidgetScope(JSObject* obj) {
-  return IsUAWidgetCompartment(js::GetObjectCompartment(obj));
+  return IsUAWidgetCompartment(JS::GetCompartment(obj));
 }
 
 bool CompartmentOriginInfo::MightBeWebContent() const {
@@ -3010,7 +3012,7 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
                                 isAborted, cx);
   }
 
-  js::SetXrayJitInfo(&gXrayJitInfo);
+  JS::SetXrayJitInfo(&gXrayJitInfo);
   JS::SetProcessLargeAllocationFailureCallback(
       OnLargeAllocationFailureCallback);
   JS::SetProcessBuildIdOp(GetBuildId);

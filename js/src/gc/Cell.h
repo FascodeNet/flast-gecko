@@ -193,6 +193,11 @@ struct Cell {
   inline JS::Zone* nurseryZone() const;
   inline JS::Zone* nurseryZoneFromAnyThread() const;
 
+  // Default barrier implementations for nursery allocatable cells. These may be
+  // overriden by derived classes.
+  static MOZ_ALWAYS_INLINE void readBarrier(Cell* thing);
+  static MOZ_ALWAYS_INLINE void writeBarrierPre(Cell* thing);
+
 #ifdef DEBUG
   static inline void assertThingIsNotGray(Cell* cell);
   inline bool isAligned() const;
@@ -275,8 +280,7 @@ class TenuredCell : public Cell {
 
   static MOZ_ALWAYS_INLINE void readBarrier(TenuredCell* thing);
   static MOZ_ALWAYS_INLINE void writeBarrierPre(TenuredCell* thing);
-
-  static void MOZ_ALWAYS_INLINE writeBarrierPost(void* cellp,
+  static MOZ_ALWAYS_INLINE void writeBarrierPost(void* cellp,
                                                  TenuredCell* prior,
                                                  TenuredCell* next);
 
@@ -388,6 +392,18 @@ inline JS::TraceKind Cell::getTraceKind() const {
 
 /* static */ MOZ_ALWAYS_INLINE bool Cell::needWriteBarrierPre(JS::Zone* zone) {
   return JS::shadow::Zone::from(zone)->needsIncrementalBarrier();
+}
+
+/* static */ MOZ_ALWAYS_INLINE void Cell::readBarrier(Cell* thing) {
+  if (thing->isTenured()) {
+    TenuredCell::readBarrier(&thing->asTenured());
+  }
+}
+
+/* static */ MOZ_ALWAYS_INLINE void Cell::writeBarrierPre(Cell* thing) {
+  if (thing && thing->isTenured()) {
+    TenuredCell::writeBarrierPre(&thing->asTenured());
+  }
 }
 
 bool TenuredCell::isMarkedAny() const {
@@ -714,7 +730,7 @@ class alignas(gc::CellAlignBytes) CellWithTenuredGCPointer : public BaseCell {
     // As above, no flags are expected to be set here.
     MOZ_ASSERT(!IsInsideNursery(newValue));
     PtrT::writeBarrierPre(headerPtr());
-    unsafeSetHeaderPtr(newValue);
+    unbarrieredSetHeaderPtr(newValue);
   }
 
  public:
@@ -728,7 +744,7 @@ class alignas(gc::CellAlignBytes) CellWithTenuredGCPointer : public BaseCell {
     return reinterpret_cast<PtrT*>(this->header_);
   }
 
-  void unsafeSetHeaderPtr(PtrT* newValue) {
+  void unbarrieredSetHeaderPtr(PtrT* newValue) {
     uintptr_t data = uintptr_t(newValue);
     MOZ_ASSERT(this->flags() == 0);
     MOZ_ASSERT((data & Cell::RESERVED_MASK) == 0);

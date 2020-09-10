@@ -20,6 +20,7 @@
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
+#include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/RegExpFlags.h"  // JS::RegExpFlag, JS::RegExpFlags
 #include "js/ScalarType.h"   // js::Scalar::Type
 #include "vm/ArgumentsObject.h"
@@ -429,6 +430,9 @@ IonBuilder::InliningResult IonBuilder::inlineNativeCall(CallInfo& callInfo,
     case InlinableNative::IntrinsicTypedArrayElementShift:
       return inlineTypedArrayElementShift(callInfo);
 
+    case InlinableNative::NumberToString:
+    case InlinableNative::StringToString:
+    case InlinableNative::StringValueOf:
     case InlinableNative::IntrinsicIsSuspendedGenerator:
       // Not supported in Ion.
       return InliningStatus_NotInlined;

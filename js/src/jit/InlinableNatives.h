@@ -98,6 +98,8 @@
   _(MathTrunc)                                     \
   _(MathCbrt)                                      \
                                                    \
+  _(NumberToString)                                \
+                                                   \
   _(ReflectGetPrototypeOf)                         \
                                                    \
   _(RegExpMatcher)                                 \
@@ -110,6 +112,8 @@
   _(GetFirstDollarIndex)                           \
                                                    \
   _(String)                                        \
+  _(StringToString)                                \
+  _(StringValueOf)                                 \
   _(StringCharCodeAt)                              \
   _(StringFromCharCode)                            \
   _(StringFromCodePoint)                           \
@@ -186,7 +190,7 @@
   _(IntrinsicTypedArrayByteOffset)                 \
   _(IntrinsicTypedArrayElementShift)
 
-struct JSJitInfo;
+class JSJitInfo;
 
 namespace js {
 namespace jit {

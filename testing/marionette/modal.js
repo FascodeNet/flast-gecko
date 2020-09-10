@@ -4,16 +4,18 @@
 
 "use strict";
 
+const EXPORTED_SYMBOLS = ["modal"];
+
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  Log: "chrome://marionette/content/log.js",
+});
 
 XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
-
-this.EXPORTED_SYMBOLS = ["modal"];
 
 const COMMON_DIALOG = "chrome://global/content/commonDialog.xhtml";
 

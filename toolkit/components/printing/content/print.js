@@ -331,7 +331,8 @@ var PrintEventHandler = {
           this.originalSourceCurrentURI
         );
       } catch (e) {
-        // Don't care why just yet.
+        // If the user cancels saving, we should close the window for now.
+        window.close();
         return;
       }
     }
@@ -529,6 +530,7 @@ var PrintEventHandler = {
     };
     printersByName[PrintUtils.SAVE_TO_PDF_PRINTER] = {
       supportsColor: true,
+      supportsMonochrome: false,
       name: PrintUtils.SAVE_TO_PDF_PRINTER,
     };
 
@@ -717,10 +719,12 @@ const PrintSettingsViewProxy = {
     if (printerInfo.printer) {
       [
         printerInfo.supportsColor,
+        printerInfo.supportsMonochrome,
         printerInfo.paperList,
         printerInfo.defaultSettings,
       ] = await Promise.all([
         printerInfo.printer.supportsColor,
+        printerInfo.printer.supportsMonochrome,
         printerInfo.printer.paperList,
         // get a set of default settings for this printer
         printerInfo.printer.createDefaultSettings(printerName),
@@ -810,12 +814,14 @@ const PrintSettingsViewProxy = {
         return "default";
 
       case "paperSizes":
-        return Object.values(this.availablePaperSizes).map(paper => {
-          return {
-            name: paper.name,
-            value: paper.name,
-          };
-        });
+        return Object.values(this.availablePaperSizes)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(paper => {
+            return {
+              name: paper.name,
+              value: paper.name,
+            };
+          });
 
       case "printBackgrounds":
         return target.printBGImages || target.printBGColors;
@@ -840,19 +846,8 @@ const PrintSettingsViewProxy = {
           target.outputFormat == Ci.nsIPrintSettings.kOutputFormatPDF ||
           this.knownSaveToFilePrinters.has(target.printerName)
         );
-      // Black and white is always supported except:
-      //
-      //  * For PDF printing, where it'd require rasterization and thus bad
-      //    quality.
-      //
-      //  * For Mac, where there's no API to print in monochrome.
-      //
       case "supportsMonochrome":
-        return (
-          !this.get(target, "supportsColor") ||
-          (target.printerName != PrintUtils.SAVE_TO_PDF_PRINTER &&
-            AppConstants.platform !== "macosx")
-        );
+        return this.availablePrinters[target.printerName].supportsMonochrome;
       case "defaultSystemPrinter":
         return (
           this.defaultSystemPrinter?.value ||

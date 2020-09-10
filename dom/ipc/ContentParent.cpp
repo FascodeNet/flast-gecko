@@ -6941,15 +6941,8 @@ mozilla::ipc::IPCResult ContentParent::RecvHistoryGo(
     const MaybeDiscarded<BrowsingContext>& aContext, int32_t aIndex,
     HistoryGoResolver&& aResolveRequestedIndex) {
   if (!aContext.IsDiscarded()) {
-    nsSHistory* shistory =
-        static_cast<nsSHistory*>(aContext.get_canonical()->GetSessionHistory());
-    nsTArray<nsSHistory::LoadEntryResult> loadResults;
-    nsresult rv = shistory->GotoIndex(aIndex, loadResults);
-    if (NS_FAILED(rv)) {
-      return IPC_FAIL(this, "GotoIndex failed");
-    }
-    aResolveRequestedIndex(shistory->GetRequestedIndex());
-    shistory->LoadURIs(loadResults);
+    aContext.get_canonical()->HistoryGo(aIndex,
+                                        std::move(aResolveRequestedIndex));
   }
   return IPC_OK();
 }
@@ -7075,6 +7068,18 @@ mozilla::ipc::IPCResult ContentParent::RecvRemoveFromSessionHistory(
     const MaybeDiscarded<BrowsingContext>& aContext) {
   if (!aContext.IsDiscarded()) {
     aContext.get_canonical()->RemoveFromSessionHistory();
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvHistoryReload(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    const uint32_t aReloadFlags) {
+  if (!aContext.IsDiscarded()) {
+    nsISHistory* shistory = aContext.get_canonical()->GetSessionHistory();
+    if (shistory) {
+      shistory->Reload(aReloadFlags);
+    }
   }
   return IPC_OK();
 }

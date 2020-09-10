@@ -224,9 +224,9 @@ async function mount() {
     slug,
     branch
   } = await window.AWGetStartupData();
-  let settings = branch && branch.feature ? branch.feature.value : {};
+  let settings = (branch === null || branch === void 0 ? void 0 : branch.feature) ? branch.feature.value : {};
 
-  if (!(branch && branch.feature)) {
+  if (!(branch === null || branch === void 0 ? void 0 : branch.feature)) {
     // Check for override content in pref browser.aboutwelcome.overrideContent
     settings = await window.AWGetMultiStageScreens();
   }
@@ -471,7 +471,7 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
 
   renderSecondaryCTA(className) {
     return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-      className: `secondary-cta ${className}`
+      className: className ? `secondary-cta ${className}` : `secondary-cta`
     }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
       text: this.props.content.secondary_button.text
     }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", null)), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {

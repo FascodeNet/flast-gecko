@@ -48,6 +48,7 @@
 #include "jit/StackSlotAllocator.h"
 #include "jit/VMFunctions.h"
 #include "jit/WarpSnapshot.h"
+#include "js/experimental/JitInfo.h"  // JSJit{Getter,Setter}CallArgs, JSJitMethodCallArgsTraits, JSJitInfo
 #include "js/RegExpFlags.h"  // JS::RegExpFlag
 #include "js/ScalarType.h"   // js::Scalar::Type
 #include "util/CheckedArithmetic.h"
@@ -8847,7 +8848,7 @@ void CodeGenerator::visitModD(LModD* ins) {
     masm.passABIArg(lhs, MoveOp::DOUBLE);
     masm.passABIArg(rhs, MoveOp::DOUBLE);
     masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
-                     MoveOp::DOUBLE);
+                     mozilla::Nothing(), MoveOp::DOUBLE);
   } else {
     masm.setupUnalignedABICall(ToRegister(ins->temp()));
     masm.passABIArg(lhs, MoveOp::DOUBLE);

@@ -2,17 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{AsyncBlobImageRasterizer, BlobImageRequest, BlobImageResult};
-use api::{DocumentId, PipelineId, ApiMsg, FrameMsg, SceneMsg, ResourceUpdate, ExternalEvent};
-use api::{NotificationRequest, Checkpoint, IdNamespace, QualitySettings, TransactionMsg};
-use api::{ClipIntern, FilterDataIntern, MemoryReport, PrimitiveKeyKind, SharedFontInstanceMap};
+use api::{AsyncBlobImageRasterizer, BlobImageResult};
+use api::{DocumentId, PipelineId, ExternalEvent, BlobImageRequest};
+use api::{NotificationRequest, Checkpoint, IdNamespace, QualitySettings};
+use api::{PrimitiveKeyKind, SharedFontInstanceMap};
 use api::{DocumentLayer, GlyphDimensionRequest, GlyphIndexRequest};
 use api::channel::{unbounded_channel, single_msg_channel, Receiver, Sender};
 use api::units::*;
+use crate::render_api::{ApiMsg, FrameMsg, SceneMsg, ResourceUpdate, TransactionMsg, MemoryReport};
 #[cfg(feature = "capture")]
 use crate::capture::CaptureConfig;
 use crate::frame_builder::FrameBuilderConfig;
 use crate::scene_building::SceneBuilder;
+use crate::clip::ClipIntern;
+use crate::filterdata::FilterDataIntern;
 use crate::intern::{Internable, Interner, UpdateList};
 use crate::internal_types::{FastHashMap, FastHashSet};
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
@@ -97,27 +100,20 @@ pub struct LoadScene {
     pub interners: Interners,
 }
 
-// Message to the scene builder thread.
+/// Message to the scene builder thread.
 pub enum SceneBuilderRequest {
     Transactions(Vec<Box<TransactionMsg>>),
-    ExternalEvent(ExternalEvent),
     AddDocument(DocumentId, DeviceIntSize, DocumentLayer),
     DeleteDocument(DocumentId),
     GetGlyphDimensions(GlyphDimensionRequest),
     GetGlyphIndices(GlyphIndexRequest),
-    WakeUp,
-    Stop,
-    Flush(Sender<()>),
     ClearNamespace(IdNamespace),
     SimulateLongSceneBuild(u32),
     SimulateLongLowPrioritySceneBuild(u32),
-    /// Enqueue this to inform the scene builder to pick one message from
-    /// backend_rx.
-    BackendMessage,
-}
-
-/// Message from render backend to scene builder.
-pub enum BackendSceneBuilderRequest {
+    ExternalEvent(ExternalEvent),
+    WakeUp,
+    ShutDown(Option<Sender<()>>),
+    Flush(Sender<()>),
     SetFrameBuilderConfig(FrameBuilderConfig),
     ReportMemory(Box<MemoryReport>, Sender<Box<MemoryReport>>),
     #[cfg(feature = "capture")]
@@ -138,10 +134,11 @@ pub enum SceneBuilderResult {
     CapturedTransactions(Vec<Box<BuiltTransaction>>, CaptureConfig, Option<Sender<SceneSwapResult>>),
     ExternalEvent(ExternalEvent),
     FlushComplete(Sender<()>),
+    DeleteDocument(DocumentId),
     ClearNamespace(IdNamespace),
     GetGlyphDimensions(GlyphDimensionRequest),
     GetGlyphIndices(GlyphIndexRequest),
-    Stopped,
+    ShutDown(Option<Sender<()>>),
     DocumentsForDebugger(String)
 }
 
@@ -207,7 +204,7 @@ macro_rules! declare_interners {
     }
 }
 
-enumerate_interners!(declare_interners);
+crate::enumerate_interners!(declare_interners);
 
 // A document in the scene builder contains the current scene,
 // as well as a persistent clip interner. This allows clips
@@ -240,9 +237,7 @@ impl Document {
 pub struct SceneBuilderThread {
     documents: FastHashMap<DocumentId, Document>,
     rx: Receiver<SceneBuilderRequest>,
-    backend_rx: Receiver<BackendSceneBuilderRequest>,
-    tx: Sender<SceneBuilderResult>,
-    api_tx: Sender<ApiMsg>,
+    tx: Sender<ApiMsg>,
     config: FrameBuilderConfig,
     default_device_pixel_ratio: f32,
     font_instances: SharedFontInstanceMap,
@@ -256,28 +251,20 @@ pub struct SceneBuilderThread {
 
 pub struct SceneBuilderThreadChannels {
     rx: Receiver<SceneBuilderRequest>,
-    backend_rx: Receiver<BackendSceneBuilderRequest>,
-    tx: Sender<SceneBuilderResult>,
-    api_tx: Sender<ApiMsg>,
+    tx: Sender<ApiMsg>,
 }
 
 impl SceneBuilderThreadChannels {
     pub fn new(
-        api_tx: Sender<ApiMsg>
-    ) -> (Self, Sender<SceneBuilderRequest>, Sender<BackendSceneBuilderRequest>, Receiver<SceneBuilderResult>) {
+        tx: Sender<ApiMsg>
+    ) -> (Self, Sender<SceneBuilderRequest>) {
         let (in_tx, in_rx) = unbounded_channel();
-        let (out_tx, out_rx) = unbounded_channel();
-        let (backend_tx, backend_rx) = unbounded_channel();
         (
             Self {
                 rx: in_rx,
-                backend_rx,
-                tx: out_tx,
-                api_tx,
+                tx,
             },
             in_tx,
-            backend_tx,
-            out_rx,
         )
     }
 }
@@ -291,14 +278,12 @@ impl SceneBuilderThread {
         hooks: Option<Box<dyn SceneBuilderHooks + Send>>,
         channels: SceneBuilderThreadChannels,
     ) -> Self {
-        let SceneBuilderThreadChannels { rx, backend_rx, tx, api_tx } = channels;
+        let SceneBuilderThreadChannels { rx, tx } = channels;
 
         Self {
             documents: Default::default(),
             rx,
-            backend_rx,
             tx,
-            api_tx,
             config,
             default_device_pixel_ratio,
             font_instances,
@@ -316,8 +301,7 @@ impl SceneBuilderThread {
     /// We first put something in the result queue and then send a wake-up
     /// message to the api queue that the render backend is blocking on.
     pub fn send(&self, msg: SceneBuilderResult) {
-        self.tx.send(msg).unwrap();
-        let _ = self.api_tx.send(ApiMsg::WakeUp);
+        self.tx.send(ApiMsg::SceneBuilderResult(msg)).unwrap();
     }
 
     /// The scene builder thread's event loop.
@@ -355,6 +339,7 @@ impl SceneBuilderThread {
                 }
                 Ok(SceneBuilderRequest::DeleteDocument(document_id)) => {
                     self.documents.remove(&document_id);
+                    self.send(SceneBuilderResult::DeleteDocument(document_id));
                 }
                 Ok(SceneBuilderRequest::ClearNamespace(id)) => {
                     self.documents.retain(|doc_id, _doc| doc_id.namespace_id != id);
@@ -364,54 +349,47 @@ impl SceneBuilderThread {
                     self.send(SceneBuilderResult::ExternalEvent(evt));
                 }
                 Ok(SceneBuilderRequest::GetGlyphDimensions(request)) => {
-                    self.send(SceneBuilderResult::GetGlyphDimensions(request))
+                    self.send(SceneBuilderResult::GetGlyphDimensions(request));
                 }
                 Ok(SceneBuilderRequest::GetGlyphIndices(request)) => {
-                    self.send(SceneBuilderResult::GetGlyphIndices(request))
+                    self.send(SceneBuilderResult::GetGlyphIndices(request));
                 }
-                Ok(SceneBuilderRequest::Stop) => {
-                    self.tx.send(SceneBuilderResult::Stopped).unwrap();
-                    // We don't need to send a WakeUp to api_tx because we only
-                    // get the Stop when the RenderBackend loop is exiting.
+                Ok(SceneBuilderRequest::ShutDown(sync)) => {
+                    self.send(SceneBuilderResult::ShutDown(sync));
                     break;
                 }
                 Ok(SceneBuilderRequest::SimulateLongSceneBuild(time_ms)) => {
                     self.simulate_slow_ms = time_ms
                 }
                 Ok(SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(_)) => {}
-                Ok(SceneBuilderRequest::BackendMessage) => {
-                    let msg = self.backend_rx.try_recv().unwrap();
-                    match msg {
-                        BackendSceneBuilderRequest::ReportMemory(mut report, tx) => {
-                            (*report) += self.report_memory();
-                            tx.send(report).unwrap();
-                        }
-                        BackendSceneBuilderRequest::SetFrameBuilderConfig(cfg) => {
-                            self.config = cfg;
-                        }
-                        #[cfg(feature = "replay")]
-                        BackendSceneBuilderRequest::LoadScenes(msg) => {
-                            self.load_scenes(msg);
-                        }
-                        #[cfg(feature = "capture")]
-                        BackendSceneBuilderRequest::SaveScene(config) => {
-                            self.save_scene(config);
-                        }
-                        #[cfg(feature = "capture")]
-                        BackendSceneBuilderRequest::StartCaptureSequence(config) => {
-                            self.start_capture_sequence(config);
-                        }
-                        #[cfg(feature = "capture")]
-                        BackendSceneBuilderRequest::StopCaptureSequence => {
-                            // FIXME(aosmond): clear config for frames and resource cache without scene
-                            // rebuild?
-                            self.capture_config = None;
-                        }
-                        BackendSceneBuilderRequest::DocumentsForDebugger => {
-                            let json = self.get_docs_for_debugger();
-                            self.send(SceneBuilderResult::DocumentsForDebugger(json));
-                        }
-                    }
+                Ok(SceneBuilderRequest::ReportMemory(mut report, tx)) => {
+                    (*report) += self.report_memory();
+                    tx.send(report).unwrap();
+                }
+                Ok(SceneBuilderRequest::SetFrameBuilderConfig(cfg)) => {
+                    self.config = cfg;
+                }
+                #[cfg(feature = "replay")]
+                Ok(SceneBuilderRequest::LoadScenes(msg)) => {
+                    self.load_scenes(msg);
+                }
+                #[cfg(feature = "capture")]
+                Ok(SceneBuilderRequest::SaveScene(config)) => {
+                    self.save_scene(config);
+                }
+                #[cfg(feature = "capture")]
+                Ok(SceneBuilderRequest::StartCaptureSequence(config)) => {
+                    self.start_capture_sequence(config);
+                }
+                #[cfg(feature = "capture")]
+                Ok(SceneBuilderRequest::StopCaptureSequence) => {
+                    // FIXME(aosmond): clear config for frames and resource cache without scene
+                    // rebuild?
+                    self.capture_config = None;
+                }
+                Ok(SceneBuilderRequest::DocumentsForDebugger) => {
+                    let json = self.get_docs_for_debugger();
+                    self.send(SceneBuilderResult::DocumentsForDebugger(json));
                 }
                 Err(_) => {
                     break;
@@ -436,7 +414,8 @@ impl SceneBuilderThread {
             let interners_name = format!("interners-{}-{}", id.namespace_id.0, id.id);
             config.serialize_for_scene(&doc.interners, interners_name);
 
-            if config.bits.contains(api::CaptureBits::SCENE) {
+            use crate::render_api::CaptureBits;
+            if config.bits.contains(CaptureBits::SCENE) {
                 let file_name = format!("scene-{}-{}", id.namespace_id.0, id.id);
                 config.serialize_for_scene(&doc.scene, file_name);
             }
@@ -511,7 +490,8 @@ impl SceneBuilderThread {
                 let interners_name = format!("interners-{}-{}", id.namespace_id.0, id.id);
                 config.serialize_for_scene(&doc.interners, interners_name);
 
-                if config.bits.contains(api::CaptureBits::SCENE) {
+                use crate::render_api::CaptureBits;
+                if config.bits.contains(CaptureBits::SCENE) {
                     let file_name = format!("scene-{}-{}", id.namespace_id.0, id.id);
                     config.serialize_for_scene(&doc.scene, file_name);
                 }
@@ -794,14 +774,14 @@ impl SceneBuilderThread {
 
         #[cfg(feature = "capture")]
         match self.capture_config {
-            Some(ref config) => self.tx.send(SceneBuilderResult::CapturedTransactions(txns, config.clone(), result_tx)).unwrap(),
-            None => self.tx.send(SceneBuilderResult::Transactions(txns, result_tx)).unwrap(),
-        }
+            Some(ref config) => self.send(SceneBuilderResult::CapturedTransactions(txns, config.clone(), result_tx)),
+            None => self.send(SceneBuilderResult::Transactions(txns, result_tx)),
+        };
 
         #[cfg(not(feature = "capture"))]
-        self.tx.send(SceneBuilderResult::Transactions(txns, result_tx)).unwrap();
+        self.send(SceneBuilderResult::Transactions(txns, result_tx));
 
-        let _ = self.api_tx.send(ApiMsg::WakeUp);
+        let _ = self.tx.send(ApiMsg::WakeUp);
 
         if let Some(pipeline_info) = pipeline_info {
             // Block until the swap is done, then invoke the hook.
@@ -856,14 +836,8 @@ impl LowPrioritySceneBuilderThread {
                         .collect();
                     self.tx.send(SceneBuilderRequest::Transactions(txns)).unwrap();
                 }
-                Ok(SceneBuilderRequest::AddDocument(id, size, layer)) => {
-                    self.tx.send(SceneBuilderRequest::AddDocument(id, size, layer)).unwrap();
-                }
-                Ok(SceneBuilderRequest::DeleteDocument(document_id)) => {
-                    self.tx.send(SceneBuilderRequest::DeleteDocument(document_id)).unwrap();
-                }
-                Ok(SceneBuilderRequest::Stop) => {
-                    self.tx.send(SceneBuilderRequest::Stop).unwrap();
+                Ok(SceneBuilderRequest::ShutDown(sync)) => {
+                    self.tx.send(SceneBuilderRequest::ShutDown(sync)).unwrap();
                     break;
                 }
                 Ok(SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(time_ms)) => {

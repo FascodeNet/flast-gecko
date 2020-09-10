@@ -4,6 +4,8 @@
 
 "use strict";
 
+const EXPORTED_SYMBOLS = ["l10n"];
+
 /**
  * An API which allows Marionette to handle localized content.
  *
@@ -20,16 +22,16 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
+XPCOMUtils.defineLazyModuleGetters(this, {
+  error: "chrome://marionette/content/error.js",
+});
+
 XPCOMUtils.defineLazyGlobalGetters(this, ["DOMParser"]);
 XPCOMUtils.defineLazyGetter(this, "domParser", () => {
   const parser = new DOMParser();
   parser.forceEnableDTD();
   return parser;
 });
-
-const { error } = ChromeUtils.import("chrome://marionette/content/error.js");
-
-this.EXPORTED_SYMBOLS = ["l10n"];
 
 /** @namespace */
 this.l10n = {};

@@ -5279,6 +5279,36 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
 #endif
 }
 
+// Returns whether there's any print callback.
+static bool BuildNestedClones(Document& aJustClonedDoc) {
+  bool hasPrintCallbacks = aJustClonedDoc.HasPrintCallbacks();
+  auto pendingFrameClones = aJustClonedDoc.TakePendingFrameStaticClones();
+  for (const auto& clone : pendingFrameClones) {
+    RefPtr<Element> element = do_QueryObject(clone.mElement);
+    RefPtr<nsFrameLoader> frameLoader =
+        nsFrameLoader::Create(element, /* aNetworkCreated */ false);
+
+    if (NS_WARN_IF(!frameLoader)) {
+      continue;
+    }
+
+    clone.mElement->SetFrameLoader(frameLoader);
+
+    nsCOMPtr<nsIDocShell> docshell;
+    RefPtr<Document> doc;
+    nsresult rv = frameLoader->FinishStaticClone(
+        clone.mStaticCloneOf, getter_AddRefs(docshell), getter_AddRefs(doc));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      continue;
+    }
+
+    if (doc) {
+      hasPrintCallbacks |= BuildNestedClones(*doc);
+    }
+  }
+  return hasPrintCallbacks;
+}
+
 Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     nsIPrintSettings* aPrintSettings, nsIWebProgressListener* aListener,
     nsIDocShell* aDocShellToCloneInto, IsPreview aIsPreview,
@@ -5312,7 +5342,9 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
 
   nsCOMPtr<nsIContentViewer> cv;
   RefPtr<BrowsingContext> bc;
-  if (docToPrint->IsStaticDocument() && bool(aIsPreview)) {
+  bool hasPrintCallbacks = false;
+  if (docToPrint->IsStaticDocument() && aIsPreview == IsPreview::Yes) {
+    MOZ_DIAGNOSTIC_ASSERT(aBlockUntilDone == BlockUntilDone::No);
     // We're already a print preview window, just reuse our browsing context /
     // content viewer.
     //
@@ -5339,8 +5371,8 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       bc = aDocShellToCloneInto->GetBrowsingContext();
     } else {
       AutoNoJSAPI nojsapi;
-      auto printKind =
-          bool(aIsPreview) ? PrintKind::PrintPreview : PrintKind::Print;
+      auto printKind = aIsPreview == IsPreview::Yes ? PrintKind::PrintPreview
+                                                    : PrintKind::Print;
       aError = OpenInternal(EmptyString(), EmptyString(), EmptyString(),
                             false,             // aDialog
                             false,             // aContentModal
@@ -5410,27 +5442,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
         return nullptr;
       }
 
-      auto pendingFrameClones = clone->TakePendingFrameStaticClones();
-      for (const auto& clone : pendingFrameClones) {
-        RefPtr<Element> element = do_QueryObject(clone.mElement);
-        RefPtr<nsFrameLoader> frameLoader =
-            nsFrameLoader::Create(element, /* aNetworkCreated */ false);
-
-        if (NS_WARN_IF(!frameLoader)) {
-          continue;
-        }
-
-        clone.mElement->SetFrameLoader(frameLoader);
-
-        nsCOMPtr<nsIDocShell> docshell;
-        RefPtr<Document> doc;
-        nsresult rv = frameLoader->FinishStaticClone(clone.mStaticCloneOf,
-                                                     getter_AddRefs(docshell),
-                                                     getter_AddRefs(doc));
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          continue;
-        }
-      }
+      hasPrintCallbacks |= BuildNestedClones(*clone);
     }
   }
 
@@ -5441,7 +5453,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     return nullptr;
   }
 
-  if (bool(aIsPreview)) {
+  if (aIsPreview == IsPreview::Yes) {
     aError = webBrowserPrint->PrintPreview(aPrintSettings, aListener,
                                            std::move(aPrintPreviewCallback));
     if (aError.Failed()) {
@@ -5452,8 +5464,13 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     webBrowserPrint->Print(aPrintSettings, aListener);
   }
 
-  if (bool(aBlockUntilDone)) {
-    // Wait until print document is closed.
+  // When aBlockUntilDone is true, we usually want to block until the print
+  // dialog is hidden. But we can't really do that if we have print callbacks,
+  // because we are inside a sync operation, and we want to run microtasks / etc
+  // that the print callbacks may create.
+  //
+  // It is really awkward to have this subtle behavior difference...
+  if (aBlockUntilDone == BlockUntilDone::Yes && !hasPrintCallbacks) {
     SpinEventLoopUntil([&] { return bc->IsDiscarded(); });
   }
 

@@ -267,6 +267,13 @@ LoadingSessionHistoryInfo::LoadingSessionHistoryInfo(
   SessionHistoryEntry::sLoadIdToEntry->Put(mLoadId, aEntry);
 }
 
+LoadingSessionHistoryInfo::LoadingSessionHistoryInfo(
+    SessionHistoryEntry* aEntry, uint64_t aLoadId)
+    : mInfo(aEntry->Info()), mLoadId(aLoadId) {
+  MOZ_ASSERT(SessionHistoryEntry::sLoadIdToEntry &&
+             SessionHistoryEntry::sLoadIdToEntry->Get(aLoadId) == aEntry);
+}
+
 already_AddRefed<nsDocShellLoadState>
 LoadingSessionHistoryInfo::CreateLoadInfo() const {
   RefPtr<nsDocShellLoadState> loadState(
@@ -315,6 +322,13 @@ SessionHistoryEntry::SessionHistoryEntry(const SessionHistoryEntry& aEntry)
       mID(aEntry.mID) {}
 
 SessionHistoryEntry::~SessionHistoryEntry() {
+  // Null out the mParent pointers on all our kids.
+  for (nsISHEntry* entry : mChildren) {
+    if (entry) {
+      entry->SetParent(nullptr);
+    }
+  }
+
   if (sLoadIdToEntry) {
     sLoadIdToEntry->RemoveIf(
         [this](auto& aIter) { return aIter.Data() == this; });
@@ -939,7 +953,7 @@ NS_IMETHODIMP
 SessionHistoryEntry::AddChild(nsISHEntry* aChild, int32_t aOffset,
                               bool aUseRemoteSubframes) {
   nsCOMPtr<SessionHistoryEntry> child = do_QueryInterface(aChild);
-  MOZ_ASSERT(child);
+  MOZ_ASSERT_IF(aChild, child);
   AddChild(child, aOffset, aUseRemoteSubframes);
 
   return NS_OK;

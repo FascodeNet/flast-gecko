@@ -36,6 +36,8 @@ class FirefoxDataProvider {
     this.actions = actions || {};
     this.actionsEnabled = true;
     this.owner = owner;
+    // Map of all stacktrace resources keyed by network event's channelId
+    this.stackTraces = new Map();
 
     // Internal properties
     this.payloadQueue = new Map();
@@ -320,6 +322,10 @@ class FirefoxDataProvider {
     });
   }
 
+  onStackTraceAvailable(resource) {
+    this.stackTraces.set(resource.channelId, resource);
+  }
+
   /**
    * The handler for when the network event resource is available.
    *
@@ -341,6 +347,14 @@ class FirefoxDataProvider {
       blockingExtension,
       channelId,
     } = resource;
+
+    // Check if a stacktrace resource exists for this network event
+    if (this.stackTraces.has(channelId)) {
+      const { stacktrace, lastFrame } = this.stackTraces.get(channelId);
+      cause.stacktraceAvailable = stacktrace;
+      cause.lastFrame = lastFrame;
+      this.stackTraces.delete(channelId);
+    }
 
     // For resources from the resource watcher cache no updates are going to be fired
     // as the resource already contains all the updated props. These need to be set so
@@ -388,8 +402,8 @@ class FirefoxDataProvider {
    *
    * @param {object} resource The updated network event resource.
    */
-  async onNetworkResourceUpdated(resource) {
-    switch (resource.updateType) {
+  async onNetworkResourceUpdated(resource, update) {
+    switch (update.updateType) {
       case "securityInfo":
         this.pushRequestToQueue(resource.actor, {
           securityState: resource.securityState,
@@ -442,7 +456,7 @@ class FirefoxDataProvider {
     // This available field helps knowing when/if updateType property is arrived
     // and can be requested via `requestData`
     this.pushRequestToQueue(resource.actor, {
-      [`${resource.updateType}Available`]: true,
+      [`${update.updateType}Available`]: true,
     });
 
     await this.onPayloadDataReceived(resource);

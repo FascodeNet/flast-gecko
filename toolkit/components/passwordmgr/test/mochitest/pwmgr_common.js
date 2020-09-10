@@ -332,7 +332,14 @@ function checkUnmodifiedForm(formNum) {
   }
 }
 
-function registerRunTests() {
+/**
+ * Wait for the document to be ready and any existing password fields on
+ * forms to be processed.
+ *
+ * @param existingPasswordFieldsCount the number of password fields
+ * that begin on the test page.
+ */
+function registerRunTests(existingPasswordFieldsCount = 0) {
   return new Promise(resolve => {
     function onDOMContentLoaded() {
       var form = document.createElement("form");
@@ -345,8 +352,15 @@ function registerRunTests() {
       password.type = "password";
       form.appendChild(password);
 
+      let foundForcer = false;
       var observer = SpecialPowers.wrapCallback(function(subject, topic, data) {
-        if (data !== "observerforcer") {
+        if (data === "observerforcer") {
+          foundForcer = true;
+        } else {
+          existingPasswordFieldsCount--;
+        }
+
+        if (!foundForcer || existingPasswordFieldsCount > 0) {
           return;
         }
 
@@ -520,6 +534,38 @@ function runInParent(aFunctionOrURL) {
     chromeScript.destroy();
   });
   return chromeScript;
+}
+
+/** Initialize with a list of logins. The logins are added within the parent chrome process.
+ * @param {array} aLogins - a list of logins to add. Each login is an array of the arguments
+ *                          that would be passed to nsLoginInfo.init().
+ */
+function addLoginsInParent(...aLogins) {
+  let script = runInParent(function addLoginsInParentInner() {
+    addMessageListener("addLogins", logins => {
+      // eslint-disable-next-line no-shadow
+      const { Services } = ChromeUtils.import(
+        "resource://gre/modules/Services.jsm"
+      );
+
+      let nsLoginInfo = Components.Constructor(
+        "@mozilla.org/login-manager/loginInfo;1",
+        Ci.nsILoginInfo,
+        "init"
+      );
+
+      for (let login of logins) {
+        let loginInfo = new nsLoginInfo(...login);
+        try {
+          Services.logins.addLogin(loginInfo);
+        } catch (e) {
+          assert.ok(false, "addLogin threw: " + e);
+        }
+      }
+    });
+  });
+  script.sendQuery("addLogins", aLogins);
+  return script;
 }
 
 /*

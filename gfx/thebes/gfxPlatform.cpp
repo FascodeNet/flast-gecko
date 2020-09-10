@@ -613,8 +613,6 @@ static void WebRenderDebugPrefChangeCallback(const char* aPrefName, void*) {
                       wr::DebugFlags::DISABLE_GRADIENT_PRIMS)
   GFX_WEBRENDER_DEBUG(".obscure-images", wr::DebugFlags::OBSCURE_IMAGES)
   GFX_WEBRENDER_DEBUG(".glyph-flashing", wr::DebugFlags::GLYPH_FLASHING)
-  GFX_WEBRENDER_DEBUG(".disable-raster-root-scaling",
-                      wr::DebugFlags::DISABLE_RASTER_ROOT_SCALING)
   GFX_WEBRENDER_DEBUG(".capture-profiler", wr::DebugFlags::PROFILER_CAPTURE)
 #undef GFX_WEBRENDER_DEBUG
 
@@ -2768,6 +2766,13 @@ void gfxPlatform::InitWebRenderConfig() {
 #ifdef XP_WIN
   if (gfxConfig::IsEnabled(Feature::WEBRENDER_DCOMP_PRESENT)) {
     gfxVars::SetUseWebRenderDCompWin(true);
+  }
+  if (Preferences::GetBool("gfx.webrender.dcomp-video-overlay-win", false)) {
+    if (IsWin10AnniversaryUpdateOrLater() &&
+        gfxConfig::IsEnabled(Feature::WEBRENDER_COMPOSITOR)) {
+      MOZ_ASSERT(gfxConfig::IsEnabled(Feature::WEBRENDER_DCOMP_PRESENT));
+      gfxVars::SetUseWebRenderDCompVideoOverlayWin(true);
+    }
   }
   if (Preferences::GetBool("gfx.webrender.flip-sequential", false)) {
     // XXX relax win version to windows 8.

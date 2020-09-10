@@ -5,15 +5,7 @@
 "use strict";
 /* global XPCNativeWrapper */
 
-const { assert } = ChromeUtils.import("chrome://marionette/content/assert.js");
-const { atom } = ChromeUtils.import("chrome://marionette/content/atom.js");
-const { error } = ChromeUtils.import("chrome://marionette/content/error.js");
-const { pprint } = ChromeUtils.import("chrome://marionette/content/format.js");
-const { PollPromise } = ChromeUtils.import(
-  "chrome://marionette/content/sync.js"
-);
-
-this.EXPORTED_SYMBOLS = [
+const EXPORTED_SYMBOLS = [
   "ChromeWebElement",
   "ContentWebElement",
   "ContentWebFrame",
@@ -21,6 +13,25 @@ this.EXPORTED_SYMBOLS = [
   "element",
   "WebElement",
 ];
+
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
+XPCOMUtils.defineLazyModuleGetters(this, {
+  assert: "chrome://marionette/content/assert.js",
+  atom: "chrome://marionette/content/atom.js",
+  error: "chrome://marionette/content/error.js",
+  PollPromise: "chrome://marionette/content/sync.js",
+  pprint: "chrome://marionette/content/format.js",
+});
+
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "uuidGen",
+  "@mozilla.org/uuid-generator;1",
+  "nsIUUIDGenerator"
+);
 
 const ORDERED_NODE_ITERATOR_TYPE = 5;
 const FIRST_ORDERED_NODE_TYPE = 9;
@@ -42,10 +53,6 @@ const XUL_SELECTED_ELS = new Set([
   "richlistitem",
   "tab",
 ]);
-
-const uuidGen = Cc["@mozilla.org/uuid-generator;1"].getService(
-  Ci.nsIUUIDGenerator
-);
 
 /**
  * This module provides shared functionality for dealing with DOM-

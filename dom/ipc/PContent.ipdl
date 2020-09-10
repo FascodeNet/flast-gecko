@@ -554,6 +554,8 @@ child:
 
     async ClearImageCache(bool privateLoader, bool chrome);
 
+    async ClearStyleSheetCache(nsIPrincipal? aForPrincipal);
+
     async SetOffline(bool offline);
     async SetConnectivity(bool connectivity);
     async SetCaptivePortalState(int32_t aState);
@@ -1665,6 +1667,8 @@ parent:
      * reject the orientationPendingPromises in other processes.
      */
     async AbortOtherOrientationPendingPromises(MaybeDiscardedBrowsingContext aContext);
+
+    async HistoryReload(MaybeDiscardedBrowsingContext aContext, uint32_t aReloadFlags);
 
     async NotifyOnHistoryReload(MaybeDiscardedBrowsingContext aContext)
             returns (bool canReload, nsDocShellLoadState? loadState,

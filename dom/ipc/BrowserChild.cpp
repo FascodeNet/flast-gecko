@@ -1757,12 +1757,14 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
   // The other values don't really matter.
   InputAPZContext context(aGuid, aInputBlockId, aApzResponse);
 
+  nsTArray<TouchBehaviorFlags> allowedTouchBehaviors;
   if (localEvent.mMessage == eTouchStart && AsyncPanZoomEnabled()) {
     nsCOMPtr<Document> document = GetTopLevelDocument();
     if (StaticPrefs::layout_css_touch_action_enabled()) {
-      APZCCallbackHelper::SendSetAllowedTouchBehaviorNotification(
-          mPuppetWidget, document, localEvent, aInputBlockId,
-          mSetAllowedTouchBehaviorCallback);
+      allowedTouchBehaviors =
+          APZCCallbackHelper::SendSetAllowedTouchBehaviorNotification(
+              mPuppetWidget, document, localEvent, aInputBlockId,
+              mSetAllowedTouchBehaviorCallback);
     }
     UniquePtr<DisplayportSetListener> postLayerization =
         APZCCallbackHelper::SendSetTargetAPZCNotification(
@@ -1784,7 +1786,8 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
   }
 
   mAPZEventState->ProcessTouchEvent(localEvent, aGuid, aInputBlockId,
-                                    aApzResponse, status);
+                                    aApzResponse, status,
+                                    std::move(allowedTouchBehaviors));
   return IPC_OK();
 }
 
@@ -2700,9 +2703,10 @@ bool BrowserChild::CreateRemoteLayerManager(
     success = mPuppetWidget->CreateRemoteLayerManager(
         [&](LayerManager* aLayerManager) -> bool {
           MOZ_ASSERT(aLayerManager->AsWebRenderLayerManager());
+          nsCString error;
           return aLayerManager->AsWebRenderLayerManager()->Initialize(
               aCompositorChild, wr::AsPipelineId(mLayersId),
-              &mTextureFactoryIdentifier);
+              &mTextureFactoryIdentifier, error);
         });
   } else {
     nsTArray<LayersBackend> ignored;

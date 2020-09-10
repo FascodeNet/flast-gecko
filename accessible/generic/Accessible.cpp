@@ -604,7 +604,7 @@ nsRect Accessible::RelativeBounds(nsIFrame** aBoundingFrame) const {
       if (canvasFrame) {
         *aBoundingFrame = canvasFrame;
         if (auto* canvas =
-              dom::HTMLCanvasElement::FromNode(canvasFrame->GetContent())) {
+                dom::HTMLCanvasElement::FromNode(canvasFrame->GetContent())) {
           if (auto* context = canvas->GetCurrentContext()) {
             nsRect bounds;
             if (context->GetHitRegionRect(mContent->AsElement(), bounds)) {
@@ -1082,6 +1082,15 @@ already_AddRefed<nsIPersistentProperties> Accessible::NativeAttributes() {
   // Expose 'margin-bottom' attribute.
   styleInfo.MarginBottom(value);
   nsAccUtils::SetAccAttr(attributes, nsGkAtoms::marginBottom, value);
+
+  // Expose data-at-shortcutkeys attribute for web applications and virtual
+  // cursors. Currently mostly used by JAWS.
+  nsAutoString atShortcutKeys;
+  if (mContent->AsElement()->GetAttr(
+          kNameSpaceID_None, nsGkAtoms::dataAtShortcutkeys, atShortcutKeys)) {
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::dataAtShortcutkeys,
+                           atShortcutKeys);
+  }
 
   return attributes.forget();
 }

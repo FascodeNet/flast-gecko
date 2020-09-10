@@ -4,23 +4,21 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+const EXPORTED_SYMBOLS = ["assert"];
+
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { error } = ChromeUtils.import("chrome://marionette/content/error.js");
-const { pprint } = ChromeUtils.import("chrome://marionette/content/format.js");
-
 XPCOMUtils.defineLazyModuleGetters(this, {
-  evaluate: "chrome://marionette/content/evaluate.js",
-  browser: "chrome://marionette/content/browser.js",
-});
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
 
-this.EXPORTED_SYMBOLS = ["assert"];
+  browser: "chrome://marionette/content/browser.js",
+  error: "chrome://marionette/content/error.js",
+  evaluate: "chrome://marionette/content/evaluate.js",
+  pprint: "chrome://marionette/content/format.js",
+});
 
 const isFennec = () => AppConstants.platform == "android";
 const isFirefox = () =>

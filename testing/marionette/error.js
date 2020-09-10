@@ -4,7 +4,15 @@
 
 "use strict";
 
-const { pprint } = ChromeUtils.import("chrome://marionette/content/format.js");
+const EXPORTED_SYMBOLS = ["error"];
+
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
+XPCOMUtils.defineLazyModuleGetters(this, {
+  pprint: "chrome://marionette/content/format.js",
+});
 
 const ERRORS = new Set([
   "ElementClickInterceptedError",
@@ -44,8 +52,6 @@ const BUILTIN_ERRORS = new Set([
   "TypeError",
   "URIError",
 ]);
-
-this.EXPORTED_SYMBOLS = ["error"];
 
 /** @namespace */
 this.error = {

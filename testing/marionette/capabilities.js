@@ -4,21 +4,7 @@
 
 "use strict";
 
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
-);
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
-
-const { assert } = ChromeUtils.import("chrome://marionette/content/assert.js");
-const { error } = ChromeUtils.import("chrome://marionette/content/error.js");
-const { pprint } = ChromeUtils.import("chrome://marionette/content/format.js");
-
-XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
-
-this.EXPORTED_SYMBOLS = [
+const EXPORTED_SYMBOLS = [
   "Capabilities",
   "PageLoadStrategy",
   "Proxy",
@@ -26,15 +12,34 @@ this.EXPORTED_SYMBOLS = [
   "UnhandledPromptBehavior",
 ];
 
-// Enable testing this module, as Services.appinfo.* is not available
-// in xpcshell tests.
-const appinfo = { name: "<missing>", version: "<missing>" };
-try {
-  appinfo.name = Services.appinfo.name.toLowerCase();
-} catch (e) {}
-try {
-  appinfo.version = Services.appinfo.version;
-} catch (e) {}
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
+XPCOMUtils.defineLazyModuleGetters(this, {
+  Preferences: "resource://gre/modules/Preferences.jsm",
+
+  assert: "chrome://marionette/content/assert.js",
+  error: "chrome://marionette/content/error.js",
+  pprint: "chrome://marionette/content/format.js",
+});
+
+XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
+
+XPCOMUtils.defineLazyGetter(this, "appinfo", () => {
+  // Enable testing this module, as Services.appinfo.* is not available
+  // in xpcshell tests.
+  const appinfo = { name: "<missing>", version: "<missing>" };
+  try {
+    appinfo.name = Services.appinfo.name.toLowerCase();
+  } catch (e) {}
+  try {
+    appinfo.version = Services.appinfo.version;
+  } catch (e) {}
+
+  return appinfo;
+});
 
 /** Representation of WebDriver session timeouts. */
 class Timeouts {

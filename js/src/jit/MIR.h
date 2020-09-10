@@ -29,6 +29,7 @@
 #include "jit/MOpcodesGenerated.h"
 #include "jit/TIOracle.h"
 #include "jit/TypePolicy.h"
+#include "js/experimental/JitInfo.h"  // JSJit{Getter,Setter}Op, JSJitInfo
 #include "js/HeapAPI.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/ArrayObject.h"
@@ -13124,10 +13125,12 @@ class MWasmParameter : public MNullaryInstruction {
   ABIArg abi() const { return abi_; }
 };
 
-class MWasmReturn : public MAryControlInstruction<1, 0>,
+class MWasmReturn : public MAryControlInstruction<2, 0>,
                     public NoTypePolicy::Data {
-  explicit MWasmReturn(MDefinition* ins) : MAryControlInstruction(classOpcode) {
+  MWasmReturn(MDefinition* ins, MDefinition* tls)
+      : MAryControlInstruction(classOpcode) {
     initOperand(0, ins);
+    initOperand(1, tls);
   }
 
  public:
@@ -13135,9 +13138,12 @@ class MWasmReturn : public MAryControlInstruction<1, 0>,
   TRIVIAL_NEW_WRAPPERS
 };
 
-class MWasmReturnVoid : public MAryControlInstruction<0, 0>,
+class MWasmReturnVoid : public MAryControlInstruction<1, 0>,
                         public NoTypePolicy::Data {
-  MWasmReturnVoid() : MAryControlInstruction(classOpcode) {}
+  explicit MWasmReturnVoid(MDefinition* tls)
+      : MAryControlInstruction(classOpcode) {
+    initOperand(0, tls);
+  }
 
  public:
   INSTRUCTION_HEADER(WasmReturnVoid)
