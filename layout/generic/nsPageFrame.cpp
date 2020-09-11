@@ -365,7 +365,7 @@ void nsPageFrame::DrawHeaderFooter(gfxContext& aRenderingContext,
       PresContext()->SetBidiEnabled();
     }
 
-    // cacl the x and y positions of the text
+    // calc the x and y positions of the text
     nscoord x =
         GetXPosition(aRenderingContext, aFontMetrics, aRect, aJust, str);
     nscoord y;
@@ -625,12 +625,8 @@ void nsPageFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
     // For print-preview, show margin guides if requested in the settings.
     if (pc->Type() == nsPresContext::eContext_PrintPreview) {
-      if (!mPD->mPrintSettings) {
-        mPD->mPrintSettings = pc->GetPrintSettings();
-      }
       bool showGuides;
-      if (mPD->mPrintSettings &&
-          NS_SUCCEEDED(mPD->mPrintSettings->GetShowMarginGuides(&showGuides)) &&
+      if (NS_SUCCEEDED(mPD->mPrintSettings->GetShowMarginGuides(&showGuides)) &&
           showGuides) {
         set.Content()->AppendNewToTop<nsDisplayGeneric>(
             aBuilder, this, PaintMarginGuides, "MarginGuides",
@@ -654,12 +650,6 @@ void nsPageFrame::PaintHeaderFooter(gfxContext& aRenderingContext, nsPoint aPt,
                                     bool aDisableSubpixelAA) {
   nsPresContext* pc = PresContext();
 
-  if (!mPD->mPrintSettings) {
-    if (pc->Type() == nsPresContext::eContext_PrintPreview || pc->IsDynamic())
-      mPD->mPrintSettings = pc->GetPrintSettings();
-    if (!mPD->mPrintSettings) return;
-  }
-
   nsRect rect(aPt, mRect.Size());
   aRenderingContext.SetColor(sRGBColor::OpaqueBlack());
 
@@ -675,12 +665,8 @@ void nsPageFrame::PaintHeaderFooter(gfxContext& aRenderingContext, nsPoint aPt,
   RefPtr<nsFontMetrics> fontMet =
       pc->DeviceContext()->GetMetricsFor(mPD->mHeadFootFont, params);
 
-  nscoord ascent = 0;
-  nscoord visibleHeight = 0;
-  if (fontMet) {
-    visibleHeight = fontMet->MaxHeight();
-    ascent = fontMet->MaxAscent();
-  }
+  nscoord ascent = fontMet->MaxAscent();
+  nscoord visibleHeight = fontMet->MaxHeight();
 
   // print document headers and footers
   nsString headerLeft, headerCenter, headerRight;

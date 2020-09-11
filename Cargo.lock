@@ -189,12 +189,11 @@ dependencies = [
 
 [[package]]
 name = "authenticator"
-version = "0.2.15"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27f4b43192679f52f6cfe741f982190e3f677f2176fd444d5af8d48d84390433"
+checksum = "f1705a61db5ea860a40b54f649ee82ece942aef6bb91c6e86994e3b7d96597ab"
 dependencies = [
  "bitflags",
- "boxfnonce",
  "core-foundation",
  "devd-rs",
  "libc",
@@ -413,12 +412,6 @@ dependencies = [
  "url",
  "xpcom",
 ]
-
-[[package]]
-name = "boxfnonce"
-version = "0.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8380105befe91099e6f69206164072c05bc92427ff6aa8a5171388317346dd75"
 
 [[package]]
 name = "build-parallel"
@@ -4191,11 +4184,11 @@ dependencies = [
 
 [[package]]
 name = "ron"
-version = "0.5.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ece421e0c4129b90e4a35b6f625e472e96c552136f5093a2f4fa2bbb75a62d5"
+checksum = "f8a58080b7bb83b2ea28c3b7a9a994fd5e310330b7c8ca5258d99b98128ecfe4"
 dependencies = [
- "base64 0.10.1",
+ "base64 0.12.0",
  "bitflags",
  "serde",
 ]
@@ -5612,7 +5605,7 @@ dependencies = [
 name = "webrender"
 version = "0.61.0"
 dependencies = [
- "base64 0.10.1",
+ "base64 0.12.0",
  "bincode",
  "bitflags",
  "build-parallel",

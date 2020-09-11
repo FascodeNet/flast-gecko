@@ -381,8 +381,8 @@ const mozilla::Module* mozJSComponentLoader::LoadModule(FileLocation& aFile) {
 
   mInitialized = true;
 
-  AUTO_PROFILER_TEXT_MARKER_CAUSE("JS XPCOM", spec, JS, Nothing(),
-                                  profiler_get_backtrace());
+  AUTO_PROFILER_MARKER_TEXT("JS XPCOM", JS.WithOptions(MarkerStack::Capture()),
+                            spec);
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("mozJSComponentLoader::LoadModule",
                                         OTHER, spec);
 
@@ -776,7 +776,8 @@ nsresult mozJSComponentLoader::ObjectForLocation(
     options.setNoScriptRval(true)
         .setForceStrictMode()
         .setFileAndLine(nativePath.get(), 1)
-        .setSourceIsLazy(cache || ScriptPreloader::GetSingleton().Active());
+        .setSourceIsLazy(cache || ScriptPreloader::GetSingleton().Active())
+        .setNonSyntacticScope(true);
 
     if (realFile) {
       AutoMemMap map;
@@ -789,7 +790,7 @@ nsresult mozJSComponentLoader::ObjectForLocation(
       JS::SourceText<mozilla::Utf8Unit> srcBuf;
       if (srcBuf.init(cx, buf.get(), map.size(),
                       JS::SourceOwnership::Borrowed)) {
-        script = CompileForNonSyntacticScope(cx, options, srcBuf);
+        script = Compile(cx, options, srcBuf);
       } else {
         MOZ_ASSERT(!script);
       }
@@ -800,7 +801,7 @@ nsresult mozJSComponentLoader::ObjectForLocation(
       JS::SourceText<mozilla::Utf8Unit> srcBuf;
       if (srcBuf.init(cx, str.get(), str.Length(),
                       JS::SourceOwnership::Borrowed)) {
-        script = CompileForNonSyntacticScope(cx, options, srcBuf);
+        script = Compile(cx, options, srcBuf);
       } else {
         MOZ_ASSERT(!script);
       }
@@ -1197,8 +1198,8 @@ nsresult mozJSComponentLoader::Import(JSContext* aCx,
                                       bool aIgnoreExports) {
   mInitialized = true;
 
-  AUTO_PROFILER_TEXT_MARKER_CAUSE("ChromeUtils.import", aLocation, JS,
-                                  Nothing(), profiler_get_backtrace());
+  AUTO_PROFILER_MARKER_TEXT("ChromeUtils.import",
+                            JS.WithOptions(MarkerStack::Capture()), aLocation);
 
   ComponentLoaderInfo info(aLocation);
 

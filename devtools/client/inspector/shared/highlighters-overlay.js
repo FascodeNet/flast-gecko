@@ -5,6 +5,7 @@
 "use strict";
 
 const Services = require("Services");
+const { safeAsyncMethod } = require("devtools/shared/async-utils");
 const EventEmitter = require("devtools/shared/event-emitter");
 const {
   VIEW_NODE_VALUE_TYPE,
@@ -33,12 +34,68 @@ loader.lazyRequireGetter(
   "flexboxReducer",
   "devtools/client/inspector/flexbox/reducers/flexbox"
 );
+loader.lazyRequireGetter(
+  this,
+  "deepEqual",
+  "devtools/shared/DevToolsUtils",
+  true
+);
 
 const DEFAULT_HIGHLIGHTER_COLOR = "#9400FF";
 const SUBGRID_PARENT_ALPHA = 0.5;
 
+const TYPES = {
+  BOXMODEL: "BoxModelHighlighter",
+  FLEXBOX: "FlexboxHighlighter",
+  GEOMETRY: "GeometryEditorHighlighter",
+  GRID: "CssGridHighlighter",
+  SHAPES: "ShapesHighlighter",
+  SELECTOR: "SelectorHighlighter",
+  TRANSFORM: "CssTransformHighlighter",
+};
+
 /**
- * Highlighters overlay is a singleton managing all highlighters in the Inspector.
+ * While refactoring to an abstracted way to show and hide highlighters,
+ * we did not update all tests and code paths which listen for exact events.
+ *
+ * When we show or hide highlighters we reference this mapping to
+ * emit events that consumers may be listening to.
+ *
+ * This list should go away as we incrementally rewrite tests to use
+ * abstract event names with data payloads indicating the highlighter.
+ *
+ * DO NOT OPTIMIZE THIS MAPPING AS CONCATENATED SUBSTRINGS!
+ * It makes it difficult to do project-wide searches for exact matches.
+ */
+const HIGHLIGHTER_EVENTS = {
+  [TYPES.BOXMODEL]: {
+    shown: "box-model-highlighter-shown",
+    hidden: "box-model-highlighter-hidden",
+  },
+  [TYPES.GRID]: {
+    shown: "grid-highlighter-shown",
+    hidden: "grid-highlighter-hidden",
+  },
+  [TYPES.FLEXBOX]: {
+    shown: "flexbox-highlighter-shown",
+    hidden: "flexbox-highlighter-hidden",
+  },
+  [TYPES.GEOMETRY]: {
+    shown: "geometry-editor-highlighter-shown",
+    hidden: "geometry-editor-highlighter-hidden",
+  },
+  [TYPES.SHAPES]: {
+    shown: "shapes-highlighter-shown",
+    hidden: "shapes-highlighter-hidden",
+  },
+  [TYPES.TRANSFORM]: {
+    shown: "css-transform-highlighter-shown",
+    hidden: "css-transform-highlighter-hidden",
+  },
+};
+
+/**
+ * HighlightersOverlay manages the visibility of highlighters in the Inspector.
  */
 class HighlightersOverlay {
   /**
@@ -56,6 +113,11 @@ class HighlightersOverlay {
       "devtools.gridinspector.maxHighlighters"
     );
 
+    // Map of active highlighter types to objects with the highlighted nodeFront and the
+    // highlighter instance. Ex: "BoxModelHighlighter" => { nodeFront, highlighter }
+    // It will fully replace this.highlighters when all highlighter consumers are updated
+    // to use it as the single source of truth for which highlighters are visible.
+    this._activeHighlighters = new Map();
     // Collection of instantiated highlighter actors like FlexboxHighlighter,
     // ShapesHighlighter and GeometryEditorHighlighter.
     this.highlighters = {};
@@ -118,6 +180,16 @@ class HighlightersOverlay {
     this.onShapesHighlighterShown = this.onShapesHighlighterShown.bind(this);
     this.onShapesHighlighterHidden = this.onShapesHighlighterHidden.bind(this);
 
+    // Catch unexpected errors from async functions if the manager has been destroyed.
+    this.hideHighlighterType = safeAsyncMethod(
+      this.hideHighlighterType.bind(this),
+      () => this.destroyed
+    );
+    this.showHighlighterTypeForNode = safeAsyncMethod(
+      this.showHighlighterTypeForNode.bind(this),
+      () => this.destroyed
+    );
+
     // Add inspector events, not specific to a given view.
     this.inspector.on("markupmutation", this.onMarkupMutation);
 
@@ -131,6 +203,171 @@ class HighlightersOverlay {
     this.walker.on("display-change", this.onDisplayChange);
 
     EventEmitter.decorate(this);
+  }
+
+  /**
+   * Get a highlighter instance of the given type for the given node front.
+   *
+   * @param  {String} type
+   *         Highlighter type.
+   * @param  {NodeFront} nodeFront
+   *         Node front of the element to be highlighted with the requested highlighter.
+   * @return {Promise}
+   *         Promise which resolves with a highlighter instance
+   */
+  async _getHighlighterTypeForNode(type, nodeFront) {
+    const { inspectorFront } = nodeFront;
+    const highlighter = await inspectorFront.getOrCreateHighlighterByType(type);
+    return highlighter;
+  }
+
+  /**
+   * Get the currently active highlighter of a given type.
+   *
+   * @param  {String} type
+   *         Highlighter type.
+   * @return {Highlighter|null}
+   *         Highlighter instance
+   *         or null if no highlighter of that type is active.
+   */
+  getActiveHighlighter(type) {
+    if (!this._activeHighlighters.has(type)) {
+      return null;
+    }
+
+    const { highlighter } = this._activeHighlighters.get(type);
+    return highlighter;
+  }
+
+  /**
+   * Get the node front highlighted by a given highlighter type.
+   *
+   * @param  {String} type
+   *         Highlighter type.
+   * @return {NodeFront|null}
+   *         Node front of the element currently being highlighted
+   *         or null if no highlighter of that type is active.
+   */
+  getNodeForActiveHighlighter(type) {
+    if (!this._activeHighlighters.has(type)) {
+      return null;
+    }
+
+    const { nodeFront } = this._activeHighlighters.get(type);
+    return nodeFront;
+  }
+
+  /**
+   * Highlight a given node front with a given type of highlighter.
+   *
+   * Highlighters are shown for one node at a time. Before showing the same highlighter
+   * type on another node, it will first be hidden from the previously highlighted node.
+   * In pages with frames running in different processes, this ensures highlighters from
+   * other frames do not stay visible.
+   *
+   * @param  {String} type
+   *          Highlighter type to show.
+   * @param  {NodeFront} nodeFront
+   *          Node front of the element to be highlighted.
+   * @param  {Options} options
+   *         Optional object with options to pass to the highlighter.
+   * @return {Promise}
+   */
+  async showHighlighterTypeForNode(type, nodeFront, options) {
+    if (this._activeHighlighters.has(type)) {
+      const {
+        nodeFront: activeNodeFront,
+        options: activeOptions,
+        timer: activeTimer,
+      } = this._activeHighlighters.get(type);
+
+      // Hide the existing highlighter before showing it for a different node.
+      // Else, if the node is the same and options are the same, skip duplicate call.
+      // Duplicate calls to show the highlighter for the same node are allowed
+      // if the options are different (for example, when scheduling autohide).
+      if (nodeFront !== activeNodeFront) {
+        await this.hideHighlighterType(type);
+      } else if (deepEqual(options, activeOptions)) {
+        return;
+      }
+
+      // Clear any autohide timer associated with this highlighter type.
+      // This clears any existing timer for duplicate calls to show() if:
+      // - called with different options.duration
+      // - called once with options.duration, then without (see deepEqual() above)
+      clearTimeout(activeTimer);
+    }
+
+    const highlighter = await this._getHighlighterTypeForNode(type, nodeFront);
+    // Set a timer to automatically hide the highlighter if a duration is provided.
+    const timer = this.scheduleAutoHideHighlighterType(type, options?.duration);
+    // TODO: support case for multiple highlighter instances (ex: multiple grids)
+    this._activeHighlighters.set(type, {
+      nodeFront,
+      highlighter,
+      options,
+      timer,
+    });
+    await highlighter.show(nodeFront, options);
+
+    // Emit any type-specific highlighter shown event for tests
+    // which have not yet been updated to listen for the generic event
+    if (HIGHLIGHTER_EVENTS[type]?.shown) {
+      this.emit(HIGHLIGHTER_EVENTS[type].shown, nodeFront, options);
+    }
+    this.emit("highlighter-shown", { type, highlighter, nodeFront, options });
+  }
+
+  /**
+   * Set a timer to automatically hide all highlighters of a given type after a delay.
+   *
+   * @param  {String} type
+   *         Highlighter type to hide.
+   * @param  {Number|undefined} duration
+   *         Delay in milliseconds after which to hide the highlighter.
+   *         If a duration is not provided, return early without scheduling a task.
+   * @return {Number|undefined}
+   *         Index of the scheduled task returned by setTimeout().
+   */
+  scheduleAutoHideHighlighterType(type, duration) {
+    if (!duration) {
+      return undefined;
+    }
+
+    const timer = setTimeout(async () => {
+      await this.hideHighlighterType(type);
+      clearTimeout(timer);
+    }, duration);
+
+    return timer;
+  }
+
+  /**
+   * Hide all instances of a given highlighter type.
+   *
+   * @param  {String} type
+   *         Highlighter type to hide.
+   * @return {Promise}
+   */
+  async hideHighlighterType(type) {
+    if (!this._activeHighlighters.has(type)) {
+      return;
+    }
+
+    const { highlighter, nodeFront, timer } = this._activeHighlighters.get(
+      type
+    );
+    // Clear any autohide timer associated with this highlighter type.
+    clearTimeout(timer);
+    this._activeHighlighters.delete(type);
+    await highlighter.hide();
+
+    // Emit any type-specific highlighter hidden event for tests
+    // which have not yet been updated to listen for the generic event
+    if (HIGHLIGHTER_EVENTS[type]?.hidden) {
+      this.emit(HIGHLIGHTER_EVENTS[type].hidden, nodeFront);
+    }
+    this.emit("highlighter-hidden", { type, highlighter, nodeFront });
   }
 
   async canGetParentGridNode() {
@@ -709,46 +946,6 @@ class HighlightersOverlay {
   }
 
   /**
-   * Show the box model highlighter for the given node.
-   *
-   * @param  {NodeFront} node
-   *         The NodeFront of the element to highlight.
-   * @param  {Object} options
-   *         Object used for passing options to the box model highlighter.
-   */
-  async showBoxModelHighlighter(node, options) {
-    const highlighter = await this._getHighlighter("BoxModelHighlighter");
-    if (!highlighter) {
-      return;
-    }
-
-    const isShown = await highlighter.show(node, options);
-    if (!isShown) {
-      return;
-    }
-
-    this.boxModelHighlighterShown = node;
-    this.emit("box-model-highlighter-shown", node);
-  }
-
-  /**
-   * Hide the box model highlighter.
-   */
-  async hideBoxModelHighlighter() {
-    if (
-      !this.boxModelHighlighterShown ||
-      !this.highlighters.BoxModelHighlighter
-    ) {
-      return;
-    }
-
-    await this.highlighters.BoxModelHighlighter.hide();
-    const node = this.boxModelHighlighterShown;
-    this.boxModelHighlighterShown = null;
-    this.emit("box-model-highlighter-hidden", node);
-  }
-
-  /**
    * Toggle the geometry editor highlighter for the given element.
    *
    * @param {NodeFront} node
@@ -990,6 +1187,12 @@ class HighlightersOverlay {
     return highlighter;
   }
 
+  /**
+   * Ignore unexpected errors from async function calls
+   * if HighlightersOverlay has been destroyed.
+   *
+   * @param {Error} error
+   */
   _handleRejection(error) {
     if (!this.destroyed) {
       console.error(error);
@@ -1069,7 +1272,7 @@ class HighlightersOverlay {
     }
 
     this.hoveredHighlighterShown = null;
-    this.emit("highlighter-hidden");
+    this.emit("css-transform-highlighter-hidden");
   }
 
   /**
@@ -1310,7 +1513,7 @@ class HighlightersOverlay {
         .then(highlighter => highlighter.show(node))
         .then(shown => {
           if (shown) {
-            this.emit("highlighter-shown");
+            this.emit("css-transform-highlighter-shown");
           }
         });
     }
@@ -1417,11 +1620,17 @@ class HighlightersOverlay {
       this.extraGridHighlighterPool.push(highlighter);
     }
 
+    // Destroy all highlighters and clear any timers set to autohide highlighters.
+    for (const { highlighter, timer } of this._activeHighlighters.values()) {
+      highlighter.finalize();
+      clearTimeout(timer);
+    }
+
+    this._activeHighlighters.clear();
     this.gridHighlighters.clear();
     this.parentGridHighlighters.clear();
     this.subgridToParentMap.clear();
 
-    this.boxModelHighlighterShown = null;
     this.flexboxHighlighterShown = null;
     this.geometryEditorHighlighterShown = null;
     this.hoveredHighlighterShown = null;
@@ -1470,6 +1679,14 @@ class HighlightersOverlay {
    * Destroy and clean-up all instances of highlighters.
    */
   destroyHighlighters() {
+    // Destroy all highlighters and clear any timers set to autohide highlighters.
+    for (const { highlighter, timer } of this._activeHighlighters.values()) {
+      highlighter.finalize();
+      clearTimeout(timer);
+    }
+
+    this._activeHighlighters.clear();
+
     for (const type in this.highlighters) {
       if (this.highlighters[type]) {
         this.highlighters[type].finalize();
@@ -1512,7 +1729,6 @@ class HighlightersOverlay {
     this.telemetry = null;
     this.walker = null;
 
-    this.boxModelHighlighterShown = null;
     this.flexboxHighlighterShown = null;
     this.geometryEditorHighlighterShown = null;
     this.hoveredHighlighterShown = null;
@@ -1522,5 +1738,7 @@ class HighlightersOverlay {
     this.destroyed = true;
   }
 }
+
+HighlightersOverlay.TYPES = HighlightersOverlay.prototype.TYPES = TYPES;
 
 module.exports = HighlightersOverlay;

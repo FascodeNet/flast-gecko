@@ -4,6 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// Markers are useful to delimit something important happening such as the first
+// paint. Unlike labels, which are only recorded in the profile buffer if a
+// sample is collected while the label is on the label stack, markers will
+// always be recorded in the profile buffer.
+//
 // This header contains definitions necessary to add markers to the Gecko
 // Profiler buffer.
 //
@@ -38,6 +43,7 @@
 #  define PROFILER_MARKER_UNTYPED(markerName, options)
 #  define PROFILER_MARKER(markerName, options, MarkerType, ...)
 #  define PROFILER_MARKER_TEXT(markerName, options, text)
+#  define AUTO_PROFILER_MARKER_TEXT(markerName, options, text)
 
 #else  // ndef MOZ_GECKO_PROFILER
 
@@ -73,13 +79,13 @@ mozilla::ProfileBufferBlockIndex profiler_add_marker(
 
 #  define PROFILER_MARKER_UNTYPED(markerName, options)                         \
     do {                                                                       \
-      AUTO_PROFILER_STATS(add_marker_v2);                                      \
+      AUTO_PROFILER_STATS(PROFILER_MARKER_UNTYPED);                            \
       ::profiler_add_marker<>(markerName, ::geckoprofiler::category::options); \
     } while (false)
 
 #  define PROFILER_MARKER(markerName, options, MarkerType, ...)           \
     do {                                                                  \
-      AUTO_PROFILER_STATS(add_marker_v2_with_##MarkerType);               \
+      AUTO_PROFILER_STATS(PROFILER_MARKER_with_##MarkerType);             \
       ::profiler_add_marker<::geckoprofiler::markers::MarkerType>(        \
           markerName, ::geckoprofiler::category::options, ##__VA_ARGS__); \
     } while (false)
@@ -91,10 +97,43 @@ using Text = ::mozilla::baseprofiler::markers::Text;
 
 #  define PROFILER_MARKER_TEXT(markerName, options, text)        \
     do {                                                         \
-      AUTO_PROFILER_STATS(add_marker_v2_with_Text);              \
+      AUTO_PROFILER_STATS(PROFILER_MARKER_TEXT);                 \
       ::profiler_add_marker<::geckoprofiler::markers::Text>(     \
           markerName, ::geckoprofiler::category::options, text); \
     } while (false)
+
+// RAII object that adds a PROFILER_MARKER_TEXT when destroyed; the marker's
+// timing will be the interval from construction (unless an instant or start
+// time is already specified in the provided options) until destruction.
+class MOZ_RAII AutoProfilerTextMarker {
+ public:
+  AutoProfilerTextMarker(const char* aMarkerName,
+                         mozilla::MarkerOptions&& aOptions,
+                         const nsACString& aText)
+      : mMarkerName(aMarkerName), mOptions(std::move(aOptions)), mText(aText) {
+    MOZ_ASSERT(mOptions.Timing().EndTime().IsNull(),
+               "AutoProfilerTextMarker options shouldn't have an end time");
+    if (mOptions.Timing().StartTime().IsNull()) {
+      mOptions.Set(mozilla::MarkerTiming::InstantNow());
+    }
+  }
+
+  ~AutoProfilerTextMarker() {
+    mOptions.TimingRef().SetIntervalEnd();
+    PROFILER_MARKER_TEXT(
+        mozilla::ProfilerString8View::WrapNullTerminatedString(mMarkerName),
+        MarkerOptions(std::move(mOptions)), mText);
+  }
+
+ protected:
+  const char* mMarkerName;
+  mozilla::MarkerOptions mOptions;
+  nsCString mText;
+};
+
+#  define AUTO_PROFILER_MARKER_TEXT(markerName, options, text) \
+    AutoProfilerTextMarker PROFILER_RAII(                      \
+        markerName, ::mozilla::baseprofiler::category::options, text)
 
 #endif  // nfed MOZ_GECKO_PROFILER else
 

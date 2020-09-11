@@ -109,6 +109,9 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   ObjectGroup* groupStubField(uint32_t offset) {
     return reinterpret_cast<ObjectGroup*>(readStubWord(offset));
   }
+  BaseScript* baseScriptStubField(uint32_t offset) {
+    return reinterpret_cast<BaseScript*>(readStubWord(offset));
+  }
   const void* rawPointerField(uint32_t offset) {
     return reinterpret_cast<const void*>(readStubWord(offset));
   }
@@ -601,6 +604,22 @@ bool WarpCacheIRTranspiler::emitGuardSpecificFunction(
   add(ins);
 
   setOperand(objId, ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardFunctionScript(
+    ObjOperandId funId, uint32_t expectedOffset, uint32_t nargsAndFlagsOffset) {
+  MDefinition* fun = getOperand(funId);
+  BaseScript* expected = baseScriptStubField(expectedOffset);
+  uint32_t nargsAndFlags = uint32StubField(nargsAndFlagsOffset);
+
+  uint16_t nargs = nargsAndFlags >> 16;
+  FunctionFlags flags = FunctionFlags(uint16_t(nargsAndFlags));
+
+  auto* ins = MGuardFunctionScript::New(alloc(), fun, expected, nargs, flags);
+  add(ins);
+
+  setOperand(funId, ins);
   return true;
 }
 
@@ -3129,13 +3148,27 @@ WrappedFunction* WarpCacheIRTranspiler::maybeCallTarget(MDefinition* callee,
   // CacheIR emits the following for specialized calls:
   //     GuardSpecificFunction <callee> <func> ..
   //     Call(Native|Scripted)Function <callee> ..
-  // We can use the <func> JSFunction object to specialize this call.
-  if (!callee->isGuardSpecificFunction()) {
-    return nullptr;
+  // or:
+  //     GuardClass <callee> ..
+  //     GuardFunctionScript <callee> <script> ..
+  //     CallScriptedFunction <callee> ..
+  //
+  // We can use the <func> JSFunction or <script> BaseScript to specialize this
+  // call.
+  if (callee->isGuardSpecificFunction()) {
+    auto* guard = callee->toGuardSpecificFunction();
+    return maybeWrappedFunction(guard->expected(), kind, guard->nargs(),
+                                guard->flags());
   }
-  auto* guard = callee->toGuardSpecificFunction();
-  return maybeWrappedFunction(guard->expected(), kind, guard->nargs(),
-                              guard->flags());
+  if (callee->isGuardFunctionScript()) {
+    MOZ_ASSERT(kind == CallKind::Scripted);
+    auto* guard = callee->toGuardFunctionScript();
+    WrappedFunction* wrappedTarget = new (alloc()) WrappedFunction(
+        /* nativeFun = */ nullptr, guard->nargs(), guard->flags());
+    MOZ_ASSERT(wrappedTarget->hasJitEntry());
+    return wrappedTarget;
+  }
+  return nullptr;
 }
 
 // If it is possible to use MCall for this call, update callInfo_ to use

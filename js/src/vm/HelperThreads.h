@@ -14,10 +14,10 @@
 #define vm_HelperThreads_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
-#include "mozilla/Variant.h"
 
 #include "jsapi.h"
 
@@ -30,6 +30,7 @@
 #include "js/TypeDecls.h"
 #include "threading/ConditionVariable.h"
 #include "threading/Thread.h"
+#include "vm/HelperThreadTask.h"
 #include "vm/JSContext.h"
 #include "vm/MutexIDs.h"
 #include "vm/OffThreadPromiseRuntimeState.h"  // js::OffThreadPromiseTask
@@ -47,20 +48,16 @@ class CompileError;
 struct ParseTask;
 struct PromiseHelperTask;
 
-struct HelperThreadTask {
-  virtual void runTaskLocked(AutoLockHelperThreadState& locked) = 0;
-  virtual ThreadType threadType() = 0;
-  virtual ~HelperThreadTask() = default;
-};
-
 namespace jit {
 class IonCompileTask;
+class IonFreeTask;
 }  // namespace jit
 namespace wasm {
 struct Tier2GeneratorTask;
 }  // namespace wasm
 
 enum class ParseTaskKind { Script, Module, ScriptDecode, MultiScriptsDecode };
+enum class StartEncoding { No, Yes };
 
 namespace wasm {
 
@@ -97,6 +94,8 @@ class GlobalHelperThreadState {
 
   typedef Vector<jit::IonCompileTask*, 0, SystemAllocPolicy>
       IonCompileTaskVector;
+  using IonFreeTaskVector =
+      Vector<js::UniquePtr<jit::IonFreeTask>, 0, SystemAllocPolicy>;
   typedef Vector<UniquePtr<ParseTask>, 0, SystemAllocPolicy> ParseTaskVector;
   using ParseTaskList = mozilla::LinkedList<ParseTask>;
   typedef Vector<UniquePtr<SourceCompressionTask>, 0, SystemAllocPolicy>
@@ -108,6 +107,11 @@ class GlobalHelperThreadState {
   using HelperThreadVector =
       Vector<UniquePtr<HelperThread>, 0, SystemAllocPolicy>;
 
+  // Count of running task by each threadType.
+  mozilla::EnumeratedArray<ThreadType, ThreadType::THREAD_TYPE_MAX, size_t>
+      runningTaskCount;
+  size_t totalCountRunningTasks;
+
   WriteOnceData<JS::RegisterThreadCallback> registerThread;
   WriteOnceData<JS::UnregisterThreadCallback> unregisterThread;
 
@@ -118,7 +122,8 @@ class GlobalHelperThreadState {
   HelperThreadVector threads_;
 
   // Ion compilation worklist and finished jobs.
-  IonCompileTaskVector ionWorklist_, ionFinishedList_, ionFreeList_;
+  IonCompileTaskVector ionWorklist_, ionFinishedList_;
+  IonFreeTaskVector ionFreeList_;
 
   // wasm worklists.
   wasm::CompileTaskPtrFifo wasmWorklist_tier1_;
@@ -154,6 +159,12 @@ class GlobalHelperThreadState {
 
   // Global list of JSContext for GlobalHelperThreadState to use.
   ContextVector helperContexts_;
+
+  using HelperThreadTaskVector =
+      Vector<HelperThreadTask*, 0, SystemAllocPolicy>;
+  // Vector of running HelperThreadTask.
+  // This is used to get the HelperThreadTask that are currently running.
+  HelperThreadTaskVector helperTasks_;
 
   ParseTask* removeFinishedParseTask(ParseTaskKind kind,
                                      JS::OffThreadToken* token);
@@ -208,8 +219,11 @@ class GlobalHelperThreadState {
   void wait(AutoLockHelperThreadState& locked, CondVar which,
             mozilla::TimeDuration timeout = mozilla::TimeDuration::Forever());
   void notifyAll(CondVar which, const AutoLockHelperThreadState&);
+
+ private:
   void notifyOne(CondVar which, const AutoLockHelperThreadState&);
 
+ public:
   // Helper method for removing items from the vectors below while iterating
   // over them.
   template <typename T>
@@ -228,7 +242,7 @@ class GlobalHelperThreadState {
   IonCompileTaskVector& ionFinishedList(const AutoLockHelperThreadState&) {
     return ionFinishedList_;
   }
-  IonCompileTaskVector& ionFreeList(const AutoLockHelperThreadState&) {
+  IonFreeTaskVector& ionFreeList(const AutoLockHelperThreadState&) {
     return ionFreeList_;
   }
 
@@ -299,18 +313,29 @@ class GlobalHelperThreadState {
     gcParallelThreadCount = count;
   }
 
-  bool canStartWasmCompile(const AutoLockHelperThreadState& lock,
-                           wasm::CompileMode mode);
+  HelperThreadTaskVector& helperTasks(const AutoLockHelperThreadState&) {
+    return helperTasks_;
+  }
 
-  bool canStartWasmTier1Compile(const AutoLockHelperThreadState& lock);
-  bool canStartWasmTier2Compile(const AutoLockHelperThreadState& lock);
-  bool canStartWasmTier2Generator(const AutoLockHelperThreadState& lock);
-  bool canStartPromiseHelperTask(const AutoLockHelperThreadState& lock);
-  bool canStartIonCompile(const AutoLockHelperThreadState& lock);
-  bool canStartIonFreeTask(const AutoLockHelperThreadState& lock);
-  bool canStartParseTask(const AutoLockHelperThreadState& lock);
-  bool canStartCompressionTask(const AutoLockHelperThreadState& lock);
-  bool canStartGCParallelTask(const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetWasmCompile(const AutoLockHelperThreadState& lock,
+                                        wasm::CompileMode mode);
+
+  HelperThreadTask* maybeGetWasmTier1CompileTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetWasmTier2CompileTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetWasmTier2GeneratorTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetPromiseHelperTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetIonCompileTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetIonFreeTask(const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetParseTask(const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetCompressionTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetGCParallelTask(
+      const AutoLockHelperThreadState& lock);
 
   enum class ScheduleCompressionTask { GC, API };
 
@@ -328,8 +353,9 @@ class GlobalHelperThreadState {
   UniquePtr<ParseTask> finishParseTaskCommon(JSContext* cx, ParseTaskKind kind,
                                              JS::OffThreadToken* token);
 
-  JSScript* finishSingleParseTask(JSContext* cx, ParseTaskKind kind,
-                                  JS::OffThreadToken* token);
+  JSScript* finishSingleParseTask(
+      JSContext* cx, ParseTaskKind kind, JS::OffThreadToken* token,
+      StartEncoding startEncoding = StartEncoding::No);
   bool generateLCovSources(JSContext* cx, ParseTask* parseTask);
   bool finishMultiParseTask(JSContext* cx, ParseTaskKind kind,
                             JS::OffThreadToken* token,
@@ -345,7 +371,9 @@ class GlobalHelperThreadState {
 
   void trace(JSTracer* trc);
 
-  JSScript* finishScriptParseTask(JSContext* cx, JS::OffThreadToken* token);
+  JSScript* finishScriptParseTask(
+      JSContext* cx, JS::OffThreadToken* token,
+      StartEncoding startEncoding = StartEncoding::No);
   JSScript* finishScriptDecodeTask(JSContext* cx, JS::OffThreadToken* token);
   bool finishMultiScriptsDecodeTask(JSContext* cx, JS::OffThreadToken* token,
                                     MutableHandle<ScriptVector> scripts);
@@ -355,13 +383,13 @@ class GlobalHelperThreadState {
   void waitForAllThreads();
   void waitForAllThreadsLocked(AutoLockHelperThreadState&);
 
-  template <typename T>
-  bool checkTaskThreadLimit(size_t maxThreads, bool isMaster,
+  bool checkTaskThreadLimit(ThreadType threadType, size_t maxThreads,
+                            bool isMaster,
                             const AutoLockHelperThreadState& lock) const;
-  template <typename T>
-  bool checkTaskThreadLimit(size_t maxThreads,
+  bool checkTaskThreadLimit(ThreadType threadType, size_t maxThreads,
                             const AutoLockHelperThreadState& lock) const {
-    return checkTaskThreadLimit<T>(maxThreads, /* isMaster */ false, lock);
+    return checkTaskThreadLimit(threadType, maxThreads, /* isMaster */ false,
+                                lock);
   }
 
   void triggerFreeUnusedMemory();
@@ -387,6 +415,24 @@ class GlobalHelperThreadState {
         MOZ_CRASH("Invalid CondVar in |whichWakeup|");
     }
   }
+
+  void dispatch(const AutoLockHelperThreadState& locked);
+
+ public:
+  bool submitTask(wasm::UniqueTier2GeneratorTask task);
+  bool submitTask(wasm::CompileTask* task, wasm::CompileMode mode);
+  bool submitTask(UniquePtr<jit::IonFreeTask> task,
+                  const AutoLockHelperThreadState& lock);
+  bool submitTask(jit::IonCompileTask* task,
+                  const AutoLockHelperThreadState& locked);
+  bool submitTask(UniquePtr<SourceCompressionTask> task,
+                  const AutoLockHelperThreadState& locked);
+  bool submitTask(JSRuntime* rt, UniquePtr<ParseTask> task,
+                  const AutoLockHelperThreadState& locked);
+  bool submitTask(PromiseHelperTask* task);
+  bool submitTask(GCParallelTask* task,
+                  const AutoLockHelperThreadState& locked);
+  void runTaskLocked(HelperThreadTask* task, AutoLockHelperThreadState& lock);
 };
 
 static inline GlobalHelperThreadState& HelperThreadState() {
@@ -396,17 +442,9 @@ static inline GlobalHelperThreadState& HelperThreadState() {
   return *gHelperThreadState;
 }
 
-typedef mozilla::Variant<jit::IonCompileTask*, wasm::CompileTask*,
-                         wasm::Tier2GeneratorTask*, PromiseHelperTask*,
-                         ParseTask*, SourceCompressionTask*, GCParallelTask*>
-    HelperTaskUnion;
-
 /* Individual helper thread, one allocated per core. */
 class HelperThread {
   Thread thread;
-
-  /* The current task being executed by this thread, if any. */
-  mozilla::Maybe<HelperTaskUnion> currentTask;
 
   /*
    * The profiling thread for this helper thread, which can be used to push
@@ -428,40 +466,6 @@ class HelperThread {
 
   ThreadId threadId() { return thread.get_id(); }
 
-  bool idle() const { return currentTask.isNothing(); }
-
-  template <typename T>
-  bool hasTask() const {
-    return !idle() && currentTask->is<T>();
-  }
-
-  /* Any builder currently being compiled by Ion on this thread. */
-  jit::IonCompileTask* ionCompileTask() {
-    return maybeCurrentTaskAs<jit::IonCompileTask*>();
-  }
-
-  /* Any wasm data currently being optimized on this thread. */
-  wasm::CompileTask* wasmTask() {
-    return maybeCurrentTaskAs<wasm::CompileTask*>();
-  }
-
-  wasm::Tier2GeneratorTask* wasmTier2GeneratorTask() {
-    return maybeCurrentTaskAs<wasm::Tier2GeneratorTask*>();
-  }
-
-  /* Any source being parsed/emitted on this thread. */
-  ParseTask* parseTask() { return maybeCurrentTaskAs<ParseTask*>(); }
-
-  /* Any source being compressed on this thread. */
-  SourceCompressionTask* compressionTask() {
-    return maybeCurrentTaskAs<SourceCompressionTask*>();
-  }
-
-  /* State required to perform a GC parallel task. */
-  GCParallelTask* gcParallelTask() {
-    return maybeCurrentTaskAs<GCParallelTask*>();
-  }
-
   void setTerminate(const AutoLockHelperThreadState& lock);
   void join();
 
@@ -481,42 +485,12 @@ class HelperThread {
     ProfilingStack* profilingStack;
   };
 
-  struct TaskSpec {
-    using Selector =
-        bool (GlobalHelperThreadState::*)(const AutoLockHelperThreadState&);
-    using Handler = void (HelperThread::*)(AutoLockHelperThreadState&);
+  using Selector = HelperThreadTask* (
+      GlobalHelperThreadState::*)(const AutoLockHelperThreadState&);
+  static const Selector selectors[];
 
-    js::ThreadType type;
-    Selector canStart;
-    Handler handleWorkload;
-  };
-
-  static const TaskSpec taskSpecs[];
-
-  const TaskSpec* findHighestPriorityTask(
+  HelperThreadTask* findHighestPriorityTask(
       const AutoLockHelperThreadState& locked);
-
-  template <typename T>
-  T maybeCurrentTaskAs() {
-    if (currentTask.isSome() && currentTask->is<T>()) {
-      return currentTask->as<T>();
-    }
-
-    return nullptr;
-  }
-
-  void handleWasmWorkload(AutoLockHelperThreadState& locked,
-                          wasm::CompileMode mode);
-
-  void handleWasmTier1Workload(AutoLockHelperThreadState& locked);
-  void handleWasmTier2Workload(AutoLockHelperThreadState& locked);
-  void handleWasmTier2GeneratorWorkload(AutoLockHelperThreadState& locked);
-  void handlePromiseHelperTaskWorkload(AutoLockHelperThreadState& locked);
-  void handleIonWorkload(AutoLockHelperThreadState& locked);
-  void handleIonFreeWorkload(AutoLockHelperThreadState& locked);
-  void handleParseWorkload(AutoLockHelperThreadState& locked);
-  void handleCompressionWorkload(AutoLockHelperThreadState& locked);
-  void handleGCParallelWorkload(AutoLockHelperThreadState& locked);
 };
 
 /* Methods for interacting with helper threads. */
@@ -786,7 +760,7 @@ struct ParseTask : public mozilla::LinkedListElement<ParseTask>,
     return mallocSizeOf(this) + sizeOfExcludingThis(mallocSizeOf);
   }
 
-  void runTaskLocked(AutoLockHelperThreadState& locked) override;
+  void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
   void runTask();
   ThreadType threadType() override { return ThreadType::THREAD_TYPE_PARSE; }
 };
@@ -823,7 +797,7 @@ extern bool OffThreadParsingMustWaitForGC(JSRuntime* rt);
 // GCs after being enqueued. Completed tasks are handled during the sweeping
 // phase by AttachCompressedSourcesTask, which runs in parallel with other GC
 // sweeping tasks.
-class SourceCompressionTask : public RunnableTask {
+class SourceCompressionTask : public HelperThreadTask {
   friend class HelperThread;
   friend class ScriptSource;
 
@@ -864,8 +838,8 @@ class SourceCompressionTask : public RunnableTask {
     return sourceHolder_.get()->refs == 1;
   }
 
-  void runTask() override;
-  void runTaskLocked(AutoLockHelperThreadState& locked);
+  void runTask();
+  void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
   void complete();
 
   ThreadType threadType() override { return ThreadType::THREAD_TYPE_COMPRESS; }
@@ -903,7 +877,7 @@ struct PromiseHelperTask : OffThreadPromiseTask, public HelperThreadTask {
   // the caller must immediately return from the stream callback.
   void executeAndResolveAndDestroy(JSContext* cx);
 
-  void runTaskLocked(AutoLockHelperThreadState& lock) override;
+  void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
   ThreadType threadType() override { return THREAD_TYPE_PROMISE_TASK; }
 };
 

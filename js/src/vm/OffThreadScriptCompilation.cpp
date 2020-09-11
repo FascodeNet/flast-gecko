@@ -92,6 +92,14 @@ JS_PUBLIC_API JSScript* JS::FinishOffThreadScript(JSContext* cx,
   return HelperThreadState().finishScriptParseTask(cx, token);
 }
 
+JS_PUBLIC_API JSScript* JS::FinishOffThreadScriptAndStartIncrementalEncoding(
+    JSContext* cx, JS::OffThreadToken* token) {
+  MOZ_ASSERT(cx);
+  MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
+  return HelperThreadState().finishScriptParseTask(cx, token,
+                                                   StartEncoding::Yes);
+}
+
 JS_PUBLIC_API void JS::CancelOffThreadScript(JSContext* cx,
                                              JS::OffThreadToken* token) {
   MOZ_ASSERT(cx);
@@ -199,3 +207,13 @@ JS_PUBLIC_API void JS::CancelMultiOffThreadScriptsDecoder(
   HelperThreadState().cancelParseTask(cx->runtime(),
                                       ParseTaskKind::MultiScriptsDecode, token);
 }
+
+namespace js {
+bool gUseOffThreadParseGlobal = true;
+}  // namespace js
+
+JS_PUBLIC_API void JS::SetUseOffThreadParseGlobal(bool value) {
+  gUseOffThreadParseGlobal = value;
+}
+
+bool js::UseOffThreadParseGlobal() { return gUseOffThreadParseGlobal; }

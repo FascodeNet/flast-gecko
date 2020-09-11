@@ -2038,8 +2038,8 @@ bool FallbackICCodeCompiler::emitGetElem(bool hasReceiver) {
   // When we get here, ICStubReg contains the ICGetElem_Fallback stub,
   // which we can't use to enter the TypeMonitor IC, because it's a
   // MonitoredFallbackStub instead of a MonitoredStub. So, we cheat. Note that
-  // we must have a non-null fallbackMonitorStub here because InitFromBailout
-  // delazifies.
+  // we must have a non-null fallbackMonitorStub here because
+  // BaselineStackBuilder::buildStubFrame delazifies the stub when bailing out.
   masm.loadPtr(Address(ICStubReg,
                        ICMonitoredFallbackStub::offsetOfFallbackMonitorStub()),
                ICStubReg);
@@ -2692,8 +2692,8 @@ bool FallbackICCodeCompiler::emitGetProp(bool hasReceiver) {
   // When we get here, ICStubReg contains the ICGetProp_Fallback stub,
   // which we can't use to enter the TypeMonitor IC, because it's a
   // MonitoredFallbackStub instead of a MonitoredStub. So, we cheat. Note that
-  // we must have a non-null fallbackMonitorStub here because InitFromBailout
-  // delazifies.
+  // we must have a non-null fallbackMonitorStub here because
+  // BaselineStackBuilder::buildStubFrame delazifies the stub when bailing out.
   masm.loadPtr(Address(ICStubReg,
                        ICMonitoredFallbackStub::offsetOfFallbackMonitorStub()),
                ICStubReg);
@@ -2966,8 +2966,9 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
   // allowed to attach stubs.
   if (canAttachStub) {
     HandleValueArray args = HandleValueArray::fromMarkedLocation(argc, vp + 2);
-    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), argc, callee,
-                        callArgs.thisv(), newTarget, args);
+    bool isFirstStub = stub->newStubIsFirstStub();
+    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), isFirstStub,
+                        argc, callee, callArgs.thisv(), newTarget, args);
     switch (gen.tryAttachStub()) {
       case AttachDecision::NoAction:
         break;
@@ -3034,8 +3035,9 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
 
   if (deferred && canAttachStub) {
     HandleValueArray args = HandleValueArray::fromMarkedLocation(argc, vp + 2);
-    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), argc, callee,
-                        callArgs.thisv(), newTarget, args);
+    bool isFirstStub = stub->newStubIsFirstStub();
+    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), isFirstStub,
+                        argc, callee, callArgs.thisv(), newTarget, args);
     switch (gen.tryAttachDeferredStub(res)) {
       case AttachDecision::Attach: {
         ICScript* icScript = frame->icScript();
@@ -3101,8 +3103,9 @@ bool DoSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
 
     HandleValueArray args = HandleValueArray::fromMarkedLocation(
         aobj->length(), aobj->getDenseElements());
-    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), 1, callee,
-                        thisv, newTarget, args);
+    bool isFirstStub = stub->newStubIsFirstStub();
+    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), isFirstStub,
+                        1, callee, thisv, newTarget, args);
     switch (gen.tryAttachStub()) {
       case AttachDecision::NoAction:
         break;
@@ -3306,7 +3309,7 @@ bool FallbackICCodeCompiler::emitCall(bool isSpread, bool isConstructing) {
   // EmitEnterTypeMonitorIC, first load the ICTypeMonitor_Fallback stub into
   // ICStubReg.  Then, use EmitEnterTypeMonitorIC with a custom struct offset.
   // Note that we must have a non-null fallbackMonitorStub here because
-  // InitFromBailout delazifies.
+  // BaselineStackBuilder::buildStubFrame delazifies the stub when bailing out.
   masm.loadPtr(Address(ICStubReg,
                        ICMonitoredFallbackStub::offsetOfFallbackMonitorStub()),
                ICStubReg);

@@ -18,7 +18,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "xpcprivate.h"                   // xpc::OptionsBase
-#include "js/CompilationAndEvaluation.h"  // JS::Compile{,ForNonSyntacticScope}
+#include "js/CompilationAndEvaluation.h"  // JS::Compile
 #include "js/friend/JSMEnvironment.h"  // JS::ExecuteInJSMEnvironment, JS::IsJSMEnvironment
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "js/Wrapper.h"
@@ -138,15 +138,16 @@ static JSScript* PrepareScript(nsIURI* uri, JSContext* cx,
   // pass through here, we may need to disable lazy source for them.
   options.setSourceIsLazy(true);
 
+  if (!wantGlobalScript) {
+    options.setNonSyntacticScope(true);
+  }
+
   JS::SourceText<Utf8Unit> srcBuf;
   if (!srcBuf.init(cx, buf, len, JS::SourceOwnership::Borrowed)) {
     return nullptr;
   }
 
-  if (wantGlobalScript) {
-    return JS::Compile(cx, options, srcBuf);
-  }
-  return JS::CompileForNonSyntacticScope(cx, options, srcBuf);
+  return JS::Compile(cx, options, srcBuf);
 }
 
 static bool EvalScript(JSContext* cx, HandleObject targetObj,
@@ -420,8 +421,8 @@ nsresult mozJSSubScriptLoader::DoLoadSubScriptWithOptions(
   }
 
   NS_LossyConvertUTF16toASCII asciiUrl(url);
-  AUTO_PROFILER_TEXT_MARKER_CAUSE("SubScript", asciiUrl, JS, Nothing(),
-                                  profiler_get_backtrace());
+  AUTO_PROFILER_MARKER_TEXT("SubScript", JS.WithOptions(MarkerStack::Capture()),
+                            asciiUrl);
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING_NONSENSITIVE(
       "mozJSSubScriptLoader::DoLoadSubScriptWithOptions", OTHER, asciiUrl);
 

@@ -182,6 +182,9 @@ PropertyName* CacheIRCloner::getPropertyNameField(uint32_t stubOffset) {
 JS::Symbol* CacheIRCloner::getSymbolField(uint32_t stubOffset) {
   return reinterpret_cast<JS::Symbol*>(readStubWord(stubOffset));
 }
+BaseScript* CacheIRCloner::getBaseScriptField(uint32_t stubOffset) {
+  return reinterpret_cast<BaseScript*>(readStubWord(stubOffset));
+}
 uintptr_t CacheIRCloner::getRawWordField(uint32_t stubOffset) {
   return reinterpret_cast<uintptr_t>(readStubWord(stubOffset));
 }
@@ -4955,11 +4958,12 @@ void GetIteratorIRGenerator::trackAttached(const char* name) {
 
 CallIRGenerator::CallIRGenerator(JSContext* cx, HandleScript script,
                                  jsbytecode* pc, JSOp op, ICState::Mode mode,
-                                 uint32_t argc, HandleValue callee,
-                                 HandleValue thisval, HandleValue newTarget,
-                                 HandleValueArray args)
+                                 bool isFirstStub, uint32_t argc,
+                                 HandleValue callee, HandleValue thisval,
+                                 HandleValue newTarget, HandleValueArray args)
     : IRGenerator(cx, script, pc, CacheKind::Call, mode),
       op_(op),
+      isFirstStub_(isFirstStub),
       argc_(argc),
       callee_(callee),
       thisval_(thisval),
@@ -4988,6 +4992,21 @@ void CallIRGenerator::emitNativeCalleeGuard(HandleFunction callee) {
         writer.loadArgumentFixedSlot(ArgumentKind::NewTarget, argc_, flags);
     ObjOperandId newTargetObjId = writer.guardToObject(newTargetValId);
     writer.guardSpecificFunction(newTargetObjId, callee);
+  }
+}
+
+void CallIRGenerator::emitCalleeGuard(ObjOperandId calleeId,
+                                      HandleFunction callee) {
+  // Guarding on the callee JSFunction* is most efficient, but doesn't work well
+  // for lambda clones (multiple functions with the same BaseScript). We guard
+  // on the function's BaseScript if the callee is scripted and this isn't the
+  // first IC stub.
+  if (!JitOptions.warpBuilder || isFirstStub_ || !callee->hasBaseScript() ||
+      callee->isSelfHostedBuiltin()) {
+    writer.guardSpecificFunction(calleeId, callee);
+  } else {
+    writer.guardClass(calleeId, GuardClassKind::JSFunction);
+    writer.guardFunctionScript(calleeId, callee->baseScript());
   }
 }
 
@@ -7736,7 +7755,7 @@ AttachDecision CallIRGenerator::tryAttachFunCall(HandleFunction callee) {
 
   if (mode_ == ICState::Mode::Specialized) {
     // Ensure that |this| is the expected target function.
-    writer.guardSpecificFunction(thisObjId, target);
+    emitCalleeGuard(thisObjId, target);
 
     CallFlags targetFlags(CallFlags::FunCall);
     if (isScripted) {
@@ -8445,7 +8464,7 @@ AttachDecision CallIRGenerator::tryAttachFunApply(HandleFunction calleeFunc) {
   CallFlags targetFlags(format);
   if (mode_ == ICState::Mode::Specialized) {
     // Ensure that |this| is the expected target function.
-    writer.guardSpecificFunction(thisObjId, target);
+    emitCalleeGuard(thisObjId, target);
 
     if (isScripted) {
       writer.callScriptedFunction(thisObjId, argcId, targetFlags);
@@ -8999,7 +9018,7 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
 
   if (isSpecialized) {
     // Ensure callee matches this stub's callee
-    writer.guardSpecificFunction(calleeObjId, calleeFunc);
+    emitCalleeGuard(calleeObjId, calleeFunc);
     if (templateObj) {
       // Call metaScriptedTemplateObject before emitting the call, so that Warp
       // can use this template object before transpiling the call.

@@ -11,6 +11,7 @@
 #include "gc/ParallelWork.h"
 #include "vm/HelperThreads.h"
 #include "vm/Runtime.h"
+#include "vm/TraceLogging.h"
 
 using namespace js;
 using namespace js::gc;
@@ -31,10 +32,8 @@ void js::GCParallelTask::startWithLockHeld(AutoLockHelperThreadState& lock) {
   MOZ_ASSERT(!HelperThreadState().threads(lock).empty());
   assertIdle();
 
-  HelperThreadState().gcParallelWorklist(lock).insertBack(this);
   setDispatched(lock);
-
-  HelperThreadState().notifyOne(GlobalHelperThreadState::PRODUCER, lock);
+  HelperThreadState().submitTask(this, lock);
 }
 
 void js::GCParallelTask::start() {
@@ -120,7 +119,10 @@ void js::GCParallelTask::runFromMainThread() {
   runTask();
 }
 
-void js::GCParallelTask::runFromHelperThread(AutoLockHelperThreadState& lock) {
+void js::GCParallelTask::runHelperThreadTask(AutoLockHelperThreadState& lock) {
+  TraceLoggerThread* logger = TraceLoggerForCurrentThread();
+  AutoTraceLog logCompile(logger, TraceLogger_GC);
+
   setRunning(lock);
 
   {
@@ -132,7 +134,6 @@ void js::GCParallelTask::runFromHelperThread(AutoLockHelperThreadState& lock) {
   }
 
   setFinished(lock);
-  HelperThreadState().notifyAll(GlobalHelperThreadState::CONSUMER, lock);
 }
 
 void GCParallelTask::runTask() {

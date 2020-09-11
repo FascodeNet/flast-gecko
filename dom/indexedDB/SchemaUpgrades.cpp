@@ -1478,20 +1478,12 @@ UpgradeSchemaFrom17_0To18_0Helper::InsertIndexDataValuesFunction::
   }
 
   // Compress the array.
-  UniqueFreePtr<uint8_t> indexValuesBlob;
-  uint32_t indexValuesBlobLength;
-  rv = MakeCompressedIndexDataValues(indexValues, indexValuesBlob,
-                                     &indexValuesBlobLength);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  IDB_TRY_VAR((auto [indexValuesBlob, indexValuesBlobLength]),
+              MakeCompressedIndexDataValues(indexValues));
 
   // The compressed blob is the result of this function.
-  std::pair<uint8_t*, int> indexValuesBlobPair(indexValuesBlob.release(),
-                                               indexValuesBlobLength);
-
-  nsCOMPtr<nsIVariant> result =
-      new storage::AdoptedBlobVariant(indexValuesBlobPair);
+  nsCOMPtr<nsIVariant> result = new storage::AdoptedBlobVariant(
+      std::pair(indexValuesBlob.release(), indexValuesBlobLength));
 
   result.forget(_retval);
   return NS_OK;
@@ -2519,16 +2511,11 @@ UpgradeIndexDataValuesFunction::OnFunctionCall(
   IDB_TRY_VAR(const auto oldIdv,
               ReadOldCompressedIDVFromBlob(Span(oldBlob, oldBlobLength)));
 
-  UniqueFreePtr<uint8_t> newIdv;
-  uint32_t newIdvLength;
-  rv = MakeCompressedIndexDataValues(oldIdv, newIdv, &newIdvLength);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  IDB_TRY_VAR((auto [newIdv, newIdvLength]),
+              MakeCompressedIndexDataValues(oldIdv));
 
-  std::pair<uint8_t*, int> data(newIdv.release(), newIdvLength);
-
-  nsCOMPtr<nsIVariant> result = new storage::AdoptedBlobVariant(data);
+  nsCOMPtr<nsIVariant> result = new storage::AdoptedBlobVariant(
+      std::pair(newIdv.release(), newIdvLength));
 
   result.forget(aResult);
   return NS_OK;
@@ -3004,10 +2991,11 @@ Result<bool, nsresult> MaybeUpgradeSchema(mozIStorageConnection& aConnection,
         IDB_TRY(UpgradeSchemaFrom25_0To26_0(aConnection));
         break;
       default:
-        IDB_WARNING(
-            "Unable to open IndexedDB database, no upgrade path is "
-            "available!");
-        return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+        IDB_FAIL(Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR), []() {
+          IDB_WARNING(
+              "Unable to open IndexedDB database, no upgrade path is "
+              "available!");
+        });
     }
 
     IDB_TRY_VAR(schemaVersion,

@@ -8430,6 +8430,9 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
 nsresult nsIFrame::PeekOffsetForWord(nsPeekOffsetStruct* aPos,
                                      int32_t aOffset) {
   SelectablePeekReport current{this, aOffset};
+  bool shouldStopAtHardBreak =
+      aPos->mWordMovementType == eDefaultBehavior &&
+      StaticPrefs::layout_word_select_eat_space_to_next_word();
   bool wordSelectEatSpace = ShouldWordSelectionEatSpace(*aPos);
 
   PeekWordState state;
@@ -8464,11 +8467,35 @@ nsresult nsIFrame::PeekOffsetForWord(nsPeekOffsetStruct* aPos,
       break;
     }
 
+    if (shouldStopAtHardBreak && next.mJumpedHardBreak) {
+      /**
+       * Prev, always: Jump and stop right there
+       * Next, saw inline: just stop
+       * Next, no inline: Jump and consume whitespaces
+       */
+      if (aPos->mDirection == eDirPrevious) {
+        // Try moving to the previous line if exists
+        current.TransferTo(*aPos);
+        current.mFrame->PeekOffsetForCharacter(aPos, current.mOffset);
+        return NS_OK;
+      }
+      if (state.mSawInlineCharacter || current.mJumpedHardBreak) {
+        if (current.mFrame->HasSignificantTerminalNewline()) {
+          current.mOffset -= 1;
+        }
+        current.TransferTo(*aPos);
+        return NS_OK;
+      }
+      // Mark the state as whitespace and continue
+      state.Update(false, true);
+    }
+
     if (next.mJumpedLine) {
       state.mContext.Truncate();
     }
     current = next;
     // Jumping a line is equivalent to encountering whitespace
+    // This affects only when it already met an actual character
     if (wordSelectEatSpace && next.mJumpedLine) {
       state.SetSawBeforeType();
     }
@@ -8830,11 +8857,11 @@ Result<bool, nsresult> nsIFrame::IsVisuallyAtLineEdge(
   nsIFrame* firstFrame;
   nsIFrame* lastFrame;
 
-  nsAutoLineIterator it = aLineIterator;
-  bool lineIsRTL = it->GetDirection();
+  bool lineIsRTL = aLineIterator->GetDirection();
   bool isReordered;
 
-  MOZ_TRY(it->CheckLineOrder(aLine, &isReordered, &firstFrame, &lastFrame));
+  MOZ_TRY(aLineIterator->CheckLineOrder(aLine, &isReordered, &firstFrame,
+                                        &lastFrame));
 
   nsIFrame** framePtr = aDirection == eDirPrevious ? &firstFrame : &lastFrame;
   if (!*framePtr) {
@@ -8852,8 +8879,7 @@ Result<bool, nsresult> nsIFrame::IsVisuallyAtLineEdge(
 
 Result<bool, nsresult> nsIFrame::IsLogicallyAtLineEdge(
     nsILineIterator* aLineIterator, int32_t aLine, nsDirection aDirection) {
-  nsAutoLineIterator it = aLineIterator;
-  auto line = it->GetLine(aLine).unwrap();
+  auto line = aLineIterator->GetLine(aLine).unwrap();
 
   if (aDirection == eDirPrevious) {
     nsIFrame* firstFrame = line.mFirstFrameOnLine;
@@ -8865,7 +8891,7 @@ Result<bool, nsresult> nsIFrame::IsLogicallyAtLineEdge(
   nsIFrame* lastFrame = line.mFirstFrameOnLine;
   for (int32_t lineFrameCount = line.mNumFramesOnLine; lineFrameCount > 1;
        lineFrameCount--) {
-    MOZ_TRY(it->GetNextSiblingOnLine(lastFrame, aLine));
+    MOZ_TRY(aLineIterator->GetNextSiblingOnLine(lastFrame, aLine));
     if (!lastFrame) {
       NS_ERROR("should not be reached nsIFrame");
       return Err(NS_ERROR_FAILURE);
@@ -8900,7 +8926,7 @@ nsIFrame::SelectablePeekReport nsIFrame::GetFrameFromDirection(
     MOZ_TRY_VAR(thisLine,
                 traversedFrame->GetLineNumber(aScrollViewStop, &blockFrame));
 
-    nsILineIterator* it = blockFrame->GetLineIterator();
+    nsAutoLineIterator it = blockFrame->GetLineIterator();
 
     bool atLineEdge;
     MOZ_TRY_VAR(
@@ -8912,6 +8938,12 @@ nsIFrame::SelectablePeekReport nsIFrame::GetFrameFromDirection(
       result.mJumpedLine = true;
       if (!aJumpLines) {
         return result;  // we are done. cannot jump lines
+      }
+      int32_t lineToCheckWrap =
+          aDirection == eDirPrevious ? thisLine - 1 : thisLine;
+      if (lineToCheckWrap < 0 ||
+          !it->GetLine(lineToCheckWrap).unwrap().mIsWrapped) {
+        result.mJumpedHardBreak = true;
       }
     }
 
@@ -8935,7 +8967,9 @@ nsIFrame::SelectablePeekReport nsIFrame::GetFrameFromDirection(
       for (nsIFrame* current = traversedFrame->GetPrevSibling(); current;
            current = current->GetPrevSibling()) {
         if (!current->IsBlockOutside() && IsSelectable(current)) {
-          canSkipBr = true;
+          if (!current->IsBrFrame()) {
+            canSkipBr = true;
+          }
           break;
         }
       }

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <numeric>
 #include <type_traits>
 #include "GeckoProfiler.h"
 #include "MainThreadUtils.h"
@@ -64,46 +65,43 @@ using mozilla::ipc::IsOnBackgroundThread;
 namespace {
 bool TokenizerIgnoreNothing(char16_t /* aChar */) { return false; }
 
+constexpr StructuredCloneFileBase::FileType ToStructuredCloneFileType(
+    const char16_t aTag) {
+  switch (aTag) {
+    case char16_t('-'):
+      return StructuredCloneFileBase::eMutableFile;
+
+    case char16_t('.'):
+      return StructuredCloneFileBase::eStructuredClone;
+
+    case char16_t('/'):
+      return StructuredCloneFileBase::eWasmBytecode;
+
+    case char16_t('\\'):
+      return StructuredCloneFileBase::eWasmCompiled;
+
+    default:
+      return StructuredCloneFileBase::eBlob;
+  }
+}
+
+int32_t ToInteger(const nsAString& aStr, nsresult* const aRv) {
+  return aStr.ToInteger(aRv);
+}
+
 Result<StructuredCloneFileParent, nsresult> DeserializeStructuredCloneFile(
     const FileManager& aFileManager, const nsDependentSubstring& aText) {
   MOZ_ASSERT(!aText.IsEmpty());
 
-  StructuredCloneFileBase::FileType type;
+  const StructuredCloneFileBase::FileType type =
+      ToStructuredCloneFileType(aText.First());
 
-  switch (aText.First()) {
-    case char16_t('-'):
-      type = StructuredCloneFileBase::eMutableFile;
-      break;
-
-    case char16_t('.'):
-      type = StructuredCloneFileBase::eStructuredClone;
-      break;
-
-    case char16_t('/'):
-      type = StructuredCloneFileBase::eWasmBytecode;
-      break;
-
-    case char16_t('\\'):
-      type = StructuredCloneFileBase::eWasmCompiled;
-      break;
-
-    default:
-      type = StructuredCloneFileBase::eBlob;
-  }
-
-  nsresult rv;
-  int32_t id;
-
-  if (type == StructuredCloneFileBase::eBlob) {
-    id = aText.ToInteger(&rv);
-  } else {
-    nsString text(Substring(aText, 1));
-
-    id = text.ToInteger(&rv);
-  }
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY_VAR(
+      const auto id,
+      ToResultGet<int32_t>(
+          ToInteger, type == StructuredCloneFileBase::eBlob
+                         ? aText
+                         : static_cast<const nsAString&>(Substring(aText, 1))));
 
   SafeRefPtr<FileInfo> fileInfo = aFileManager.GetFileInfo(id);
   MOZ_ASSERT(fileInfo);
@@ -154,10 +152,7 @@ class SandboxHolder final {
           NullPrincipal::CreateWithoutOriginAttributes();
 
       JS::Rooted<JSObject*> sandbox(aCx);
-      nsresult rv = xpc->CreateSandbox(aCx, principal, sandbox.address());
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return nullptr;
-      }
+      IDB_TRY(xpc->CreateSandbox(aCx, principal, sandbox.address()), nullptr);
 
       mSandbox = new JSObjectHolder(aCx, sandbox);
     }
@@ -238,30 +233,29 @@ nsresult ReadCompressedIndexDataValuesFromBlob(
 
   // XXX Is this check still necessary with a Span? Or should it rather be moved
   // to the caller?
-  if (uintptr_t(aBlobData.Elements()) > UINTPTR_MAX - aBlobData.LengthBytes()) {
-    IDB_REPORT_INTERNAL_ERR();
-    return NS_ERROR_FILE_CORRUPTED;
-  }
+  IDB_TRY(OkIf(uintptr_t(aBlobData.Elements()) <=
+               UINTPTR_MAX - aBlobData.LengthBytes()),
+          NS_ERROR_FILE_CORRUPTED, IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
   for (auto remainder = aBlobData; !remainder.IsEmpty();) {
     IDB_TRY_VAR((const auto [indexId, unique, remainderAfterIndexId]),
                 ReadCompressedIndexId(remainder));
 
-    if (NS_WARN_IF(remainderAfterIndexId.IsEmpty())) {
-      IDB_REPORT_INTERNAL_ERR();
-      return NS_ERROR_FILE_CORRUPTED;
-    }
+    IDB_TRY(OkIf(!remainderAfterIndexId.IsEmpty()), NS_ERROR_FILE_CORRUPTED,
+            IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
     // Read key buffer length.
     IDB_TRY_VAR((const auto [keyBufferLength, remainderAfterKeyBufferLength]),
                 ReadCompressedNumber(remainderAfterIndexId));
 
-    if (NS_WARN_IF(remainderAfterKeyBufferLength.IsEmpty()) ||
-        NS_WARN_IF(keyBufferLength > uint64_t(UINT32_MAX)) ||
-        NS_WARN_IF(keyBufferLength > remainderAfterKeyBufferLength.Length())) {
-      IDB_REPORT_INTERNAL_ERR();
-      return NS_ERROR_FILE_CORRUPTED;
-    }
+    IDB_TRY(OkIf(!remainderAfterKeyBufferLength.IsEmpty()),
+            NS_ERROR_FILE_CORRUPTED, IDB_REPORT_INTERNAL_ERR_LAMBDA);
+
+    IDB_TRY(OkIf(keyBufferLength <= uint64_t(UINT32_MAX)),
+            NS_ERROR_FILE_CORRUPTED, IDB_REPORT_INTERNAL_ERR_LAMBDA);
+
+    IDB_TRY(OkIf(keyBufferLength <= remainderAfterKeyBufferLength.Length()),
+            NS_ERROR_FILE_CORRUPTED, IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
     const auto [keyBuffer, remainderAfterKeyBuffer] =
         remainderAfterKeyBufferLength.SplitAt(keyBufferLength);
@@ -275,12 +269,14 @@ nsresult ReadCompressedIndexDataValuesFromBlob(
 
     remainder = remainderAfterSortKeyBufferLength;
     if (sortKeyBufferLength > 0) {
-      if (NS_WARN_IF(remainder.IsEmpty()) ||
-          NS_WARN_IF(sortKeyBufferLength > uint64_t(UINT32_MAX)) ||
-          NS_WARN_IF(sortKeyBufferLength > remainder.Length())) {
-        IDB_REPORT_INTERNAL_ERR();
-        return NS_ERROR_FILE_CORRUPTED;
-      }
+      IDB_TRY(OkIf(!remainder.IsEmpty()), NS_ERROR_FILE_CORRUPTED,
+              IDB_REPORT_INTERNAL_ERR_LAMBDA);
+
+      IDB_TRY(OkIf(sortKeyBufferLength <= uint64_t(UINT32_MAX)),
+              NS_ERROR_FILE_CORRUPTED, IDB_REPORT_INTERNAL_ERR_LAMBDA);
+
+      IDB_TRY(OkIf(sortKeyBufferLength <= remainder.Length()),
+              NS_ERROR_FILE_CORRUPTED, IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
       const auto [sortKeyBuffer, remainderAfterSortKeyBuffer] =
           remainder.SplitAt(sortKeyBufferLength);
@@ -288,10 +284,8 @@ nsresult ReadCompressedIndexDataValuesFromBlob(
       remainder = remainderAfterSortKeyBuffer;
     }
 
-    if (NS_WARN_IF(!aOutIndexValues.AppendElement(std::move(idv), fallible))) {
-      IDB_REPORT_INTERNAL_ERR();
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
+    IDB_TRY(OkIf(aOutIndexValues.AppendElement(std::move(idv), fallible)),
+            NS_ERROR_OUT_OF_MEMORY, IDB_REPORT_INTERNAL_ERR_LAMBDA);
   }
   aOutIndexValues.Sort();
 
@@ -576,59 +570,45 @@ JSObject* GetSandbox(JSContext* aCx) {
   return holder->GetSandboxInternal(aCx);
 }
 
-nsresult MakeCompressedIndexDataValues(
-    const nsTArray<IndexDataValue>& aIndexValues,
-    UniqueFreePtr<uint8_t>& aCompressedIndexDataValues,
-    uint32_t* aCompressedIndexDataValuesLength) {
+Result<std::pair<UniqueFreePtr<uint8_t>, uint32_t>, nsresult>
+MakeCompressedIndexDataValues(const nsTArray<IndexDataValue>& aIndexValues) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
-  MOZ_ASSERT(!aCompressedIndexDataValues);
-  MOZ_ASSERT(aCompressedIndexDataValuesLength);
 
   AUTO_PROFILER_LABEL("MakeCompressedIndexDataValues", DOM);
 
   const uint32_t arrayLength = aIndexValues.Length();
   if (!arrayLength) {
-    *aCompressedIndexDataValuesLength = 0;
-    return NS_OK;
+    return std::pair{UniqueFreePtr<uint8_t>{}, 0u};
   }
 
   // First calculate the size of the final buffer.
-  uint32_t blobDataLength = 0;
+  const auto blobDataLength = std::accumulate(
+      aIndexValues.cbegin(), aIndexValues.cend(), CheckedUint32(0),
+      [](CheckedUint32 sum, const IndexDataValue& info) {
+        const nsCString& keyBuffer = info.mPosition.GetBuffer();
+        const nsCString& sortKeyBuffer = info.mLocaleAwarePosition.GetBuffer();
+        const uint32_t keyBufferLength = keyBuffer.Length();
+        const uint32_t sortKeyBufferLength = sortKeyBuffer.Length();
 
-  for (const IndexDataValue& info : aIndexValues) {
-    const nsCString& keyBuffer = info.mPosition.GetBuffer();
-    const nsCString& sortKeyBuffer = info.mLocaleAwarePosition.GetBuffer();
-    const uint32_t keyBufferLength = keyBuffer.Length();
-    const uint32_t sortKeyBufferLength = sortKeyBuffer.Length();
+        MOZ_ASSERT(!keyBuffer.IsEmpty());
 
-    MOZ_ASSERT(!keyBuffer.IsEmpty());
+        return sum + CompressedByteCountForIndexId(info.mIndexId) +
+               CompressedByteCountForNumber(keyBufferLength) +
+               CompressedByteCountForNumber(sortKeyBufferLength) +
+               keyBufferLength + sortKeyBufferLength;
+      });
 
-    const CheckedUint32 infoLength =
-        CheckedUint32(CompressedByteCountForIndexId(info.mIndexId)) +
-        CompressedByteCountForNumber(keyBufferLength) +
-        CompressedByteCountForNumber(sortKeyBufferLength) + keyBufferLength +
-        sortKeyBufferLength;
-    // Don't let |infoLength| overflow.
-    if (NS_WARN_IF(!infoLength.isValid())) {
-      IDB_REPORT_INTERNAL_ERR();
-      return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
-    }
-
-    // Don't let |blobDataLength| overflow.
-    if (NS_WARN_IF(UINT32_MAX - infoLength.value() < blobDataLength)) {
-      IDB_REPORT_INTERNAL_ERR();
-      return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
-    }
-
-    blobDataLength += infoLength.value();
+  if (NS_WARN_IF(!blobDataLength.isValid())) {
+    IDB_REPORT_INTERNAL_ERR();
+    return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
   }
 
   UniqueFreePtr<uint8_t> blobData(
-      static_cast<uint8_t*>(malloc(blobDataLength)));
+      static_cast<uint8_t*>(malloc(blobDataLength.value())));
   if (NS_WARN_IF(!blobData)) {
     IDB_REPORT_INTERNAL_ERR();
-    return NS_ERROR_OUT_OF_MEMORY;
+    return Err(NS_ERROR_OUT_OF_MEMORY);
   }
 
   uint8_t* blobDataIter = blobData.get();
@@ -651,12 +631,9 @@ nsresult MakeCompressedIndexDataValues(
     blobDataIter += sortKeyBufferLength;
   }
 
-  MOZ_ASSERT(blobDataIter == blobData.get() + blobDataLength);
+  MOZ_ASSERT(blobDataIter == blobData.get() + blobDataLength.value());
 
-  aCompressedIndexDataValues = std::move(blobData);
-  *aCompressedIndexDataValuesLength = uint32_t(blobDataLength);
-
-  return NS_OK;
+  return std::pair{std::move(blobData), blobDataLength.value()};
 }
 
 nsresult ReadCompressedIndexDataValues(

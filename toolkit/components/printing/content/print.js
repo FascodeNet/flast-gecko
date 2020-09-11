@@ -164,6 +164,10 @@ var PrintEventHandler = {
           ? PrintUtils.getPrintSettings(this.viewSettings.defaultSystemPrinter)
           : this.settings.clone();
       settings.showPrintProgress = true;
+      // We set the title so that if the user chooses save-to-PDF from the
+      // system dialog the title will be used to generate the prepopulated
+      // filename in the file picker.
+      settings.title = this.previewBrowser.browsingContext.embedderElement.contentTitle;
       const PRINTPROMPTSVC = Cc[
         "@mozilla.org/embedcomp/printingprompt-service;1"
       ].getService(Ci.nsIPrintingPromptService);
@@ -342,8 +346,9 @@ var PrintEventHandler = {
 
     try {
       this.settings.showPrintProgress = true;
-      await PrintUtils.printWindow(
-        this.previewBrowser.browsingContext,
+      let bc = this.previewBrowser.browsingContext;
+      await bc.top.embedderElement.print(
+        bc.currentWindowGlobal.outerWindowId,
         settings
       );
     } catch (e) {

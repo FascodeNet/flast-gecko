@@ -220,6 +220,7 @@ class StubField {
     JSObject,
     Symbol,
     String,
+    BaseScript,
     Id,
 
     // These fields take up 64 bits on all platforms.
@@ -588,6 +589,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     MOZ_ASSERT(sym);
     addStubField(uintptr_t(sym), StubField::Type::Symbol);
   }
+  void writeBaseScriptField(BaseScript* script) {
+    MOZ_ASSERT(script);
+    addStubField(uintptr_t(script), StubField::Type::BaseScript);
+  }
   void writeRawWordField(uintptr_t word) {
     addStubField(word, StubField::Type::RawWord);
   }
@@ -819,6 +824,16 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     // instead of directly using the JSFunction fields.
     uint32_t nargsAndFlags = encodeNargsAndFlags(expected);
     guardSpecificFunction_(obj, expected, nargsAndFlags);
+  }
+
+  void guardFunctionScript(ObjOperandId fun, BaseScript* expected) {
+    // Guard function has a specific BaseScript. This implies immutable fields
+    // on the JSFunction struct itself are unchanged and are equivalent for
+    // lambda clones.
+    // Bake in the nargs and FunctionFlags so Warp can use them off-main thread,
+    // instead of directly using the JSFunction fields.
+    uint32_t nargsAndFlags = encodeNargsAndFlags(expected->function());
+    guardFunctionScript_(fun, expected, nargsAndFlags);
   }
 
   ValOperandId loadArgumentFixedSlot(
@@ -1125,6 +1140,7 @@ class MOZ_RAII CacheIRCloner {
   JSAtom* getAtomField(uint32_t stubOffset);
   PropertyName* getPropertyNameField(uint32_t stubOffset);
   JS::Symbol* getSymbolField(uint32_t stubOffset);
+  BaseScript* getBaseScriptField(uint32_t stubOffset);
   uintptr_t getRawWordField(uint32_t stubOffset);
   const void* getRawPointerField(uint32_t stubOffset);
   jsid getIdField(uint32_t stubOffset);
@@ -1641,6 +1657,7 @@ enum class StringChar { CodeAt, At };
 class MOZ_RAII CallIRGenerator : public IRGenerator {
  private:
   JSOp op_;
+  bool isFirstStub_;
   uint32_t argc_;
   HandleValue callee_;
   HandleValue thisval_;
@@ -1656,6 +1673,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
                                   MutableHandleObject result);
 
   void emitNativeCalleeGuard(HandleFunction callee);
+  void emitCalleeGuard(ObjOperandId calleeId, HandleFunction callee);
 
   bool canAttachAtomicsReadWriteModify();
 
@@ -1778,9 +1796,9 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
 
  public:
   CallIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc, JSOp op,
-                  ICState::Mode mode, uint32_t argc, HandleValue callee,
-                  HandleValue thisval, HandleValue newTarget,
-                  HandleValueArray args);
+                  ICState::Mode mode, bool isFirstStub, uint32_t argc,
+                  HandleValue callee, HandleValue thisval,
+                  HandleValue newTarget, HandleValueArray args);
 
   AttachDecision tryAttachStub();
 

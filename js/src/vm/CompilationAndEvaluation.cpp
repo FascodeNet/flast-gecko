@@ -80,6 +80,34 @@ JSScript* JS::Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
   return CompileSourceBuffer(cx, options, srcBuf);
 }
 
+template <typename Unit>
+static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<Unit>& srcBuf) {
+  Rooted<JSScript*> script(cx, CompileSourceBuffer(cx, options, srcBuf));
+  if (!script) {
+    return nullptr;
+  }
+
+  if (!script->scriptSource()->xdrEncodeTopLevel(cx, script)) {
+    return nullptr;
+  }
+
+  return script;
+}
+
+JSScript* JS::CompileAndStartIncrementalEncoding(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<char16_t>& srcBuf) {
+  return CompileSourceBufferAndStartIncrementalEncoding(cx, options, srcBuf);
+}
+
+JSScript* JS::CompileAndStartIncrementalEncoding(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<Utf8Unit>& srcBuf) {
+  return CompileSourceBufferAndStartIncrementalEncoding(cx, options, srcBuf);
+}
+
 JSScript* JS::CompileUtf8File(JSContext* cx,
                               const ReadOnlyCompileOptions& options,
                               FILE* file) {
@@ -108,22 +136,6 @@ JSScript* JS::CompileUtf8Path(JSContext* cx,
   CompileOptions options(cx, optionsArg);
   options.setFileAndLine(filename, 1);
   return CompileUtf8File(cx, options, file.fp());
-}
-
-JSScript* JS::CompileForNonSyntacticScope(
-    JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-    SourceText<char16_t>& srcBuf) {
-  CompileOptions options(cx, optionsArg);
-  options.setNonSyntacticScope(true);
-  return CompileSourceBuffer(cx, options, srcBuf);
-}
-
-JSScript* JS::CompileForNonSyntacticScope(
-    JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-    SourceText<Utf8Unit>& srcBuf) {
-  CompileOptions options(cx, optionsArg);
-  options.setNonSyntacticScope(true);
-  return CompileSourceBuffer(cx, options, srcBuf);
 }
 
 JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,

@@ -2649,6 +2649,12 @@
   value: true
   mirror: always
 
+# pref controls `Sanitizer` API being exposed
+- name: dom.security.sanitizer.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # Is support for selection event APIs enabled?
 - name: dom.select_events.enabled
   type: bool
@@ -9291,7 +9297,7 @@
   mirror: always
 
 - name: telemetry.fog.test.localhost_port
-  type: RelaxedAtomicUint32
+  type: RelaxedAtomicInt32
   value: 0
   mirror: always
   rust: true
@@ -9792,6 +9798,11 @@
   mirror: always
 
 - name: webgl.enable-surface-texture
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+- name: webgl.enable-ahardwarebuffer
   type: RelaxedAtomicBool
   value: false
   mirror: always

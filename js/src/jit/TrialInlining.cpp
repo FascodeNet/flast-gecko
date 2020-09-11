@@ -78,9 +78,23 @@ void TrialInliner::replaceICStub(const ICEntry& entry, CacheIRWriter& writer,
 }
 
 ICStub* TrialInliner::maybeSingleStub(const ICEntry& entry) {
+  // Look for a single non-fallback stub followed by stubs with entered-count 0.
+  // Allow one optimized stub before the fallback stub to support the
+  // CallIRGenerator::emitCalleeGuard optimization where we first try a
+  // GuardSpecificFunction guard before falling back to GuardFunctionHasScript.
   ICStub* stub = entry.firstStub();
-  if (stub->isFallback() || !stub->next()->isFallback()) {
+  if (stub->isFallback()) {
     return nullptr;
+  }
+  ICStub* next = stub->next();
+  if (next->getEnteredCount() != 0) {
+    return nullptr;
+  }
+  if (!next->isFallback()) {
+    ICStub* nextNext = next->next();
+    if (!nextNext->isFallback() || nextNext->getEnteredCount() != 0) {
+      return nullptr;
+    }
   }
   return stub;
 }
@@ -93,7 +107,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
 
   ObjOperandId calleeGuardOperand;
   CallFlags flags;
-  uint32_t targetOffset = 0;
+  JSFunction* target = nullptr;
 
   CacheIRReader reader(stubInfo);
   while (reader.more()) {
@@ -104,13 +118,25 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
     mozilla::DebugOnly<const uint8_t*> argStart = reader.currentPosition();
 
     switch (op) {
-      case CacheOp::GuardSpecificFunction:
+      case CacheOp::GuardSpecificFunction: {
         // If we see a guard, remember which operand we are guarding.
         MOZ_ASSERT(data.isNothing());
         calleeGuardOperand = reader.objOperandId();
-        targetOffset = reader.stubOffset();
+        uint32_t targetOffset = reader.stubOffset();
+        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        uintptr_t rawTarget = stubInfo->getStubRawWord(stubData, targetOffset);
+        target = reinterpret_cast<JSFunction*>(rawTarget);
+        break;
+      }
+      case CacheOp::GuardFunctionScript: {
+        MOZ_ASSERT(data.isNothing());
+        calleeGuardOperand = reader.objOperandId();
+        uint32_t targetOffset = reader.stubOffset();
+        uintptr_t rawTarget = stubInfo->getStubRawWord(stubData, targetOffset);
+        target = reinterpret_cast<BaseScript*>(rawTarget)->function();
         mozilla::Unused << reader.stubOffset();  // nargsAndFlags
         break;
+      }
       case CacheOp::CallScriptedFunction: {
         // If we see a call, check if `callee` is the previously guarded
         // operand. If it is, we know the target and can inline.
@@ -157,8 +183,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
   if (data.isSome()) {
     data->calleeOperand = calleeGuardOperand;
     data->callFlags = flags;
-    uintptr_t rawTarget = stubInfo->getStubRawWord(stubData, targetOffset);
-    data->target = reinterpret_cast<JSFunction*>(rawTarget);
+    data->target = target;
   }
   return data;
 }
@@ -280,15 +305,25 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
     return true;
   }
 
+  // Ensure that we haven't already trial-inlined a different stub.
+  uint32_t pcOffset = loc.bytecodeToOffset(script_);
+  if (!stub->next()->isFallback()) {
+    if (icScript_->hasInlinedChild(pcOffset)) {
+      return true;
+    }
+  }
+
   // Look for a CallScriptedFunction with a known target.
   Maybe<InlinableCallData> data = FindInlinableCallData(stub);
   if (data.isNothing()) {
     return true;
   }
-  // Ensure that we haven't already trial-inlined this callsite.
+  // Ensure that we haven't already trial-inlined this stub.
   if (data->icScript) {
     return true;
   }
+
+  MOZ_ASSERT(!icScript_->hasInlinedChild(pcOffset));
 
   // Decide whether to inline the target.
   if (!shouldInline(data->target, stub, loc)) {
