@@ -19,6 +19,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ReaderMode: "resource://gre/modules/ReaderMode.jsm",
   PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.jsm",
+  SearchUtils: "resource://gre/modules/SearchUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
   UrlbarEventBufferer: "resource:///modules/UrlbarEventBufferer.jsm",
@@ -109,7 +110,11 @@ class UrlbarInput {
     this._untrimmedValue = "";
     this._searchModesByBrowser = new WeakMap();
 
-    UrlbarPrefs.addObserver(this);
+    this.QueryInterface = ChromeUtils.generateQI([
+      "nsIObserver",
+      "nsISupportsWeakReference",
+    ]);
+    this._addObservers();
 
     // This exists only for tests.
     this._enableAutofillPlaceholder = true;
@@ -400,44 +405,26 @@ class UrlbarInput {
   }
 
   /**
-   * Handles an event which would cause a url or text to be opened.
+   * Handles an event which might open text or a URL. If the event requires
+   * doing so, handleCommand forwards it to handleNavigation.
    *
    * @param {Event} [event] The event triggering the open.
-   * @param {string} [openWhere] Where we expect the result to be opened.
-   * @param {object} [openParams]
-   *   The parameters related to where the result will be opened.
-   * @param {object} [triggeringPrincipal]
-   *   The principal that the action was triggered from.
    */
-  handleCommand(event, openWhere, openParams = {}, triggeringPrincipal = null) {
+  handleCommand(event = null) {
     let isMouseEvent = event instanceof this.window.MouseEvent;
     if (isMouseEvent && event.button == 2) {
       // Do nothing for right clicks.
       return;
     }
 
-    let element = this.view.selectedElement;
-    let result = this.view.getResultFromElement(element);
-
     // Determine whether to use the selected one-off search button.  In
     // one-off search buttons parlance, "selected" means that the button
     // has been navigated to via the keyboard.  So we want to use it if
     // the triggering event is not a mouse click -- i.e., it's a Return
     // key -- or if the one-off was mouse-clicked.
-    let selectedOneOff;
     if (this.view.isOpen) {
-      selectedOneOff = this.view.oneOffSearchButtons.selectedButton;
-      if (selectedOneOff && isMouseEvent && event.target != selectedOneOff) {
-        selectedOneOff = null;
-      }
-      if (
-        selectedOneOff == this.view.oneOffSearchButtons.settingsButtonCompact
-      ) {
-        this.controller.engagementEvent.discard();
-        selectedOneOff.doCommand();
-        return;
-      }
-      if (selectedOneOff && this.view.oneOffsRefresh) {
+      let selectedOneOff = this.view.oneOffSearchButtons.selectedButton;
+      if (selectedOneOff && (!isMouseEvent || event.target == selectedOneOff)) {
         this.view.oneOffSearchButtons.handleSearchCommand(event, {
           engineName: selectedOneOff.engine?.name,
           source: selectedOneOff.source,
@@ -447,6 +434,30 @@ class UrlbarInput {
       }
     }
 
+    this.handleNavigation({ event });
+  }
+
+  /**
+   * Handles an event which would cause a URL or text to be opened.
+   *
+   * @param {Event} [event]
+   *   The event triggering the open.
+   * @param {object} [oneOffParams]
+   *   Optional. Pass if this navigation was triggered by a one-off.
+   * @param {string} oneOffParams.openWhere
+   *   Where we expect the result to be opened.
+   * @param {object} oneOffParams.openParams
+   *   The parameters related to where the result will be opened.
+   * @param {Node} oneOffParams.engine
+   *   The selected one-off's engine.
+   * @param {object} [triggeringPrincipal]
+   *   The principal that the action was triggered from.
+   */
+  handleNavigation({ event, oneOffParams, triggeringPrincipal }) {
+    let element = this.view.selectedElement;
+    let result = this.view.getResultFromElement(element);
+    let openParams = oneOffParams?.openParams || {};
+
     // Use the selected element if we have one; this is usually the case
     // when the view is open.
     let selectedPrivateResult =
@@ -455,7 +466,7 @@ class UrlbarInput {
       result.payload.inPrivateWindow;
     let selectedPrivateEngineResult =
       selectedPrivateResult && result.payload.isPrivateEngine;
-    if (element && (!selectedOneOff || selectedPrivateEngineResult)) {
+    if (element && (!oneOffParams?.engine || selectedPrivateEngineResult)) {
       this.pickElement(element, event);
       return;
     }
@@ -463,7 +474,7 @@ class UrlbarInput {
     let url;
     let selType = this.controller.engagementEvent.typeFromElement(element);
     let typedValue = this.value;
-    if (selectedOneOff) {
+    if (oneOffParams?.engine) {
       selType = "oneoff";
       typedValue = this._lastSearchString;
       // If there's a selected one-off button then load a search using
@@ -473,15 +484,15 @@ class UrlbarInput {
         (result && (result.payload.suggestion || result.payload.query)) ||
         this._lastSearchString;
       [url, openParams.postData] = UrlbarUtils.getSearchQueryUrl(
-        selectedOneOff.engine,
+        oneOffParams.engine,
         searchString
       );
-      this._recordSearch(selectedOneOff.engine, event, { url });
+      this._recordSearch(oneOffParams.engine, event, { url });
 
       UrlbarUtils.addToFormHistory(
         this,
         searchString,
-        selectedOneOff.engine.name
+        oneOffParams.engine.name
       ).catch(Cu.reportError);
     } else {
       // Use the current value if we don't have a UrlbarResult e.g. because the
@@ -499,7 +510,7 @@ class UrlbarInput {
       result || this.view.selectedResult
     );
 
-    let where = openWhere || this._whereToOpen(event);
+    let where = oneOffParams?.openWhere || this._whereToOpen(event);
     if (selectedPrivateResult) {
       where = "window";
       openParams.private = true;
@@ -1254,8 +1265,13 @@ class UrlbarInput {
    *   the values in UrlbarUtils.SEARCH_MODE_ENTRY.
    */
   setSearchMode({ engineName, source, entry }) {
-    if (!UrlbarPrefs.get("update2")) {
-      // Exit search mode.
+    // Exit search mode if update2 is disabled or the passed-in engine is
+    // invalid or hidden.
+    let engine = Services.search.getEngineByName(engineName);
+    if (
+      !UrlbarPrefs.get("update2") ||
+      (engineName && (!engine || engine.hidden))
+    ) {
       engineName = null;
       source = null;
     }
@@ -1354,6 +1370,23 @@ class UrlbarInput {
       this.removeAttribute("searchmode");
       this._searchModesByBrowser.delete(this.window.gBrowser.selectedBrowser);
     }
+  }
+
+  /**
+   * Sets search mode for a specific browser instance.
+   *
+   * @param {object} searchMode
+   *   A search mode object. See setSearchMode documentation.
+   * @param {Browser} browser
+   *   The browser for which to set search mode.
+   */
+  setSearchModeForBrowser(searchMode, browser) {
+    if (browser == this.window.gBrowser.selectedBrowser) {
+      this.setSearchMode(searchMode);
+      return;
+    }
+
+    this._searchModesByBrowser.set(browser, searchMode);
   }
 
   /**
@@ -1565,7 +1598,28 @@ class UrlbarInput {
     return true;
   }
 
+  observe(subject, topic, data) {
+    switch (topic) {
+      case SearchUtils.TOPIC_ENGINE_MODIFIED: {
+        switch (data) {
+          case SearchUtils.MODIFIED_TYPE.CHANGED:
+          case SearchUtils.MODIFIED_TYPE.REMOVED:
+            if (this.searchMode?.engineName == subject.name) {
+              // We exit search mode if the current search mode engine was removed.
+              this.setSearchMode(this.searchMode);
+            }
+            break;
+        }
+        break;
+      }
+    }
+  }
+
   // Private methods below.
+  _addObservers() {
+    UrlbarPrefs.addObserver(this);
+    Services.obs.addObserver(this, SearchUtils.TOPIC_ENGINE_MODIFIED, true);
+  }
 
   _getURIFixupInfo(searchString) {
     let flags =
@@ -1958,7 +2012,12 @@ class UrlbarInput {
 
     this.window.BrowserSearch.recordSearchInTelemetry(
       engine,
-      this.searchMode ? "urlbar-searchmode" : "urlbar",
+      // Without checking !isOneOff, we might record the string
+      // oneoff_urlbar-searchmode in the SEARCH_COUNTS probe (in addition to
+      // oneoff_urlbar and oneoff_searchbar). The extra information is not
+      // necessary; the intent is the same regardless of whether the user is
+      // in search mode when they do a key-modified click/enter on a one-off.
+      this.searchMode && !isOneOff ? "urlbar-searchmode" : "urlbar",
       details
     );
   }
@@ -2845,7 +2904,7 @@ class UrlbarInput {
       // To simplify tracking of events, register an initial event for event
       // telemetry, to replace the missing input event.
       this.controller.engagementEvent.start(event);
-      this.handleCommand(null, undefined, undefined, principal);
+      this.handleNavigation({ triggeringPrincipal: principal });
       // For safety reasons, in the drop case we don't want to immediately show
       // the the dropped value, instead we want to keep showing the current page
       // url until an onLocationChange happens.

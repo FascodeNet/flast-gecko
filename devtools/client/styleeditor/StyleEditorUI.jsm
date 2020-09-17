@@ -330,7 +330,7 @@ StyleEditorUI.prototype = {
         const {
           href,
           nodeHref,
-          actorID: id,
+          resourceId: id,
           sourceMapURL,
           sourceMapBaseURL,
         } = resource;
@@ -1237,7 +1237,7 @@ StyleEditorUI.prototype = {
   },
 
   async _onResourceUpdated(updates) {
-    for (const { update } of updates) {
+    for (const { resource, update } of updates) {
       if (
         update.resourceType === this._toolbox.resourceWatcher.TYPES.STYLESHEET
       ) {
@@ -1258,8 +1258,9 @@ StyleEditorUI.prototype = {
             }
             break;
           }
-          case "media-rules-changed": {
-            const { mediaRules } = update.resourceUpdates;
+          case "media-rules-changed":
+          case "matches-change": {
+            const { mediaRules } = resource;
             editor.onMediaRulesChanged(mediaRules);
             break;
           }

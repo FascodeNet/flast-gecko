@@ -1150,9 +1150,16 @@ bool TextEditor::FireClipboardEvent(EventMessage aEventMessage,
     return false;
   }
 
-  if (!nsCopySupport::FireClipboardEvent(
-          aEventMessage, aSelectionType, presShell,
-          MOZ_KnownLive(SelectionRefPtr()), aActionTaken)) {
+  RefPtr<Selection> sel = SelectionRefPtr();
+  if (IsHTMLEditor() && aEventMessage == eCopy && sel->IsCollapsed()) {
+    // If we don't have a usable selection for copy and we're an HTML editor
+    // (which is global for the document) try to use the last focused selection
+    // instead.
+    sel = nsCopySupport::GetSelectionForCopy(GetDocument());
+  }
+
+  if (!nsCopySupport::FireClipboardEvent(aEventMessage, aSelectionType,
+                                         presShell, sel, aActionTaken)) {
     return false;
   }
 
@@ -1193,17 +1200,18 @@ nsresult TextEditor::CutAsAction(nsIPrincipal* aPrincipal) {
   return EditorBase::ToGenericNSResult(rv);
 }
 
+bool TextEditor::AreClipboardCommandsUnconditionallyEnabled() const {
+  Document* document = GetDocument();
+  return document && document->AreClipboardCommandsUnconditionallyEnabled();
+}
+
 bool TextEditor::IsCutCommandEnabled() const {
   AutoEditActionDataSetter editActionData(*this, EditAction::eNotEditing);
   if (NS_WARN_IF(!editActionData.CanHandle())) {
     return false;
   }
 
-  // Cut is always enabled in HTML documents, but if the document is chrome,
-  // let it control it.
-  Document* document = GetDocument();
-  if (document && document->IsHTMLOrXHTML() &&
-      !nsContentUtils::IsChromeDoc(document)) {
+  if (AreClipboardCommandsUnconditionallyEnabled()) {
     return true;
   }
 
@@ -1229,11 +1237,7 @@ bool TextEditor::IsCopyCommandEnabled() const {
     return false;
   }
 
-  // Copy is always enabled in HTML documents, but if the document is chrome,
-  // let it control it.
-  Document* document = GetDocument();
-  if (document && document->IsHTMLOrXHTML() &&
-      !nsContentUtils::IsChromeDoc(document)) {
+  if (AreClipboardCommandsUnconditionallyEnabled()) {
     return true;
   }
 

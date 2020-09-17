@@ -223,11 +223,12 @@ void WriteCompressedIndexId(IndexOrObjectStoreId aIndexId, bool aUnique,
 // aOutIndexValues is an output parameter, since its storage is reused.
 nsresult ReadCompressedIndexDataValuesFromBlob(
     const Span<const uint8_t> aBlobData,
-    nsTArray<IndexDataValue>& aOutIndexValues) {
+    nsTArray<IndexDataValue>* aOutIndexValues) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(!aBlobData.IsEmpty());
-  MOZ_ASSERT(aOutIndexValues.IsEmpty());
+  MOZ_ASSERT(aOutIndexValues);
+  MOZ_ASSERT(aOutIndexValues->IsEmpty());
 
   AUTO_PROFILER_LABEL("ReadCompressedIndexDataValuesFromBlob", DOM);
 
@@ -284,10 +285,10 @@ nsresult ReadCompressedIndexDataValuesFromBlob(
       remainder = remainderAfterSortKeyBuffer;
     }
 
-    IDB_TRY(OkIf(aOutIndexValues.AppendElement(std::move(idv), fallible)),
+    IDB_TRY(OkIf(aOutIndexValues->AppendElement(std::move(idv), fallible)),
             NS_ERROR_OUT_OF_MEMORY, IDB_REPORT_INTERNAL_ERR_LAMBDA);
   }
-  aOutIndexValues.Sort();
+  aOutIndexValues->Sort();
 
   return NS_OK;
 }
@@ -296,42 +297,38 @@ nsresult ReadCompressedIndexDataValuesFromBlob(
 template <typename T>
 nsresult ReadCompressedIndexDataValuesFromSource(
     T& aSource, uint32_t aColumnIndex,
-    nsTArray<IndexDataValue>& aOutIndexValues) {
+    nsTArray<IndexDataValue>* aOutIndexValues) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
-  MOZ_ASSERT(aOutIndexValues.IsEmpty());
+  MOZ_ASSERT(aOutIndexValues);
+  MOZ_ASSERT(aOutIndexValues->IsEmpty());
 
-  int32_t columnType;
-  nsresult rv = aSource.GetTypeOfIndex(aColumnIndex, &columnType);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+  IDB_TRY_VAR(const int32_t columnType,
+              MOZ_TO_RESULT_INVOKE(aSource, GetTypeOfIndex, aColumnIndex));
+
+  switch (columnType) {
+    case mozIStorageStatement::VALUE_TYPE_NULL:
+      return NS_OK;
+
+    case mozIStorageStatement::VALUE_TYPE_BLOB: {
+      // XXX ToResultInvoke does not support multiple output parameters yet, so
+      // we also can't use IDB_TRY_VAR here.
+      const uint8_t* blobData;
+      uint32_t blobDataLength;
+      IDB_TRY(aSource.GetSharedBlob(aColumnIndex, &blobDataLength, &blobData));
+
+      IDB_TRY(OkIf(blobDataLength), NS_ERROR_FILE_CORRUPTED,
+              IDB_REPORT_INTERNAL_ERR_LAMBDA);
+
+      IDB_TRY(ReadCompressedIndexDataValuesFromBlob(
+          Span(blobData, blobDataLength), aOutIndexValues));
+
+      return NS_OK;
+    }
+
+    default:
+      return NS_ERROR_FILE_CORRUPTED;
   }
-
-  if (columnType == mozIStorageStatement::VALUE_TYPE_NULL) {
-    return NS_OK;
-  }
-
-  MOZ_ASSERT(columnType == mozIStorageStatement::VALUE_TYPE_BLOB);
-
-  const uint8_t* blobData;
-  uint32_t blobDataLength;
-  rv = aSource.GetSharedBlob(aColumnIndex, &blobDataLength, &blobData);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  if (NS_WARN_IF(!blobDataLength)) {
-    IDB_REPORT_INTERNAL_ERR();
-    return NS_ERROR_FILE_CORRUPTED;
-  }
-
-  rv = ReadCompressedIndexDataValuesFromBlob(Span(blobData, blobDataLength),
-                                             aOutIndexValues);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  return NS_OK;
 }
 
 Result<StructuredCloneReadInfoParent, nsresult>
@@ -347,28 +344,24 @@ GetStructuredCloneReadInfoFromBlob(const uint8_t* aBlobData,
   const size_t compressedLength = size_t(aBlobDataLength);
 
   size_t uncompressedLength;
-  if (NS_WARN_IF(!snappy::GetUncompressedLength(compressed, compressedLength,
-                                                &uncompressedLength))) {
-    return Err(NS_ERROR_FILE_CORRUPTED);
-  }
+  IDB_TRY(OkIf(snappy::GetUncompressedLength(compressed, compressedLength,
+                                             &uncompressedLength)),
+          Err(NS_ERROR_FILE_CORRUPTED));
 
   AutoTArray<uint8_t, 512> uncompressed;
-  if (NS_WARN_IF(!uncompressed.SetLength(uncompressedLength, fallible))) {
-    return Err(NS_ERROR_OUT_OF_MEMORY);
-  }
+  IDB_TRY(OkIf(uncompressed.SetLength(uncompressedLength, fallible)),
+          Err(NS_ERROR_OUT_OF_MEMORY));
 
   char* const uncompressedBuffer =
       reinterpret_cast<char*>(uncompressed.Elements());
 
-  if (NS_WARN_IF(!snappy::RawUncompress(compressed, compressedLength,
-                                        uncompressedBuffer))) {
-    return Err(NS_ERROR_FILE_CORRUPTED);
-  }
+  IDB_TRY(OkIf(snappy::RawUncompress(compressed, compressedLength,
+                                     uncompressedBuffer)),
+          Err(NS_ERROR_FILE_CORRUPTED));
 
   JSStructuredCloneData data(JS::StructuredCloneScope::DifferentProcess);
-  if (!data.AppendBytes(uncompressedBuffer, uncompressed.Length())) {
-    return Err(NS_ERROR_OUT_OF_MEMORY);
-  }
+  IDB_TRY(OkIf(data.AppendBytes(uncompressedBuffer, uncompressed.Length())),
+          Err(NS_ERROR_OUT_OF_MEMORY));
 
   nsTArray<StructuredCloneFileParent> files;
   if (!aFileIds.IsVoid()) {
@@ -387,8 +380,6 @@ GetStructuredCloneReadInfoFromExternalBlob(uint64_t aIntData,
 
   AUTO_PROFILER_LABEL("GetStructuredCloneReadInfoFromExternalBlob", DOM);
 
-  nsresult rv;
-
   nsTArray<StructuredCloneFileParent> files;
   if (!aFileIds.IsVoid()) {
     IDB_TRY_VAR(files, DeserializeStructuredCloneFiles(aFileManager, aFileIds));
@@ -396,12 +387,10 @@ GetStructuredCloneReadInfoFromExternalBlob(uint64_t aIntData,
 
   // Higher and lower 32 bits described
   // in ObjectStoreAddOrPutRequestOp::DoDatabaseWork.
-  const uint32_t index = uint32_t(aIntData & 0xFFFFFFFF);
+  const uint32_t index = uint32_t(aIntData & UINT32_MAX);
 
-  if (index >= files.Length()) {
-    MOZ_ASSERT(false, "Bad index value!");
-    return Err(NS_ERROR_UNEXPECTED);
-  }
+  IDB_TRY(OkIf(index < files.Length()), Err(NS_ERROR_UNEXPECTED),
+          [](const auto&) { MOZ_ASSERT(false, "Bad index value!"); });
 
   if (IndexedDatabaseManager::PreprocessingEnabled()) {
     return StructuredCloneReadInfoParent{
@@ -414,15 +403,14 @@ GetStructuredCloneReadInfoFromExternalBlob(uint64_t aIntData,
   MOZ_ASSERT(file.Type() == StructuredCloneFileBase::eStructuredClone);
 
   const nsCOMPtr<nsIFile> nativeFile = file.FileInfo().GetFileForFileInfo();
-  if (NS_WARN_IF(!nativeFile)) {
-    return Err(NS_ERROR_FAILURE);
-  }
+  IDB_TRY(OkIf(nativeFile), Err(NS_ERROR_FAILURE));
 
+  // XXX NS_NewLocalFileInputStream does not follow the convention to place its
+  // output parameter last (it has optional parameters which makes that
+  // problematic), so we can't use ToResultInvoke, nor IDB_TRY_VAR.
   nsCOMPtr<nsIInputStream> fileInputStream;
-  rv = NS_NewLocalFileInputStream(getter_AddRefs(fileInputStream), nativeFile);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY(
+      NS_NewLocalFileInputStream(getter_AddRefs(fileInputStream), nativeFile));
 
   const auto snappyInputStream =
       MakeRefPtr<SnappyUncompressInputStream>(fileInputStream);
@@ -431,19 +419,16 @@ GetStructuredCloneReadInfoFromExternalBlob(uint64_t aIntData,
   do {
     char buffer[kFileCopyBufferSize];
 
-    uint32_t numRead;
-    rv = snappyInputStream->Read(buffer, sizeof(buffer), &numRead);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return Err(rv);
-    }
+    IDB_TRY_VAR(
+        const uint32_t numRead,
+        MOZ_TO_RESULT_INVOKE(snappyInputStream, Read, buffer, sizeof(buffer)));
 
     if (!numRead) {
       break;
     }
 
-    if (NS_WARN_IF(!data.AppendBytes(buffer, numRead))) {
-      return Err(NS_ERROR_OUT_OF_MEMORY);
-    }
+    IDB_TRY(OkIf(data.AppendBytes(buffer, numRead)),
+            Err(NS_ERROR_OUT_OF_MEMORY));
   } while (true);
 
   return StructuredCloneReadInfoParent{std::move(data), std::move(files),
@@ -458,52 +443,46 @@ GetStructuredCloneReadInfoFromSource(T* aSource, uint32_t aDataIndex,
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(aSource);
 
-  int32_t columnType;
-  nsresult rv = aSource->GetTypeOfIndex(aDataIndex, &columnType);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY_VAR(const int32_t columnType,
+              MOZ_TO_RESULT_INVOKE(aSource, GetTypeOfIndex, aDataIndex));
 
-  MOZ_ASSERT(columnType == mozIStorageStatement::VALUE_TYPE_BLOB ||
-             columnType == mozIStorageStatement::VALUE_TYPE_INTEGER);
+  IDB_TRY_VAR(const bool isNull,
+              MOZ_TO_RESULT_INVOKE(aSource, GetIsNull, aFileIdsIndex));
 
-  bool isNull;
-  rv = aSource->GetIsNull(aFileIdsIndex, &isNull);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY_VAR(const nsString fileIds, ([aSource, aFileIdsIndex, isNull] {
+                // XXX MOZ_TO_RESULT_INVOKE doesn't seem to automatically
+                // determine the necessary return success type to be
+                // nsString rather than nsAString
+                return isNull ? Result<nsString, nsresult>{VoidString()}
+                              : ToResultInvoke<nsString>(
+                                    std::mem_fn(&T::GetString), aSource,
+                                    aFileIdsIndex);
+              }()));
 
-  nsString fileIds;
+  switch (columnType) {
+    case mozIStorageStatement::VALUE_TYPE_INTEGER: {
+      IDB_TRY_VAR(const int64_t intData,
+                  MOZ_TO_RESULT_INVOKE(aSource, GetInt64, aDataIndex));
 
-  if (isNull) {
-    fileIds.SetIsVoid(true);
-  } else {
-    rv = aSource->GetString(aFileIdsIndex, fileIds);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return Err(rv);
-    }
-  }
+      uint64_t uintData;
+      memcpy(&uintData, &intData, sizeof(uint64_t));
 
-  if (columnType == mozIStorageStatement::VALUE_TYPE_INTEGER) {
-    uint64_t intData;
-    rv = aSource->GetInt64(aDataIndex, reinterpret_cast<int64_t*>(&intData));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return Err(rv);
+      return GetStructuredCloneReadInfoFromExternalBlob(uintData, aFileManager,
+                                                        fileIds);
     }
 
-    return GetStructuredCloneReadInfoFromExternalBlob(intData, aFileManager,
-                                                      fileIds);
-  }
+    case mozIStorageStatement::VALUE_TYPE_BLOB: {
+      const uint8_t* blobData;
+      uint32_t blobDataLength;
+      IDB_TRY(aSource->GetSharedBlob(aDataIndex, &blobDataLength, &blobData));
 
-  const uint8_t* blobData;
-  uint32_t blobDataLength;
-  rv = aSource->GetSharedBlob(aDataIndex, &blobDataLength, &blobData);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+      return GetStructuredCloneReadInfoFromBlob(blobData, blobDataLength,
+                                                aFileManager, fileIds);
+    }
 
-  return GetStructuredCloneReadInfoFromBlob(blobData, blobDataLength,
-                                            aFileManager, fileIds);
+    default:
+      return Err(NS_ERROR_FILE_CORRUPTED);
+  }
 }
 
 }  // namespace
@@ -599,17 +578,14 @@ MakeCompressedIndexDataValues(const nsTArray<IndexDataValue>& aIndexValues) {
                keyBufferLength + sortKeyBufferLength;
       });
 
-  if (NS_WARN_IF(!blobDataLength.isValid())) {
-    IDB_REPORT_INTERNAL_ERR();
-    return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
-  }
+  IDB_TRY(OkIf(blobDataLength.isValid()),
+          Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR),
+          IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
   UniqueFreePtr<uint8_t> blobData(
       static_cast<uint8_t*>(malloc(blobDataLength.value())));
-  if (NS_WARN_IF(!blobData)) {
-    IDB_REPORT_INTERNAL_ERR();
-    return Err(NS_ERROR_OUT_OF_MEMORY);
-  }
+  IDB_TRY(OkIf(static_cast<bool>(blobData)), Err(NS_ERROR_OUT_OF_MEMORY),
+          IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
   uint8_t* blobDataIter = blobData.get();
 
@@ -640,20 +616,14 @@ nsresult ReadCompressedIndexDataValues(
     mozIStorageStatement& aStatement, uint32_t aColumnIndex,
     nsTArray<IndexDataValue>& aOutIndexValues) {
   return ReadCompressedIndexDataValuesFromSource(aStatement, aColumnIndex,
-                                                 aOutIndexValues);
+                                                 &aOutIndexValues);
 }
 
-using IndexDataValuesAutoArray = AutoTArray<IndexDataValue, 32>;
 Result<IndexDataValuesAutoArray, nsresult> ReadCompressedIndexDataValues(
     mozIStorageValueArray& aValues, uint32_t aColumnIndex) {
-  IndexDataValuesAutoArray result;
-  const nsresult rv =
-      ReadCompressedIndexDataValuesFromSource(aValues, aColumnIndex, result);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
-
-  return result;
+  return ToResultInvoke<IndexDataValuesAutoArray>(
+      &ReadCompressedIndexDataValuesFromSource<mozIStorageValueArray>, aValues,
+      aColumnIndex);
 }
 
 Result<std::tuple<IndexOrObjectStoreId, bool, Span<const uint8_t>>, nsresult>
@@ -683,11 +653,10 @@ ReadCompressedNumber(const Span<const uint8_t> aSpan) {
         return !(byte & 0x80);
       });
 
-  if (NS_WARN_IF(newPos == end)) {
+  IDB_TRY(OkIf(newPos != end), Err(NS_ERROR_FILE_CORRUPTED), [](const auto&) {
     MOZ_ASSERT(false);
     IDB_REPORT_INTERNAL_ERR();
-    return Err(NS_ERROR_FILE_CORRUPTED);
-  }
+  });
 
   return std::pair{result, Span{newPos + 1, end}};
 }

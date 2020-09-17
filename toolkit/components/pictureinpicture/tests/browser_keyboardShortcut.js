@@ -34,24 +34,22 @@ add_task(async function test_pip_keyboard_shortcut() {
         }
       );
 
-      EventUtils.synthesizeKey("]", { accelKey: true, shiftKey: true });
+      if (AppConstants.platform == "macosx") {
+        EventUtils.synthesizeKey("]", {
+          accelKey: true,
+          shiftKey: true,
+          altKey: true,
+        });
+      } else {
+        EventUtils.synthesizeKey("]", { accelKey: true, shiftKey: true });
+      }
 
       let pipWin = await domWindowOpened;
       await videoReady;
 
       ok(pipWin, "Got Picture-in-Picture window.");
 
-      try {
-        await assertShowingMessage(browser, VIDEO_ID, true);
-      } finally {
-        let uaWidgetUpdate = BrowserTestUtils.waitForContentEvent(
-          browser,
-          "UAWidgetSetupOrChange",
-          true /* capture */
-        );
-        await BrowserTestUtils.closeWindow(pipWin);
-        await uaWidgetUpdate;
-      }
+      await ensureMessageAndClosePiP(browser, VIDEO_ID, pipWin, false);
     }
   );
 });

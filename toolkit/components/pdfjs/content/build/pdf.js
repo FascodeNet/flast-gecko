@@ -335,8 +335,8 @@ var _text_layer = __w_pdfjs_require__(20);
 
 var _svg = __w_pdfjs_require__(21);
 
-const pdfjsVersion = '2.7.37';
-const pdfjsBuild = '865de9ab9';
+const pdfjsVersion = '2.7.59';
+const pdfjsBuild = 'e73354a32';
 ;
 
 /***/ }),
@@ -1575,7 +1575,15 @@ function stringToPDFString(str) {
 }
 
 function escapeString(str) {
-  return str.replace(/([\(\)\\])/g, "\\$1");
+  return str.replace(/([\(\)\\\n\r])/g, match => {
+    if (match === "\n") {
+      return "\\n";
+    } else if (match === "\r") {
+      return "\\r";
+    }
+
+    return `\\${match}`;
+  });
 }
 
 function stringToUTF8String(str) {
@@ -1964,7 +1972,7 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
 
   return worker.messageHandler.sendWithPromise("GetDocRequest", {
     docId,
-    apiVersion: '2.7.37',
+    apiVersion: '2.7.59',
     source: {
       data: source.data,
       url: source.url,
@@ -3889,9 +3897,9 @@ const InternalRenderTask = function InternalRenderTaskClosure() {
   return InternalRenderTask;
 }();
 
-const version = '2.7.37';
+const version = '2.7.59';
 exports.version = version;
-const build = '865de9ab9';
+const build = 'e73354a32';
 exports.build = build;
 
 /***/ }),
@@ -9465,6 +9473,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
 
       element.addEventListener("input", function (event) {
         storage.setValue(id, event.target.value);
+      });
+      element.addEventListener("blur", function (event) {
+        event.target.setSelectionRange(0, 0);
       });
       element.disabled = this.data.readOnly;
       element.name = this.data.fieldName;

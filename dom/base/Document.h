@@ -55,7 +55,7 @@
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
-#include <bitset>  // for member
+#include <bitset>                // for member
 #include "js/friend/DOMProxy.h"  // JS::ExpandoAndGeneration
 
 // XXX We need to include this here to ensure that DefaultDeleter for Servo
@@ -1463,6 +1463,8 @@ class Document : public nsINode,
 
   bool HasThirdPartyChannel();
 
+  bool ShouldIncludeInTelemetry(bool aAllowExtensionURIs);
+
  protected:
   friend class nsUnblockOnloadEvent;
 
@@ -2714,6 +2716,13 @@ class Document : public nsINode,
   }
 
   /**
+   * Some clipboard commands are unconditionally enabled on some documents, so
+   * as to always dispatch copy / paste events even though you'd normally not be
+   * able to copy.
+   */
+  bool AreClipboardCommandsUnconditionallyEnabled() const;
+
+  /**
    * Note a ChannelEventQueue which has been suspended on the document's behalf
    * to prevent XHRs from running content scripts while event handling is
    * suppressed. The document is responsible for resuming the queue after
@@ -2821,9 +2830,14 @@ class Document : public nsINode,
    * and replace the cloned resources).
    *
    * @param aCloneContainer The container for the clone document.
+   * @param aContentViewer The viewer for the clone document. Must be the viewer
+   *                       of aCloneContainer, but callers must have a reference
+   *                       to it already and ensure it's not null.
+   * @param aOutHasInProcessPrintCallbacks Self-descriptive.
    */
-  virtual already_AddRefed<Document> CreateStaticClone(
-      nsIDocShell* aCloneContainer);
+  already_AddRefed<Document> CreateStaticClone(
+      nsIDocShell* aCloneContainer, nsIContentViewer* aContentViewer,
+      bool* aOutHasInProcessPrintCallbacks);
 
   /**
    * If this document is a static clone, this returns the original
@@ -3926,7 +3940,6 @@ class Document : public nsINode,
     RefPtr<nsFrameLoaderOwner> mElement;
     RefPtr<nsFrameLoader> mStaticCloneOf;
   };
-  nsTArray<PendingFrameStaticClone> TakePendingFrameStaticClones();
   void AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
                                   nsFrameLoader* aStaticCloneOf);
 

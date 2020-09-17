@@ -88,7 +88,10 @@ static nsReturnRef<nsHGLOBAL> CreateGlobalDevModeAndInit(
     return nsReturnRef<nsHGLOBAL>();
   }
 
-  // Allocate a buffer of the correct size.
+  // Some drivers do not return the correct size for their DEVMODE, so we
+  // over-allocate to try and compensate.
+  // (See https://bugzilla.mozilla.org/show_bug.cgi?id=1664530#c5)
+  needed *= 2;
   nsAutoDevMode newDevMode(
       (LPDEVMODEW)::HeapAlloc(::GetProcessHeap(), HEAP_ZERO_MEMORY, needed));
   if (!newDevMode) {
@@ -216,6 +219,13 @@ static nsresult ShowNativePrintDialog(HWND aHWnd,
   aPrintSettings->GetPrintOptions(nsIPrintSettings::kEnableSelectionRB, &isOn);
   if (!isOn) {
     prntdlg.Flags |= PD_NOSELECTION;
+  }
+
+  int16_t printRangeType = nsIPrintSettings::kRangeAllPages;
+  aPrintSettings->GetPrintRange(&printRangeType);
+  // if there is a specified page range then enable the "Custom" radio button
+  if (printRangeType == nsIPrintSettings::kRangeSpecifiedPageRange) {
+    prntdlg.Flags |= PD_PAGENUMS;
   }
 
   int32_t pg = 1;

@@ -623,14 +623,7 @@ class SearchEngine {
    * Constructor.
    *
    * @param {object} options
-   *   The options for this search engine. At least one of options.name,
-   *   or options.shortName are required.
-   * @param {string} [options.name]
-   *   The name to base the short name of the engine on. This is typically the
-   *   display name where a pre-defined/sanitized short name is not available.
-   * @param {string} [options.shortName]
-   *   The short name to use for the engine. This should be known to match
-   *   the basic requirements in sanitizeName for a short name.
+   *   The options for this search engine.
    * @param {boolean} options.isAppProvided
    *   Indicates whether the engine is provided by Firefox, either
    *   shipped in omni.ja or via Normandy. If it is, it will
@@ -647,14 +640,6 @@ class SearchEngine {
     }
     this._isAppProvided = options.isAppProvided;
     this._loadPath = options.loadPath;
-
-    if ("name" in options) {
-      this._shortName = SearchUtils.sanitizeName(options.name);
-    } else if ("shortName" in options) {
-      this._shortName = options.shortName;
-    } else {
-      throw new Error("'name' or 'shortName' missing from options.");
-    }
   }
 
   get _searchForm() {
@@ -787,10 +772,10 @@ class SearchEngine {
       case "ftp":
         var chan = SearchUtils.makeChannel(uri);
 
-        let iconLoadCallback = function(byteArray, engine) {
+        let iconLoadCallback = function(byteArray) {
           // This callback may run after we've already set a preferred icon,
           // so check again.
-          if (engine._hasPreferredIcon && !isPreferred) {
+          if (this._hasPreferredIcon && !isPreferred) {
             return;
           }
 
@@ -819,27 +804,24 @@ class SearchEngine {
             ";base64," +
             btoa(String.fromCharCode.apply(null, byteArray));
 
-          engine._iconURI = SearchUtils.makeURI(dataURL);
+          this._iconURI = SearchUtils.makeURI(dataURL);
 
           if (width && height) {
-            engine._addIconToMap(width, height, dataURL);
+            this._addIconToMap(width, height, dataURL);
           }
 
-          if (engine._engineAddedToStore) {
-            SearchUtils.notifyAction(engine, SearchUtils.MODIFIED_TYPE.CHANGED);
+          if (this._engineAddedToStore) {
+            SearchUtils.notifyAction(this, SearchUtils.MODIFIED_TYPE.CHANGED);
           }
-          engine._hasPreferredIcon = isPreferred;
+          this._hasPreferredIcon = isPreferred;
         };
-
-        // If we're currently acting as an "update engine", then the callback
-        // should set the icon on the engine we're updating and not us, since
-        // |this| might be gone by the time the callback runs.
-        var engineToSet = this._engineToUpdate || this;
 
         var listener = new SearchUtils.LoadListener(
           chan,
-          engineToSet,
-          iconLoadCallback
+          // If we're currently acting as an "update engine", then the callback
+          // should set the icon on the engine we're updating and not us, since
+          // |this| might be gone by the time the callback runs.
+          iconLoadCallback.bind(this._engineToUpdate || this)
         );
         chan.notificationCallbacks = listener;
         chan.asyncOpen(listener);
@@ -954,29 +936,27 @@ class SearchEngine {
         extensionBaseURI.resolve(IconDetails.getPreferredIcon(icons).icon);
     }
 
-    let shortName = extensionID.split("@")[0];
-    if (locale != SearchUtils.DEFAULT_TAG) {
-      shortName += "-" + locale;
-    }
-    // TODO: Bug 1619656. We should no longer need to maintain the short name as
-    // the telemetry id. However, we need to check that this doesn't adversely
-    // affect settings or caches.
-    if ("telemetryId" in configuration && configuration.telemetryId) {
-      shortName = configuration.telemetryId;
+    // We only set _telemetryId for app-provided engines. See also telemetryId
+    // getter.
+    if (this._isAppProvided) {
+      if (configuration.telemetryId) {
+        this._telemetryId = configuration.telemetryId;
+      } else {
+        let telemetryId = extensionID.split("@")[0];
+        if (locale != SearchUtils.DEFAULT_TAG) {
+          telemetryId += "-" + locale;
+        }
+        this._telemetryId = telemetryId;
+      }
     }
 
     this._extensionID = extensionID;
     this._locale = locale;
     this._orderHint = configuration.orderHint;
-    this._telemetryId = configuration.telemetryId;
     this._name = searchProvider.name.trim();
     this._regionParams = configuration.regionParams;
     this._sendAttributionRequest =
       configuration.sendAttributionRequest ?? false;
-
-    if (shortName) {
-      this._shortName = shortName;
-    }
 
     this._definedAliases = [];
     if (Array.isArray(searchProvider.keyword)) {
@@ -1094,7 +1074,7 @@ class SearchEngine {
 
   /**
    * Overrides the urls/parameters with those of the provided extension.
-   * The parameters are not saved to the search cache - the code handling
+   * The parameters are not saved to the search settings - the code handling
    * the extension should set these on every restart, this avoids potential
    * third party modifications and means that we can verify the WebExtension is
    * still in the allow list.
@@ -1138,7 +1118,6 @@ class SearchEngine {
    */
   _initWithJSON(json) {
     this._name = json._name;
-    this._shortName = json._shortName;
     this._description = json.description;
     this._hasPreferredIcon = json._hasPreferredIcon == undefined;
     this._queryCharset = json.queryCharset || SearchUtils.DEFAULT_QUERY_CHARSET;
@@ -1150,7 +1129,6 @@ class SearchEngine {
     this._iconMapObj = json._iconMapObj;
     this._metaData = json._metaData || {};
     this._orderHint = json._orderHint || null;
-    this._telemetryId = json._telemetryId || null;
     this._definedAliases = json._definedAliases || [];
     // These changed keys in Firefox 80, maintain the old keys
     // for backwards compatibility.
@@ -1180,8 +1158,8 @@ class SearchEngine {
    *   An object suitable for serialization as JSON.
    */
   toJSON() {
-    // For built-in engines we don't want to store all their data in the cache
-    // so just store the relevant metadata.
+    // For built-in engines we don't want to store all their data in the settings
+    // file so just store the relevant metadata.
     if (this._isAppProvided) {
       return {
         _name: this.name,
@@ -1192,7 +1170,6 @@ class SearchEngine {
 
     const fieldsToCopy = [
       "_name",
-      "_shortName",
       "_loadPath",
       "description",
       "__searchForm",
@@ -1280,16 +1257,15 @@ class SearchEngine {
    * Returns the appropriate identifier to use for telemetry. It is based on
    * the following order:
    *
-   * - telemetryId: The telemetry id from the configuration.
-   * - identifier: The built-in identifier of app-provided engines.
+   * - telemetryId: The telemetry id from the configuration, or derived from
+   *                the WebExtension name.
    * - other-<name>: The engine name prefixed by `other-` for non-app-provided
    *                 engines.
    *
    * @returns {string}
    */
   get telemetryId() {
-    let telemetryId =
-      this._telemetryId || this.identifier || `other-${this.name}`;
+    let telemetryId = this._telemetryId || `other-${this.name}`;
     if (this.getAttr("overriddenBy")) {
       return telemetryId + "-addon";
     }
@@ -1304,7 +1280,7 @@ class SearchEngine {
    */
   get identifier() {
     // No identifier if If the engine isn't app-provided
-    return this.isAppProvided ? this._shortName : null;
+    return this.isAppProvided ? this._telemetryId : null;
   }
 
   get description() {

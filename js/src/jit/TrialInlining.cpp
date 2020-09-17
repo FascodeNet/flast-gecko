@@ -24,13 +24,16 @@ bool DoTrialInlining(JSContext* cx, BaselineFrame* frame) {
 
   RootedScript script(cx, frame->script());
   ICScript* icScript = frame->icScript();
-  bool isRecursive = !!icScript->inliningRoot();
+  bool isRecursive = icScript->depth() > 0;
 
   if (!script->canIonCompile()) {
     return true;
   }
 
-  const uint32_t MAX_INLINING_DEPTH = 5;
+  // Baseline shouldn't attempt trial inlining in scripts that are too large.
+  MOZ_ASSERT(script->length() <= JitOptions.ionMaxScriptSize);
+
+  const uint32_t MAX_INLINING_DEPTH = 4;
   if (icScript->depth() > MAX_INLINING_DEPTH) {
     return true;
   }
@@ -216,6 +219,28 @@ bool TrialInliner::shouldInline(JSFunction* target, ICStub* stub,
           CodeName(loc.getOp()), target->nonLazyScript()->filename(),
           target->nonLazyScript()->lineno(), target->nonLazyScript()->column());
 
+  // Don't inline (direct) recursive calls. This still allows recursion if
+  // called through another function (f => g => f).
+  JSScript* targetScript = target->nonLazyScript();
+  if (script_ == targetScript) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: recursion");
+    return false;
+  }
+
+  // Don't inline if the callee has a loop that was hot enough to enter Warp
+  // via OSR. This helps prevent getting stuck in Baseline code for a long time.
+  if (targetScript->jitScript()->hadIonOSR()) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: had OSR");
+    return false;
+  }
+
+  // Ensure the total bytecode size does not exceed ionMaxScriptSize.
+  size_t newTotalSize = root_->totalBytecodeSize() + targetScript->length();
+  if (newTotalSize > JitOptions.ionMaxScriptSize) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: total size too big");
+    return false;
+  }
+
   uint32_t entryCount = stub->getEnteredCount();
   if (entryCount < JitOptions.inliningEntryThreshold) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: Entry count is %u (minimum %u)",
@@ -223,9 +248,9 @@ bool TrialInliner::shouldInline(JSFunction* target, ICStub* stub,
     return false;
   }
 
-  if (!JitOptions.isSmallFunction(target->nonLazyScript())) {
+  if (!JitOptions.isSmallFunction(targetScript)) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: Length is %u (maximum %u)",
-            unsigned(target->nonLazyScript()->length()),
+            unsigned(targetScript->length()),
             unsigned(JitOptions.smallFunctionMaxBytecodeLength));
     return false;
   }
@@ -265,14 +290,11 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
     return nullptr;
   }
 
-  // TODO: Increase this to make recursive inlining more aggressive.
-  // Alternatively, we could add a trialInliningThreshold field to
-  // ICScript to give more precise control.
-  const uint32_t InitialWarmUpCount = 0;
+  uint32_t initialWarmUpCount = JitOptions.trialInliningInitialWarmUpCount;
 
   uint32_t depth = icScript_->depth() + 1;
   UniquePtr<ICScript> inlinedICScript(
-      new (raw) ICScript(InitialWarmUpCount, allocSize, depth, root_));
+      new (raw) ICScript(initialWarmUpCount, allocSize, depth, root_));
 
   {
     // Suppress GC. This matches the AutoEnterAnalysis in
@@ -292,8 +314,10 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
   }
   MOZ_ASSERT(result->numICEntries() == targetScript->numICEntries());
 
+  root_->addToTotalBytecodeSize(targetScript->length());
+
   JitSpew(JitSpew_WarpTrialInlining,
-          "Outer ICScript: %p Inner ICScript: %p pcOffset: %u\n", icScript_,
+          "Outer ICScript: %p Inner ICScript: %p pcOffset: %u", icScript_,
           result, pcOffset);
 
   return result;
@@ -352,23 +376,26 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
 }
 
 bool TrialInliner::tryInlining() {
-  uint32_t icIndex = 0;
-  for (BytecodeLocation loc : AllBytecodesIterable(script_)) {
+  uint32_t numICEntries = icScript_->numICEntries();
+  BytecodeLocation startLoc = script_->location();
+
+  for (uint32_t icIndex = 0; icIndex < numICEntries; icIndex++) {
+    const ICEntry& entry = icScript_->icEntry(icIndex);
+    BytecodeLocation loc = startLoc + BytecodeLocationOffset(entry.pcOffset());
     JSOp op = loc.getOp();
     switch (op) {
       case JSOp::Call:
       case JSOp::CallIgnoresRv:
       case JSOp::CallIter:
       case JSOp::FunCall:
-        if (!maybeInlineCall(icScript_->icEntry(icIndex), loc)) {
+      case JSOp::New:
+      case JSOp::SuperCall:
+        if (!maybeInlineCall(entry, loc)) {
           return false;
         }
         break;
       default:
         break;
-    }
-    if (loc.opHasIC()) {
-      icIndex++;
     }
   }
 
@@ -396,6 +423,12 @@ void InliningRoot::trace(JSTracer* trc) {
 void InliningRoot::purgeOptimizedStubs(Zone* zone) {
   for (auto& inlinedScript : inlinedScripts_) {
     inlinedScript->purgeOptimizedStubs(zone);
+  }
+}
+
+void InliningRoot::resetWarmUpCounts(uint32_t count) {
+  for (auto& inlinedScript : inlinedScripts_) {
+    inlinedScript->resetWarmUpCount(count);
   }
 }
 

@@ -13,14 +13,14 @@
 
 #include "NamespaceImports.h"
 
+#include "builtin/TypedObject.h"
 #include "gc/Rooting.h"
 #include "jit/CacheIROpsGenerated.h"
 #include "jit/CompactBuffer.h"
 #include "jit/ICState.h"
-#include "jit/MacroAssembler.h"
 #include "jit/Simulator.h"
 #include "js/friend/XrayJitInfo.h"  // JS::XrayJitInfo
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/ScalarType.h"          // js::Scalar::Type
 #include "vm/Iteration.h"
 #include "vm/Shape.h"
 
@@ -29,6 +29,10 @@ namespace jit {
 
 enum class BaselineCacheIRStubKind;
 enum class InlinableNative : uint16_t;
+
+class ICStub;
+class Label;
+class MacroAssembler;
 
 // [SMDOC] CacheIR
 //
@@ -181,6 +185,7 @@ class TypedOperandId : public OperandId {
   _(ToPropertyKey)        \
   _(InstanceOf)           \
   _(GetIterator)          \
+  _(OptimizeSpreadCall)   \
   _(Compare)              \
   _(ToBool)               \
   _(Call)                 \
@@ -292,10 +297,12 @@ class CallFlags {
 
   CallFlags() = default;
   explicit CallFlags(ArgFormat format) : argFormat_(format) {}
-  CallFlags(bool isConstructing, bool isSpread, bool isSameRealm = false)
+  CallFlags(bool isConstructing, bool isSpread, bool isSameRealm = false,
+            bool needsUninitializedThis = false)
       : argFormat_(isSpread ? Spread : Standard),
         isConstructing_(isConstructing),
-        isSameRealm_(isSameRealm) {}
+        isSameRealm_(isSameRealm),
+        needsUninitializedThis_(needsUninitializedThis) {}
 
   ArgFormat getArgFormat() const { return argFormat_; }
   bool isConstructing() const {
@@ -304,6 +311,9 @@ class CallFlags {
     return isConstructing_;
   }
   bool isSameRealm() const { return isSameRealm_; }
+
+  bool needsUninitializedThis() const { return needsUninitializedThis_; }
+  void setNeedsUninitializedThis() { needsUninitializedThis_ = true; }
 
   uint8_t toByte() const {
     // See CacheIRReader::callFlags()
@@ -315,6 +325,9 @@ class CallFlags {
     if (isSameRealm()) {
       value |= CallFlags::IsSameRealm;
     }
+    if (needsUninitializedThis()) {
+      value |= CallFlags::NeedsUninitializedThis;
+    }
     return value;
   }
 
@@ -322,6 +335,7 @@ class CallFlags {
   ArgFormat argFormat_ = ArgFormat::Unknown;
   bool isConstructing_ = false;
   bool isSameRealm_ = false;
+  bool needsUninitializedThis_ = false;
 
   // Used for encoding/decoding
   static const uint8_t ArgFormatBits = 4;
@@ -329,6 +343,7 @@ class CallFlags {
   static_assert(LastArgFormat <= ArgFormatMask, "Not enough arg format bits");
   static const uint8_t IsConstructing = 1 << 5;
   static const uint8_t IsSameRealm = 1 << 6;
+  static const uint8_t NeedsUninitializedThis = 1 << 7;
 
   friend class CacheIRReader;
   friend class CacheIRWriter;
@@ -1066,13 +1081,17 @@ class MOZ_RAII CacheIRReader {
         CallFlags::ArgFormat(encoded & CallFlags::ArgFormatMask);
     bool isConstructing = encoded & CallFlags::IsConstructing;
     bool isSameRealm = encoded & CallFlags::IsSameRealm;
+    bool needsUninitializedThis = encoded & CallFlags::NeedsUninitializedThis;
+    MOZ_ASSERT_IF(needsUninitializedThis, isConstructing);
     switch (format) {
       case CallFlags::Unknown:
         MOZ_CRASH("Unexpected call flags");
       case CallFlags::Standard:
-        return CallFlags(isConstructing, /*isSpread =*/false, isSameRealm);
+        return CallFlags(isConstructing, /*isSpread =*/false, isSameRealm,
+                         needsUninitializedThis);
       case CallFlags::Spread:
-        return CallFlags(isConstructing, /*isSpread =*/true, isSameRealm);
+        return CallFlags(isConstructing, /*isSpread =*/true, isSameRealm,
+                         needsUninitializedThis);
       default:
         // The existing non-standard argument formats (FunCall and FunApply)
         // can't be constructors and have no support for isSameRealm.
@@ -1652,7 +1671,29 @@ class MOZ_RAII GetIteratorIRGenerator : public IRGenerator {
   void trackAttached(const char* name);
 };
 
+class MOZ_RAII OptimizeSpreadCallIRGenerator : public IRGenerator {
+  HandleValue val_;
+
+  AttachDecision tryAttachArray();
+  AttachDecision tryAttachNotOptimizable();
+
+ public:
+  OptimizeSpreadCallIRGenerator(JSContext* cx, HandleScript script,
+                                jsbytecode* pc, ICState::Mode mode,
+                                HandleValue value);
+
+  AttachDecision tryAttachStub();
+
+  void trackAttached(const char* name);
+};
+
 enum class StringChar { CodeAt, At };
+enum class ScriptedThisResult {
+  NoAction,
+  TemporarilyUnoptimizable,
+  UninitializedThis,
+  TemplateObject
+};
 
 class MOZ_RAII CallIRGenerator : public IRGenerator {
  private:
@@ -1666,9 +1707,8 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   PropertyTypeCheckInfo typeCheckInfo_;
   BaselineCacheIRStubKind cacheIRStubKind_;
 
-  bool getTemplateObjectForScripted(HandleFunction calleeFunc,
-                                    MutableHandleObject result,
-                                    bool* skipAttach);
+  ScriptedThisResult getThisForScripted(HandleFunction calleeFunc,
+                                        MutableHandleObject result);
   bool getTemplateObjectForNative(HandleFunction calleeFunc,
                                   MutableHandleObject result);
 
@@ -1719,6 +1759,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachSubstringKernel(HandleFunction callee);
   AttachDecision tryAttachObjectHasPrototype(HandleFunction callee);
   AttachDecision tryAttachString(HandleFunction callee);
+  AttachDecision tryAttachStringConstructor(HandleFunction callee);
   AttachDecision tryAttachStringToStringValueOf(HandleFunction callee);
   AttachDecision tryAttachStringChar(HandleFunction callee, StringChar kind);
   AttachDecision tryAttachStringCharCodeAt(HandleFunction callee);
@@ -1784,6 +1825,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachAssertFloat32(HandleFunction callee);
   AttachDecision tryAttachAssertRecoveredOnBailout(HandleFunction callee);
   AttachDecision tryAttachObjectIs(HandleFunction callee);
+  AttachDecision tryAttachObjectIsPrototypeOf(HandleFunction callee);
 
   AttachDecision tryAttachFunCall(HandleFunction calleeFunc);
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);

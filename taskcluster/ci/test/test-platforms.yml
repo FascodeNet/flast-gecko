@@ -214,6 +214,21 @@ windows7-32-devedition/opt:
         - web-platform-tests
         - mochitest-webgpu
 
+# win7 qr builds for try purposes
+windows7-32-qr/debug:
+    build-platform: win64/debug
+    test-sets:
+        - mochitest-webgpu
+        - windows-qr-tests
+        - web-platform-tests
+
+windows7-32-qr/opt:
+    build-platform: win64/opt
+    test-sets:
+        - awsy
+        - windows-qr-tests
+        - web-platform-tests
+
 # win64
 windows10-64-ccov/opt:
     build-platform: win64-ccov/opt
@@ -224,7 +239,7 @@ windows10-64-ccov/opt:
         - windows-talos
         - marionette-gpu-tests
         - windows-tests
-        - windows-devtools
+        - windows10-tests
         - web-platform-tests
         - ccov-code-coverage-tests
         - mochitest-webgpu
@@ -235,7 +250,7 @@ windows10-64/debug:
         - marionette-gpu-tests
         - mochitest-webgpu
         - windows-tests
-        - windows-devtools
+        - windows10-tests
         - web-platform-tests
 
 windows10-64/opt:
@@ -246,7 +261,7 @@ windows10-64/opt:
         - windows-talos
         - marionette-gpu-tests
         - windows-tests
-        - windows-devtools
+        - windows10-tests
         - web-platform-tests
         - web-platform-tests-backlog
         - raptor-firefox
@@ -274,7 +289,7 @@ windows10-64-shippable/opt:
         - windows-talos
         - marionette-gpu-tests
         - windows-tests
-        - windows-devtools
+        - windows10-tests
         - web-platform-tests
         - web-platform-tests-backlog
         - web-platform-tests-wdspec-headless
@@ -292,7 +307,7 @@ windows10-64-devedition/opt:
         - desktop-screenshot-capture
         - marionette-gpu-tests
         - windows-tests
-        - windows-devtools
+        - windows10-tests
         - web-platform-tests
         - mochitest-webgpu
 
@@ -300,7 +315,7 @@ windows10-64-asan/opt:
     build-platform: win64-asan/opt
     test-sets:
         - windows-tests
-        - windows-devtools
+        - windows10-tests
         - mochitest-webgpu
 
 # QR builds just run a subset right now.

@@ -20,13 +20,14 @@
 class nsPrinterCUPS final : public nsPrinterBase {
  public:
   NS_IMETHOD GetName(nsAString& aName) override;
+  NS_IMETHOD GetSystemName(nsAString& aName) override;
   PrintSettingsInitializer DefaultSettings() const final;
   bool SupportsDuplex() const final;
   bool SupportsColor() const final;
   bool SupportsMonochrome() const final;
   bool SupportsCollation() const final;
   nsTArray<mozilla::PaperInfo> PaperList() const final;
-  MarginDouble GetMarginsForPaper(uint64_t) const final {
+  MarginDouble GetMarginsForPaper(short) const final {
     MOZ_ASSERT_UNREACHABLE(
         "The CUPS API requires us to always get the margin when fetching the "
         "paper list so there should be no need to query it separately");

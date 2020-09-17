@@ -263,11 +263,6 @@ void nsLookAndFeel::RefreshImpl() {
   nsXPLookAndFeel::RefreshImpl();
   moz_gtk_refresh();
 
-  mDefaultFontCached = false;
-  mButtonFontCached = false;
-  mFieldFontCached = false;
-  mMenuFontCached = false;
-
   mInitialized = false;
 }
 
@@ -1130,6 +1125,7 @@ void nsLookAndFeel::EnsureInit() {
   mFieldText = GDK_RGBA_TO_NS_RGBA(color);
 
   // Selected text and background
+  style = GetStyleContext(MOZ_GTK_TEXT_VIEW_TEXT_SELECTION);
   gtk_style_context_get_background_color(
       style,
       static_cast<GtkStateFlags>(GTK_STATE_FLAG_FOCUSED |

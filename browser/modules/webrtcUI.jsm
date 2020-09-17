@@ -840,10 +840,6 @@ var webrtcUI = {
       !this.allowTabSwitchesForSession &&
       !this.allowedSharedBrowsers.has(browser.permanentKey);
 
-    if (shouldShow) {
-      this.recordEvent("tab_switch_warning", "tab_switch_warning");
-    }
-
     return shouldShow;
   },
 
@@ -853,10 +849,6 @@ var webrtcUI = {
     this.allowedSharedBrowsers.add(browser.permanentKey);
     gBrowser.selectedTab = tab;
     this.allowTabSwitchesForSession = allowForSession;
-
-    if (allowForSession) {
-      this.recordEvent("allow_all_tabs", "allow_all_tabs");
-    }
   },
 
   recordEvent(type, object, args = {}) {
@@ -925,7 +917,7 @@ class MacOSWebRTCStatusbarIndicator {
     this._screen = null;
 
     this._hiddenDoc = Services.appShell.hiddenDOMWindow.document;
-    this._statusBar = Cc["@mozilla.org/widget/macsystemstatusbar;1"].getService(
+    this._statusBar = Cc["@mozilla.org/widget/systemstatusbar;1"].getService(
       Ci.nsISystemStatusBar
     );
 

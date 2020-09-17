@@ -26,7 +26,7 @@ PrioritizedEventQueue::PrioritizedEventQueue(
       mDeferredTimersQueue(
           MakeUnique<EventQueue>(EventQueuePriority::DeferredTimers)),
       mIdleQueue(MakeUnique<EventQueue>(EventQueuePriority::Idle)) {
-  mInputTaskManager = new InputTaskManager();
+  mInputTaskManager = InputTaskManager::Get();
   mIdleTaskManager = new IdleTaskManager(std::move(aIdlePeriod));
   TaskController::Get()->SetIdleTaskManager(mIdleTaskManager);
 }
@@ -242,7 +242,6 @@ already_AddRefed<nsIRunnable> PrioritizedEventQueue::GetEvent(
       event = mHighQueue->GetEvent(nullptr, aProofOfLock,
                                    aHypotheticalInputEventDelay);
       MOZ_ASSERT(event);
-      mInputTaskManager->SetInputHandlingStartTime(TimeStamp());
       break;
 
     case EventQueuePriority::InputHigh:
@@ -382,65 +381,4 @@ bool PrioritizedEventQueue::HasIdleRunnables(
 
 size_t PrioritizedEventQueue::Count(const MutexAutoLock& aProofOfLock) const {
   MOZ_CRASH("unimplemented");
-}
-
-void InputTaskManager::EnableInputEventPrioritization() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mInputQueueState == STATE_DISABLED);
-  mInputQueueState = STATE_ENABLED;
-  mInputHandlingStartTime = TimeStamp();
-}
-
-void InputTaskManager::FlushInputEventPrioritization() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mInputQueueState == STATE_ENABLED ||
-             mInputQueueState == STATE_SUSPEND);
-  mInputQueueState =
-      mInputQueueState == STATE_ENABLED ? STATE_FLUSHING : STATE_SUSPEND;
-}
-
-void InputTaskManager::SuspendInputEventPrioritization() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mInputQueueState == STATE_ENABLED ||
-             mInputQueueState == STATE_FLUSHING);
-  mInputQueueState = STATE_SUSPEND;
-}
-
-void InputTaskManager::ResumeInputEventPrioritization() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mInputQueueState == STATE_SUSPEND);
-  mInputQueueState = STATE_ENABLED;
-}
-
-int32_t InputTaskManager::GetPriorityModifierForEventLoopTurn(
-    const MutexAutoLock& aProofOfLock) {
-  size_t inputCount = PendingTaskCount();
-  if (State() == STATE_ENABLED && InputHandlingStartTime().IsNull() &&
-      inputCount > 0) {
-    SetInputHandlingStartTime(
-        InputEventStatistics::Get().GetInputHandlingStartTime(inputCount));
-  }
-
-  if (inputCount > 0 && (State() == InputTaskManager::STATE_FLUSHING ||
-                         (State() == InputTaskManager::STATE_ENABLED &&
-                          !InputHandlingStartTime().IsNull() &&
-                          TimeStamp::Now() > InputHandlingStartTime()))) {
-    return 0;
-  }
-
-  int32_t modifier = static_cast<int32_t>(EventQueuePriority::InputLow) -
-                     static_cast<int32_t>(EventQueuePriority::MediumHigh);
-  return modifier;
-}
-
-void InputTaskManager::WillRunTask() {
-  TaskManager::WillRunTask();
-  mStartTimes.AppendElement(TimeStamp::Now());
-}
-
-void InputTaskManager::DidRunTask() {
-  TaskManager::DidRunTask();
-  MOZ_ASSERT(!mStartTimes.IsEmpty());
-  TimeStamp start = mStartTimes.PopLastElement();
-  InputEventStatistics::Get().UpdateInputDuration(TimeStamp::Now() - start);
 }

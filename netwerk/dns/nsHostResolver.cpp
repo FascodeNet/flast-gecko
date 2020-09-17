@@ -151,9 +151,10 @@ static inline bool IsLowPriority(uint16_t flags) {
 // this macro filters out any flags that are not used when constructing the
 // host key.  the significant flags are those that would affect the resulting
 // host record (i.e., the flags that are passed down to PR_GetAddrInfoByName).
-#define RES_KEY_FLAGS(_f)                                                     \
-  ((_f) & (nsHostResolver::RES_CANON_NAME | nsHostResolver::RES_DISABLE_TRR | \
-           nsIDNSService::RESOLVE_TRR_MODE_MASK))
+#define RES_KEY_FLAGS(_f)                                              \
+  ((_f) &                                                              \
+   (nsHostResolver::RES_CANON_NAME | nsHostResolver::RES_DISABLE_TRR | \
+    nsIDNSService::RESOLVE_TRR_MODE_MASK | nsHostResolver::RES_IP_HINT))
 
 #define IS_ADDR_TYPE(_type) ((_type) == nsIDNSService::RESOLVE_TYPE_DEFAULT)
 #define IS_OTHER_TYPE(_type) ((_type) != nsIDNSService::RESOLVE_TYPE_DEFAULT)
@@ -310,7 +311,7 @@ bool AddrHostRecord::Blacklisted(const NetAddr* aQuery) {
   }
 
   char buf[kIPv6CStrBufSize];
-  if (!NetAddrToString(aQuery, buf, sizeof(buf))) {
+  if (!aQuery->ToStringBuffer(buf, sizeof(buf))) {
     return false;
   }
   nsDependentCString strQuery(buf);
@@ -335,7 +336,7 @@ void AddrHostRecord::ReportUnusable(const NetAddr* aAddress) {
   ++mBlacklistedCount;
 
   char buf[kIPv6CStrBufSize];
-  if (NetAddrToString(aAddress, buf, sizeof(buf))) {
+  if (aAddress->ToStringBuffer(buf, sizeof(buf))) {
     LOG(
         ("Successfully adding address [%s] to blacklist for host "
          "[%s].\n",
@@ -1319,6 +1320,16 @@ nsresult nsHostResolver::TrrLookup_unlocked(nsHostRecord* rec, TRR* pushedTRR) {
   return TrrLookup(rec, pushedTRR);
 }
 
+void nsHostResolver::MaybeRenewHostRecord(nsHostRecord* aRec) {
+  if (aRec->isInList()) {
+    // we're already on the eviction queue. This is a renewal
+    MOZ_ASSERT(mEvictionQSize);
+    AssertOnQ(aRec, mEvictionQ);
+    aRec->remove();
+    mEvictionQSize--;
+  }
+}
+
 // returns error if no TRR resolve is issued
 // it is impt this is not called while a native lookup is going on
 nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
@@ -1357,14 +1368,7 @@ nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
     return NS_ERROR_UNKNOWN_HOST;
   }
 
-  if (rec->isInList()) {
-    // we're already on the eviction queue. This is a renewal
-    MOZ_ASSERT(mEvictionQSize);
-    AssertOnQ(rec, mEvictionQ);
-
-    rec->remove();
-    mEvictionQSize--;
-  }
+  MaybeRenewHostRecord(rec);
 
   bool madeQuery = false;
 
@@ -1482,12 +1486,7 @@ nsresult nsHostResolver::NativeLookup(nsHostRecord* aRec) {
   addrRec->mNativeStart = TimeStamp::Now();
 
   // Add rec to one of the pending queues, possibly removing it from mEvictionQ.
-  if (rec->isInList()) {
-    MOZ_ASSERT(mEvictionQSize);
-    AssertOnQ(rec, mEvictionQ);
-    rec->remove();  // was on the eviction queue
-    mEvictionQSize--;
-  }
+  MaybeRenewHostRecord(rec);
 
   switch (AddrHostRecord::GetPriority(rec->flags)) {
     case AddrHostRecord::DNS_PRIORITY_HIGH:
@@ -1606,6 +1605,11 @@ void nsHostResolver::ComputeEffectiveTRRMode(nsHostRecord* aRec) {
 // Kick-off a name resolve operation, using native resolver and/or TRR
 nsresult nsHostResolver::NameLookup(nsHostRecord* rec) {
   LOG(("NameLookup host:%s af:%" PRId16, rec->host.get(), rec->af));
+
+  if (rec->flags & RES_IP_HINT) {
+    LOG(("Skip lookup if RES_IP_HINT is set\n"));
+    return NS_ERROR_UNKNOWN_HOST;
+  }
 
   nsresult rv = NS_ERROR_UNKNOWN_HOST;
   if (rec->mResolving) {
@@ -2007,7 +2011,9 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
 
       if (NS_FAILED(addrRec->mFirstTRRresult) && NS_FAILED(status) &&
           (addrRec->mFirstTRRresult != NS_ERROR_UNKNOWN_HOST) &&
-          (status != NS_ERROR_UNKNOWN_HOST)) {
+          (status != NS_ERROR_UNKNOWN_HOST) &&
+          (addrRec->mFirstTRRresult != NS_ERROR_DEFINITIVE_UNKNOWN_HOST) &&
+          (status != NS_ERROR_DEFINITIVE_UNKNOWN_HOST)) {
         // the errors are not failed resolves, that means
         // something else failed, consider this as *TRR not used*
         // for actually trying to resolve the host
@@ -2034,7 +2040,8 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
       }
 
       if (!addrRec->mTRRSuccess &&
-          addrRec->mEffectiveTRRMode == nsIRequest::TRR_FIRST_MODE) {
+          addrRec->mEffectiveTRRMode == nsIRequest::TRR_FIRST_MODE &&
+          addrRec->mFirstTRRresult != NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
         MOZ_ASSERT(!addrRec->mResolving);
         NativeLookup(addrRec);
         MOZ_ASSERT(addrRec->mResolving);
@@ -2099,7 +2106,7 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
     if (addrRec->addr_info) {
       for (const auto& elem : addrRec->addr_info->Addresses()) {
         char buf[128];
-        NetAddrToString(&elem, buf, sizeof(buf));
+        elem.ToStringBuffer(buf, sizeof(buf));
         LOG(("CompleteLookup: %s has %s\n", addrRec->host.get(), buf));
       }
     } else {
@@ -2414,7 +2421,7 @@ void nsHostResolver::GetDNSCacheEntries(nsTArray<DNSCacheEntries>* args) {
       MutexAutoLock lock(addrRec->addr_info_lock);
       for (const auto& addr : addrRec->addr_info->Addresses()) {
         char buf[kIPv6CStrBufSize];
-        if (NetAddrToString(&addr, buf, sizeof(buf))) {
+        if (addr.ToStringBuffer(buf, sizeof(buf))) {
           info.hostaddr.AppendElement(buf);
         }
       }

@@ -13,6 +13,7 @@
 #include "mozilla/MathAlgorithms.h"
 
 #include "gc/Zone.h"
+#include "vm/ProxyObject.h"
 
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/MacroAssembler-x86-inl.h"
@@ -388,6 +389,10 @@ void MacroAssembler::branchIfScriptHasNoJitScript(Register script,
                                                   Label* label) {
   static_assert(ScriptWarmUpData::JitScriptTag == 0,
                 "Code below depends on tag value");
+  static_assert(BaseScript::offsetOfWarmUpData() ==
+                    SelfHostedLazyScript::offsetOfWarmUpData(),
+                "SelfHostedLazyScript and BaseScript must use same layout for "
+                "warmUpData_");
   branchTestPtr(Assembler::NonZero,
                 Address(script, JSScript::offsetOfWarmUpData()),
                 Imm32(ScriptWarmUpData::TagMask), label);

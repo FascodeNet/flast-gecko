@@ -80,9 +80,12 @@ var PointerlockFsWarning = {
     }
     let uri = Services.io.newURI(this._origin);
     let host = null;
-    try {
-      host = uri.host;
-    } catch (e) {}
+    // Make an exception for PDF.js - we'll show "This document" instead.
+    if (this._origin != "resource://pdf.js") {
+      try {
+        host = uri.host;
+      } catch (e) {}
+    }
     let textElem = this._element.querySelector(
       ".pointerlockfswarning-domain-text"
     );
@@ -90,13 +93,17 @@ var PointerlockFsWarning = {
       textElem.setAttribute("hidden", true);
     } else {
       textElem.removeAttribute("hidden");
-      let hostElem = this._element.querySelector(
-        ".pointerlockfswarning-domain"
-      );
       // Document's principal's URI has a host. Display a warning including it.
       let utils = {};
       ChromeUtils.import("resource://gre/modules/DownloadUtils.jsm", utils);
-      hostElem.textContent = utils.DownloadUtils.getURIHost(uri.spec)[0];
+      let displayHost = utils.DownloadUtils.getURIHost(uri.spec)[0];
+      let l10nString = {
+        "fullscreen-warning": "fullscreen-warning-domain",
+        "pointerlock-warning": "pointerlock-warning-domain",
+      }[elementId];
+      document.l10n.setAttributes(textElem, l10nString, {
+        domain: displayHost,
+      });
     }
 
     this._element.dataset.identity =
@@ -124,6 +131,10 @@ var PointerlockFsWarning = {
     this._timeoutShow.cancel();
     // Reset state of the warning box
     this._state = "hidden";
+    // Reset state of the text so we don't persist or retranslate it.
+    this._element
+      .querySelector(".pointerlockfswarning-domain-text")
+      .removeAttribute("data-l10n-id");
     this._element.setAttribute("hidden", true);
     // Remove all event listeners
     this._element.removeEventListener("transitionend", this);

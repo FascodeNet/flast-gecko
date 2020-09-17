@@ -71,7 +71,6 @@ class PreallocatedProcessManagerImpl;
 class BenchmarkStorageParent;
 
 using mozilla::loader::PScriptCacheParent;
-using mozilla::scache::PStartupCacheParent;
 
 namespace embedding {
 class PrintingParent;
@@ -740,16 +739,6 @@ class ContentParent final
       sJSPluginContentParents;
   static UniquePtr<LinkedList<ContentParent>> sContentParents;
 
-  /**
-   * In order to avoid rapidly creating and destroying content processes when
-   * running under e10s, we may keep alive a single unused "web" content
-   * process if it previously had a very short lifetime.
-   *
-   * This process will be re-used during process selection, avoiding spawning a
-   * new process, if the "web" remote type is being requested.
-   */
-  static StaticRefPtr<ContentParent> sRecycledE10SProcess;
-
   void AddShutdownBlockers();
   void RemoveShutdownBlockers();
 
@@ -824,14 +813,6 @@ class ContentParent final
   bool TryToRecycle();
 
   /**
-   * If this process is currently being recycled, unmark it as the recycled
-   * content process.
-   * If `aForeground` is true, will also restore the process' foreground
-   * priority if it was previously the recycled content process.
-   */
-  void StopRecycling(bool aForeground = true);
-
-  /**
    * Removing it from the static array so it won't be returned for new tabs in
    * GetNewOrUsedBrowserProcess.
    */
@@ -849,24 +830,16 @@ class ContentParent final
   bool ShouldKeepProcessAlive();
 
   /**
+   * Mark this ContentParent as "troubled". This means that it is still alive,
+   * but it won't be returned for new tabs in GetNewOrUsedBrowserProcess.
+   */
+  void MarkAsTroubled();
+
+  /**
    * Mark this ContentParent as dead for the purposes of Get*().
    * This method is idempotent.
    */
   void MarkAsDead();
-
-  /**
-   * Check if this process is ready to be shut down, and if it is, begin the
-   * shutdown process. Should be called whenever a change occurs which could
-   * cause the decisions made by `ShouldKeepProcessAlive` to change.
-   *
-   * @param aExpectedBrowserCount The number of PBrowser actors which should
-   *                              not block shutdown. This should usually be 0.
-   * @param aSendShutDown If true, will send the shutdown message in addition
-   *                      to marking the process as dead and starting the force
-   *                      kill timer.
-   */
-  void MaybeBeginShutDown(uint32_t aExpectedBrowserCount = 0,
-                          bool aSendShutDown = true);
 
   /**
    * How we will shut down this ContentParent and its subprocess.
@@ -962,10 +935,6 @@ class ContentParent final
                                               const bool& wantCacheData);
 
   bool DeallocPScriptCacheParent(PScriptCacheParent* shell);
-
-  PStartupCacheParent* AllocPStartupCacheParent();
-
-  bool DeallocPStartupCacheParent(PStartupCacheParent* shell);
 
   bool DeallocPNeckoParent(PNeckoParent* necko);
 
@@ -1137,22 +1106,6 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvFirstIdle();
 
   mozilla::ipc::IPCResult RecvDeviceReset();
-
-  mozilla::ipc::IPCResult RecvKeywordToURI(const nsCString& aKeyword,
-                                           const bool& aIsPrivateContext,
-                                           nsString* aProviderName,
-                                           RefPtr<nsIInputStream>* aPostData,
-                                           RefPtr<nsIURI>* aURI);
-
-  mozilla::ipc::IPCResult RecvGetFixupURIInfo(const nsString& aURIString,
-                                              const uint32_t& aFixupFlags,
-                                              bool aAllowThirdPartyFixup,
-                                              nsString* aProviderName,
-                                              RefPtr<nsIInputStream>* aPostData,
-                                              RefPtr<nsIURI>* aPreferredURI);
-
-  mozilla::ipc::IPCResult RecvNotifyKeywordSearchLoading(
-      const nsString& aProvider, const nsString& aKeyword);
 
   mozilla::ipc::IPCResult RecvCopyFavicon(
       nsIURI* aOldURI, nsIURI* aNewURI, const IPC::Principal& aLoadingPrincipal,
@@ -1384,6 +1337,10 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvSessionHistoryEntryCacheKey(
       const MaybeDiscarded<BrowsingContext>& aContext,
       const uint32_t& aCacheKey);
+
+  mozilla::ipc::IPCResult
+  RecvSessionHistoryEntryStoreWindowNameInContiguousEntries(
+      const MaybeDiscarded<BrowsingContext>& aContext, const nsString& aName);
 
   mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForTop(
       const MaybeDiscarded<BrowsingContext>& aContext,
@@ -1629,6 +1586,8 @@ const nsDependentCSubstring RemoteTypePrefix(
 bool IsWebRemoteType(const nsACString& aContentProcessType);
 
 bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType);
+
+bool IsPriviligedMozillaRemoteType(const nsACString& aContentProcessType);
 
 inline nsISupports* ToSupports(mozilla::dom::ContentParent* aContentParent) {
   return static_cast<nsIDOMProcessParent*>(aContentParent);

@@ -389,7 +389,7 @@ class CompositeStrategy(OptimizationStrategy):
 
         self.split_args = kwargs.pop('split_args', None)
         if not self.split_args:
-            self.split_args = lambda arg: [arg] * len(substrategies)
+            self.split_args = lambda arg, substrategies: [arg] * len(substrategies)
         if kwargs:
             raise TypeError("unexpected keyword args")
 
@@ -405,7 +405,7 @@ class CompositeStrategy(OptimizationStrategy):
         pass
 
     def _generate_results(self, fname, task, params, arg):
-        for sub, arg in zip(self.substrategies, self.split_args(arg)):
+        for sub, arg in zip(self.substrategies, self.split_args(arg, self.substrategies)):
             yield getattr(sub, fname)(task, params, arg)
 
     def should_remove_task(self, *args):
@@ -473,15 +473,28 @@ class Alias(CompositeStrategy):
         return next(results)
 
 
-def split_bugbug_arg(arg):
+class Not(CompositeStrategy):
+    """Given a strategy, returns the opposite."""
+    def __init__(self, strategy):
+        super(Not, self).__init__(strategy)
+
+    @property
+    def description(self):
+        return "not-" + self.substrategies[0].description
+
+    def reduce(self, results):
+        return not next(results)
+
+
+def split_bugbug_arg(arg, substrategies):
     """Split args for bugbug based strategies.
 
     Many bugbug based optimizations require passing an empty dict by reference
     to communicate to downstream strategies. This function passes the provided
-    arg to the first strategy and an empty dict to second (bugbug based)
-    strategy.
+    arg to the first strategies and a shared empty dict to last two (bugbug
+    based) strategies.
     """
-    return (arg, {})
+    return [arg] * (len(substrategies) - 2) + [{}] * 2
 
 
 # Trigger registration in sibling modules.
@@ -490,7 +503,7 @@ import_sibling_modules()
 
 # Register composite strategies.
 register_strategy('build', args=('skip-unless-schedules',))(Alias)
-register_strategy('build-fuzzing', args=('push-interval-10', 'backstop'))(All)
+register_strategy('build-fuzzing', args=('skip-unless-expanded',))(Alias)
 register_strategy('test', args=('skip-unless-schedules',))(Alias)
 register_strategy('test-inclusive', args=('skip-unless-schedules',))(Alias)
 register_strategy('test-verify', args=('skip-unless-schedules',))(Alias)
@@ -503,38 +516,62 @@ register_strategy('upload-symbols', args=('never',))(Alias)
 class project(object):
     """Strategies that should be applied per-project."""
 
-    # Optimize everything away, except on 10th pushes, where we run everything that was selected by
-    # bugbug for the last 10 pushes.
-    register_strategy(
-        'optimized-backstop',
-        args=(
-            'push-interval-10',
-            Any(
-                'skip-unless-schedules',
+    autoland = {
+        'test': Any(
+            # This `Any` strategy implements bi-modal behaviour. It allows different
+            # strategies on expanded pushes vs regular pushes.
+
+            # This first `All` handles "expanded" pushes.
+            All(
+                # There are three substrategies in this `All`, the first two act as barriers
+                # that help determine when to apply the third:
+                # 1. On backstop pushes, `skip-unless-backstop` returns False. Therefore
+                #    the overall composite strategy is False and we don't optimize.
+                # 2. On regular pushes, `Not('skip-unless-expanded')` returns False. Therefore
+                #    the overall composite strategy is False and we don't optimize.
+                # 3. On expanded pushes, the third strategy will determine whether or
+                #    not to optimize each individual task.
+
+                # The barrier strategies.
+                'skip-unless-backstop',
+                Not('skip-unless-expanded'),
+
+                # The actual test strategy applied to "expanded" pushes.
                 Any(
-                    'bugbug-reduced-manifests-fallback-last-10-pushes',
-                    'platform-disperse',
+                    'skip-unless-schedules',
+                    Any(
+                        'bugbug-reduced-manifests-fallback-last-10-pushes',
+                        'platform-disperse',
+                    ),
+                    split_args=split_bugbug_arg,
                 ),
-                split_args=split_bugbug_arg,
+            ),
+
+            # This second `All` handles regular (aka not expanded or backstop)
+            # pushes.
+            All(
+                # There are two substrategies in this `All`, the first acts as a barrier
+                # that determines when to apply the second:
+                # 1. On expanded pushes (which includes backstops), `skip-unless-expanded`
+                #    returns False. Therefore the overall composite strategy is False and we
+                #    don't optimize.
+                # 2. On regular pushes, the second strategy will determine whether or
+                #    not to optimize each individual task.
+
+                # The barrier strategy.
+                'skip-unless-expanded',
+
+                # The actual test strategy applied to regular pushes.
+                Any(
+                    'skip-unless-schedules',
+                    'bugbug-reduced-manifests-fallback',
+                    'platform-disperse',
+                    split_args=split_bugbug_arg,
+                ),
             ),
         ),
-    )(Any)
-
-    # The three strategies are part of an All composite strategy, which means they are linked
-    # by AND.
-    # - On 20th pushes, "backstop" will not allow the strategy to optimize anything away.
-    # - On 10th pushes, "backstop" allows the strategy to optimize things away, but
-    #   "optimized-backstop" will apply the relaxed bugbug optimization and will not allow the
-    #   normal bugbug optimization to apply.
-    # - On all other pushes, the normal bugbug optimization is applied.
-    autoland = {
-        'test': All(
-            'backstop',
-            'optimized-backstop',
-            Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
-        ),
         'build': All(
-            'push-interval-10',
+            'skip-unless-expanded',
             Any(
                 'skip-unless-schedules',
                 'bugbug-reduced-fallback',

@@ -14,6 +14,7 @@ const TYPES = {
   ERROR_MESSAGE: "error-message",
   PLATFORM_MESSAGE: "platform-message",
   NETWORK_EVENT: "network-event",
+  STYLESHEET: "stylesheet",
 };
 exports.TYPES = TYPES;
 
@@ -44,6 +45,9 @@ const FrameTargetResources = augmentResourceDictionary({
   },
   [TYPES.PLATFORM_MESSAGE]: {
     path: "devtools/server/actors/resources/platform-messages",
+  },
+  [TYPES.STYLESHEET]: {
+    path: "devtools/server/actors/resources/stylesheets",
   },
 });
 const ParentProcessResources = augmentResourceDictionary({
@@ -127,7 +131,7 @@ function getResourceTypeEntry(watcherOrTargetActor, resourceType) {
  * @param Array<String> resourceTypes
  *        List of all type of resource to listen to.
  */
-function watchResources(watcherOrTargetActor, resourceTypes) {
+async function watchResources(watcherOrTargetActor, resourceTypes) {
   // If we are given a target actor, filter out the resource types supported by the target.
   // When using sharedData to pass types between processes, we are passing them for all target types.
   const { targetType } = watcherOrTargetActor;
@@ -145,7 +149,8 @@ function watchResources(watcherOrTargetActor, resourceTypes) {
       continue;
     }
 
-    const watcher = new WatcherClass(watcherOrTargetActor, {
+    const watcher = new WatcherClass();
+    await watcher.watch(watcherOrTargetActor, {
       onAvailable: watcherOrTargetActor.notifyResourceAvailable,
       onDestroyed: watcherOrTargetActor.notifyResourceDestroyed,
       onUpdated: watcherOrTargetActor.notifyResourceUpdated,

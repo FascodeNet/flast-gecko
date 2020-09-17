@@ -177,6 +177,9 @@ class RenderThread final {
   void WakeUp(wr::WindowId aWindowId);
 
   /// Automatically forwarded to the render thread.
+  void SetClearColor(wr::WindowId aWindowId, wr::ColorF aColor);
+
+  /// Automatically forwarded to the render thread.
   void PipelineSizeChanged(wr::WindowId aWindowId, uint64_t aPipelineId,
                            float aWidth, float aHeight);
 
@@ -252,6 +255,7 @@ class RenderThread final {
   }
 
   /// Can only be called from the render thread.
+  gl::GLContext* SharedGL(nsACString& aError);
   gl::GLContext* SharedGL();
   void ClearSharedGL();
   RefPtr<layers::SurfacePool> SharedSurfacePool();

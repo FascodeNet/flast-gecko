@@ -81,6 +81,7 @@
 #include "frontend/Parser.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "gc/PublicIterators.h"
+#include "gc/GC-inl.h"  // ZoneCellIter
 #ifdef JS_SIMULATOR_ARM
 #  include "jit/arm/Simulator-arm.h"
 #endif
@@ -2240,7 +2241,13 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       }
 
       if (loadBytecode) {
-        JS::TranscodeResult rv = JS::DecodeScript(cx, loadBuffer, &script);
+        JS::TranscodeResult rv;
+        if (saveIncrementalBytecode) {
+          rv = JS::DecodeScriptAndStartIncrementalEncoding(cx, loadBuffer,
+                                                           &script);
+        } else {
+          rv = JS::DecodeScript(cx, loadBuffer, &script);
+        }
         if (!ConvertTranscodeResultToJSException(cx, rv)) {
           return false;
         }
@@ -2255,7 +2262,12 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
         if (envChain.length() != 0) {
           options.setNonSyntacticScope(true);
         }
-        script = JS::Compile(cx, options, srcBuf);
+
+        if (saveIncrementalBytecode) {
+          script = JS::CompileAndStartIncrementalEncoding(cx, options, srcBuf);
+        } else {
+          script = JS::Compile(cx, options, srcBuf);
+        }
       }
 
       if (!script) {
@@ -2278,15 +2290,6 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
       if (!script->scriptSource()->setSourceMapURL(cx, std::move(chars))) {
-        return false;
-      }
-    }
-
-    // If we want to save the bytecode incrementally, then we should
-    // register ahead the fact that every JSFunction which is being
-    // delazified should be encoded at the end of the delazification.
-    if (saveIncrementalBytecode) {
-      if (!StartIncrementalEncoding(cx, script)) {
         return false;
       }
     }
@@ -3641,26 +3644,38 @@ static bool DisassWithSrc(JSContext* cx, unsigned argc, Value* vp) {
 #ifdef JS_CACHEIR_SPEW
 static bool RateMyCacheIR(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
+  Rooted<ScriptVector> scripts(cx, ScriptVector(cx));
 
-  RootedScript script(cx);
   if (!argc) {
-    /* If no function is specified we rate current script. */
-    script = GetTopScript(cx);
+    // Calling RateMyCacheIR without any arguments will create health
+    // reports for all scripts in the zone.
+    for (auto base = cx->zone()->cellIter<BaseScript>(); !base.done();
+         base.next()) {
+      if (!base->hasJitScript() || base->selfHosted()) {
+        continue;
+      }
+
+      if (!scripts.append(base->asJSScript())) {
+        return false;
+      }
+    }
   } else {
     RootedValue value(cx, args.get(0));
+    RootedScript script(cx);
+
     if (value.isObject() && value.toObject().is<ModuleObject>()) {
-      script = value.toObject().as<ModuleObject>().maybeScript();
+      script.set(value.toObject().as<ModuleObject>().maybeScript());
     } else {
-      script = TestingFunctionArgumentToScript(cx, args.get(0));
+      script.set(TestingFunctionArgumentToScript(cx, args.get(0)));
+    }
+
+    if (!script || !scripts.append(script)) {
+      return false;
     }
   }
 
-  if (!script) {
-    return false;
-  }
-
   js::jit::CacheIRHealth cih;
-  if (!cih.rateMyCacheIR(cx, script)) {
+  if (!cih.rateMyCacheIR(cx, scripts)) {
     return false;
   }
 
@@ -4694,11 +4709,13 @@ static bool SetJitCompilerOption(JSContext* cx, unsigned argc, Value* vp) {
 
   // Similarly, don't allow enabling or disabling Warp at runtime. Bytecode and
   // VM data structures depend on whether TI is enabled/disabled.
-  if (opt == JSJITCOMPILER_WARP_ENABLE &&
-      bool(number) != jit::JitOptions.warpBuilder) {
-    JS_ReportErrorASCII(
-        cx, "Enabling or disabling Warp at runtime is not supported.");
-    return false;
+  if (opt == JSJITCOMPILER_WARP_ENABLE) {
+    if (bool(number) != jit::JitOptions.warpBuilder) {
+      JS_ReportErrorASCII(
+          cx, "Enabling or disabling Warp at runtime is not supported.");
+      return false;
+    }
+    return true;
   }
 
   // Throw if disabling the JITs and there's JIT code on the stack, to avoid
@@ -4746,7 +4763,7 @@ static bool SetJitCompilerOption(JSContext* cx, unsigned argc, Value* vp) {
 
   // JIT compiler options are process-wide, so we have to stop off-thread
   // compilations for all runtimes to avoid races.
-  HelperThreadState().waitForAllThreads();
+  WaitForAllHelperThreads();
 
   // Only release JIT code for the current runtime because there's no good
   // way to discard code for other runtimes.
@@ -10275,6 +10292,20 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 
   JS::SetUseOffThreadParseGlobal(useOffThreadParseGlobal);
 
+  // First check some options that set default warm-up thresholds, so these
+  // thresholds can be overridden below by --ion-eager and other flags.
+#ifdef NIGHTLY_BUILD
+  if (op.getBoolOption("no-warp")) {
+    MOZ_ASSERT(!jit::JitOptions.warpBuilder,
+               "WarpBuilder is disabled by default");
+  } else if (op.getBoolOption("warp")) {
+    jit::JitOptions.setWarpEnabled(true);
+  }
+#endif
+  if (op.getBoolOption("fast-warmup")) {
+    jit::JitOptions.setFastWarmUp();
+  }
+
   if (op.getBoolOption("no-ion-for-main-context")) {
     JS::ContextOptionsRef(cx).setDisableIon();
   }
@@ -10513,15 +10544,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     jit::JitOptions.traceRegExpPeephole = true;
   }
 
-#ifdef NIGHTLY_BUILD
-  if (op.getBoolOption("no-warp")) {
-    MOZ_ASSERT(!jit::JitOptions.warpBuilder,
-               "WarpBuilder is disabled by default");
-  } else if (op.getBoolOption("warp")) {
-    jit::JitOptions.setWarpEnabled(true);
-  }
-#endif
-
   int32_t inliningEntryThreshold = op.getIntOption("inlining-entry-threshold");
   if (inliningEntryThreshold > 0) {
     jit::JitOptions.inliningEntryThreshold = inliningEntryThreshold;
@@ -10541,9 +10563,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 
   if (op.getBoolOption("ion-eager")) {
     jit::JitOptions.setEagerIonCompilation();
-  }
-  if (op.getBoolOption("fast-warmup")) {
-    jit::JitOptions.setFastWarmUp();
   }
 
   offthreadCompilation = true;

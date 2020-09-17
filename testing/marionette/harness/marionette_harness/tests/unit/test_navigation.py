@@ -15,7 +15,7 @@ from marionette_driver.marionette import Alert
 from marionette_harness import (
     MarionetteTestCase,
     run_if_manage_instance,
-    skip,
+    skip_unless_browser_pref,
     WindowManagerMixin,
 )
 
@@ -63,7 +63,6 @@ class BaseNavigationTestCase(WindowManagerMixin, MarionetteTestCase):
 
     def tearDown(self):
         self.marionette.timeout.reset()
-        self.marionette.switch_to_parent_frame()
 
         self.close_all_tabs()
 
@@ -164,22 +163,28 @@ class TestNavigate(BaseNavigationTestCase):
         self.marionette.navigate(self.test_page_frameset)
         self.marionette.find_element(By.NAME, "third")
 
-    @skip("https://bugzilla.mozilla.org/show_bug.cgi?id=1255946")
+    @skip_unless_browser_pref(
+        "Bug 1665210 - Early return from navigation with Fission enabled",
+        "fission.autostart",
+        lambda value: value is False)
     def test_navigate_top_frame_from_nested_context(self):
-        self.marionette.navigate(inline("""<title>foo</title>
-<iframe src="{}">""".format(inline("""<title>bar</title>
-<a href="{}" target=_top>consume top frame</a>""".format(inline("<title>baz</title>"))))))
+        sub_frame = inline("""
+          <title>bar</title>
+          <a href="{}" target="_top">consume top frame</a>
+        """.format(self.test_page_remote))
+        top_frame = inline("""
+          <title>foo</title>
+          <iframe src="{}">
+        """.format(sub_frame))
 
-        self.assertEqual("foo", self.marionette.title)
+        self.marionette.navigate(top_frame)
+        frame = self.marionette.find_element(By.TAG_NAME, "iframe")
+        self.marionette.switch_to_frame(frame)
 
-        bar = self.marionette.find_element(By.TAG_NAME, "iframe")
-        self.marionette.switch_to_frame(bar)
-        self.assertEqual("foo", self.marionette.title)
+        link = self.marionette.find_element(By.TAG_NAME, "a")
+        link.click()
 
-        consume = self.marionette.find_element(By.TAG_NAME, "a")
-        consume.click()
-
-        self.assertEqual("baz", self.marionette.title)
+        self.assertEqual(self.marionette.get_url(), self.test_page_remote)
 
     def test_invalid_url(self):
         with self.assertRaises(errors.MarionetteException):
@@ -292,6 +297,13 @@ class TestNavigate(BaseNavigationTestCase):
 
         self.marionette.navigate("about:blank")
 
+    def test_about_newtab(self):
+        with self.marionette.using_prefs({"browser.newtabpage.enabled": True}):
+            self.marionette.navigate("about:newtab")
+
+            self.marionette.navigate(self.test_page_remote)
+            self.marionette.find_element(By.ID, "testDiv")
+
     @run_if_manage_instance("Only runnable if Marionette manages the instance")
     def test_focus_after_navigation(self):
         self.marionette.restart()
@@ -352,12 +364,7 @@ class TestBackForwardNavigation(BaseNavigationTestCase):
                 else:
                     self.assertEqual(Alert(self.marionette).text, page["alert_text"])
 
-            if "error" in page and page["error"] != errors.TimeoutException:
-                url = self.marionette.get_url()
-                self.assertNotEqual(url, page["url"])
-                self.assertIn("error", url)
-            else:
-                self.assertEqual(self.marionette.get_url(), page["url"])
+            self.assertEqual(self.marionette.get_url(), page["url"])
             self.assertEqual(self.history_length, expected_history_length)
 
             if "is_remote" in page:
@@ -692,7 +699,7 @@ class TestRefresh(BaseNavigationTestCase):
     def test_insecure_error(self):
         with self.assertRaises(errors.InsecureCertificateException):
             self.marionette.navigate(self.test_page_insecure)
-        self.assertNotEqual(self.marionette.get_url(), self.test_page_insecure)
+        self.assertEqual(self.marionette.get_url(), self.test_page_insecure)
 
         with self.assertRaises(errors.InsecureCertificateException):
             self.marionette.refresh()

@@ -8,8 +8,5 @@ DIRS += [
     'dataset',
 ]
 
-XPCSHELL_TESTS_MANIFESTS += ['test/xpcshell/xpcshell.ini']
-
-DevToolsModules(
-    'MDNCompatibility.js',
-)
+with Files('**'):
+    BUG_COMPONENT = ('DevTools', 'Inspector: Compatibility')

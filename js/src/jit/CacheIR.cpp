@@ -12,6 +12,7 @@
 
 #include "builtin/DataViewObject.h"
 #include "builtin/MapObject.h"
+#include "builtin/ModuleObject.h"
 #include "jit/BaselineCacheIRCompiler.h"
 #include "jit/BaselineIC.h"
 #include "jit/CacheIRSpewer.h"
@@ -22,7 +23,7 @@
 #include "js/friend/DOMProxy.h"       // JS::ExpandoAndGeneration
 #include "js/friend/WindowProxy.h"  // js::IsWindow, js::IsWindowProxy, js::ToWindowIfWindowProxy
 #include "js/friend/XrayJitInfo.h"  // js::jit::GetXrayJitInfo, JS::XrayJitInfo
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/ScalarType.h"          // js::Scalar::Type
 #include "js/Wrapper.h"
 #include "util/Unicode.h"
 #include "vm/ArrayBufferObject.h"
@@ -88,6 +89,7 @@ size_t js::jit::NumInputsForCacheKind(CacheKind kind) {
     case CacheKind::GetName:
     case CacheKind::BindName:
     case CacheKind::Call:
+    case CacheKind::OptimizeSpreadCall:
       return 1;
     case CacheKind::Compare:
     case CacheKind::GetElem:
@@ -4956,6 +4958,162 @@ void GetIteratorIRGenerator::trackAttached(const char* name) {
 #endif
 }
 
+OptimizeSpreadCallIRGenerator::OptimizeSpreadCallIRGenerator(
+    JSContext* cx, HandleScript script, jsbytecode* pc, ICState::Mode mode,
+    HandleValue value)
+    : IRGenerator(cx, script, pc, CacheKind::OptimizeSpreadCall, mode),
+      val_(value) {}
+
+AttachDecision OptimizeSpreadCallIRGenerator::tryAttachStub() {
+  MOZ_ASSERT(cacheKind_ == CacheKind::OptimizeSpreadCall);
+
+  AutoAssertNoPendingException aanpe(cx_);
+
+  TRY_ATTACH(tryAttachArray());
+  TRY_ATTACH(tryAttachNotOptimizable());
+
+  trackAttached(IRGenerator::NotAttached);
+  return AttachDecision::NoAction;
+}
+
+static bool IsArrayPrototypeOptimizable(JSContext* cx, ArrayObject* arr,
+                                        NativeObject** arrProto, uint32_t* slot,
+                                        JSFunction** iterFun) {
+  // Prototype must be Array.prototype.
+  auto* proto = cx->global()->maybeGetArrayPrototype();
+  if (!proto || arr->staticPrototype() != proto) {
+    return false;
+  }
+  *arrProto = proto;
+
+  // The object must not have an own @@iterator property.
+  JS::PropertyKey iteratorKey = SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator);
+  if (arr->lookupPure(iteratorKey)) {
+    return false;
+  }
+
+  // Ensure that Array.prototype's @@iterator slot is unchanged.
+  Shape* shape = proto->lookupPure(iteratorKey);
+  if (!shape || !shape->isDataProperty()) {
+    return false;
+  }
+
+  *slot = shape->slot();
+  MOZ_ASSERT(proto->numFixedSlots() == 0, "Stub code relies on this");
+
+  const Value& iterVal = proto->getSlot(*slot);
+  if (!iterVal.isObject() || !iterVal.toObject().is<JSFunction>()) {
+    return false;
+  }
+
+  *iterFun = &iterVal.toObject().as<JSFunction>();
+  return IsSelfHostedFunctionWithName(*iterFun, cx->names().ArrayValues);
+}
+
+static bool IsArrayIteratorPrototypeOptimizable(JSContext* cx,
+                                                NativeObject** arrIterProto,
+                                                uint32_t* slot,
+                                                JSFunction** nextFun) {
+  auto* proto = cx->global()->maybeGetArrayIteratorPrototype();
+  if (!proto) {
+    return false;
+  }
+  *arrIterProto = proto;
+
+  // Ensure that %ArrayIteratorPrototype%'s "next" slot is unchanged.
+  Shape* shape = proto->lookupPure(cx->names().next);
+  if (!shape || !shape->isDataProperty()) {
+    return false;
+  }
+
+  *slot = shape->slot();
+  MOZ_ASSERT(proto->numFixedSlots() == 0, "Stub code relies on this");
+
+  const Value& nextVal = proto->getSlot(*slot);
+  if (!nextVal.isObject() || !nextVal.toObject().is<JSFunction>()) {
+    return false;
+  }
+
+  *nextFun = &nextVal.toObject().as<JSFunction>();
+  return IsSelfHostedFunctionWithName(*nextFun, cx->names().ArrayIteratorNext);
+}
+
+AttachDecision OptimizeSpreadCallIRGenerator::tryAttachArray() {
+  // The value must be a packed array.
+  if (!val_.isObject()) {
+    return AttachDecision::NoAction;
+  }
+  JSObject* obj = &val_.toObject();
+  if (!IsPackedArray(obj)) {
+    return AttachDecision::NoAction;
+  }
+
+  // Prototype must be Array.prototype and Array.prototype[@@iterator] must not
+  // be modified.
+  NativeObject* arrProto;
+  uint32_t arrProtoIterSlot;
+  JSFunction* iterFun;
+  if (!IsArrayPrototypeOptimizable(cx_, &obj->as<ArrayObject>(), &arrProto,
+                                   &arrProtoIterSlot, &iterFun)) {
+    return AttachDecision::NoAction;
+  }
+
+  // %ArrayIteratorPrototype%.next must not be modified.
+  NativeObject* arrayIteratorProto;
+  uint32_t iterNextSlot;
+  JSFunction* nextFun;
+  if (!IsArrayIteratorPrototypeOptimizable(cx_, &arrayIteratorProto,
+                                           &iterNextSlot, &nextFun)) {
+    return AttachDecision::NoAction;
+  }
+
+  ValOperandId valId(writer.setInputOperandId(0));
+  ObjOperandId objId = writer.guardToObject(valId);
+
+  // Guard the object is a packed array with Array.prototype as proto.
+  writer.guardShape(objId, obj->as<ArrayObject>().lastProperty());
+  writer.guardArrayIsPacked(objId);
+  if (obj->hasUncacheableProto()) {
+    writer.guardProto(objId, arrProto);
+  }
+
+  // Guard on Array.prototype[@@iterator].
+  ObjOperandId arrProtoId = writer.loadObject(arrProto);
+  ObjOperandId iterId = writer.loadObject(iterFun);
+  writer.guardShape(arrProtoId, arrProto->lastProperty());
+  writer.guardDynamicSlotIsSpecificObject(arrProtoId, iterId, arrProtoIterSlot);
+
+  // Guard on %ArrayIteratorPrototype%.next.
+  ObjOperandId iterProtoId = writer.loadObject(arrayIteratorProto);
+  ObjOperandId nextId = writer.loadObject(nextFun);
+  writer.guardShape(iterProtoId, arrayIteratorProto->lastProperty());
+  writer.guardDynamicSlotIsSpecificObject(iterProtoId, nextId, iterNextSlot);
+
+  writer.loadBooleanResult(true);
+  writer.returnFromIC();
+
+  trackAttached("Array");
+  return AttachDecision::Attach;
+}
+
+AttachDecision OptimizeSpreadCallIRGenerator::tryAttachNotOptimizable() {
+  ValOperandId valId(writer.setInputOperandId(0));
+
+  writer.loadBooleanResult(false);
+  writer.returnFromIC();
+
+  trackAttached("NotOptimizable");
+  return AttachDecision::Attach;
+}
+
+void OptimizeSpreadCallIRGenerator::trackAttached(const char* name) {
+#ifdef JS_CACHEIR_SPEW
+  if (const CacheIRSpewer::Guard& sp = CacheIRSpewer::Guard(*this, name)) {
+    sp.valueProperty("val", val_);
+  }
+#endif
+}
+
 CallIRGenerator::CallIRGenerator(JSContext* cx, HandleScript script,
                                  jsbytecode* pc, JSOp op, ICState::Mode mode,
                                  bool isFirstStub, uint32_t argc,
@@ -6111,6 +6269,48 @@ AttachDecision CallIRGenerator::tryAttachString(HandleFunction callee) {
   cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
 
   trackAttached("String");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachStringConstructor(
+    HandleFunction callee) {
+  // Need a single string argument.
+  // TODO(Warp): Support all or more conversions to strings.
+  if (argc_ != 1 || !args_[0].isString()) {
+    return AttachDecision::NoAction;
+  }
+
+  RootedString emptyString(cx_, cx_->runtime()->emptyString);
+  JSObject* templateObj = StringObject::create(
+      cx_, emptyString, /* proto = */ nullptr, TenuredObject);
+  if (!templateObj) {
+    cx_->recoverFromOutOfMemory();
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'String' function.
+  emitNativeCalleeGuard(callee);
+
+  CallFlags flags(IsConstructPC(pc_), IsSpreadPC(pc_));
+
+  // Guard that the argument is a string.
+  ValOperandId argId =
+      writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_, flags);
+  StringOperandId strId = writer.guardToString(argId);
+
+  if (!JitOptions.warpBuilder) {
+    // Store the template object for BaselineInspector.
+    writer.metaNativeTemplateObject(callee, templateObj);
+  }
+
+  writer.newStringObjectResult(templateObj, strId);
+  writer.typeMonitorResult();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Monitored;
+
+  trackAttached("StringConstructor");
   return AttachDecision::Attach;
 }
 
@@ -7724,6 +7924,42 @@ AttachDecision CallIRGenerator::tryAttachObjectIs(HandleFunction callee) {
   return AttachDecision::Attach;
 }
 
+AttachDecision CallIRGenerator::tryAttachObjectIsPrototypeOf(
+    HandleFunction callee) {
+  // Ensure |this| is an object.
+  if (!thisval_.isObject()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Need a single argument.
+  if (argc_ != 1) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the `isPrototypeOf` native function.
+  emitNativeCalleeGuard(callee);
+
+  // Guard that |this| is an object.
+  ValOperandId thisValId =
+      writer.loadArgumentDynamicSlot(ArgumentKind::This, argcId);
+  ObjOperandId thisObjId = writer.guardToObject(thisValId);
+
+  ValOperandId argId = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+
+  writer.loadInstanceOfObjectResult(argId, thisObjId);
+
+  // This stub does not need to be monitored, because it always returns a
+  // boolean.
+  writer.returnFromIC();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Regular;
+
+  trackAttached("ObjectIsPrototypeOf");
+  return AttachDecision::Attach;
+}
+
 AttachDecision CallIRGenerator::tryAttachFunCall(HandleFunction callee) {
   if (!callee->isNativeWithoutJitEntry() || callee->native() != fun_call) {
     return AttachDecision::NoAction;
@@ -8146,29 +8382,11 @@ AttachDecision CallIRGenerator::tryAttachArrayIteratorPrototypeOptimizable(
   // TODO(Warp): attach this stub just once to prevent slowdowns for polymorphic
   // calls.
 
-  auto* arrayIteratorProto = cx_->global()->maybeGetArrayIteratorPrototype();
-  if (!arrayIteratorProto) {
-    return AttachDecision::NoAction;
-  }
-
-  // Ensure that %ArrayIteratorPrototype%'s "next" slot is unchanged.
-  Shape* shape = arrayIteratorProto->lookupPure(cx_->names().next);
-  if (!shape || !shape->isDataProperty()) {
-    return AttachDecision::NoAction;
-  }
-
-  uint32_t slot = shape->slot();
-
-  MOZ_ASSERT(arrayIteratorProto->numFixedSlots() == 0,
-             "Stub code relies on this");
-
-  const Value& nextVal = arrayIteratorProto->getSlot(slot);
-  if (!nextVal.isObject() || !nextVal.toObject().is<JSFunction>()) {
-    return AttachDecision::NoAction;
-  }
-
-  auto* nextFun = &nextVal.toObject().as<JSFunction>();
-  if (!IsSelfHostedFunctionWithName(nextFun, cx_->names().ArrayIteratorNext)) {
+  NativeObject* arrayIteratorProto;
+  uint32_t slot;
+  JSFunction* nextFun;
+  if (!IsArrayIteratorPrototypeOptimizable(cx_, &arrayIteratorProto, &slot,
+                                           &nextFun)) {
     return AttachDecision::NoAction;
   }
 
@@ -8535,6 +8753,8 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
         return tryAttachArrayConstructor(callee);
       case InlinableNative::TypedArrayConstructor:
         return tryAttachTypedArrayConstructor(callee);
+      case InlinableNative::String:
+        return tryAttachStringConstructor(callee);
       default:
         break;
     }
@@ -8795,6 +9015,8 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
       return tryAttachObjectCreate(callee);
     case InlinableNative::ObjectIs:
       return tryAttachObjectIs(callee);
+    case InlinableNative::ObjectIsPrototypeOf:
+      return tryAttachObjectIsPrototypeOf(callee);
     case InlinableNative::ObjectToString:
       return AttachDecision::NoAction;  // Not yet supported.
 
@@ -8884,43 +9106,31 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
 
 // Remember the template object associated with any script being called
 // as a constructor, for later use during Ion compilation.
-bool CallIRGenerator::getTemplateObjectForScripted(HandleFunction calleeFunc,
-                                                   MutableHandleObject result,
-                                                   bool* skipAttach) {
-  MOZ_ASSERT(!*skipAttach);
-
+ScriptedThisResult CallIRGenerator::getThisForScripted(
+    HandleFunction calleeFunc, MutableHandleObject result) {
   // Some constructors allocate their own |this| object.
   if (calleeFunc->constructorNeedsUninitializedThis()) {
-    return true;
+    return ScriptedThisResult::UninitializedThis;
   }
 
-  // Don't allocate a template object for super() calls as Ion doesn't support
-  // super() yet.
-  bool isSuper = op_ == JSOp::SuperCall || op_ == JSOp::SpreadSuperCall;
-  if (isSuper) {
-    return true;
-  }
-
-  // Only attach a stub if the newTarget is a function that already has a
-  // prototype and we can look it up without causing side effects.
+  // Only attach a stub if the newTarget is a function with a
+  // nonconfigurable prototype.
   RootedValue protov(cx_);
   RootedObject newTarget(cx_, &newTarget_.toObject());
   if (!newTarget->is<JSFunction>() ||
       !newTarget->as<JSFunction>().hasNonConfigurablePrototypeDataProperty()) {
-    trackAttached(IRGenerator::NotAttached);
-    *skipAttach = true;
-    return true;
+    return ScriptedThisResult::NoAction;
   }
+
   if (!GetPropertyPure(cx_, newTarget, NameToId(cx_->names().prototype),
                        protov.address())) {
-    // Can't purely lookup function prototype
-    trackAttached(IRGenerator::NotAttached);
-    *skipAttach = true;
-    return true;
+    // The lazy prototype property hasn't been resolved yet.
+    MOZ_ASSERT(newTarget->as<JSFunction>().needsPrototypeProperty());
+    return ScriptedThisResult::TemporarilyUnoptimizable;
   }
 
   if (!protov.isObject()) {
-    return true;
+    return ScriptedThisResult::NoAction;
   }
 
   {
@@ -8929,27 +9139,28 @@ bool CallIRGenerator::getTemplateObjectForScripted(HandleFunction calleeFunc,
     ObjectGroup* group = ObjectGroup::defaultNewGroup(cx_, &PlainObject::class_,
                                                       proto, newTarget);
     if (!group) {
-      return false;
+      cx_->clearPendingException();
+      return ScriptedThisResult::NoAction;
     }
 
     AutoSweepObjectGroup sweep(group);
     if (group->newScript(sweep) && !group->newScript(sweep)->analyzed()) {
-      // Function newScript has not been analyzed
-      trackAttached(IRGenerator::NotAttached);
-      *skipAttach = true;
-      return true;
+      // The new script analysis has not been done on this function.
+      // Don't attach until after the analysis has been done.
+      return ScriptedThisResult::TemporarilyUnoptimizable;
     }
   }
 
   PlainObject* thisObject =
       CreateThisForFunction(cx_, calleeFunc, newTarget, TenuredObject);
   if (!thisObject) {
-    return false;
+    cx_->clearPendingException();
+    return ScriptedThisResult::NoAction;
   }
 
   MOZ_ASSERT(thisObject->nonCCWRealm() == calleeFunc->realm());
   result.set(thisObject);
-  return true;
+  return ScriptedThisResult::TemplateObject;
 }
 
 AttachDecision CallIRGenerator::tryAttachCallScripted(
@@ -8998,14 +9209,18 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
   }
 
   RootedObject templateObj(cx_);
-  bool skipAttach = false;
-  if (isConstructing && isSpecialized &&
-      !getTemplateObjectForScripted(calleeFunc, &templateObj, &skipAttach)) {
-    cx_->clearPendingException();
-    return AttachDecision::NoAction;
-  }
-  if (skipAttach) {
-    return AttachDecision::TemporarilyUnoptimizable;
+  if (isConstructing && isSpecialized) {
+    switch (getThisForScripted(calleeFunc, &templateObj)) {
+      case ScriptedThisResult::TemplateObject:
+        break;
+      case ScriptedThisResult::UninitializedThis:
+        flags.setNeedsUninitializedThis();
+        break;
+      case ScriptedThisResult::TemporarilyUnoptimizable:
+        return AttachDecision::TemporarilyUnoptimizable;
+      case ScriptedThisResult::NoAction:
+        return AttachDecision::NoAction;
+    }
   }
 
   // Load argc.
@@ -9017,6 +9232,9 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
   ObjOperandId calleeObjId = writer.guardToObject(calleeValId);
 
   if (isSpecialized) {
+    MOZ_ASSERT_IF(isConstructing,
+                  templateObj || flags.needsUninitializedThis());
+
     // Ensure callee matches this stub's callee
     emitCalleeGuard(calleeObjId, calleeFunc);
     if (templateObj) {
@@ -9024,8 +9242,8 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
       // can use this template object before transpiling the call.
       if (JitOptions.warpBuilder) {
         // Emit guards to ensure the newTarget's .prototype property is what we
-        // expect. Note that getTemplateObjectForScripted checked newTarget is a
-        // function with a non-configurable .prototype data property.
+        // expect. Note that getThisForScripted checked newTarget is a function
+        // with a non-configurable .prototype data property.
         JSFunction* newTarget = &newTarget_.toObject().as<JSFunction>();
         Shape* shape = newTarget->lookupPure(cx_->names().prototype);
         MOZ_ASSERT(shape);
@@ -9073,8 +9291,8 @@ bool CallIRGenerator::getTemplateObjectForNative(HandleFunction calleeFunc,
                                                  MutableHandleObject res) {
   AutoRealm ar(cx_, calleeFunc);
 
-  // Don't allocate a template object for super() calls as Ion doesn't support
-  // super() yet.
+  // Don't allocate a template object for super() calls as Ion doesn't inline
+  // native super().
   bool isSuper = op_ == JSOp::SuperCall || op_ == JSOp::SpreadSuperCall;
   if (isSuper) {
     return true;
@@ -9139,6 +9357,11 @@ bool CallIRGenerator::getTemplateObjectForNative(HandleFunction calleeFunc,
 
     case InlinableNative::String: {
       if (!isConstructing) {
+        return true;
+      }
+
+      if (args_.length() == 1 && args_[0].isString()) {
+        // This case is handled by tryAttachStringConstructor.
         return true;
       }
 

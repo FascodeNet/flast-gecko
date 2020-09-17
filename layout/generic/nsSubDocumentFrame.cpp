@@ -661,12 +661,11 @@ AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() {
 LogicalSize nsSubDocumentFrame::ComputeAutoSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorder, const LogicalSize& aPadding,
-    ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   if (!IsInline()) {
     return nsIFrame::ComputeAutoSize(aRenderingContext, aWM, aCBSize,
-                                     aAvailableISize, aMargin, aBorder,
-                                     aPadding, aFlags);
+                                     aAvailableISize, aMargin, aBorderPadding,
+                                     aFlags);
   }
 
   const WritingMode wm = GetWritingMode();
@@ -678,11 +677,10 @@ LogicalSize nsSubDocumentFrame::ComputeAutoSize(
 nsIFrame::SizeComputationResult nsSubDocumentFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorder, const LogicalSize& aPadding,
-    ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   return {ComputeSizeWithIntrinsicDimensions(
               aRenderingContext, aWM, GetIntrinsicSize(), GetIntrinsicRatio(),
-              aCBSize, aMargin, aBorder, aPadding, aFlags),
+              aCBSize, aMargin, aBorderPadding, aFlags),
           AspectRatioUsage::None};
 }
 

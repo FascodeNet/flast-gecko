@@ -12,8 +12,6 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 
-#include "vm/Realm.h"
-
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/MacroAssembler-x86.h"
 #elif defined(JS_CODEGEN_X64)
@@ -39,9 +37,6 @@
 #include "jit/VMFunctions.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/Memory.h"
-#include "vm/ProxyObject.h"
-#include "vm/Shape.h"
-#include "vm/TypedArrayObject.h"
 
 // [SMDOC] MacroAssembler multi-platform overview
 //
@@ -209,6 +204,9 @@
 #endif
 
 namespace js {
+
+class TypedArrayObject;
+
 namespace jit {
 
 // Defined in JitFrames.h
@@ -3959,7 +3957,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void outOfLineTruncateSlow(FloatRegister src, Register dest,
                              bool widenFloatToDouble, bool compilingWasm,
-                             wasm::BytecodeOffset callOffset);
+                             wasm::BytecodeOffset callOffset,
+                             mozilla::Maybe<int32_t> tlsOffset);
 
   void convertInt32ValueToDouble(const Address& address, Register scratch,
                                  Label* done);

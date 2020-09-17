@@ -20,6 +20,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/WindowGlobalChild.h"
 
 #include "base/basictypes.h"
 
@@ -82,6 +83,7 @@
 #include "nsFontFaceUtils.h"
 #include "mozilla/GlobalStyleSheetCache.h"
 #include "mozilla/ServoBindings.h"
+#include "mozilla/StaticPrefs_font.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_zoom.h"
 #include "mozilla/StyleSheet.h"
@@ -92,6 +94,7 @@
 #include "mozilla/layers/APZThreadUtils.h"
 #include "MobileViewportManager.h"
 #include "mozilla/dom/ImageTracker.h"
+#include "mozilla/gfx/gfxVars.h"
 
 // Needed for Start/Stop of Image Animation
 #include "imgIContainer.h"
@@ -269,11 +272,13 @@ static const char* gExactCallbackPrefs[] = {
     "nglayout.debug.paint_flashing",
     "nglayout.debug.paint_flashing_chrome",
     "intl.accept_languages",
+    "dom.meta-viewport.enabled",
     nullptr,
 };
 
 static const char* gPrefixCallbackPrefs[] = {
-    "font.", "browser.display.", "bidi.", "gfx.font_rendering.", nullptr,
+    "font.", "browser.display.",    "browser.viewport.",
+    "bidi.", "gfx.font_rendering.", nullptr,
 };
 
 void nsPresContext::Destroy() {
@@ -497,6 +502,17 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
     }
     return;
   }
+
+  if (StringBeginsWith(prefName, "browser.viewport."_ns) ||
+      StringBeginsWith(prefName, "font.size.inflation."_ns) ||
+      prefName.EqualsLiteral("dom.meta-viewport.enabled")) {
+    if (mPresShell &&
+        (!gfxVars::UseWebRender() ||
+         !StaticPrefs::font_size_inflation_skipmaybereflowwithwebrender())) {
+      mPresShell->MaybeReflowForInflationScreenSizeChange();
+    }
+  }
+
   // Changing any of these potentially changes the value of @media
   // (prefers-contrast).
   if (prefName.EqualsLiteral("layout.css.prefers-contrast.enabled") ||
@@ -1308,6 +1324,14 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 
       if (isFirstInteraction) {
         Telemetry::Accumulate(Telemetry::TIME_TO_FIRST_INTERACTION_MS, millis);
+
+        if (Document()->ShouldIncludeInTelemetry(
+                /* aAllowExtensionURIs = */ false)) {
+          if (auto* wgc = Document()->GetWindowGlobalChild()) {
+            Unused << wgc->SendSubmitTimeToFirstInteractionPreloadTelemetry(
+                millis);
+          }
+        }
       }
     }
   } else {
@@ -1626,6 +1650,10 @@ void nsPresContext::SetPrintSettings(nsIPrintSettings* aPrintSettings) {
   if (!mPrintSettings) {
     return;
   }
+
+  // set the presentation context to the value in the print settings
+  mDrawColorBackground = mPrintSettings->GetPrintBGColors();
+  mDrawImageBackground = mPrintSettings->GetPrintBGImages();
 
   nsIntMargin unwriteableTwips = mPrintSettings->GetUnwriteableMarginInTwips();
   NS_ASSERTION(unwriteableTwips.top >= 0 && unwriteableTwips.right >= 0 &&

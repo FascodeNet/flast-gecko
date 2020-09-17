@@ -141,7 +141,6 @@
 #include "mozilla/mozalloc.h"
 #include "mozilla/PRemoteLazyInputStreamParent.h"
 #include "mozilla/storage/Variant.h"
-#include "mozzconf.h"
 #include "nsBaseHashtable.h"
 #include "nsCOMPtr.h"
 #include "nsClassHashtable.h"
@@ -582,25 +581,19 @@ Result<nsCOMPtr<nsIFileURL>, nsresult> GetDatabaseFileURL(
     nsIFile& aDatabaseFile, const int64_t aDirectoryLockId) {
   MOZ_ASSERT(aDirectoryLockId >= -1);
 
-  nsresult rv;
+  IDB_TRY_VAR(const auto protocolHandler,
+              ToResultGet<nsCOMPtr<nsIProtocolHandler>>(
+                  MOZ_SELECT_OVERLOAD(do_GetService),
+                  NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "file"));
 
-  nsCOMPtr<nsIProtocolHandler> protocolHandler(
-      do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "file", &rv));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY_VAR(const auto fileHandler,
+              ToResultGet<nsCOMPtr<nsIFileProtocolHandler>>(
+                  MOZ_SELECT_OVERLOAD(do_QueryInterface), protocolHandler));
 
-  nsCOMPtr<nsIFileProtocolHandler> fileHandler(
-      do_QueryInterface(protocolHandler, &rv));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
-
-  nsCOMPtr<nsIURIMutator> mutator;
-  rv = fileHandler->NewFileURIMutator(&aDatabaseFile, getter_AddRefs(mutator));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY_VAR(const auto mutator,
+              ToResultInvoke<nsCOMPtr<nsIURIMutator>>(
+                  std::mem_fn(&nsIFileProtocolHandler::NewFileURIMutator),
+                  fileHandler, &aDatabaseFile));
 
   // aDirectoryLockId should only be -1 when we are called from
   // FileManager::InitDirectory when the temporary storage hasn't been
@@ -612,13 +605,15 @@ Result<nsCOMPtr<nsIFileURL>, nsresult> GetDatabaseFileURL(
           ? "&directoryLockId="_ns + IntCString(aDirectoryLockId)
           : EmptyCString();
 
-  nsCOMPtr<nsIFileURL> result;
-  rv = NS_MutateURI(mutator)
-           .SetQuery("cache=private"_ns + directoryLockIdClause)
-           .Finalize(result);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
+  IDB_TRY_VAR(
+      auto result, ([&mutator, &directoryLockIdClause] {
+        nsCOMPtr<nsIFileURL> result;
+        nsresult rv = NS_MutateURI(mutator)
+                          .SetQuery("cache=private"_ns + directoryLockIdClause)
+                          .Finalize(result);
+        return NS_SUCCEEDED(rv) ? Result<nsCOMPtr<nsIFileURL>, nsresult>{result}
+                                : Err(rv);
+      }()));
 
   return result;
 }
@@ -3494,8 +3489,8 @@ class FactoryOp
   virtual void SendBlockedNotification() = 0;
 
  private:
-  nsresult CheckPermission(ContentParent* aContentParent,
-                           PermissionRequestBase::PermissionValue* aPermission);
+  mozilla::Result<PermissionRequestBase::PermissionValue, nsresult>
+  CheckPermission(ContentParent* aContentParent);
 
   static bool CheckAtLeastOneAppHasPermission(
       ContentParent* aContentParent, const nsACString& aPermissionString);
@@ -9025,7 +9020,7 @@ void ConnectionPool::ScheduleQueuedTransactions(ThreadInfo aThreadInfo) {
 
   const auto foundIt = std::find_if(
       mQueuedTransactions.begin(), mQueuedTransactions.end(),
-      [& me = *this](const auto& queuedTransaction) {
+      [&me = *this](const auto& queuedTransaction) {
         return !me.ScheduleTransaction(*queuedTransaction,
                                        /* aFromQueuedTransactions */ true);
       });
@@ -9147,7 +9142,7 @@ void ConnectionPool::NoteClosedDatabase(DatabaseInfo& aDatabaseInfo) {
   mCompleteCallbacks.RemoveLastElements(
       mCompleteCallbacks.end() -
       std::remove_if(mCompleteCallbacks.begin(), mCompleteCallbacks.end(),
-                     [& me = *this](const auto& completeCallback) {
+                     [&me = *this](const auto& completeCallback) {
                        return me.MaybeFireCallback(completeCallback.get());
                      }));
 
@@ -9169,7 +9164,7 @@ bool ConnectionPool::MaybeFireCallback(DatabasesCompleteCallback* aCallback) {
 
   if (std::any_of(aCallback->mDatabaseIds.begin(),
                   aCallback->mDatabaseIds.end(),
-                  [& databases = mDatabases](const auto& databaseId) {
+                  [&databases = mDatabases](const auto& databaseId) {
                     MOZ_ASSERT(!databaseId.IsEmpty());
 
                     return databases.Get(databaseId);
@@ -16348,11 +16343,7 @@ nsresult FactoryOp::Open() {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  PermissionRequestBase::PermissionValue permission;
-  nsresult rv = CheckPermission(contentParent, &permission);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  IDB_TRY_VAR(const auto permission, CheckPermission(contentParent));
 
   MOZ_ASSERT(permission == PermissionRequestBase::kPermissionAllowed ||
              permission == PermissionRequestBase::kPermissionDenied ||
@@ -16444,11 +16435,7 @@ nsresult FactoryOp::RetryCheckPermission() {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  PermissionRequestBase::PermissionValue permission;
-  nsresult rv = CheckPermission(contentParent, &permission);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  IDB_TRY_VAR(const auto permission, CheckPermission(contentParent));
 
   MOZ_ASSERT(permission == PermissionRequestBase::kPermissionAllowed ||
              permission == PermissionRequestBase::kPermissionDenied ||
@@ -16583,9 +16570,8 @@ void FactoryOp::FinishSendResults() {
   mFactory = nullptr;
 }
 
-nsresult FactoryOp::CheckPermission(
-    ContentParent* aContentParent,
-    PermissionRequestBase::PermissionValue* aPermission) {
+Result<PermissionRequestBase::PermissionValue, nsresult>
+FactoryOp::CheckPermission(ContentParent* aContentParent) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mState == State::Initial || mState == State::PermissionRetry);
 
@@ -16597,14 +16583,14 @@ nsresult FactoryOp::CheckPermission(
         aContentParent->KillHard("IndexedDB CheckPermission 0");
       }
 
-      return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
+      return Err(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
     }
 
     const ContentPrincipalInfo& contentPrincipalInfo =
         principalInfo.get_ContentPrincipalInfo();
     if (contentPrincipalInfo.attrs().mPrivateBrowsingId != 0) {
       // IndexedDB is currently disabled in privateBrowsing.
-      return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
+      return Err(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
     }
   }
 
@@ -16645,14 +16631,14 @@ nsresult FactoryOp::CheckPermission(
       if (mDeleting && !canWrite) {
         aContentParent->KillHard("IndexedDB CheckPermission 2");
         IDB_REPORT_INTERNAL_ERR();
-        return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
+        return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
       }
 
       // Opening or deleting requires read permissions.
       if (!canRead) {
         aContentParent->KillHard("IndexedDB CheckPermission 3");
         IDB_REPORT_INTERNAL_ERR();
-        return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
+        return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
       }
 
       mChromeWriteAccessAllowed = canWrite;
@@ -16668,41 +16654,35 @@ nsresult FactoryOp::CheckPermission(
       mEnforcingQuota = false;
     }
 
-    *aPermission = PermissionRequestBase::kPermissionAllowed;
-    return NS_OK;
+    return PermissionRequestBase::kPermissionAllowed;
   }
 
   MOZ_ASSERT(principalInfo.type() == PrincipalInfo::TContentPrincipalInfo);
 
-  IDB_TRY_VAR(auto principal, PrincipalInfoToPrincipal(principalInfo));
+  IDB_TRY_VAR(const auto principal, PrincipalInfoToPrincipal(principalInfo));
 
   nsCString suffix;
   nsCString group;
   nsCString origin;
-  nsresult rv;
-  rv = QuotaManager::GetInfoFromPrincipal(principal, &suffix, &group, &origin);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  IDB_TRY(
+      QuotaManager::GetInfoFromPrincipal(principal, &suffix, &group, &origin));
 
-  PermissionRequestBase::PermissionValue permission;
-
-  if (persistenceType == PERSISTENCE_TYPE_PERSISTENT) {
-    if (QuotaManager::IsOriginInternal(origin)) {
-      permission = PermissionRequestBase::kPermissionAllowed;
-    } else {
+  IDB_TRY_VAR(const auto permission,
+              ([persistenceType, &origin, &principal = *principal]()
+                   -> mozilla::Result<PermissionRequestBase::PermissionValue,
+                                      nsresult> {
+                if (persistenceType == PERSISTENCE_TYPE_PERSISTENT) {
+                  if (QuotaManager::IsOriginInternal(origin)) {
+                    return PermissionRequestBase::kPermissionAllowed;
+                  }
 #ifdef IDB_MOBILE
-      return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
+                  return Err(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
 #else
-      rv = PermissionRequestBase::GetCurrentPermission(principal, &permission);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+                  return PermissionRequestBase::GetCurrentPermission(principal);
 #endif
-    }
-  } else {
-    permission = PermissionRequestBase::kPermissionAllowed;
-  }
+                }
+                return PermissionRequestBase::kPermissionAllowed;
+              })());
 
   if (permission != PermissionRequestBase::kPermissionDenied &&
       State::Initial == mState) {
@@ -16713,8 +16693,7 @@ nsresult FactoryOp::CheckPermission(
     mEnforcingQuota = persistenceType != PERSISTENCE_TYPE_PERSISTENT;
   }
 
-  *aPermission = permission;
-  return NS_OK;
+  return permission;
 }
 
 nsresult FactoryOp::SendVersionChangeMessages(
@@ -21497,7 +21476,7 @@ ObjectStoreGetRequestOp::GetPreprocessParams() {
         std::make_move_iterator(mResponse.end()),
         MakeBackInserter(preprocessInfos),
         [](const auto& info) { return info.HasPreprocessInfo(); },
-        [& self = *this](StructuredCloneReadInfoParent&& info) {
+        [&self = *this](StructuredCloneReadInfoParent&& info) {
           return self.ConvertResponse<PreprocessInfo>(std::move(info));
         }));
 

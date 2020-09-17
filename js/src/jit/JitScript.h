@@ -14,6 +14,7 @@
 #include "jit/TrialInlining.h"
 #include "js/UniquePtr.h"
 #include "util/TrailingArray.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/TypeInference.h"
 
 class JS_PUBLIC_API JSScript;
@@ -111,6 +112,8 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   InliningRoot* inliningRoot() const { return inliningRoot_; }
   uint32_t depth() const { return depth_; }
 
+  void resetWarmUpCount(uint32_t count) { warmUpCount_ = count; }
+
   static constexpr size_t offsetOfFirstStub(uint32_t entryIndex) {
     return sizeof(ICScript) + entryIndex * sizeof(ICEntry) +
            ICEntry::offsetOfFirstStub();
@@ -119,6 +122,7 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   static constexpr Offset offsetOfWarmUpCount() {
     return offsetof(ICScript, warmUpCount_);
   }
+  static constexpr Offset offsetOfDepth() { return offsetof(ICScript, depth_); }
 
   static constexpr Offset offsetOfICEntries() { return sizeof(ICScript); }
   uint32_t numICEntries() const {
@@ -342,6 +346,9 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
     // inlined into another script. This is cleared when the script's type
     // information or caches are cleared.
     bool ionCompiledOrInlined : 1;
+
+    // True if this script entered Ion via OSR at a loop header.
+    bool hadIonOSR : 1;
   };
   Flags flags_ = {};  // Zero-initialize flags.
 
@@ -415,6 +422,9 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   void setIonCompiledOrInlined() { flags_.ionCompiledOrInlined = true; }
   void clearIonCompiledOrInlined() { flags_.ionCompiledOrInlined = false; }
   bool ionCompiledOrInlined() const { return flags_.ionCompiledOrInlined; }
+
+  void setHadIonOSR() { flags_.hadIonOSR = true; }
+  bool hadIonOSR() const { return flags_.hadIonOSR; }
 
   RecompileInfoVector* maybeInlinedCompilations(
       const js::AutoSweepJitScript& sweep) {
@@ -551,7 +561,7 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   uint32_t warmUpCount() const { return icScript_.warmUpCount_; }
   void incWarmUpCount(uint32_t amount) { icScript_.warmUpCount_ += amount; }
-  void resetWarmUpCount(uint32_t count) { icScript_.warmUpCount_ = count; }
+  void resetWarmUpCount(uint32_t count);
 
 #ifdef DEBUG
   void printTypes(JSContext* cx, HandleScript script);

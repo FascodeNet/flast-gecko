@@ -175,10 +175,15 @@ let JSWINDOWACTORS = {
   },
 
   AboutNewTab: {
+    parent: {
+      moduleURI: "resource:///actors/AboutNewTabParent.jsm",
+    },
     child: {
       moduleURI: "resource:///actors/AboutNewTabChild.jsm",
       events: {
         DOMContentLoaded: {},
+        pageshow: {},
+        visibilitychange: {},
       },
     },
     // The wildcard on about:newtab is for the ?endpoint query parameter
@@ -780,6 +785,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Normandy: "resource://normandy/Normandy.jsm",
   ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   OS: "resource://gre/modules/osfile.jsm",
+  OsEnvironment: "resource://gre/modules/OsEnvironment.jsm",
   PageActions: "resource:///modules/PageActions.jsm",
   PageThumbs: "resource://gre/modules/PageThumbs.jsm",
   PdfJs: "resource://pdf.js/PdfJs.jsm",
@@ -1354,18 +1360,18 @@ BrowserGlue.prototype = {
 
     AddonManager.maybeInstallBuiltinAddon(
       "firefox-compact-light@mozilla.org",
-      "1.0",
-      "resource:///modules/themes/light/"
+      "1.1",
+      "resource://builtin-themes/light/"
     );
     AddonManager.maybeInstallBuiltinAddon(
       "firefox-compact-dark@mozilla.org",
-      "1.0",
-      "resource:///modules/themes/dark/"
+      "1.1",
+      "resource://builtin-themes/dark/"
     );
     AddonManager.maybeInstallBuiltinAddon(
       "firefox-alpenglow@mozilla.org",
-      "1.0",
-      "resource:///modules/themes/alpenglow/"
+      "1.1",
+      "resource://builtin-themes/alpenglow/"
     );
 
     if (AppConstants.MOZ_NORMANDY) {
@@ -2220,7 +2226,7 @@ BrowserGlue.prototype = {
   },
 
   _monitorPioneerStudies() {
-    const STUDY_ADDON_COLLECTION_KEY = "pioneer-study-addons";
+    const STUDY_ADDON_COLLECTION_KEY = "pioneer-study-addons-v1";
     const PREF_PIONEER_NEW_STUDIES_AVAILABLE =
       "toolkit.telemetry.pioneer-new-studies-available";
 
@@ -2256,12 +2262,19 @@ BrowserGlue.prototype = {
       onCloseWindow() {},
     };
 
+    // Update all open windows if the pref changes.
     Services.prefs.addObserver(PREF_PIONEER_NEW_STUDIES_AVAILABLE, _badgeIcon);
+
+    // Badge any currently-open windows.
+    if (Services.prefs.getBoolPref(PREF_PIONEER_NEW_STUDIES_AVAILABLE, false)) {
+      _badgeIcon();
+    }
 
     RemoteSettings(STUDY_ADDON_COLLECTION_KEY).on("sync", async event => {
       Services.prefs.setBoolPref(PREF_PIONEER_NEW_STUDIES_AVAILABLE, true);
     });
 
+    // When a new window opens, check if we need to badge the icon.
     Services.wm.addListener(windowListener);
   },
 
@@ -2704,6 +2717,8 @@ BrowserGlue.prototype = {
       },
 
       () => BrowserUsageTelemetry.reportProfileCount(),
+
+      () => OsEnvironment.reportAllowedAppSources(),
     ];
 
     for (let task of idleTasks) {
@@ -3864,14 +3879,15 @@ BrowserGlue.prototype = {
   _maybeShowDefaultBrowserPrompt() {
     DefaultBrowserCheck.willCheckDefaultBrowser(/* isStartupCheck */ true).then(
       async willPrompt => {
-        let win = BrowserWindowTracker.getTopWindow();
-        if (!willPrompt) {
-          // If we're not showing the modal prompt, maybe we
-          // still want to show the passive notification bar.
-          await win.DefaultBrowserNotificationOnNewTabPage.init();
-          return;
+        let { DefaultBrowserNotification } = ChromeUtils.import(
+          "resource:///actors/AboutNewTabParent.jsm",
+          {}
+        );
+        if (willPrompt) {
+          // Prevent the related notification from appearing if we're
+          // showing the modal prompt.
+          DefaultBrowserNotification.notifyModalDisplayed();
         }
-        DefaultBrowserCheck.prompt(win);
       }
     );
   },

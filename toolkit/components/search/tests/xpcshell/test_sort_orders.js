@@ -26,6 +26,11 @@ add_task(async function setup() {
 
   await SearchTestUtils.useTestEngines();
 
+  Services.locale.availableLocales = [
+    ...Services.locale.availableLocales,
+    "gd",
+  ];
+
   Services.prefs.setBoolPref(
     SearchUtils.BROWSER_SEARCH_PREF + "separatePrivateDefault",
     true
@@ -61,8 +66,8 @@ add_task(async function test_engine_sort_with_non_builtins_sort() {
 
   // As we've added an engine, the pref will have been set to true, but
   // we do really want to test the default sort.
-  Services.prefs.setBoolPref(
-    SearchUtils.BROWSER_SEARCH_PREF + "useDBForOrder",
+  Services.search.wrappedJSObject._settings.setAttribute(
+    "useSavedOrder",
     false
   );
 

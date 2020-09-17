@@ -215,6 +215,7 @@ void AppendToString(std::stringstream& aStream, const ScrollMetadata& m,
       AppendToString(aStream, overscrollY, "] [overscroll-y=");
     }
   }
+  aStream << "] [" << m.GetScrollUpdates().Length() << " scrollupdates";
   aStream << "] }" << sfx;
 }
 
@@ -226,9 +227,6 @@ void AppendToString(std::stringstream& aStream, const FrameMetrics& m,
   AppendToString(aStream, m.GetVisualScrollOffset(), "] [s=");
   if (m.GetVisualScrollUpdateType() != FrameMetrics::eNone) {
     AppendToString(aStream, m.GetVisualDestination(), "] [vd=");
-  }
-  if (m.GetDoSmoothScroll()) {
-    AppendToString(aStream, m.GetSmoothScrollOffset(), "] [ss=");
   }
   AppendToString(aStream, m.GetDisplayPort(), "] [dp=");
   AppendToString(aStream, m.GetCriticalDisplayPort(), "] [cdp=");
@@ -249,10 +247,9 @@ void AppendToString(std::stringstream& aStream, const FrameMetrics& m,
     AppendToString(aStream, m.GetCumulativeResolution(), " cr=");
     AppendToString(aStream, m.GetZoom(), " z=");
     AppendToString(aStream, m.GetExtraResolution(), " er=");
-    aStream << nsPrintfCString(")] [u=(%d %d %d %" PRIu32 ")",
-                               m.GetScrollUpdateType(),
-                               m.GetVisualScrollUpdateType(),
-                               m.GetDoSmoothScroll(), m.GetScrollGeneration())
+    aStream << nsPrintfCString(
+                   ")] [u=(%d %d %" PRIu32 ")", m.GetScrollUpdateType(),
+                   m.GetVisualScrollUpdateType(), m.GetScrollGeneration())
                    .get();
     aStream << nsPrintfCString("] [i=(%" PRIu32 " %" PRIu64 " %d)] }",
                                m.GetPresShellId(), m.GetScrollId(),
@@ -495,6 +492,14 @@ void AppendToString(std::stringstream& aStream, ImageFormat format,
       aStream << "???";
   }
 
+  aStream << sfx;
+}
+
+void AppendToString(std::stringstream& aStream,
+                    const mozilla::ScrollPositionUpdate& aUpdate,
+                    const char* pfx, const char* sfx) {
+  aStream << pfx;
+  aUpdate.AppendToString(aStream);
   aStream << sfx;
 }
 

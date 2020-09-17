@@ -277,6 +277,7 @@ static mozilla::LazyLogModule gDocShellAndDOMWindowLeakLogging(
 #endif
 static mozilla::LazyLogModule gDocShellLeakLog("nsDocShellLeak");
 extern mozilla::LazyLogModule gPageCacheLog;
+static mozilla::LazyLogModule gSHLog("SessionHistory");
 
 const char kBrandBundleURL[] = "chrome://branding/locale/brand.properties";
 const char kAppstringsBundleURL[] =
@@ -816,10 +817,8 @@ nsDocShell::LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating) {
   }
 
   if (aLoadState->LoadIsFromSessionHistory()) {
-#ifdef DEBUG
-    MOZ_LOG(gDocShellLog, LogLevel::Debug,
+    MOZ_LOG(gSHLog, LogLevel::Debug,
             ("nsDocShell[%p]: loading from session history", this));
-#endif
 
     if (!StaticPrefs::fission_sessionHistoryInParent()) {
       return LoadHistoryEntry(aLoadState->SHEntry(), aLoadState->LoadType());
@@ -1061,10 +1060,15 @@ void nsDocShell::FirePageHideNotificationInternal(
     if (aIsUnload && !aSkipCheckingDynEntries) {
       RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
       if (rootSH) {
+        MOZ_LOG(
+            gSHLog, LogLevel::Debug,
+            ("document %p unloading, remove dynamic subframe entries", this));
         if (StaticPrefs::fission_sessionHistoryInParent()) {
           if (mActiveEntry) {
             mBrowsingContext->RemoveDynEntriesFromActiveSessionHistoryEntry();
           }
+          MOZ_LOG(gSHLog, LogLevel::Debug,
+                  ("document %p unloading, no active entries", this));
         } else if (mOSHE) {
           int32_t index = rootSH->Index();
           rootSH->LegacySHistory()->RemoveDynEntries(index, mOSHE);
@@ -1320,7 +1324,11 @@ bool nsDocShell::SetCurrentURI(nsIURI* aURI, nsIRequest* aRequest,
   if (StaticPrefs::fission_sessionHistoryInParent()) {
     if (mLoadingEntry) {
       isSubFrame = mLoadingEntry->mInfo.IsSubFrame();
+      MOZ_LOG(gSHLog, LogLevel::Debug,
+              ("document %p SetCurrentURI, isSubFrame=%d", this, isSubFrame));
     }
+    MOZ_LOG(gSHLog, LogLevel::Debug,
+            ("document %p SetCurrentURI, no mLoadingEntry", this));
   } else {
     if (mLSHE) {
       isSubFrame = mLSHE->GetIsSubFrame();
@@ -2571,6 +2579,70 @@ void nsDocShell::MaybeClearStorageAccessFlag() {
         static_cast<nsDocShell*>(child.get())->MaybeClearStorageAccessFlag();
       }
     }
+  }
+}
+
+void nsDocShell::MaybeRestoreWindowName() {
+  if (!StaticPrefs::privacy_window_name_update_enabled()) {
+    return;
+  }
+
+  // We only restore window.name for the top-level content.
+  if (!mBrowsingContext->IsTopContent()) {
+    return;
+  }
+
+  nsAutoString name;
+
+  // Following implements https://html.spec.whatwg.org/#history-traversal:
+  // Step 4.4. Check if the loading entry has a name.
+
+  if (mLSHE) {
+    mLSHE->GetName(name);
+  }
+
+  if (mLoadingEntry) {
+    name = mLoadingEntry->mInfo.GetName();
+  }
+
+  if (name.IsEmpty()) {
+    return;
+  }
+
+  // Step 4.4.1. Set the name to the browsing context.
+  Unused << mBrowsingContext->SetName(name);
+
+  // Step 4.4.2. Clear the name of all entries that are contiguous and
+  // same-origin with the loading entry.
+  if (mLSHE) {
+    nsSHistory::WalkContiguousEntries(
+        mLSHE, [](nsISHEntry* aEntry) { aEntry->SetName(EmptyString()); });
+  }
+
+  if (mLoadingEntry) {
+    // Clear the name of the session entry in the child side. For parent side,
+    // the clearing will be done when we commit the history to the parent.
+    mLoadingEntry->mInfo.SetName(EmptyString());
+  }
+}
+
+void nsDocShell::StoreWindowNameToSHEntries() {
+  MOZ_ASSERT(mBrowsingContext->IsTopContent());
+
+  nsAutoString name;
+  mBrowsingContext->GetName(name);
+
+  if (mOSHE) {
+    nsSHistory::WalkContiguousEntries(
+        mOSHE, [&](nsISHEntry* aEntry) { aEntry->SetName(name); });
+  }
+
+  // Ask parent process to store the name in entries.
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    mozilla::Unused
+        << ContentChild::GetSingleton()
+               ->SendSessionHistoryEntryStoreWindowNameInContiguousEntries(
+                   mBrowsingContext, name);
   }
 }
 
@@ -3842,35 +3914,65 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
   // reload
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
   if (StaticPrefs::fission_sessionHistoryInParent()) {
-    RefPtr<nsDocShell> docShell(this);
-    RefPtr<Document> doc(GetDocument());
-    RefPtr<BrowsingContext> browsingContext(mBrowsingContext);
-    nsCOMPtr<nsIURI> currentURI(mCurrentURI);
-    nsCOMPtr<nsIReferrerInfo> referrerInfo(mReferrerInfo);
-    ContentChild::GetSingleton()->SendNotifyOnHistoryReload(
-        mBrowsingContext,
-        [docShell, doc, loadType, browsingContext, currentURI, referrerInfo](
-            Tuple<bool, Maybe<RefPtr<nsDocShellLoadState>>, Maybe<bool>>&&
-                aResult) {
-          bool canReload;
-          Maybe<RefPtr<nsDocShellLoadState>> loadState;
-          Maybe<bool> reloadingActiveEntry;
+    MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Reload", this));
+    if (!XRE_IsParentProcess()) {
+      RefPtr<nsDocShell> docShell(this);
+      RefPtr<Document> doc(GetDocument());
+      RefPtr<BrowsingContext> browsingContext(mBrowsingContext);
+      nsCOMPtr<nsIURI> currentURI(mCurrentURI);
+      nsCOMPtr<nsIReferrerInfo> referrerInfo(mReferrerInfo);
+      ContentChild::GetSingleton()->SendNotifyOnHistoryReload(
+          mBrowsingContext,
+          [docShell, doc, loadType, browsingContext, currentURI, referrerInfo](
+              Tuple<bool, Maybe<RefPtr<nsDocShellLoadState>>, Maybe<bool>>&&
+                  aResult) {
+            bool canReload;
+            Maybe<RefPtr<nsDocShellLoadState>> loadState;
+            Maybe<bool> reloadingActiveEntry;
 
-          Tie(canReload, loadState, reloadingActiveEntry) = aResult;
+            Tie(canReload, loadState, reloadingActiveEntry) = aResult;
 
-          if (!canReload) {
-            return;
-          }
+            if (!canReload) {
+              return;
+            }
 
-          if (loadState.isSome()) {
-            docShell->LoadHistoryEntry(loadState.ref(), loadType,
-                                       reloadingActiveEntry.ref());
-          } else {
-            ReloadDocument(docShell, doc, loadType, browsingContext, currentURI,
-                           referrerInfo);
-          }
-        },
-        [](ResponseRejectReason) {});
+            if (loadState.isSome()) {
+              MOZ_LOG(
+                  gSHLog, LogLevel::Debug,
+                  ("document %p Reload - LoadHistoryEntry", docShell.get()));
+              docShell->LoadHistoryEntry(loadState.ref(), loadType,
+                                         reloadingActiveEntry.ref());
+            } else {
+              MOZ_LOG(gSHLog, LogLevel::Debug,
+                      ("document %p ReloadDocument", docShell.get()));
+              ReloadDocument(docShell, doc, loadType, browsingContext,
+                             currentURI, referrerInfo);
+            }
+          },
+          [](ResponseRejectReason) {});
+    } else {
+      // Parent process
+      bool canReload = false;
+      Maybe<RefPtr<nsDocShellLoadState>> loadState;
+      Maybe<bool> reloadingActiveEntry;
+      if (!mBrowsingContext->IsDiscarded()) {
+        mBrowsingContext->Canonical()->NotifyOnHistoryReload(
+            canReload, loadState, reloadingActiveEntry);
+      }
+      if (canReload) {
+        if (loadState.isSome()) {
+          MOZ_LOG(gSHLog, LogLevel::Debug,
+                  ("document %p Reload - LoadHistoryEntry", this));
+          LoadHistoryEntry(loadState.ref(), loadType,
+                           reloadingActiveEntry.ref());
+        } else {
+          MOZ_LOG(gSHLog, LogLevel::Debug,
+                  ("document %p ReloadDocument", this));
+          ReloadDocument(this, GetDocument(), loadType, mBrowsingContext,
+                         mCurrentURI, mReferrerInfo);
+        }
+      }
+    }
   }
 
   bool canReload = true;
@@ -4060,54 +4162,48 @@ nsDocShell::GetSessionHistoryXPCOM(nsISupports** aSessionHistory) {
 //*****************************************************************************
 
 NS_IMETHODIMP
-nsDocShell::LoadPageAsViewSource(nsISupports* aPageDescriptor) {
-  nsCOMPtr<nsISHEntry> shEntryIn(do_QueryInterface(aPageDescriptor));
-
-  // Currently, the opaque 'page descriptor' is an nsISHEntry...
-  if (!shEntryIn) {
+nsDocShell::LoadPageAsViewSource(nsIDocShell* aOtherDocShell,
+                                 const nsAString& aURI) {
+  if (!aOtherDocShell) {
     return NS_ERROR_INVALID_POINTER;
   }
-
-  // Now clone shEntryIn, since we might end up modifying it later on, and we
-  // want a page descriptor to be reusable.
-  nsCOMPtr<nsISHEntry> shEntry;
-  nsresult rv = shEntryIn->Clone(getter_AddRefs(shEntry));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Give our cloned shEntry a new bfcache entry so this load is independent
-  // of all other loads.  (This is important, in particular, for bugs 582795
-  // and 585298.)
-  rv = shEntry->AbandonBFCacheEntry();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  //
-  // load the page as view-source
-  //
-  nsCString spec, newSpec;
-
-  // Create a new view-source URI and replace the original.
-  nsCOMPtr<nsIURI> oldUri = shEntry->GetURI();
-
-  oldUri->GetSpec(spec);
-  newSpec.AppendLiteral("view-source:");
-  newSpec.Append(spec);
-
-  nsCOMPtr<nsIURI> newUri;
-  rv = NS_NewURI(getter_AddRefs(newUri), newSpec);
+  nsCOMPtr<nsIURI> newURI;
+  nsresult rv = NS_NewURI(getter_AddRefs(newURI), aURI);
   if (NS_FAILED(rv)) {
     return rv;
   }
-  shEntry->SetURI(newUri);
-  shEntry->SetOriginalURI(nullptr);
-  shEntry->SetResultPrincipalURI(nullptr);
-  // shEntry's current triggering principal is whoever loaded that page
-  // initially. But now we're doing another load of the page, via an API that
+
+  RefPtr<nsDocShellLoadState> loadState;
+  uint32_t cacheKey;
+  auto* otherDocShell = nsDocShell::Cast(aOtherDocShell);
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    loadState = new nsDocShellLoadState(newURI);
+    if (!otherDocShell->FillLoadStateFromCurrentEntry(*loadState)) {
+      return NS_ERROR_INVALID_POINTER;
+    }
+    cacheKey = otherDocShell->GetCacheKeyFromCurrentEntry().valueOr(0);
+  } else {
+    nsCOMPtr<nsISHEntry> entry;
+    bool isOriginalSHE;
+    otherDocShell->GetCurrentSHEntry(getter_AddRefs(entry), &isOriginalSHE);
+    if (!entry) {
+      return NS_ERROR_INVALID_POINTER;
+    }
+    rv = entry->CreateLoadInfo(getter_AddRefs(loadState));
+    NS_ENSURE_SUCCESS(rv, rv);
+    entry->GetCacheKey(&cacheKey);
+    loadState->SetURI(newURI);
+    loadState->SetSHEntry(nullptr);
+  }
+
+  // We're doing a load of the page, via an API that
   // is only exposed to system code.  The triggering principal for this load
   // should be the system principal.
-  shEntry->SetTriggeringPrincipal(nsContentUtils::GetSystemPrincipal());
+  loadState->SetTriggeringPrincipal(nsContentUtils::GetSystemPrincipal());
+  loadState->SetOriginalURI(nullptr);
+  loadState->SetResultPrincipalURI(nullptr);
 
-  rv = LoadHistoryEntry(shEntry, LOAD_HISTORY);
-  return rv;
+  return InternalLoad(loadState, Some(cacheKey));
 }
 
 NS_IMETHODIMP
@@ -4141,10 +4237,14 @@ already_AddRefed<nsIInputStream> nsDocShell::GetPostDataFromCurrentEntry()
   if (StaticPrefs::fission_sessionHistoryInParent()) {
     if (mActiveEntry) {
       postData = mActiveEntry->GetPostData();
+    } else if (mLoadingEntry) {
+      postData = mLoadingEntry->mInfo.GetPostData();
     }
   } else {
     if (mOSHE) {
       postData = mOSHE->GetPostData();
+    } else if (mLSHE) {
+      postData = mLSHE->GetPostData();
     }
   }
 
@@ -4156,13 +4256,34 @@ Maybe<uint32_t> nsDocShell::GetCacheKeyFromCurrentEntry() const {
     if (mActiveEntry) {
       return Some(mActiveEntry->GetCacheKey());
     }
+
+    if (mLoadingEntry) {
+      return Some(mLoadingEntry->mInfo.GetCacheKey());
+    }
   } else {
     if (mOSHE) {
       return Some(mOSHE->GetCacheKey());
     }
+
+    if (mLSHE) {
+      return Some(mLSHE->GetCacheKey());
+    }
   }
 
   return Nothing();
+}
+
+bool nsDocShell::FillLoadStateFromCurrentEntry(
+    nsDocShellLoadState& aLoadState) {
+  if (mLoadingEntry) {
+    mLoadingEntry->mInfo.FillLoadInfo(aLoadState);
+    return true;
+  }
+  if (mActiveEntry) {
+    mActiveEntry->FillLoadInfo(aLoadState);
+    return true;
+  }
+  return false;
 }
 
 //*****************************************************************************
@@ -5470,6 +5591,7 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
   }
 
   if (StaticPrefs::fission_sessionHistoryInParent()) {
+    MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Embed", this));
     mActiveEntry = nullptr;
     mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> loadingEntry;
     if (mLoadingEntry) {
@@ -5749,32 +5871,7 @@ already_AddRefed<nsIURIFixupInfo> nsDocShell::KeywordToURI(
     const nsACString& aKeyword, bool aIsPrivateContext,
     nsIInputStream** aPostData) {
   nsCOMPtr<nsIURIFixupInfo> info;
-  if (XRE_IsContentProcess()) {
-    dom::ContentChild* contentChild = dom::ContentChild::GetSingleton();
-    if (!contentChild) {
-      return nullptr;
-    }
-
-    info = do_CreateInstance("@mozilla.org/docshell/uri-fixup-info;1");
-    if (NS_WARN_IF(!info)) {
-      return nullptr;
-    }
-    RefPtr<nsIInputStream> postData;
-    RefPtr<nsIURI> uri;
-    nsAutoString providerName;
-    nsAutoCString keyword(aKeyword);
-    // TODO (Bug 1375244): This synchronous IPC messaging should be changed.
-    if (contentChild->SendKeywordToURI(keyword, aIsPrivateContext,
-                                       &providerName, &postData, &uri)) {
-      NS_ConvertUTF8toUTF16 keywordW(aKeyword);
-      info->SetKeywordAsSent(keywordW);
-      info->SetKeywordProviderName(providerName);
-      if (aPostData) {
-        postData.forget(aPostData);
-      }
-      info->SetPreferredURI(uri);
-    }
-  } else {
+  if (!XRE_IsContentProcess()) {
     nsCOMPtr<nsIURIFixup> uriFixup = components::URIFixup::Service();
     if (uriFixup) {
       uriFixup->KeywordToURI(aKeyword, aIsPrivateContext, aPostData,
@@ -7778,6 +7875,10 @@ nsresult nsDocShell::CreateContentViewer(const nsACString& aContentType,
 
   NS_ENSURE_SUCCESS(Embed(viewer), NS_ERROR_FAILURE);
 
+  if (!mBrowsingContext->GetHasLoadedNonInitialDocument()) {
+    MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetHasLoadedNonInitialDocument(true));
+  }
+
   if (TreatAsBackgroundLoad()) {
     nsCOMPtr<nsIRunnable> triggerParentCheckDocShell =
         NewRunnableMethod("nsDocShell::TriggerParentCheckDocShellIsEmpty", this,
@@ -8013,6 +8114,8 @@ void nsDocShell::SetDocCurrentStateObj(nsISHEntry* aShEntry,
     if (aInfo) {
       scContainer = aInfo->GetStateData();
     }
+    MOZ_LOG(gSHLog, LogLevel::Debug,
+            ("document %p SetCurrentDocState %p", this, scContainer.get()));
   } else {
     if (aShEntry) {
       scContainer = aShEntry->GetStateData();
@@ -8433,6 +8536,9 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
       aState.mHistoryNavBetweenSameDoc = mActiveEntry->SharesDocumentWith(
           aLoadState->GetLoadingSessionHistoryInfo()->mInfo);
     }
+    MOZ_LOG(gSHLog, LogLevel::Debug,
+            ("document %p NavBetweenSameDoc=%d", this,
+             aState.mHistoryNavBetweenSameDoc));
   } else {
     if (mOSHE && aLoadState->LoadIsFromSessionHistory()) {
       // We're doing a history load.
@@ -8475,6 +8581,9 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
         (!aLoadState->SHEntry() && !aLoadState->PostDataStream() &&
          aState.mSameExceptHashes && aState.mNewURIHasRef);
 
+    MOZ_LOG(gSHLog, LogLevel::Debug,
+            ("document %p NavBetweenSameDoc=%d is same doc = %d", this,
+             aState.mHistoryNavBetweenSameDoc, doSameDocumentNavigation));
     return doSameDocumentNavigation;
   }
 
@@ -8742,7 +8851,8 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
   return NS_OK;
 }
 
-nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState) {
+nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
+                                  Maybe<uint32_t> aCacheKey) {
   MOZ_ASSERT(aLoadState, "need a load state!");
   MOZ_ASSERT(aLoadState->TriggeringPrincipal(),
              "need a valid TriggeringPrincipal");
@@ -9104,7 +9214,7 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState) {
                    nsINetworkPredictor::PREDICT_LOAD, attrs, nullptr);
 
   nsCOMPtr<nsIRequest> req;
-  rv = DoURILoad(aLoadState, getter_AddRefs(req));
+  rv = DoURILoad(aLoadState, aCacheKey, getter_AddRefs(req));
 
   if (NS_FAILED(rv)) {
     nsCOMPtr<nsIChannel> chan(do_QueryInterface(req));
@@ -9239,6 +9349,16 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
       }
     }
   } else if (SchemeIsViewSource(aURI)) {
+    // Instantiate view source handler protocol, if it doesn't exist already.
+    nsCOMPtr<nsIIOService> io(do_GetIOService());
+    MOZ_ASSERT(io);
+    nsCOMPtr<nsIProtocolHandler> handler;
+    nsresult rv =
+        io->GetProtocolHandler("view-source", getter_AddRefs(handler));
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
     nsViewSourceHandler* vsh = nsViewSourceHandler::GetInstance();
     if (!vsh) {
       return NS_ERROR_FAILURE;
@@ -9602,6 +9722,7 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
 }
 
 nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
+                               Maybe<uint32_t> aCacheKey,
                                nsIRequest** aRequest) {
   // Double-check that we're still around to load this URI.
   if (mIsBeingDestroyed) {
@@ -9838,9 +9959,10 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   }
   loadInfo->SetTriggeringSandboxFlags(aLoadState->TriggeringSandboxFlags());
 
-  /* Get the cache Key from SH */
   uint32_t cacheKey = 0;
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (aCacheKey) {
+    cacheKey = *aCacheKey;
+  } else if (StaticPrefs::fission_sessionHistoryInParent()) {
     if (mLoadingEntry) {
       cacheKey = mLoadingEntry->mInfo.GetCacheKey();
     } else if (mActiveEntry) {  // for reload cases
@@ -10790,6 +10912,8 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     nsCOMPtr<nsIContentSecurityPolicy> csp = aDocument->GetCsp();
 
     if (StaticPrefs::fission_sessionHistoryInParent()) {
+      MOZ_LOG(gSHLog, LogLevel::Debug,
+              ("document %p UpdateActiveEntry replace", this));
       nsString title(mActiveEntry->GetTitle());
       UpdateActiveEntry(false,
                         /* aPreviousScrollPos = */ Some(scrollPos), aNewURI,
@@ -10828,6 +10952,8 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
       mOSHE = newSHEntry;
     }
   } else if (StaticPrefs::fission_sessionHistoryInParent()) {
+    MOZ_LOG(gSHLog, LogLevel::Debug,
+            ("document %p UpdateActiveEntry non-replace", this));
     UpdateActiveEntry(
         true, /* aPreviousScrollPos = */ Nothing(), aNewURI, aNewURI,
         aDocument->NodePrincipal(), aDocument->GetCsp(), EmptyString(),
@@ -10836,6 +10962,7 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     // Step 3.
     newSHEntry = mOSHE;
 
+    MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p step 3", this));
     // Since we're not changing which page we have loaded, pass
     // true for aCloneChildren.
     if (!newSHEntry) {
@@ -12700,14 +12827,6 @@ void nsDocShell::NotifyJSRunToCompletionStop() {
 void nsDocShell::MaybeNotifyKeywordSearchLoading(const nsString& aProvider,
                                                  const nsString& aKeyword) {
   if (aProvider.IsEmpty()) {
-    return;
-  }
-
-  if (XRE_IsContentProcess()) {
-    dom::ContentChild* contentChild = dom::ContentChild::GetSingleton();
-    if (contentChild) {
-      contentChild->SendNotifyKeywordSearchLoading(aProvider, aKeyword);
-    }
     return;
   }
 

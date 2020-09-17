@@ -54,7 +54,7 @@
 #include "js/UniquePtr.h"
 #include "util/Memory.h"
 #include "util/Windows.h"
-#include "vm/HelperThreads.h"
+#include "vm/HelperThreadState.h"
 #include "vm/Realm.h"
 #include "vm/TraceLogging.h"
 #ifdef MOZ_VTUNE
@@ -1691,6 +1691,10 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
 
   if (recompile) {
     script->ionScript()->setRecompiling();
+  }
+
+  if (osrPc) {
+    script->jitScript()->setHadIonOSR();
   }
 
   WarpSnapshot* snapshot = nullptr;

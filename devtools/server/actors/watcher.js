@@ -117,6 +117,8 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           [Resources.TYPES.PLATFORM_MESSAGE]: true,
           [Resources.TYPES.NETWORK_EVENT]:
             enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.STYLESHEET]:
+            enableServerWatcher && hasBrowserElement,
         },
       },
     };
@@ -246,7 +248,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   async watchResources(resourceTypes) {
     // First process resources which have to be listened from the parent process
     // (the watcher actor always runs in the parent process)
-    Resources.watchResources(
+    await Resources.watchResources(
       this,
       Resources.getParentProcessResourceTypes(resourceTypes)
     );

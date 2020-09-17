@@ -107,6 +107,10 @@ bool RenderCompositorNative::MaybeReadback(
   MOZ_RELEASE_ASSERT(aReadbackFormat == wr::ImageFormat::BGRA8);
   if (!mNativeLayerRootSnapshotter) {
     mNativeLayerRootSnapshotter = mNativeLayerRoot->CreateSnapshotter();
+
+    if (!mNativeLayerRootSnapshotter) {
+      return false;
+    }
   }
   bool success = mNativeLayerRootSnapshotter->ReadbackPixels(
       aReadbackSize, gfx::SurfaceFormat::B8G8R8A8, aReadbackBuffer);
@@ -131,12 +135,15 @@ bool RenderCompositorNative::MaybeGrabScreenshot(
   if (!mNativeLayerRootSnapshotter) {
     mNativeLayerRootSnapshotter = mNativeLayerRoot->CreateSnapshotter();
   }
-  mNativeLayerRootSnapshotter->MaybeGrabProfilerScreenshot(
-      &mProfilerScreenshotGrabber, aWindowSize);
 
-  // MaybeGrabScreenshot might have changed the current context. Make sure our
-  // context is current again.
-  MakeCurrent();
+  if (mNativeLayerRootSnapshotter) {
+    mProfilerScreenshotGrabber.MaybeGrabScreenshot(*mNativeLayerRootSnapshotter,
+                                                   aWindowSize);
+
+    // MaybeGrabScreenshot might have changed the current context. Make sure our
+    // context is current again.
+    MakeCurrent();
+  }
 
   return true;
 }
@@ -374,7 +381,7 @@ CompositorCapabilities RenderCompositorNative::GetCompositorCapabilities() {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorNativeOGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget) {
+    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
   RefPtr<gl::GLContext> gl = RenderThread::Get()->SharedGL();
   if (!gl) {
     gl = gl::GLContextProvider::CreateForCompositorWidget(
@@ -491,7 +498,7 @@ void RenderCompositorNativeOGL::Unbind() {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorNativeSWGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget) {
+    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
   void* ctx = wr_swgl_create_context();
   if (!ctx) {
     gfxCriticalNote << "Failed SWGL context creation for WebRender";

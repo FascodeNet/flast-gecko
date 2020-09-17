@@ -369,6 +369,31 @@ class MOZ_STACK_CLASS WSRunScanner final {
       const HTMLEditor& aHTMLEditor, const nsIContent& aAtomicContent);
 
   /**
+   * GetRangeForDeleteBlockElementBoundaries() returns a range starting from end
+   * of aLeftBlockElement to start of aRightBlockElement and extend invisible
+   * white-spaces around them.
+   *
+   * @param aHTMLEditor         The HTML editor.
+   * @param aLeftBlockElement   The block element which will be joined with
+   *                            aRightBlockElement.
+   * @param aRightBlockElement  The block element which will be joined with
+   *                            aLeftBlockElement.  This must be an element
+   *                            after aLeftBlockElement.
+   * @param aPointContainingTheOtherBlock
+   *                            When aRightBlockElement is an ancestor of
+   *                            aLeftBlockElement, this must be set and the
+   *                            container must be aRightBlockElement.
+   *                            When aLeftBlockElement is an ancestor of
+   *                            aRightBlockElement, this must be set and the
+   *                            container must be aLeftBlockElement.
+   *                            Otherwise, must not be set.
+   */
+  static EditorDOMRange GetRangeForDeletingBlockElementBoundaries(
+      const HTMLEditor& aHTMLEditor, const Element& aLeftBlockElement,
+      const Element& aRightBlockElement,
+      const EditorDOMPoint& aPointContainingTheOtherBlock);
+
+  /**
    * ShrinkRangeIfStartsFromOrEndsAfterAtomicContent() may shrink aRange if it
    * starts and/or ends with an atomic content, but the range boundary
    * is in adjacent text nodes.  Returns true if this modifies the range.
@@ -376,6 +401,14 @@ class MOZ_STACK_CLASS WSRunScanner final {
   static Result<bool, nsresult> ShrinkRangeIfStartsFromOrEndsAfterAtomicContent(
       const HTMLEditor& aHTMLEditor, nsRange& aRange,
       const Element* aEditingHost);
+
+  /**
+   * GetRangeExtendToContainInvisibleWhiteSpacesAtRangeBoundaries() returns
+   * extended range if range boundaries of aRange are in invisible white-spaces.
+   */
+  static EditorDOMRange
+  GetRangeExtendToContainInvisibleWhiteSpacesAtRangeBoundaries(
+      const HTMLEditor& aHTMLEditor, const EditorDOMRange& aRange);
 
   /**
    * GetPrecedingBRElementUnlessVisibleContentFound() scans a `<br>` element
@@ -934,12 +967,6 @@ class MOZ_STACK_CLASS WSRunScanner final {
       if (!trailingWhiteSpaceRange.IsPositioned()) {
         return trailingWhiteSpaceRange;
       }
-      // XXX Why don't we need to treat new trailing white-spaces are invisible
-      //     when the trailing white-spaces are only the content in current
-      //     line?
-      if (trailingWhiteSpaceRange != InvisibleLeadingWhiteSpaceRangeRef()) {
-        return EditorDOMRange();
-      }
       // If the point is before the trailing white-spaces, the new line won't
       // start with leading white-spaces.
       if (aPointToSplit.IsBefore(trailingWhiteSpaceRange.StartRef())) {
@@ -982,12 +1009,6 @@ class MOZ_STACK_CLASS WSRunScanner final {
           InvisibleLeadingWhiteSpaceRangeRef();
       if (!leadingWhiteSpaceRange.IsPositioned()) {
         return leadingWhiteSpaceRange;
-      }
-      // XXX Why don't we need to treat new leading white-spaces are invisible
-      //     when the leading white-spaces are only the content in current
-      //     line?
-      if (leadingWhiteSpaceRange != InvisibleTrailingWhiteSpaceRangeRef()) {
-        return EditorDOMRange();
       }
       // If the point equals or is after the leading white-spaces, the line
       // will end without trailing white-spaces.
@@ -1294,7 +1315,8 @@ class WhiteSpaceVisibilityKeeper final {
   MergeFirstLineOfRightBlockElementIntoDescendantLeftBlockElement(
       HTMLEditor& aHTMLEditor, Element& aLeftBlockElement,
       Element& aRightBlockElement, const EditorDOMPoint& aAtRightBlockChild,
-      const Maybe<nsAtom*>& aListElementTagName);
+      const Maybe<nsAtom*>& aListElementTagName,
+      const dom::HTMLBRElement* aPrecedingInvisibleBRElement);
 
   /**
    * MergeFirstLineOfRightBlockElementIntoAncestorLeftBlockElement() merges
@@ -1321,7 +1343,8 @@ class WhiteSpaceVisibilityKeeper final {
       HTMLEditor& aHTMLEditor, Element& aLeftBlockElement,
       Element& aRightBlockElement, const EditorDOMPoint& aAtLeftBlockChild,
       nsIContent& aLeftContentInBlock,
-      const Maybe<nsAtom*>& aListElementTagName);
+      const Maybe<nsAtom*>& aListElementTagName,
+      const dom::HTMLBRElement* aPrecedingInvisibleBRElement);
 
   /**
    * MergeFirstLineOfRightBlockElementIntoLeftBlockElement() merges first
@@ -1340,7 +1363,8 @@ class WhiteSpaceVisibilityKeeper final {
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT static EditActionResult
   MergeFirstLineOfRightBlockElementIntoLeftBlockElement(
       HTMLEditor& aHTMLEditor, Element& aLeftBlockElement,
-      Element& aRightBlockElement, const Maybe<nsAtom*>& aListElementTagName);
+      Element& aRightBlockElement, const Maybe<nsAtom*>& aListElementTagName,
+      const dom::HTMLBRElement* aPrecedingInvisibleBRElement);
 
   /**
    * InsertBRElement() inserts a <br> node at (before) aPointToInsert and delete

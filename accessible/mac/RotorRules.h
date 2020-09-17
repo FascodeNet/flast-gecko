@@ -39,6 +39,23 @@ class RotorLandmarkRule final : public PivotRoleRule {
   explicit RotorLandmarkRule(AccessibleOrProxy& aDirectDescendantsFrom);
 };
 
+class RotorButtonRule final : public PivotRoleRule {
+ public:
+  explicit RotorButtonRule();
+  explicit RotorButtonRule(AccessibleOrProxy& aDirectDescendantsFrom);
+};
+
+class RotorControlRule final : public PivotRule {
+ public:
+  explicit RotorControlRule(AccessibleOrProxy& aDirectDescendantsFrom);
+  explicit RotorControlRule();
+
+  virtual uint16_t Match(const AccessibleOrProxy& aAccOrProxy) override;
+
+ private:
+  AccessibleOrProxy mDirectDescendantsFrom;
+};
+
 /**
  * This rule matches all accessibles, filtering out non-direct
  * descendants if necessary.

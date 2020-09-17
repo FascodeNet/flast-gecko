@@ -350,6 +350,18 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
       newActiveEntry->SetForInitialLoad(false);
       SessionHistoryEntry::RemoveLoadId(aLoadId);
       mLoadingEntries.RemoveElementAt(i);
+
+      // If there is a name in the new entry, clear the name of all contiguous
+      // entries. This is for https://html.spec.whatwg.org/#history-traversal
+      // Step 4.4.2.
+      nsAutoString nameOfNewEntry;
+      newActiveEntry->GetName(nameOfNewEntry);
+      if (!nameOfNewEntry.IsEmpty()) {
+        nsSHistory::WalkContiguousEntries(
+            newActiveEntry,
+            [](nsISHEntry* aEntry) { aEntry->SetName(EmptyString()); });
+      }
+
       if (IsTop()) {
         mActiveEntry = newActiveEntry;
         if (loadFromSessionHistory) {
@@ -1325,6 +1337,9 @@ void CanonicalBrowsingContext::HistoryCommitIndexAndLength(
   }
 
   nsISHistory* shistory = GetSessionHistory();
+  if (!shistory) {
+    return;
+  }
   int32_t index = 0;
   shistory->GetIndex(&index);
   int32_t length = shistory->GetCount();

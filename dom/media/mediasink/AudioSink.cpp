@@ -13,6 +13,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "nsPrintfCString.h"
 
 #ifdef MOZ_GECKO_PROFILER
@@ -66,26 +67,13 @@ AudioSink::AudioSink(AbstractThread* aThread,
       mOwnerThread(aThread),
       mProcessedQueueLength(0),
       mFramesParsed(0),
+      mOutputRate(DecideAudioPlaybackSampleRate(aInfo)),
+      mOutputChannels(DecideAudioPlaybackChannels(aInfo)),
+      mAudibilityMonitor(
+          mOutputRate,
+          StaticPrefs::dom_media_silence_duration_for_audibility()),
       mIsAudioDataAudible(false),
-      mAudioQueue(aAudioQueue) {
-  bool resampling = StaticPrefs::media_resampling_enabled();
-
-  if (resampling) {
-    mOutputRate = 48000;
-  } else if (mInfo.mRate == 44100 || mInfo.mRate == 48000) {
-    // The original rate is of good quality and we want to minimize unecessary
-    // resampling. The common scenario being that the sampling rate is one or
-    // the other, this allows to minimize audio quality regression and hoping
-    // content provider want change from those rates mid-stream.
-    mOutputRate = mInfo.mRate;
-  } else {
-    // We will resample all data to match cubeb's preferred sampling rate.
-    mOutputRate = AudioStream::GetPreferredRate();
-  }
-  MOZ_DIAGNOSTIC_ASSERT(mOutputRate, "output rate can't be 0.");
-
-  mOutputChannels = DecideAudioPlaybackChannels(mInfo);
-}
+      mAudioQueue(aAudioQueue) {}
 
 AudioSink::~AudioSink() = default;
 
@@ -332,7 +320,9 @@ void AudioSink::Errored() {
 void AudioSink::CheckIsAudible(const AudioData* aData) {
   MOZ_ASSERT(aData);
 
-  bool isAudible = aData->IsAudible();
+  mAudibilityMonitor.ProcessAudioData(aData);
+  bool isAudible = mAudibilityMonitor.RecentlyAudible();
+
   if (isAudible != mIsAudioDataAudible) {
     mIsAudioDataAudible = isAudible;
     mAudibleEvent.Notify(mIsAudioDataAudible);

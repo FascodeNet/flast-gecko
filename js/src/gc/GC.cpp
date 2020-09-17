@@ -227,7 +227,6 @@
 #include "jit/JitCode.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitRealm.h"
-#include "jit/MacroAssembler.h"
 #include "js/Object.h"  // JS::GetClass
 #include "js/SliceBudget.h"
 #include "proxy/DeadObjectProxy.h"
@@ -235,6 +234,7 @@
 #include "util/Windows.h"
 #include "vm/BigIntType.h"
 #include "vm/GeckoProfiler.h"
+#include "vm/HelperThreadState.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
@@ -397,8 +397,10 @@ static constexpr FinalizePhase BackgroundFinalizePhases[] = {
       AllocKind::OBJECT_GROUP}}};
 
 void Arena::unmarkAll() {
-  uintptr_t* word = chunk()->bitmap.arenaBits(this);
-  memset(word, 0, ArenaBitmapWords * sizeof(uintptr_t));
+  MarkBitmapWord* arenaBits = chunk()->bitmap.arenaBits(this);
+  for (size_t i = 0; i < ArenaBitmapWords; i++) {
+    arenaBits[i] = 0;
+  }
 }
 
 void Arena::unmarkPreMarkedFreeCells() {

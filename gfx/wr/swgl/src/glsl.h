@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Some of this is copied from Skia and is governed by a BSD-style license
-// Every function in this file should be marked static and inline using SI.
 #define SI ALWAYS_INLINE static
 
 #include "vector_type.h"
@@ -612,6 +610,7 @@ Float approx_log2(Float x) {
   return e - 124.225514990f - 1.498030302f * m -
          1.725879990f / (0.3520887068f + m);
 }
+
 Float approx_pow2(Float x) {
   Float f = fract(x);
   return bit_cast<Float>(
@@ -619,14 +618,21 @@ Float approx_pow2(Float x) {
                                       27.728023300f / (4.84252568f - f)));
 }
 
-// From skia
+#define pow __glsl_pow
+
+SI float pow(float x, float y) { return powf(x, y); }
+
 Float pow(Float x, Float y) {
   return if_then_else((x == 0) | (x == 1), x, approx_pow2(approx_log2(x) * y));
 }
 
+#define exp __glsl_exp
+
+SI float exp(float x) { return expf(x); }
+
 Float exp(Float y) {
-  float x = 2.718281828459045235360287471352;
-  return approx_pow2(log2f(x) * y);
+  float l2e = 1.4426950408889634074f;
+  return approx_pow2(l2e * y);
 }
 
 struct ivec4;
@@ -2198,16 +2204,16 @@ SI mat4 if_then_else(I32 c, mat4 t, mat4 e) {
 
 SI mat4 if_then_else(int32_t c, mat4 t, mat4 e) { return c ? t : e; }
 
-SI I32 clampCoord(I32 coord, int limit) {
+SI I32 clampCoord(I32 coord, int limit, int base = 0) {
 #if USE_SSE2
-  return _mm_min_epi16(_mm_max_epi16(coord, _mm_setzero_si128()),
+  return _mm_min_epi16(_mm_max_epi16(coord, _mm_set1_epi32(base)),
                        _mm_set1_epi32(limit - 1));
 #else
-  return clamp(coord, 0, limit - 1);
+  return clamp(coord, base, limit - 1);
 #endif
 }
-SI int clampCoord(int coord, int limit) {
-  return min(max(coord, 0), limit - 1);
+SI int clampCoord(int coord, int limit, int base = 0) {
+  return min(max(coord, base), limit - 1);
 }
 template <typename T, typename S>
 SI T clamp2D(T P, S sampler) {
@@ -2506,6 +2512,29 @@ SI ivec4_scalar* texelFetchPtr(isampler2D sampler, ivec2_scalar P, int min_x,
   P.y = min(max(P.y, -min_y), int(sampler->height) - 1 - max_y);
   assert(sampler->format == TextureFormat::RGBA32I);
   return (ivec4_scalar*)&sampler->buf[P.x * 4 + P.y * sampler->stride];
+}
+
+template <typename S>
+SI I32 texelFetchPtr(S sampler, ivec2 P, int min_x, int max_x, int min_y,
+                     int max_y) {
+  P.x = clampCoord(P.x, int(sampler->width) - max_x, -min_x);
+  P.y = clampCoord(P.y, int(sampler->height) - max_y, -min_y);
+  return P.x * 4 + P.y * sampler->stride;
+}
+
+template <typename S, typename P>
+SI P texelFetchUnchecked(S sampler, P* ptr, int x, int y = 0) {
+  return ptr[x + y * (sampler->stride >> 2)];
+}
+
+SI vec4 texelFetchUnchecked(sampler2D sampler, I32 offset, int x, int y = 0) {
+  assert(sampler->format == TextureFormat::RGBA32F);
+  return fetchOffsetsFloat(sampler, offset + (x * 4 + y * sampler->stride));
+}
+
+SI ivec4 texelFetchUnchecked(isampler2D sampler, I32 offset, int x, int y = 0) {
+  assert(sampler->format == TextureFormat::RGBA32I);
+  return fetchOffsetsInt(sampler, offset + (x * 4 + y * sampler->stride));
 }
 
 #define texelFetchOffset(sampler, P, lod, offset) \

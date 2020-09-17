@@ -34,22 +34,29 @@ static bool WithDefaultDevMode(const nsString& aName,
                                Callback&& aCallback) {
   nsHPRINTER hPrinter = nullptr;
   BOOL status = ::OpenPrinterW(aName.get(), &hPrinter, nullptr);
-  if (NS_WARN_IF(!status)) {
+  MOZ_DIAGNOSTIC_ASSERT(status, "OpenPrinterW failed");
+  if (!status) {
     return false;
   }
   nsAutoPrinter autoPrinter(hPrinter);
   // Allocate devmode storage of the correct size.
   LONG bytesNeeded = ::DocumentPropertiesW(nullptr, autoPrinter.get(),
                                            aName.get(), nullptr, nullptr, 0);
-  if (NS_WARN_IF(bytesNeeded < 0)) {
+  MOZ_DIAGNOSTIC_ASSERT(bytesNeeded >= sizeof(DEVMODEW),
+                        "DocumentPropertiesW failed to get valid size");
+  if (bytesNeeded < sizeof(DEVMODEW)) {
     return false;
   }
 
-  aStorage.SetLength(bytesNeeded);
+  // Allocate extra space in case of bad drivers that return a too-small
+  // result from DocumentProperties.
+  // (See https://bugzilla.mozilla.org/show_bug.cgi?id=1664530#c5)
+  aStorage.SetLength(bytesNeeded * 2);
   auto* devmode = reinterpret_cast<DEVMODEW*>(aStorage.Elements());
   LONG ret = ::DocumentPropertiesW(nullptr, autoPrinter.get(), aName.get(),
                                    devmode, nullptr, DM_OUT_BUFFER);
-  if (NS_WARN_IF(ret != IDOK)) {
+  MOZ_DIAGNOSTIC_ASSERT(ret == IDOK, "DocumentPropertiesW failed");
+  if (ret != IDOK) {
     return false;
   }
 
@@ -76,7 +83,8 @@ PrintSettingsInitializer nsPrinterWin::DefaultSettings() const {
 
         nsAutoHDC printerDc(
             ::CreateICW(nullptr, mName.get(), nullptr, devmode));
-        if (NS_WARN_IF(!printerDc)) {
+        MOZ_DIAGNOSTIC_ASSERT(printerDc, "CreateICW failed");
+        if (!printerDc) {
           return false;
         }
 
@@ -123,7 +131,9 @@ static nsTArray<T> GetDeviceCapabilityArray(const LPWSTR aPrinterName,
     return caps;
   }
 
-  caps.SetLength(count);
+  // As DeviceCapabilitiesW doesn't take a size, there is a greater risk of the
+  // buffer being overflowed, so we over-allocate for safety.
+  caps.SetLength(count * 2);
   count =
       ::DeviceCapabilitiesW(aPrinterName, nullptr, aCapabilityID,
                             reinterpret_cast<LPWSTR>(caps.Elements()), nullptr);
@@ -132,16 +142,19 @@ static nsTArray<T> GetDeviceCapabilityArray(const LPWSTR aPrinterName,
     return caps;
   }
 
-  MOZ_DIAGNOSTIC_ASSERT(
-      count <= caps.Length(),
-      "DeviceCapabilitiesW returned more than buffer could hold.");
-
-  caps.SetLength(count);
+  // Note that TruncateLength will crash if count > caps.Length().
+  caps.TruncateLength(count);
   return caps;
 }
 
 NS_IMETHODIMP
 nsPrinterWin::GetName(nsAString& aName) {
+  aName.Assign(mName);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPrinterWin::GetSystemName(nsAString& aName) {
   aName.Assign(mName);
   return NS_OK;
 }
@@ -228,23 +241,31 @@ nsTArray<mozilla::PaperInfo> nsPrinterWin::PaperList() const {
 }
 
 mozilla::gfx::MarginDouble nsPrinterWin::GetMarginsForPaper(
-    uint64_t aPaperId) const {
-  static const wchar_t kDriverName[] = L"WINSPOOL";
-  // Now get the margin info.
-  // We need a DEVMODE to set the paper size on the context.
-  DEVMODEW devmode = {};
-  devmode.dmSize = sizeof(DEVMODEW);
-  devmode.dmFields = DM_PAPERSIZE;
-  devmode.dmPaperSize = aPaperId;
+    short aPaperId) const {
+  gfx::MarginDouble margin;
 
-  // Create an information context, so that we can get margin information.
-  // Note: this blocking call interacts with the driver and can be slow.
-  nsAutoHDC printerDc(::CreateICW(kDriverName, mName.get(), nullptr, &devmode));
+  nsTArray<uint8_t> storage;
+  bool success =
+      WithDefaultDevMode(mName, storage, [&](HANDLE, DEVMODEW* devmode) {
+        devmode->dmFields = DM_PAPERSIZE;
+        devmode->dmPaperSize = aPaperId;
+        nsAutoHDC printerDc(
+            ::CreateICW(nullptr, mName.get(), nullptr, devmode));
+        MOZ_DIAGNOSTIC_ASSERT(printerDc, "CreateICW failed");
+        if (!printerDc) {
+          return false;
+        }
+        margin = WinUtils::GetUnwriteableMarginsForDeviceInInches(printerDc);
+        margin.top *= POINTS_PER_INCH_FLOAT;
+        margin.right *= POINTS_PER_INCH_FLOAT;
+        margin.bottom *= POINTS_PER_INCH_FLOAT;
+        margin.left *= POINTS_PER_INCH_FLOAT;
+        return true;
+      });
 
-  auto margin = WinUtils::GetUnwriteableMarginsForDeviceInInches(printerDc);
-  margin.top *= POINTS_PER_INCH_FLOAT;
-  margin.right *= POINTS_PER_INCH_FLOAT;
-  margin.bottom *= POINTS_PER_INCH_FLOAT;
-  margin.left *= POINTS_PER_INCH_FLOAT;
+  if (!success) {
+    return {};
+  }
+
   return margin;
 }

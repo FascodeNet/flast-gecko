@@ -84,10 +84,11 @@ class NewRenderer : public RendererEvent {
     layers::AutoCompleteTask complete(mTask);
 
     UniquePtr<RenderCompositor> compositor =
-        RenderCompositor::Create(std::move(mCompositorWidget));
+        RenderCompositor::Create(std::move(mCompositorWidget), *mError);
     if (!compositor) {
-      // RenderCompositor::Create puts a message into gfxCriticalNote if it is
-      // nullptr
+      if (!mError->IsEmpty()) {
+        gfxCriticalNote << mError->BeginReading();
+      }
       return;
     }
 
@@ -527,6 +528,10 @@ void WebRenderAPI::EnableMultithreading(bool aEnable) {
 
 void WebRenderAPI::SetBatchingLookback(uint32_t aCount) {
   wr_api_set_batching_lookback(mDocHandle, aCount);
+}
+
+void WebRenderAPI::SetClearColor(const gfx::DeviceColor& aColor) {
+  RenderThread::Get()->SetClearColor(mId, ToColorF(aColor));
 }
 
 void WebRenderAPI::Pause() {

@@ -11,13 +11,14 @@
 class nsPrinterWin final : public nsPrinterBase {
  public:
   NS_IMETHOD GetName(nsAString& aName) override;
+  NS_IMETHOD GetSystemName(nsAString& aName) override;
   PrintSettingsInitializer DefaultSettings() const final;
   bool SupportsDuplex() const final;
   bool SupportsColor() const final;
   bool SupportsMonochrome() const final;
   bool SupportsCollation() const final;
   nsTArray<mozilla::PaperInfo> PaperList() const final;
-  MarginDouble GetMarginsForPaper(uint64_t aId) const final;
+  MarginDouble GetMarginsForPaper(short aPaperId) const final;
 
   nsPrinterWin() = delete;
   static already_AddRefed<nsPrinterWin> Create(const nsAString& aName);

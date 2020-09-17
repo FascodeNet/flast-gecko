@@ -29,6 +29,10 @@ const ONE_KILO = 1024;
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { WebExtensionPolicy } = Cu.getGlobalForObject(Services);
 
+const SHOW_THREADS = Services.prefs.getBoolPref(
+  "toolkit.aboutProcesses.showThreads"
+);
+
 /**
  * Returns a Promise that's resolved after the next turn of the event loop.
  *
@@ -293,26 +297,31 @@ var State = {
       result.title = titles[0];
     }
     if (!prev) {
-      result.threads = cur.threads.map(data =>
-        this._getThreadDelta(data, null, null)
-      );
+      if (SHOW_THREADS) {
+        result.threads = cur.threads.map(data =>
+          this._getThreadDelta(data, null, null)
+        );
+      }
       return result;
     }
     if (prev.pid != cur.pid) {
       throw new Error("Assertion failed: A process cannot change pid.");
     }
-    let prevThreads = new Map();
-    for (let thread of prev.threads) {
-      prevThreads.set(thread.tid, thread);
-    }
     let deltaT = (cur.date - prev.date) * MS_PER_NS;
-    let threads = cur.threads.map(curThread => {
-      let prevThread = prevThreads.get(curThread.tid);
-      if (!prevThread) {
-        return this._getThreadDelta(curThread);
+    let threads = null;
+    if (SHOW_THREADS) {
+      let prevThreads = new Map();
+      for (let thread of prev.threads) {
+        prevThreads.set(thread.tid, thread);
       }
-      return this._getThreadDelta(curThread, prevThread, deltaT);
-    });
+      threads = cur.threads.map(curThread => {
+        let prevThread = prevThreads.get(curThread.tid);
+        if (!prevThread) {
+          return this._getThreadDelta(curThread);
+        }
+        return this._getThreadDelta(curThread, prevThread, deltaT);
+      });
+    }
     result.deltaResidentUniqueSize =
       cur.residentUniqueSize - prev.residentUniqueSize;
     result.slopeCpuUser = (cur.cpuUser - prev.cpuUser) / deltaT;
@@ -393,34 +402,76 @@ var View = {
 
     // Column: Name
     {
-      let elt;
-      if (data.type == "browser") {
-        elt = this._addCell(row, {
-          fluentName: "about-processes-browser-name",
-          fluentArgs: {},
-          classes: ["type", "favicon"],
-        });
-      } else {
-        let name = data.title;
-        if (name) {
-          name = `${name} (${data.type})`;
-        } else {
-          name = data.origin ? `${data.origin} (${data.type})` : data.type;
-        }
-        elt = this._addCell(row, {
-          fluentName: "about-processes-process-name",
-          fluentArgs: { name },
-          classes: ["type", "favicon"],
-        });
+      let fluentName;
+      switch (data.type) {
+        case "web":
+          fluentName = "about-processes-web-process-name";
+          break;
+        case "webIsolated":
+          fluentName = "about-processes-webIsolated-process-name";
+          break;
+        case "webLargeAllocation":
+          fluentName = "about-processes-webLargeAllocation-process-name";
+          break;
+        case "file":
+          fluentName = "about-processes-file-process-name";
+          break;
+        case "extension":
+          fluentName = "about-processes-extension-process-name";
+          break;
+        case "privilegedabout":
+          fluentName = "about-processes-privilegedabout-process-name";
+          break;
+        case "withCoopCoep":
+          fluentName = "about-processes-withCoopCoep-process-name";
+          break;
+        case "browser":
+          fluentName = "about-processes-browser-process-name";
+          break;
+        case "plugin":
+          fluentName = "about-processes-plugin-process-name";
+          break;
+        case "gmpPlugin":
+          fluentName = "about-processes-gmpPlugin-process-name";
+          break;
+        case "gpu":
+          fluentName = "about-processes-gpu-process-name";
+          break;
+        case "vr":
+          fluentName = "about-processes-vr-process-name";
+          break;
+        case "rdd":
+          fluentName = "about-processes-rdd-process-name";
+          break;
+        case "socket":
+          fluentName = "about-processes-socket-process-name";
+          break;
+        case "remoteSandboxBroker":
+          fluentName = "about-processes-remoteSandboxBroker-process-name";
+          break;
+        case "forkServer":
+          fluentName = "about-processes-forkServer-process-name";
+          break;
+        case "preallocated":
+          fluentName = "about-processes-preallocated-process-name";
+          break;
+        // The following are probably not going to show up for users
+        // but let's handle the case anyway to avoid heisenoranges
+        // during tests in case of a leftover process from a previous
+        // test.
+        default:
+          fluentName = "about-processes-unknown-process-name";
+          break;
       }
-      if (data.threads.length) {
-        let img = document.createElement("span");
-        img.classList.add("twisty", "process");
-        if (data.isOpen) {
-          img.classList.add("open");
-        }
-        elt.insertBefore(img, elt.firstChild);
-      }
+      let elt = this._addCell(row, {
+        fluentName,
+        fluentArgs: {
+          pid: "" + data.pid, // Make sure that this number is not localized
+          origin: data.origin,
+          type: data.type,
+        },
+        classes: ["type", "favicon"],
+      });
 
       let image;
       switch (data.type) {
@@ -477,16 +528,39 @@ var View = {
       });
     }
 
-    // Column: pid
+    this._fragment.appendChild(row);
+    return row;
+  },
+
+  appendThreadSummaryRow(data, isOpen) {
+    let row = document.createElement("tr");
+    row.classList.add("thread-summary");
+
+    // Column: Name
+    let elt = this._addCell(row, {
+      fluentName: "about-processes-thread-summary",
+      fluentArgs: { number: data.threads.length },
+      classes: ["name", "indent"],
+    });
+    if (data.threads.length) {
+      let img = document.createElement("span");
+      img.classList.add("twisty");
+      if (data.isOpen) {
+        img.classList.add("open");
+      }
+      elt.insertBefore(img, elt.firstChild);
+    }
+
+    // Column: Resident size
     this._addCell(row, {
-      content: data.pid,
-      classes: ["pid", "root"],
+      content: "",
+      classes: ["totalMemorySize"],
     });
 
-    // Column: Number of threads
+    // Column: CPU: User and Kernel
     this._addCell(row, {
-      content: data.threads.length,
-      classes: ["numberOfThreads"],
+      content: "",
+      classes: ["cpu"],
     });
 
     this._fragment.appendChild(row);
@@ -551,18 +625,6 @@ var View = {
       classes: ["cpu"],
     });
 
-    // Column: id (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["windowId"],
-    });
-
-    // Column: Number of threads (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["numberOfThreads"],
-    });
-
     this._fragment.appendChild(row);
     return row;
   },
@@ -582,8 +644,9 @@ var View = {
       fluentName: "about-processes-thread-name",
       fluentArgs: {
         name: data.name,
+        tid: "" + data.tid /* Make sure that this number is not localized */,
       },
-      classes: ["name", "indent"],
+      classes: ["name", "double_indent"],
     });
 
     // Column: Resident size (empty)
@@ -603,18 +666,6 @@ var View = {
         classes: ["cpu"],
       });
     }
-
-    // Column: id
-    this._addCell(row, {
-      content: data.tid,
-      classes: ["tid"],
-    });
-
-    // Column: Number of threads (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["numberOfThreads"],
-    });
 
     this._fragment.appendChild(row);
     return row;
@@ -787,7 +838,7 @@ var Control = {
         let id = row.process.pid;
         if (target.classList.toggle("open")) {
           this._openItems.add(id);
-          this._showChildren(row);
+          this._showThreads(row);
           View.insertAfterRow(row);
         } else {
           this._openItems.delete(id);
@@ -916,7 +967,6 @@ var Control = {
     this._hungItems = new Set();
 
     counters = this._sortProcesses(counters);
-    let previousRow = null;
     let previousProcess = null;
     for (let process of counters) {
       this._sortDOMWindows(process.windows);
@@ -936,10 +986,14 @@ var Control = {
         winRow.win = win;
       }
 
-      let latestRow = winRow || processRow;
-      if (isOpen) {
-        this._openItems.add(process.pid);
-        latestRow = this._showChildren(processRow);
+      if (SHOW_THREADS) {
+        let threadSummaryRow = View.appendThreadSummaryRow(process, isOpen);
+        threadSummaryRow.process = process;
+
+        if (isOpen) {
+          this._openItems.add(process.pid);
+          this._showThreads(processRow);
+        }
       }
       if (
         this._sortColumn == null &&
@@ -947,15 +1001,14 @@ var Control = {
         previousProcess.displayRank != process.displayRank
       ) {
         // Add a separation between successive categories of processes.
-        previousRow.classList.add("separate-from-next-process-group");
+        processRow.classList.add("separate-from-previous-process-group");
       }
       previousProcess = process;
-      previousRow = latestRow;
     }
 
     await View.commit();
   },
-  _showChildren(row) {
+  _showThreads(row) {
     let process = row.process;
     this._sortThreads(process.threads);
     let elt = row;

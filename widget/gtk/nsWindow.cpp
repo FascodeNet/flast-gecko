@@ -4346,7 +4346,11 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
         int visualId = 0;
         bool haveVisual;
 
-        if (!gfx::gfxVars::UseEGL()) {
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=1663003
+        // We need to use GLX to get visual even on EGL until
+        // EGL can provide compositable visual:
+        // https://gitlab.freedesktop.org/mesa/mesa/-/issues/149
+        if ((true /* !gfx::gfxVars::UseEGL() */)) {
           auto display = GDK_DISPLAY_XDISPLAY(gtk_widget_get_display(mShell));
           int screenNumber = GDK_SCREEN_XNUMBER(screen);
           haveVisual = GLContextGLX::FindVisual(
@@ -5605,8 +5609,9 @@ void nsWindow::UpdateTitlebarTransparencyBitmap() {
   NS_ASSERTION(mTransparencyBitmapForTitlebar,
                "Transparency bitmap is already used to draw window shape");
 
-  if (!mDrawInTitlebar || (mBounds.width == mTransparencyBitmapWidth &&
-                           mBounds.height == mTransparencyBitmapHeight)) {
+  if (!mGdkWindow || !mDrawInTitlebar ||
+      (mBounds.width == mTransparencyBitmapWidth &&
+       mBounds.height == mTransparencyBitmapHeight)) {
     return;
   }
 
@@ -7864,12 +7869,6 @@ bool nsWindow::HideTitlebarByDefault() {
   if ((strstr(currentDesktop, "GNOME-Flashback:GNOME") != nullptr ||
        strstr(currentDesktop, "GNOME") != nullptr ||
        strstr(currentDesktop, "Pantheon") != nullptr)) {
-    return hideTitlebar;
-  }
-
-  // We hide system titlebar on KDE on recent enough systems.
-  if (gtk_check_version(3, 24, 0) == nullptr &&
-      strstr(currentDesktop, "KDE") != nullptr) {
     return hideTitlebar;
   }
 

@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include "builtin/Eval.h"
+#include "builtin/ModuleObject.h"
 #include "builtin/TypedObject.h"
 #include "frontend/SourceNotes.h"
 #include "jit/BaselineFrame.h"
@@ -24,14 +25,13 @@
 #include "jit/MIRGraph.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/Object.h"                // JS::GetReservedSlot
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/ScalarType.h"            // js::Scalar::Type
 #include "util/CheckedArithmetic.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
-#include "vm/EnvironmentObject.h"
 #include "vm/Instrumentation.h"
 #include "vm/Opcodes.h"
 #include "vm/PlainObject.h"  // js::PlainObject
@@ -5690,8 +5690,6 @@ bool IonBuilder::ensureArrayIteratorPrototypeNextNotModified() {
 AbortReasonOr<Ok> IonBuilder::jsop_optimize_spreadcall() {
   MDefinition* arr = current->peek(-1);
 
-  // Assuming optimization isn't available doesn't affect correctness.
-  // TODO: Investigate dynamic checks.
   bool result = false;
   do {
     // Inline with MIsPackedArray if the conditions described in
@@ -5739,11 +5737,13 @@ AbortReasonOr<Ok> IonBuilder::jsop_optimize_spreadcall() {
     auto* ins = MIsPackedArray::New(alloc(), arr);
     current->add(ins);
     current->push(ins);
-  } else {
-    arr->setImplicitlyUsedUnchecked();
-    pushConstant(BooleanValue(false));
+    return Ok();
   }
-  return Ok();
+
+  auto* ins = MOptimizeSpreadCallCache::New(alloc(), arr);
+  current->add(ins);
+  current->push(ins);
+  return resumeAfter(ins);
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_funapplyarray(uint32_t argc) {

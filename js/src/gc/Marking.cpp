@@ -35,7 +35,6 @@
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayObject.h"
 #include "vm/BigIntType.h"
-#include "vm/EnvironmentObject.h"
 #include "vm/GeneratorObject.h"
 #include "vm/RegExpShared.h"
 #include "vm/Scope.h"
@@ -4210,11 +4209,11 @@ uintptr_t* GetMarkWordAddress(Cell* cell) {
     return nullptr;
   }
 
-  uintptr_t* wordp;
+  MarkBitmapWord* wordp;
   uintptr_t mask;
   js::gc::detail::GetGCThingMarkWordAndMask(uintptr_t(cell), ColorBit::BlackBit,
                                             &wordp, &mask);
-  return wordp;
+  return reinterpret_cast<uintptr_t*>(wordp);
 }
 
 uintptr_t GetMarkMask(Cell* cell, uint32_t colorBit) {
@@ -4225,7 +4224,7 @@ uintptr_t GetMarkMask(Cell* cell, uint32_t colorBit) {
   }
 
   ColorBit bit = colorBit == 0 ? ColorBit::BlackBit : ColorBit::GrayOrBlackBit;
-  uintptr_t* wordp;
+  MarkBitmapWord* wordp;
   uintptr_t mask;
   js::gc::detail::GetGCThingMarkWordAndMask(uintptr_t(cell), bit, &wordp,
                                             &mask);

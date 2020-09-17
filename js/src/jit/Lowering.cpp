@@ -1845,6 +1845,32 @@ void LIRGenerator::visitDiv(MDiv* ins) {
   MOZ_CRASH("Unhandled number specialization");
 }
 
+void LIRGenerator::visitWasmBuiltinDivI64(MWasmBuiltinDivI64* div) {
+  lowerWasmBuiltinDivI64(div);
+}
+
+void LIRGenerator::visitWasmBuiltinModI64(MWasmBuiltinModI64* mod) {
+  lowerWasmBuiltinModI64(mod);
+}
+
+void LIRGenerator::visitWasmBuiltinModD(MWasmBuiltinModD* ins) {
+  MOZ_ASSERT(gen->compilingWasm());
+  LWasmBuiltinModD* lir = new (alloc()) LWasmBuiltinModD(
+      useRegisterAtStart(ins->lhs()), useRegisterAtStart(ins->rhs()),
+      useFixedAtStart(ins->tls(), WasmTlsReg));
+  defineReturn(lir, ins);
+}
+
+void LIRGenerator::visitBuiltinInt64ToFloatingPoint(
+    MBuiltinInt64ToFloatingPoint* ins) {
+  lowerBuiltinInt64ToFloatingPoint(ins);
+}
+
+void LIRGenerator::visitWasmBuiltinTruncateToInt64(
+    MWasmBuiltinTruncateToInt64* ins) {
+  lowerWasmBuiltinTruncateToInt64(ins);
+}
+
 void LIRGenerator::visitMod(MMod* ins) {
   MOZ_ASSERT(ins->lhs()->type() == ins->rhs()->type());
   MOZ_ASSERT(IsNumberType(ins->type()));
@@ -1868,13 +1894,13 @@ void LIRGenerator::visitMod(MMod* ins) {
     MOZ_ASSERT(ins->lhs()->type() == MIRType::Double);
     MOZ_ASSERT(ins->rhs()->type() == MIRType::Double);
 
-    // Ion does an unaligned ABI call and thus needs a temp register. Wasm
-    // doesn't.
-    LDefinition maybeTemp = gen->compilingWasm() ? LDefinition::BogusTemp()
-                                                 : tempFixed(CallTempReg0);
+    MOZ_ASSERT(!gen->compilingWasm());
 
-    LModD* lir = new (alloc()) LModD(useRegisterAtStart(ins->lhs()),
-                                     useRegisterAtStart(ins->rhs()), maybeTemp);
+    // Ion does an unaligned ABI call and thus needs a temp register.
+    // Note: useRegisterAtStart is safe here, the temp is not a FP register.
+    LModD* lir = new (alloc())
+        LModD(useRegisterAtStart(ins->lhs()), useRegisterAtStart(ins->rhs()),
+              tempFixed(CallTempReg0));
     defineReturn(lir, ins);
     return;
   }
@@ -2329,6 +2355,16 @@ void LIRGenerator::visitWasmTruncateToInt32(MWasmTruncateToInt32* ins) {
     default:
       MOZ_CRASH("unexpected type in WasmTruncateToInt32");
   }
+}
+
+void LIRGenerator::visitWasmBuiltinTruncateToInt32(
+    MWasmBuiltinTruncateToInt32* truncate) {
+  mozilla::DebugOnly<MDefinition*> opd = truncate->input();
+  MOZ_ASSERT(opd->type() == MIRType::Double || opd->type() == MIRType::Float32);
+
+  // May call into JS::ToInt32() on the slow OOL path.
+  gen->setNeedsStaticStackAlignment();
+  lowerWasmBuiltinTruncateToInt32(truncate);
 }
 
 void LIRGenerator::visitWasmBoxValue(MWasmBoxValue* ins) {
@@ -4291,7 +4327,7 @@ void LIRGenerator::visitMegamorphicLoadSlotByValue(
   MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
   auto* lir = new (alloc()) LMegamorphicLoadSlotByValue(
       useRegisterAtStart(ins->object()), useBoxAtStart(ins->idVal()),
-      tempFixed(CallTempReg0));
+      tempFixed(CallTempReg0), tempFixed(CallTempReg1));
   assignSnapshot(lir, BailoutKind::MegamorphicAccess);
   defineReturn(lir, ins);
 }
@@ -4299,9 +4335,10 @@ void LIRGenerator::visitMegamorphicLoadSlotByValue(
 void LIRGenerator::visitMegamorphicStoreSlot(MMegamorphicStoreSlot* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
   MOZ_ASSERT(ins->rhs()->type() == MIRType::Value);
-  auto* lir = new (alloc()) LMegamorphicStoreSlot(
-      useRegisterAtStart(ins->object()), useBoxAtStart(ins->rhs()),
-      tempFixed(CallTempReg0), tempFixed(CallTempReg1));
+  auto* lir = new (alloc())
+      LMegamorphicStoreSlot(useRegisterAtStart(ins->object()),
+                            useBoxAtStart(ins->rhs()), tempFixed(CallTempReg0),
+                            tempFixed(CallTempReg1), tempFixed(CallTempReg2));
   assignSnapshot(lir, BailoutKind::MegamorphicAccess);
   add(lir, ins);
 }
@@ -4309,9 +4346,9 @@ void LIRGenerator::visitMegamorphicStoreSlot(MMegamorphicStoreSlot* ins) {
 void LIRGenerator::visitMegamorphicHasProp(MMegamorphicHasProp* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
   MOZ_ASSERT(ins->idVal()->type() == MIRType::Value);
-  auto* lir = new (alloc())
-      LMegamorphicHasProp(useRegisterAtStart(ins->object()),
-                          useBoxAtStart(ins->idVal()), tempFixed(CallTempReg0));
+  auto* lir = new (alloc()) LMegamorphicHasProp(
+      useRegisterAtStart(ins->object()), useBoxAtStart(ins->idVal()),
+      tempFixed(CallTempReg0), tempFixed(CallTempReg1));
   assignSnapshot(lir, BailoutKind::MegamorphicAccess);
   defineReturn(lir, ins);
 }
@@ -4578,6 +4615,15 @@ void LIRGenerator::visitGetIteratorCache(MGetIteratorCache* ins) {
 
   LGetIteratorCache* lir =
       new (alloc()) LGetIteratorCache(useBoxOrTyped(value), temp(), temp());
+  define(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitOptimizeSpreadCallCache(MOptimizeSpreadCallCache* ins) {
+  MDefinition* value = ins->value();
+  MOZ_ASSERT(value->type() == MIRType::Value);
+
+  auto* lir = new (alloc()) LOptimizeSpreadCallCache(useBox(value), temp());
   define(lir, ins);
   assignSafepoint(lir, ins);
 }

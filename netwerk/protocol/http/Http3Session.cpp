@@ -64,7 +64,8 @@ Http3Session::Http3Session()
       mIsClosedByNeqo(false),
       mError(NS_OK),
       mSocketError(NS_OK),
-      mBeforeConnectedError(false) {
+      mBeforeConnectedError(false),
+      mTimerActive(false) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3Session::Http3Session [this=%p]", this));
 
@@ -97,7 +98,7 @@ nsresult Http3Session::Init(const nsACString& aOrigin,
     return NS_ERROR_FAILURE;
   }
   char buf[kIPv6CStrBufSize];
-  NetAddrToString(&selfAddr, buf, kIPv6CStrBufSize);
+  selfAddr.ToStringBuffer(buf, kIPv6CStrBufSize);
 
   nsAutoCString selfAddrStr;
   if (selfAddr.raw.family == AF_INET6) {
@@ -118,7 +119,7 @@ nsresult Http3Session::Init(const nsACString& aOrigin,
     LOG3(("Http3Session::Init GetPeerAddr failed [this=%p]", this));
     return NS_ERROR_FAILURE;
   }
-  NetAddrToString(&peerAddr, buf, kIPv6CStrBufSize);
+  peerAddr.ToStringBuffer(buf, kIPv6CStrBufSize);
 
   nsAutoCString peerAddrStr;
   if (peerAddr.raw.family == AF_INET6) {
@@ -567,6 +568,9 @@ nsresult Http3Session::ProcessOutput() {
 // properly and close the connection.
 nsresult Http3Session::ProcessOutputAndEvents() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  // ProcessOutput could fire another timer. Need to unset the flag before that.
+  mTimerActive = false;
+
   nsresult rv = ProcessOutput();
   if (NS_FAILED(rv)) {
     return rv;
@@ -576,11 +580,27 @@ nsresult Http3Session::ProcessOutputAndEvents() {
 
 void Http3Session::SetupTimer(uint64_t aTimeout) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  // UINT64_MAX indicated a no-op from neqo, which only happens when a
+  // connection is in or going to be Closed state.
+  if (aTimeout == UINT64_MAX) {
+    return;
+  }
 
   LOG(("Http3Session::SetupTimer to %" PRIu64 "ms [this=%p].", aTimeout, this));
+
+  if (mTimerActive && mTimer) {
+    LOG(
+        ("  -- Previous timer has not fired. Update the delay instead of "
+         "re-initializing the timer"));
+    mTimer->SetDelay(aTimeout);
+    return;
+  }
+
   if (!mTimer) {
     mTimer = NS_NewTimer();
   }
+
+  mTimerActive = true;
 
   if (!mTimer ||
       NS_FAILED(mTimer->InitWithNamedFuncCallback(

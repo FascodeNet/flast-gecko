@@ -68,7 +68,7 @@ job-defaults:
             # Bug 1635749, disable window recorder temporarily
             - --browsertime-no-ffwindowrecorder
     optimization:
-        push-interval-20: null
+        skip-unless-backstop: null
     variants:
         by-app:
             chrome-m: []
@@ -180,15 +180,12 @@ browsertime-tp6m:
                             geckoview:
                                 by-test-platform: *android-warm-settings
                             default: []
-    pageload:
-        by-app:
-            fenix: both
-            geckoview: both
-            refbrow: both
-            fennec: both
-            default: cold
+    pageload: cold
     run-visual-metrics: true
     treeherder-symbol: Btime(tp6m)
+    mozharness:
+        extra-options:
+            - --chimera
 
 browsertime-youtube-playback-mobile:
     description: "Browsertime YouTube Playback on Android"
@@ -312,6 +309,7 @@ browsertime-tp6m-live:
     mozharness:
         extra-options:
             - --live-sites
+            - --chimera
 
 browsertime-tp6m-profiling:
     description: "Raptor (browsertime) tp6 page-load tests on android with Gecko profiling"
@@ -348,6 +346,29 @@ browsertime-speedometer-mobile:
         extra-options:
             - --browsertime
             - --test=speedometer
+
+browsertime-unity-webgl-mobile:
+    description: "Browsertime Unity WebGL on Android"
+    apps: ["geckoview", "refbrow", "fenix"]
+    treeherder-symbol: Btime(ugl)
+    run-on-projects:
+        by-app:
+            geckoview:
+                by-test-platform:
+                    android-hw-.*(?<!-shippable)/opt: []
+                    android-hw-p2-.*api-16/pgo: []
+                    android-hw-p2-.*api-16-shippable/opt: []
+                    android-hw-(?!p2-.*api-16)/pgo: ['trunk', 'mozilla-beta']
+                    android-hw-(?!p2-.*api-16)-shippable/opt: ['trunk', 'mozilla-beta']
+                    default: ['mozilla-central', 'mozilla-beta']
+            default: []
+    max-run-time: 900
+    mozharness:
+        extra-options:
+            - --test=unity-webgl
+    fetches:
+        fetch:
+            - unity-webgl
 
 browsertime-power:
     description: "Browsertime Power Usage Tests on Android"

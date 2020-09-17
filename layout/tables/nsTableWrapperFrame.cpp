@@ -279,7 +279,7 @@ void nsTableWrapperFrame::GetChildMargin(nsPresContext* aPresContext,
   WritingMode wm = aOuterRI.GetWritingMode();
   LogicalSize availSize(wm, aAvailISize, aOuterRI.AvailableSize(wm).BSize(wm));
   ReflowInput childRI(aPresContext, aOuterRI, aChildFrame, availSize, Nothing(),
-                      ReflowInput::CALLER_WILL_INIT);
+                      ReflowInput::InitFlag::CallerWillInit);
   InitChildReflowInput(*aPresContext, aOuterRI, childRI);
 
   aMargin = childRI.ComputedLogicalMargin();
@@ -374,14 +374,12 @@ nscoord nsTableWrapperFrame::ChildShrinkWrapISize(
                                aCBSize.ISize(aWM));
   LogicalSize marginSize =
       offsets.ComputedLogicalMargin().Size(childWM).ConvertTo(aWM, childWM);
-  LogicalSize paddingSize =
-      offsets.ComputedLogicalPadding().Size(childWM).ConvertTo(aWM, childWM);
   LogicalSize bpSize =
       offsets.ComputedLogicalBorderPadding().Size(childWM).ConvertTo(aWM,
                                                                      childWM);
 
   // Shrink-wrap aChildFrame by default, except if we're a stretched grid item.
-  auto flags = ComputeSizeFlags::eShrinkWrap;
+  ComputeSizeFlags flags(ComputeSizeFlag::ShrinkWrap);
   if (MOZ_UNLIKELY(IsGridItem()) && !StyleMargin()->HasInlineAxisAuto(aWM)) {
     const auto* parent = GetParent();
     auto inlineAxisAlignment =
@@ -390,13 +388,13 @@ nscoord nsTableWrapperFrame::ChildShrinkWrapISize(
             : StylePosition()->UsedJustifySelf(parent->Style())._0;
     if (inlineAxisAlignment == StyleAlignFlags::NORMAL ||
         inlineAxisAlignment == StyleAlignFlags::STRETCH) {
-      flags = nsIFrame::ComputeSizeFlags::eDefault;
+      flags -= ComputeSizeFlag::ShrinkWrap;
     }
   }
 
-  auto size = aChildFrame->ComputeSize(
-      aRenderingContext, aWM, aCBSize, aAvailableISize, marginSize,
-      bpSize - paddingSize, paddingSize, flags);
+  auto size =
+      aChildFrame->ComputeSize(aRenderingContext, aWM, aCBSize, aAvailableISize,
+                               marginSize, bpSize, flags);
   if (aMarginResult) {
     *aMarginResult = offsets.ComputedLogicalMargin().IStartEnd(aWM);
   }
@@ -408,10 +406,9 @@ nscoord nsTableWrapperFrame::ChildShrinkWrapISize(
 LogicalSize nsTableWrapperFrame::ComputeAutoSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorder, const LogicalSize& aPadding,
-    ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   nscoord kidAvailableISize = aAvailableISize - aMargin.ISize(aWM);
-  NS_ASSERTION(aBorder.IsAllZero() && aPadding.IsAllZero(),
+  NS_ASSERTION(aBorderPadding.IsAllZero(),
                "Table wrapper frames cannot have borders or paddings");
 
   // When we're shrink-wrapping, our auto size needs to wrap around the
@@ -741,7 +738,7 @@ void nsTableWrapperFrame::OuterBeginReflowChild(nsPresContext* aPresContext,
   // create and init the child reflow input, using passed-in Maybe<>,
   // so that caller can use it after we return.
   aChildRI.emplace(aPresContext, aOuterRI, aChildFrame, availSize, Nothing(),
-                   ReflowInput::CALLER_WILL_INIT);
+                   ReflowInput::InitFlag::CallerWillInit);
   InitChildReflowInput(*aPresContext, aOuterRI, *aChildRI);
 
   // see if we need to reset top-of-page due to a caption

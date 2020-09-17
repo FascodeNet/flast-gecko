@@ -617,10 +617,8 @@ static nscoord FloatMarginISize(const ReflowInput& aCBReflowInput,
   auto floatSize = aFloat->ComputeSize(
       aCBReflowInput.mRenderingContext, wm, aCBReflowInput.ComputedSize(wm),
       aFloatAvailableISize, aFloatOffsetState.ComputedLogicalMargin().Size(wm),
-      aFloatOffsetState.ComputedLogicalBorderPadding().Size(wm) -
-          aFloatOffsetState.ComputedLogicalPadding().Size(wm),
-      aFloatOffsetState.ComputedLogicalPadding().Size(wm),
-      nsIFrame::ComputeSizeFlags::eShrinkWrap);
+      aFloatOffsetState.ComputedLogicalBorderPadding().Size(wm),
+      ComputeSizeFlag::ShrinkWrap);
 
   WritingMode cbwm = aCBReflowInput.GetWritingMode();
   nscoord floatISize = floatSize.mLogicalSize.ConvertTo(cbwm, wm).ISize(cbwm);

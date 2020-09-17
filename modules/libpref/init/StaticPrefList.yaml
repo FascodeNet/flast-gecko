@@ -2141,6 +2141,13 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
+# Number of seconds of very quiet or silent audio before considering the audio
+# inaudible.
+- name: dom.media.silence_duration_for_audibility
+  type: AtomicFloat
+  value: 2.0f
+  mirror: always
+
 # Enable meta-viewport support in remote APZ-enabled frames.
 - name: dom.meta-viewport.enabled
   type: RelaxedAtomicBool
@@ -2506,7 +2513,7 @@
 # soon as they are fetched.
 - name: dom.script_loader.external_scripts.speculative_omt_parse.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Speculatively compile non parser inserted scripts
@@ -3702,6 +3709,12 @@
   value: 0
   mirror: always
 
+# temporary pref to work around a problem (bug 1663562)
+- name: font.size.inflation.skipmaybereflowwithwebrender
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # This setting corresponds to a global text zoom setting affecting
 # all content that is not already subject to font size inflation.
 # It is interpreted as a percentage value that is applied on top
@@ -3806,6 +3819,11 @@
   value: 200
   mirror: always
 
+- name: general.smoothScroll.lines
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: general.smoothScroll.lines.durationMaxMS
   type: RelaxedAtomicInt32
   value: 150
@@ -3836,6 +3854,11 @@
   value: 100
   mirror: always
 
+- name: general.smoothScroll.other
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: general.smoothScroll.other.durationMaxMS
   type: RelaxedAtomicInt32
   value: 150
@@ -3859,6 +3882,26 @@
 - name: general.smoothScroll.pages.durationMinMS
   type: RelaxedAtomicInt32
   value: 150
+  mirror: always
+
+- name: general.smoothScroll.scrollbars
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+- name: general.smoothScroll.scrollbars.durationMaxMS
+  type: RelaxedAtomicInt32
+  value: 150
+  mirror: always
+
+- name: general.smoothScroll.scrollbars.durationMinMS
+  type: RelaxedAtomicInt32
+  value: 150
+  mirror: always
+
+- name: general.smoothScroll.pixels
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 - name: general.smoothScroll.pixels.durationMaxMS
@@ -6521,6 +6564,16 @@
   value: true
   mirror: always
 
+# Whether :is() and :where() ignore errors inside their selector lists
+# internally, rather than failing to parse altogether.
+#
+# See https://github.com/w3c/csswg-drafts/issues/3264
+- name: layout.css.is-and-where-better-error-recovery.enabled
+  type: RelaxedAtomicBool
+  value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+  rust: true
+
 # Whether frame visibility tracking is enabled globally.
 - name: layout.framevisibility.enabled
   type: bool
@@ -6602,13 +6655,6 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
-# Whether to disable legacy MathML number values that are not valid CSS numbers
-# (e.g. "1234.")
-- name: mathml.legacy_number_syntax.disabled
-  type: bool
-  value: true
-  mirror: always
-
 # Whether to disable legacy names "small", "normal" and "big" for the
 # mathsize attribute.
 - name: mathml.mathsize_names.disabled
@@ -6640,12 +6686,6 @@
 - name: mathml.mfrac_linethickness_names.disabled
   type: bool
   value: @IS_NIGHTLY_BUILD@
-  mirror: always
-
-# Whether to disable nonzero unitless values e.g. linethickness="2" for 200%
-- name: mathml.nonzero_unitless_lengths.disabled
-  type: bool
-  value: true
   mirror: always
 
 # Whether to disable deprecated numalign/denomalign/align attributes
@@ -8622,6 +8662,30 @@
   value: true
   mirror: always
 
+# The default DPI for printing.
+#
+# For PDF-based output, DPI should ideally be irrelevant, but in fact it is not
+# for multiple reasons:
+#
+#  * Layout code that tries to respect device pixels (e.g. for snapping glyph
+#    positions and baselines, and especially for the "GDI Classic"
+#    rendering-mode threshold for certain fonts).
+#
+#  * The limitations of the PDF format mean that we can't natively represent
+#    certain effects, such as filters, in PDF output, so we need to rasterize
+#    the parts of the document with these applied.
+#
+#  * Other rasterized things like images and such are also affected by DPI
+#    (both in the output, and the images we select via srcset, for example).
+#
+# Therefore, using a high DPI is preferable. For now, we use 144dpi to match
+# physical printer output on Windows, but higher (e.g. 300dpi) might be better
+# if it does not lead to issues such as excessive memory use.
+- name: print.default_dpi
+  type: float
+  value: 144.0f
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "privacy."
 #---------------------------------------------------------------------------
@@ -8939,6 +9003,11 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
+- name: privacy.window.name.update.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
 # By default, the network state isolation is not active when there is a proxy
 # setting. This pref forces the network isolation even in these scenarios.
 - name: privacy.partition.network_state.connection_with_proxy
@@ -8994,6 +9063,14 @@
 - name: security.csp.reporting.script-sample.max-length
   type: int32_t
   value: 40
+  mirror: always
+
+# Allows loading ui resources in CheckLoadURIFlags
+# TODO Bug 1654488: Remove pref in CheckLoadURIFlags
+#      which allows all UI resources to load
+- name: security.caps.allow_uri_is_ui_resource_in_checkloaduriflags
+  type: bool
+  value: false
   mirror: always
 
 # TODO: Bug 1324406: Treat 'data:' documents as unique, opaque origins

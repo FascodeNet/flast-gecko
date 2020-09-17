@@ -8,6 +8,7 @@
 #define jit_TrialInlining_h
 
 #include "jit/CacheIR.h"
+#include "jit/ICStubSpace.h"
 #include "vm/BytecodeLocation.h"
 
 /*
@@ -35,6 +36,9 @@
 namespace js {
 namespace jit {
 
+class ICEntry;
+class ICScript;
+
 /*
  * An InliningRoot is owned by a JitScript. In turn, it owns the set
  * of ICScripts that are candidates for being inlined in that JitScript.
@@ -42,7 +46,9 @@ namespace jit {
 class InliningRoot {
  public:
   explicit InliningRoot(JSContext* cx, JSScript* owningScript)
-      : owningScript_(owningScript), inlinedScripts_(cx) {}
+      : owningScript_(owningScript),
+        inlinedScripts_(cx),
+        totalBytecodeSize_(owningScript->length()) {}
 
   FallbackICStubSpace* fallbackStubSpace() { return &fallbackStubSpace_; }
 
@@ -54,13 +60,21 @@ class InliningRoot {
   uint32_t numInlinedScripts() const { return inlinedScripts_.length(); }
 
   void purgeOptimizedStubs(Zone* zone);
+  void resetWarmUpCounts(uint32_t count);
 
   JSScript* owningScript() const { return owningScript_; }
+
+  size_t totalBytecodeSize() const { return totalBytecodeSize_; }
+
+  void addToTotalBytecodeSize(size_t size) { totalBytecodeSize_ += size; }
 
  private:
   FallbackICStubSpace fallbackStubSpace_ = {};
   HeapPtr<JSScript*> owningScript_;
   js::Vector<js::UniquePtr<ICScript>> inlinedScripts_;
+
+  // Bytecode size of outer script and all inlined scripts.
+  size_t totalBytecodeSize_;
 };
 
 class InlinableCallData {

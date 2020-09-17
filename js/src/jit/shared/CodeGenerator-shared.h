@@ -279,11 +279,16 @@ class CodeGeneratorShared : public LElementVisitor {
 
   OutOfLineCode* oolTruncateDouble(
       FloatRegister src, Register dest, MInstruction* mir,
-      wasm::BytecodeOffset callOffset = wasm::BytecodeOffset());
+      wasm::BytecodeOffset callOffset = wasm::BytecodeOffset(),
+      bool preserveTls = false);
   void emitTruncateDouble(FloatRegister src, Register dest,
                           MTruncateToInt32* mir);
+  void emitTruncateDoubleBuiltin(FloatRegister src, Register dest,
+                                 MWasmBuiltinTruncateToInt32* mir);
   void emitTruncateFloat32(FloatRegister src, Register dest,
                            MTruncateToInt32* mir);
+  void emitTruncateFloat32Builtin(FloatRegister src, Register dest,
+                                  MWasmBuiltinTruncateToInt32* mir);
 
   void emitPreBarrier(Register elements, const LAllocation* index);
   void emitPreBarrier(Address address);
@@ -548,6 +553,16 @@ class OutOfLineWasmTruncateCheckBase : public OutOfLineCodeBase<CodeGen> {
         input_(input),
         output_(output),
         output64_(Register64::Invalid()),
+        flags_(mir->flags()),
+        bytecodeOffset_(mir->bytecodeOffset()) {}
+
+  OutOfLineWasmTruncateCheckBase(MWasmBuiltinTruncateToInt64* mir,
+                                 FloatRegister input, Register64 output)
+      : fromType_(mir->input()->type()),
+        toType_(MIRType::Int64),
+        input_(input),
+        output_(Register::Invalid()),
+        output64_(output),
         flags_(mir->flags()),
         bytecodeOffset_(mir->bytecodeOffset()) {}
 

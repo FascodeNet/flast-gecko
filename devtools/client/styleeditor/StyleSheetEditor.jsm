@@ -422,15 +422,8 @@ StyleSheetEditor.prototype = {
     if (!rules.length && !this.mediaRules.length) {
       return;
     }
-    for (const rule of this.mediaRules) {
-      rule.off("matches-change", this.emitMediaRulesChanged);
-      rule.destroy();
-    }
-    this.mediaRules = rules;
 
-    for (const rule of rules) {
-      rule.on("matches-change", this.emitMediaRulesChanged);
-    }
+    this.mediaRules = rules;
     this.emitMediaRulesChanged();
   },
 
@@ -665,9 +658,7 @@ StyleSheetEditor.prototype = {
       return;
     }
 
-    const node = await this.walker.getStyleSheetOwnerNode(
-      this.styleSheet.actorID
-    );
+    const node = await this.walker.getStyleSheetOwnerNode(this.resourceId);
     await this.highlighter.show(node, {
       selector: info.selector,
       hideInfoBar: true,
