@@ -9,6 +9,7 @@
 
 #import "MacUtils.h"
 #import "mozView.h"
+#import "MOXSearchInfo.h"
 
 #include "Accessible-inl.h"
 #include "nsAccUtils.h"
@@ -295,6 +296,15 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
   }
 
   id nativeParent = GetNativeFromGeckoAccessible(parent);
+  if (parent.Role() == roles::DOCUMENT &&
+      [nativeParent respondsToSelector:@selector(rootGroup)]) {
+    // Before returning a WebArea as parent, check to see if
+    // there is a generated root group that is an intermediate container.
+    if (id<mozAccessible> rootGroup = [nativeParent rootGroup]) {
+      nativeParent = rootGroup;
+    }
+  }
+
   if (!nativeParent && mGeckoAccessible.IsAccessible()) {
     // Return native of root accessible if we have no direct parent.
     // XXX: need to return a sensible fallback in proxy case as well
@@ -734,6 +744,27 @@ struct RoleDescrComparator {
 
 - (NSNumber*)moxRequired {
   return @([self stateWithMask:states::REQUIRED] != 0);
+}
+
+- (NSArray*)moxUIElementsForSearchPredicate:(NSDictionary*)searchPredicate {
+  // Create our search object and set it up with the searchPredicate
+  // params. The init function does additional parsing. We pass a
+  // reference to the web area to use as a start element if one is not
+  // specified.
+  MOXWebAreaAccessible* webArea = static_cast<MOXWebAreaAccessible*>(
+      GetNativeFromGeckoAccessible([self geckoDocument]));
+  MOXSearchInfo* search =
+      [[MOXSearchInfo alloc] initWithParameters:searchPredicate
+                                        andRoot:webArea];
+
+  return [search performSearch];
+}
+
+- (NSNumber*)moxUIElementCountForSearchPredicate:
+    (NSDictionary*)searchPredicate {
+  return [NSNumber
+      numberWithDouble:[[self moxUIElementsForSearchPredicate:searchPredicate]
+                           count]];
 }
 
 - (void)moxSetFocused:(NSNumber*)focused {

@@ -2138,7 +2138,7 @@
 # Media Session API
 - name: dom.media.mediasession.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Number of seconds of very quiet or silent audio before considering the audio
@@ -3707,12 +3707,6 @@
 - name: font.size.inflation.maxRatio
   type: uint32_t
   value: 0
-  mirror: always
-
-# temporary pref to work around a problem (bug 1663562)
-- name: font.size.inflation.skipmaybereflowwithwebrender
-  type: RelaxedAtomicBool
-  value: false
   mirror: always
 
 # This setting corresponds to a global text zoom setting affecting
@@ -6757,11 +6751,11 @@
   value: false
 #endif
 
-# ClockDrift desired buffering
+# ClockDrift desired buffering in milliseconds
 - name: media.clockdrift.buffering
   type: int32_t
   mirror: always
-  value: 5
+  value: 50
 
 # If a resource is known to be smaller than this size (in kilobytes), a
 # memory-backed MediaCache may be used; otherwise the (single shared global)
@@ -7106,13 +7100,6 @@
 -   name: media.ffvpx.mp3.enabled
     type: RelaxedAtomicBool
     value: true
-    mirror: always
-#endif
-
-#if defined(MOZ_FFMPEG) || defined(MOZ_FFVPX)
--   name: media.ffmpeg.low-latency.enabled
-    type: RelaxedAtomicBool
-    value: false
     mirror: always
 #endif
 
@@ -9942,6 +9929,11 @@
 - name: webgl.out-of-process
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+- name: webgl.out-of-process.shmem-size
+  type: RelaxedAtomicUint32
+  value: 100000 # 100KB
   mirror: always
 
 - name: webgl.power-preference-override

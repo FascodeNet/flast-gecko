@@ -111,6 +111,8 @@ class TabBase {
    *
    * @param {BaseContext} context
    *        The extension context for which to perform the capture.
+   * @param {number} zoom
+   *        The current zoom for the page.
    * @param {Object} [options]
    *        The options with which to perform the capture.
    * @param {string} [options.format = "png"]
@@ -126,10 +128,9 @@ class TabBase {
    *        The scale to render at, defaults to devicePixelRatio.
    * @returns {Promise<string>}
    */
-  async capture(context, options) {
-    let win = this.nativeTab.ownerGlobal;
+  async capture(context, zoom, options) {
+    let win = this.browser.ownerGlobal;
     let scale = options?.scale || win.devicePixelRatio;
-    let zoom = win.ZoomManager.getZoomForBrowser(this.browser);
     let rect = options?.rect && win.DOMRect.fromRect(options.rect);
 
     let wgp = this.browsingContext.currentWindowGlobal;
@@ -654,6 +655,7 @@ class TabBase {
       isInReaderMode: this.isInReaderMode,
       sharingState: this.sharingState,
       successorTabId: this.successorTabId,
+      cookieStoreId: this.cookieStoreId,
     };
 
     // If the tab has not been fully layed-out yet, fallback to the geometry
@@ -666,10 +668,6 @@ class TabBase {
     let opener = this.openerTabId;
     if (opener) {
       result.openerTabId = opener;
-    }
-
-    if (this.extension.hasPermission("cookies")) {
-      result.cookieStoreId = this.cookieStoreId;
     }
 
     if (this.hasTabPermission) {

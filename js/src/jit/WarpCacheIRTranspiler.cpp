@@ -21,6 +21,7 @@
 #include "jit/WarpBuilderShared.h"
 #include "jit/WarpSnapshot.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "vm/ArgumentsObject.h"
 
 #include "gc/ObjectKind-inl.h"
 
@@ -111,6 +112,9 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   }
   BaseScript* baseScriptStubField(uint32_t offset) {
     return reinterpret_cast<BaseScript*>(readStubWord(offset));
+  }
+  const JSJitInfo* jitInfoStubField(uint32_t offset) {
+    return reinterpret_cast<const JSJitInfo*>(readStubWord(offset));
   }
   const void* rawPointerField(uint32_t offset) {
     return reinterpret_cast<const void*>(readStubWord(offset));
@@ -273,12 +277,22 @@ bool WarpCacheIRTranspiler::emitGuardClass(ObjOperandId objId,
     case GuardClassKind::DataView:
       classp = &DataViewObject::class_;
       break;
+    case GuardClassKind::MappedArguments:
+      classp = &MappedArgumentsObject::class_;
+      break;
+    case GuardClassKind::UnmappedArguments:
+      classp = &UnmappedArgumentsObject::class_;
+      break;
+    case GuardClassKind::WindowProxy:
+      classp = mirGen().runtime->maybeWindowProxyClass();
+      break;
     case GuardClassKind::JSFunction:
       classp = &JSFunction::class_;
       break;
     default:
       MOZ_CRASH("not yet supported");
   }
+  MOZ_ASSERT(classp);
 
   auto* ins = MGuardToClass::New(alloc(), def, classp);
   add(ins);
@@ -438,6 +452,51 @@ bool WarpCacheIRTranspiler::emitCallSetArrayLength(ObjOperandId objId,
   addEffectful(ins);
 
   return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitCallDOMGetterResult(ObjOperandId objId,
+                                                    uint32_t jitInfoOffset) {
+  MDefinition* obj = getOperand(objId);
+  const JSJitInfo* jitInfo = jitInfoStubField(jitInfoOffset);
+
+  MInstruction* ins;
+  if (jitInfo->isAlwaysInSlot) {
+    ins = MGetDOMMember::New(alloc(), jitInfo, obj, nullptr, nullptr);
+  } else {
+    // TODO(post-Warp): realms, guard operands (movable?).
+    ins = MGetDOMProperty::New(alloc(), jitInfo, DOMObjectKind::Native,
+                               (JS::Realm*)mirGen().realm->realmPtr(), obj,
+                               nullptr, nullptr);
+  }
+
+  if (!ins) {
+    return false;
+  }
+
+  if (ins->isEffectful()) {
+    addEffectful(ins);
+    pushResult(ins);
+    return resumeAfter(ins);
+  }
+
+  add(ins);
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitCallDOMSetter(ObjOperandId objId,
+                                              uint32_t jitInfoOffset,
+                                              ValOperandId rhsId) {
+  MDefinition* obj = getOperand(objId);
+  const JSJitInfo* jitInfo = jitInfoStubField(jitInfoOffset);
+  MDefinition* value = getOperand(rhsId);
+
+  MOZ_ASSERT(jitInfo->type() == JSJitInfo::Setter);
+  auto* set =
+      MSetDOMProperty::New(alloc(), jitInfo->setter, DOMObjectKind::Native,
+                           (JS::Realm*)mirGen().realm->realmPtr(), obj, value);
+  addEffectful(set);
+  return resumeAfter(set);
 }
 
 bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
@@ -1252,6 +1311,39 @@ bool WarpCacheIRTranspiler::emitLoadInt32ArrayLength(ObjOperandId objId,
   add(length);
 
   return defineOperand(resultId, length);
+}
+
+bool WarpCacheIRTranspiler::emitLoadArgumentsObjectArgResult(
+    ObjOperandId objId, Int32OperandId indexId) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* index = getOperand(indexId);
+
+  auto* load = MLoadArgumentsObjectArg::New(alloc(), obj, index);
+  add(load);
+
+  pushResult(load);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitLoadArgumentsObjectLengthResult(
+    ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* length = MArgumentsObjectLength::New(alloc(), obj);
+  add(length);
+
+  pushResult(length);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitLoadFunctionLengthResult(ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* length = MFunctionLength::New(alloc(), obj);
+  add(length);
+
+  pushResult(length);
+  return true;
 }
 
 bool WarpCacheIRTranspiler::emitLoadTypedArrayLengthResult(
@@ -3078,6 +3170,16 @@ bool WarpCacheIRTranspiler::emitLoadValueTruthyResult(ValOperandId inputId) {
 
   pushResult(result);
   return true;
+}
+
+bool WarpCacheIRTranspiler::emitLoadWrapperTarget(ObjOperandId objId,
+                                                  ObjOperandId resultId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* ins = MLoadWrapperTarget::New(alloc(), obj);
+  add(ins);
+
+  return defineOperand(resultId, ins);
 }
 
 bool WarpCacheIRTranspiler::emitLoadArgumentSlot(ValOperandId resultId,

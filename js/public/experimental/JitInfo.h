@@ -38,6 +38,9 @@ class JSJitGetterCallArgs : protected JS::MutableHandle<JS::Value> {
   explicit JSJitGetterCallArgs(JS::Rooted<JS::Value>* rooted)
       : JS::MutableHandle<JS::Value>(rooted) {}
 
+  explicit JSJitGetterCallArgs(JS::MutableHandle<JS::Value> handle)
+      : JS::MutableHandle<JS::Value>(handle) {}
+
   JS::MutableHandle<JS::Value> rval() { return *this; }
 };
 
@@ -49,6 +52,9 @@ class JSJitSetterCallArgs : protected JS::MutableHandle<JS::Value> {
  public:
   explicit JSJitSetterCallArgs(const JS::CallArgs& args)
       : JS::MutableHandle<JS::Value>(args[0]) {}
+
+  explicit JSJitSetterCallArgs(JS::Rooted<JS::Value>* rooted)
+      : JS::MutableHandle<JS::Value>(rooted) {}
 
   JS::MutableHandle<JS::Value> operator[](unsigned i) {
     MOZ_ASSERT(i == 0);

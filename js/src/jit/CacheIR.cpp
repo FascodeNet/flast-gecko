@@ -225,15 +225,15 @@ GetPropIRGenerator::GetPropIRGenerator(JSContext* cx, HandleScript script,
       resultFlags_(resultFlags),
       preliminaryObjectAction_(PreliminaryObjectAction::None) {}
 
-static void EmitLoadSlotResult(CacheIRWriter& writer, ObjOperandId holderOp,
+static void EmitLoadSlotResult(CacheIRWriter& writer, ObjOperandId holderId,
                                NativeObject* holder, Shape* shape) {
   if (holder->isFixedSlot(shape->slot())) {
-    writer.loadFixedSlotResult(holderOp,
+    writer.loadFixedSlotResult(holderId,
                                NativeObject::getFixedSlotOffset(shape->slot()));
   } else {
     size_t dynamicSlotOffset =
         holder->dynamicSlotIndex(shape->slot()) * sizeof(Value);
-    writer.loadDynamicSlotResult(holderOp, dynamicSlotOffset);
+    writer.loadDynamicSlotResult(holderId, dynamicSlotOffset);
   }
 }
 
@@ -387,7 +387,7 @@ AttachDecision GetPropIRGenerator::tryAttachStub() {
       TRY_ATTACH(tryAttachDenseElement(obj, objId, index, indexId));
       TRY_ATTACH(tryAttachDenseElementHole(obj, objId, index, indexId));
       TRY_ATTACH(tryAttachSparseElement(obj, objId, index, indexId));
-      TRY_ATTACH(tryAttachArgumentsObjectArg(obj, objId, indexId));
+      TRY_ATTACH(tryAttachArgumentsObjectArg(obj, objId, index, indexId));
       TRY_ATTACH(tryAttachGenericElement(obj, objId, index, indexId));
 
       trackAttached(IRGenerator::NotAttached);
@@ -1065,6 +1065,58 @@ static void EmitCallGetterResult(JSContext* cx, CacheIRWriter& writer,
   EmitCallGetterResultNoGuards(cx, writer, obj, holder, shape, receiverId);
 }
 
+static bool CanAttachDOMGetterSetter(JSContext* cx, JSJitInfo::OpType type,
+                                     HandleObject obj, HandleShape shape,
+                                     ICState::Mode mode) {
+  MOZ_ASSERT(type == JSJitInfo::Getter || type == JSJitInfo::Setter);
+  if (!JitOptions.warpBuilder) {
+    return false;
+  }
+
+  if (mode != ICState::Mode::Specialized) {
+    return false;
+  }
+
+  Value v =
+      type == JSJitInfo::Getter ? shape->getterValue() : shape->setterValue();
+  JSFunction* fun = &v.toObject().as<JSFunction>();
+  if (!fun->hasJitInfo()) {
+    return false;
+  }
+
+  if (cx->realm() != fun->realm()) {
+    return false;
+  }
+
+  const JSJitInfo* jitInfo = fun->jitInfo();
+  if (jitInfo->type() != type) {
+    return false;
+  }
+
+  const JSClass* clasp = obj->getClass();
+  if (!clasp->isDOMClass() || clasp->isProxy()) {
+    return false;
+  }
+
+  DOMInstanceClassHasProtoAtDepth instanceChecker =
+      cx->runtime()->DOMcallbacks->instanceClassMatchesProto;
+  return instanceChecker(clasp, jitInfo->protoID, jitInfo->depth);
+}
+
+static void EmitCallDOMGetterResult(JSContext* cx, CacheIRWriter& writer,
+                                    JSObject* obj, JSObject* holder,
+                                    Shape* shape, ObjOperandId objId) {
+  // Note: this relies on EmitCallGetterResultGuards emitting a shape guard
+  // for specialized stubs.
+  // The shape guard ensures the receiver's Class is valid for this DOM getter.
+  EmitCallGetterResultGuards(writer, obj, holder, shape, objId,
+                             ICState::Mode::Specialized);
+
+  JSFunction* getter = &shape->getterValue().toObject().as<JSFunction>();
+  writer.callDOMGetterResult(objId, getter->jitInfo());
+  writer.typeMonitorResult();
+}
+
 void GetPropIRGenerator::attachMegamorphicNativeSlot(ObjOperandId objId,
                                                      jsid id,
                                                      bool handleMissing) {
@@ -1130,6 +1182,15 @@ AttachDecision GetPropIRGenerator::tryAttachNative(HandleObject obj,
     case CanAttachNativeGetter: {
       MOZ_ASSERT(!idempotent());
       maybeEmitIdGuard(id);
+
+      if (!isSuper() &&
+          CanAttachDOMGetterSetter(cx_, JSJitInfo::Getter, obj, shape, mode_)) {
+        EmitCallDOMGetterResult(cx_, writer, obj, holder, shape, objId);
+
+        trackAttached("DOMGetter");
+        return AttachDecision::Attach;
+      }
+
       EmitCallGetterResult(cx_, writer, obj, holder, shape, objId, receiverId,
                            mode_);
 
@@ -1888,36 +1949,44 @@ AttachDecision GetPropIRGenerator::tryAttachFunction(HandleObject obj,
     return AttachDecision::NoAction;
   }
 
+  if (!JSID_IS_ATOM(id, cx_->names().length)) {
+    return AttachDecision::NoAction;
+  }
+
   JSObject* holder = nullptr;
   PropertyResult prop;
-  // This property exists already, don't attach the stub.
+  // If this property exists already, don't attach the stub.
   if (LookupPropertyPure(cx_, obj, id, &holder, &prop)) {
     return AttachDecision::NoAction;
   }
 
   JSFunction* fun = &obj->as<JSFunction>();
 
-  if (JSID_IS_ATOM(id, cx_->names().length)) {
-    // length was probably deleted from the function.
-    if (fun->hasResolvedLength()) {
-      return AttachDecision::NoAction;
-    }
-
-    // Lazy functions don't store the length.
-    if (!fun->hasBytecode()) {
-      return AttachDecision::NoAction;
-    }
-
-    maybeEmitIdGuard(id);
-    writer.guardClass(objId, GuardClassKind::JSFunction);
-    writer.loadFunctionLengthResult(objId);
-    writer.returnFromIC();
-
-    trackAttached("FunctionLength");
-    return AttachDecision::Attach;
+  // length was probably deleted from the function.
+  if (fun->hasResolvedLength()) {
+    return AttachDecision::NoAction;
   }
 
-  return AttachDecision::NoAction;
+  // Lazy functions don't store the length.
+  if (!fun->hasBytecode()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Length can be non-int32 for bound functions.
+  if (fun->isBoundFunction()) {
+    constexpr auto lengthSlot = FunctionExtended::BOUND_FUNCTION_LENGTH_SLOT;
+    if (!fun->getExtendedSlot(lengthSlot).isInt32()) {
+      return AttachDecision::NoAction;
+    }
+  }
+
+  maybeEmitIdGuard(id);
+  writer.guardClass(objId, GuardClassKind::JSFunction);
+  writer.loadFunctionLengthResult(objId);
+  writer.returnFromIC();
+
+  trackAttached("FunctionLength");
+  return AttachDecision::Attach;
 }
 
 AttachDecision GetPropIRGenerator::tryAttachModuleNamespace(HandleObject obj,
@@ -2162,9 +2231,30 @@ AttachDecision GetPropIRGenerator::tryAttachMagicArgument(
 }
 
 AttachDecision GetPropIRGenerator::tryAttachArgumentsObjectArg(
-    HandleObject obj, ObjOperandId objId, Int32OperandId indexId) {
-  if (!obj->is<ArgumentsObject>() ||
-      obj->as<ArgumentsObject>().hasOverriddenElement()) {
+    HandleObject obj, ObjOperandId objId, uint32_t index,
+    Int32OperandId indexId) {
+  if (!obj->is<ArgumentsObject>()) {
+    return AttachDecision::NoAction;
+  }
+  auto* args = &obj->as<ArgumentsObject>();
+
+  // No elements must have been overriden.
+  if (args->hasOverriddenElement()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Check bounds.
+  if (index >= args->initialLength()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Ensure no elements were ever deleted.
+  if (args->isAnyElementDeleted()) {
+    return AttachDecision::NoAction;
+  }
+
+  // And finally also check that the argument isn't forwarded.
+  if (args->argIsForwarded(index)) {
     return AttachDecision::NoAction;
   }
 
@@ -2172,10 +2262,10 @@ AttachDecision GetPropIRGenerator::tryAttachArgumentsObjectArg(
     return AttachDecision::NoAction;
   }
 
-  if (obj->is<MappedArgumentsObject>()) {
+  if (args->is<MappedArgumentsObject>()) {
     writer.guardClass(objId, GuardClassKind::MappedArguments);
   } else {
-    MOZ_ASSERT(obj->is<UnmappedArgumentsObject>());
+    MOZ_ASSERT(args->is<UnmappedArgumentsObject>());
     writer.guardClass(objId, GuardClassKind::UnmappedArguments);
   }
 
@@ -3860,6 +3950,16 @@ static void EmitCallSetterNoGuards(JSContext* cx, CacheIRWriter& writer,
   writer.returnFromIC();
 }
 
+static void EmitCallDOMSetterNoGuards(JSContext* cx, CacheIRWriter& writer,
+                                      Shape* shape, ObjOperandId objId,
+                                      ValOperandId rhsId) {
+  JSFunction* setter = &shape->setterValue().toObject().as<JSFunction>();
+  MOZ_ASSERT(cx->realm() == setter->realm());
+
+  writer.callDOMSetter(objId, setter->jitInfo(), rhsId);
+  writer.returnFromIC();
+}
+
 AttachDecision SetPropIRGenerator::tryAttachSetter(HandleObject obj,
                                                    ObjOperandId objId,
                                                    HandleId id,
@@ -3887,6 +3987,13 @@ AttachDecision SetPropIRGenerator::tryAttachSetter(HandleObject obj,
     }
   } else {
     writer.guardHasGetterSetter(objId, propShape);
+  }
+
+  if (CanAttachDOMGetterSetter(cx_, JSJitInfo::Setter, obj, propShape, mode_)) {
+    EmitCallDOMSetterNoGuards(cx_, writer, propShape, objId, rhsId);
+
+    trackAttached("DOMSetter");
+    return AttachDecision::Attach;
   }
 
   EmitCallSetterNoGuards(cx_, writer, obj, holder, propShape, objId, rhsId);

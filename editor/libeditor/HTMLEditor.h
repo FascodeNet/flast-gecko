@@ -4172,12 +4172,24 @@ class HTMLEditor final : public TextEditor,
    * InsertFromDataTransfer() is called only when user drops data into
    * this editor.  Don't use this method for other purposes.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult InsertFromDataTransfer(
-      dom::DataTransfer* aDataTransfer, int32_t aIndex, Document* aSourceDoc,
-      const EditorDOMPoint& aDroppedAt, bool aDoDeleteSelection);
+  MOZ_CAN_RUN_SCRIPT nsresult
+  InsertFromDataTransfer(const dom::DataTransfer* aDataTransfer, int32_t aIndex,
+                         Document* aSourceDoc, const EditorDOMPoint& aDroppedAt,
+                         bool aDoDeleteSelection);
 
   bool HavePrivateHTMLFlavor(nsIClipboard* clipboard);
-  nsresult ParseCFHTML(nsCString& aCfhtml, char16_t** aStuffToPaste,
+
+  /**
+   * CF_HTML:
+   * <https://docs.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format>.
+   *
+   * @param[in]  aCfhtml a CF_HTML string as defined above.
+   * @param[out] aStuffToPaste the fragment, excluding context.
+   * @param[out] aCfcontext the context, excluding the fragment, including a
+   *                        marker (`kInsertionCookie`) indicating where the
+   *                        fragment begins.
+   */
+  nsresult ParseCFHTML(const nsCString& aCfhtml, char16_t** aStuffToPaste,
                        char16_t** aCfcontext);
 
   /**
@@ -4477,8 +4489,8 @@ class HTMLEditor final : public TextEditor,
 
   ManualNACPtr CreateResizer(int16_t aLocation, nsIContent& aParentContent);
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  SetAnonymousElementPositionWithTransaction(nsStyledElement& aStyledElement,
-                                             int32_t aX, int32_t aY);
+  SetAnonymousElementPositionWithoutTransaction(nsStyledElement& aStyledElement,
+                                                int32_t aX, int32_t aY);
 
   ManualNACPtr CreateShadow(nsIContent& aParentContent,
                             Element& aOriginalObject);

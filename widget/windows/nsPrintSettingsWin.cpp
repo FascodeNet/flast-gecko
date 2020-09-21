@@ -195,13 +195,13 @@ void nsPrintSettingsWin::InitWithInitializer(
   }
 
   if (mDevMode->dmFields & DM_PAPERSIZE) {
-    SetPaperData(mDevMode->dmPaperSize);
+    nsString paperIdString;
+    paperIdString.AppendInt(mDevMode->dmPaperSize);
+    SetPaperId(paperIdString);
     if (mDevMode->dmPaperSize > 0 &&
         mDevMode->dmPaperSize < int32_t(ArrayLength(kPaperSizeUnits))) {
-      SetPaperSizeUnit(kPaperSizeUnits[mPaperData]);
+      SetPaperSizeUnit(kPaperSizeUnits[mDevMode->dmPaperSize]);
     }
-  } else {
-    SetPaperData(-1);
   }
 
   if (mDevMode->dmFields & DM_COLOR) {
@@ -351,14 +351,13 @@ void nsPrintSettingsWin::CopyFromNative(HDC aHdc, DEVMODEW* aDevMode) {
   }
 
   if (aDevMode->dmFields & DM_PAPERSIZE) {
-    mPaperData = aDevMode->dmPaperSize;
+    mPaperId.Truncate(0);
+    mPaperId.AppendInt(aDevMode->dmPaperSize);
     // If not a paper size we know about, the unit will be the last one saved.
-    if (mPaperData > 0 &&
-        mPaperData < int32_t(mozilla::ArrayLength(kPaperSizeUnits))) {
-      mPaperSizeUnit = kPaperSizeUnits[mPaperData];
+    if (aDevMode->dmPaperSize > 0 &&
+        aDevMode->dmPaperSize < int32_t(ArrayLength(kPaperSizeUnits))) {
+      mPaperSizeUnit = kPaperSizeUnits[aDevMode->dmPaperSize];
     }
-  } else {
-    mPaperData = -1;
   }
 
   if (aDevMode->dmFields & DM_COLOR) {
@@ -404,8 +403,8 @@ void nsPrintSettingsWin::CopyFromNative(HDC aHdc, DEVMODEW* aDevMode) {
 void nsPrintSettingsWin::CopyToNative(DEVMODEW* aDevMode) {
   MOZ_ASSERT(aDevMode);
 
-  if (mPaperData >= 0) {
-    aDevMode->dmPaperSize = mPaperData;
+  if (!mPaperId.IsEmpty()) {
+    aDevMode->dmPaperSize = _wtoi((const wchar_t*)mPaperId.BeginReading());
     aDevMode->dmFields |= DM_PAPERSIZE;
   } else {
     aDevMode->dmPaperSize = 0;
@@ -544,8 +543,7 @@ Tester::Tester() {
     ps->SetFooterStrLeft(NS_ConvertUTF8toUTF16("Left").get());
     ps->SetFooterStrCenter(NS_ConvertUTF8toUTF16("Center").get());
     ps->SetFooterStrRight(NS_ConvertUTF8toUTF16("Right").get());
-    ps->SetPaperName(NS_ConvertUTF8toUTF16("Paper Name").get());
-    ps->SetPaperData(1);
+    ps->SetPaperId(NS_ConvertUTF8toUTF16("Paper Id").get());
     ps->SetPaperWidth(100.0);
     ps->SetPaperHeight(50.0);
     ps->SetPaperSizeUnit(nsIPrintSettings::kPaperSizeMillimeters);

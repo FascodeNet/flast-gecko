@@ -3300,25 +3300,26 @@ void GCRuntime::startDecommit() {
   decommitTask.runFromMainThread();
 }
 
-void js::gc::BackgroundDecommitTask::run() {
-  ChunkPool emptyChunksToFree;
-
+void js::gc::BackgroundDecommitTask::run(AutoLockHelperThreadState& lock) {
   {
-    AutoLockGC lock(gc);
+    AutoUnlockHelperThreadState unlock(lock);
 
-    // To help minimize the total number of chunks needed over time, sort the
-    // available chunks list so that we allocate into more-used chunks first.
-    gc->availableChunks(lock).sort();
+    ChunkPool emptyChunksToFree;
+    {
+      AutoLockGC gcLock(gc);
 
-    gc->decommitFreeArenas(cancel_, lock);
+      // To help minimize the total number of chunks needed over time, sort the
+      // available chunks list so that we allocate into more-used chunks first.
+      gc->availableChunks(gcLock).sort();
 
-    emptyChunksToFree = gc->expireEmptyChunkPool(lock);
+      gc->decommitFreeArenas(cancel_, gcLock);
+
+      emptyChunksToFree = gc->expireEmptyChunkPool(gcLock);
+    }
+
+    FreeChunkPool(emptyChunksToFree);
   }
 
-  FreeChunkPool(emptyChunksToFree);
-
-  AutoLockHelperThreadState lock;
-  setFinishing(lock);
   gc->maybeRequestGCAfterBackgroundTask(lock);
 }
 
@@ -3467,17 +3468,11 @@ void GCRuntime::queueZonesAndStartBackgroundSweep(ZoneList& zones) {
   }
 }
 
-void BackgroundSweepTask::run() {
+void BackgroundSweepTask::run(AutoLockHelperThreadState& lock) {
   AutoTraceLog logSweeping(TraceLoggerForCurrentThread(),
                            TraceLogger_GCSweeping);
 
-  AutoLockHelperThreadState lock;
-
   gc->sweepFromBackgroundThread(lock);
-
-  // Signal to the main thread that we're about to finish, because we release
-  // the lock again before GCParallelTask's state is changed to finished.
-  setFinishing(lock);
 }
 
 void GCRuntime::sweepFromBackgroundThread(AutoLockHelperThreadState& lock) {
@@ -3538,16 +3533,10 @@ void GCRuntime::startBackgroundFree() {
   freeTask.startOrRunIfIdle(lock);
 }
 
-void BackgroundFreeTask::run() {
+void BackgroundFreeTask::run(AutoLockHelperThreadState& lock) {
   AutoTraceLog logFreeing(TraceLoggerForCurrentThread(), TraceLogger_GCFree);
 
-  AutoLockHelperThreadState lock;
-
   gc->freeFromBackgroundThread(lock);
-
-  // Signal to the main thread that we're about to finish, because we release
-  // the lock again before GCParallelTask's state is changed to finished.
-  setFinishing(lock);
 }
 
 void GCRuntime::freeFromBackgroundThread(AutoLockHelperThreadState& lock) {
@@ -3760,7 +3749,9 @@ class MOZ_RAII AutoRunParallelTask : public GCParallelTask {
 
   ~AutoRunParallelTask() { gc->joinTask(*this, phase_, lock_); }
 
-  void run() override {
+  void run(AutoLockHelperThreadState& lock) override {
+    AutoUnlockHelperThreadState unlock(lock);
+
     // The hazard analysis can't tell what the call to func_ will do but it's
     // not allowed to GC.
     JS::AutoSuppressGCAnalysis nogc;
@@ -4256,9 +4247,7 @@ bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
    * GC.
    */
   if (!IsShutdownReason(reason) && reason != JS::GCReason::ROOTS_REMOVED) {
-    AutoLockHelperThreadState helperLock;
-    HelperThreadState().startHandlingCompressionTasks(
-        helperLock, GlobalHelperThreadState::ScheduleCompressionTask::GC);
+    StartHandlingCompressionsOnGC(rt);
   }
 
   return true;
@@ -5034,7 +5023,8 @@ class ImmediateSweepWeakCacheTask : public GCParallelTask {
         zone(other.zone),
         cache(other.cache) {}
 
-  void run() override {
+  void run(AutoLockHelperThreadState& lock) override {
+    AutoUnlockHelperThreadState unlock(lock);
     AutoSetThreadIsSweeping threadIsSweeping(zone);
     cache.sweep(&gc->storeBuffer());
   }
@@ -5097,14 +5087,7 @@ void GCRuntime::sweepCompressionTasks() {
   // Attach finished compression tasks.
   AutoLockHelperThreadState lock;
   AttachFinishedCompressions(runtime, lock);
-
-  // Sweep pending tasks that are holding onto should-be-dead ScriptSources.
-  auto& pending = HelperThreadState().compressionPendingList(lock);
-  for (size_t i = 0; i < pending.length(); i++) {
-    if (pending[i]->shouldCancel()) {
-      HelperThreadState().remove(pending, &i);
-    }
-  }
+  SweepPendingCompressions(lock);
 }
 
 void GCRuntime::sweepWeakMaps() {
@@ -5631,7 +5614,9 @@ bool ArenaLists::foregroundFinalize(JSFreeOp* fop, AllocKind thingKind,
   return true;
 }
 
-void js::gc::SweepMarkTask::run() {
+void js::gc::SweepMarkTask::run(AutoLockHelperThreadState& lock) {
+  AutoUnlockHelperThreadState unlock(lock);
+
   // Time reporting is handled separately for parallel tasks.
   gc->sweepMarkResult =
       gc->markUntilBudgetExhausted(this->budget, GCMarker::DontReportMarkTime);

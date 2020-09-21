@@ -148,6 +148,10 @@ enum class BailoutKind : uint8_t {
   // Array length did not fit in int32.
   NonInt32ArrayLength,
 
+  // Function length not available ("length" property was redefined or function
+  // has a lazy script) or did not fit in int32.
+  FunctionLength,
+
   // END Normal bailouts
 
   // Bailouts caused by invalid assumptions based on Baseline code.
@@ -193,6 +197,9 @@ enum class BailoutKind : uint8_t {
 
   // Bailout triggered by a megamorphic load or store.
   MegamorphicAccess,
+
+  // Bailout triggered by MLoadArgumentsObjectArg and MArgumentsObjectLength.
+  ArgumentsObjectAccess,
 
   // Bailout triggered by MArrayPopShift.
   ArrayPopShift,
@@ -294,6 +301,8 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::FirstExecution";
     case BailoutKind::NonInt32ArrayLength:
       return "BailoutKind::NonInt32ArrayLength";
+    case BailoutKind::FunctionLength:
+      return "BailoutKind::FunctionLength";
 
     // Bailouts caused by invalid assumptions.
     case BailoutKind::OverflowInvalidate:
@@ -320,6 +329,8 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::NotArrayBufferMaybeSharedGuard";
     case BailoutKind::MegamorphicAccess:
       return "BailoutKind::MegamorphicAccess";
+    case BailoutKind::ArgumentsObjectAccess:
+      return "BailoutKind::ArgumentsObjectAccess";
     case BailoutKind::ArrayPopShift:
       return "BailoutKind::ArrayPopShift";
     case BailoutKind::ArraySlice:

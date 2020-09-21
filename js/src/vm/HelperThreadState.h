@@ -335,16 +335,14 @@ class GlobalHelperThreadState {
   enum class ScheduleCompressionTask { GC, API };
 
   // Used by a major GC to signal processing enqueued compression tasks.
-  void startHandlingCompressionTasks(const AutoLockHelperThreadState&,
-                                     ScheduleCompressionTask schedule);
+  void startHandlingCompressionTasks(ScheduleCompressionTask schedule,
+                                     JSRuntime* maybeRuntime,
+                                     const AutoLockHelperThreadState& lock);
 
   jit::IonCompileTask* highestPriorityPendingIonCompile(
       const AutoLockHelperThreadState& lock);
 
  private:
-  void scheduleCompressionTasks(const AutoLockHelperThreadState&,
-                                ScheduleCompressionTask schedule);
-
   UniquePtr<ParseTask> finishParseTaskCommon(JSContext* cx, ParseTaskKind kind,
                                              JS::OffThreadToken* token);
 
@@ -482,19 +480,13 @@ class HelperThread {
       const AutoLockHelperThreadState& locked);
 };
 
-struct MOZ_RAII AutoSetHelperThreadContext {
+class MOZ_RAII AutoSetHelperThreadContext {
   JSContext* cx;
-  explicit AutoSetHelperThreadContext();
-  ~AutoSetHelperThreadContext() {
-    AutoLockHelperThreadState lock;
-    cx->tempLifoAlloc().releaseAll();
-    if (cx->shouldFreeUnusedMemory()) {
-      cx->tempLifoAlloc().freeAll();
-      cx->setFreeUnusedMemory(false);
-    }
-    cx->clearHelperThread(lock);
-    cx = nullptr;
-  }
+  AutoLockHelperThreadState& lock;
+
+ public:
+  explicit AutoSetHelperThreadContext(AutoLockHelperThreadState& lock);
+  ~AutoSetHelperThreadContext();
 };
 
 struct MOZ_RAII AutoSetContextRuntime {
@@ -559,7 +551,7 @@ struct ParseTask : public mozilla::LinkedListElement<ParseTask>,
   }
 
   void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
-  void runTask();
+  void runTask(AutoLockHelperThreadState& lock);
   ThreadType threadType() override { return ThreadType::THREAD_TYPE_PARSE; }
 };
 

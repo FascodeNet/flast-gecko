@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import, unicode_literals
 
+import mozfile
 from mach.decorators import CommandProvider, Command, CommandArgument
 from mozbuild.base import MachCommandBase
 
@@ -23,11 +24,11 @@ class PhabricatorCommandProvider(MachCommandBase):
     )
     def install_moz_phab(self, force=False):
         import logging
-        import shutil
+        import os
         import subprocess
         import sys
 
-        existing = shutil.which("moz-phab")
+        existing = mozfile.which("moz-phab")
         if existing and not force:
             self.log(
                 logging.ERROR,
@@ -40,7 +41,8 @@ class PhabricatorCommandProvider(MachCommandBase):
         # pip3 is part of Python since 3.4, however some distros choose to
         # remove core components from languages, so show a useful error message
         # if pip3 is missing.
-        if not shutil.which("pip3"):
+        pip3 = mozfile.which("pip3")
+        if not pip3:
             self.log(
                 logging.ERROR,
                 "pip3_not_installed",
@@ -50,7 +52,7 @@ class PhabricatorCommandProvider(MachCommandBase):
             )
             sys.exit(1)
 
-        command = ["pip3", "install", "--upgrade", "MozPhab"]
+        command = [pip3, "install", "--upgrade", "MozPhab"]
 
         if (
             sys.platform.startswith("linux")
@@ -58,16 +60,16 @@ class PhabricatorCommandProvider(MachCommandBase):
             or sys.platform.startswith("dragonfly")
             or sys.platform.startswith("freebsd")
         ):
-            # On all Linux and BSD distros we default to a user installation.
-            command.append("--user")
+            # On all Linux and BSD distros we consider doing a user installation.
+            platform_prefers_user_install = True
 
         elif sys.platform.startswith("darwin"):
             # On MacOS we require brew or ports, which work better without --user.
-            pass
+            platform_prefers_user_install = False
 
         elif sys.platform.startswith("win32") or sys.platform.startswith("msys"):
             # Likewise for Windows we assume a system level install is preferred.
-            pass
+            platform_prefers_user_install = False
 
         else:
             # Unsupported, default to --user.
@@ -75,9 +77,15 @@ class PhabricatorCommandProvider(MachCommandBase):
                 logging.WARNING,
                 "unsupported_platform",
                 {},
-                "Unsupported platform (%s), assuming per-user installation."
+                "Unsupported platform (%s), assuming per-user installation is "
+                "preferred."
                 % sys.platform,
             )
+            platform_prefers_user_install = True
+
+        if platform_prefers_user_install and not os.environ.get('VIRTUAL_ENV'):
+            # Virtual environments don't see user packages, so only perform a user
+            # installation if we're not within one.
             command.append("--user")
 
         self.log(logging.INFO, "run", {}, "Installing moz-phab")

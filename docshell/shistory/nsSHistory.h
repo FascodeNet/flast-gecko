@@ -174,6 +174,13 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
     mRootBC = aRootBC;
   }
 
+  int32_t GetIndexForReplace() {
+    // Replace current entry in session history; If the requested index is
+    // valid, it indicates the loading was triggered by a history load, and
+    // we should replace the entry at requested index instead.
+    return mRequestedIndex == -1 ? mIndex : mRequestedIndex;
+  }
+
  protected:
   virtual ~nsSHistory();
 
@@ -235,6 +242,10 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
   static void HandleEntriesToSwapInDocShell(mozilla::dom::BrowsingContext* aBC,
                                             nsISHEntry* aOldEntry,
                                             nsISHEntry* aNewEntry);
+
+  // Update the root browsing context state when adding, removing or
+  // replacing entries.
+  void UpdateRootBrowsingContextState();
 
  protected:
   bool mHasOngoingUpdate;

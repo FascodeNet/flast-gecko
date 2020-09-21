@@ -64,20 +64,28 @@ void TrialInliner::cloneSharedPrefix(ICStub* stub, const uint8_t* endOfPrefix,
   }
 }
 
-void TrialInliner::replaceICStub(const ICEntry& entry, CacheIRWriter& writer,
+bool TrialInliner::replaceICStub(const ICEntry& entry, CacheIRWriter& writer,
                                  CacheKind kind) {
-  ICFallbackStub* fallbackStub = entry.fallbackStub();
-  fallbackStub->discardStubs(cx(), root_->owningScript());
+  ICFallbackStub* fallback = entry.fallbackStub();
+  MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
+
+  fallback->discardStubs(cx(), root_->owningScript());
 
   // Note: AttachBaselineCacheIRStub never throws an exception.
   bool attached = false;
   ICStub* newStub = AttachBaselineCacheIRStub(
       cx(), writer, kind, BaselineCacheIRStubKind::Regular, script_, icScript_,
-      fallbackStub, &attached);
-  if (newStub) {
-    MOZ_ASSERT(attached);
-    JitSpew(JitSpew_WarpTrialInlining, "Attached new stub %p", newStub);
+      fallback, &attached);
+  if (!newStub) {
+    MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
+    ReportOutOfMemory(cx());
+    return false;
   }
+
+  MOZ_ASSERT(attached);
+  MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Inlined);
+  JitSpew(JitSpew_WarpTrialInlining, "Attached new stub %p", newStub);
+  return true;
 }
 
 ICStub* TrialInliner::maybeSingleStub(const ICEntry& entry) {
@@ -93,12 +101,22 @@ ICStub* TrialInliner::maybeSingleStub(const ICEntry& entry) {
   if (next->getEnteredCount() != 0) {
     return nullptr;
   }
-  if (!next->isFallback()) {
+
+  ICFallbackStub* fallback = nullptr;
+  if (next->isFallback()) {
+    fallback = next->toFallbackStub();
+  } else {
     ICStub* nextNext = next->next();
     if (!nextNext->isFallback() || nextNext->getEnteredCount() != 0) {
       return nullptr;
     }
+    fallback = nextNext->toFallbackStub();
   }
+
+  if (fallback->trialInliningState() != TrialInliningState::Candidate) {
+    return nullptr;
+  }
+
   return stub;
 }
 
@@ -329,25 +347,15 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
     return true;
   }
 
-  // Ensure that we haven't already trial-inlined a different stub.
-  uint32_t pcOffset = loc.bytecodeToOffset(script_);
-  if (!stub->next()->isFallback()) {
-    if (icScript_->hasInlinedChild(pcOffset)) {
-      return true;
-    }
-  }
+  MOZ_ASSERT(!icScript_->hasInlinedChild(entry.pcOffset()));
 
   // Look for a CallScriptedFunction with a known target.
   Maybe<InlinableCallData> data = FindInlinableCallData(stub);
   if (data.isNothing()) {
     return true;
   }
-  // Ensure that we haven't already trial-inlined this stub.
-  if (data->icScript) {
-    return true;
-  }
 
-  MOZ_ASSERT(!icScript_->hasInlinedChild(pcOffset));
+  MOZ_ASSERT(!data->icScript);
 
   // Decide whether to inline the target.
   if (!shouldInline(data->target, stub, loc)) {
@@ -371,7 +379,11 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
                              data->callFlags);
   writer.returnFromIC();
 
-  replaceICStub(entry, writer, CacheKind::Call);
+  if (!replaceICStub(entry, writer, CacheKind::Call)) {
+    icScript_->removeInlinedChild(entry.pcOffset());
+    return false;
+  }
+
   return true;
 }
 

@@ -3630,6 +3630,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
                         Register temp2, LiveRegisterSet volatileRegs,
                         Label* fail);
 
+  void loadArgumentsObjectElement(Register obj, Register index,
+                                  ValueOperand output, Register temp,
+                                  Label* fail);
+
+  void loadArgumentsObjectLength(Register obj, Register output, Label* fail);
+
   void typedArrayElementShift(Register obj, Register output);
   void branchIfClassIsNotTypedArray(Register clasp, Label* notTypedArray);
 

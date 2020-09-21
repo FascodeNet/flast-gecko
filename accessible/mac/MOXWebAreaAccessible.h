@@ -6,60 +6,79 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #import "mozAccessible.h"
-#include "Pivot.h"
 
 using namespace mozilla::a11y;
 
-@interface MOXWebAreaAccessible : mozAccessible
+@class MOXRootGroup;
+
+@interface MOXWebAreaAccessible : mozAccessible {
+  MOXRootGroup* mRootGroup;
+}
 // overrides
 - (NSURL*)moxURL;
 
-// overrides
+// override
 - (NSNumber*)moxLoaded;
 
-// overrides
+// override
 - (NSNumber*)moxLoadingProgress;
 
 // override
-- (NSArray*)moxUIElementsForSearchPredicate:(NSDictionary*)searchPredicate;
+- (NSArray*)moxLinkUIElements;
 
 // override
-- (NSNumber*)moxUIElementCountForSearchPredicate:(NSDictionary*)searchPredicate;
+- (NSArray*)moxUnignoredChildren;
 
-// overrides
+// override
 - (void)handleAccessibleEvent:(uint32_t)eventType;
+
+// override
+- (void)dealloc;
+
+- (NSArray*)rootGroupChildren;
+
+- (id)rootGroup;
 
 @end
 
-@interface MOXSearchInfo : NSObject {
-  // The gecko accessible of the web area, we need a reference
-  // to set the pivot's root. This is a weak ref.
-  AccessibleOrProxy mWebArea;
-
-  // The gecko accessible we should start searching from.
-  // This is a weak ref.
-  AccessibleOrProxy mStartElem;
-
-  // The amount of matches we should return
-  int mResultLimit;
-
-  // The array of search keys to use during this search
-  NSMutableArray* mSearchKeys;
-
-  // Set to YES if we should search forward, NO if backward
-  BOOL mSearchForward;
-
-  // Set to YES if we should match on immediate descendants only, NO otherwise
-  BOOL mImmediateDescendantsOnly;
+@interface MOXRootGroup : MOXAccessibleBase {
+  MOXWebAreaAccessible* mParent;
 }
 
-- (id)initWithParameters:(NSDictionary*)params
-                 andRoot:(mozilla::a11y::AccessibleOrProxy)root;
+// override
+- (id)initWithParent:(MOXWebAreaAccessible*)parent;
 
-- (NSMutableArray*)getMatchesForRule:(PivotRule&)rule;
+// override
+- (NSString*)moxRole;
 
-- (NSArray*)performSearch;
+// override
+- (NSString*)moxRoleDescription;
 
-- (void)dealloc;
+// override
+- (id<mozAccessible>)moxParent;
+
+// override
+- (NSArray*)moxChildren;
+
+// override
+- (NSString*)moxIdentifier;
+
+// override
+- (id)moxHitTest:(NSPoint)point;
+
+// override
+- (NSValue*)moxPosition;
+
+// override
+- (NSValue*)moxSize;
+
+// override
+- (BOOL)disableChild:(id)child;
+
+// override
+- (void)expire;
+
+// override
+- (BOOL)isExpired;
 
 @end

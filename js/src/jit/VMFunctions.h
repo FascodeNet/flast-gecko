@@ -1078,6 +1078,12 @@ MOZ_MUST_USE bool CallNativeGetter(JSContext* cx, HandleFunction callee,
                                    HandleValue receiver,
                                    MutableHandleValue result);
 
+bool CallDOMGetter(JSContext* cx, const JSJitInfo* jitInfo, HandleObject obj,
+                   MutableHandleValue result);
+
+bool CallDOMSetter(JSContext* cx, const JSJitInfo* jitInfo, HandleObject obj,
+                   HandleValue value);
+
 MOZ_MUST_USE bool CallNativeSetter(JSContext* cx, HandleFunction callee,
                                    HandleObject obj, HandleValue rhs);
 

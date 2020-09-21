@@ -27,7 +27,7 @@
 #include "jit/SharedICRegisters.h"
 #include "js/friend/DOMProxy.h"     // JS::ExpandoAndGeneration
 #include "js/friend/XrayJitInfo.h"  // js::jit::GetXrayJitInfo
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/ScalarType.h"          // js::Scalar::Type
 #include "proxy/Proxy.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/ArrayBufferViewObject.h"
@@ -3139,18 +3139,8 @@ bool CacheIRCompiler::emitLoadArgumentsObjectLengthResult(ObjOperandId objId) {
     return false;
   }
 
-  // Get initial length value.
-  masm.unboxInt32(Address(obj, ArgumentsObject::getInitialLengthSlotOffset()),
-                  scratch);
+  masm.loadArgumentsObjectLength(obj, scratch, failure->label());
 
-  // Test if length has been overridden.
-  masm.branchTest32(Assembler::NonZero, scratch,
-                    Imm32(ArgumentsObject::LENGTH_OVERRIDDEN_BIT),
-                    failure->label());
-
-  // Shift out arguments length and return it. No need to type monitor
-  // because this stub always returns int32.
-  masm.rshiftPtr(Imm32(ArgumentsObject::PACKED_BITS_COUNT), scratch);
   EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
   return true;
 }
@@ -3280,41 +3270,15 @@ bool CacheIRCompiler::emitLoadArgumentsObjectArgResult(ObjOperandId objId,
   AutoOutputRegister output(*this);
   Register obj = allocator.useRegister(masm, objId);
   Register index = allocator.useRegister(masm, indexId);
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegisterMaybeOutput scratch2(allocator, masm, output);
+  AutoScratchRegister scratch(allocator, masm);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
     return false;
   }
 
-  // Get initial length value.
-  masm.unboxInt32(Address(obj, ArgumentsObject::getInitialLengthSlotOffset()),
-                  scratch1);
-
-  // Ensure no overridden length/element.
-  masm.branchTest32(Assembler::NonZero, scratch1,
-                    Imm32(ArgumentsObject::LENGTH_OVERRIDDEN_BIT |
-                          ArgumentsObject::ELEMENT_OVERRIDDEN_BIT),
-                    failure->label());
-
-  // Bounds check.
-  masm.rshift32(Imm32(ArgumentsObject::PACKED_BITS_COUNT), scratch1);
-  masm.spectreBoundsCheck32(index, scratch1, scratch2, failure->label());
-
-  // Load ArgumentsData.
-  masm.loadPrivate(Address(obj, ArgumentsObject::getDataSlotOffset()),
-                   scratch1);
-
-  // Fail if we have a RareArgumentsData (elements were deleted).
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(scratch1, offsetof(ArgumentsData, rareData)),
-                 ImmWord(0), failure->label());
-
-  // Guard the argument is not a FORWARD_TO_CALL_SLOT MagicValue.
-  BaseValueIndex argValue(scratch1, index, ArgumentsData::offsetOfArgs());
-  masm.branchTestMagic(Assembler::Equal, argValue, failure->label());
-  masm.loadValue(argValue, output.valueReg());
+  masm.loadArgumentsObjectElement(obj, index, output.valueReg(), scratch,
+                                  failure->label());
   return true;
 }
 

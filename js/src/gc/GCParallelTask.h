@@ -53,10 +53,6 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
     // The task is currently running on a helper thread.
     Running,
 
-    // The task is currently running on a helper thread but has indicated that
-    // it will finish soon.
-    Finishing,
-
     // The task has finished running but has not yet been joined by the main
     // thread.
     Finished
@@ -134,22 +130,9 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
     return state_ == State::Dispatched;
   }
 
-  ThreadType threadType() override {
-    return ThreadType::THREAD_TYPE_GCPARALLEL;
-  }
-
  protected:
   // Override this method to provide the task's functionality.
-  virtual void run() = 0;
-
-  // Can be called to indicate that although the task is still running, it is
-  // about to finish.
-  void setFinishing(const AutoLockHelperThreadState& lock) {
-    MOZ_ASSERT(isIdle(lock) || isRunning(lock));
-    if (isRunning(lock)) {
-      state_ = State::Finishing;
-    }
-  }
+  virtual void run(AutoLockHelperThreadState& lock) = 0;
 
  private:
   void assertIdle() const {
@@ -159,9 +142,6 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
   }
   bool isRunning(const AutoLockHelperThreadState& lock) const {
     return state_ == State::Running;
-  }
-  bool isFinishing(const AutoLockHelperThreadState& lock) const {
-    return state_ == State::Finishing;
   }
   bool isFinished(const AutoLockHelperThreadState& lock) const {
     return state_ == State::Finished;
@@ -176,7 +156,7 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
     state_ = State::Running;
   }
   void setFinished(const AutoLockHelperThreadState& lock) {
-    MOZ_ASSERT(isRunning(lock) || isFinishing(lock));
+    MOZ_ASSERT(isRunning(lock));
     state_ = State::Finished;
   }
   void setIdle(const AutoLockHelperThreadState& lock) {
@@ -184,8 +164,12 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
     state_ = State::Idle;
   }
 
-  void runTask();
-  friend class HelperThread;
+  void runTask(AutoLockHelperThreadState& lock);
+
+  // Implement the HelperThreadTask interface.
+  ThreadType threadType() override {
+    return ThreadType::THREAD_TYPE_GCPARALLEL;
+  }
   void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
 };
 

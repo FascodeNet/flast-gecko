@@ -3711,6 +3711,16 @@ class MGetArgumentsObjectArg : public MUnaryInstruction,
 
   size_t argno() const { return argno_; }
 
+  bool congruentTo(const MDefinition* ins) const override {
+    if (!ins->isGetArgumentsObjectArg()) {
+      return false;
+    }
+    if (ins->toGetArgumentsObjectArg()->argno() != argno()) {
+      return false;
+    }
+    return congruentIfOperandsEqual(ins);
+  }
+
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::Any);
   }
@@ -3733,6 +3743,60 @@ class MSetArgumentsObjectArg
 
   AliasSet getAliasSet() const override {
     return AliasSet::Store(AliasSet::Any);
+  }
+};
+
+// Load |arguments[index]| from a mapped or unmapped arguments object. Bails out
+// if any elements were overridden or deleted. Also bails out if the index is
+// out of bounds.
+class MLoadArgumentsObjectArg
+    : public MBinaryInstruction,
+      public MixPolicy<ObjectPolicy<0>, UnboxedInt32Policy<1>>::Data {
+  MLoadArgumentsObjectArg(MDefinition* object, MDefinition* index)
+      : MBinaryInstruction(classOpcode, object, index) {
+    setResultType(MIRType::Value);
+    setGuard();
+  }
+
+ public:
+  INSTRUCTION_HEADER(LoadArgumentsObjectArg)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, getArgsObject), (1, index))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::Any);
+  }
+};
+
+// Load |arguments.length|. Bails out if the length has been overriden.
+class MArgumentsObjectLength : public MUnaryInstruction,
+                               public SingleObjectPolicy::Data {
+  explicit MArgumentsObjectLength(MDefinition* argsObj)
+      : MUnaryInstruction(classOpcode, argsObj) {
+    setResultType(MIRType::Int32);
+    setMovable();
+    setGuard();
+  }
+
+ public:
+  INSTRUCTION_HEADER(ArgumentsObjectLength)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, getArgsObject))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  AliasSet getAliasSet() const override {
+    // Even though the "length" property is lazily resolved, it acts similar to
+    // a normal property load, so we can treat this operation like any other
+    // property read.
+    return AliasSet::Load(AliasSet::ObjectFields | AliasSet::FixedSlot |
+                          AliasSet::DynamicSlot);
   }
 };
 
@@ -7586,6 +7650,34 @@ class MSetArrayLength : public MBinaryInstruction, public NoTypePolicy::Data {
   MOZ_MUST_USE bool writeRecoverData(
       CompactBufferWriter& writer) const override;
   bool canRecoverOnBailout() const override { return isRecoveredOnBailout(); }
+};
+
+// Load the function length. Bails for functions with lazy scripts or a
+// resolved "length" property.
+class MFunctionLength : public MUnaryInstruction,
+                        public SingleObjectPolicy::Data {
+  explicit MFunctionLength(MDefinition* fun)
+      : MUnaryInstruction(classOpcode, fun) {
+    setResultType(MIRType::Int32);
+    setGuard();
+  }
+
+ public:
+  INSTRUCTION_HEADER(FunctionLength)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, function))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  AliasSet getAliasSet() const override {
+    // Even though the "length" property is lazily resolved, it acts similar to
+    // a normal property load, so we can treat this operation like any other
+    // property read.
+    return AliasSet::Load(AliasSet::ObjectFields | AliasSet::FixedSlot |
+                          AliasSet::DynamicSlot);
+  }
 };
 
 class MGetNextEntryForIterator
@@ -12740,6 +12832,32 @@ class MLoadValueTag : public MUnaryInstruction, public BoxInputsPolicy::Data {
   NAMED_OPERANDS((0, value))
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+};
+
+// Load the target object from a proxy wrapper. The target is stored in the
+// proxy object's private slot.
+class MLoadWrapperTarget : public MUnaryInstruction,
+                           public SingleObjectPolicy::Data {
+  explicit MLoadWrapperTarget(MDefinition* obj)
+      : MUnaryInstruction(classOpcode, obj) {
+    setResultType(MIRType::Object);
+    setMovable();
+  }
+
+ public:
+  INSTRUCTION_HEADER(LoadWrapperTarget)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, object))
+
+  AliasSet getAliasSet() const override {
+    // Can't use |AliasSet::None| because the target changes on navigation.
+    // TODO: Investigate using a narrower or a custom alias set.
+    return AliasSet::Load(AliasSet::Any);
+  }
 
   bool congruentTo(const MDefinition* ins) const override {
     return congruentIfOperandsEqual(ins);

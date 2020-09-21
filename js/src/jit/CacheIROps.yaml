@@ -682,7 +682,7 @@
 
 - name: LoadWrapperTarget
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -1440,6 +1440,15 @@
     sameRealm: BoolImm
     nargsAndFlags: RawWordField
 
+- name: CallDOMSetter
+  shared: false
+  transpile: true
+  cost_estimate: 4
+  args:
+    obj: ObjId
+    jitInfo: RawPointerField
+    rhs: ValId
+
 - name: CallSetArrayLength
   shared: false
   transpile: true
@@ -1507,6 +1516,7 @@
   shared: false
   transpile: true
   cost_estimate: 3
+  custom_writer: true
   args:
     callee: ObjId
     argc: Int32Id
@@ -1542,6 +1552,7 @@
   shared: false
   transpile: true
   cost_estimate: 4
+  custom_writer: true
   args:
     callee: ObjId
     argc: Int32Id
@@ -1704,7 +1715,7 @@
 
 - name: LoadArgumentsObjectArgResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     obj: ObjId
@@ -1712,14 +1723,14 @@
 
 - name: LoadArgumentsObjectLengthResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
 
 - name: LoadFunctionLengthResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     obj: ObjId
@@ -1859,6 +1870,14 @@
     getter: ObjectField
     sameRealm: BoolImm
     nargsAndFlags: RawWordField
+
+- name: CallDOMGetterResult
+  shared: false
+  transpile: true
+  cost_estimate: 4
+  args:
+    obj: ObjId
+    jitInfo: RawPointerField
 
 - name: ProxyGetResult
   shared: false

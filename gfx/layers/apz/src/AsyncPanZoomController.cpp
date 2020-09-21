@@ -3623,11 +3623,37 @@ void AsyncPanZoomController::ScaleWithFocus(float aScale,
                         (aFocus / aScale));
 }
 
+/*static*/
+gfx::IntSize AsyncPanZoomController::GetDisplayportAlignmentMultiplier(
+    const ScreenSize& aBaseSize) {
+  MOZ_ASSERT(gfxVars::UseWebRender());
+
+  IntSize multiplier(1, 1);
+  float baseWidth = aBaseSize.width;
+  while (baseWidth > 500) {
+    baseWidth /= 2;
+    multiplier.width *= 2;
+    if (multiplier.width >= 8) {
+      break;
+    }
+  }
+  float baseHeight = aBaseSize.height;
+  while (baseHeight > 500) {
+    baseHeight /= 2;
+    multiplier.height *= 2;
+    if (multiplier.height >= 8) {
+      break;
+    }
+  }
+  return multiplier;
+}
+
 /**
  * Enlarges the displayport along both axes based on the velocity.
  */
 static CSSSize CalculateDisplayPortSize(const CSSSize& aCompositionSize,
-                                        const CSSPoint& aVelocity) {
+                                        const CSSPoint& aVelocity,
+                                        const CSSToScreenScale2D& aDpPerCSS) {
   bool xIsStationarySpeed =
       fabsf(aVelocity.x) < StaticPrefs::apz_min_skate_speed();
   bool yIsStationarySpeed =
@@ -3645,6 +3671,28 @@ static CSSSize CalculateDisplayPortSize(const CSSSize& aCompositionSize,
 
   if (IsHighMemSystem() && !yIsStationarySpeed) {
     yMultiplier += StaticPrefs::apz_y_skate_highmem_adjust();
+  }
+
+  if (gfxVars::UseWebRender()) {
+    // Scale down the margin multipliers by the alignment multiplier because
+    // the alignment code will expand the displayport outward to the multiplied
+    // alignment. This is not necessary for correctness, but for performance;
+    // if we don't do this the displayport can end up much larger. The math here
+    // is actually just scaling the part of the multipler that is > 1, so that
+    // we never end up with xMultiplier or yMultiplier being less than 1 (that
+    // would result in a guaranteed checkerboarding situation). Note that the
+    // calculation doesn't cancel exactly the increased margin from applying
+    // the alignment multiplier, but this is simple and should provide
+    // reasonable behaviour in most cases.
+    IntSize alignmentMultipler =
+        AsyncPanZoomController::GetDisplayportAlignmentMultiplier(
+            aCompositionSize * aDpPerCSS);
+    if (xMultiplier > 1) {
+      xMultiplier = ((xMultiplier - 1) / alignmentMultipler.width) + 1;
+    }
+    if (yMultiplier > 1) {
+      yMultiplier = ((yMultiplier - 1) / alignmentMultipler.height) + 1;
+    }
   }
 
   return aCompositionSize * CSSSize(xMultiplier, yMultiplier);
@@ -3717,7 +3765,8 @@ const ScreenMargin AsyncPanZoomController::CalculatePendingDisplayPort(
 
   // Calculate the displayport size based on how fast we're moving along each
   // axis.
-  CSSSize displayPortSize = CalculateDisplayPortSize(compositionSize, velocity);
+  CSSSize displayPortSize = CalculateDisplayPortSize(
+      compositionSize, velocity, aFrameMetrics.DisplayportPixelsPerCSSPixel());
 
   displayPortSize =
       ExpandDisplayPortToDangerZone(displayPortSize, aFrameMetrics);
@@ -4408,8 +4457,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
                       !FuzzyEqualsAdditive(Metrics().GetVisualScrollOffset().y,
                                            lastScrollOffset.y);
 
-  if (aLayerMetrics.GetScrollUpdateType() !=
-      FrameMetrics::ScrollOffsetUpdateType::ePending) {
+  if (aScrollMetadata.DidContentGetPainted()) {
     mLastContentPaintMetadata = aScrollMetadata;
   }
 
@@ -4458,25 +4506,14 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     }
   }
 
-  // If `isDefault` is true, this APZC is a "new" one (this is the first time
-  // it's getting a NotifyLayersUpdated call). In this case we want to apply the
-  // visual scroll offset from the main thread to our scroll offset.
-  // The main thread may also ask us to scroll the visual viewport to a
-  // particular location. This is different from a layout viewport offset update
-  // in that the layout viewport offset is limited to the layout scroll range,
-  // while the visual viewport offset is not.
-  // The update type indicates the priority; an eMainThread layout update (or
-  // a smooth scroll request which is similar) takes precedence over an eRestore
-  // visual update, but we allow the possibility for the main thread to ask us
-  // to scroll both the layout and visual viewports to distinct (but compatible)
-  // locations (via e.g. both updates being eRestore).
-  bool visualScrollOffsetUpdated =
-      isDefault ||
-      aLayerMetrics.GetVisualScrollUpdateType() != FrameMetrics::eNone;
-  if (aLayerMetrics.GetScrollUpdateType() == FrameMetrics::eMainThread &&
-      aLayerMetrics.GetVisualScrollUpdateType() != FrameMetrics::eMainThread) {
-    visualScrollOffsetUpdated = false;
-  }
+  // The main thread may send us a visual scroll offset update. This is
+  // different from a layout viewport offset update in that the layout viewport
+  // offset is limited to the layout scroll range, while the visual viewport
+  // offset is not.
+  // However, there are some conditions in which the layout update will clobber
+  // the visual update, and we want to ignore the visual update in those cases.
+  // This variable tracks that.
+  bool ignoreVisualUpdate = false;
 
   // TODO if we're in a drag and scrollOffsetUpdated is set then we want to
   // ignore it
@@ -4636,10 +4673,10 @@ void AsyncPanZoomController::NotifyLayersUpdated(
         scrollUpdate.GetMode() == ScrollMode::SmoothMsd) {
       // Requests to animate the visual scroll position override requests to
       // simply update the visual scroll offset to a particular point. Since
-      // we have an animation request, we reset visualScrollOffsetUpdated
-      // to false to indicate we don't need to apply the visual scroll update
-      // in aLayerMetrics.
-      visualScrollOffsetUpdated = false;
+      // we have an animation request, we set ignoreVisualUpdate to true to
+      // indicate we don't need to apply the visual scroll update in
+      // aLayerMetrics.
+      ignoreVisualUpdate = true;
 
       // For relative updates we want to add the relative offset to any existing
       // destination, or the current visual offset if there is no existing
@@ -4678,6 +4715,20 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     MOZ_ASSERT(scrollUpdate.GetMode() == ScrollMode::Instant ||
                scrollUpdate.GetMode() == ScrollMode::Normal);
 
+    // If the layout update is of a higher priority than the visual update, then
+    // we don't want to apply the visual update.
+    // If the layout update is of a clobbering type (or a smooth scroll request,
+    // which is handled above) then it takes precedence over an eRestore visual
+    // update. But we also allow the possibility for the main thread to ask us
+    // to scroll both the layout and visual viewports to distinct (but
+    // compatible) locations (via e.g. both updates being of a non-clobbering/
+    // eRestore type).
+    if (nsLayoutUtils::CanScrollOriginClobberApz(scrollUpdate.GetOrigin()) &&
+        aLayerMetrics.GetVisualScrollUpdateType() !=
+            FrameMetrics::eMainThread) {
+      ignoreVisualUpdate = true;
+    }
+
     Maybe<CSSPoint> relativeDelta;
 
     if (StaticPrefs::apz_relative_update_enabled() &&
@@ -4713,14 +4764,14 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       needContentRepaint = true;
       contentRepaintType = RepaintUpdateType::eVisualUpdate;
 
-      // We have to cancel a visual scroll offset update otherwise it will
+      // We have to ignore a visual scroll offset update otherwise it will
       // clobber the relative scrolling we are about to do. We perform
       // visualScrollOffset = visualScrollOffset + delta. Then the
       // visualScrollOffsetUpdated block below will do visualScrollOffset =
       // aLayerMetrics.GetVisualDestination(). We need visual scroll offset
       // updates to be incorporated into this scroll update loop to properly fix
       // this.
-      visualScrollOffsetUpdated = false;
+      ignoreVisualUpdate = true;
 
       relativeDelta =
           Some(Metrics().ApplyPureRelativeScrollUpdateFrom(scrollUpdate));
@@ -4777,10 +4828,23 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     }
   }
 
+  // If `isDefault` is true, this APZC is a "new" one (this is the first time
+  // it's getting a NotifyLayersUpdated call). In this case we want to apply the
+  // visual scroll offset from the main thread to our scroll offset.
+  // The main thread may also ask us to scroll the visual viewport to a
+  // particular location. However, in all cases, we want to ignore the visual
+  // offset update if ignoreVisualUpdate is true, because we're clobbering
+  // the visual update with a layout update.
+  bool visualScrollOffsetUpdated =
+      !ignoreVisualUpdate &&
+      (isDefault ||
+       aLayerMetrics.GetVisualScrollUpdateType() != FrameMetrics::eNone);
+
   if (visualScrollOffsetUpdated) {
-    APZC_LOG("%p updating visual scroll offset from %s to %s\n", this,
-             ToString(Metrics().GetVisualScrollOffset()).c_str(),
-             ToString(aLayerMetrics.GetVisualDestination()).c_str());
+    APZC_LOG("%p updating visual scroll offset from %s to %s (updateType %d)\n",
+             this, ToString(Metrics().GetVisualScrollOffset()).c_str(),
+             ToString(aLayerMetrics.GetVisualDestination()).c_str(),
+             (int)aLayerMetrics.GetVisualScrollUpdateType());
     Metrics().ClampAndSetVisualScrollOffset(
         aLayerMetrics.GetVisualDestination());
 

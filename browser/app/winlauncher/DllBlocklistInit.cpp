@@ -28,8 +28,9 @@ namespace {
 
 template <typename T>
 T* GetRemoteAddress(T* aLocalAddress, HMODULE aLocal, HMODULE aRemote) {
-  ptrdiff_t diff = nt::PEHeaders::HModuleToBaseAddr<uint8_t*>(aRemote) -
-                   nt::PEHeaders::HModuleToBaseAddr<uint8_t*>(aLocal);
+  ptrdiff_t diff =
+      mozilla::nt::PEHeaders::HModuleToBaseAddr<uint8_t*>(aRemote) -
+      mozilla::nt::PEHeaders::HModuleToBaseAddr<uint8_t*>(aLocal);
   return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(aLocalAddress) + diff);
 }
 
@@ -70,13 +71,13 @@ static LauncherVoidResultWithLineInfo InitializeDllBlocklistOOPInternal(
       aChildProcess, intcpt, "NtMapViewOfSection",
       &freestanding::patched_NtMapViewOfSection);
   if (!ok) {
-    return LAUNCHER_ERROR_GENERIC();
+    return LAUNCHER_ERROR_GENERIC_WITH_DETOUR_ERROR(intcpt.GetLastError());
   }
 
   ok = freestanding::stub_LdrLoadDll.SetDetour(
       aChildProcess, intcpt, "LdrLoadDll", &freestanding::patched_LdrLoadDll);
   if (!ok) {
-    return LAUNCHER_ERROR_GENERIC();
+    return LAUNCHER_ERROR_GENERIC_WITH_DETOUR_ERROR(intcpt.GetLastError());
   }
 
   // Because aChildProcess has just been created in a suspended state, its

@@ -47,8 +47,7 @@ struct PrintData {
   bool shrinkToFit;
   bool showPrintProgress;
 
-  nsString paperName;
-  short paperData;
+  nsString paperId;
   double paperWidth;
   double paperHeight;
   short paperSizeUnit;

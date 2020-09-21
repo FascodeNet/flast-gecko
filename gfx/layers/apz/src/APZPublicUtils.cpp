@@ -26,6 +26,11 @@ namespace apz {
                                                              aVelocity);
 }
 
+/*static*/ gfx::IntSize GetDisplayportAlignmentMultiplier(
+    const ScreenSize& aBaseSize) {
+  return AsyncPanZoomController::GetDisplayportAlignmentMultiplier(aBaseSize);
+}
+
 static int32_t GetNormalizedAppVersion() {
   static int32_t sAppVersion = 0;
   if (sAppVersion == 0) {
@@ -75,17 +80,18 @@ static int32_t GetNormalizedAppVersion() {
   return std::make_pair(minMS, maxMS);
 }
 
-ScrollAnimationBezierPhysicsSettings
-ComputeBezierAnimationSettingsForOrigin(ScrollOrigin aOrigin) {
+ScrollAnimationBezierPhysicsSettings ComputeBezierAnimationSettingsForOrigin(
+    ScrollOrigin aOrigin) {
   int32_t minMS = 0;
   int32_t maxMS = 0;
   bool isOriginSmoothnessEnabled = false;
 
-#define READ_DURATIONS(prefbase) \
-  isOriginSmoothnessEnabled = StaticPrefs::general_smoothScroll() && StaticPrefs::general_smoothScroll_ ## prefbase (); \
-  if (isOriginSmoothnessEnabled) { \
-    minMS = StaticPrefs::general_smoothScroll_ ## prefbase ## _durationMinMS(); \
-    maxMS = StaticPrefs::general_smoothScroll_ ## prefbase ## _durationMaxMS(); \
+#define READ_DURATIONS(prefbase)                                              \
+  isOriginSmoothnessEnabled = StaticPrefs::general_smoothScroll() &&          \
+                              StaticPrefs::general_smoothScroll_##prefbase(); \
+  if (isOriginSmoothnessEnabled) {                                            \
+    minMS = StaticPrefs::general_smoothScroll_##prefbase##_durationMinMS();   \
+    maxMS = StaticPrefs::general_smoothScroll_##prefbase##_durationMaxMS();   \
   }
 
   switch (aOrigin) {

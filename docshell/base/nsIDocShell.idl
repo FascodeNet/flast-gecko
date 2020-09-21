@@ -165,7 +165,7 @@ interface nsIDocShell : nsIDocShellTreeItem
    * Content Viewer that is currently loaded for this DocShell.  This may
    * change as the underlying content changes.
    */
-  readonly attribute nsIContentViewer contentViewer;
+  [infallible] readonly attribute nsIContentViewer contentViewer;
 
   /**
    * Get the id of the outer window that is or will be in this docshell.
@@ -702,18 +702,6 @@ interface nsIDocShell : nsIDocShellTreeItem
    *                                  creating the editor.
    */
   void makeEditable(in boolean inWaitForUriLoad);
-
-
-  /**
-   * Add a Child SHEntry for a frameset page, given the child's loadtype.
-   * If aCloneChildren is true, then aCloneReference's children will be
-   * cloned onto aHistoryEntry.
-   */
-  void addChildSHEntry(in nsISHEntry aCloneReference,
-                       in nsISHEntry aHistoryEntry,
-                       in long aChildOffset,
-                       in unsigned long aLoadType,
-                       in boolean aCloneChilden);
 
   /**
    * Set when an iframe/frame is added dynamically.

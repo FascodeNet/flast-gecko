@@ -193,17 +193,16 @@ add_task(async function backspaceRemainOpen() {
       source: UrlbarUtils.RESULT_SOURCE.BOOKMARKS,
     });
 
-    // The heursitic should now be shown since we always show it in search mode
-    // when the search string is *not* empty, even when there are no other
-    // results.
-    Assert.greater(
+    // The heursitic should not be shown since we don't show it in local search
+    // modes.
+    Assert.equal(
       UrlbarTestUtils.getResultCount(win),
       0,
-      "At least the heuristic result should be shown"
+      "No results should be present"
     );
     Assert.ok(
-      !win.gURLBar.panel.hasAttribute("noresults"),
-      "Panel has results, therefore should not have noresults attribute"
+      win.gURLBar.panel.hasAttribute("noresults"),
+      "Panel has no results, therefore should have noresults attribute"
     );
 
     // Backspace.  The search string will now be empty.
@@ -258,7 +257,7 @@ add_task(async function spaceToEnterSearchMode() {
 
     // We need to wait for two searches: The first enters search mode, the
     // second does the search in search mode.
-    let searchPromise = UrlbarTestUtils.promiseSearchComplete(win, 2);
+    let searchPromise = UrlbarTestUtils.promiseSearchComplete(win);
     EventUtils.synthesizeKey(" ", {}, win);
     await searchPromise;
 

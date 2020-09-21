@@ -698,6 +698,17 @@ void nsSHistory::HandleEntriesToSwapInDocShell(
   }
 }
 
+void nsSHistory::UpdateRootBrowsingContextState() {
+  if (mRootBC) {
+    bool sameDocument = IsEmptyOrHasEntriesForSingleTopLevelPage();
+    if (sameDocument != mRootBC->GetIsSingleToplevelInHistory()) {
+      // If the browsing context is discarded then its session history is
+      // invalid and will go away.
+      Unused << mRootBC->SetIsSingleToplevelInHistory(sameDocument);
+    }
+  }
+}
+
 NS_IMETHODIMP
 nsSHistory::AddToRootSessionHistory(bool aCloneChildren, nsISHEntry* aOSHE,
                                     BrowsingContext* aRootBC,
@@ -726,10 +737,7 @@ nsSHistory::AddToRootSessionHistory(bool aCloneChildren, nsISHEntry* aOSHE,
     // Replace current entry in session history; If the requested index is
     // valid, it indicates the loading was triggered by a history load, and
     // we should replace the entry at requested index instead.
-    int32_t index = mRequestedIndex;
-    if (index == -1) {
-      index = mIndex;
-    }
+    int32_t index = GetIndexForReplace();
 
     // Replace the current entry with the new entry
     if (index >= 0) {
@@ -788,17 +796,17 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
       NOTIFY_LISTENERS(OnHistoryReplaceEntry, ());
       aSHEntry->SetPersist(aPersist);
       mEntries[mIndex] = aSHEntry;
+      UpdateRootBrowsingContextState();
       return NS_OK;
     }
   }
-
   SHistoryChangeNotifier change(this);
 
   nsCOMPtr<nsIURI> uri = aSHEntry->GetURI();
   NOTIFY_LISTENERS(OnHistoryNewEntry, (uri, mIndex));
 
-  // Remove all entries after the current one, add the new one, and set the new
-  // one as the current one.
+  // Remove all entries after the current one, add the new one, and set the
+  // new one as the current one.
   MOZ_ASSERT(mIndex >= -1);
   aSHEntry->SetPersist(aPersist);
   mEntries.TruncateLength(mIndex + 1);
@@ -809,6 +817,8 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
   if (gHistoryMaxSize >= 0 && Length() > gHistoryMaxSize) {
     PurgeHistory(Length() - gHistoryMaxSize);
   }
+
+  UpdateRootBrowsingContextState();
 
   return NS_OK;
 }
@@ -935,6 +945,8 @@ nsSHistory::PurgeHistory(int32_t aNumEntries) {
     mRootBC->GetDocShell()->HistoryPurged(aNumEntries);
   }
 
+  UpdateRootBrowsingContextState();
+
   return NS_OK;
 }
 
@@ -993,6 +1005,8 @@ nsSHistory::ReplaceEntry(int32_t aIndex, nsISHEntry* aReplaceEntry) {
 
   aReplaceEntry->SetPersist(true);
   mEntries[aIndex] = aReplaceEntry;
+
+  UpdateRootBrowsingContextState();
 
   return NS_OK;
 }
@@ -1514,6 +1528,7 @@ bool nsSHistory::RemoveDuplicate(int32_t aIndex, bool aKeepNext) {
     if (mRequestedIndex > aIndex || (mRequestedIndex == aIndex && !aKeepNext)) {
       mRequestedIndex = mRequestedIndex - 1;
     }
+
     return true;
   }
   return false;
@@ -1548,6 +1563,8 @@ void nsSHistory::RemoveEntries(nsTArray<nsID>& aIDs, int32_t aStartIndex,
     }
     --index;
   }
+
+  UpdateRootBrowsingContextState();
 }
 
 void nsSHistory::RemoveFrameEntries(nsISHEntry* aEntry) {
@@ -1818,6 +1835,12 @@ void nsSHistory::InitiateLoad(nsISHEntry* aFrameEntry,
   }
   loadState->SetLoadIsFromSessionHistory(mRequestedIndex, Length(),
                                          loadingFromActiveEntry);
+
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    nsCOMPtr<SessionHistoryEntry> she = do_QueryInterface(aFrameEntry);
+    aFrameBC->Canonical()->AddLoadingSessionHistoryEntry(
+        loadState->GetLoadingSessionHistoryInfo()->mLoadId, she);
+  }
 
   nsCOMPtr<nsIURI> originalURI = aFrameEntry->GetOriginalURI();
   loadState->SetOriginalURI(originalURI);

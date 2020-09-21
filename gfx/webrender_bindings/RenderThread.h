@@ -20,8 +20,8 @@
 #include "mozilla/webrender/webrender_ffi.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/webrender/WebRenderTypes.h"
+#include "mozilla/layers/CompositionRecorder.h"
 #include "mozilla/layers/SynchronousTask.h"
-#include "mozilla/layers/WebRenderCompositionRecorder.h"
 #include "mozilla/VsyncDispatcher.h"
 
 #include <list>
@@ -281,9 +281,9 @@ class RenderThread final {
 
   size_t RendererCount();
 
-  void SetCompositionRecorderForWindow(
-      wr::WindowId aWindowId,
-      UniquePtr<layers::WebRenderCompositionRecorder> aCompositionRecorder);
+  void BeginRecordingForWindow(wr::WindowId aWindowId,
+                               const TimeStamp& aRecordingStart,
+                               wr::PipelineId aRootPipelineId);
 
   void WriteCollectedFramesForWindow(wr::WindowId aWindowId);
 
@@ -327,8 +327,6 @@ class RenderThread final {
   RefPtr<layers::SurfacePool> mSurfacePool;
 
   std::map<wr::WindowId, UniquePtr<RendererOGL>> mRenderers;
-  std::map<wr::WindowId, UniquePtr<layers::WebRenderCompositionRecorder>>
-      mCompositionRecorders;
 
   struct PendingFrameInfo {
     TimeStamp mStartTime;

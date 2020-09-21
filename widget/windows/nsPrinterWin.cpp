@@ -20,6 +20,7 @@ using namespace mozilla::gfx;
 using namespace mozilla::widget;
 
 static const double kTenthMMToPoint = 72.0 / 254.0;
+static const double kPointsPerInch = 72.0;
 
 nsPrinterWin::nsPrinterWin(const nsAString& aName) : mName(aName) {}
 
@@ -64,21 +65,22 @@ static bool WithDefaultDevMode(const nsString& aName,
 }
 
 PrintSettingsInitializer nsPrinterWin::DefaultSettings() const {
-  nsString paperName;
-  SizeDouble paperSize;
+  // Initialize to something reasonable, in case we fail to get usable data
+  // from the devmode below.
+  nsString paperIdString(u"1");  // DMPAPER_LETTER
+  SizeDouble paperSize{8.5 * 72.0, 11.0 * 72.0};
   gfx::MarginDouble margin;
   int resolution = 0;
-  bool color = false;
+  bool color = true;
 
   nsTArray<uint8_t> devmodeWStorage;
   bool success = WithDefaultDevMode(
       mName, devmodeWStorage, [&](HANDLE, DEVMODEW* devmode) {
-        for (auto paperInfo : PaperList()) {
-          if (paperInfo.mPaperId == devmode->dmPaperSize) {
-            paperName.Assign(paperInfo.mName);
-            paperSize = paperInfo.mSize;
-            break;
-          }
+        // XXX If DM_PAPERSIZE is not set, or is not a known value, should we
+        // be returning a "Custom" name of some kind?
+        if (devmode->dmFields & DM_PAPERSIZE) {
+          paperIdString.Truncate(0);
+          paperIdString.AppendInt(devmode->dmPaperSize);
         }
 
         nsAutoHDC printerDc(
@@ -88,16 +90,31 @@ PrintSettingsInitializer nsPrinterWin::DefaultSettings() const {
           return false;
         }
 
+        int pixelsPerInchY = ::GetDeviceCaps(printerDc, LOGPIXELSY);
+        int physicalHeight = ::GetDeviceCaps(printerDc, PHYSICALHEIGHT);
+        double heightInInches = double(physicalHeight) / pixelsPerInchY;
+        int pixelsPerInchX = ::GetDeviceCaps(printerDc, LOGPIXELSX);
+        int physicalWidth = ::GetDeviceCaps(printerDc, PHYSICALWIDTH);
+        double widthInches = double(physicalWidth) / pixelsPerInchX;
+        if (devmode->dmFields & DM_ORIENTATION &&
+            devmode->dmOrientation == DMORIENT_LANDSCAPE) {
+          std::swap(widthInches, heightInInches);
+        }
+        paperSize.SizeTo(widthInches * kPointsPerInch,
+                         heightInInches * kPointsPerInch);
+
         margin = WinUtils::GetUnwriteableMarginsForDeviceInInches(printerDc);
-        margin.top *= POINTS_PER_INCH_FLOAT;
-        margin.right *= POINTS_PER_INCH_FLOAT;
-        margin.bottom *= POINTS_PER_INCH_FLOAT;
-        margin.left *= POINTS_PER_INCH_FLOAT;
+        margin.top *= kPointsPerInch;
+        margin.right *= kPointsPerInch;
+        margin.bottom *= kPointsPerInch;
+        margin.left *= kPointsPerInch;
 
         // Using Y to match existing code for print scaling calculations.
-        resolution = GetDeviceCaps(printerDc, LOGPIXELSY);
-        color =
-            (devmode->dmFields & DM_COLOR) && devmode->dmColor == DMCOLOR_COLOR;
+        resolution = pixelsPerInchY;
+        if (devmode->dmFields & DM_COLOR) {
+          // See comment for PrintSettingsInitializer.mPrintInColor
+          color = devmode->dmColor != DMCOLOR_MONOCHROME;
+        }
         return true;
       });
 
@@ -105,14 +122,18 @@ PrintSettingsInitializer nsPrinterWin::DefaultSettings() const {
     return {};
   }
 
+  // We don't actually need the paper name in the settings because the
+  // paperIdString is used to look up the paper details in the front end.
+  nsString paperName;
   return PrintSettingsInitializer{
-      mName, PaperInfo(paperName, paperSize, Some(margin)), color, resolution,
-      std::move(devmodeWStorage)};
+      mName, PaperInfo(paperIdString, paperName, paperSize, Some(margin)),
+      color, resolution, std::move(devmodeWStorage)};
 }
 
 template <class T>
 static nsTArray<T> GetDeviceCapabilityArray(const LPWSTR aPrinterName,
-                                            WORD aCapabilityID) {
+                                            WORD aCapabilityID,
+                                            size_t aCount = 0) {
   nsTArray<T> caps;
 
   // We only want to access printer drivers in the parent process.
@@ -120,15 +141,25 @@ static nsTArray<T> GetDeviceCapabilityArray(const LPWSTR aPrinterName,
     return caps;
   }
 
-  // Passing nullptr as the port here seems to work. Given that we would have to
-  // OpenPrinter with just the name anyway to get the port that makes sense.
-  // Also, the printer set-up seems to stop you from having two printers with
-  // the same name.
-  // Note: this (and the call below) are blocking calls, which could be slow.
-  int count = ::DeviceCapabilitiesW(aPrinterName, nullptr, aCapabilityID,
-                                    nullptr, nullptr);
-  if (count <= 0) {
-    return caps;
+  // Both the call to get the size and the call to actually populate the array
+  // are relatively expensive, so as sometimes the lengths of the arrays that we
+  // retrieve depend on each other we allow a count to be passed in to save the
+  // first call. As we allocate double the count anyway this should allay any
+  // safety worries.
+  int count;
+  if (aCount) {
+    count = aCount;
+  } else {
+    // Passing nullptr as the port here seems to work. Given that we would have
+    // to OpenPrinter with just the name anyway to get the port that makes
+    // sense. Also, the printer set-up seems to stop you from having two
+    // printers with the same name. Note: this (and the call below) are blocking
+    // calls, which could be slow.
+    count = ::DeviceCapabilitiesW(aPrinterName, nullptr, aCapabilityID, nullptr,
+                                  nullptr);
+    if (count <= 0) {
+      return caps;
+    }
   }
 
   // As DeviceCapabilitiesW doesn't take a size, there is a greater risk of the
@@ -198,16 +229,17 @@ bool nsPrinterWin::SupportsCollation() const {
 }
 
 nsTArray<mozilla::PaperInfo> nsPrinterWin::PaperList() const {
-  // Paper names are returned in 64 long character buffers.
-  auto paperNames =
-      GetDeviceCapabilityArray<Array<wchar_t, 64>>(mName.get(), DC_PAPERNAMES);
-
   // Paper IDs are returned as WORDs.
   auto paperIds = GetDeviceCapabilityArray<WORD>(mName.get(), DC_PAPERS);
 
+  // Paper names are returned in 64 long character buffers.
+  auto paperNames = GetDeviceCapabilityArray<Array<wchar_t, 64>>(
+      mName.get(), DC_PAPERNAMES, paperIds.Length());
+
   // Paper sizes are returned as POINT structs with a tenth of a millimeter as
   // the unit.
-  auto paperSizes = GetDeviceCapabilityArray<POINT>(mName.get(), DC_PAPERSIZE);
+  auto paperSizes = GetDeviceCapabilityArray<POINT>(mName.get(), DC_PAPERSIZE,
+                                                    paperIds.Length());
 
   // Check that we have papers and that the array lengths match.
   if (!paperNames.Length() || paperNames.Length() != paperIds.Length() ||
@@ -230,25 +262,30 @@ nsTArray<mozilla::PaperInfo> nsPrinterWin::PaperList() const {
       continue;
     }
 
+    // Windows paper IDs are 16-bit integers; we stringify them to store in the
+    // PaperInfo.mId field.
+    nsString paperIdString;
+    paperIdString.AppendInt(paperIds[i]);
+
     // We don't resolve the margins eagerly because they're really expensive (on
     // the order of seconds for some drivers).
     nsDependentSubstring name(paperNames[i].cbegin(), nameLength);
-    paperList.AppendElement(mozilla::PaperInfo(nsString(name), {width, height},
-                                               Nothing(), paperIds[i]));
+    paperList.AppendElement(mozilla::PaperInfo(paperIdString, nsString(name),
+                                               {width, height}, Nothing()));
   }
 
   return paperList;
 }
 
 mozilla::gfx::MarginDouble nsPrinterWin::GetMarginsForPaper(
-    short aPaperId) const {
+    nsString aPaperId) const {
   gfx::MarginDouble margin;
 
   nsTArray<uint8_t> storage;
   bool success =
       WithDefaultDevMode(mName, storage, [&](HANDLE, DEVMODEW* devmode) {
         devmode->dmFields = DM_PAPERSIZE;
-        devmode->dmPaperSize = aPaperId;
+        devmode->dmPaperSize = _wtoi((const wchar_t*)aPaperId.BeginReading());
         nsAutoHDC printerDc(
             ::CreateICW(nullptr, mName.get(), nullptr, devmode));
         MOZ_DIAGNOSTIC_ASSERT(printerDc, "CreateICW failed");
@@ -256,10 +293,10 @@ mozilla::gfx::MarginDouble nsPrinterWin::GetMarginsForPaper(
           return false;
         }
         margin = WinUtils::GetUnwriteableMarginsForDeviceInInches(printerDc);
-        margin.top *= POINTS_PER_INCH_FLOAT;
-        margin.right *= POINTS_PER_INCH_FLOAT;
-        margin.bottom *= POINTS_PER_INCH_FLOAT;
-        margin.left *= POINTS_PER_INCH_FLOAT;
+        margin.top *= kPointsPerInch;
+        margin.right *= kPointsPerInch;
+        margin.bottom *= kPointsPerInch;
+        margin.left *= kPointsPerInch;
         return true;
       });
 

@@ -16,6 +16,8 @@
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/VideoBridgeChild.h"
+#include "mozilla/gfx/GPUParent.h"
+#include "mozilla/RDDParent.h"
 
 namespace mozilla {
 
@@ -30,14 +32,13 @@ using namespace gfx;
 
 StaticRefPtr<TaskQueue> sRemoteDecoderManagerParentThread;
 
-SurfaceDescriptorGPUVideo RemoteDecoderManagerParent::StoreImage(
-    Image* aImage, TextureClient* aTexture) {
-  SurfaceDescriptorRemoteDecoder ret;
-  aTexture->GetSurfaceDescriptorRemoteDecoder(&ret);
-
-  mImageMap[ret.handle()] = aImage;
-  mTextureMap[ret.handle()] = aTexture;
-  return ret;
+void RemoteDecoderManagerParent::StoreImage(
+    const SurfaceDescriptorGPUVideo& aSD, Image* aImage,
+    TextureClient* aTexture) {
+  MOZ_ASSERT(OnManagerThread());
+  mImageMap[static_cast<SurfaceDescriptorRemoteDecoder>(aSD).handle()] = aImage;
+  mTextureMap[static_cast<SurfaceDescriptorRemoteDecoder>(aSD).handle()] =
+      aTexture;
 }
 
 class RemoteDecoderManagerThreadShutdownObserver : public nsIObserver {
@@ -150,10 +151,18 @@ RemoteDecoderManagerParent::RemoteDecoderManagerParent(
     nsISerialEventTarget* aThread)
     : mThread(aThread) {
   MOZ_COUNT_CTOR(RemoteDecoderManagerParent);
+  auto& registrar = XRE_IsGPUProcess()
+                        ? GPUParent::GetSingleton()->AsyncShutdownService()
+                        : RDDParent::GetSingleton()->AsyncShutdownService();
+  registrar.Register(this);
 }
 
 RemoteDecoderManagerParent::~RemoteDecoderManagerParent() {
   MOZ_COUNT_DTOR(RemoteDecoderManagerParent);
+  auto& registrar = XRE_IsGPUProcess()
+                        ? GPUParent::GetSingleton()->AsyncShutdownService()
+                        : RDDParent::GetSingleton()->AsyncShutdownService();
+  registrar.Deregister(this);
 }
 
 void RemoteDecoderManagerParent::ActorDestroy(
@@ -253,10 +262,25 @@ mozilla::ipc::IPCResult RemoteDecoderManagerParent::RecvReadback(
 mozilla::ipc::IPCResult
 RemoteDecoderManagerParent::RecvDeallocateSurfaceDescriptorGPUVideo(
     const SurfaceDescriptorGPUVideo& aSD) {
+  MOZ_ASSERT(OnManagerThread());
   const SurfaceDescriptorRemoteDecoder& sd = aSD;
   mImageMap.erase(sd.handle());
   mTextureMap.erase(sd.handle());
   return IPC_OK();
+}
+
+void RemoteDecoderManagerParent::DeallocateSurfaceDescriptor(
+    const SurfaceDescriptorGPUVideo& aSD) {
+  if (!OnManagerThread()) {
+    MOZ_ALWAYS_SUCCEEDS(
+        sRemoteDecoderManagerParentThread->Dispatch(NS_NewRunnableFunction(
+            "RemoteDecoderManagerParent::DeallocateSurfaceDescriptor",
+            [ref = RefPtr{this}, sd = aSD]() {
+              ref->RecvDeallocateSurfaceDescriptorGPUVideo(sd);
+            })));
+  } else {
+    RecvDeallocateSurfaceDescriptorGPUVideo(aSD);
+  }
 }
 
 }  // namespace mozilla

@@ -5601,6 +5601,13 @@ void ContentParent::CancelContentJSExecutionIfRunning(
   if (!mHangMonitorActor) {
     return;
   }
+
+  if (!aBrowserParent->CanCancelContentJS(aNavigationType,
+                                          aCancelContentJSOptions.mIndex,
+                                          aCancelContentJSOptions.mUri)) {
+    return;
+  }
+
   ProcessHangMonitor::CancelContentJSExecutionIfRunning(
       mHangMonitorActor, aBrowserParent, aNavigationType,
       aCancelContentJSOptions);
@@ -6829,9 +6836,10 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyOnHistoryReload(
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
     const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
-    const nsID& aChangeID) {
+    const nsID& aChangeID, const uint32_t& aLoadType) {
   if (!aContext.IsDiscarded()) {
-    aContext.get_canonical()->SessionHistoryCommit(aLoadID, aChangeID);
+    aContext.get_canonical()->SessionHistoryCommit(aLoadID, aChangeID,
+                                                   aLoadType);
   }
 
   return IPC_OK();
@@ -6944,6 +6952,26 @@ mozilla::ipc::IPCResult ContentParent::RecvSessionHistoryEntryCacheKey(
   if (entry) {
     entry->SetCacheKey(aCacheKey);
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentParent::RecvGetLoadingSessionHistoryInfoFromParent(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    GetLoadingSessionHistoryInfoFromParentResolver&& aResolver) {
+  if (aContext.IsNullOrDiscarded()) {
+    return IPC_OK();
+  }
+
+  Maybe<LoadingSessionHistoryInfo> info;
+  int32_t requestedIndex = -1;
+  int32_t sessionHistoryLength = 0;
+  aContext.get_canonical()->GetLoadingSessionHistoryInfoFromParent(
+      info, &requestedIndex, &sessionHistoryLength);
+  aResolver(
+      Tuple<const mozilla::Maybe<LoadingSessionHistoryInfo>&, const int32_t&,
+            const int32_t&>(info, requestedIndex, sessionHistoryLength));
+
   return IPC_OK();
 }
 

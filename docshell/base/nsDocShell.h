@@ -519,6 +519,13 @@ class nsDocShell final : public nsDocLoader,
 
   bool IsOSHE(nsISHEntry* aEntry) const { return mOSHE == aEntry; }
 
+  mozilla::dom::ChildSHistory* GetSessionHistory() {
+    return mBrowsingContext->GetChildSessionHistory();
+  }
+
+  // This returns true only when using session history in parent.
+  bool IsLoadingFromSessionHistory();
+
  private:  // member functions
   friend class nsDSURIContentListener;
   friend class FramingChecker;
@@ -636,6 +643,10 @@ class nsDocShell final : public nsDocLoader,
       const mozilla::Maybe<bool>& aScrollRestorationIsManual,
       nsIStructuredCloneContainer* aData, bool aURIWasModified);
 
+  nsresult AddChildSHEntry(nsISHEntry* aCloneRef, nsISHEntry* aNewEntry,
+                           int32_t aChildOffset, uint32_t aLoadType,
+                           bool aCloneChildren);
+
   nsresult AddChildSHEntryToParent(nsISHEntry* aNewEntry, int32_t aChildOffset,
                                    bool aCloneChildren);
 
@@ -650,10 +661,6 @@ class nsDocShell final : public nsDocLoader,
   // the same as in docshell
   void SetHistoryEntryAndUpdateBC(const Maybe<nsISHEntry*>& aLSHE,
                                   const Maybe<nsISHEntry*>& aOSHE);
-
-  mozilla::dom::ChildSHistory* GetSessionHistory() {
-    return mBrowsingContext->GetChildSessionHistory();
-  }
 
   static nsresult ReloadDocument(
       nsDocShell* aDocShell, mozilla::dom::Document* aDocument,
@@ -1028,7 +1035,9 @@ class nsDocShell final : public nsDocLoader,
   // loadType may need to reflect the loadType of the parent document, or in
   // some cases (like reloads), the history load may need to be cancelled. See
   // function comments for in-depth logic descriptions.
-  void MaybeHandleSubframeHistory(nsDocShellLoadState* aLoadState);
+  // Returns true if the method itself deals with the load.
+  bool MaybeHandleSubframeHistory(nsDocShellLoadState* aLoadState,
+                                  bool aContinueHandlingSubframeHistory);
 
   // If we are passed a named target during InternalLoad, this method handles
   // moving the load to the browsing context the target name resolves to.
@@ -1082,6 +1091,14 @@ class nsDocShell final : public nsDocLoader,
                                                   bool aIsManual);
 
   void SetCacheKeyOnHistoryEntry(nsISHEntry* aSHEntry, uint32_t aCacheKey);
+
+  nsresult LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating,
+                   bool aContinueHandlingSubframeHistory);
+
+  // Sets the active entry to the current loading entry. If aCommit is true then
+  // SessionHistoryCommit will be called on the CanonicalBrowsingContext
+  // (directly or over IPC).
+  void MoveLoadingToActiveEntry(bool aCommit);
 
  private:  // data members
   nsID mHistoryID;
@@ -1146,6 +1163,8 @@ class nsDocShell final : public nsDocLoader,
 
   // These are only set when fission.sessionHistoryInParent is set.
   mozilla::UniquePtr<mozilla::dom::SessionHistoryInfo> mActiveEntry;
+  bool mActiveEntryIsLoadingFromSessionHistory = false;
+  // mLoadingEntry is set when we're about to start loading.
   mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> mLoadingEntry;
 
   // Holds a weak pointer to a RestorePresentationEvent object if any that
@@ -1282,8 +1301,6 @@ class nsDocShell final : public nsDocLoader,
   // should be passed a SHEntry to save itself into.
   bool mSavingOldViewer : 1;
 
-  // @see nsIDocShellHistory::createdDynamically
-  bool mDynamicallyCreated : 1;
   bool mAffectPrivateSessionLifetime : 1;
   bool mInvisible : 1;
   bool mHasLoadedNonBlankURI : 1;

@@ -100,7 +100,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
       nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
-  void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID);
+  void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
+                            uint32_t aLoadType);
 
   // Calls the session history listeners' OnHistoryReload, storing the result in
   // aCanReload. If aCanReload is set to true and we have an active or a loading
@@ -220,6 +221,13 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool HasHistoryEntry(nsISHEntry* aEntry);
 
   void SwapHistoryEntries(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry);
+
+  void AddLoadingSessionHistoryEntry(uint64_t aLoadId,
+                                     SessionHistoryEntry* aEntry);
+
+  void GetLoadingSessionHistoryInfoFromParent(
+      Maybe<LoadingSessionHistoryInfo>& aLoadingInfo, int32_t* aRequestedIndex,
+      int32_t* aLength);
 
  protected:
   // Called when the browsing context is being discarded.

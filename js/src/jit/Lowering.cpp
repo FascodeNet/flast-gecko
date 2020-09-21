@@ -333,6 +333,28 @@ void LIRGenerator::visitSetArgumentsObjectArg(MSetArgumentsObjectArg* ins) {
   add(lir, ins);
 }
 
+void LIRGenerator::visitLoadArgumentsObjectArg(MLoadArgumentsObjectArg* ins) {
+  MDefinition* argsObj = ins->getArgsObject();
+  MOZ_ASSERT(argsObj->type() == MIRType::Object);
+
+  MDefinition* index = ins->index();
+  MOZ_ASSERT(index->type() == MIRType::Int32);
+
+  auto* lir = new (alloc())
+      LLoadArgumentsObjectArg(useRegister(argsObj), useRegister(index), temp());
+  assignSnapshot(lir, BailoutKind::ArgumentsObjectAccess);
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitArgumentsObjectLength(MArgumentsObjectLength* ins) {
+  MDefinition* argsObj = ins->getArgsObject();
+  MOZ_ASSERT(argsObj->type() == MIRType::Object);
+
+  auto* lir = new (alloc()) LArgumentsObjectLength(useRegister(argsObj));
+  assignSnapshot(lir, BailoutKind::ArgumentsObjectAccess);
+  define(lir, ins);
+}
+
 void LIRGenerator::visitReturnFromCtor(MReturnFromCtor* ins) {
   LReturnFromCtor* lir = new (alloc())
       LReturnFromCtor(useBox(ins->getValue()), useRegister(ins->getObject()));
@@ -3063,6 +3085,14 @@ void LIRGenerator::visitSetArrayLength(MSetArrayLength* ins) {
       ins);
 }
 
+void LIRGenerator::visitFunctionLength(MFunctionLength* ins) {
+  MOZ_ASSERT(ins->function()->type() == MIRType::Object);
+
+  auto* lir = new (alloc()) LFunctionLength(useRegister(ins->function()));
+  assignSnapshot(lir, BailoutKind::FunctionLength);
+  define(lir, ins);
+}
+
 void LIRGenerator::visitGetNextEntryForIterator(MGetNextEntryForIterator* ins) {
   MOZ_ASSERT(ins->iter()->type() == MIRType::Object);
   MOZ_ASSERT(ins->result()->type() == MIRType::Object);
@@ -5535,6 +5565,13 @@ void LIRGenerator::visitGuardTagNotEqual(MGuardTagNotEqual* ins) {
       new (alloc()) LGuardTagNotEqual(useRegister(lhs), useRegister(rhs));
   assignSnapshot(guard, BailoutKind::TagNotEqualGuard);
   add(guard, ins);
+}
+
+void LIRGenerator::visitLoadWrapperTarget(MLoadWrapperTarget* ins) {
+  MDefinition* object = ins->object();
+  MOZ_ASSERT(object->type() == MIRType::Object);
+
+  define(new (alloc()) LLoadWrapperTarget(useRegisterAtStart(object)), ins);
 }
 
 void LIRGenerator::visitConstant(MConstant* ins) {

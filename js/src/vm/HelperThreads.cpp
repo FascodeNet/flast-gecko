@@ -504,8 +504,9 @@ static const uint32_t HELPER_STACK_SIZE = kDefaultHelperStackSize;
 static const uint32_t HELPER_STACK_QUOTA = kDefaultHelperStackQuota;
 #endif
 
-AutoSetHelperThreadContext::AutoSetHelperThreadContext() {
-  AutoLockHelperThreadState lock;
+AutoSetHelperThreadContext::AutoSetHelperThreadContext(
+    AutoLockHelperThreadState& lock)
+    : lock(lock) {
   cx = HelperThreadState().getFirstUnusedContext(lock);
   MOZ_ASSERT(cx);
   cx->setHelperThread(lock);
@@ -513,6 +514,16 @@ AutoSetHelperThreadContext::AutoSetHelperThreadContext() {
   // When we set the JSContext, we need to reset the computed stack limits for
   // the current thread, so we also set the native stack quota.
   JS_SetNativeStackQuota(cx, HELPER_STACK_QUOTA);
+}
+
+AutoSetHelperThreadContext::~AutoSetHelperThreadContext() {
+  cx->tempLifoAlloc().releaseAll();
+  if (cx->shouldFreeUnusedMemory()) {
+    cx->tempLifoAlloc().freeAll();
+    cx->setFreeUnusedMemory(false);
+  }
+  cx->clearHelperThread(lock);
+  cx = nullptr;
 }
 
 static const JSClass parseTaskGlobalClass = {"internal-parse-task-global",
@@ -593,10 +604,7 @@ void ParseTask::runHelperThreadTask(AutoLockHelperThreadState& locked) {
   }
 #endif
 
-  {
-    AutoUnlockHelperThreadState unlock(locked);
-    runTask();
-  }
+  runTask(locked);
 
   // The callback is invoked while we are still off thread.
   callback(this, callbackData);
@@ -612,8 +620,10 @@ void ParseTask::runHelperThreadTask(AutoLockHelperThreadState& locked) {
 #endif
 }
 
-void ParseTask::runTask() {
-  AutoSetHelperThreadContext usesContext;
+void ParseTask::runTask(AutoLockHelperThreadState& lock) {
+  AutoSetHelperThreadContext usesContext(lock);
+
+  AutoUnlockHelperThreadState unlock(lock);
 
   JSContext* cx = TlsContext.get();
 
@@ -1782,19 +1792,20 @@ HelperThreadTask* GlobalHelperThreadState::maybeGetCompressionTask(
 }
 
 void GlobalHelperThreadState::startHandlingCompressionTasks(
-    const AutoLockHelperThreadState& lock, ScheduleCompressionTask schedule) {
-  scheduleCompressionTasks(lock, schedule);
-}
+    ScheduleCompressionTask schedule, JSRuntime* maybeRuntime,
+    const AutoLockHelperThreadState& lock) {
+  MOZ_ASSERT((schedule == ScheduleCompressionTask::GC) ==
+             (maybeRuntime != nullptr));
 
-void GlobalHelperThreadState::scheduleCompressionTasks(
-    const AutoLockHelperThreadState& lock, ScheduleCompressionTask schedule) {
   auto& pending = compressionPendingList(lock);
 
   for (size_t i = 0; i < pending.length(); i++) {
-    if (pending[i]->shouldStart() || schedule != ScheduleCompressionTask::GC) {
+    UniquePtr<SourceCompressionTask>& task = pending[i];
+    if (schedule == ScheduleCompressionTask::API ||
+        (task->runtimeMatches(maybeRuntime) && task->shouldStart())) {
       // OOMing during appending results in the task not being scheduled
       // and deleted.
-      Unused << submitTask(std::move(pending[i]), lock);
+      Unused << submitTask(std::move(task), lock);
       remove(pending, &i);
     }
   }
@@ -2307,6 +2318,12 @@ bool js::EnqueueOffThreadCompression(JSContext* cx,
   return true;
 }
 
+void js::StartHandlingCompressionsOnGC(JSRuntime* runtime) {
+  AutoLockHelperThreadState lock;
+  HelperThreadState().startHandlingCompressionTasks(
+      GlobalHelperThreadState::ScheduleCompressionTask::GC, runtime, lock);
+}
+
 template <typename T>
 static void ClearCompressionTaskList(T& list, JSRuntime* runtime) {
   for (size_t i = 0; i < list.length(); i++) {
@@ -2367,6 +2384,15 @@ void js::AttachFinishedCompressions(JSRuntime* runtime,
   }
 }
 
+void js::SweepPendingCompressions(AutoLockHelperThreadState& lock) {
+  auto& pending = HelperThreadState().compressionPendingList(lock);
+  for (size_t i = 0; i < pending.length(); i++) {
+    if (pending[i]->shouldCancel()) {
+      HelperThreadState().remove(pending, &i);
+    }
+  }
+}
+
 void js::RunPendingSourceCompressions(JSRuntime* runtime) {
   AutoLockHelperThreadState lock;
 
@@ -2375,7 +2401,7 @@ void js::RunPendingSourceCompressions(JSRuntime* runtime) {
   }
 
   HelperThreadState().startHandlingCompressionTasks(
-      lock, GlobalHelperThreadState::ScheduleCompressionTask::API);
+      GlobalHelperThreadState::ScheduleCompressionTask::API, nullptr, lock);
 
   // Wait until all tasks have started compression.
   while (!HelperThreadState().compressionWorklist(lock).empty()) {

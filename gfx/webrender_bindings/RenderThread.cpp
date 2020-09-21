@@ -222,7 +222,6 @@ void RenderThread::RemoveRenderer(wr::WindowId aWindowId) {
   }
 
   mRenderers.erase(aWindowId);
-  mCompositionRecorders.erase(aWindowId);
 
   if (mRenderers.size() == 0 && mHandlingDeviceReset) {
     mHandlingDeviceReset = false;
@@ -254,15 +253,14 @@ size_t RenderThread::RendererCount() {
   return mRenderers.size();
 }
 
-void RenderThread::SetCompositionRecorderForWindow(
-    wr::WindowId aWindowId,
-    UniquePtr<layers::WebRenderCompositionRecorder> aCompositionRecorder) {
+void RenderThread::BeginRecordingForWindow(wr::WindowId aWindowId,
+                                           const TimeStamp& aRecordingStart,
+                                           wr::PipelineId aRootPipelineId) {
   MOZ_ASSERT(IsInRenderThread());
-  MOZ_ASSERT(GetRenderer(aWindowId));
-  MOZ_ASSERT(mCompositionRecorders.find(aWindowId) ==
-             mCompositionRecorders.end());
+  RendererOGL* renderer = GetRenderer(aWindowId);
+  MOZ_ASSERT(renderer);
 
-  mCompositionRecorders[aWindowId] = std::move(aCompositionRecorder);
+  renderer->BeginRecording(aRecordingStart, aRootPipelineId);
 }
 
 void RenderThread::WriteCollectedFramesForWindow(wr::WindowId aWindowId) {
@@ -270,21 +268,7 @@ void RenderThread::WriteCollectedFramesForWindow(wr::WindowId aWindowId) {
 
   RendererOGL* renderer = GetRenderer(aWindowId);
   MOZ_ASSERT(renderer);
-
-  auto it = mCompositionRecorders.find(aWindowId);
-  MOZ_DIAGNOSTIC_ASSERT(
-      it != mCompositionRecorders.end(),
-      "Attempted to write frames from a window that was not recording.");
-  if (it != mCompositionRecorders.end()) {
-    it->second->WriteCollectedFrames();
-
-    if (renderer) {
-      wr_renderer_release_composition_recorder_structures(
-          renderer->GetRenderer());
-    }
-
-    mCompositionRecorders.erase(it);
-  }
+  renderer->WriteCollectedFrames();
 }
 
 Maybe<layers::CollectedFrames> RenderThread::GetCollectedFramesForWindow(
@@ -293,26 +277,7 @@ Maybe<layers::CollectedFrames> RenderThread::GetCollectedFramesForWindow(
 
   RendererOGL* renderer = GetRenderer(aWindowId);
   MOZ_ASSERT(renderer);
-
-  auto it = mCompositionRecorders.find(aWindowId);
-  MOZ_DIAGNOSTIC_ASSERT(
-      it != mCompositionRecorders.end(),
-      "Attempted to get frames from a window that was not recording.");
-
-  Maybe<layers::CollectedFrames> maybeFrames;
-
-  if (it != mCompositionRecorders.end()) {
-    maybeFrames.emplace(it->second->GetCollectedFrames());
-
-    if (renderer) {
-      wr_renderer_release_composition_recorder_structures(
-          renderer->GetRenderer());
-    }
-
-    mCompositionRecorders.erase(it);
-  }
-
-  return maybeFrames;
+  return renderer->GetCollectedFrames();
 }
 
 void RenderThread::HandleFrameOneDoc(wr::WindowId aWindowId, bool aRender) {
@@ -519,11 +484,7 @@ void RenderThread::UpdateAndRender(
                           aStartTime, start, end, aRender, stats));
 
   if (latestFrameId.IsValid()) {
-    auto recorderIt = mCompositionRecorders.find(aWindowId);
-    if (recorderIt != mCompositionRecorders.end() &&
-        renderer->EnsureAsyncScreenshot()) {
-      recorderIt->second->MaybeRecordFrame(renderer->GetRenderer(), info.get());
-    }
+    renderer->MaybeRecordFrame(info);
   }
 
   ipc::FileDescriptor fenceFd;

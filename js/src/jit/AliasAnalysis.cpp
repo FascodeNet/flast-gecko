@@ -156,6 +156,8 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::GuardArrayIsPacked:
     case MDefinition::Opcode::GuardFunctionFlags:
     case MDefinition::Opcode::GuardFunctionKind:
+    case MDefinition::Opcode::ArgumentsObjectLength:
+    case MDefinition::Opcode::FunctionLength:
       object = ins->getOperand(0);
       break;
     case MDefinition::Opcode::GetPropertyCache:
@@ -167,6 +169,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::ThrowRuntimeLexicalError:
     case MDefinition::Opcode::GetArgumentsObjectArg:
     case MDefinition::Opcode::SetArgumentsObjectArg:
+    case MDefinition::Opcode::LoadArgumentsObjectArg:
     case MDefinition::Opcode::CreateThis:
     case MDefinition::Opcode::NewArrayDynamicLength:
     case MDefinition::Opcode::NewTypedArrayDynamicLength:
@@ -179,6 +182,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::CompareExchangeTypedArrayElement:
     case MDefinition::Opcode::AtomicExchangeTypedArrayElement:
     case MDefinition::Opcode::AtomicTypedArrayElementBinop:
+    case MDefinition::Opcode::LoadWrapperTarget:
     case MDefinition::Opcode::AsmJSLoadHeap:
     case MDefinition::Opcode::AsmJSStoreHeap:
     case MDefinition::Opcode::WasmHeapBase:

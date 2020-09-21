@@ -188,6 +188,9 @@ add_task(async function disabled_urlbarSuggestions_withRestrictionToken() {
     matches: [
       makeSearchResult(context, {
         query: SEARCH_STRING,
+        alias: UrlbarPrefs.get("update2")
+          ? UrlbarTokenizer.RESTRICT.SEARCH
+          : undefined,
         engineName: ENGINE_NAME,
         heuristic: true,
       }),
@@ -213,6 +216,9 @@ add_task(
       matches: [
         makeSearchResult(context, {
           query: SEARCH_STRING,
+          alias: UrlbarPrefs.get("update2")
+            ? UrlbarTokenizer.RESTRICT.SEARCH
+            : undefined,
           engineName: ENGINE_NAME,
           heuristic: true,
         }),
@@ -236,6 +242,9 @@ add_task(
       matches: [
         makeSearchResult(context, {
           query: SEARCH_STRING,
+          alias: UrlbarPrefs.get("update2")
+            ? UrlbarTokenizer.RESTRICT.SEARCH
+            : undefined,
           engineName: ENGINE_NAME,
           heuristic: true,
         }),
@@ -410,6 +419,9 @@ add_task(async function restrictToken() {
     matches: [
       makeSearchResult(context, {
         engineName: ENGINE_NAME,
+        alias: UrlbarPrefs.get("update2")
+          ? UrlbarTokenizer.RESTRICT.SEARCH
+          : undefined,
         query: SEARCH_STRING,
         heuristic: true,
       }),
@@ -446,6 +458,9 @@ add_task(async function restrictToken() {
     matches: [
       makeSearchResult(context, {
         engineName: ENGINE_NAME,
+        alias: UrlbarPrefs.get("update2")
+          ? UrlbarTokenizer.RESTRICT.SEARCH
+          : undefined,
         query: "",
         heuristic: true,
       }),
@@ -482,6 +497,9 @@ add_task(async function restrictToken() {
     matches: [
       makeSearchResult(context, {
         engineName: ENGINE_NAME,
+        alias: UrlbarPrefs.get("update2")
+          ? UrlbarTokenizer.RESTRICT.SEARCH
+          : undefined,
         query: "h",
         heuristic: true,
       }),
@@ -519,7 +537,6 @@ add_task(async function restrictToken() {
         heuristic: true,
         query: SEARCH_STRING,
         alias: UrlbarTokenizer.RESTRICT.BOOKMARK,
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.NONE,
       }),
       makeBookmarkResult(context, {
         uri: `http://example.com/${SEARCH_STRING}-bookmark`,
@@ -530,18 +547,18 @@ add_task(async function restrictToken() {
 
   // Non-search-mode restriction tokens remain in the query and heuristic search
   // result.
-  let restrict;
-  for (let r of Object.keys(UrlbarTokenizer.RESTRICT)) {
-    if (!UrlbarTokenizer.SEARCH_MODE_RESTRICT.has(r)) {
-      restrict = r;
+  let token;
+  for (let t of Object.values(UrlbarTokenizer.RESTRICT)) {
+    if (!UrlbarTokenizer.SEARCH_MODE_RESTRICT.has(t)) {
+      token = t;
       break;
     }
   }
   Assert.ok(
-    restrict,
+    token,
     "Non-search-mode restrict token exists -- if not, you can probably remove me!"
   );
-  context = createContext(UrlbarTokenizer.RESTRICT[restrict], {
+  context = createContext(token, {
     isPrivate: false,
   });
   await check_results({

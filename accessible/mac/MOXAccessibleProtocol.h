@@ -127,6 +127,9 @@
 // AXURL
 - (NSURL* _Nullable)moxURL;
 
+// AXLinkUIElements
+- (NSArray* _Nullable)moxLinkUIElements;
+
 // AXPopupValue
 - (NSString* _Nullable)moxPopupValue;
 
@@ -204,6 +207,9 @@
 
 // AXColumnHeaderUIElements
 - (NSArray* _Nullable)moxColumnHeaderUIElements;
+
+// AXIdentifier
+- (NSString* _Nullable)moxIdentifier;
 
 // Math Attributes
 
