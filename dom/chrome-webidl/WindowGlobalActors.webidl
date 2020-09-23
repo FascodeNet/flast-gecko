@@ -19,6 +19,16 @@ interface WindowContext {
   readonly attribute WindowContext? parentWindowContext;
 
   readonly attribute WindowContext topWindowContext;
+
+  // True if this window has registered a "beforeunload" event handler.
+  readonly attribute boolean hasBeforeUnload;
+};
+
+// Keep this in sync with nsIContentViewer::PermitUnloadAction.
+enum PermitUnloadAction {
+  "prompt",
+  "dontUnload",
+  "unload",
 };
 
 [Exposed=Window, ChromeOnly]
@@ -37,9 +47,6 @@ interface WindowGlobalParent : WindowContext {
   // embedder is in a different process.
   readonly attribute boolean isProcessRoot;
 
-  // True if this window has registered a "beforeunload" event handler.
-  readonly attribute boolean hasBeforeUnload;
-
   // Is the document loaded in this WindowGlobalParent the initial document
   // implicitly created while "creating a new browsing context".
   // https://html.spec.whatwg.org/multipage/browsers.html#creating-a-new-browsing-context
@@ -48,6 +55,14 @@ interface WindowGlobalParent : WindowContext {
   readonly attribute FrameLoader? rootFrameLoader; // Embedded (browser) only
 
   readonly attribute WindowGlobalChild? childActor; // in-process only
+
+  // Checks for any WindowContexts with "beforeunload" listeners in this
+  // WindowGlobal's subtree. If any exist, a "beforeunload" event is
+  // dispatched to them. If any of those request to block the navigation,
+  // displays a prompt to the user. Returns a boolean which resolves to true
+  // if the navigation should be allowed.
+  [Throws]
+  Promise<boolean> permitUnload(optional PermitUnloadAction action = "prompt");
 
   // Information about the currently loaded document.
   readonly attribute Principal documentPrincipal;

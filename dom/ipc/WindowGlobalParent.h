@@ -16,6 +16,7 @@
 #include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/PWindowGlobalParent.h"
 #include "mozilla/dom/WindowContext.h"
+#include "mozilla/dom/WindowGlobalActorsBinding.h"
 #include "nsDataHashtable.h"
 #include "nsRefPtrHashtable.h"
 #include "nsWrapperCache.h"
@@ -143,7 +144,8 @@ class WindowGlobalParent final : public WindowContext,
 
   bool IsInitialDocument() { return mIsInitialDocument; }
 
-  bool HasBeforeUnload() { return mHasBeforeUnload; }
+  already_AddRefed<mozilla::dom::Promise> PermitUnload(
+      PermitUnloadAction aAction, mozilla::ErrorResult& aRv);
 
   already_AddRefed<mozilla::dom::Promise> DrawSnapshot(
       const DOMRect* aRect, double aScale, const nsACString& aBackgroundColor,
@@ -225,7 +227,6 @@ class WindowGlobalParent final : public WindowContext,
   }
   mozilla::ipc::IPCResult RecvUpdateDocumentSecurityInfo(
       nsITransportSecurityInfo* aSecurityInfo);
-  mozilla::ipc::IPCResult RecvSetHasBeforeUnload(bool aHasBeforeUnload);
   mozilla::ipc::IPCResult RecvSetClientInfo(
       const IPCClientInfo& aIPCClientInfo);
   mozilla::ipc::IPCResult RecvDestroy();
@@ -256,6 +257,10 @@ class WindowGlobalParent final : public WindowContext,
       uint32_t aMillis);
   mozilla::ipc::IPCResult RecvSubmitLoadInputEventResponsePreloadTelemetry(
       uint32_t aMillis);
+
+  mozilla::ipc::IPCResult RecvCheckPermitUnload(
+      bool aHasInProcessBlocker, XPCOMPermitUnloadAction aAction,
+      CheckPermitUnloadResolver&& aResolver);
 
  private:
   WindowGlobalParent(CanonicalBrowsingContext* aBrowsingContext,

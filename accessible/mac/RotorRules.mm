@@ -39,6 +39,16 @@ RotorButtonRule::RotorButtonRule() : PivotRoleRule(roles::PUSHBUTTON) {}
 RotorButtonRule::RotorButtonRule(AccessibleOrProxy& aDirectDescendantsFrom)
     : PivotRoleRule(roles::PUSHBUTTON, aDirectDescendantsFrom) {}
 
+RotorFrameRule::RotorFrameRule() : PivotRoleRule(roles::DOCUMENT) {}
+
+RotorFrameRule::RotorFrameRule(AccessibleOrProxy& aDirectDescendantsFrom)
+    : PivotRoleRule(roles::DOCUMENT, aDirectDescendantsFrom) {}
+
+RotorImageRule::RotorImageRule() : PivotRoleRule(roles::GRAPHIC) {}
+
+RotorImageRule::RotorImageRule(AccessibleOrProxy& aDirectDescendantsFrom)
+    : PivotRoleRule(roles::GRAPHIC, aDirectDescendantsFrom) {}
+
 RotorControlRule::RotorControlRule(AccessibleOrProxy& aDirectDescendantsFrom)
     : mDirectDescendantsFrom(aDirectDescendantsFrom) {}
 

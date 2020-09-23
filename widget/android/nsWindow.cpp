@@ -15,7 +15,6 @@
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/RWLock.h"
 #include "mozilla/StaticPrefs_android.h"
 #include "mozilla/StaticPrefs_ui.h"
 #include "mozilla/TouchEvents.h"
@@ -88,7 +87,9 @@ using mozilla::gfx::SurfaceFormat;
 #include "AndroidBridge.h"
 #include "AndroidBridgeUtilities.h"
 #include "AndroidUiThread.h"
+#include "AndroidView.h"
 #include "GeckoEditableSupport.h"
+#include "GeckoViewSupport.h"
 #include "KeyEvent.h"
 #include "MotionEvent.h"
 #include "mozilla/java/EventDispatcherWrappers.h"
@@ -142,61 +143,19 @@ static const int32_t INPUT_RESULT_HANDLED =
 static const int32_t INPUT_RESULT_HANDLED_CONTENT =
     java::PanZoomController::INPUT_RESULT_HANDLED_CONTENT;
 
-template <typename Lambda, bool IsStatic, typename InstanceType, class Impl>
-class nsWindow::WindowEvent : public Runnable {
-  bool IsStaleCall() {
-    if (IsStatic) {
-      // Static calls are never stale.
-      return false;
-    }
-
-    JNIEnv* const env = mozilla::jni::GetEnvForThread();
-
-    const auto natives = reinterpret_cast<mozilla::WeakPtr<Impl>*>(
-        jni::GetNativeHandle(env, mInstance.Get()));
-    MOZ_CATCH_JNI_EXCEPTION(env);
-
-    // The call is stale if the nsWindow has been destroyed on the
-    // Gecko side, but the Java object is still attached to it through
-    // a weak pointer. Stale calls should be discarded. Note that it's
-    // an error if natives is nullptr here; we return false but the
-    // native call will throw an error.
-    return natives && !natives->get();
-  }
-
-  Lambda mLambda;
-  const InstanceType mInstance;
-
- public:
-  WindowEvent(Lambda&& aLambda, InstanceType&& aInstance)
-      : Runnable("nsWindowEvent"),
-        mLambda(std::move(aLambda)),
-        mInstance(std::forward<InstanceType>(aInstance)) {}
-
-  explicit WindowEvent(Lambda&& aLambda)
-      : Runnable("nsWindowEvent"),
-        mLambda(std::move(aLambda)),
-        mInstance(mLambda.GetThisArg()) {}
-
-  NS_IMETHOD Run() override {
-    if (!IsStaleCall()) {
-      mLambda();
-    }
-    return NS_OK;
-  }
-};
-
 namespace {
 template <class Instance, class Impl>
-std::enable_if_t<
-    jni::detail::NativePtrPicker<Impl>::value == jni::detail::REFPTR, void>
+std::enable_if_t<jni::detail::NativePtrPicker<Impl>::value ==
+                     jni::detail::NativePtrType::REFPTR,
+                 void>
 CallAttachNative(Instance aInstance, Impl* aImpl) {
   Impl::AttachNative(aInstance, RefPtr<Impl>(aImpl).get());
 }
 
 template <class Instance, class Impl>
-std::enable_if_t<
-    jni::detail::NativePtrPicker<Impl>::value == jni::detail::OWNING, void>
+std::enable_if_t<jni::detail::NativePtrPicker<Impl>::value ==
+                     jni::detail::NativePtrType::OWNING,
+                 void>
 CallAttachNative(Instance aInstance, Impl* aImpl) {
   Impl::AttachNative(aInstance, UniquePtr<Impl>(aImpl));
 }
@@ -211,186 +170,19 @@ bool DispatchToUiThread(const char* aName, Lambda&& aLambda) {
 }
 }  // namespace
 
-template <class Impl>
-template <class Cls, typename... Args>
-void nsWindow::NativePtr<Impl>::Attach(const jni::LocalRef<Cls>& aInstance,
-                                       nsWindow* aWindow, Args&&... aArgs) {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(!mPtr && !mImpl);
+namespace mozilla {
+namespace widget {
 
-  Impl* const impl = new Impl(this, aWindow, std::forward<Args>(aArgs)...);
-  mImpl = impl;
+using WindowPtr = jni::NativeWeakPtr<GeckoViewSupport>;
 
-  // CallAttachNative transfers ownership of impl.
-  CallAttachNative<>(aInstance, impl);
-}
-
-template <class Impl>
-template <class Cls, typename T>
-void nsWindow::NativePtr<Impl>::Detach(const jni::Ref<Cls, T>& aInstance) {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mPtr && mImpl);
-
-  // nsIRunnable that takes care of disposing the native object attached to
-  // the Java object in a safe manner.
-  class ImplDisposer : public Runnable {
-    const typename Cls::GlobalRef mInstance;
-    const uintptr_t mOldImpl;
-
-   public:
-    explicit ImplDisposer(const typename Cls::LocalRef& aInstance)
-        : Runnable("nsWindow::NativePtr::Detach"),
-          mInstance(aInstance.Env(), aInstance),
-          mOldImpl(aInstance
-                       ? jni::GetNativeHandle(aInstance.Env(), aInstance.Get())
-                       : 0) {
-      MOZ_CATCH_JNI_EXCEPTION(aInstance.Env());
-    }
-
-    NS_IMETHOD Run() override {
-      if (!mInstance) {
-        return NS_OK;
-      }
-
-      if (!NS_IsMainThread()) {
-        NS_DispatchToMainThread(this);
-        return NS_OK;
-      }
-
-      typename Cls::LocalRef instance(jni::GetGeckoThreadEnv(), mInstance);
-      auto newImpl = jni::GetNativeHandle(instance.Env(), instance.Get());
-      MOZ_CATCH_JNI_EXCEPTION(instance.Env());
-
-      if (mOldImpl == newImpl) {
-        // Only dispose the object if the native object has not changed.
-        Impl::DisposeNative(instance);
-      }
-      return NS_OK;
-    }
-  };
-
-  // Objects that use nsWindow::NativePtr are expected to implement a public
-  // member function with signature "void OnDetach(
-  // already_AddRefed<Runnable> aDisposer)".  This function should perform
-  // necessary cleanups for the native/Java objects, as well as mark the Java
-  // object as being disposed, so no native methods are called after that
-  // point. After this disposal step, the function must call "aDisposer->
-  // Run()" to finish disposing the native object. The disposer is
-  // thread-safe and may be called on any thread as necessary.
-  mImpl->OnDetach(
-      do_AddRef(new ImplDisposer({jni::GetGeckoThreadEnv(), aInstance})));
-
-  {
-    Locked implLock(*this);
-    mImpl = nullptr;
-  }
-
-  typename WindowPtr<Impl>::Locked lock(*mPtr);
-  mPtr->mWindow = nullptr;
-  mPtr->mPtr = nullptr;
-  mPtr = nullptr;
-}
-
-template <class Impl>
-class nsWindow::NativePtr<Impl>::Locked final : private MutexAutoLock {
-  Impl* const mImpl;
-
- public:
-  explicit Locked(NativePtr<Impl>& aPtr)
-      : MutexAutoLock(aPtr.mImplLock), mImpl(aPtr.mImpl) {}
-
-  operator Impl*() const { return mImpl; }
-  Impl* operator->() const { return mImpl; }
-};
-
-class nsWindow::GeckoViewSupport final
-    : public GeckoSession::Window::Natives<GeckoViewSupport>,
-      public SupportsWeakPtr {
-  nsWindow& window;
-
-  // We hold a WeakRef because we want to allow the
-  // GeckoSession.Window to be garbage collected.
-  // Callers need to create a LocalRef from this
-  // before calling methods.
-  GeckoSession::Window::WeakRef mGeckoViewWindow;
-
- public:
-  typedef GeckoSession::Window::Natives<GeckoViewSupport> Base;
-
-  template <typename Functor>
-  static void OnNativeCall(Functor&& aCall) {
-    NS_DispatchToMainThread(new WindowEvent<Functor>(std::move(aCall)));
-  }
-
-  GeckoViewSupport(nsWindow* aWindow,
-                   const GeckoSession::Window::LocalRef& aInstance)
-      : window(*aWindow), mGeckoViewWindow(aInstance) {
-    Base::AttachNative(aInstance, static_cast<SupportsWeakPtr*>(this));
-  }
-
-  ~GeckoViewSupport();
-
-  using Base::DisposeNative;
-
-  /**
-   * GeckoView methods
-   */
- private:
-  nsCOMPtr<nsPIDOMWindowOuter> mDOMWindow;
-  bool mIsReady{false};
-
- public:
-  // Create and attach a window.
-  static void Open(const jni::Class::LocalRef& aCls,
-                   GeckoSession::Window::Param aWindow,
-                   jni::Object::Param aQueue, jni::Object::Param aCompositor,
-                   jni::Object::Param aDispatcher,
-                   jni::Object::Param aSessionAccessibility,
-                   jni::Object::Param aInitData, jni::String::Param aId,
-                   jni::String::Param aChromeURI, int32_t aScreenId,
-                   bool aPrivateMode, bool aRemote);
-
-  // Close and destroy the nsWindow.
-  void Close();
-
-  // Transfer this nsWindow to new GeckoSession objects.
-  void Transfer(const GeckoSession::Window::LocalRef& inst,
-                jni::Object::Param aQueue, jni::Object::Param aCompositor,
-                jni::Object::Param aDispatcher,
-                jni::Object::Param aSessionAccessibility,
-                jni::Object::Param aInitData);
-
-  void AttachEditable(const GeckoSession::Window::LocalRef& inst,
-                      jni::Object::Param aEditableParent);
-
-  void AttachAccessibility(const GeckoSession::Window::LocalRef& inst,
-                           jni::Object::Param aSessionAccessibility);
-
-  void OnReady(jni::Object::Param aQueue = nullptr);
-
-  auto OnLoadRequest(mozilla::jni::String::Param aUri, int32_t aWindowType,
-                     int32_t aFlags, mozilla::jni::String::Param aTriggeringUri,
-                     bool aHasUserGesture, bool aIsTopLevel) const
-      -> java::GeckoResult::LocalRef;
-
-  void PassExternalResponse(java::WebResponse::Param aResponse);
-
-  void AttachMediaSessionController(const GeckoSession::Window::LocalRef& inst,
-                                    jni::Object::Param aController,
-                                    const int64_t aId);
-  void DetachMediaSessionController(const GeckoSession::Window::LocalRef& inst,
-                                    jni::Object::Param aController);
-};
-
-class nsWindow::MediaSessionSupport final
+class MediaSessionSupport final
     : public mozilla::java::MediaSession::Controller::Natives<
           MediaSessionSupport> {
-  using LockedWindowPtr = WindowPtr<MediaSessionSupport>::Locked;
   using MediaKeysArray = nsTArray<MediaControlKey>;
 
   typedef RefPtr<mozilla::dom::MediaController> ControllerPtr;
 
-  WindowPtr<MediaSessionSupport> mWindow;
+  WindowPtr mWindow;
   mozilla::java::MediaSession::Controller::WeakRef mJavaController;
   ControllerPtr mMediaController;
   MediaEventListener mMetadataChangedListener;
@@ -403,18 +195,30 @@ class nsWindow::MediaSessionSupport final
   using Base::DisposeNative;
 
   MediaSessionSupport(
-      NativePtr<MediaSessionSupport>* aPtr, nsWindow* aWindow,
+      WindowPtr aWindow,
       const java::MediaSession::Controller::LocalRef& aController)
-      : mWindow(aPtr, aWindow),
+      : mWindow(aWindow),
         mJavaController(aController),
         mMediaController(nullptr) {
-    MOZ_ASSERT(mWindow);
+#if defined(DEBUG)
+    auto win(mWindow.Access());
+    MOZ_ASSERT(!!win);
+#endif  // defined(DEBUG)
   }
 
   bool Dispatch(const char16_t aType[],
                 java::GeckoBundle::Param aBundle = nullptr) {
-    widget::EventDispatcher* dispatcher = mWindow->GetEventDispatcher();
+    auto win = mWindow.Access();
+    if (!win) {
+      return false;
+    }
 
+    nsWindow* gkWindow = win->GetNsWindow();
+    if (!gkWindow) {
+      return false;
+    }
+
+    widget::EventDispatcher* dispatcher = gkWindow->GetEventDispatcher();
     if (!dispatcher) {
       return false;
     }
@@ -542,7 +346,7 @@ class nsWindow::MediaSessionSupport final
     }
   }
 
-  void OnDetach(already_AddRefed<Runnable> aDisposer) {
+  void OnWeakNonIntrusiveDetach(already_AddRefed<Runnable> aDisposer) {
     MOZ_ASSERT(NS_IsMainThread());
 
     RefPtr<Runnable> disposer = aDisposer;
@@ -720,19 +524,13 @@ class nsWindow::MediaSessionSupport final
   }
 };
 
-template <>
-const char nsWindow::NativePtr<nsWindow::MediaSessionSupport>::sName[] =
-    "MediaSessionSupport";
-
 /**
  * PanZoomController handles its native calls on the UI thread, so make
  * it separate from GeckoViewSupport.
  */
-class nsWindow::NPZCSupport final
+class NPZCSupport final
     : public java::PanZoomController::NativeProvider::Natives<NPZCSupport> {
-  using LockedWindowPtr = WindowPtr<NPZCSupport>::Locked;
-
-  WindowPtr<NPZCSupport> mWindow;
+  WindowPtr mWindow;
   java::PanZoomController::NativeProvider::WeakRef mNPZC;
   int mPreviousButtons;
 
@@ -749,16 +547,29 @@ class nsWindow::NPZCSupport final
       MOZ_ASSERT(NS_IsMainThread());
 
       JNIEnv* const env = jni::GetGeckoThreadEnv();
-      NPZCSupport* npzcSupport = GetNative(
+      const auto npzcSupportWeak = GetNative(
           java::PanZoomController::NativeProvider::LocalRef(env, mNPZC));
-
-      if (!npzcSupport || !npzcSupport->mWindow) {
+      if (!npzcSupportWeak) {
         // We already shut down.
         env->ExceptionClear();
         return;
       }
 
-      nsWindow* const window = npzcSupport->mWindow;
+      auto acc = npzcSupportWeak->Access();
+      if (!acc) {
+        // We already shut down.
+        env->ExceptionClear();
+        return;
+      }
+
+      auto win = acc->mWindow.Access();
+      if (!win) {
+        // We already shut down.
+        env->ExceptionClear();
+        return;
+      }
+
+      nsWindow* const window = win->GetNsWindow();
       window->UserActivity();
       return mLambda(window);
     }
@@ -776,10 +587,13 @@ class nsWindow::NPZCSupport final
  public:
   typedef java::PanZoomController::NativeProvider::Natives<NPZCSupport> Base;
 
-  NPZCSupport(NativePtr<NPZCSupport>* aPtr, nsWindow* aWindow,
+  NPZCSupport(WindowPtr aWindow,
               const java::PanZoomController::NativeProvider::LocalRef& aNPZC)
-      : mWindow(aPtr, aWindow), mNPZC(aNPZC), mPreviousButtons(0) {
-    MOZ_ASSERT(mWindow);
+      : mWindow(aWindow), mNPZC(aNPZC), mPreviousButtons(0) {
+#if defined(DEBUG)
+    auto win(mWindow.Access());
+    MOZ_ASSERT(!!win);
+#endif  // defined(DEBUG)
   }
 
   ~NPZCSupport() {}
@@ -787,7 +601,7 @@ class nsWindow::NPZCSupport final
   using Base::AttachNative;
   using Base::DisposeNative;
 
-  void OnDetach(already_AddRefed<Runnable> aDisposer) {
+  void OnWeakNonIntrusiveDetach(already_AddRefed<Runnable> aDisposer) {
     RefPtr<Runnable> disposer = aDisposer;
     // There are several considerations when shutting down NPZC. 1) The
     // Gecko thread may destroy NPZC at any time when nsWindow closes. 2)
@@ -800,7 +614,7 @@ class nsWindow::NPZCSupport final
     // cleared on the Gecko thread when the pending call happens on the UI
     // thread.
     //
-    // 1) happens through OnDetach, which first notifies the UI
+    // 1) happens through OnWeakNonIntrusiveDetach, which first notifies the UI
     // thread through Destroy; Destroy then calls DisposeNative, which
     // finally disposes the native instance back on the Gecko thread. Using
     // Destroy to indirectly call DisposeNative here also solves 5), by
@@ -810,8 +624,7 @@ class nsWindow::NPZCSupport final
     // pending event that we had shut down. In that case the event bails
     // and does not touch mWindow.
     //
-    // 4) happens through DisposeNative directly. OnDetach is not
-    // called.
+    // 4) happens through DisposeNative directly.
     //
     // 6) is solved by keeping a destroyed flag in the Java NPZC instance,
     // and only make a pending call if the destroyed flag is not set.
@@ -827,11 +640,12 @@ class nsWindow::NPZCSupport final
         return;
       }
 
-      uiThread->Dispatch(NS_NewRunnableFunction(
-          "NPZCSupport::OnDetach", [npzc, disposer = std::move(disposer)] {
-            npzc->SetAttached(false);
-            disposer->Run();
-          }));
+      uiThread->Dispatch(
+          NS_NewRunnableFunction("NPZCSupport::OnWeakNonIntrusiveDetach",
+                                 [npzc, disposer = std::move(disposer)] {
+                                   npzc->SetAttached(false);
+                                   disposer->Run();
+                                 }));
     }
   }
 
@@ -843,8 +657,11 @@ class nsWindow::NPZCSupport final
   void SetIsLongpressEnabled(bool aIsLongpressEnabled) {
     RefPtr<IAPZCTreeManager> controller;
 
-    if (LockedWindowPtr window{mWindow}) {
-      controller = window->mAPZC;
+    if (auto window = mWindow.Access()) {
+      nsWindow* gkWindow = window->GetNsWindow();
+      if (gkWindow) {
+        controller = gkWindow->mAPZC;
+      }
     }
 
     if (controller) {
@@ -858,8 +675,11 @@ class nsWindow::NPZCSupport final
 
     RefPtr<IAPZCTreeManager> controller;
 
-    if (LockedWindowPtr window{mWindow}) {
-      controller = window->mAPZC;
+    if (auto window = mWindow.Access()) {
+      nsWindow* gkWindow = window->GetNsWindow();
+      if (gkWindow) {
+        controller = gkWindow->mAPZC;
+      }
     }
 
     if (!controller) {
@@ -874,8 +694,8 @@ class nsWindow::NPZCSupport final
     }
 
     ScrollWheelInput input(
-        aTime, GetEventTimeStamp(aTime), GetModifiers(aMetaState),
-        ScrollWheelInput::SCROLLMODE_SMOOTH,
+        aTime, nsWindow::GetEventTimeStamp(aTime),
+        nsWindow::GetModifiers(aMetaState), ScrollWheelInput::SCROLLMODE_SMOOTH,
         ScrollWheelInput::SCROLLDELTA_PIXEL, origin, aHScroll, aVScroll, false,
         // XXX Do we need to support auto-dir scrolling
         // for Android widgets with a wheel device?
@@ -959,8 +779,11 @@ class nsWindow::NPZCSupport final
 
     RefPtr<IAPZCTreeManager> controller;
 
-    if (LockedWindowPtr window{mWindow}) {
-      controller = window->mAPZC;
+    if (auto window = mWindow.Access()) {
+      nsWindow* gkWindow = window->GetNsWindow();
+      if (gkWindow) {
+        controller = gkWindow->mAPZC;
+      }
     }
 
     if (!controller) {
@@ -1002,10 +825,10 @@ class nsWindow::NPZCSupport final
 
     ScreenPoint origin = ScreenPoint(aX, aY);
 
-    MouseInput input(mouseType, buttonType,
-                     MouseEvent_Binding::MOZ_SOURCE_MOUSE,
-                     ConvertButtons(buttons), origin, aTime,
-                     GetEventTimeStamp(aTime), GetModifiers(aMetaState));
+    MouseInput input(
+        mouseType, buttonType, MouseEvent_Binding::MOZ_SOURCE_MOUSE,
+        ConvertButtons(buttons), origin, aTime,
+        nsWindow::GetEventTimeStamp(aTime), nsWindow::GetModifiers(aMetaState));
 
     APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
     int32_t ret = (result.mHandledByRootApzc == Some(true))
@@ -1045,8 +868,11 @@ class nsWindow::NPZCSupport final
     auto returnResult = java::GeckoResult::Ref::From(aResult);
     RefPtr<IAPZCTreeManager> controller;
 
-    if (LockedWindowPtr window{mWindow}) {
-      controller = window->mAPZC;
+    if (auto window = mWindow.Access()) {
+      nsWindow* gkWindow = window->GetNsWindow();
+      if (gkWindow) {
+        controller = gkWindow->mAPZC;
+      }
     }
 
     if (!controller) {
@@ -1090,8 +916,8 @@ class nsWindow::NPZCSupport final
         return;
     }
 
-    MultiTouchInput input(type, aTime, GetEventTimeStamp(aTime), 0);
-    input.modifiers = GetModifiers(aMetaState);
+    MultiTouchInput input(type, aTime, nsWindow::GetEventTimeStamp(aTime), 0);
+    input.modifiers = nsWindow::GetModifiers(aMetaState);
     input.mTouches.SetCapacity(endIndex - startIndex);
     input.mScreenOffset =
         ExternalIntPoint(int32_t(floorf(aScreenX)), int32_t(floorf(aScreenY)));
@@ -1199,14 +1025,9 @@ class nsWindow::NPZCSupport final
   }
 };
 
-template <>
-const char nsWindow::NativePtr<nsWindow::NPZCSupport>::sName[] = "NPZCSupport";
+NS_IMPL_ISUPPORTS(AndroidView, nsIAndroidEventDispatcher, nsIAndroidView)
 
-NS_IMPL_ISUPPORTS(nsWindow::AndroidView, nsIAndroidEventDispatcher,
-                  nsIAndroidView)
-
-nsresult nsWindow::AndroidView::GetInitData(JSContext* aCx,
-                                            JS::MutableHandleValue aOut) {
+nsresult AndroidView::GetInitData(JSContext* aCx, JS::MutableHandleValue aOut) {
   if (!mInitData) {
     aOut.setNull();
     return NS_OK;
@@ -1219,11 +1040,9 @@ nsresult nsWindow::AndroidView::GetInitData(JSContext* aCx,
  * Compositor has some unique requirements for its native calls, so make it
  * separate from GeckoViewSupport.
  */
-class nsWindow::LayerViewSupport final
+class LayerViewSupport final
     : public GeckoSession::Compositor::Natives<LayerViewSupport> {
-  using LockedWindowPtr = WindowPtr<LayerViewSupport>::Locked;
-
-  WindowPtr<LayerViewSupport> mWindow;
+  WindowPtr mWindow;
   GeckoSession::Compositor::WeakRef mCompositor;
   Atomic<bool, ReleaseAcquire> mCompositorPaused;
   jni::Object::GlobalRef mSurface;
@@ -1283,17 +1102,13 @@ class nsWindow::LayerViewSupport final
  public:
   typedef GeckoSession::Compositor::Natives<LayerViewSupport> Base;
 
-  static LayerViewSupport* FromNative(
-      const GeckoSession::Compositor::LocalRef& instance) {
-    return GetNative(instance);
-  }
-
-  LayerViewSupport(NativePtr<LayerViewSupport>* aPtr, nsWindow* aWindow,
+  LayerViewSupport(WindowPtr aWindow,
                    const GeckoSession::Compositor::LocalRef& aInstance)
-      : mWindow(aPtr, aWindow),
-        mCompositor(aInstance),
-        mCompositorPaused(true) {
-    MOZ_ASSERT(mWindow);
+      : mWindow(aWindow), mCompositor(aInstance), mCompositorPaused(true) {
+#if defined(DEBUG)
+    auto win(mWindow.Access());
+    MOZ_ASSERT(!!win);
+#endif  // defined(DEBUG)
   }
 
   ~LayerViewSupport() {}
@@ -1301,7 +1116,7 @@ class nsWindow::LayerViewSupport final
   using Base::AttachNative;
   using Base::DisposeNative;
 
-  void OnDetach(already_AddRefed<Runnable> aDisposer) {
+  void OnWeakNonIntrusiveDetach(already_AddRefed<Runnable> aDisposer) {
     RefPtr<Runnable> disposer = aDisposer;
     if (RefPtr<nsThread> uiThread = GetAndroidUiThread()) {
       GeckoSession::Compositor::GlobalRef compositor(mCompositor);
@@ -1310,10 +1125,10 @@ class nsWindow::LayerViewSupport final
       }
 
       uiThread->Dispatch(NS_NewRunnableFunction(
-          "LayerViewSupport::OnDetach",
+          "LayerViewSupport::OnWeakNonIntrusiveDetach",
           [compositor, disposer = std::move(disposer),
-           results = &mCapturePixelsResults, window = &mWindow] {
-            if (LockedWindowPtr lock{*window}) {
+           results = &mCapturePixelsResults, window = mWindow]() mutable {
+            if (auto accWindow = window.Access()) {
               while (!results->empty()) {
                 auto aResult =
                     java::GeckoResult::LocalRef(results->front().mResult);
@@ -1326,8 +1141,9 @@ class nsWindow::LayerViewSupport final
                 results->pop();
               }
               compositor->OnCompositorDetached();
-              disposer->Run();
             }
+
+            disposer->Run();
           }));
     }
   }
@@ -1344,8 +1160,11 @@ class nsWindow::LayerViewSupport final
   already_AddRefed<UiCompositorControllerChild>
   GetUiCompositorControllerChild() {
     RefPtr<UiCompositorControllerChild> child;
-    if (LockedWindowPtr window{mWindow}) {
-      child = window->GetUiCompositorControllerChild();
+    if (auto window = mWindow.Access()) {
+      nsWindow* gkWindow = window->GetNsWindow();
+      if (gkWindow) {
+        child = gkWindow->GetUiCompositorControllerChild();
+      }
     }
     return child.forget();
   }
@@ -1385,24 +1204,26 @@ class nsWindow::LayerViewSupport final
  public:
   void AttachNPZC(jni::Object::Param aNPZC) {
     MOZ_ASSERT(NS_IsMainThread());
-    if (!mWindow) {
+    MOZ_ASSERT(aNPZC);
+
+    auto locked(mWindow.Access());
+    if (!locked) {
       return;  // Already shut down.
     }
 
-    MOZ_ASSERT(aNPZC);
+    nsWindow* gkWindow = locked->GetNsWindow();
 
     // We can have this situation if we get two GeckoViewSupport::Transfer()
     // called before the first AttachNPZC() gets here. Just detach the current
     // instance since that's what happens in GeckoViewSupport::Transfer() as
     // well.
-    if (mWindow->mNPZCSupport) {
-      mWindow->mNPZCSupport.Detach(mWindow->mNPZCSupport->GetJavaNPZC());
-    }
+    gkWindow->mNPZCSupport.Detach();
 
     auto npzc = java::PanZoomController::NativeProvider::LocalRef(
         jni::GetGeckoThreadEnv(),
         java::PanZoomController::NativeProvider::Ref::From(aNPZC));
-    mWindow->mNPZCSupport.Attach(npzc, mWindow, npzc);
+    gkWindow->mNPZCSupport =
+        jni::NativeWeakPtrHolder<NPZCSupport>::Attach(npzc, mWindow, npzc);
 
     DispatchToUiThread(
         "LayerViewSupport::AttachNPZC",
@@ -1414,20 +1235,32 @@ class nsWindow::LayerViewSupport final
   void OnBoundsChanged(int32_t aLeft, int32_t aTop, int32_t aWidth,
                        int32_t aHeight) {
     MOZ_ASSERT(NS_IsMainThread());
-    if (!mWindow) {
+    auto acc = mWindow.Access();
+    if (!acc) {
       return;  // Already shut down.
     }
 
-    mWindow->Resize(aLeft, aTop, aWidth, aHeight, /* repaint */ false);
+    nsWindow* gkWindow = acc->GetNsWindow();
+    if (!gkWindow) {
+      return;
+    }
+
+    gkWindow->Resize(aLeft, aTop, aWidth, aHeight, /* repaint */ false);
   }
 
   void SetDynamicToolbarMaxHeight(int32_t aHeight) {
     MOZ_ASSERT(NS_IsMainThread());
-    if (!mWindow) {
+    auto acc = mWindow.Access();
+    if (!acc) {
       return;  // Already shut down.
     }
 
-    mWindow->UpdateDynamicToolbarMaxHeight(ScreenIntCoord(aHeight));
+    nsWindow* gkWindow = acc->GetNsWindow();
+    if (!gkWindow) {
+      return;
+    }
+
+    gkWindow->UpdateDynamicToolbarMaxHeight(ScreenIntCoord(aHeight));
   }
 
   void SyncPauseCompositor() {
@@ -1439,7 +1272,7 @@ class nsWindow::LayerViewSupport final
       child->Pause();
     }
 
-    if (LockedWindowPtr lock{mWindow}) {
+    if (auto lock{mWindow.Access()}) {
       while (!mCapturePixelsResults.empty()) {
         auto result =
             java::GeckoResult::LocalRef(mCapturePixelsResults.front().mResult);
@@ -1489,10 +1322,22 @@ class nsWindow::LayerViewSupport final
         MOZ_ASSERT(NS_IsMainThread());
 
         JNIEnv* const env = jni::GetGeckoThreadEnv();
-        LayerViewSupport* const lvs =
+        const auto lvsHolder =
             GetNative(GeckoSession::Compositor::LocalRef(env, mCompositor));
 
-        if (!lvs || !lvs->mWindow) {
+        if (!lvsHolder) {
+          env->ExceptionClear();
+          return;  // Already shut down.
+        }
+
+        auto lvs(lvsHolder->Access());
+        if (!lvs) {
+          env->ExceptionClear();
+          return;  // Already shut down.
+        }
+
+        auto win = lvs->mWindow.Access();
+        if (!win) {
           env->ExceptionClear();
           return;  // Already shut down.
         }
@@ -1503,7 +1348,10 @@ class nsWindow::LayerViewSupport final
         // occurring while the compositor was paused, we need to
         // schedule a draw event now.
         if (!lvs->mCompositorPaused) {
-          lvs->mWindow->RedrawAll();
+          nsWindow* const gkWindow = win->GetNsWindow();
+          if (gkWindow) {
+            gkWindow->RedrawAll();
+          }
         }
       }
     };
@@ -1543,8 +1391,11 @@ class nsWindow::LayerViewSupport final
   }
 
   void SetFixedBottomOffset(int32_t aOffset) {
-    if (mWindow) {
-      mWindow->UpdateDynamicToolbarOffset(ScreenIntCoord(aOffset));
+    if (auto acc{mWindow.Access()}) {
+      nsWindow* gkWindow = acc->GetNsWindow();
+      if (gkWindow) {
+        gkWindow->UpdateDynamicToolbarOffset(ScreenIntCoord(aOffset));
+      }
     }
 
     if (RefPtr<nsThread> uiThread = GetAndroidUiThread()) {
@@ -1603,7 +1454,7 @@ class nsWindow::LayerViewSupport final
     MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
 
     int size = 0;
-    if (LockedWindowPtr window{mWindow}) {
+    if (auto window = mWindow.Access()) {
       mCapturePixelsResults.push(CaptureRequest(
           java::GeckoResult::GlobalRef(java::GeckoResult::LocalRef(aResult)),
           java::sdk::Bitmap::GlobalRef(java::sdk::Bitmap::LocalRef(aTarget)),
@@ -1626,7 +1477,7 @@ class nsWindow::LayerViewSupport final
     CaptureRequest request;
     java::GeckoResult::LocalRef result = nullptr;
     java::sdk::Bitmap::LocalRef bitmap = nullptr;
-    if (LockedWindowPtr window{mWindow}) {
+    if (auto window = mWindow.Access()) {
       // The result might have been already rejected if the compositor was
       // detached from the session
       if (!mCapturePixelsResults.empty()) {
@@ -1675,7 +1526,7 @@ class nsWindow::LayerViewSupport final
             GetUiCompositorControllerChild()) {
       child->DeallocPixelBuffer(aMem);
 
-      if (LockedWindowPtr window{mWindow}) {
+      if (auto window = mWindow.Access()) {
         if (!mCapturePixelsResults.empty()) {
           child->RequestScreenPixels();
         }
@@ -1694,47 +1545,29 @@ class nsWindow::LayerViewSupport final
   void OnSafeAreaInsetsChanged(int32_t aTop, int32_t aRight, int32_t aBottom,
                                int32_t aLeft) {
     MOZ_ASSERT(NS_IsMainThread());
-    if (!mWindow) {
+    auto win(mWindow.Access());
+    if (!win) {
       return;  // Already shut down.
     }
+
+    nsWindow* gkWindow = win->GetNsWindow();
+    if (!gkWindow) {
+      return;
+    }
+
     ScreenIntMargin safeAreaInsets(aTop, aRight, aBottom, aLeft);
-    mWindow->UpdateSafeAreaInsets(safeAreaInsets);
+    gkWindow->UpdateSafeAreaInsets(safeAreaInsets);
   }
 };
 
-template <>
-const char nsWindow::NativePtr<nsWindow::LayerViewSupport>::sName[] =
-    "LayerViewSupport";
-
-nsWindow::GeckoViewSupport::~GeckoViewSupport() {
-  // Disassociate our GeckoEditable instance with our native object.
-  if (window.mEditableSupport) {
-    window.mEditableSupport.Detach(window.mEditableSupport->GetJavaEditable());
-    window.mEditableParent = nullptr;
-  }
-
-  if (window.mNPZCSupport) {
-    window.mNPZCSupport.Detach(window.mNPZCSupport->GetJavaNPZC());
-  }
-
-  if (window.mLayerViewSupport) {
-    window.mLayerViewSupport.Detach(
-        window.mLayerViewSupport->GetJavaCompositor());
-  }
-
-  if (window.mSessionAccessibility) {
-    window.mSessionAccessibility.Detach(
-        window.mSessionAccessibility->GetJavaAccessibility());
-  }
-
-  if (window.mMediaSessionSupport) {
-    window.mMediaSessionSupport.Detach(
-        window.mMediaSessionSupport->GetJavaController());
+GeckoViewSupport::~GeckoViewSupport() {
+  if (mWindow) {
+    mWindow->DetachNatives();
   }
 }
 
 /* static */
-void nsWindow::GeckoViewSupport::Open(
+void GeckoViewSupport::Open(
     const jni::Class::LocalRef& aCls, GeckoSession::Window::Param aWindow,
     jni::Object::Param aQueue, jni::Object::Param aCompositor,
     jni::Object::Param aDispatcher, jni::Object::Param aSessionAccessibility,
@@ -1743,7 +1576,7 @@ void nsWindow::GeckoViewSupport::Open(
     bool aRemote) {
   MOZ_ASSERT(NS_IsMainThread());
 
-  AUTO_PROFILER_LABEL("nsWindow::GeckoViewSupport::Open", OTHER);
+  AUTO_PROFILER_LABEL("mozilla::widget::GeckoViewSupport::Open", OTHER);
 
   nsCOMPtr<nsIWindowWatcher> ww = do_GetService(NS_WINDOWWATCHER_CONTRACTID);
   MOZ_RELEASE_ASSERT(ww);
@@ -1783,15 +1616,21 @@ void nsWindow::GeckoViewSupport::Open(
 
   // Attach a new GeckoView support object to the new window.
   GeckoSession::Window::LocalRef sessionWindow(aCls.Env(), aWindow);
-  window->mGeckoViewSupport =
-      mozilla::MakeUnique<GeckoViewSupport>(window, sessionWindow);
-  window->mGeckoViewSupport->mDOMWindow = pdomWindow;
+  auto weakGeckoViewSupport =
+      jni::NativeWeakPtrHolder<GeckoViewSupport>::Attach(
+          sessionWindow, window, sessionWindow, pdomWindow);
+
+  window->mGeckoViewSupport = weakGeckoViewSupport;
   window->mAndroidView = androidView;
 
   // Attach other session support objects.
-  window->mGeckoViewSupport->Transfer(sessionWindow, aQueue, aCompositor,
-                                      aDispatcher, aSessionAccessibility,
-                                      aInitData);
+  {  // Scope for gvsAccess
+    auto gvsAccess = weakGeckoViewSupport.Access();
+    MOZ_ASSERT(gvsAccess);
+
+    gvsAccess->Transfer(sessionWindow, aQueue, aCompositor, aDispatcher,
+                        aSessionAccessibility, aInitData);
+  }
 
   if (window->mWidgetListener) {
     nsCOMPtr<nsIAppWindow> appWindow(window->mWidgetListener->GetAppWindow());
@@ -1803,9 +1642,12 @@ void nsWindow::GeckoViewSupport::Open(
   }
 }
 
-void nsWindow::GeckoViewSupport::Close() {
-  if (window.mAndroidView) {
-    window.mAndroidView->mEventDispatcher->Detach();
+void GeckoViewSupport::Close() {
+  if (mWindow) {
+    if (mWindow->mAndroidView) {
+      mWindow->mAndroidView->mEventDispatcher->Detach();
+    }
+    mWindow = nullptr;
   }
 
   if (!mDOMWindow) {
@@ -1817,43 +1659,45 @@ void nsWindow::GeckoViewSupport::Close() {
   mGeckoViewWindow = nullptr;
 }
 
-void nsWindow::GeckoViewSupport::Transfer(
-    const GeckoSession::Window::LocalRef& inst, jni::Object::Param aQueue,
-    jni::Object::Param aCompositor, jni::Object::Param aDispatcher,
-    jni::Object::Param aSessionAccessibility, jni::Object::Param aInitData) {
-  if (window.mNPZCSupport) {
-    MOZ_ASSERT(window.mLayerViewSupport);
-    window.mNPZCSupport.Detach(window.mNPZCSupport->GetJavaNPZC());
-  }
+void GeckoViewSupport::Transfer(const GeckoSession::Window::LocalRef& inst,
+                                jni::Object::Param aQueue,
+                                jni::Object::Param aCompositor,
+                                jni::Object::Param aDispatcher,
+                                jni::Object::Param aSessionAccessibility,
+                                jni::Object::Param aInitData) {
+  mWindow->mNPZCSupport.Detach();
 
   auto compositor = GeckoSession::Compositor::LocalRef(
       inst.Env(), GeckoSession::Compositor::Ref::From(aCompositor));
-  if (window.mLayerViewSupport &&
-      window.mLayerViewSupport->GetJavaCompositor() != compositor) {
-    window.mLayerViewSupport.Detach(
-        window.mLayerViewSupport->GetJavaCompositor());
-  }
-  if (!window.mLayerViewSupport) {
-    window.mLayerViewSupport.Attach(compositor, &window, compositor);
+
+  bool attachLvs;
+  {  // Scope for lvsAccess
+    auto lvsAccess{mWindow->mLayerViewSupport.Access()};
+    // If we do not yet have mLayerViewSupport, or if the compositor has
+    // changed, then we must attach a new one.
+    attachLvs = !lvsAccess || lvsAccess->GetJavaCompositor() != compositor;
   }
 
-  MOZ_ASSERT(window.mAndroidView);
-  window.mAndroidView->mEventDispatcher->Attach(
+  if (attachLvs) {
+    mWindow->mLayerViewSupport =
+        jni::NativeWeakPtrHolder<LayerViewSupport>::Attach(
+            compositor, mWindow->mGeckoViewSupport, compositor);
+  }
+
+  MOZ_ASSERT(mWindow->mAndroidView);
+  mWindow->mAndroidView->mEventDispatcher->Attach(
       java::EventDispatcher::Ref::From(aDispatcher), mDOMWindow);
 
-  if (window.mSessionAccessibility) {
-    window.mSessionAccessibility.Detach(
-        window.mSessionAccessibility->GetJavaAccessibility());
-  }
+  mWindow->mSessionAccessibility.Detach();
   if (aSessionAccessibility) {
     AttachAccessibility(inst, aSessionAccessibility);
   }
 
   if (mIsReady) {
     // We're in a transfer; update init-data and notify JS code.
-    window.mAndroidView->mInitData = java::GeckoBundle::Ref::From(aInitData);
+    mWindow->mAndroidView->mInitData = java::GeckoBundle::Ref::From(aInitData);
     OnReady(aQueue);
-    window.mAndroidView->mEventDispatcher->Dispatch(
+    mWindow->mAndroidView->mEventDispatcher->Dispatch(
         u"GeckoView:UpdateInitData");
   }
 
@@ -1862,81 +1706,124 @@ void nsWindow::GeckoViewSupport::Transfer(
                           compositor)] { compositor->OnCompositorAttached(); });
 }
 
-void nsWindow::GeckoViewSupport::AttachEditable(
+void GeckoViewSupport::AttachEditable(
     const GeckoSession::Window::LocalRef& inst,
     jni::Object::Param aEditableParent) {
-  if (!window.mEditableSupport) {
+  if (auto win{mWindow->mEditableSupport.Access()}) {
+    win->TransferParent(aEditableParent);
+  } else {
     auto editableChild = java::GeckoEditableChild::New(aEditableParent,
                                                        /* default */ true);
-    window.mEditableSupport.Attach(editableChild, &window, editableChild);
-  } else {
-    window.mEditableSupport->TransferParent(aEditableParent);
+    mWindow->mEditableSupport =
+        jni::NativeWeakPtrHolder<GeckoEditableSupport>::Attach(
+            editableChild, mWindow->mGeckoViewSupport, editableChild);
   }
 
-  window.mEditableParent = aEditableParent;
+  mWindow->mEditableParent = aEditableParent;
 }
 
-void nsWindow::GeckoViewSupport::AttachAccessibility(
+void GeckoViewSupport::AttachAccessibility(
     const GeckoSession::Window::LocalRef& inst,
     jni::Object::Param aSessionAccessibility) {
-  MOZ_ASSERT(!window.mSessionAccessibility);
   java::SessionAccessibility::NativeProvider::LocalRef sessionAccessibility(
       inst.Env());
   sessionAccessibility = java::SessionAccessibility::NativeProvider::Ref::From(
       aSessionAccessibility);
 
-  if (window.mSessionAccessibility) {
-    window.mSessionAccessibility.Detach(
-        window.mSessionAccessibility->GetJavaAccessibility());
-  }
-
-  window.mSessionAccessibility.Attach(sessionAccessibility, &window,
-                                      sessionAccessibility);
+  mWindow->mSessionAccessibility =
+      jni::NativeWeakPtrHolder<a11y::SessionAccessibility>::Attach(
+          sessionAccessibility, mWindow->mGeckoViewSupport,
+          sessionAccessibility);
 }
 
-void nsWindow::GeckoViewSupport::AttachMediaSessionController(
-    const GeckoSession::Window::LocalRef& inst, jni::Object::Param aController,
-    const int64_t aId) {
-  if (window.mMediaSessionSupport) {
-    window.mMediaSessionSupport.Detach(
-        window.mMediaSessionSupport->GetJavaController());
+auto GeckoViewSupport::OnLoadRequest(mozilla::jni::String::Param aUri,
+                                     int32_t aWindowType, int32_t aFlags,
+                                     mozilla::jni::String::Param aTriggeringUri,
+                                     bool aHasUserGesture,
+                                     bool aIsTopLevel) const
+    -> java::GeckoResult::LocalRef {
+  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
+  if (!window) {
+    return nullptr;
+  }
+  return window->OnLoadRequest(aUri, aWindowType, aFlags, aTriggeringUri,
+                               aHasUserGesture, aIsTopLevel);
+}
+
+void GeckoViewSupport::OnReady(jni::Object::Param aQueue) {
+  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
+  if (!window) {
+    return;
+  }
+  window->OnReady(aQueue);
+  mIsReady = true;
+}
+
+void GeckoViewSupport::PassExternalResponse(
+    java::WebResponse::Param aResponse) {
+  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
+  if (!window) {
+    return;
   }
 
+  auto response = java::WebResponse::GlobalRef(aResponse);
+
+  DispatchToUiThread("GeckoViewSupport::PassExternalResponse",
+                     [window = java::GeckoSession::Window::GlobalRef(window),
+                      response] { window->PassExternalWebResponse(response); });
+}
+
+void GeckoViewSupport::AttachMediaSessionController(
+    const GeckoSession::Window::LocalRef& inst, jni::Object::Param aController,
+    const int64_t aId) {
   auto controller = java::MediaSession::Controller::LocalRef(
       jni::GetGeckoThreadEnv(),
       java::MediaSession::Controller::Ref::From(aController));
-  window.mMediaSessionSupport.Attach(controller, &window, controller);
+  mWindow->mMediaSessionSupport =
+      jni::NativeWeakPtrHolder<MediaSessionSupport>::Attach(
+          controller, mWindow->mGeckoViewSupport, controller);
 
   RefPtr<BrowsingContext> bc = BrowsingContext::Get(aId);
   RefPtr<dom::MediaController> nativeController =
       bc->Canonical()->GetMediaController();
   MOZ_ASSERT(nativeController);
 
-  window.mMediaSessionSupport->SetNativeController(nativeController);
+  if (auto acc = mWindow->mMediaSessionSupport.Access()) {
+    acc->SetNativeController(nativeController);
+  }
 
   DispatchToUiThread("GeckoViewSupport::AttachMediaSessionController",
                      [controller = java::MediaSession::Controller::GlobalRef(
                           controller)] { controller->OnAttached(); });
 }
 
-void nsWindow::GeckoViewSupport::DetachMediaSessionController(
+void GeckoViewSupport::DetachMediaSessionController(
     const GeckoSession::Window::LocalRef& inst,
     jni::Object::Param aController) {
-  if (window.mMediaSessionSupport) {
-    window.mMediaSessionSupport.Detach(
-        window.mMediaSessionSupport->GetJavaController());
-  }
+  mWindow->mMediaSessionSupport.Detach();
 }
+
+}  // namespace widget
+}  // namespace mozilla
 
 void nsWindow::InitNatives() {
   jni::InitConversionStatics();
-  nsWindow::GeckoViewSupport::Base::Init();
-  nsWindow::LayerViewSupport::Init();
-  nsWindow::NPZCSupport::Init();
-  nsWindow::MediaSessionSupport::Init();
+  mozilla::widget::GeckoViewSupport::Base::Init();
+  mozilla::widget::LayerViewSupport::Init();
+  mozilla::widget::MediaSessionSupport::Init();
+  mozilla::widget::NPZCSupport::Init();
 
-  GeckoEditableSupport::Init();
+  mozilla::widget::GeckoEditableSupport::Init();
   a11y::SessionAccessibility::Init();
+}
+
+void nsWindow::DetachNatives() {
+  MOZ_ASSERT(NS_IsMainThread());
+  mEditableSupport.Detach();
+  mNPZCSupport.Detach();
+  mLayerViewSupport.Detach();
+  mSessionAccessibility.Detach();
+  mMediaSessionSupport.Detach();
 }
 
 /* static */
@@ -2065,10 +1952,8 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
 void nsWindow::Destroy() {
   nsBaseWidget::mOnDestroyCalled = true;
 
-  if (mGeckoViewSupport) {
-    // Disassociate our native object with GeckoView.
-    mGeckoViewSupport = nullptr;
-  }
+  // Disassociate our native object from GeckoView.
+  mGeckoViewSupport.Detach();
 
   // Stuff below may release the last ref to this
   nsCOMPtr<nsIWidget> kungFuDeathGrip(this);
@@ -2108,6 +1993,13 @@ nsresult nsWindow::ConfigureChildren(
   return NS_OK;
 }
 
+mozilla::widget::EventDispatcher* nsWindow::GetEventDispatcher() const {
+  if (mAndroidView) {
+    return mAndroidView->mEventDispatcher;
+  }
+  return nullptr;
+}
+
 void nsWindow::RedrawAll() {
   if (mAttachedWidgetListener) {
     mAttachedWidgetListener->RequestRepaint();
@@ -2128,10 +2020,12 @@ mozilla::layers::LayersId nsWindow::GetRootLayerId() const {
 }
 
 void nsWindow::OnGeckoViewReady() {
-  if (!mGeckoViewSupport) {
+  auto acc(mGeckoViewSupport.Access());
+  if (!acc) {
     return;
   }
-  mGeckoViewSupport->OnReady();
+
+  acc->OnReady();
 }
 
 void nsWindow::SetParent(nsIWidget* aNewParent) {
@@ -2155,7 +2049,8 @@ RefPtr<MozPromise<bool, bool, false>> nsWindow::OnLoadRequest(
     nsIURI* aUri, int32_t aWindowType, int32_t aFlags,
     nsIPrincipal* aTriggeringPrincipal, bool aHasUserGesture,
     bool aIsTopLevel) {
-  if (!mGeckoViewSupport) {
+  auto geckoViewSupport(mGeckoViewSupport.Access());
+  if (!geckoViewSupport) {
     return MozPromise<bool, bool, false>::CreateAndResolve(false, __func__);
   }
   nsAutoCString spec, triggeringSpec;
@@ -2177,7 +2072,7 @@ RefPtr<MozPromise<bool, bool, false>> nsWindow::OnLoadRequest(
     }
   }
 
-  auto geckoResult = mGeckoViewSupport->OnLoadRequest(
+  auto geckoResult = geckoViewSupport->OnLoadRequest(
       spec.get(), aWindowType, aFlags,
       isNullPrincipal ? nullptr : triggeringSpec.get(), aHasUserGesture,
       aIsTopLevel);
@@ -2524,7 +2419,8 @@ void nsWindow::InitEvent(WidgetGUIEvent& event, LayoutDeviceIntPoint* aPoint) {
 }
 
 void nsWindow::UpdateOverscrollVelocity(const float aX, const float aY) {
-  if (NativePtr<LayerViewSupport>::Locked lvs{mLayerViewSupport}) {
+  if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+          mLayerViewSupport.Access()}) {
     const auto& compositor = lvs->GetJavaCompositor();
     if (AndroidBridge::IsJavaUiThread()) {
       compositor->UpdateOverscrollVelocity(aX, aY);
@@ -2540,7 +2436,8 @@ void nsWindow::UpdateOverscrollVelocity(const float aX, const float aY) {
 }
 
 void nsWindow::UpdateOverscrollOffset(const float aX, const float aY) {
-  if (NativePtr<LayerViewSupport>::Locked lvs{mLayerViewSupport}) {
+  if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+          mLayerViewSupport.Access()}) {
     const auto& compositor = lvs->GetJavaCompositor();
     if (AndroidBridge::IsJavaUiThread()) {
       compositor->UpdateOverscrollOffset(aX, aY);
@@ -2574,7 +2471,8 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
     }
 
     case NS_JAVA_SURFACE:
-      if (NativePtr<LayerViewSupport>::Locked lvs{mLayerViewSupport}) {
+      if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+              mLayerViewSupport.Access()}) {
         return lvs->GetSurface().Get();
       }
       return nullptr;
@@ -2603,10 +2501,12 @@ void nsWindow::DispatchHitTest(const WidgetTouchEvent& aEvent) {
 }
 
 void nsWindow::PassExternalResponse(java::WebResponse::Param aResponse) {
-  if (!mGeckoViewSupport) {
+  auto acc(mGeckoViewSupport.Access());
+  if (!acc) {
     return;
   }
-  mGeckoViewSupport->PassExternalResponse(aResponse);
+
+  acc->PassExternalResponse(aResponse);
 }
 
 mozilla::Modifiers nsWindow::GetModifiers(int32_t metaState) {
@@ -2633,29 +2533,6 @@ TimeStamp nsWindow::GetEventTimeStamp(int64_t aEventTime) {
   return TimeStamp::FromSystemTime(tick);
 }
 
-void nsWindow::GeckoViewSupport::OnReady(jni::Object::Param aQueue) {
-  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
-  if (!window) {
-    return;
-  }
-  window->OnReady(aQueue);
-  mIsReady = true;
-}
-
-void nsWindow::GeckoViewSupport::PassExternalResponse(
-    java::WebResponse::Param aResponse) {
-  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
-  if (!window) {
-    return;
-  }
-
-  auto response = java::WebResponse::GlobalRef(aResponse);
-
-  DispatchToUiThread("GeckoViewSupport::PassExternalResponse",
-                     [window = GeckoSession::Window::GlobalRef(window),
-                      response] { window->PassExternalWebResponse(response); });
-}
-
 void nsWindow::UserActivity() {
   if (!mIdleService) {
     mIdleService = do_GetService("@mozilla.org/widget/useridleservice;1");
@@ -2670,15 +2547,33 @@ void nsWindow::UserActivity() {
   }
 }
 
+RefPtr<mozilla::a11y::SessionAccessibility>
+nsWindow::GetSessionAccessibility() {
+  auto acc(mSessionAccessibility.Access());
+  if (!acc) {
+    return nullptr;
+  }
+
+  return acc.AsRefPtr();
+}
+
 TextEventDispatcherListener* nsWindow::GetNativeTextEventDispatcherListener() {
   nsWindow* top = FindTopLevel();
   MOZ_ASSERT(top);
 
-  if (!top->mEditableSupport) {
+  auto acc(top->mEditableSupport.Access());
+  if (!acc) {
     // Non-GeckoView windows don't support IME operations.
     return nullptr;
   }
-  return top->mEditableSupport;
+
+  nsCOMPtr<TextEventDispatcherListener> ptr;
+  if (NS_FAILED(acc->QueryInterface(NS_GET_IID(TextEventDispatcherListener),
+                                    getter_AddRefs(ptr)))) {
+    return nullptr;
+  }
+
+  return ptr.get();
 }
 
 void nsWindow::SetInputContext(const InputContext& aContext,
@@ -2686,7 +2581,8 @@ void nsWindow::SetInputContext(const InputContext& aContext,
   nsWindow* top = FindTopLevel();
   MOZ_ASSERT(top);
 
-  if (!top->mEditableSupport) {
+  auto acc(top->mEditableSupport.Access());
+  if (!acc) {
     // Non-GeckoView windows don't support IME operations.
     return;
   }
@@ -2695,21 +2591,22 @@ void nsWindow::SetInputContext(const InputContext& aContext,
   // will be processed by the top window. Therefore, to ensure the
   // IME event uses the correct mInputContext, we need to let the top
   // window process SetInputContext
-  top->mEditableSupport->SetInputContext(aContext, aAction);
+  acc->SetInputContext(aContext, aAction);
 }
 
 InputContext nsWindow::GetInputContext() {
   nsWindow* top = FindTopLevel();
   MOZ_ASSERT(top);
 
-  if (!top->mEditableSupport) {
+  auto acc(top->mEditableSupport.Access());
+  if (!acc) {
     // Non-GeckoView windows don't support IME operations.
     return InputContext();
   }
 
   // We let the top window process SetInputContext,
   // so we should let it process GetInputContext as well.
-  return top->mEditableSupport->GetInputContext();
+  return acc->GetInputContext();
 }
 
 nsresult nsWindow::SynthesizeNativeTouchPoint(uint32_t aPointerId,
@@ -2739,8 +2636,11 @@ nsresult nsWindow::SynthesizeNativeTouchPoint(uint32_t aPointerId,
       return NS_ERROR_UNEXPECTED;
   }
 
-  MOZ_ASSERT(mNPZCSupport);
-  const auto& npzc = mNPZCSupport->GetJavaNPZC();
+  MOZ_ASSERT(mNPZCSupport.IsAttached());
+  auto npzcSup(mNPZCSupport.Access());
+  MOZ_ASSERT(!!npzcSup);
+
+  const auto& npzc = npzcSup->GetJavaNPZC();
   const auto& bounds = FindTopLevel()->mBounds;
   aPoint.x -= bounds.x;
   aPoint.y -= bounds.y;
@@ -2762,8 +2662,11 @@ nsresult nsWindow::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
                                               nsIObserver* aObserver) {
   mozilla::widget::AutoObserverNotifier notifier(aObserver, "mouseevent");
 
-  MOZ_ASSERT(mNPZCSupport);
-  const auto& npzc = mNPZCSupport->GetJavaNPZC();
+  MOZ_ASSERT(mNPZCSupport.IsAttached());
+  auto npzcSup(mNPZCSupport.Access());
+  MOZ_ASSERT(!!npzcSup);
+
+  const auto& npzc = npzcSup->GetJavaNPZC();
   const auto& bounds = FindTopLevel()->mBounds;
   aPoint.x -= bounds.x;
   aPoint.y -= bounds.y;
@@ -2781,8 +2684,11 @@ nsresult nsWindow::SynthesizeNativeMouseMove(LayoutDeviceIntPoint aPoint,
                                              nsIObserver* aObserver) {
   mozilla::widget::AutoObserverNotifier notifier(aObserver, "mouseevent");
 
-  MOZ_ASSERT(mNPZCSupport);
-  const auto& npzc = mNPZCSupport->GetJavaNPZC();
+  MOZ_ASSERT(mNPZCSupport.IsAttached());
+  auto npzcSup(mNPZCSupport.Access());
+  MOZ_ASSERT(!!npzcSup);
+
+  const auto& npzc = npzcSup->GetJavaNPZC();
   const auto& bounds = FindTopLevel()->mBounds;
   aPoint.x -= bounds.x;
   aPoint.y -= bounds.y;
@@ -2802,11 +2708,11 @@ bool nsWindow::WidgetPaintsBackground() {
 }
 
 bool nsWindow::NeedsPaint() {
-  if (!mLayerViewSupport || mLayerViewSupport->CompositorPaused() ||
-      // FindTopLevel() != nsWindow::TopWindow() ||
-      !GetLayerManager(nullptr)) {
+  auto lvs(mLayerViewSupport.Access());
+  if (!lvs || lvs->CompositorPaused() || !GetLayerManager(nullptr)) {
     return false;
   }
+
   return nsIWidget::NeedsPaint();
 }
 
@@ -2853,7 +2759,8 @@ bool nsWindow::IsContentDocumentDisplayed() {
 
 void nsWindow::RecvToolbarAnimatorMessageFromCompositor(int32_t aMessage) {
   MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
-  if (NativePtr<LayerViewSupport>::Locked lvs{mLayerViewSupport}) {
+  if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+          mLayerViewSupport.Access()}) {
     lvs->RecvToolbarAnimatorMessage(aMessage);
   }
 }
@@ -2861,7 +2768,8 @@ void nsWindow::RecvToolbarAnimatorMessageFromCompositor(int32_t aMessage) {
 void nsWindow::UpdateRootFrameMetrics(const ScreenPoint& aScrollOffset,
                                       const CSSToScreenScale& aZoom) {
   MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
-  if (NativePtr<LayerViewSupport>::Locked lvs{mLayerViewSupport}) {
+  if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+          mLayerViewSupport.Access()}) {
     const auto& compositor = lvs->GetJavaCompositor();
     mContentDocumentDisplayed = true;
     compositor->UpdateRootFrameMetrics(aScrollOffset.x, aScrollOffset.y,
@@ -2872,7 +2780,8 @@ void nsWindow::UpdateRootFrameMetrics(const ScreenPoint& aScrollOffset,
 void nsWindow::RecvScreenPixels(Shmem&& aMem, const ScreenIntSize& aSize,
                                 bool aNeedsYFlip) {
   MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
-  if (NativePtr<LayerViewSupport>::Locked lvs{mLayerViewSupport}) {
+  if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+          mLayerViewSupport.Access()}) {
     lvs->RecvScreenPixels(std::move(aMem), aSize, aNeedsYFlip);
   }
 }
@@ -2917,17 +2826,6 @@ void nsWindow::UpdateSafeAreaInsets(const ScreenIntMargin& aSafeAreaInsets) {
   }
 }
 
-auto nsWindow::GeckoViewSupport::OnLoadRequest(
-    mozilla::jni::String::Param aUri, int32_t aWindowType, int32_t aFlags,
-    mozilla::jni::String::Param aTriggeringUri, bool aHasUserGesture,
-    bool aIsTopLevel) const -> java::GeckoResult::LocalRef {
-  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
-  if (!window) {
-    return nullptr;
-  }
-  return window->OnLoadRequest(aUri, aWindowType, aFlags, aTriggeringUri,
-                               aHasUserGesture, aIsTopLevel);
-}
 already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {
   nsCOMPtr<nsIWidget> window = new nsWindow();
   return window.forget();

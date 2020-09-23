@@ -1048,3 +1048,120 @@ addAccessibleTask(
     );
   }
 );
+
+/*
+ * Test rotor with images
+ */
+addAccessibleTask(
+  `
+  <img id="img1" alt="image one" src="http://example.com/a11y/accessible/tests/mochitest/moz.png"><br>
+  <a href="http://example.com">
+    <img id="img2" alt="image two" src="http://example.com/a11y/accessible/tests/mochitest/moz.png">
+  </a>
+  <img src="" id="img3">
+  `,
+  (browser, accDoc) => {
+    let searchPred = {
+      AXSearchKey: "AXImageSearchKey",
+      AXImmediateDescendantsOnly: 0,
+      AXResultsLimit: -1,
+      AXDirection: "AXDirectionNext",
+    };
+
+    const webArea = accDoc.nativeInterface.QueryInterface(
+      Ci.nsIAccessibleMacInterface
+    );
+    is(
+      webArea.getAttributeValue("AXRole"),
+      "AXWebArea",
+      "Got web area accessible"
+    );
+
+    let images = webArea.getParameterizedAttributeValue(
+      "AXUIElementsForSearchPredicate",
+      NSDictionary(searchPred)
+    );
+
+    is(images.length, 3, "Found three images");
+
+    const img1 = getNativeInterface(accDoc, "img1");
+    const img2 = getNativeInterface(accDoc, "img2");
+    const img3 = getNativeInterface(accDoc, "img3");
+
+    is(
+      img1.getAttributeValue("AXDescription"),
+      images[0].getAttributeValue("AXDescription"),
+      "Found correct image"
+    );
+
+    is(
+      img2.getAttributeValue("AXDescription"),
+      images[1].getAttributeValue("AXDescription"),
+      "Found correct image"
+    );
+
+    is(
+      img3.getAttributeValue("AXDescription"),
+      images[2].getAttributeValue("AXDescription"),
+      "Found correct image"
+    );
+  }
+);
+
+/**
+ * Test rotor with frames
+ */
+addAccessibleTask(
+  `
+  <iframe id="frame1" src="data:text/html,<h1>hello</h1>world"></iframe>
+  <iframe id="frame2" src="data:text/html,<iframe id='frame3' src='data:text/html,<h1>goodbye</h1>'>"></iframe>
+  `,
+  async (browser, accDoc) => {
+    const searchPred = {
+      AXSearchKey: "AXFrameSearchKey",
+      AXImmediateDescendantsOnly: 0,
+      AXResultsLimit: -1,
+      AXDirection: "AXDirectionNext",
+    };
+
+    const webArea = accDoc.nativeInterface.QueryInterface(
+      Ci.nsIAccessibleMacInterface
+    );
+    is(
+      webArea.getAttributeValue("AXRole"),
+      "AXWebArea",
+      "Got web area accessible"
+    );
+
+    const frameCount = webArea.getParameterizedAttributeValue(
+      "AXUIElementCountForSearchPredicate",
+      NSDictionary(searchPred)
+    );
+    is(3, frameCount, "Found 3 frames");
+
+    // const frames = webArea.getParameterizedAttributeValue(
+    //   "AXUIElementsForSearchPredicate",
+    //   NSDictionary(searchPred)
+    // );
+
+    // const spin = getNativeInterface(accDoc, "spinbutton");
+    // const details = getNativeInterface(accDoc, "details");
+    // const tree = getNativeInterface(accDoc, "tree");
+
+    // is(
+    //   spin.getAttributeValue("AXRole"),
+    //   controls[0].getAttributeValue("AXRole"),
+    //   "Found correct spinbutton"
+    // );
+    // is(
+    //   details.getAttributeValue("AXRole"),
+    //   controls[1].getAttributeValue("AXRole"),
+    //   "Found correct details element"
+    // );
+    // is(
+    //   tree.getAttributeValue("AXRole"),
+    //   controls[2].getAttributeValue("AXRole"),
+    //   "Found correct tree"
+    // );
+  }
+);

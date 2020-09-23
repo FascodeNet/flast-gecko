@@ -4092,6 +4092,7 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
         }
       }
     }
+    return NS_OK;
   }
 
   bool canReload = true;
@@ -10108,8 +10109,8 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   }
 
   bool uriModified;
-  if (mLSHE) {
-    if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mLSHE || mLoadingEntry) {
+    if (mLoadingEntry) {
       uriModified = mLoadingEntry->mInfo.GetURIWasModified();
     } else {
       uriModified = mLSHE->GetURIWasModified();
@@ -13213,7 +13214,8 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aCommit) {
 
   mActiveEntry = nullptr;
   mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> loadingEntry;
-  mActiveEntryIsLoadingFromSessionHistory = !!mLoadingEntry;
+  mActiveEntryIsLoadingFromSessionHistory =
+      mLoadingEntry && mLoadingEntry->mLoadIsFromSessionHistory;
   if (mLoadingEntry) {
     MOZ_LOG(gSHLog, LogLevel::Debug,
             ("Moving the loading entry to the active entry on nsDocShell %p "

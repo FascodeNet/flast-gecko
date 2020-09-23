@@ -68,6 +68,8 @@ interface BrowsingContext {
 
   readonly attribute WindowContext? topWindowContext;
 
+  readonly attribute boolean ancestorsAreCurrent;
+
   [SetterThrows] attribute [TreatNullAs=EmptyString] DOMString customPlatform;
 
   [SetterThrows] attribute [TreatNullAs=EmptyString] DOMString customUserAgent;
@@ -124,6 +126,9 @@ interface BrowsingContext {
   [SetterThrows] attribute unsigned long long browserId;
 
   readonly attribute ChildSHistory? childSessionHistory;
+
+  // Resets the location change rate limit. Used for testing.
+  void resetLocationChangeRateLimit();
 };
 
 BrowsingContext includes LoadContextMixin;

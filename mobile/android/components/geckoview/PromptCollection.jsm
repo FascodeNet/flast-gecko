@@ -29,19 +29,16 @@ class PromptCollection {
     return !!result?.allow;
   }
 
-  beforeUnloadCheck(browsingContext) {
-    const msg = {
-      type: "beforeUnload",
-    };
-    const prompter = new GeckoViewPrompter(browsingContext);
-    const result = prompter.showPrompt(msg);
-    return !!result?.allow;
+  asyncBeforeUnloadCheck(browsingContext) {
+    return new Promise(resolve => {
+      const msg = {
+        type: "beforeUnload",
+      };
+      const prompter = new GeckoViewPrompter(browsingContext);
+      prompter.asyncShowPrompt(msg, resolve);
+    }).then(result => !!result?.allow);
   }
 }
-
-PromptCollection.prototype.classID = Components.ID(
-  "{3e30d2a0-9934-11ea-bb37-0242ac130002}"
-);
 
 PromptCollection.prototype.QueryInterface = ChromeUtils.generateQI([
   "nsIPromptCollection",

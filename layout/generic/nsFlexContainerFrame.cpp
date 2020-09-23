@@ -1516,7 +1516,7 @@ static nscoord PartiallyResolveAutoMinSize(
   //   from the aspect ratio and any definite size constraints in the opposite
   //   dimension.
   nscoord transferredSizeSuggestion = nscoord_MAX;
-  if (aFlexItem.IntrinsicRatio()) {
+  if (aFlexItem.HasIntrinsicRatio()) {
     // We have a usable aspect ratio. (not going to divide by 0)
     const bool useMinSizeIfCrossSizeIsIndefinite = true;
     nscoord crossSizeToUseWithRatio = CrossSizeToUseWithRatio(
@@ -2134,6 +2134,16 @@ FlexItem::FlexItem(ReflowInput& aFlexItemReflowInput, float aFlexGrow,
     } else if (mAlignSelf._0 == StyleAlignFlags::LAST_BASELINE) {
       mAlignSelf = {StyleAlignFlags::FLEX_END};
     }
+  }
+
+  // FIXME: Bug 1660122: Drop this if nsIFrame::GetIntrinicRatio() takes
+  // aspect-ratio property into account.
+  // Note: We check eReplaced here because replaced elements already handle the
+  // aspect-ratio property in their GetIntrinsicRatio() implementation.
+  const StyleAspectRatio& ratio =
+      aFlexItemReflowInput.mStylePosition->mAspectRatio;
+  if (!mFrame->IsFrameOfType(nsIFrame::eReplaced) && ratio.HasFiniteRatio()) {
+    mIntrinsicRatio = ratio.ratio.AsRatio().ToLayoutRatio();
   }
 }
 
@@ -4125,6 +4135,13 @@ nscoord nsFlexContainerFrame::ComputeCrossSize(
         "Unconstrained inline size; this should only result from huge sizes "
         "(not intrinsic sizing w/ orthogonal flows)");
     *aIsDefinite = true;
+    // FIXME: Bug 1661847 - there are cases where aReflowInput.ComputedISize()
+    // might not be the right thing to return here. Specifically: if our cross
+    // size is an intrinsic size, and we have flex items that are flexible and
+    // have intrinsic aspect ratios, then we may need to take their post-flexing
+    // main sizes into account (multiplied through their aspect ratios to get
+    // their cross sizes), in order to determine their flex line's size & the
+    // flex container's cross size (e.g. as `aSumLineCrossSizes`).
     return aReflowInput.ComputedISize();
   }
 
@@ -4502,7 +4519,8 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
 
 // Class to let us temporarily provide an override value for the the main-size
 // CSS property ('width' or 'height') on a flex item, for use in
-// nsContainerFrame::ComputeSizeWithIntrinsicDimensions.
+// nsContainerFrame::ComputeSizeWithIntrinsicDimensions (and
+// nsIFrame::ComputeSize, for items with 'aspect-ratio's).
 // (We could use this overridden size more broadly, too, but it's probably
 // better to avoid property-table accesses.  So, where possible, we communicate
 // the resolved main-size to the child via modifying its reflow input directly,
