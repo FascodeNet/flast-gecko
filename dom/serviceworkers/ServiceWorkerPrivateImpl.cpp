@@ -711,10 +711,7 @@ Result<IPCInternalRequest, nsresult> GetIPCInternalRequest(
   uint32_t loadFlags;
   MOZ_TRY(underlyingChannel->GetLoadFlags(&loadFlags));
 
-  nsCOMPtr<nsILoadInfo> loadInfo;
-  MOZ_TRY(underlyingChannel->GetLoadInfo(getter_AddRefs(loadInfo)));
-  MOZ_ASSERT(loadInfo);
-
+  nsCOMPtr<nsILoadInfo> loadInfo = underlyingChannel->LoadInfo();
   nsContentPolicyType contentPolicyType = loadInfo->InternalContentPolicyType();
 
   nsAutoString integrity;
@@ -1010,9 +1007,8 @@ void ServiceWorkerPrivateImpl::ErrorReceived(const ErrorValue& aError) {
   ServiceWorkerInfo* info = mOuter->mInfo;
 
   swm->HandleError(nullptr, info->Principal(), info->Scope(),
-                   NS_ConvertUTF8toUTF16(info->ScriptSpec()), EmptyString(),
-                   EmptyString(), EmptyString(), 0, 0,
-                   nsIScriptError::errorFlag, JSEXN_ERR);
+                   NS_ConvertUTF8toUTF16(info->ScriptSpec()), u""_ns, u""_ns,
+                   u""_ns, 0, 0, nsIScriptError::errorFlag, JSEXN_ERR);
 }
 
 void ServiceWorkerPrivateImpl::Terminated() {

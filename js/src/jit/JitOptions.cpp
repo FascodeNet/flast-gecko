@@ -130,11 +130,6 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the IonMonkey JIT is enabled.
   SET_DEFAULT(ion, true);
 
-#ifdef NIGHTLY_BUILD
-  // Whether TI is enabled.
-  SET_DEFAULT(typeInference, true);
-#endif
-
   // Whether Ion uses WarpBuilder as MIR builder.
   SET_DEFAULT(warpBuilder, false);
 
@@ -351,13 +346,10 @@ void DefaultJitOptions::setFastWarmUp() {
 }
 
 void DefaultJitOptions::setWarpEnabled(bool enable) {
-#ifdef NIGHTLY_BUILD
-  // WarpBuilder requires TI to be disabled and doesn't use optimization levels.
-  typeInference = !enable;
+  // WarpBuilder doesn't use optimization levels.
   warpBuilder = enable;
   disableOptimizationLevels = enable;
   normalIonWarmUpThreshold = enable ? 1500 : 1000;
-#endif
 }
 
 void DefaultJitOptions::setNormalIonWarmUpThreshold(uint32_t warmUpThreshold) {

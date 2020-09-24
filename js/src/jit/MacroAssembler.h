@@ -10,7 +10,6 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/MacroForEach.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/Maybe.h"
 
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/MacroAssembler-x86.h"
@@ -623,7 +622,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
                           MoveOp::Type result = MoveOp::GENERAL);
 
   CodeOffset callWithABI(wasm::BytecodeOffset offset, wasm::SymbolicAddress fun,
-                         mozilla::Maybe<int32_t> tlsOffset,
                          MoveOp::Type result = MoveOp::GENERAL);
   void callDebugWithABI(wasm::SymbolicAddress fun,
                         MoveOp::Type result = MoveOp::GENERAL);
@@ -1045,6 +1043,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void truncDoubleToInt32(FloatRegister src, Register dest,
                           Label* fail) PER_SHARED_ARCH;
 
+  void nearbyIntDouble(RoundingMode mode, FloatRegister src,
+                       FloatRegister dest) PER_SHARED_ARCH;
+  void nearbyIntFloat32(RoundingMode mode, FloatRegister src,
+                        FloatRegister dest) PER_SHARED_ARCH;
+
   void signInt32(Register input, Register output);
   void signDouble(FloatRegister input, FloatRegister output);
   void signDoubleToInt32(FloatRegister input, Register output,
@@ -1418,6 +1421,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // RESOLVED_LENGTH flags are not set.
   void loadFunctionLength(Register func, Register funFlags, Register output,
                           Label* slowPath);
+
+  // Loads the function name. This handles interpreted, native, and bound
+  // functions.
+  void loadFunctionName(Register func, Register output, ImmGCPtr emptyString,
+                        Label* slowPath);
 
   inline void branchFunctionKind(Condition cond,
                                  FunctionFlags::FunctionKind kind, Register fun,
@@ -3963,8 +3971,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void outOfLineTruncateSlow(FloatRegister src, Register dest,
                              bool widenFloatToDouble, bool compilingWasm,
-                             wasm::BytecodeOffset callOffset,
-                             mozilla::Maybe<int32_t> tlsOffset);
+                             wasm::BytecodeOffset callOffset);
 
   void convertInt32ValueToDouble(const Address& address, Register scratch,
                                  Label* done);

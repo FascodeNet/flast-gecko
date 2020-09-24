@@ -38,6 +38,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryComms.h"
 #include "xpcpublic.h"
+#include "nsMimeTypes.h"
 
 #include "jsapi.h"
 #include "js/RegExp.h"
@@ -96,9 +97,10 @@ bool nsContentSecurityManager::AllowTopLevelNavigationToDataURI(
       !contentType.EqualsLiteral("image/svg+xml")) {
     return true;
   }
-  // Allow all plain text types as well as data: PDFs.
-  if (nsContentUtils::IsPlainTextType(contentType) ||
-      contentType.EqualsLiteral("application/pdf")) {
+  // Allow all data: PDFs. or JSON documents
+  if (contentType.EqualsLiteral(APPLICATION_JSON) ||
+      contentType.EqualsLiteral(TEXT_JSON) ||
+      contentType.EqualsLiteral(APPLICATION_PDF)) {
     return true;
   }
   // Redirecting to a toplevel data: URI is not allowed, hence we make
@@ -390,7 +392,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
 
   switch (contentPolicyType) {
     case nsIContentPolicy::TYPE_OTHER: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -400,7 +402,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_IMAGE: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -410,12 +412,12 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_OBJECT: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
     case nsIContentPolicy::TYPE_DOCUMENT: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -430,7 +432,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_PING: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -448,7 +450,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
       if (internalContentPolicyType ==
               nsIContentPolicy::TYPE_INTERNAL_XMLHTTPREQUEST ||
           internalContentPolicyType == nsIContentPolicy::TYPE_XMLHTTPREQUEST) {
-        mimeTypeGuess = EmptyCString();
+        mimeTypeGuess.Truncate();
       } else {
         MOZ_ASSERT(internalContentPolicyType ==
                        nsIContentPolicy::TYPE_INTERNAL_EVENTSOURCE,
@@ -459,7 +461,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_OBJECT_SUBREQUEST: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
 #ifdef DEBUG
       {
         nsCOMPtr<nsINode> node = aLoadInfo->LoadingNode();
@@ -472,7 +474,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_DTD: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
 #ifdef DEBUG
       {
         nsCOMPtr<nsINode> node = aLoadInfo->LoadingNode();
@@ -484,7 +486,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_FONT: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -492,7 +494,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
       if (internalContentPolicyType == nsIContentPolicy::TYPE_INTERNAL_TRACK) {
         mimeTypeGuess = "text/vtt"_ns;
       } else {
-        mimeTypeGuess = EmptyCString();
+        mimeTypeGuess.Truncate();
       }
 #ifdef DEBUG
       {
@@ -514,12 +516,12 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
         rv = httpChannelInternal->GetProxyURI(getter_AddRefs(uri));
         MOZ_ASSERT(NS_SUCCEEDED(rv));
       }
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
     case nsIContentPolicy::TYPE_CSP_REPORT: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -536,7 +538,7 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_BEACON: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
 #ifdef DEBUG
       {
         nsCOMPtr<nsINode> node = aLoadInfo->LoadingNode();
@@ -548,12 +550,12 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_FETCH: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
     case nsIContentPolicy::TYPE_IMAGESET: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
@@ -563,12 +565,12 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
     }
 
     case nsIContentPolicy::TYPE_SAVEAS_DOWNLOAD: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 
     case nsIContentPolicy::TYPE_SPECULATIVE: {
-      mimeTypeGuess = EmptyCString();
+      mimeTypeGuess.Truncate();
       break;
     }
 

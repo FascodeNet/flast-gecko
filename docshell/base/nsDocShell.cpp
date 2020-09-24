@@ -271,13 +271,16 @@ static int32_t gNumberOfDocumentsLoading = 0;
 static uint32_t gNumberOfPrivateDocShells = 0;
 
 #ifdef DEBUG
+unsigned long nsDocShell::gNumberOfDocShells = 0;
+static uint64_t gDocshellIDCounter = 0;
+
 static mozilla::LazyLogModule gDocShellLog("nsDocShell");
 static mozilla::LazyLogModule gDocShellAndDOMWindowLeakLogging(
     "DocShellAndDOMWindowLeak");
 #endif
 static mozilla::LazyLogModule gDocShellLeakLog("nsDocShellLeak");
 extern mozilla::LazyLogModule gPageCacheLog;
-static mozilla::LazyLogModule gSHLog("SessionHistory");
+mozilla::LazyLogModule gSHLog("SessionHistory");
 
 const char kBrandBundleURL[] = "chrome://branding/locale/brand.properties";
 const char kAppstringsBundleURL[] =
@@ -354,7 +357,6 @@ static bool IsUrgentStart(BrowsingContext* aBrowsingContext,
 nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
                        uint64_t aContentWindowID)
     : nsDocLoader(),
-      mHistoryID(aBrowsingContext->GetHistoryID()),
       mContentWindowID(aContentWindowID),
       mBrowsingContext(aBrowsingContext),
       mForcedCharset(nullptr),
@@ -421,11 +423,12 @@ nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
   MOZ_LOG(gDocShellLeakLog, LogLevel::Debug, ("DOCSHELL %p created\n", this));
 
 #ifdef DEBUG
+  mDocShellID = gDocshellIDCounter++;
   // We're counting the number of |nsDocShells| to help find leaks
   ++gNumberOfDocShells;
   MOZ_LOG(gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
-          ("++DOCSHELL %p == %ld [pid = %d] [id = %s]\n", (void*)this,
-           gNumberOfDocShells, getpid(), nsIDToCString(mHistoryID).get()));
+          ("++DOCSHELL %p == %ld [pid = %d] [id = %" PRIu64 "]\n", (void*)this,
+           gNumberOfDocShells, getpid(), mDocShellID));
 #endif
 }
 
@@ -460,10 +463,10 @@ nsDocShell::~nsDocShell() {
 
     // We're counting the number of |nsDocShells| to help find leaks
     --gNumberOfDocShells;
-    MOZ_LOG(gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
-            ("--DOCSHELL %p == %ld [pid = %d] [id = %s] [url = %s]\n",
-             (void*)this, gNumberOfDocShells, getpid(),
-             nsIDToCString(mHistoryID).get(), url.get()));
+    MOZ_LOG(
+        gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
+        ("--DOCSHELL %p == %ld [pid = %d] [id = %" PRIu64 "] [url = %s]\n",
+         (void*)this, gNumberOfDocShells, getpid(), mDocShellID, url.get()));
   }
 #endif
 }
@@ -2887,12 +2890,12 @@ void nsDocShell::SetChildOffset(int32_t aChildOffset) {
 int32_t nsDocShell::GetChildOffset() { return mChildOffset; }
 
 NS_IMETHODIMP
-nsDocShell::GetHistoryID(nsID** aID) {
-  *aID = mHistoryID.Clone();
+nsDocShell::GetHistoryID(nsID& aID) {
+  aID = mBrowsingContext->GetHistoryID();
   return NS_OK;
 }
 
-const nsID nsDocShell::HistoryID() { return mHistoryID; }
+const nsID& nsDocShell::HistoryID() { return mBrowsingContext->GetHistoryID(); }
 
 NS_IMETHODIMP
 nsDocShell::GetIsInUnload(bool* aIsInUnload) {
@@ -2940,8 +2943,7 @@ nsDocShell::AddChild(nsIDocShellTreeItem* aChild) {
                "child list must not be empty after a successful add");
 
   nsCOMPtr<nsIDocShell> childDocShell = do_QueryInterface(aChild);
-  bool dynamic = false;
-  childDocShell->GetCreatedDynamically(&dynamic);
+  bool dynamic = nsDocShell::Cast(childDocShell)->GetCreatedDynamically();
   if (!dynamic) {
     nsCOMPtr<nsISHEntry> currentSH;
     bool oshe = false;
@@ -3120,20 +3122,6 @@ nsresult nsDocShell::AddChildSHEntryToParent(nsISHEntry* aNewEntry,
   }
 
   return rv;
-}
-
-NS_IMETHODIMP
-nsDocShell::SetCreatedDynamically(bool aDynamic) {
-  if (mBrowsingContext) {
-    Unused << mBrowsingContext->SetCreatedDynamically(aDynamic);
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetCreatedDynamically(bool* aDynamic) {
-  *aDynamic = mBrowsingContext && mBrowsingContext->GetCreatedDynamically();
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -4034,6 +4022,7 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
   if (StaticPrefs::fission_sessionHistoryInParent()) {
     MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Reload", this));
+    bool forceReload = IsForceReloadType(loadType);
     if (!XRE_IsParentProcess()) {
       RefPtr<nsDocShell> docShell(this);
       RefPtr<Document> doc(GetDocument());
@@ -4041,7 +4030,7 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
       nsCOMPtr<nsIURI> currentURI(mCurrentURI);
       nsCOMPtr<nsIReferrerInfo> referrerInfo(mReferrerInfo);
       ContentChild::GetSingleton()->SendNotifyOnHistoryReload(
-          mBrowsingContext,
+          mBrowsingContext, forceReload,
           [docShell, doc, loadType, browsingContext, currentURI, referrerInfo](
               Tuple<bool, Maybe<RefPtr<nsDocShellLoadState>>, Maybe<bool>>&&
                   aResult) {
@@ -4076,7 +4065,7 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
       Maybe<bool> reloadingActiveEntry;
       if (!mBrowsingContext->IsDiscarded()) {
         mBrowsingContext->Canonical()->NotifyOnHistoryReload(
-            canReload, loadState, reloadingActiveEntry);
+            forceReload, canReload, loadState, reloadingActiveEntry);
       }
       if (canReload) {
         if (loadState.isSome()) {
@@ -5686,7 +5675,8 @@ nsresult nsDocShell::RefreshURIFromQueue() {
 }
 
 nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
-                           WindowGlobalChild* aWindowActor) {
+                           WindowGlobalChild* aWindowActor,
+                           bool aIsTransientAboutBlank) {
   // Save the LayoutHistoryState of the previous document, before
   // setting up new document
   PersistLayoutHistoryState();
@@ -5711,7 +5701,8 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
     SetHistoryEntryAndUpdateBC(Nothing(), Some<nsISHEntry*>(mLSHE));
   }
 
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (!aIsTransientAboutBlank &&
+      StaticPrefs::fission_sessionHistoryInParent()) {
     MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Embed", this));
     MoveLoadingToActiveEntry(mLoadType != LOAD_ERROR_PAGE);
   }
@@ -6761,7 +6752,7 @@ nsresult nsDocShell::CreateAboutBlankContentViewer(
       // hook 'em up
       if (viewer) {
         viewer->SetContainer(this);
-        rv = Embed(viewer, aActor);
+        rv = Embed(viewer, aActor, true);
         NS_ENSURE_SUCCESS(rv, rv);
 
         SetCurrentURI(blankDoc->GetDocumentURI(), nullptr, true, 0);
@@ -8316,7 +8307,7 @@ class InternalLoadEvent : public Runnable {
     // expect. By the time the event is fired, both window targeting and file
     // downloading have been handled, so we should never have an internal load
     // event that retargets or had a download.
-    mLoadState->SetTarget(EmptyString());
+    mLoadState->SetTarget(u""_ns);
     mLoadState->SetFileName(VoidString());
   }
 
@@ -8434,7 +8425,7 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
 
     int16_t shouldLoad = nsIContentPolicy::ACCEPT;
     rv = NS_CheckContentLoadPolicy(aLoadState->URI(), secCheckLoadInfo,
-                                   EmptyCString(),  // mime guess
+                                   ""_ns,  // mime guess
                                    &shouldLoad);
 
     if (NS_FAILED(rv) || NS_CP_REJECTED(shouldLoad)) {
@@ -8534,7 +8525,7 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
 
       rv = win->Open(NS_ConvertUTF8toUTF16(spec),
                      aLoadState->Target(),  // window name
-                     EmptyString(),         // Features
+                     u""_ns,                // Features
                      loadState,
                      true,  // aForceNoOpener
                      getter_AddRefs(newBC));
@@ -8544,7 +8535,7 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
 
     rv = win->OpenNoNavigate(NS_ConvertUTF8toUTF16(spec),
                              aLoadState->Target(),  // window name
-                             EmptyString(),         // Features
+                             u""_ns,                // Features
                              getter_AddRefs(newBC));
 
     // In some cases the Open call doesn't actually result in a new
@@ -8579,7 +8570,7 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
   // name to the empty string to prevent recursive retargeting!
   //
   // No window target
-  aLoadState->SetTarget(EmptyString());
+  aLoadState->SetTarget(u""_ns);
   // No forced download
   aLoadState->SetFileName(VoidString());
   return targetContext->InternalLoad(aLoadState);
@@ -9269,9 +9260,10 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
         !StaticPrefs::fission_sessionHistoryInParent()) {
       // We're making history navigation or a reload. Make sure our history ID
       // points to the same ID as SHEntry's docshell ID.
-      aLoadState->SHEntry()->GetDocshellID(mHistoryID);
+      nsID historyID = {};
+      aLoadState->SHEntry()->GetDocshellID(historyID);
 
-      MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetHistoryID(mHistoryID));
+      MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetHistoryID(historyID));
     }
   }
 
@@ -9721,8 +9713,7 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
       }
 
       // we really need to have a content type associated with this stream!!
-      postChannel->SetUploadStream(aLoadState->PostDataStream(), EmptyCString(),
-                                   -1);
+      postChannel->SetUploadStream(aLoadState->PostDataStream(), ""_ns, -1);
     }
 
     /* If there is a valid postdata *and* it is a History Load,
@@ -10372,8 +10363,7 @@ nsresult nsDocShell::OpenRedirectedChannel(nsDocShellLoadState* aLoadState) {
 
   MaybeCreateInitialClientSource();
 
-  nsCOMPtr<nsILoadInfo> loadInfo;
-  channel->GetLoadInfo(getter_AddRefs(loadInfo));
+  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
 
   LoadInfo* li = static_cast<LoadInfo*>(loadInfo.get());
   if (loadInfo->GetExternalContentPolicyType() ==
@@ -10528,7 +10518,7 @@ nsresult nsDocShell::ScrollToAnchor(bool aCurHasRef, bool aNewHasRef,
     }
   } else {
     // Tell the shell it's at an anchor, without scrolling.
-    presShell->GoToAnchor(EmptyString(), false);
+    presShell->GoToAnchor(u""_ns, false);
 
     // An empty anchor was found, but if it's a load from history,
     // we don't have to jump to the top of the page. Scrollbar
@@ -11090,7 +11080,7 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
             ("document %p UpdateActiveEntry non-replace", this));
     UpdateActiveEntry(
         true, /* aPreviousScrollPos = */ Nothing(), aNewURI, aNewURI,
-        aDocument->NodePrincipal(), aDocument->GetCsp(), EmptyString(),
+        aDocument->NodePrincipal(), aDocument->GetCsp(), u""_ns,
         /* aScrollRestorationIsManual = */ Nothing(), aData, uriWasModified);
   } else {
     // Step 3.
@@ -11185,12 +11175,13 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
 
 NS_IMETHODIMP
 nsDocShell::GetCurrentScrollRestorationIsManual(bool* aIsManual) {
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    *aIsManual = mActiveEntry && mActiveEntry->GetScrollRestorationIsManual();
+    return NS_OK;
+  }
+
   *aIsManual = false;
   if (mOSHE) {
-    if (StaticPrefs::fission_sessionHistoryInParent()) {
-      *aIsManual = mActiveEntry->GetScrollRestorationIsManual();
-      return NS_OK;
-    }
     return mOSHE->GetScrollRestorationIsManual(aIsManual);
   }
 
@@ -11446,7 +11437,7 @@ nsresult nsDocShell::AddToSessionHistory(
 
   // Title is set in nsDocShell::SetTitle()
   entry->Create(aURI,                 // uri
-                EmptyString(),        // Title
+                u""_ns,               // Title
                 inputStream,          // Post data stream
                 cacheKey,             // CacheKey
                 mContentTypeHint,     // Content-type
@@ -12630,7 +12621,7 @@ nsresult nsDocShell::OnLeaveLink() {
   nsresult rv = NS_ERROR_FAILURE;
 
   if (browserChrome) {
-    rv = browserChrome->SetLinkStatus(EmptyString());
+    rv = browserChrome->SetLinkStatus(u""_ns);
   }
   return rv;
 }
@@ -12716,10 +12707,6 @@ NS_IMETHODIMP nsDocShell::ExitPrintPreview() {
   return NS_OK;
 #endif
 }
-
-#ifdef DEBUG
-unsigned long nsDocShell::gNumberOfDocShells = 0;
-#endif
 
 NS_IMETHODIMP
 nsDocShell::GetCanExecuteScripts(bool* aResult) {

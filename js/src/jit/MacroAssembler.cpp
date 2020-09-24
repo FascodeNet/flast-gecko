@@ -2432,8 +2432,7 @@ void MacroAssembler::convertValueToFloatingPoint(ValueOperand value,
 void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
                                            bool widenFloatToDouble,
                                            bool compilingWasm,
-                                           wasm::BytecodeOffset callOffset,
-                                           mozilla::Maybe<int32_t> tlsOffset) {
+                                           wasm::BytecodeOffset callOffset) {
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
     defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
   ScratchDoubleScope fpscratch(*this);
@@ -2460,7 +2459,7 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
   if (compilingWasm) {
     setupWasmABICall();
     passABIArg(src, MoveOp::DOUBLE);
-    callWithABI(callOffset, wasm::SymbolicAddress::ToInt32, tlsOffset);
+    callWithABI(callOffset, wasm::SymbolicAddress::ToInt32);
   } else {
     setupUnalignedABICall(dest);
     passABIArg(src, MoveOp::DOUBLE);
@@ -3123,7 +3122,6 @@ void MacroAssembler::callWithABINoProfiler(void* fun, MoveOp::Type result,
 
 CodeOffset MacroAssembler::callWithABI(wasm::BytecodeOffset bytecode,
                                        wasm::SymbolicAddress imm,
-                                       mozilla::Maybe<int32_t> tlsOffset,
                                        MoveOp::Type result) {
   MOZ_ASSERT(wasm::NeedsBuiltinThunk(imm));
 
@@ -3137,14 +3135,8 @@ CodeOffset MacroAssembler::callWithABI(wasm::BytecodeOffset bytecode,
   // The TLS register is used in builtin thunks and must be set, by ABI:
   // reload it after passing arguments, which might have used it at spill
   // points when placing arguments.
+  loadWasmTlsRegFromFrame();
 
-  if (tlsOffset) {
-    // Account for stackAdjust and Push(WasmTlsReg).
-    *tlsOffset += stackAdjust + sizeof(void*);
-    loadPtr(Address(getStackPointer(), *tlsOffset), WasmTlsReg);
-  } else {
-    loadWasmTlsRegFromFrame();
-  }
   CodeOffset raOffset = call(
       wasm::CallSiteDesc(bytecode.offset(), wasm::CallSite::Symbolic), imm);
 
@@ -3485,6 +3477,52 @@ void MacroAssembler::loadFunctionLength(Register func, Register funFlags,
                      output);
   }
   bind(&lengthLoaded);
+}
+
+void MacroAssembler::loadFunctionName(Register func, Register output,
+                                      ImmGCPtr emptyString, Label* slowPath) {
+  MOZ_ASSERT(func != output);
+
+  // Get the JSFunction flags.
+  load16ZeroExtend(Address(func, JSFunction::offsetOfFlags()), output);
+
+  // If the name was previously resolved, the name property may be shadowed.
+  branchTest32(Assembler::NonZero, output, Imm32(FunctionFlags::RESOLVED_NAME),
+               slowPath);
+
+  Label notBoundTarget, loadName;
+  branchTest32(Assembler::Zero, output, Imm32(FunctionFlags::BOUND_FUN),
+               &notBoundTarget);
+  {
+    // Call into the VM if the target's name atom doesn't contain the bound
+    // function prefix.
+    branchTest32(Assembler::Zero, output,
+                 Imm32(FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX),
+                 slowPath);
+
+    // Bound functions reuse HAS_GUESSED_ATOM for
+    // HAS_BOUND_FUNCTION_NAME_PREFIX, so skip the guessed atom check below.
+    static_assert(
+        FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX ==
+            FunctionFlags::HAS_GUESSED_ATOM,
+        "HAS_BOUND_FUNCTION_NAME_PREFIX is shared with HAS_GUESSED_ATOM");
+    jump(&loadName);
+  }
+  bind(&notBoundTarget);
+
+  Label guessed, hasName;
+  branchTest32(Assembler::NonZero, output,
+               Imm32(FunctionFlags::HAS_GUESSED_ATOM), &guessed);
+  bind(&loadName);
+  loadPtr(Address(func, JSFunction::offsetOfAtom()), output);
+  branchTestPtr(Assembler::NonZero, output, output, &hasName);
+  {
+    bind(&guessed);
+
+    // An absent name property defaults to the empty string.
+    movePtr(emptyString, output);
+  }
+  bind(&hasName);
 }
 
 void MacroAssembler::branchTestObjGroupNoSpectreMitigations(

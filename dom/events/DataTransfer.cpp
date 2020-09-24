@@ -411,7 +411,7 @@ void DataTransfer::ClearData(const Optional<nsAString>& aFormat,
   if (aFormat.WasPassed()) {
     MozClearDataAtHelper(aFormat.Value(), 0, aSubjectPrincipal, aRv);
   } else {
-    MozClearDataAtHelper(EmptyString(), 0, aSubjectPrincipal, aRv);
+    MozClearDataAtHelper(u""_ns, 0, aSubjectPrincipal, aRv);
   }
 }
 
@@ -1538,13 +1538,6 @@ void DataTransfer::SetMode(DataTransfer::Mode aMode) {
   } else {
     mMode = aMode;
   }
-}
-
-/* static */
-bool DataTransfer::MozAtAPIsEnabled(JSContext* aCx, JSObject* aObj /*unused*/) {
-  // We can expose moz* APIs if we are chrome code or if pref is enabled
-  return nsContentUtils::IsSystemCaller(aCx) ||
-         StaticPrefs::dom_datatransfer_mozAtAPIs_DoNotUseDirectly();
 }
 
 }  // namespace dom

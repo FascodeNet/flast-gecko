@@ -3184,6 +3184,24 @@ bool CacheIRCompiler::emitLoadFunctionLengthResult(ObjOperandId objId) {
   return true;
 }
 
+bool CacheIRCompiler::emitLoadFunctionNameResult(ObjOperandId objId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoOutputRegister output(*this);
+  Register obj = allocator.useRegister(masm, objId);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.loadFunctionName(obj, scratch, ImmGCPtr(cx_->names().empty),
+                        failure->label());
+
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_STRING, output);
+  return true;
+}
+
 bool CacheIRCompiler::emitLoadStringLengthResult(StringOperandId strId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
@@ -4277,6 +4295,60 @@ bool CacheIRCompiler::emitMathSqrtNumberResult(NumberOperandId inputId) {
   return true;
 }
 
+bool CacheIRCompiler::emitMathFloorNumberResult(NumberOperandId inputId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  AutoAvailableFloatRegister scratch(*this, FloatReg0);
+
+  allocator.ensureDoubleRegister(masm, inputId, scratch);
+
+  if (Assembler::HasRoundInstruction(RoundingMode::Down)) {
+    masm.nearbyIntDouble(RoundingMode::Down, scratch, scratch);
+    masm.boxDouble(scratch, output.valueReg(), scratch);
+    return true;
+  }
+
+  return emitMathFunctionNumberResultShared(UnaryMathFunction::Floor, scratch,
+                                            output.valueReg());
+}
+
+bool CacheIRCompiler::emitMathCeilNumberResult(NumberOperandId inputId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  AutoAvailableFloatRegister scratch(*this, FloatReg0);
+
+  allocator.ensureDoubleRegister(masm, inputId, scratch);
+
+  if (Assembler::HasRoundInstruction(RoundingMode::Up)) {
+    masm.nearbyIntDouble(RoundingMode::Up, scratch, scratch);
+    masm.boxDouble(scratch, output.valueReg(), scratch);
+    return true;
+  }
+
+  return emitMathFunctionNumberResultShared(UnaryMathFunction::Ceil, scratch,
+                                            output.valueReg());
+}
+
+bool CacheIRCompiler::emitMathTruncNumberResult(NumberOperandId inputId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  AutoAvailableFloatRegister scratch(*this, FloatReg0);
+
+  allocator.ensureDoubleRegister(masm, inputId, scratch);
+
+  if (Assembler::HasRoundInstruction(RoundingMode::TowardsZero)) {
+    masm.nearbyIntDouble(RoundingMode::TowardsZero, scratch, scratch);
+    masm.boxDouble(scratch, output.valueReg(), scratch);
+    return true;
+  }
+
+  return emitMathFunctionNumberResultShared(UnaryMathFunction::Trunc, scratch,
+                                            output.valueReg());
+}
+
 bool CacheIRCompiler::emitMathFRoundNumberResult(NumberOperandId inputId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
@@ -4550,6 +4622,25 @@ bool CacheIRCompiler::emitNumberMinMax(bool isMax, NumberOperandId firstId,
   return true;
 }
 
+bool CacheIRCompiler::emitMathFunctionNumberResultShared(
+    UnaryMathFunction fun, FloatRegister inputScratch, ValueOperand output) {
+  UnaryMathFunctionType funPtr = GetUnaryMathFunctionPtr(fun);
+
+  LiveRegisterSet save(GeneralRegisterSet::Volatile(), liveVolatileFloatRegs());
+  save.takeUnchecked(inputScratch);
+  masm.PushRegsInMask(save);
+
+  masm.setupUnalignedABICall(output.scratchReg());
+  masm.passABIArg(inputScratch, MoveOp::DOUBLE);
+  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, funPtr), MoveOp::DOUBLE);
+  masm.storeCallFloatResult(inputScratch);
+
+  masm.PopRegsInMask(save);
+
+  masm.boxDouble(inputScratch, output, inputScratch);
+  return true;
+}
+
 bool CacheIRCompiler::emitMathFunctionNumberResult(NumberOperandId inputId,
                                                    UnaryMathFunction fun) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -4557,26 +4648,9 @@ bool CacheIRCompiler::emitMathFunctionNumberResult(NumberOperandId inputId,
   AutoOutputRegister output(*this);
   AutoAvailableFloatRegister scratch(*this, FloatReg0);
 
-  Register outputScratch = output.valueReg().scratchReg();
-
-  UnaryMathFunctionType funPtr = GetUnaryMathFunctionPtr(fun);
-
   allocator.ensureDoubleRegister(masm, inputId, scratch);
 
-  LiveRegisterSet save(GeneralRegisterSet::Volatile(), liveVolatileFloatRegs());
-  masm.PushRegsInMask(save);
-
-  masm.setupUnalignedABICall(outputScratch);
-  masm.passABIArg(scratch, MoveOp::DOUBLE);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, funPtr), MoveOp::DOUBLE);
-  masm.storeCallFloatResult(scratch);
-
-  LiveRegisterSet ignore;
-  ignore.add(scratch);
-  masm.PopRegsInMaskIgnore(save, ignore);
-
-  masm.boxDouble(scratch, output.valueReg(), scratch);
-  return true;
+  return emitMathFunctionNumberResultShared(fun, scratch, output.valueReg());
 }
 
 bool CacheIRCompiler::emitStoreTypedElement(ObjOperandId objId,

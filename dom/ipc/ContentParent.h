@@ -763,8 +763,7 @@ class ContentParent final
       bool aLoadUri, nsIContentSecurityPolicy* aCsp,
       const OriginAttributes& aOriginAttributes);
 
-  explicit ContentParent(int32_t aPluginID)
-      : ContentParent(EmptyCString(), aPluginID) {}
+  explicit ContentParent(int32_t aPluginID) : ContentParent(""_ns, aPluginID) {}
   explicit ContentParent(const nsACString& aRemoteType)
       : ContentParent(aRemoteType, nsFakePluginTag::NOT_JSPLUGIN) {}
 
@@ -901,6 +900,10 @@ class ContentParent final
       const nsID& aID, nsTArray<PerformanceInfo>&& aMetrics);
 
   bool DeallocPRemoteSpellcheckEngineParent(PRemoteSpellcheckEngineParent*);
+
+  mozilla::ipc::IPCResult RecvCloneDocumentTreeInto(
+      const MaybeDiscarded<BrowsingContext>& aSource,
+      const MaybeDiscarded<BrowsingContext>& aTarget);
 
   mozilla::ipc::IPCResult RecvConstructPopupBrowser(
       ManagedEndpoint<PBrowserParent>&& actor,
@@ -1309,7 +1312,7 @@ class ContentParent final
       const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvNotifyOnHistoryReload(
-      const MaybeDiscarded<BrowsingContext>& aContext,
+      const MaybeDiscarded<BrowsingContext>& aContext, const bool& aForceReload,
       NotifyOnHistoryReloadResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvHistoryCommit(

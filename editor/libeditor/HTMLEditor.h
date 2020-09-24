@@ -2076,7 +2076,7 @@ class HTMLEditor final : public TextEditor,
   ReplaceContainerAndCloneAttributesWithTransaction(Element& aOldContainer,
                                                     nsAtom& aTagName) {
     return ReplaceContainerWithTransactionInternal(
-        aOldContainer, aTagName, *nsGkAtoms::_empty, EmptyString(), true);
+        aOldContainer, aTagName, *nsGkAtoms::_empty, u""_ns, true);
   }
 
   /**
@@ -2110,7 +2110,7 @@ class HTMLEditor final : public TextEditor,
   MOZ_CAN_RUN_SCRIPT already_AddRefed<Element> ReplaceContainerWithTransaction(
       Element& aOldContainer, nsAtom& aTagName) {
     return ReplaceContainerWithTransactionInternal(
-        aOldContainer, aTagName, *nsGkAtoms::_empty, EmptyString(), false);
+        aOldContainer, aTagName, *nsGkAtoms::_empty, u""_ns, false);
   }
 
   /**
@@ -2137,8 +2137,8 @@ class HTMLEditor final : public TextEditor,
    */
   MOZ_CAN_RUN_SCRIPT already_AddRefed<Element> InsertContainerWithTransaction(
       nsIContent& aContent, nsAtom& aTagName) {
-    return InsertContainerWithTransactionInternal(
-        aContent, aTagName, *nsGkAtoms::_empty, EmptyString());
+    return InsertContainerWithTransactionInternal(aContent, aTagName,
+                                                  *nsGkAtoms::_empty, u""_ns);
   }
 
   /**
@@ -4151,6 +4151,9 @@ class HTMLEditor final : public TextEditor,
 
   /**
    * InsertObject() inserts given object at aPointToInsert.
+   *
+   * @param aType one of kFileMime, kJPEGImageMime, kJPGImageMime,
+   *              kPNGImageMime, kGIFImageMime.
    */
   MOZ_CAN_RUN_SCRIPT nsresult InsertObject(const nsACString& aType,
                                            nsISupports* aObject, bool aIsSafe,
@@ -4162,7 +4165,10 @@ class HTMLEditor final : public TextEditor,
   // (drag&drop or clipboard)
   virtual nsresult PrepareTransferable(
       nsITransferable** aTransferable) override;
-  nsresult PrepareHTMLTransferable(nsITransferable** aTransferable);
+
+  class HTMLTransferablePreparer;
+  nsresult PrepareHTMLTransferable(nsITransferable** aTransferable) const;
+
   MOZ_CAN_RUN_SCRIPT nsresult InsertFromTransferable(
       nsITransferable* aTransferable, Document* aSourceDoc,
       const nsAString& aContextStr, const nsAString& aInfoStr,
@@ -4171,13 +4177,15 @@ class HTMLEditor final : public TextEditor,
   /**
    * InsertFromDataTransfer() is called only when user drops data into
    * this editor.  Don't use this method for other purposes.
+   *
+   * @param aIndex index of aDataTransfer's item to insert.
    */
   MOZ_CAN_RUN_SCRIPT nsresult
   InsertFromDataTransfer(const dom::DataTransfer* aDataTransfer, int32_t aIndex,
                          Document* aSourceDoc, const EditorDOMPoint& aDroppedAt,
                          bool aDoDeleteSelection);
 
-  bool HavePrivateHTMLFlavor(nsIClipboard* clipboard);
+  static bool HavePrivateHTMLFlavor(nsIClipboard* clipboard);
 
   /**
    * CF_HTML:

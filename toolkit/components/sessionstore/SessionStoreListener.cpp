@@ -314,22 +314,12 @@ TabListener::HandleEvent(Event* aEvent) {
   }
 
   nsPIDOMWindowOuter* outer = target->GetOwnerGlobalForBindingsInternal();
-  if (!outer) {
+  if (!outer || !outer->GetDocShell()) {
     return NS_OK;
   }
 
-  nsIDocShell* docShell = outer->GetDocShell();
-  if (!docShell) {
-    return NS_OK;
-  }
-
-  bool isDynamic = false;
-  nsresult rv = docShell->GetCreatedDynamically(&isDynamic);
-  if (NS_FAILED(rv)) {
-    return NS_OK;
-  }
-
-  if (isDynamic) {
+  RefPtr<BrowsingContext> context = outer->GetBrowsingContext();
+  if (!context || context->CreatedDynamically()) {
     return NS_OK;
   }
 
@@ -442,7 +432,7 @@ nsresult TabListener::Observe(nsISupports* aSubject, const char* aTopic,
 nsCString CollectPosition(Document& aDocument) {
   PresShell* presShell = aDocument.GetPresShell();
   if (!presShell) {
-    return EmptyCString();
+    return ""_ns;
   }
   nsPoint scrollPos = presShell->GetVisualViewportOffset();
   int scrollX = nsPresContext::AppUnitsToIntCSSPixels(scrollPos.x);
@@ -451,19 +441,18 @@ nsCString CollectPosition(Document& aDocument) {
     return nsPrintfCString("%d,%d", scrollX, scrollY);
   }
 
-  return EmptyCString();
+  return ""_ns;
 }
 
 int CollectPositions(BrowsingContext* aBrowsingContext,
                      nsTArray<nsCString>& aPositions,
                      nsTArray<int32_t>& aPositionDescendants) {
-  nsPIDOMWindowOuter* window = aBrowsingContext->GetDOMWindow();
-  if (!window) {
+  if (aBrowsingContext->CreatedDynamically()) {
     return 0;
   }
 
-  nsIDocShell* docShell = window->GetDocShell();
-  if (!docShell || docShell->GetCreatedDynamically()) {
+  nsPIDOMWindowOuter* window = aBrowsingContext->GetDOMWindow();
+  if (!window) {
     return 0;
   }
 
@@ -491,7 +480,7 @@ void ContentSessionStore::GetScrollPositions(
     nsTArray<nsCString>& aPositions, nsTArray<int32_t>& aPositionDescendants) {
   if (mScrollChanged == PAGELOADEDSTART) {
     aPositionDescendants.AppendElement(0);
-    aPositions.AppendElement(EmptyCString());
+    aPositions.AppendElement(""_ns);
   } else {
     CollectPositions(mDocShell->GetBrowsingContext(), aPositions,
                      aPositionDescendants);
@@ -542,13 +531,12 @@ int CollectInputs(BrowsingContext* aBrowsingContext,
                   nsTArray<InputFormData>& aInputs,
                   nsTArray<CollectedInputDataValue>& aIdVals,
                   nsTArray<CollectedInputDataValue>& aXPathVals) {
-  nsPIDOMWindowOuter* window = aBrowsingContext->GetDOMWindow();
-  if (!window) {
+  if (aBrowsingContext->CreatedDynamically()) {
     return 0;
   }
 
-  nsIDocShell* docShell = window->GetDocShell();
-  if (!docShell || docShell->GetCreatedDynamically()) {
+  nsPIDOMWindowOuter* window = aBrowsingContext->GetDOMWindow();
+  if (!window || !window->GetDocShell()) {
     return 0;
   }
 
@@ -584,8 +572,8 @@ nsTArray<InputFormData> ContentSessionStore::GetInputs(
     mFormDataChanged = NO_CHANGE;
     InputFormData input;
     input.descendants = 0;
-    input.innerHTML = EmptyString();
-    input.url = EmptyCString();
+    input.innerHTML.Truncate();
+    input.url.Truncate();
     input.numId = 0;
     input.numXPath = 0;
     inputs.AppendElement(input);

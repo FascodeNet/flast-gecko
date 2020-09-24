@@ -1886,8 +1886,6 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
     masm.storePtr(tls, Address(sp_, stackOffset(tlsPointerOffset_)));
   }
 
-  int32_t getTlsPtrOffset() { return stackOffset(tlsPointerOffset_); }
-
   // An outgoing stack result area pointer is for stack results of callees of
   // the function being compiled.
   void computeOutgoingStackResultAreaPtr(const StackResultsLoc& results,
@@ -6381,7 +6379,7 @@ class BaseCompiler final : public BaseCompilerInterface {
 
   void roundF32(RoundingMode roundingMode, RegF32 f0) {
 #if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
-    masm.vroundss(Assembler::ToX86RoundingMode(roundingMode), f0, f0);
+    masm.nearbyIntFloat32(roundingMode, f0, f0);
 #else
     MOZ_CRASH("NYI");
 #endif
@@ -6389,7 +6387,7 @@ class BaseCompiler final : public BaseCompilerInterface {
 
   void roundF64(RoundingMode roundingMode, RegF64 f0) {
 #if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
-    masm.vroundsd(Assembler::ToX86RoundingMode(roundingMode), f0, f0);
+    masm.nearbyIntDouble(roundingMode, f0, f0);
 #else
     MOZ_CRASH("NYI");
 #endif
@@ -10313,8 +10311,7 @@ bool BaseCompiler::emitDivOrModI64BuiltinCall(SymbolicAddress callee,
   masm.passABIArg(srcDest.low);
   masm.passABIArg(rhs.high);
   masm.passABIArg(rhs.low);
-  CodeOffset raOffset = masm.callWithABI(bytecodeOffset(), callee,
-                                         mozilla::Some(fr.getTlsPtrOffset()));
+  CodeOffset raOffset = masm.callWithABI(bytecodeOffset(), callee);
   if (!createStackMap("emitDivOrModI64Bui[..]", raOffset)) {
     return false;
   }
@@ -10345,7 +10342,7 @@ bool BaseCompiler::emitConvertInt64ToFloatingCallout(SymbolicAddress callee,
   masm.passABIArg(input.low);
 #  endif
   CodeOffset raOffset = masm.callWithABI(
-      bytecodeOffset(), callee, mozilla::Some(fr.getTlsPtrOffset()),
+      bytecodeOffset(), callee,
       resultType == ValType::F32 ? MoveOp::FLOAT32 : MoveOp::DOUBLE);
   if (!createStackMap("emitConvertInt64To[..]", raOffset)) {
     return false;
@@ -10389,8 +10386,7 @@ bool BaseCompiler::emitConvertFloatingToInt64Callout(SymbolicAddress callee,
 
   masm.setupWasmABICall();
   masm.passABIArg(doubleInput, MoveOp::DOUBLE);
-  CodeOffset raOffset = masm.callWithABI(bytecodeOffset(), callee,
-                                         mozilla::Some(fr.getTlsPtrOffset()));
+  CodeOffset raOffset = masm.callWithABI(bytecodeOffset(), callee);
   if (!createStackMap("emitConvertFloatin[..]", raOffset)) {
     return false;
   }

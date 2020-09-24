@@ -13,6 +13,8 @@
 #include "mozilla/dom/nsCSPContext.h"
 #include "mozilla/ipc/IPDLParamTraits.h"
 
+extern mozilla::LazyLogModule gSHLog;
+
 namespace mozilla {
 namespace dom {
 
@@ -264,6 +266,8 @@ LoadingSessionHistoryInfo::LoadingSessionHistoryInfo(
     SessionHistoryEntry::sLoadIdToEntry =
         new nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>();
   }
+  MOZ_LOG(gSHLog, LogLevel::Verbose,
+          ("SHEntry::AddLoadId(%" PRIu64 " - %p", mLoadId, aEntry));
   SessionHistoryEntry::sLoadIdToEntry->Put(mLoadId, aEntry);
 }
 
@@ -303,6 +307,8 @@ void SessionHistoryEntry::RemoveLoadId(uint64_t aLoadId) {
     return;
   }
 
+  MOZ_LOG(gSHLog, LogLevel::Verbose,
+          ("SHEntry::RemoveLoadId(%" PRIu64 ")", aLoadId));
   sLoadIdToEntry->Remove(aLoadId);
 }
 
@@ -938,8 +944,13 @@ SessionHistoryEntry::HasBFCacheEntry(nsIBFCacheEntry* aEntry) {
 
 NS_IMETHODIMP
 SessionHistoryEntry::AdoptBFCacheEntry(nsISHEntry* aEntry) {
-  NS_WARNING("This lives in the child process");
-  return NS_ERROR_FAILURE;
+  nsCOMPtr<SessionHistoryEntry> she = do_QueryInterface(aEntry);
+  NS_ENSURE_STATE(she && she->mInfo->mSharedState.Get());
+
+  mInfo->mSharedState =
+      static_cast<SessionHistoryEntry*>(aEntry)->mInfo->mSharedState;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP

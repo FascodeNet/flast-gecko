@@ -638,11 +638,11 @@ var E10SUtils = {
     // non-content principal.
     let currentURI =
       aCurrentPrincipal && aCurrentPrincipal.isContentPrincipal
-        ? aCurrentPrincipal.URI
+        ? Services.io.newURI(aCurrentPrincipal.spec)
         : null;
 
     return E10SUtils.getRemoteTypeForURIObject(
-      useOriginalURI ? aOriginalURI : aPrincipal.URI,
+      useOriginalURI ? aOriginalURI : Services.io.newURI(aPrincipal.spec),
       aMultiProcess,
       aRemoteSubframes,
       aPreferredRemoteType,
@@ -1032,23 +1032,25 @@ var E10SUtils = {
     }
 
     // Allow history load if loaded in this process before.
-    let requestedIndex = sessionHistory.legacySHistory.requestedIndex;
-    if (requestedIndex >= 0) {
-      this.log().debug("Checking history case\n");
-      if (
-        sessionHistory.legacySHistory.getEntryAtIndex(requestedIndex)
-          .loadedInThisProcess
-      ) {
-        this.log().info("History entry loaded in this process");
-        return true;
-      }
+    if (!sessionHistoryInParent) {
+      let requestedIndex = sessionHistory.legacySHistory.requestedIndex;
+      if (requestedIndex >= 0) {
+        this.log().debug("Checking history case\n");
+        if (
+          sessionHistory.legacySHistory.getEntryAtIndex(requestedIndex)
+            .loadedInThisProcess
+        ) {
+          this.log().info("History entry loaded in this process");
+          return true;
+        }
 
-      // If not originally loaded in this process allow it if the URI would
-      // normally be allowed to load in this process by default.
-      this.log().debug(
-        `Checking remote type, got: ${remoteType} want: ${wantRemoteType}\n`
-      );
-      return remoteType == wantRemoteType;
+        // If not originally loaded in this process allow it if the URI would
+        // normally be allowed to load in this process by default.
+        this.log().debug(
+          `Checking remote type, got: ${remoteType} want: ${wantRemoteType}\n`
+        );
+        return remoteType == wantRemoteType;
+      }
     }
 
     // If the URI can be loaded in the current process then continue

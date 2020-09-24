@@ -670,8 +670,7 @@ void nsHttpTransaction::OnTransportStatus(nsITransport* transport,
     if ((mHasRequestBody) && (status == NS_NET_STATUS_WAITING_FOR)) {
       nsresult rv = mActivityDistributor->ObserveActivityWithArgs(
           HttpActivityArgs(mChannelId), NS_HTTP_ACTIVITY_TYPE_HTTP_TRANSACTION,
-          NS_HTTP_ACTIVITY_SUBTYPE_REQUEST_BODY_SENT, PR_Now(), 0,
-          EmptyCString());
+          NS_HTTP_ACTIVITY_SUBTYPE_REQUEST_BODY_SENT, PR_Now(), 0, ""_ns);
       if (NS_FAILED(rv)) {
         LOG3(("ObserveActivity failed (%08x)", static_cast<uint32_t>(rv)));
       }
@@ -680,7 +679,7 @@ void nsHttpTransaction::OnTransportStatus(nsITransport* transport,
     // report the status and progress
     nsresult rv = mActivityDistributor->ObserveActivityWithArgs(
         HttpActivityArgs(mChannelId), NS_HTTP_ACTIVITY_TYPE_SOCKET_TRANSPORT,
-        static_cast<uint32_t>(status), PR_Now(), progress, EmptyCString());
+        static_cast<uint32_t>(status), PR_Now(), progress, ""_ns);
     if (NS_FAILED(rv)) {
       LOG3(("ObserveActivity failed (%08x)", static_cast<uint32_t>(rv)));
     }
@@ -1161,7 +1160,7 @@ void nsHttpTransaction::Close(nsresult reason) {
       nsresult rv = mActivityDistributor->ObserveActivityWithArgs(
           HttpActivityArgs(mChannelId), NS_HTTP_ACTIVITY_TYPE_HTTP_TRANSACTION,
           NS_HTTP_ACTIVITY_SUBTYPE_RESPONSE_COMPLETE, PR_Now(),
-          static_cast<uint64_t>(mContentRead), EmptyCString());
+          static_cast<uint64_t>(mContentRead), ""_ns);
       if (NS_FAILED(rv)) {
         LOG3(("ObserveActivity failed (%08x)", static_cast<uint32_t>(rv)));
       }
@@ -1170,8 +1169,7 @@ void nsHttpTransaction::Close(nsresult reason) {
     // report that this transaction is closing
     nsresult rv = mActivityDistributor->ObserveActivityWithArgs(
         HttpActivityArgs(mChannelId), NS_HTTP_ACTIVITY_TYPE_HTTP_TRANSACTION,
-        NS_HTTP_ACTIVITY_SUBTYPE_TRANSACTION_CLOSE, PR_Now(), 0,
-        EmptyCString());
+        NS_HTTP_ACTIVITY_SUBTYPE_TRANSACTION_CLOSE, PR_Now(), 0, ""_ns);
     if (NS_FAILED(rv)) {
       LOG3(("ObserveActivity failed (%08x)", static_cast<uint32_t>(rv)));
     }
@@ -1481,7 +1479,6 @@ nsresult nsHttpTransaction::Restart() {
   mReuseOnRestart = false;
 
   if (!mDoNotRemoveAltSvc && !mConnInfo->GetRoutedHost().IsEmpty()) {
-    MutexAutoLock lock(*nsHttp::GetLock());
     RefPtr<nsHttpConnectionInfo> ci;
     mConnInfo->CloneAsDirectRoute(getter_AddRefs(ci));
     mConnInfo = ci;
@@ -1671,7 +1668,7 @@ nsresult nsHttpTransaction::ParseHead(char* buf, uint32_t count,
       mReportedStart = true;
       rv = mActivityDistributor->ObserveActivityWithArgs(
           HttpActivityArgs(mChannelId), NS_HTTP_ACTIVITY_TYPE_HTTP_TRANSACTION,
-          NS_HTTP_ACTIVITY_SUBTYPE_RESPONSE_START, PR_Now(), 0, EmptyCString());
+          NS_HTTP_ACTIVITY_SUBTYPE_RESPONSE_START, PR_Now(), 0, ""_ns);
       if (NS_FAILED(rv)) {
         LOG3(("ObserveActivity failed (%08x)", static_cast<uint32_t>(rv)));
       }
@@ -1692,7 +1689,7 @@ nsresult nsHttpTransaction::ParseHead(char* buf, uint32_t count,
         // Treat any 0.9 style response of a put as a failure.
         if (mRequestHead->IsPut()) return NS_ERROR_ABORT;
 
-        mResponseHead->ParseStatusLine(EmptyCString());
+        mResponseHead->ParseStatusLine(""_ns);
         mHaveStatusLine = true;
         mHaveAllHeaders = true;
         return NS_OK;
@@ -2020,7 +2017,7 @@ nsresult nsHttpTransaction::HandleContent(char* buf, uint32_t count,
       rv = mActivityDistributor->ObserveActivityWithArgs(
           HttpActivityArgs(mChannelId), NS_HTTP_ACTIVITY_TYPE_HTTP_TRANSACTION,
           NS_HTTP_ACTIVITY_SUBTYPE_RESPONSE_COMPLETE, PR_Now(),
-          static_cast<uint64_t>(mContentRead), EmptyCString());
+          static_cast<uint64_t>(mContentRead), ""_ns);
       if (NS_FAILED(rv)) {
         LOG3(("ObserveActivity failed (%08x)", static_cast<uint32_t>(rv)));
       }
@@ -2562,7 +2559,6 @@ nsresult nsHttpTransaction::RestartOnFastOpenError() {
   mSecurityInfo = nullptr;
 
   if (!mConnInfo->GetRoutedHost().IsEmpty()) {
-    MutexAutoLock lock(*nsHttp::GetLock());
     RefPtr<nsHttpConnectionInfo> ci;
     mConnInfo->CloneAsDirectRoute(getter_AddRefs(ci));
     mConnInfo = ci;

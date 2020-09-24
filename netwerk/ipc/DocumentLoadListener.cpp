@@ -1248,9 +1248,7 @@ void DocumentLoadListener::SerializeRedirectData(
   // clears the principal to inherit, which fails tests (probably because this
   // 'redirect' is usually just an implementation detail). It's also http
   // only, and mChannel can be anything that we redirected to.
-  nsCOMPtr<nsILoadInfo> channelLoadInfo;
-  mChannel->GetLoadInfo(getter_AddRefs(channelLoadInfo));
-
+  nsCOMPtr<nsILoadInfo> channelLoadInfo = mChannel->LoadInfo();
   nsCOMPtr<nsIPrincipal> principalToInherit;
   channelLoadInfo->GetPrincipalToInherit(getter_AddRefs(principalToInherit));
 
@@ -1284,7 +1282,7 @@ void DocumentLoadListener::SerializeRedirectData(
     sm->GetChannelURIPrincipal(mChannel, getter_AddRefs(uriPrincipal));
 
     nsCOMPtr<nsIRedirectHistoryEntry> entry =
-        new nsRedirectHistoryEntry(uriPrincipal, nullptr, EmptyCString());
+        new nsRedirectHistoryEntry(uriPrincipal, nullptr, ""_ns);
 
     redirectLoadInfo->AppendRedirectHistoryEntry(entry, true);
   }

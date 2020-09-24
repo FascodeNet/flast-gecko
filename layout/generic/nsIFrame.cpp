@@ -6245,7 +6245,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   result.ISize(aWM) = std::max(minISize, result.ISize(aWM));
 
   // Compute block-axis size
-  // (but not if we have auto bsize or if we received the "eUseAutoBSize"
+  // (but not if we have auto bsize or if we received the "UseAutoBSize"
   // flag -- then, we'll just stick with the bsize that we already calculated
   // in the initial ComputeAutoSize() call.)
   if (!aFlags.contains(ComputeSizeFlag::UseAutoBSize)) {
@@ -6438,13 +6438,9 @@ nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
   return 0;
 }
 
-nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
-                                    nscoord aContainingBlockISize,
+nscoord nsIFrame::ComputeISizeValue(nscoord aContainingBlockISize,
                                     nscoord aContentEdgeToBoxSizing,
-                                    nscoord aBoxSizingToMarginEdge,
-                                    const LengthPercentage& aCoord,
-                                    ComputeSizeFlags aFlags) {
-  MOZ_ASSERT(aRenderingContext, "non-null rendering context expected");
+                                    const LengthPercentage& aSize) {
   LAYOUT_WARN_IF_FALSE(
       aContainingBlockISize != NS_UNCONSTRAINEDSIZE,
       "have unconstrained inline-size; this should only result from "
@@ -6452,7 +6448,7 @@ nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
       "calculation");
   NS_ASSERTION(aContainingBlockISize >= 0, "inline-size less than zero");
 
-  nscoord result = aCoord.Resolve(aContainingBlockISize);
+  nscoord result = aSize.Resolve(aContainingBlockISize);
   // The result of a calc() expression might be less than 0; we
   // should clamp at runtime (below).  (Percentages and coords that
   // are less than 0 have already been dropped by the parser.)

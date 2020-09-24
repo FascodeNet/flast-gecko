@@ -667,7 +667,7 @@ nsresult SetDefaultPragmas(mozIStorageConnection& aConnection) {
   if (kSQLiteGrowthIncrement) {
     // This is just an optimization so ignore the failure if the disk is
     // currently too full.
-    rv = aConnection.SetGrowthIncrement(kSQLiteGrowthIncrement, EmptyCString());
+    rv = aConnection.SetGrowthIncrement(kSQLiteGrowthIncrement, ""_ns);
     if (rv != NS_ERROR_FILE_TOO_BIG && NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -697,8 +697,7 @@ mozilla::Result<mozilla::Ok, nsresult> CollectWhileHasResult(
     mozIStorageStatement& aStmt, StepFunc&& aStepFunc) {
   return CollectWhile(
       [&aStmt]() -> Result<bool, nsresult> {
-        IDB_TRY_VAR(auto hasResult, MOZ_TO_RESULT_INVOKE(aStmt, ExecuteStep));
-        return hasResult;
+        IDB_TRY_RETURN(MOZ_TO_RESULT_INVOKE(aStmt, ExecuteStep));
       },
       [&aStmt, &aStepFunc] { return aStepFunc(aStmt); });
 }
@@ -5751,8 +5750,8 @@ SerializeStructuredCloneFiles(PBackgroundParent* aBackgroundActor,
             // Transfer ownership to IPDL.
             actor->SetActorAlive();
 
-            if (!aDatabase->SendPBackgroundMutableFileConstructor(
-                    actor, EmptyString(), EmptyString())) {
+            if (!aDatabase->SendPBackgroundMutableFileConstructor(actor, u""_ns,
+                                                                  u""_ns)) {
               // This can only fail if the child has crashed.
               IDB_REPORT_INTERNAL_ERR();
               return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
@@ -7699,16 +7698,13 @@ void DatabaseConnection::CachedStatement::Reset() {
 
 DatabaseConnection::CachedStatement::CachedStatement(
     DatabaseConnection* aConnection, nsCOMPtr<mozIStorageStatement> aStatement)
-    : mStatement(std::move(aStatement))
-#if defined(EARLY_BETA_OR_EARLIER) || defined(DEBUG)
-      ,
+    : mStatement(std::move(aStatement)),
       mScoper(mStatement
                   ? Maybe<mozStorageStatementScoper>{std::in_place, mStatement}
                   : Nothing{})
-#  ifdef DEBUG
+#ifdef DEBUG
       ,
       mDEBUGConnection(aConnection)
-#  endif
 #endif
 {
 #ifdef DEBUG
@@ -12838,11 +12834,8 @@ nsresult FileManager::InitDirectory(nsIFile& aDirectory, nsIFile& aDatabaseFile,
 
     IDB_TRY(CollectEach(
         [&entries]() -> Result<nsCOMPtr<nsIFile>, nsresult> {
-          IDB_TRY_VAR(
-              auto file,
-              ToResultInvoke<nsCOMPtr<nsIFile>>(
-                  std::mem_fn(&nsIDirectoryEnumerator::GetNextFile), entries));
-          return file;
+          IDB_TRY_RETURN(ToResultInvoke<nsCOMPtr<nsIFile>>(
+              std::mem_fn(&nsIDirectoryEnumerator::GetNextFile), entries));
         },
         [&hasJournals](
             const nsCOMPtr<nsIFile>& file) -> Result<mozilla::Ok, nsresult> {
@@ -12953,11 +12946,8 @@ Result<FileUsageType, nsresult> FileManager::GetUsage(nsIFile* aDirectory) {
 
   IDB_TRY(CollectEach(
       [&entries]() -> Result<nsCOMPtr<nsIFile>, nsresult> {
-        IDB_TRY_VAR(
-            auto file,
-            ToResultInvoke<nsCOMPtr<nsIFile>>(
-                std::mem_fn(&nsIDirectoryEnumerator::GetNextFile), entries));
-        return file;
+        IDB_TRY_RETURN(ToResultInvoke<nsCOMPtr<nsIFile>>(
+            std::mem_fn(&nsIDirectoryEnumerator::GetNextFile), entries));
       },
       [&usage](const nsCOMPtr<nsIFile>& file) -> Result<mozilla::Ok, nsresult> {
         IDB_TRY_VAR(
@@ -13381,7 +13371,7 @@ nsresult QuotaClient::GetUsageForOriginInternal(
       if (obsoleteFilenames.Contains(subdirNameBase)) {
         rv = RemoveDatabaseFilesAndDirectory(*directory, subdirNameBase,
                                              nullptr, aPersistenceType, aGroup,
-                                             aOrigin, EmptyString());
+                                             aOrigin, u""_ns);
         if (NS_WARN_IF(NS_FAILED(rv))) {
           // If we somehow running into here, it probably means we are in a
           // serious situation. e.g. Filesystem corruption.

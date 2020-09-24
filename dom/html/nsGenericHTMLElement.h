@@ -177,6 +177,10 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   void SetInputMode(const nsAString& aValue, ErrorResult& aRv) {
     SetHTMLAttr(nsGkAtoms::inputmode, aValue, aRv);
   }
+  virtual void GetAutocapitalize(nsAString& aValue);
+  void SetAutocapitalize(const nsAString& aValue, ErrorResult& aRv) {
+    SetHTMLAttr(nsGkAtoms::autocapitalize, aValue, aRv);
+  }
 
   void GetEnterKeyHint(nsAString& aValue) {
     GetEnumAttr(nsGkAtoms::enterkeyhint, nullptr, aValue);
@@ -739,7 +743,7 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   void SetHTMLBoolAttr(nsAtom* aName, bool aValue,
                        mozilla::ErrorResult& aError) {
     if (aValue) {
-      SetHTMLAttr(aName, EmptyString(), aError);
+      SetHTMLAttr(aName, u""_ns, aError);
     } else {
       UnsetHTMLAttr(aName, aError);
     }
@@ -1018,6 +1022,10 @@ class nsGenericHTMLFormElement : public nsGenericHTMLElement,
   virtual bool IsLabelable() const override;
 
   void GetFormAction(nsString& aValue);
+
+  // autocapitalize attribute support
+  virtual void GetAutocapitalize(nsAString& aValue) override;
+  bool IsAutocapitalizeInheriting() const;
 
  protected:
   virtual ~nsGenericHTMLFormElement();

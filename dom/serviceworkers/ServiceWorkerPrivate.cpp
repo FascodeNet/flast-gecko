@@ -1286,7 +1286,7 @@ class FetchEventRunnable : public ExtendableFunctionalEventWorkerRunnable,
     MOZ_ASSERT(httpChannel, "How come we don't have an HTTP channel?");
 
     mReferrerPolicy = ReferrerPolicy::_empty;
-    mReferrer = EmptyString();
+    mReferrer.Truncate();
     nsCOMPtr<nsIReferrerInfo> referrerInfo = httpChannel->GetReferrerInfo();
     if (referrerInfo) {
       mReferrerPolicy = referrerInfo->ReferrerPolicy();
@@ -1533,8 +1533,7 @@ nsresult ServiceWorkerPrivate::SendFetchEvent(
   if (isNonSubresourceRequest) {
     registration = swm->GetRegistration(mInfo->Principal(), mInfo->Scope());
   } else {
-    nsCOMPtr<nsILoadInfo> loadInfo;
-    channel->GetLoadInfo(getter_AddRefs(loadInfo));
+    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
 
     // We'll check for a null registration below rather than an error code here.
     Unused << swm->GetClientRegistration(loadInfo->GetClientInfo().ref(),
@@ -1750,7 +1749,7 @@ nsresult ServiceWorkerPrivate::SpawnWorkerIfNeeded(WakeUpReason aWhy,
 
   mWorkerPrivate = WorkerPrivate::Constructor(jsapi.cx(), scriptSpec, false,
                                               WorkerTypeService, VoidString(),
-                                              EmptyCString(), &info, error);
+                                              ""_ns, &info, error);
   if (NS_WARN_IF(error.Failed())) {
     return error.StealNSResult();
   }

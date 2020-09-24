@@ -50,7 +50,7 @@ avoid-blacklist-and-whitelist:
         - browser/components/migration/ChromeMigrationUtils.jsm
         - browser/components/migration/ChromeProfileMigrator.jsm
         - browser/components/newtab/data/content/activity-stream.bundle.js
-        - browser/components/pioneer/content/pioneer.js
+        - browser/components/ion/content/ion.js
         - browser/components/preferences/privacy.inc.xhtml
         - browser/components/preferences/privacy.js
         - browser/components/resistfingerprinting/test/mochitest/test_bug1354633_media_error.html
@@ -123,6 +123,10 @@ avoid-blacklist-and-whitelist:
         - dom/media/test/test_autoplay_policy_key_blacklist.html
         - dom/media/test/test_autoplay_policy_permission.html
         - dom/media/webm/WebMDecoder.cpp
+        - dom/media/webrtc/jsapi/PeerConnectionMedia.cpp
+        - dom/media/webrtc/libwebrtcglue/VideoConduit.cpp
+        - dom/media/webrtc/transport/stun_socket_filter.cpp
+        - dom/media/webrtc/transport/test/ice_unittest.cpp
         - dom/plugins/base/nsPluginHost.h
         - dom/plugins/ipc/PluginQuirks.cpp
         - dom/push/PushServiceWebSocket.jsm
@@ -197,10 +201,6 @@ avoid-blacklist-and-whitelist:
         - layout/tools/reftest/reftestcommandline.py
         - layout/tools/reftest/runreftest.py
         - layout/tools/reftest/selftest/conftest.py
-        - media/mtransport/stun_socket_filter.cpp
-        - media/mtransport/test/ice_unittest.cpp
-        - media/webrtc/signaling/src/media-conduit/VideoConduit.cpp
-        - media/webrtc/signaling/src/peerconnection/PeerConnectionMedia.cpp
         - mfbt/Attributes.h
         - mobile/android/app/geckoview-prefs.js
         - mobile/android/app/mobile.js

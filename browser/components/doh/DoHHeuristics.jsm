@@ -39,16 +39,19 @@ XPCOMUtils.defineLazyServiceGetter(
 
 ChromeUtils.defineModuleGetter(
   this,
+  "Config",
+  "resource:///modules/DoHConfig.jsm"
+);
+
+ChromeUtils.defineModuleGetter(
+  this,
   "Preferences",
   "resource://gre/modules/Preferences.jsm"
 );
 
-const GLOBAL_CANARY = "use-application-dns.net";
+const GLOBAL_CANARY = "use-application-dns.net.";
 
 const NXDOMAIN_ERR = "NS_ERROR_UNKNOWN_HOST";
-
-const kProviderSteeringEnabledPref = "doh-rollout.provider-steering.enabled";
-const kProviderSteeringListPref = "doh-rollout.provider-steering.provider-list";
 
 const Heuristics = {
   // String constants used to indicate outcome of heuristics.
@@ -261,19 +264,19 @@ async function safeSearch() {
   const providerList = [
     {
       name: "google",
-      unfiltered: ["www.google.com", "google.com"],
-      safeSearch: ["forcesafesearch.google.com"],
+      unfiltered: ["www.google.com.", "google.com."],
+      safeSearch: ["forcesafesearch.google.com."],
     },
     {
       name: "youtube",
       unfiltered: [
-        "www.youtube.com",
-        "m.youtube.com",
-        "youtubei.googleapis.com",
-        "youtube.googleapis.com",
-        "www.youtube-nocookie.com",
+        "www.youtube.com.",
+        "m.youtube.com.",
+        "youtubei.googleapis.com.",
+        "youtube.googleapis.com.",
+        "www.youtube-nocookie.com.",
       ],
-      safeSearch: ["restrict.youtube.com", "restrictmoderate.youtube.com"],
+      safeSearch: ["restrict.youtube.com.", "restrictmoderate.youtube.com."],
     },
   ];
 
@@ -300,7 +303,7 @@ async function safeSearch() {
 }
 
 async function zscalerCanary() {
-  const ZSCALER_CANARY = "sitereview.zscaler.com";
+  const ZSCALER_CANARY = "sitereview.zscaler.com.";
 
   let { addresses } = await dnsLookup(ZSCALER_CANARY);
   for (let address of addresses) {
@@ -352,15 +355,15 @@ async function platform() {
 // provider if the check is successful, else null. Currently we only support
 // this for Comcast networks.
 async function providerSteering() {
-  if (!Preferences.get(kProviderSteeringEnabledPref, false)) {
+  if (!Config.providerSteering.enabled) {
     return null;
   }
-  const TEST_DOMAIN = "doh.test";
+  const TEST_DOMAIN = "doh.test.";
 
   // Array of { name, canonicalName, uri } where name is an identifier for
   // telemetry, canonicalName is the expected CNAME when looking up doh.test,
   // and uri is the provider's DoH endpoint.
-  let steeredProviders = Preferences.get(kProviderSteeringListPref, "[]");
+  let steeredProviders = Config.providerSteering.providerList;
   try {
     steeredProviders = JSON.parse(steeredProviders);
   } catch (e) {

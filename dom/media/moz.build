@@ -208,8 +208,8 @@ EXPORTS.mozilla.media.webrtc += [
 ]
 
 if not CONFIG['MOZ_WEBRTC']:
-  EXPORTS.mtransport += [
-      '../../media/mtransport/runnable_utils.h',
+  EXPORTS.transport += [
+      'webrtc/transport/runnable_utils.h',
   ]
 
 EXPORTS.mozilla.dom += [
@@ -371,7 +371,7 @@ LOCAL_INCLUDES += [
 
 if CONFIG['MOZ_WEBRTC']:
     LOCAL_INCLUDES += [
-        '/media/webrtc/signaling/src/common',
+        '/dom/media/webrtc/common',
         '/media/webrtc/trunk',
         '/media/webrtc/trunk/webrtc',
     ]

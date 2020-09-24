@@ -18,6 +18,7 @@
 #include "nsStandardURL.h"
 #include "LoadContextInfo.h"
 #include "nsCategoryManagerUtils.h"
+#include "nsDirectoryServiceDefs.h"
 #include "nsSocketProviderService.h"
 #include "nsISocketProvider.h"
 #include "nsPrintfCString.h"
@@ -479,6 +480,25 @@ nsresult nsHttpHandler::Init() {
         Preferences::GetBool(HTTP_PREF("active_tab_priority"), true);
   }
 
+  auto initQLogDir = [&]() {
+    nsCOMPtr<nsIFile> qlogDir;
+    nsresult rv =
+        NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(qlogDir));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return EmptyCString();
+    }
+
+    nsAutoCString dirName("qlog_");
+    dirName.AppendInt(mProcessId);
+    rv = qlogDir->AppendNative(dirName);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return EmptyCString();
+    }
+
+    return qlogDir->HumanReadablePath();
+  };
+  mHttp3QlogDir = initQLogDir();
+
   // monitor some preference changes
   Preferences::RegisterPrefixCallbacks(nsHttpHandler::PrefsChanged,
                                        gCallbackPrefs, this);
@@ -593,7 +613,16 @@ nsresult nsHttpHandler::Init() {
   if (pc) {
     pc->GetParentalControlsEnabled(&mParentalControlEnabled);
   }
+
   return NS_OK;
+}
+
+const nsCString& nsHttpHandler::Http3QlogDir() {
+  if (StaticPrefs::network_http_http3_enable_qlog()) {
+    return mHttp3QlogDir;
+  }
+
+  return EmptyCString();
 }
 
 void nsHttpHandler::MakeNewRequestTokenBucket() {
@@ -1181,7 +1210,7 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
         }
       }
     } else {
-      mDeviceModelId = EmptyCString();
+      mDeviceModelId.Truncate();
     }
     mUserAgentIsDirty = true;
   }
@@ -2010,6 +2039,22 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     }
   }
 
+  if (PREF_CHANGED(HTTP_PREF("http3.enable_qlog"))) {
+    // Initialize the directory.
+    nsCOMPtr<nsIFile> qlogDir;
+    if (Preferences::GetBool(HTTP_PREF("http3.enable_qlog")) &&
+        !mHttp3QlogDir.IsEmpty() &&
+        NS_SUCCEEDED(NS_NewNativeLocalFile(mHttp3QlogDir, false,
+                                           getter_AddRefs(qlogDir)))) {
+      // Here we do main thread IO, but since this only happens
+      // when enabling a developer feature it's not a problem for users.
+      rv = qlogDir->Create(nsIFile::DIRECTORY_TYPE, 0755);
+      if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS) {
+        NS_WARNING("Creating qlog dir failed");
+      }
+    }
+  }
+
   // Enable HTTP response timeout if TCP Keepalives are disabled.
   mResponseTimeoutEnabled =
       !mTCPKeepaliveShortLivedEnabled && !mTCPKeepaliveLongLivedEnabled;
@@ -2580,13 +2625,13 @@ nsresult nsHttpHandler::SpeculativeConnectInternal(
   nsAutoCString username;
   aURI->GetUsername(username);
 
-  // TODO For now pass EmptyCString() for topWindowOrigin for all speculative
+  // TODO For now pass ""_ns for topWindowOrigin for all speculative
   // connection attempts, but ideally we should pass the accurate top window
   // origin here.  This would require updating the nsISpeculativeConnect API
   // and all of its consumers.
-  RefPtr<nsHttpConnectionInfo> ci = new nsHttpConnectionInfo(
-      host, port, EmptyCString(), username, EmptyCString(), nullptr,
-      originAttributes, aURI->SchemeIs("https"));
+  RefPtr<nsHttpConnectionInfo> ci =
+      new nsHttpConnectionInfo(host, port, ""_ns, username, ""_ns, nullptr,
+                               originAttributes, aURI->SchemeIs("https"));
   ci->SetAnonymous(anonymous);
 
   return SpeculativeConnect(ci, aCallbacks);

@@ -2225,6 +2225,10 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter, bool aIsRoot)
         mOuter->GetContent(), mOuter->PresShell(), ScreenMargin(), 0);
     nsLayoutUtils::SetZeroMarginDisplayPortOnAsyncScrollableAncestors(mOuter);
   }
+
+  if (mIsRoot) {
+    mZoomableByAPZ = mOuter->PresShell()->GetZoomableByAPZ();
+  }
 }
 
 ScrollFrameHelper::~ScrollFrameHelper() {
@@ -5284,8 +5288,8 @@ nsresult ScrollFrameHelper::CreateAnonymousContent(
       case StyleResize::Vertical:
         dir.AssignLiteral("bottom");
         if (!IsScrollbarOnRight()) {
-          mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::flip,
-                                   EmptyString(), false);
+          mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::flip, u""_ns,
+                                   false);
           key |= AnonymousContentKey::Flag_Resizer_Bottom_Flip;
         } else {
           key |= AnonymousContentKey::Flag_Resizer_Bottom;

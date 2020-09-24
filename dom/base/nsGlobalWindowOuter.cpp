@@ -23,6 +23,7 @@
 #include "nsIWebProgressListener.h"
 #include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/ContentBlocking.h"
+#include "mozilla/dom/AutoPrintEventDispatcher.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
@@ -2603,7 +2604,7 @@ void nsGlobalWindowOuter::DispatchDOMWindowCreated() {
   }
 }
 
-void nsGlobalWindowOuter::ClearStatus() { SetStatusOuter(EmptyString()); }
+void nsGlobalWindowOuter::ClearStatus() { SetStatusOuter(u""_ns); }
 
 void nsGlobalWindowOuter::SetDocShell(nsDocShell* aDocShell) {
   MOZ_ASSERT(aDocShell);
@@ -5207,31 +5208,6 @@ void nsGlobalWindowOuter::StopOuter(ErrorResult& aError) {
   }
 }
 
-static CallState CollectDocuments(Document& aDoc,
-                                  nsTArray<nsCOMPtr<Document>>& aDocs) {
-  aDocs.AppendElement(&aDoc);
-  auto recurse = [&aDocs](Document& aSubDoc) {
-    return CollectDocuments(aSubDoc, aDocs);
-  };
-  aDoc.EnumerateSubDocuments(recurse);
-  return CallState::Continue;
-}
-
-static void DispatchPrintEventToWindowTree(Document& aDoc,
-                                           const nsAString& aEvent) {
-  if (aDoc.IsStaticDocument()) {
-    return;
-  }
-
-  nsTArray<nsCOMPtr<Document>> targets;
-  CollectDocuments(aDoc, targets);
-  for (nsCOMPtr<Document>& doc : targets) {
-    nsContentUtils::DispatchTrustedEvent(doc, doc->GetWindow(), aEvent,
-                                         CanBubble::eNo, Cancelable::eNo,
-                                         nullptr);
-  }
-}
-
 #ifdef NS_PRINTING
 static void SetIsPrintingInDocShellTree(nsIDocShellTreeItem* aParentNode,
                                         bool aIsPrintingOrPP,
@@ -5393,7 +5369,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       AutoNoJSAPI nojsapi;
       auto printKind = aIsPreview == IsPreview::Yes ? PrintKind::PrintPreview
                                                     : PrintKind::Print;
-      aError = OpenInternal(EmptyString(), EmptyString(), EmptyString(),
+      aError = OpenInternal(u""_ns, u""_ns, u""_ns,
                             false,             // aDialog
                             false,             // aContentModal
                             true,              // aCalledNoScript
@@ -5442,9 +5418,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     }
 
     // TODO(emilio): Should dispatch this to OOP iframes too.
-    DispatchPrintEventToWindowTree(*docToPrint, u"beforeprint"_ns);
-    auto dispatchAfterPrint = MakeScopeExit(
-        [&] { DispatchPrintEventToWindowTree(*docToPrint, u"afterprint"_ns); });
+    AutoPrintEventDispatcher dispatcher(*docToPrint);
 
     nsAutoScriptBlocker blockScripts;
     RefPtr<Document> clone =
@@ -6065,8 +6039,8 @@ bool nsGlobalWindowOuter::GatherPostMessageData(
     }
 
     nsresult rv = NS_MutateURI(targetOriginURI)
-                      .SetUserPass(EmptyCString())
-                      .SetPathQueryRef(EmptyCString())
+                      .SetUserPass(""_ns)
+                      .SetPathQueryRef(""_ns)
                       .Finalize(aTargetOriginURI);
     if (NS_FAILED(rv)) {
       return false;

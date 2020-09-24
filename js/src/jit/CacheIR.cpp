@@ -62,14 +62,14 @@ const char* const js::jit::CacheIROpNames[] = {
 #undef OPNAME
 };
 
-const uint32_t js::jit::CacheIROpArgLengths[] = {
-#define ARGLENGTH(op, len, ...) len,
-    CACHE_IR_OPS(ARGLENGTH)
-#undef ARGLENGTH
+const CacheIROpInfo js::jit::CacheIROpInfos[] = {
+#define OPINFO(op, len, transpile, ...) {len, transpile},
+    CACHE_IR_OPS(OPINFO)
+#undef OPINFO
 };
 
 const uint32_t js::jit::CacheIROpHealth[] = {
-#define OPHEALTH(op, len, health) health,
+#define OPHEALTH(op, len, transpile, health) health,
     CACHE_IR_OPS(OPHEALTH)
 #undef OPHEALTH
 };
@@ -1949,7 +1949,8 @@ AttachDecision GetPropIRGenerator::tryAttachFunction(HandleObject obj,
     return AttachDecision::NoAction;
   }
 
-  if (!JSID_IS_ATOM(id, cx_->names().length)) {
+  bool isLength = JSID_IS_ATOM(id, cx_->names().length);
+  if (!isLength && !JSID_IS_ATOM(id, cx_->names().name)) {
     return AttachDecision::NoAction;
   }
 
@@ -1962,30 +1963,54 @@ AttachDecision GetPropIRGenerator::tryAttachFunction(HandleObject obj,
 
   JSFunction* fun = &obj->as<JSFunction>();
 
-  // length was probably deleted from the function.
-  if (fun->hasResolvedLength()) {
-    return AttachDecision::NoAction;
-  }
+  if (isLength) {
+    // length was probably deleted from the function.
+    if (fun->hasResolvedLength()) {
+      return AttachDecision::NoAction;
+    }
 
-  // Lazy functions don't store the length.
-  if (!fun->hasBytecode()) {
-    return AttachDecision::NoAction;
-  }
+    // Lazy functions don't store the length.
+    if (!fun->hasBytecode()) {
+      return AttachDecision::NoAction;
+    }
 
-  // Length can be non-int32 for bound functions.
-  if (fun->isBoundFunction()) {
-    constexpr auto lengthSlot = FunctionExtended::BOUND_FUNCTION_LENGTH_SLOT;
-    if (!fun->getExtendedSlot(lengthSlot).isInt32()) {
+    // Length can be non-int32 for bound functions.
+    if (fun->isBoundFunction()) {
+      constexpr auto lengthSlot = FunctionExtended::BOUND_FUNCTION_LENGTH_SLOT;
+      if (!fun->getExtendedSlot(lengthSlot).isInt32()) {
+        return AttachDecision::NoAction;
+      }
+    }
+  } else {
+    // name was probably deleted from the function.
+    if (fun->hasResolvedName()) {
+      return AttachDecision::NoAction;
+    }
+
+    // Unless the bound function name prefix is present, we need to call into
+    // the VM to compute the full name.
+    if (fun->isBoundFunction() && !fun->hasBoundFunctionNamePrefix()) {
       return AttachDecision::NoAction;
     }
   }
 
   maybeEmitIdGuard(id);
   writer.guardClass(objId, GuardClassKind::JSFunction);
-  writer.loadFunctionLengthResult(objId);
-  writer.returnFromIC();
+  if (isLength) {
+    writer.loadFunctionLengthResult(objId);
 
-  trackAttached("FunctionLength");
+    // Doesn't need to be monitored, because it always returns an int32.
+    writer.returnFromIC();
+
+    trackAttached("FunctionLength");
+  } else {
+    writer.loadFunctionNameResult(objId);
+
+    // Doesn't need to be monitored, because it always returns a string.
+    writer.returnFromIC();
+
+    trackAttached("FunctionName");
+  }
   return AttachDecision::Attach;
 }
 
@@ -6907,7 +6932,7 @@ AttachDecision CallIRGenerator::tryAttachMathFloor(HandleFunction callee) {
   if (resultIsInt32) {
     writer.mathFloorToInt32Result(numberId);
   } else {
-    writer.mathFunctionNumberResult(numberId, UnaryMathFunction::Floor);
+    writer.mathFloorNumberResult(numberId);
   }
 
   writer.typeMonitorResult();
@@ -6941,7 +6966,7 @@ AttachDecision CallIRGenerator::tryAttachMathCeil(HandleFunction callee) {
   if (resultIsInt32) {
     writer.mathCeilToInt32Result(numberId);
   } else {
-    writer.mathFunctionNumberResult(numberId, UnaryMathFunction::Ceil);
+    writer.mathCeilNumberResult(numberId);
   }
 
   writer.typeMonitorResult();
@@ -6975,7 +7000,7 @@ AttachDecision CallIRGenerator::tryAttachMathTrunc(HandleFunction callee) {
   if (resultIsInt32) {
     writer.mathTruncToInt32Result(numberId);
   } else {
-    writer.mathFunctionNumberResult(numberId, UnaryMathFunction::Trunc);
+    writer.mathTruncNumberResult(numberId);
   }
 
   writer.typeMonitorResult();

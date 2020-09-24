@@ -1346,6 +1346,16 @@ bool WarpCacheIRTranspiler::emitLoadFunctionLengthResult(ObjOperandId objId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitLoadFunctionNameResult(ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* name = MFunctionName::New(alloc(), obj);
+  add(name);
+
+  pushResult(name);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitLoadTypedArrayLengthResult(
     ObjOperandId objId, uint32_t getterOffset) {
   MDefinition* obj = getOperand(objId);
@@ -2428,6 +2438,52 @@ bool WarpCacheIRTranspiler::emitMathFunctionNumberResult(
   MDefinition* input = getOperand(inputId);
 
   auto* ins = MMathFunction::New(alloc(), input, fun);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMathFloorNumberResult(NumberOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  MInstruction* ins;
+  if (MNearbyInt::HasAssemblerSupport(RoundingMode::Down)) {
+    ins = MNearbyInt::New(alloc(), input, MIRType::Double, RoundingMode::Down);
+  } else {
+    ins = MMathFunction::New(alloc(), input, UnaryMathFunction::Floor);
+  }
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMathCeilNumberResult(NumberOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  MInstruction* ins;
+  if (MNearbyInt::HasAssemblerSupport(RoundingMode::Up)) {
+    ins = MNearbyInt::New(alloc(), input, MIRType::Double, RoundingMode::Up);
+  } else {
+    ins = MMathFunction::New(alloc(), input, UnaryMathFunction::Ceil);
+  }
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMathTruncNumberResult(NumberOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  MInstruction* ins;
+  if (MNearbyInt::HasAssemblerSupport(RoundingMode::TowardsZero)) {
+    ins = MNearbyInt::New(alloc(), input, MIRType::Double,
+                          RoundingMode::TowardsZero);
+  } else {
+    ins = MMathFunction::New(alloc(), input, UnaryMathFunction::Trunc);
+  }
   add(ins);
 
   pushResult(ins);

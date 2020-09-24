@@ -83,21 +83,16 @@ function trr_clear_prefs() {
 /// This class sends a DNS query and can be awaited as a promise to get the
 /// response.
 class TRRDNSListener {
-  constructor(
-    name,
-    expectedAnswer,
-    expectedSuccess = true,
-    delay,
-    trrServer = "",
-    expectEarlyFail = false
-  ) {
+  constructor(name, options = {}) {
     this.name = name;
-    this.expectedAnswer = expectedAnswer;
-    this.expectedSuccess = expectedSuccess;
-    this.delay = delay;
+    this.options = options;
+    this.expectedAnswer = options.expectedAnswer ?? undefined;
+    this.expectedSuccess = options.expectedSuccess ?? true;
+    this.delay = options.delay;
     this.promise = new Promise(resolve => {
       this.resolve = resolve;
     });
+    let trrServer = options.trrServer || "";
 
     const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
       Ci.nsIDNSService
@@ -113,15 +108,15 @@ class TRRDNSListener {
       this.request = dns.asyncResolve(
         name,
         Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT,
-        0,
+        this.options.flags || 0,
         resolverInfo,
         this,
         currentThread,
         {} // defaultOriginAttributes
       );
-      Assert.ok(!expectEarlyFail);
+      Assert.ok(!options.expectEarlyFail);
     } catch (e) {
-      Assert.ok(expectEarlyFail);
+      Assert.ok(options.expectEarlyFail);
       this.resolve([e]);
     }
   }

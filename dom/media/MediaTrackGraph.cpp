@@ -31,7 +31,7 @@
 #include "mozilla/AbstractThread.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/Unused.h"
-#include "mtransport/runnable_utils.h"
+#include "transport/runnable_utils.h"
 #include "VideoUtils.h"
 #include "GraphRunner.h"
 #include "Tracing.h"
@@ -3341,8 +3341,8 @@ void MediaTrackGraphImpl::FinishCollectReports(
   if (!manager) return;
 
 #define REPORT(_path, _amount, _desc)                                    \
-  aHandleReport->Callback(EmptyCString(), _path, KIND_HEAP, UNITS_BYTES, \
-                          _amount, nsLiteralCString(_desc), aData);
+  aHandleReport->Callback(""_ns, _path, KIND_HEAP, UNITS_BYTES, _amount, \
+                          nsLiteralCString(_desc), aData);
 
   for (size_t i = 0; i < aAudioTrackSizes.Length(); i++) {
     const AudioNodeSizes& usage = aAudioTrackSizes[i];

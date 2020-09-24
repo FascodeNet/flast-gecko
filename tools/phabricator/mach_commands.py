@@ -25,6 +25,7 @@ class PhabricatorCommandProvider(MachCommandBase):
     def install_moz_phab(self, force=False):
         import logging
         import os
+        import re
         import subprocess
         import sys
 
@@ -90,3 +91,28 @@ class PhabricatorCommandProvider(MachCommandBase):
 
         self.log(logging.INFO, "run", {}, "Installing moz-phab")
         subprocess.run(command)
+
+        # There isn't an elegant way of determining the CLI location of a pip-installed package.
+        # The viable mechanism used here is to:
+        # 1. Get the list of info about the installed package via pip
+        # 2. Parse out the install location. This gives us the python environment in which the
+        #    package is installed
+        # 3. Parse out the relative location of the cli script
+        # 4. Join the two paths, and execute the script at that location
+
+        info = subprocess.check_output([pip3, "show", "-f", "MozPhab"], universal_newlines=True)
+        mozphab_package_location = re.compile(r"Location: (.*)").search(info).group(1)
+        potential_cli_paths = re.compile(r"([^\s]*moz-phab(?:\.exe)?)").findall(info)
+
+        if len(potential_cli_paths) != 1:
+            self.log(
+                logging.WARNING,
+                "no_mozphab_console_script",
+                {},
+                "Could not find the CLI script for moz-phab. Skipping install-certificate step."
+            )
+            sys.exit(1)
+
+        console_script = os.path.realpath(os.path.join(mozphab_package_location,
+                                                       potential_cli_paths[0]))
+        subprocess.run([console_script, 'install-certificate'])

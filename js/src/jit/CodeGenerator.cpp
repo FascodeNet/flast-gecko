@@ -8236,6 +8236,18 @@ void CodeGenerator::visitFunctionLength(LFunctionLength* lir) {
   bailoutFrom(&bail, lir->snapshot());
 }
 
+void CodeGenerator::visitFunctionName(LFunctionName* lir) {
+  Register function = ToRegister(lir->function());
+  Register output = ToRegister(lir->output());
+
+  Label bail;
+
+  const JSAtomState& names = gen->runtime->names();
+  masm.loadFunctionName(function, output, ImmGCPtr(names.empty), &bail);
+
+  bailoutFrom(&bail, lir->snapshot());
+}
+
 template <class OrderedHashTable>
 static void RangeFront(MacroAssembler&, Register, Register, Register);
 
@@ -8912,38 +8924,24 @@ void CodeGenerator::visitMathFunctionF(LMathFunctionF* ins) {
 }
 
 void CodeGenerator::visitModD(LModD* ins) {
-  MOZ_ASSERT(!gen->compilingWasm());
-
   FloatRegister lhs = ToFloatRegister(ins->lhs());
   FloatRegister rhs = ToFloatRegister(ins->rhs());
 
   MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
-  MOZ_ASSERT(!ins->temp()->isBogusTemp());
+  MOZ_ASSERT(ins->temp()->isBogusTemp() == gen->compilingWasm());
 
-  masm.setupUnalignedABICall(ToRegister(ins->temp()));
-  masm.passABIArg(lhs, MoveOp::DOUBLE);
-  masm.passABIArg(rhs, MoveOp::DOUBLE);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, NumberMod), MoveOp::DOUBLE);
-}
-
-void CodeGenerator::visitWasmBuiltinModD(LWasmBuiltinModD* ins) {
-  masm.Push(WasmTlsReg);
-  int32_t framePushedAfterTls = masm.framePushed();
-
-  FloatRegister lhs = ToFloatRegister(ins->lhs());
-  FloatRegister rhs = ToFloatRegister(ins->rhs());
-
-  MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
-
-  masm.setupWasmABICall();
-  masm.passABIArg(lhs, MoveOp::DOUBLE);
-  masm.passABIArg(rhs, MoveOp::DOUBLE);
-
-  int32_t tlsOffset = masm.framePushed() - framePushedAfterTls;
-  masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
-                   mozilla::Some(tlsOffset), MoveOp::DOUBLE);
-
-  masm.Pop(WasmTlsReg);
+  if (gen->compilingWasm()) {
+    masm.setupWasmABICall();
+    masm.passABIArg(lhs, MoveOp::DOUBLE);
+    masm.passABIArg(rhs, MoveOp::DOUBLE);
+    masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
+                     MoveOp::DOUBLE);
+  } else {
+    masm.setupUnalignedABICall(ToRegister(ins->temp()));
+    masm.passABIArg(lhs, MoveOp::DOUBLE);
+    masm.passABIArg(rhs, MoveOp::DOUBLE);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, NumberMod), MoveOp::DOUBLE);
+  }
 }
 
 void CodeGenerator::visitFloor(LFloor* lir) {

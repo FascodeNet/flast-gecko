@@ -1535,11 +1535,13 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "chrono",
+ "crossbeam-channel",
  "glean-core",
  "log",
  "once_cell",
  "serde",
  "tempfile",
+ "thiserror",
  "uuid",
  "xpcom",
 ]
@@ -3252,6 +3254,7 @@ dependencies = [
 name = "neqo_glue"
 version = "0.1.0"
 dependencies = [
+ "log",
  "neqo-common",
  "neqo-crypto",
  "neqo-http3",
@@ -3259,6 +3262,7 @@ dependencies = [
  "neqo-transport",
  "nserror",
  "nsstring",
+ "qlog",
  "thin-vec",
  "xpcom",
 ]
