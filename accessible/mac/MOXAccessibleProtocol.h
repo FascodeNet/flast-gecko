@@ -261,6 +261,9 @@
 // AXInsertionPointLineNumber
 - (NSNumber* _Nullable)moxInsertionPointLineNumber;
 
+// AXEditableAncestor
+- (id _Nullable)moxEditableAncestor;
+
 #pragma mark - AttributeSetters
 
 // AXValue
@@ -409,6 +412,31 @@
 
 // AXTextMarkerRangeForUIElement
 - (id _Nullable)moxTextMarkerRangeForUIElement:(id _Nonnull)element;
+
+// AXLineTextMarkerRangeForTextMarker
+- (id _Nullable)moxLineTextMarkerRangeForTextMarker:(id _Nonnull)textMarker;
+
+// AXLeftLineTextMarkerRangeForTextMarker
+- (id _Nullable)moxLeftLineTextMarkerRangeForTextMarker:(id _Nonnull)textMarker;
+
+// AXRightLineTextMarkerRangeForTextMarker
+- (id _Nullable)moxRightLineTextMarkerRangeForTextMarker:
+    (id _Nonnull)textMarker;
+
+// AXParagraphTextMarkerRangeForTextMarker
+- (id _Nullable)moxParagraphTextMarkerRangeForTextMarker:
+    (id _Nonnull)textMarker;
+
+// AXStyleTextMarkerRangeForTextMarker
+- (id _Nullable)moxStyleTextMarkerRangeForTextMarker:(id _Nonnull)textMarker;
+
+// AXMozDebugDescriptionForTextMarker
+- (NSString* _Nullable)moxMozDebugDescriptionForTextMarker:
+    (id _Nonnull)textMarker;
+
+// AXMozDebugDescriptionForTextMarkerRange
+- (NSString* _Nullable)moxMozDebugDescriptionForTextMarkerRange:
+    (id _Nonnull)textMarkerRange;
 
 #pragma mark - TextAttributeSetters
 

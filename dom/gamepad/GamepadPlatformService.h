@@ -17,6 +17,7 @@ namespace mozilla {
 namespace dom {
 
 class GamepadEventChannelParent;
+class GamepadTestChannelParent;
 
 // Platform Service for building and transmitting IPDL messages
 // through the HAL sandbox. Used by platform specific
@@ -33,6 +34,30 @@ class GamepadEventChannelParent;
 class GamepadPlatformService final {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GamepadPlatformService)
  public:
+  class MonitoringState {
+   public:
+    MonitoringState() = default;
+    ~MonitoringState();
+
+    void AddObserver(RefPtr<GamepadTestChannelParent> aParent);
+    void RemoveObserver(GamepadTestChannelParent* aParent);
+
+    bool IsMonitoring() const;
+
+    MonitoringState(const MonitoringState&) = delete;
+    MonitoringState(MonitoringState&&) = delete;
+    MonitoringState& operator=(const MonitoringState) = delete;
+    MonitoringState& operator=(MonitoringState&&) = delete;
+
+   private:
+    void Set(bool aIsMonitoring);
+
+    bool mIsMonitoring{false};
+    nsTArray<RefPtr<GamepadTestChannelParent>> mObservers;
+
+    friend class GamepadPlatformService;
+  };
+
   // Get the singleton service
   static already_AddRefed<GamepadPlatformService> GetParentService();
 
@@ -87,15 +112,14 @@ class GamepadPlatformService final {
 
   void MaybeShutdown();
 
+  MonitoringState& GetMonitoringState() { return mMonitoringState; }
+
  private:
   GamepadPlatformService();
   ~GamepadPlatformService();
   template <class T>
   void NotifyGamepadChange(uint32_t aIndex, const T& aInfo);
 
-  // Flush all pending events buffered in mPendingEvents, must be called
-  // with mMutex held
-  void FlushPendingEvents();
   void Cleanup();
 
   // mGamepadIndex can only be accessed by monitor thread
@@ -110,11 +134,9 @@ class GamepadPlatformService final {
   // between background and monitor thread
   Mutex mMutex;
 
-  // In mochitest, it is possible that the test Events is synthesized
-  // before GamepadEventChannel created, we need to buffer all events
-  // until the channel is created if that happens.
-  nsTArray<GamepadChangeEvent> mPendingEvents;
   std::map<uint32_t, GamepadAdded> mGamepadAdded;
+
+  MonitoringState mMonitoringState;
 };
 
 }  // namespace dom

@@ -4,10 +4,9 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
-
 // eslint-disable-next-line mozilla/reject-some-requires
 const { gDevTools } = require("devtools/client/framework/devtools");
+const { throttle } = require("devtools/shared/throttle");
 
 class ResourceWatcher {
   /**
@@ -33,13 +32,19 @@ class ResourceWatcher {
     this._onResourceAvailable = this._onResourceAvailable.bind(this);
     this._onResourceDestroyed = this._onResourceDestroyed.bind(this);
 
-    this._availableListeners = new EventEmitter();
-    this._updatedListeners = new EventEmitter();
-    this._destroyedListeners = new EventEmitter();
+    // Array of all the currently registered watchers, which contains object with attributes:
+    // - {String} resources: list of all resource watched by this one watcher
+    // - {Function} onAvailable: watcher's function to call when a new resource is available
+    // - {Function} onUpdated: watcher's function to call when a resource has been updated
+    // - {Function} onDestroyed: watcher's function to call when a resource is destroyed
+    this._watchers = [];
 
     // Cache for all resources by the order that the resource was taken.
     this._cache = [];
     this._listenerCount = new Map();
+
+    this._notifyWatchers = this._notifyWatchers.bind(this);
+    this._throttledNotifyWatchers = throttle(this._notifyWatchers, 100);
   }
 
   /**
@@ -62,6 +67,9 @@ class ResourceWatcher {
    *        - {Function} onAvailable: This attribute is mandatory.
    *                                  Function which will be called once per existing
    *                                  resource and each time a resource is created.
+   *        - {Function} onUpdated:   This attribute is optional.
+   *                                  Function which will be called each time a resource,
+   *                                  previously notified via onAvailable is updated.
    *        - {Function} onDestroyed: This attribute is optional.
    *                                  Function which will be called each time a resource in
    *                                  the remote target is destroyed.
@@ -77,6 +85,12 @@ class ResourceWatcher {
       onDestroyed,
       ignoreExistingResources = false,
     } = options;
+
+    if (typeof onAvailable !== "function") {
+      throw new Error(
+        "ResourceWatcher.watchResources expects an onAvailable function as argument"
+      );
+    }
 
     // Cache the Watcher once for all, the first time we call `watch()`.
     // This `watcher` attribute may be then used in any function of the ResourceWatcher after this.
@@ -111,17 +125,28 @@ class ResourceWatcher {
     for (const resource of resources) {
       // If we are registering the first listener, so start listening from the server about
       // this one resource.
-      if (this._availableListeners.count(resource) === 0) {
+      if (!this._hasListenerForResource(resource)) {
         await this._startListening(resource);
       }
-      this._availableListeners.on(resource, onAvailable);
-      if (onUpdated) {
-        this._updatedListeners.on(resource, onUpdated);
-      }
-      if (onDestroyed) {
-        this._destroyedListeners.on(resource, onDestroyed);
-      }
     }
+
+    // The resource cache is immediately filled when receiving the sources, but they are
+    // emitted with a delay due to throttling. Since the cache can contain resources that
+    // will soon be emitted, we have to flush it before adding the new listeners.
+    // Otherwise forwardCacheResources might emit resources that will also be emitted by
+    // the next `_notifyWatchers` call done when calling `_startListening`, which will pull the
+    // "already existing" resources.
+    this._notifyWatchers();
+
+    // Register the watcher just after calling _startListening in order to avoid it being called
+    // for already existing resources, which will optionally be notified via _forwardCachedResources
+    this._watchers.push({
+      resources,
+      onAvailable,
+      onUpdated,
+      onDestroyed,
+      pendingEvents: [],
+    });
 
     if (!ignoreExistingResources) {
       await this._forwardCachedResources(resources, onAvailable);
@@ -131,25 +156,44 @@ class ResourceWatcher {
   /**
    * Stop watching for given type of resources.
    * See `watchResources` for the arguments as both methods receive the same.
+   * Note that `onUpdated` and `onDestroyed` attributes of `options` aren't used here.
+   * Only `onAvailable` attribute is looked up and we unregister all the other registered callbacks
+   * when a matching available callback is found.
    */
   unwatchResources(resources, options) {
-    const { onAvailable, onUpdated, onDestroyed } = options;
+    const { onAvailable } = options;
 
+    if (typeof onAvailable !== "function") {
+      throw new Error(
+        "ResourceWatcher.unwatchResources expects an onAvailable function as argument"
+      );
+    }
+
+    const watchedResources = [];
     for (const resource of resources) {
-      if (onUpdated) {
-        this._updatedListeners.off(resource, onUpdated);
+      if (this._hasListenerForResource(resource)) {
+        watchedResources.push(resource);
       }
-      if (onDestroyed) {
-        this._destroyedListeners.off(resource, onDestroyed);
+    }
+    // Unregister the callbacks from the _watchers registry
+    for (const watcherEntry of this._watchers) {
+      // onAvailable is the only mandatory argument which ends up being used to match
+      // the right watcher entry.
+      if (watcherEntry.onAvailable == onAvailable) {
+        // Remove all resources that we stop watching. We may still watch for some others.
+        watcherEntry.resources = watcherEntry.resources.filter(resourceType => {
+          return !resources.includes(resourceType);
+        });
       }
+    }
+    this._watchers = this._watchers.filter(entry => {
+      // Remove entries entirely if it isn't watching for any resource type
+      return entry.resources.length > 0;
+    });
 
-      const hadAtLeastOneListener =
-        this._availableListeners.count(resource) > 0;
-      this._availableListeners.off(resource, onAvailable);
-      if (
-        hadAtLeastOneListener &&
-        this._availableListeners.count(resource) === 0
-      ) {
+    // Stop listening to all resources that no longer have any watcher callback
+    for (const resource of watchedResources) {
+      if (!this._hasListenerForResource(resource)) {
         this._stopListening(resource);
       }
     }
@@ -210,7 +254,7 @@ class ResourceWatcher {
       // to a new process.
       // In order to keep working resources that are being watched via the
       // Watcher actor, we have to unregister and re-register the resource
-      // types. This will force calling `watchTargetResources` on the new top
+      // types. This will force calling `Resources.watchResources` on the new top
       // level target.
       for (const resourceType of this._listenerCount.keys()) {
         await this._stopListening(resourceType, { bypassListenerCount: true });
@@ -294,8 +338,6 @@ class ResourceWatcher {
    *        which describes the resource.
    */
   async _onResourceAvailable({ targetFront, watcherFront }, resources) {
-    let currentType = null;
-    let resourceBuffer = [];
     for (let resource of resources) {
       const { resourceType } = resource;
 
@@ -321,24 +363,11 @@ class ResourceWatcher {
         });
       }
 
-      if (!currentType) {
-        currentType = resourceType;
-      }
-      // Flush the current list of buffered resource if we switch to another type
-      else if (currentType != resourceType) {
-        this._availableListeners.emit(currentType, resourceBuffer);
-        currentType = resourceType;
-        resourceBuffer = [];
-      }
-      resourceBuffer.push(resource);
+      this._queueResourceEvent("available", resourceType, resource);
 
       this._cache.push(resource);
     }
-
-    // Flush the buffered resources if there is any
-    if (resourceBuffer.length > 0) {
-      this._availableListeners.emit(currentType, resourceBuffer);
-    }
+    this._throttledNotifyWatchers();
   }
 
   /**
@@ -380,8 +409,6 @@ class ResourceWatcher {
    *        }
    */
   async _onResourceUpdated({ targetFront, watcherFront }, updates) {
-    let currentType = null;
-    let resourceBuffer = [];
     for (const update of updates) {
       const {
         resourceType,
@@ -389,6 +416,10 @@ class ResourceWatcher {
         resourceUpdates,
         nestedResourceUpdates,
       } = update;
+
+      if (!resourceId) {
+        console.warn(`Expected resource ${resourceType} to have a resourceId`);
+      }
 
       const existingResource = this._cache.find(
         cachedResource =>
@@ -422,26 +453,12 @@ class ResourceWatcher {
           target[path[path.length - 1]] = value;
         }
       }
-
-      if (!currentType) {
-        currentType = resourceType;
-      }
-      // Flush the current list of buffered resource if we switch to another type
-      if (currentType != resourceType) {
-        this._updatedListeners.emit(currentType, resourceBuffer);
-        currentType = resourceType;
-        resourceBuffer = [];
-      }
-      resourceBuffer.push({
+      this._queueResourceEvent("updated", resourceType, {
         resource: existingResource,
         update,
       });
     }
-
-    // Flush the buffered resources if there is any
-    if (resourceBuffer.length > 0) {
-      this._updatedListeners.emit(currentType, resourceBuffer);
-    }
+    this._throttledNotifyWatchers();
   }
 
   /**
@@ -449,8 +466,6 @@ class ResourceWatcher {
    * See _onResourceAvailable for the argument description.
    */
   async _onResourceDestroyed({ targetFront, watcherFront }, resources) {
-    let currentType = null;
-    let resourceBuffer = [];
     for (const resource of resources) {
       const { resourceType, resourceId } = resource;
 
@@ -479,21 +494,82 @@ class ResourceWatcher {
         );
       }
 
-      if (!currentType) {
-        currentType = resourceType;
-      }
-      // Flush the current list of buffered resource if we switch to another type
-      if (currentType != resourceType) {
-        this._destroyedListeners.emit(currentType, resourceBuffer);
-        currentType = resourceType;
-        resourceBuffer = [];
-      }
-      resourceBuffer.push(resource);
+      this._queueResourceEvent("destroyed", resourceType, resource);
     }
+    this._throttledNotifyWatchers();
+  }
 
-    // Flush the buffered resources if there is any
-    if (resourceBuffer.length > 0) {
-      this._destroyedListeners.emit(currentType, resourceBuffer);
+  /**
+   * Check if there is at least one listener registered for the given resource type.
+   *
+   * @param {String} resourceType
+   *        Watched resource type
+   */
+  _hasListenerForResource(resourceType) {
+    return this._watchers.some(({ resources }) => {
+      return resources.includes(resourceType);
+    });
+  }
+
+  _queueResourceEvent(callbackType, resourceType, update) {
+    for (const { resources, pendingEvents } of this._watchers) {
+      // This watcher doesn't listen to this type of resource
+      if (!resources.includes(resourceType)) {
+        continue;
+      }
+      // If we receive a new event of the same type, accumulate the new update in the last event
+      if (pendingEvents.length > 0) {
+        const lastEvent = pendingEvents[pendingEvents.length - 1];
+        if (lastEvent.callbackType == callbackType) {
+          lastEvent.updates.push(update);
+          continue;
+        }
+      }
+      // Otherwise, pile up a new event, which will force calling watcher
+      // callback a new time
+      pendingEvents.push({
+        callbackType,
+        updates: [update],
+      });
+    }
+  }
+
+  /**
+   * Flush the pending event and notify all the currently registered watchers
+   * about all the available, updated and destroyed events that have been accumulated in
+   * `_watchers`'s `pendingEvents` arrays.
+   */
+  _notifyWatchers() {
+    for (const watcherEntry of this._watchers) {
+      const {
+        onAvailable,
+        onUpdated,
+        onDestroyed,
+        pendingEvents,
+      } = watcherEntry;
+      // Immediately clear the buffer in order to avoid possible races, where an event listener
+      // would end up somehow adding a new throttled resource
+      watcherEntry.pendingEvents = [];
+
+      for (const { callbackType, updates } of pendingEvents) {
+        try {
+          if (callbackType == "available") {
+            onAvailable(updates);
+          } else if (callbackType == "updated" && onUpdated) {
+            onUpdated(updates);
+          } else if (callbackType == "destroyed" && onDestroyed) {
+            onDestroyed(updates);
+          }
+        } catch (e) {
+          console.error(
+            "Exception while calling a ResourceWatcher",
+            callbackType,
+            "callback",
+            ":",
+            e
+          );
+        }
+      }
     }
   }
 
@@ -592,8 +668,12 @@ class ResourceWatcher {
     }
 
     const onAvailable = this._onResourceAvailable.bind(this, { targetFront });
-    const onDestroyed = this._onResourceDestroyed.bind(this, { targetFront });
     const onUpdated = this._onResourceUpdated.bind(this, { targetFront });
+    const onDestroyed = this._onResourceDestroyed.bind(this, { targetFront });
+
+    if (!(resourceType in LegacyListeners)) {
+      throw new Error(`Missing legacy listener for ${resourceType}`);
+    }
     return LegacyListeners[resourceType]({
       targetList: this.targetList,
       targetFront,
@@ -674,7 +754,14 @@ ResourceWatcher.TYPES = ResourceWatcher.prototype.TYPES = {
   STYLESHEET: "stylesheet",
   NETWORK_EVENT: "network-event",
   WEBSOCKET: "websocket",
+  COOKIE: "cookie",
+  LOCAL_STORAGE: "local-storage",
+  SESSION_STORAGE: "session-storage",
+  CACHE_STORAGE: "Cache",
+  EXTENSION_STORAGE: "extension-storage",
+  INDEXED_DB: "indexed-db",
   NETWORK_EVENT_STACKTRACE: "network-event-stacktrace",
+  SOURCE: "source",
 };
 module.exports = { ResourceWatcher };
 
@@ -718,7 +805,21 @@ const LegacyListeners = {
   [ResourceWatcher.TYPES
     .WEBSOCKET]: require("devtools/shared/resources/legacy-listeners/websocket"),
   [ResourceWatcher.TYPES
+    .COOKIE]: require("devtools/shared/resources/legacy-listeners/cookie"),
+  [ResourceWatcher.TYPES
+    .LOCAL_STORAGE]: require("devtools/shared/resources/legacy-listeners/local-storage"),
+  [ResourceWatcher.TYPES
+    .SESSION_STORAGE]: require("devtools/shared/resources/legacy-listeners/session-storage"),
+  [ResourceWatcher.TYPES
+    .CACHE_STORAGE]: require("devtools/shared/resources/legacy-listeners/cache-storage"),
+  [ResourceWatcher.TYPES
+    .EXTENSION_STORAGE]: require("devtools/shared/resources/legacy-listeners/extension-storage"),
+  [ResourceWatcher.TYPES
+    .INDEXED_DB]: require("devtools/shared/resources/legacy-listeners/indexed-db"),
+  [ResourceWatcher.TYPES
     .NETWORK_EVENT_STACKTRACE]: require("devtools/shared/resources/legacy-listeners/network-event-stacktraces"),
+  [ResourceWatcher.TYPES
+    .SOURCE]: require("devtools/shared/resources/legacy-listeners/source"),
 };
 
 // Optional transformers for each type of resource.
@@ -730,6 +831,8 @@ const ResourceTransformers = {
     .CONSOLE_MESSAGE]: require("devtools/shared/resources/transformers/console-messages"),
   [ResourceWatcher.TYPES
     .ERROR_MESSAGE]: require("devtools/shared/resources/transformers/error-messages"),
+  [ResourceWatcher.TYPES
+    .INDEXED_DB]: require("devtools/shared/resources/transformers/storage-indexed-db.js"),
   [ResourceWatcher.TYPES
     .ROOT_NODE]: require("devtools/shared/resources/transformers/root-node"),
 };

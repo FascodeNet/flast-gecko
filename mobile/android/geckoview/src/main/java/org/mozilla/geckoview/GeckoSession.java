@@ -14,7 +14,6 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.AbstractSequentialList;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -1073,46 +1072,6 @@ public class GeckoSession {
         @WrapForJNI(dispatchTo = "proxy", stubName = "Close")
         private native void nativeClose();
 
-        // Assign a new set of Java session objects to the underlying Gecko window.
-        // This replaces previously assigned objects from open() or transfer() calls.
-        public synchronized void transfer(final GeckoSession owner,
-                                          final NativeQueue queue,
-                                          final Compositor compositor,
-                                          final EventDispatcher dispatcher,
-                                          final SessionAccessibility.NativeProvider sessionAccessibility,
-                                          final GeckoBundle initData) {
-            if (mNativeQueue == null) {
-                // Already closed.
-                return;
-            }
-
-            final GeckoSession oldOwner = mOwner.get();
-            if (oldOwner != null && owner != oldOwner) {
-                oldOwner.abandonWindow();
-            }
-
-            mOwner = new WeakReference<>(owner);
-
-            if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
-                nativeTransfer(queue, compositor, dispatcher, sessionAccessibility, initData);
-            } else {
-                GeckoThread.queueNativeCallUntil(GeckoThread.State.PROFILE_READY,
-                        this, "nativeTransfer",
-                        NativeQueue.class, queue,
-                        Compositor.class, compositor,
-                        EventDispatcher.class, dispatcher,
-                        SessionAccessibility.NativeProvider.class, sessionAccessibility,
-                        GeckoBundle.class, initData);
-            }
-
-            if (mNativeQueue != queue) {
-                // Reset the old queue to prevent old events from affecting this window.
-                // Gecko will call onReady later with the new queue if needed.
-                mNativeQueue.reset(State.INITIAL);
-                mNativeQueue = queue;
-            }
-        }
-
         @WrapForJNI(dispatchTo = "proxy", stubName = "Transfer")
         private native void nativeTransfer(NativeQueue queue, Compositor compositor,
                                            EventDispatcher dispatcher,
@@ -1124,14 +1083,6 @@ public class GeckoSession {
 
         @WrapForJNI(dispatchTo = "proxy")
         public native void attachAccessibility(SessionAccessibility.NativeProvider sessionAccessibility);
-
-        @WrapForJNI(dispatchTo = "proxy")
-        public native void attachMediaSessionController(
-            final MediaSession.Controller controller, final long id);
-
-        @WrapForJNI(dispatchTo = "proxy")
-        public native void detachMediaSessionController(
-            final MediaSession.Controller controller);
 
         @WrapForJNI(calledFrom = "gecko")
         private synchronized void onReady(final @Nullable NativeQueue queue) {
@@ -1284,36 +1235,6 @@ public class GeckoSession {
         onWindowChanged(WINDOW_TRANSFER_OUT, /* inProgress */ true);
         mWindow = null;
         onWindowChanged(WINDOW_TRANSFER_OUT, /* inProgress */ false);
-    }
-
-    private void transferFrom(final Window window,
-                              final GeckoSessionSettings settings,
-                              final String id) {
-        if (isOpen()) {
-            // We will leak the existing Window if we transfer in another one.
-            throw new IllegalStateException("Session is open");
-        }
-
-        if (window != null) {
-            onWindowChanged(WINDOW_TRANSFER_IN, /* inProgress */ true);
-        }
-
-        mWindow = window;
-        mSettings = new GeckoSessionSettings(settings, this);
-        mId = id;
-
-        if (mWindow != null) {
-            mWindow.transfer(this, mNativeQueue, mCompositor,
-                    mEventDispatcher, mAccessibility != null ? mAccessibility.nativeProvider : null,
-                    createInitData());
-            onWindowChanged(WINDOW_TRANSFER_IN, /* inProgress */ false);
-            mWebExtensionController.setRuntime(mWindow.runtime);
-        }
-    }
-
-    /* package */ void transferFrom(final GeckoSession session) {
-        transferFrom(session.mWindow, session.mSettings, session.mId);
-        session.mWindow = null;
     }
 
     /* package */ boolean equalsId(final GeckoSession other) {
@@ -1539,21 +1460,16 @@ public class GeckoSession {
      */
     public static final int LOAD_FLAGS_REPLACE_HISTORY = 1 << 6;
 
-    /**
-     * Formats the map of additional request headers into an ArrayList
-     * @param additionalHeaders Request headers to be formatted
-     * @return Correctly formatted request headers as a ArrayList
-     */
-    private ArrayList<String> additionalHeadersToStringArray(final @NonNull Map<String, String> additionalHeaders) {
-        ArrayList<String> headers = new ArrayList<String>();
-        for (String key : additionalHeaders.keySet()) {
-            // skip null key if one exists
-            if (key == null)
+    private GeckoBundle additionalHeadersToBundle(final Map<String, String> additionalHeaders) {
+        final GeckoBundle bundle = new GeckoBundle(additionalHeaders.size());
+        for (Map.Entry<String, String> entry : additionalHeaders.entrySet()) {
+            if (entry.getKey() == null) {
+                // Ignore null keys
                 continue;
-
-            headers.add( String.format("%s:%s", key, additionalHeaders.get(key)) );
+            }
+            bundle.putString(entry.getKey(), entry.getValue());
         }
-        return headers;
+        return bundle;
     }
 
     /**
@@ -1619,7 +1535,7 @@ public class GeckoSession {
         }
 
         if (additionalHeaders != null) {
-            msg.putStringArray("headers", additionalHeadersToStringArray(additionalHeaders));
+            msg.putBundle("headers", additionalHeadersToBundle(additionalHeaders));
         }
         mEventDispatcher.dispatch("GeckoView:LoadUri", msg);
     }
@@ -1677,7 +1593,7 @@ public class GeckoSession {
             }
 
             if (additionalHeaders != null) {
-                msg.putStringArray("headers", additionalHeadersToStringArray(additionalHeaders));
+                msg.putBundle("headers", additionalHeadersToBundle(additionalHeaders));
             }
 
             mEventDispatcher.dispatch("GeckoView:LoadUri", msg);
@@ -2605,7 +2521,6 @@ public class GeckoSession {
     @AnyThread
     public void setMediaSessionDelegate(
             final @Nullable MediaSession.Delegate delegate) {
-        Log.d(LOGTAG, "setMediaSessionDelegate " + mWindow);
         mMediaSessionHandler.setDelegate(delegate, this);
     }
 
@@ -2616,61 +2531,6 @@ public class GeckoSession {
     @AnyThread
     public @Nullable MediaSession.Delegate getMediaSessionDelegate() {
         return mMediaSessionHandler.getDelegate();
-    }
-
-    @UiThread
-    /* package */ void attachMediaSessionController(
-            final MediaSession.Controller controller) {
-        ThreadUtils.assertOnUiThread();
-
-        if (DEBUG) {
-            Log.d(LOGTAG,
-                    "attachMediaSessionController" +
-                    " isOpen=" + isOpen() +
-                    ", isEnabled=" + mMediaSessionHandler.isEnabled());
-        }
-
-        if (!isOpen() || !mMediaSessionHandler.isEnabled()) {
-            return;
-        }
-
-        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
-            mWindow.attachMediaSessionController(controller, controller.getId());
-        } else {
-            GeckoThread.queueNativeCallUntil(
-                    GeckoThread.State.PROFILE_READY,
-                    mWindow, "attachMediaSessionController",
-                    MediaSession.Controller.class,
-                    controller,
-                    controller.getId());
-        }
-    }
-
-    @UiThread
-    /* package */ void detachMediaSessionController(
-            final MediaSession.Controller controller) {
-        ThreadUtils.assertOnUiThread();
-
-        if (DEBUG) {
-            Log.d(LOGTAG,
-                    "detachMediaSessionController" +
-                    " isOpen=" + isOpen() +
-                    ", isEnabled=" + mMediaSessionHandler.isEnabled());
-        }
-
-        if (!isOpen() || !mMediaSessionHandler.isEnabled()) {
-            return;
-        }
-
-        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
-            mWindow.detachMediaSessionController(controller);
-        } else {
-            GeckoThread.queueNativeCallUntil(
-                    GeckoThread.State.PROFILE_READY,
-                    mWindow, "detachMediaSessionController",
-                    MediaSession.Controller.class,
-                    controller);
-        }
     }
 
     /**

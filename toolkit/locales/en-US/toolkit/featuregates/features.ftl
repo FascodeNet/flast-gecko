@@ -104,7 +104,17 @@ experimental-features-graphics-desktop-zooming =
     .label = Graphics: Smooth Pinch Zoom
 experimental-features-graphics-desktop-zooming-description = Enable support for smooth pinch zooming on touchscreens and precision touch pads.
 
+# WebRTC global mute toggle controls
+experimental-features-webrtc-global-mute-toggles =
+    .label = WebRTC Global Mute Toggles
+experimental-features-webrtc-global-mute-toggles-description = Add controls to the WebRTC global sharing indicator that allow users to globally mute their microphone and camera feeds.
+
 # JS JIT Warp project
 experimental-features-js-warp =
     .label = JavaScript JIT: Warp
 experimental-features-js-warp-description = Enable Warp, a project to improve JavaScript performance and memory usage.
+
+# Fission is the name of the feature and should not be translated.
+experimental-features-fission =
+    .label = Fission (Site Isolation)
+experimental-features-fission-description = Fission (site isolation) is an experimental feature in { -brand-short-name } to provide an additional layer of defense against security bugs. By isolating each site into a separate process, Fission makes it harder for malicious websites to get access to information from other pages you are visiting. This is a major architectural change in { -brand-short-name } and we appreciate you testing and reporting any issues you might encounter. For more details, see <a data-l10n-name="wiki">the wiki</a>.

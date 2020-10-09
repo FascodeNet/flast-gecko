@@ -150,6 +150,9 @@ urlbar.searchmode.*
   time search mode is entered in the Urlbar. The suffix on the scalar name
   describes how search mode was entered. Possibilities include:
 
+  - ``bookmarkmenu``
+    Used when the user selects the Search Bookmarks menu item in the Library
+    menu.
   - ``handoff``
     Used when the user uses the search box on the new tab page and is handed off
     to the address bar.
@@ -160,10 +163,19 @@ urlbar.searchmode.*
   - ``shortcut``
     Used when the user enters search mode with a keyboard shortcut or menu bar
     item (e.g. ``Accel+K``).
+  - ``tabmenu``
+    Used when the user selects the Search Tabs menu item in the tab overflow
+    menu.
+  - ``tabtosearch``
+    Used when the user selects a tab-to-search result. These results suggest a
+    search engine when the search engine's domain is autofilled.
   - ``topsites_newtab``
     Used when the user selects a search shortcut Top Site from the New Tab Page.
   - ``topsites_urlbar``
     Used when the user selects a search shortcut Top Site from the Urlbar.
+  - ``touchbar``
+    Used when the user taps a search shortct on the Touch Bar, available on some
+    Macs.
   - ``typed``
     Used when the user types an engine alias in the Urlbar.
   - ``other``
@@ -258,7 +270,11 @@ Event Extra
     It can be one of: ``none``, ``autofill``, ``visit``, ``bookmark``,
     ``history``, ``keyword``, ``search``, ``searchsuggestion``, ``switchtab``,
     ``remotetab``, ``extension``, ``oneoff``, ``keywordoffer``, ``canonized``,
-    ``tip``, ``tiphelp``, ``formhistory``
+    ``tip``, ``tiphelp``, ``formhistory``, ``tabtosearch``
+    In practice, ``tabtosearch`` should not appear in real event telemetry.
+    Opening a tab-to-search result enters search mode and entering search mode
+    does not currently mark the end of an engagement. It is noted here for
+    completeness.
   - ``selIndex``
     Index of the selected result in the urlbar panel, or -1 for no selection.
     There won't be a selection when a one-off button is the only selection, and

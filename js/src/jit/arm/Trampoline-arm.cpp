@@ -6,10 +6,11 @@
 
 #include "jit/arm/SharedICHelpers-arm.h"
 #include "jit/Bailouts.h"
+#include "jit/BaselineFrame.h"
+#include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
-#include "jit/Linker.h"
 #ifdef JS_ION_PERF
 #  include "jit/PerfSpewer.h"
 #endif
@@ -274,13 +275,14 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.push(framePtr);  // BaselineFrame
     masm.push(r0);        // jitcode
 
+    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
+                        uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(r11);          // BaselineFrame
     masm.passABIArg(OsrFrameReg);  // InterpreterFrame
     masm.passABIArg(numStackValues);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::InitBaselineFrameForOsr),
-                     MoveOp::GENERAL,
-                     CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+    masm.callWithABI<Fn, jit::InitBaselineFrameForOsr>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
     Register jitcode = regs.takeAny();
     masm.pop(jitcode);
@@ -406,12 +408,14 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   const int sizeOfBailoutInfo = sizeof(void*) * 2;
   masm.reserveStack(sizeOfBailoutInfo);
   masm.mov(sp, r2);
+  using Fn = bool (*)(InvalidationBailoutStack * sp, size_t * frameSizeOut,
+                      BaselineBailoutInfo * *info);
   masm.setupAlignedABICall();
   masm.passABIArg(r0);
   masm.passABIArg(r1);
   masm.passABIArg(r2);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, InvalidationBailout),
-                   MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI<Fn, InvalidationBailout>(
+      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
 
   masm.ma_ldr(DTRAddr(sp, DtrOffImm(0)), r2);
   {
@@ -652,6 +656,7 @@ static void GenerateBailoutThunk(MacroAssembler& masm, uint32_t frameClass,
   const int sizeOfBailoutInfo = sizeof(void*) * 2;
   masm.reserveStack(sizeOfBailoutInfo);
   masm.mov(sp, r1);
+  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
   masm.setupAlignedABICall();
 
   // Decrement sp by another 4, so we keep alignment. Not Anymore! Pushing
@@ -662,8 +667,8 @@ static void GenerateBailoutThunk(MacroAssembler& masm, uint32_t frameClass,
   masm.passABIArg(r1);
 
   // Sp % 8 == 0
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, Bailout), MoveOp::GENERAL,
-                   CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI<Fn, Bailout>(MoveOp::GENERAL,
+                                CheckUnsafeCallWithABI::DontCheckOther);
   masm.ma_ldr(DTRAddr(sp, DtrOffImm(0)), r2);
   {
     ScratchRegisterScope scratch(masm);

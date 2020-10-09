@@ -51,6 +51,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "mozilla/ToString.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/AutoPrintEventDispatcher.h"
 #include "mozilla/dom/BrowserBridgeChild.h"
@@ -134,6 +135,7 @@
 #include "nsViewportInfo.h"
 #include "nsWebBrowser.h"
 #include "nsWindowWatcher.h"
+#include "nsIXULRuntime.h"
 
 #ifdef XP_WIN
 #  include "mozilla/plugins/PluginWidgetChild.h"
@@ -1286,7 +1288,7 @@ void BrowserChild::HandleDoubleTap(const CSSPoint& aPoint,
                                    const ScrollableLayerGuid& aGuid) {
   MOZ_LOG(
       sApzChildLog, LogLevel::Debug,
-      ("Handling double tap at %s with %p %p\n", Stringify(aPoint).c_str(),
+      ("Handling double tap at %s with %p %p\n", ToString(aPoint).c_str(),
        mBrowserChildMessageManager ? mBrowserChildMessageManager->GetWrapper()
                                    : nullptr,
        mBrowserChildMessageManager.get()));
@@ -3372,16 +3374,14 @@ ScreenIntSize BrowserChild::GetInnerSize() {
       innerSize, PixelCastJustification::LayoutDeviceIsScreenForTabDims);
 };
 
-Maybe<LayoutDeviceIntRect> BrowserChild::GetVisibleRect() const {
+Maybe<nsRect> BrowserChild::GetVisibleRect() const {
   if (mIsTopLevel) {
     // We are conservative about visible rects for top-level browsers to avoid
     // artifacts when resizing
     return Nothing();
   }
-  CSSRect visibleRectCSS = CSSPixel::FromAppUnits(mEffectsInfo.mVisibleRect);
-  LayoutDeviceIntRect visibleRectLD =
-      RoundedToInt(visibleRectCSS * mPuppetWidget->GetDefaultScale());
-  return Some(visibleRectLD);
+
+  return Some(mEffectsInfo.mVisibleRect);
 }
 
 Maybe<LayoutDeviceRect>
@@ -3450,7 +3450,7 @@ nsresult BrowserChild::CanCancelContentJS(
 
   // If we have session history in the parent we've already performed
   // the checks following, so we can return early.
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mozilla::SessionHistoryInParent()) {
     *aCanCancel = true;
     return NS_OK;
   }

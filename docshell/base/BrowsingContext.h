@@ -121,6 +121,16 @@ class WindowProxyHolder;
   FIELD(HistoryID, nsID)                                                     \
   FIELD(InRDMPane, bool)                                                     \
   FIELD(Loading, bool)                                                       \
+  /* A field only set on top browsing contexts, which indicates that either: \
+   *                                                                         \
+   *  * This is a browsing context created explicitly for printing or print  \
+   *    preview (thus hosting static documents).                             \
+   *                                                                         \
+   *  * This is a browsing context where something in this tree is calling   \
+   *    window.print() (and thus showing a modal dialog).                    \
+   *                                                                         \
+   * We use it exclusively to block navigation for both of these cases. */   \
+  FIELD(IsPrinting, bool)                                                    \
   FIELD(AncestorLoading, bool)                                               \
   FIELD(AllowPlugins, bool)                                                  \
   FIELD(AllowContentRetargeting, bool)                                       \
@@ -157,7 +167,12 @@ class WindowProxyHolder;
   FIELD(IsSingleToplevelInHistory, bool)                                     \
   FIELD(UseErrorPages, bool)                                                 \
   FIELD(PlatformOverride, nsString)                                          \
-  FIELD(HasLoadedNonInitialDocument, bool)
+  FIELD(HasLoadedNonInitialDocument, bool)                                   \
+  FIELD(CreatedDynamically, bool)                                            \
+  /* Default value for nsIContentViewer::authorStyleDisabled in any new      \
+   * browsing contexts created as a descendant of this one.  Valid only for  \
+   * top BCs. */                                                             \
+  FIELD(AuthorStyleDisabledDefault, bool)
 
 // BrowsingContext, in this context, is the cross process replicated
 // environment in which information about documents is stored. In
@@ -441,6 +456,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   float FullZoom() const { return GetFullZoom(); }
   float TextZoom() const { return GetTextZoom(); }
 
+  bool AuthorStyleDisabledDefault() const {
+    return GetAuthorStyleDisabledDefault();
+  }
+
   bool UseGlobalHistory() const { return GetUseGlobalHistory(); }
 
   uint64_t BrowserId() const { return GetBrowserId(); }
@@ -656,22 +675,21 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // context or any of its ancestors.
   bool IsPopupAllowed();
 
-  // Set a new active entry on this browsing context. Should only be called if
-  // IsTop() returns true. This is used for implementing
-  // history.pushState/replaceState.
-  void SetActiveSessionHistoryEntryForTop(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      uint32_t aLoadType);
-
-  // Set a new active entry on this browsing context. Should only be called if
-  // IsTop() returns false. This is used for implementing
-  // history.pushState/replaceState.
-  void SetActiveSessionHistoryEntryForFrame(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      int32_t aChildOffset);
+  // Set a new active entry on this browsing context. This is used for
+  // implementing history.pushState/replaceState and same document navigations.
+  // The new active entry will be linked to the current active entry through
+  // its shared state.
+  // aPreviousScrollPos is the scroll position that needs to be saved on the
+  // previous active entry.
+  // aUpdatedCacheKey is the cache key to set on the new active entry. If
+  // aUpdatedCacheKey is 0 then it will be ignored.
+  void SetActiveSessionHistoryEntry(const Maybe<nsPoint>& aPreviousScrollPos,
+                                    SessionHistoryInfo* aInfo,
+                                    uint32_t aLoadType, int32_t aChildOffset,
+                                    uint32_t aUpdatedCacheKey);
 
   // Replace the active entry for this browsing context. This is used for
-  // implementing history.replaceState.
+  // implementing history.replaceState and same document navigations.
   void ReplaceActiveSessionHistoryEntry(SessionHistoryInfo* aInfo);
 
   // Removes dynamic child entries of the active entry.
@@ -689,7 +707,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   Tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
   GetTriggeringAndInheritPrincipalsForCurrentLoad();
 
-  void HistoryGo(int32_t aIndex, std::function<void(int32_t&&)>&& aResolver);
+  void HistoryGo(int32_t aOffset, std::function<void(int32_t&&)>&& aResolver);
 
   bool ShouldUpdateSessionHistory(uint32_t aLoadType);
 
@@ -880,6 +898,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void DidSet(FieldIndex<IDX_FullZoom>, float aOldValue);
   void DidSet(FieldIndex<IDX_TextZoom>, float aOldValue);
+  void DidSet(FieldIndex<IDX_AuthorStyleDisabledDefault>);
 
   // True if the process attemping to set field is the same as the owning
   // process.

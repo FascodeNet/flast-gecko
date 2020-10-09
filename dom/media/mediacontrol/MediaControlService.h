@@ -67,12 +67,6 @@ class MediaControlService final : public nsIObserver {
   // key events and would show its metadata to virtual controller interface.
   MediaController* GetMainController() const;
 
-  // This event is used to generate a media event indicating media controller
-  // amount changed.
-  MediaEventSource<uint64_t>& MediaControllerAmountChangedEvent() {
-    return mMediaControllerAmountChangedEvent;
-  }
-
   /**
    * These following functions are used for testing only. We use them to
    * generate fake media control key events, get the media metadata and playback
@@ -81,6 +75,11 @@ class MediaControlService final : public nsIObserver {
   void GenerateTestMediaControlKey(MediaControlKey aKey);
   MediaMetadataBase GetMainControllerMediaMetadata() const;
   MediaSessionPlaybackState GetMainControllerPlaybackState() const;
+
+  // Media title that should be used as a fallback. This commonly used
+  // when playing media in private browsing mode and we are trying to avoid
+  // exposing potentially sensitive titles.
+  nsString GetFallbackTitle() const;
 
  private:
   MediaControlService();
@@ -166,6 +165,7 @@ class MediaControlService final : public nsIObserver {
   RefPtr<MediaControlKeyListener> mMediaKeysHandler;
   MediaEventProducer<uint64_t> mMediaControllerAmountChangedEvent;
   UniquePtr<ControllerManager> mControllerManager;
+  nsString mFallbackTitle;
 };
 
 }  // namespace dom

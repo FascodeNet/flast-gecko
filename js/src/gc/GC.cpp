@@ -227,6 +227,8 @@
 #include "jit/JitCode.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
+#include "jit/JitZone.h"
 #include "js/Object.h"  // JS::GetClass
 #include "js/SliceBudget.h"
 #include "proxy/DeadObjectProxy.h"
@@ -1741,7 +1743,7 @@ bool GCRuntime::addRoot(Value* vp, const char* name) {
    * cases.
    */
   if (isIncrementalGCInProgress()) {
-    GCPtrValue::writeBarrierPre(*vp);
+    GCPtrValue::preWriteBarrier(*vp);
   }
 
   return rootsHash.ref().put(vp, name);
@@ -2206,6 +2208,14 @@ bool MovingTracer::onRegExpSharedEdge(RegExpShared** sharedp) {
 bool MovingTracer::onBigIntEdge(BigInt** bip) { return updateEdge(bip); }
 bool MovingTracer::onObjectGroupEdge(ObjectGroup** groupp) {
   return updateEdge(groupp);
+}
+bool MovingTracer::onSymbolEdge(JS::Symbol** symp) {
+  MOZ_ASSERT(!(*symp)->isForwarded());
+  return true;
+}
+bool MovingTracer::onJitCodeEdge(jit::JitCode** jitp) {
+  MOZ_ASSERT(!(*jitp)->isForwarded());
+  return true;
 }
 
 void Zone::prepareForCompacting() {
@@ -3838,16 +3848,15 @@ bool GCRuntime::shouldPreserveJITCode(Realm* realm,
 
 #ifdef DEBUG
 class CompartmentCheckTracer final : public JS::CallbackTracer {
-  bool onChild(const JS::GCCellPtr& thing) override;
+  void onChild(const JS::GCCellPtr& thing) override;
 
  public:
   explicit CompartmentCheckTracer(JSRuntime* rt)
-      : JS::CallbackTracer(rt),
+      : JS::CallbackTracer(rt, JS::TracerKind::Callback,
+                           JS::WeakEdgeTraceAction::Skip),
         src(nullptr),
         zone(nullptr),
-        compartment(nullptr) {
-    setTraceWeakEdges(false);
-  }
+        compartment(nullptr) {}
 
   Cell* src;
   JS::TraceKind srcKind;
@@ -3877,7 +3886,7 @@ static bool InCrossCompartmentMap(JSRuntime* rt, JSObject* src,
   return false;
 }
 
-bool CompartmentCheckTracer::onChild(const JS::GCCellPtr& thing) {
+void CompartmentCheckTracer::onChild(const JS::GCCellPtr& thing) {
   Compartment* comp =
       MapGCThingTyped(thing, [](auto t) { return t->maybeCompartment(); });
   if (comp && compartment) {
@@ -3890,7 +3899,6 @@ bool CompartmentCheckTracer::onChild(const JS::GCCellPtr& thing) {
     Zone* thingZone = tenured->zoneFromAnyThread();
     MOZ_ASSERT(thingZone == zone || thingZone->isAtomsZone());
   }
-  return true;
 }
 
 void GCRuntime::checkForCompartmentMismatches() {
@@ -3910,7 +3918,7 @@ void GCRuntime::checkForCompartmentMismatches() {
         trc.srcKind = MapAllocToTraceKind(thingKind);
         trc.compartment = MapGCThingTyped(
             trc.src, trc.srcKind, [](auto t) { return t->maybeCompartment(); });
-        js::TraceChildren(&trc, trc.src, trc.srcKind);
+        JS::TraceChildren(&trc, JS::GCCellPtr(trc.src, trc.srcKind));
       }
     }
   }
@@ -8528,7 +8536,7 @@ JS_PUBLIC_API void JS::IncrementalPreWriteBarrier(JSObject* obj) {
   AutoGeckoProfilerEntry profilingStackFrame(
       TlsContext.get(), "IncrementalPreWriteBarrier(JSObject*)",
       JS::ProfilingCategoryPair::GCCC_Barrier);
-  JSObject::writeBarrierPre(obj);
+  PreWriteBarrier(obj);
 }
 
 JS_PUBLIC_API void JS::IncrementalPreWriteBarrier(GCCellPtr thing) {
@@ -8539,7 +8547,7 @@ JS_PUBLIC_API void JS::IncrementalPreWriteBarrier(GCCellPtr thing) {
   AutoGeckoProfilerEntry profilingStackFrame(
       TlsContext.get(), "IncrementalPreWriteBarrier(GCCellPtr)",
       JS::ProfilingCategoryPair::GCCC_Barrier);
-  TenuredCell::writeBarrierPre(&thing.asCell()->asTenured());
+  CellPtrPreWriteBarrier(thing);
 }
 
 JS_PUBLIC_API bool JS::WasIncrementalGC(JSRuntime* rt) {
@@ -8893,7 +8901,8 @@ extern JS_PUBLIC_API bool js::gc::detail::ObjectIsMarkedBlack(
 #endif
 
 js::gc::ClearEdgesTracer::ClearEdgesTracer(JSRuntime* rt)
-    : CallbackTracer(rt, TraceWeakMapKeysValues) {}
+    : GenericTracer(rt, JS::TracerKind::ClearEdges,
+                    JS::WeakMapTraceAction::TraceKeysAndValues) {}
 
 js::gc::ClearEdgesTracer::ClearEdgesTracer()
     : ClearEdgesTracer(TlsContext.get()->runtime()) {}
@@ -8938,10 +8947,6 @@ bool js::gc::ClearEdgesTracer::onScopeEdge(js::Scope** scopep) {
 }
 bool js::gc::ClearEdgesTracer::onRegExpSharedEdge(js::RegExpShared** sharedp) {
   return clearEdge(sharedp);
-}
-bool js::gc::ClearEdgesTracer::onChild(const JS::GCCellPtr& thing) {
-  MOZ_CRASH();
-  return true;
 }
 
 JS_PUBLIC_API void js::gc::FinalizeDeadNurseryObject(JSContext* cx,

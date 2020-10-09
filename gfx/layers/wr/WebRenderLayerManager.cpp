@@ -21,6 +21,7 @@
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/layers/UpdateImageHelper.h"
 #include "nsDisplayList.h"
+#include "nsLayoutUtils.h"
 #include "WebRenderCanvasRenderer.h"
 
 #ifdef XP_WIN
@@ -157,7 +158,7 @@ CompositorBridgeChild* WebRenderLayerManager::GetCompositorBridgeChild() {
 }
 
 void WebRenderLayerManager::GetBackendName(nsAString& name) {
-  if (gfx::gfxVars::UseSoftwareWebRender()) {
+  if (WrBridge()->GetTextureFactoryIdentifier().mUsingSoftwareWebRender) {
     name.AssignLiteral("WebRender (Software)");
   } else {
     name.AssignLiteral("WebRender");

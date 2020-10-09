@@ -10,7 +10,6 @@
 #include "mozilla/Maybe.h"
 
 #include "ds/InlineTable.h"
-#include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "js/Vector.h"
 #include "vm/Opcodes.h"
@@ -213,6 +212,7 @@ class MOZ_STACK_CLASS CallInfo {
   void initForSetterCall(MDefinition* callee, MDefinition* thisVal,
                          MDefinition* rhs) {
     MOZ_ASSERT(args_.empty());
+    markAsSetter();
     setCallee(callee);
     setThis(thisVal);
     static_assert(decltype(args_)::InlineLength >= 1,
@@ -222,8 +222,7 @@ class MOZ_STACK_CLASS CallInfo {
 
   // Before doing any pop to the stack, capture whatever flows into the
   // instruction, such that we can restore it later.
-  MOZ_MUST_USE bool savePriorCallStack(MIRGenerator* mir, MBasicBlock* current,
-                                       size_t peekDepth);
+  MOZ_MUST_USE bool savePriorCallStack(MBasicBlock* current, size_t peekDepth);
 
   void popPriorCallStack(MBasicBlock* current) {
     if (priorArgs_.empty()) {
@@ -233,10 +232,9 @@ class MOZ_STACK_CLASS CallInfo {
     }
   }
 
-  MOZ_MUST_USE bool pushPriorCallStack(MIRGenerator* mir,
-                                       MBasicBlock* current) {
+  MOZ_MUST_USE bool pushPriorCallStack(MBasicBlock* current) {
     if (priorArgs_.empty()) {
-      return pushCallStack(mir, current);
+      return pushCallStack(current);
     }
     for (MDefinition* def : priorArgs_) {
       current->push(def);
@@ -246,7 +244,7 @@ class MOZ_STACK_CLASS CallInfo {
 
   void popCallStack(MBasicBlock* current) { current->popn(numFormals()); }
 
-  MOZ_MUST_USE bool pushCallStack(MIRGenerator* mir, MBasicBlock* current) {
+  MOZ_MUST_USE bool pushCallStack(MBasicBlock* current) {
     // Ensure sufficient space in the slots: needed for inlining from FunApply.
     if (apply_) {
       uint32_t depth = current->stackDepth() + numFormals();

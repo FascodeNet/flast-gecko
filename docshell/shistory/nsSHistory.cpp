@@ -21,6 +21,7 @@
 #include "nsISHEntry.h"
 #include "nsISHistoryListener.h"
 #include "nsIURI.h"
+#include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
 #include "nsSHEntry.h"
 #include "SessionHistoryEntry.h"
@@ -34,7 +35,6 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
-#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "nsIWebNavigation.h"
@@ -136,7 +136,7 @@ extern mozilla::LazyLogModule gPageCacheLog;
   }                                                       \
   PR_END_MACRO
 
-class SHistoryChangeNotifier {
+class MOZ_STACK_CLASS SHistoryChangeNotifier {
  public:
   explicit SHistoryChangeNotifier(nsSHistory* aHistory) {
     // If we're already in an update, the outermost change notifier will
@@ -157,6 +157,13 @@ class SHistoryChangeNotifier {
         mSHistory->GetBrowsingContext()->SessionHistoryChanged(
             mSHistory->Index() - mInitialIndex,
             mSHistory->Length() - mInitialLength);
+      }
+
+      if (mozilla::SessionHistoryInParent() &&
+          mSHistory->GetBrowsingContext()) {
+        mSHistory->GetBrowsingContext()
+            ->Canonical()
+            ->HistoryCommitIndexAndLength();
       }
     }
   }
@@ -238,6 +245,12 @@ nsSHistory::nsSHistory(BrowsingContext* aRootBC)
       mIndex(-1),
       mRequestedIndex(-1),
       mRootDocShellID(aRootBC->GetHistoryID()) {
+  static bool sCalledStartup = false;
+  if (!sCalledStartup) {
+    Startup();
+    sCalledStartup = true;
+  }
+
   // Add this new SHistory object to the list
   gSHistoryList.insertBack(this);
 
@@ -329,7 +342,7 @@ uint32_t nsSHistory::CalcMaxTotalViewers() {
 // static
 void nsSHistory::UpdatePrefs() {
   Preferences::GetInt(PREF_SHISTORY_SIZE, &gHistoryMaxSize);
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mozilla::SessionHistoryInParent()) {
     sHistoryMaxTotalViewers = 0;
     return;
   }
@@ -430,8 +443,7 @@ nsresult nsSHistory::WalkHistoryEntries(nsISHEntry* aRootEntry,
         // If the SH pref is on and we are in the parent process, update
         // canonical BC directly
         bool foundChild = false;
-        if (StaticPrefs::fission_sessionHistoryInParent() &&
-            XRE_IsParentProcess()) {
+        if (mozilla::SessionHistoryInParent() && XRE_IsParentProcess()) {
           if (child->Canonical()->HasHistoryEntry(childEntry)) {
             childBC = child;
             foundChild = true;
@@ -681,7 +693,7 @@ nsresult nsSHistory::SetChildHistoryEntry(nsISHEntry* aEntry,
 void nsSHistory::HandleEntriesToSwapInDocShell(
     mozilla::dom::BrowsingContext* aBC, nsISHEntry* aOldEntry,
     nsISHEntry* aNewEntry) {
-  bool shPref = StaticPrefs::fission_sessionHistoryInParent();
+  bool shPref = mozilla::SessionHistoryInParent();
   if (aBC->IsInProcess() || !shPref) {
     nsDocShell* docshell = static_cast<nsDocShell*>(aBC->GetDocShell());
     if (docshell) {
@@ -821,6 +833,10 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
   UpdateRootBrowsingContextState();
 
   return NS_OK;
+}
+
+void nsSHistory::NotifyOnHistoryReplaceEntry() {
+  NOTIFY_LISTENERS(OnHistoryReplaceEntry, ());
 }
 
 /* Get size of the history list */
@@ -1825,7 +1841,7 @@ void nsSHistory::InitiateLoad(nsISHEntry* aFrameEntry,
   // a same-document navigation (see nsDocShell::IsSameDocumentNavigation), so
   // record that here in the LoadingSessionHistoryEntry.
   bool loadingFromActiveEntry;
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mozilla::SessionHistoryInParent()) {
     loadingFromActiveEntry =
         aFrameBC->Canonical()->GetActiveSessionHistoryEntry() == aFrameEntry;
   } else {
@@ -1836,7 +1852,7 @@ void nsSHistory::InitiateLoad(nsISHEntry* aFrameEntry,
   loadState->SetLoadIsFromSessionHistory(mRequestedIndex, Length(),
                                          loadingFromActiveEntry);
 
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mozilla::SessionHistoryInParent()) {
     nsCOMPtr<SessionHistoryEntry> she = do_QueryInterface(aFrameEntry);
     aFrameBC->Canonical()->AddLoadingSessionHistoryEntry(
         loadState->GetLoadingSessionHistoryInfo()->mLoadId, she);
@@ -1861,7 +1877,7 @@ void nsSHistory::InitiateLoad(nsISHEntry* aFrameEntry,
 NS_IMETHODIMP
 nsSHistory::CreateEntry(nsISHEntry** aEntry) {
   nsCOMPtr<nsISHEntry> entry;
-  if (XRE_IsParentProcess() && StaticPrefs::fission_sessionHistoryInParent()) {
+  if (XRE_IsParentProcess() && mozilla::SessionHistoryInParent()) {
     entry = new SessionHistoryEntry();
   } else {
     entry = new nsSHEntry();

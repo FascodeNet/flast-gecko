@@ -100,7 +100,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
    * The observer will be called even if there is no other activity.
    */
   void AddRefreshObserver(nsARefreshObserver* aObserver,
-                          mozilla::FlushType aFlushType);
+                          mozilla::FlushType aFlushType,
+                          const char* aObserverDescription);
   bool RemoveRefreshObserver(nsARefreshObserver* aObserver,
                              mozilla::FlushType aFlushType);
   /**
@@ -414,11 +415,10 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     eNeedsToUpdateIntersectionObservations = 1 << 2,
     eHasVisualViewportResizeEvents = 1 << 3,
     eHasScrollEvents = 1 << 4,
-    eHasVisualVieportScrollEvents = 1 << 5,
+    eHasVisualViewportScrollEvents = 1 << 5,
   };
 
  private:
-  typedef nsTObserverArray<nsARefreshObserver*> ObserverArray;
   typedef nsTArray<RefPtr<VVPResizeEvent>> VisualViewportResizeEventArray;
   typedef nsTArray<RefPtr<mozilla::Runnable>> ScrollEventArray;
   typedef nsTArray<RefPtr<VVPScrollEvent>> VisualViewportScrollEventArray;
@@ -431,6 +431,20 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   };
   typedef nsClassHashtable<nsUint32HashKey, ImageStartData> ImageStartTable;
 
+  struct ObserverData {
+    nsARefreshObserver* mObserver;
+    const char* mDescription;
+    mozilla::TimeStamp mRegisterTime;
+    mozilla::Maybe<uint64_t> mInnerWindowId;
+    mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mCause;
+    mozilla::FlushType mFlushType;
+
+    bool operator==(nsARefreshObserver* aObserver) const {
+      return mObserver == aObserver;
+    }
+    operator RefPtr<nsARefreshObserver>() { return mObserver; }
+  };
+  typedef nsTObserverArray<ObserverData> ObserverArray;
   void RunFullscreenSteps();
   void DispatchAnimationEvents();
   MOZ_CAN_RUN_SCRIPT
@@ -449,6 +463,7 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   void StopTimer();
 
   bool HasObservers() const;
+  void AppendObserverDescriptionsToString(nsACString& aStr) const;
   // Note: This should only be called in the dtor of nsRefreshDriver.
   uint32_t ObserverCount() const;
   bool HasImageRequests() const;

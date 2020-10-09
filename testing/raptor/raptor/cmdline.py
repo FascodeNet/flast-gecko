@@ -160,7 +160,8 @@ def create_parser(mach_interface=False):
     add_arg('--enable-fission', dest="enable_fission", action="store_true", default=False,
             help="Enable Fission (site isolation) in Gecko.")
     add_arg('--setpref', dest="extra_prefs", action="append", default=[],
-            help="A preference to set. Must be a key-value pair separated by a ':'.")
+            metavar="PREF=VALUE",
+            help="Set a browser preference. May be used multiple times.")
     if not mach_interface:
         add_arg('--run-local', dest="run_local", default=False, action="store_true",
                 help="Flag which indicates if Raptor is running locally or in production")
@@ -185,10 +186,14 @@ def create_parser(mach_interface=False):
             help="path to Node.js executable")
     add_arg('--browsertime-browsertimejs', dest='browsertime_browsertimejs',
             help="path to browsertime.js script")
+    add_arg('--browsertime-vismet-script', dest='browsertime_vismet_script',
+            help="path to visualmetrics.py script")
     add_arg('--browsertime-chromedriver', dest='browsertime_chromedriver',
             help="path to chromedriver executable")
     add_arg('--browsertime-video', dest='browsertime_video',
             help="records the viewport", default=False, action="store_true")
+    add_arg('--browsertime-visualmetrics', dest='browsertime_visualmetrics',
+            help="enables visual metrics", default=False, action="store_true")
     add_arg('--browsertime-no-ffwindowrecorder', dest='browsertime_no_ffwindowrecorder',
             help="disable the firefox window recorder", default=False, action="store_true")
     add_arg('--browsertime-ffmpeg', dest='browsertime_ffmpeg',
@@ -205,6 +210,10 @@ def verify_options(parser, args):
     ctx = vars(args)
     if args.binary is None and args.app != "chrome-m":
         parser.error("--binary is required!")
+
+    # make sure that browsertime_video is set if visual metrics are requested
+    if args.browsertime_visualmetrics and not args.browsertime_video:
+        args.browsertime_video = True
 
     # if running chrome android tests, make sure it's on browsertime and
     # that the chromedriver path was provided

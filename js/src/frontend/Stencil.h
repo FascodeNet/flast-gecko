@@ -30,9 +30,9 @@
 #include "vm/GeneratorAndAsyncKind.h"     // GeneratorKind, FunctionAsyncKind
 #include "vm/JSScript.h"                  // MemberInitializers
 #include "vm/Scope.h"  // BaseScopeData, FunctionScope, LexicalScope, VarScope, GlobalScope, EvalScope, ModuleScope
-#include "vm/ScopeKind.h"      // ScopeKind
-#include "vm/SharedStencil.h"  // ImmutableScriptFlags, GCThingIndex
-#include "vm/StencilEnums.h"   // ImmutableScriptFlagsEnum
+#include "vm/ScopeKind.h"  // ScopeKind
+#include "vm/SharedStencil.h"  // ImmutableScriptFlags, GCThingIndex, js::SharedImmutableScriptData
+#include "vm/StencilEnums.h"  // ImmutableScriptFlagsEnum
 
 namespace js {
 
@@ -46,6 +46,7 @@ struct CompilationGCOutput;
 class ScriptStencil;
 class RegExpStencil;
 class BigIntStencil;
+class StencilXDR;
 
 using BaseParserScopeData = AbstractBaseScopeData<const ParserAtom>;
 
@@ -84,6 +85,8 @@ FunctionFlags InitialFunctionFlags(FunctionSyntaxKind kind,
 // This owns a set of characters, previously syntax checked as a RegExp. Used
 // to avoid allocating the RegExp on the GC heap during parsing.
 class RegExpStencil {
+  friend class StencilXDR;
+
   UniqueTwoByteChars buf_;
   size_t length_ = 0;
   JS::RegExpFlags flags_;
@@ -114,6 +117,8 @@ class RegExpStencil {
 // ParseBigIntLiteral. Used to avoid allocating the BigInt on the
 // GC heap during parsing.
 class BigIntStencil {
+  friend class StencilXDR;
+
   UniqueTwoByteChars buf_;
   size_t length_ = 0;
 
@@ -151,15 +156,17 @@ class BigIntStencil {
 };
 
 class ScopeStencil {
+  friend class StencilXDR;
+
   // The enclosing scope. If Nothing, then the enclosing scope of the
   // compilation applies.
   mozilla::Maybe<ScopeIndex> enclosing_;
 
   // The kind determines data_.
-  ScopeKind kind_;
+  ScopeKind kind_{UINT8_MAX};
 
   // First frame slot to use, or LOCALNO_LIMIT if none are allowed.
-  uint32_t firstFrameSlot_;
+  uint32_t firstFrameSlot_ = UINT32_MAX;
 
   // If Some, then an environment Shape must be created. The shape itself may
   // have no slots if the environment may be extensible later.
@@ -169,7 +176,7 @@ class ScopeStencil {
   mozilla::Maybe<FunctionIndex> functionIndex_;
 
   // True if this is a FunctionScope for an arrow function.
-  bool isArrow_;
+  bool isArrow_ = false;
 
   // The list of binding and scope-specific data. Note that the back pointers to
   // the owning JSFunction / ModuleObject are not set until Stencils are
@@ -177,6 +184,9 @@ class ScopeStencil {
   js::UniquePtr<BaseParserScopeData> data_;
 
  public:
+  // For XDR only.
+  ScopeStencil() = default;
+
   ScopeStencil(ScopeKind kind, mozilla::Maybe<ScopeIndex> enclosing,
                uint32_t firstFrameSlot,
                mozilla::Maybe<uint32_t> numEnvironmentSlots,
@@ -190,6 +200,8 @@ class ScopeStencil {
         functionIndex_(functionIndex),
         isArrow_(isArrow),
         data_(data) {}
+
+  js::UniquePtr<BaseParserScopeData>& data() { return data_; }
 
   static bool createForFunctionScope(JSContext* cx, CompilationStencil& stencil,
                                      ParserFunctionScopeData* dataArg,
@@ -335,6 +347,9 @@ class StencilModuleEntry {
       : lineno(lineno), column(column) {}
 
  public:
+  // For XDR only.
+  StencilModuleEntry() = default;
+
   static StencilModuleEntry moduleRequest(const ParserAtom* specifier,
                                           uint32_t lineno, uint32_t column) {
     MOZ_ASSERT(specifier);
@@ -438,7 +453,7 @@ class ScriptStencil {
   ScriptThingsVector gcThings;
 
   // See `BaseScript::sharedData_`.
-  js::UniquePtr<js::ImmutableScriptData> immutableScriptData = nullptr;
+  RefPtr<js::SharedImmutableScriptData> sharedData = {};
 
   // The location of this script in the source.
   SourceExtent extent = {};
@@ -480,12 +495,19 @@ class ScriptStencil {
   // at most once. This is a heuristic only and does not affect correctness.
   bool isSingletonFunction : 1;
 
+  // If this is for the root of delazification, this represents
+  // MutableScriptFlagsEnum::AllowRelazify value of the script *after*
+  // delazification.
+  // False otherwise.
+  bool allowRelazify : 1;
+
   // End of fields.
 
   ScriptStencil()
       : isStandaloneFunction(false),
         wasFunctionEmitted(false),
-        isSingletonFunction(false) {}
+        isSingletonFunction(false),
+        allowRelazify(false) {}
 
   bool isFunction() const {
     bool result = functionFlags.toRaw() != 0x0000;

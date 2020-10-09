@@ -209,7 +209,7 @@ describe("PlacesFeed", () => {
         pocket_id: undefined,
       });
     });
-    it("should call openTrustedLinkIn with the correct url and where on OPEN_NEW_WINDOW", () => {
+    it("should call openTrustedLinkIn with the correct url, where and params on OPEN_NEW_WINDOW", () => {
       const openTrustedLinkIn = sinon.stub();
       const openWindowAction = {
         type: at.OPEN_NEW_WINDOW,
@@ -224,8 +224,9 @@ describe("PlacesFeed", () => {
       assert.equal(url, "https://foo.com");
       assert.equal(where, "window");
       assert.propertyVal(params, "private", false);
+      assert.propertyVal(params, "fromChrome", false);
     });
-    it("should call openTrustedLinkIn with the correct url, where and privacy args on OPEN_PRIVATE_WINDOW", () => {
+    it("should call openTrustedLinkIn with the correct url, where, params and privacy args on OPEN_PRIVATE_WINDOW", () => {
       const openTrustedLinkIn = sinon.stub();
       const openWindowAction = {
         type: at.OPEN_PRIVATE_WINDOW,
@@ -240,8 +241,9 @@ describe("PlacesFeed", () => {
       assert.equal(url, "https://foo.com");
       assert.equal(where, "window");
       assert.propertyVal(params, "private", true);
+      assert.propertyVal(params, "fromChrome", false);
     });
-    it("should open link on OPEN_LINK", () => {
+    it("should call openTrustedLinkIn with the correct url, where and params on OPEN_LINK", () => {
       const openTrustedLinkIn = sinon.stub();
       const openLinkAction = {
         type: at.OPEN_LINK,
@@ -260,6 +262,7 @@ describe("PlacesFeed", () => {
       assert.equal(url, "https://foo.com");
       assert.equal(where, "current");
       assert.propertyVal(params, "private", false);
+      assert.propertyVal(params, "fromChrome", false);
     });
     it("should open link with referrer on OPEN_LINK", () => {
       const openTrustedLinkIn = sinon.stub();
@@ -353,7 +356,7 @@ describe("PlacesFeed", () => {
       });
       const openLinkAction = {
         type: at.OPEN_LINK,
-        data: { url: "file://,foo.com" },
+        data: { url: "file:///foo.com" },
         _target: {
           browser: {
             ownerGlobal: { openTrustedLinkIn, whereToOpenLink: e => "current" },
@@ -376,7 +379,7 @@ describe("PlacesFeed", () => {
       assert.calledOnce(feed.fillSearchTopSiteTerm);
     });
     it("should set the URL bar value to the label value", () => {
-      const locationBar = { searchWithAlias: sandbox.stub() };
+      const locationBar = { search: sandbox.stub() };
       const action = {
         type: at.FILL_SEARCH_TERM,
         data: { label: "@Foo" },
@@ -385,12 +388,10 @@ describe("PlacesFeed", () => {
 
       feed.fillSearchTopSiteTerm(action);
 
-      assert.calledOnce(locationBar.searchWithAlias);
-      assert.calledWithExactly(
-        locationBar.searchWithAlias,
-        "@Foo",
-        "topsites_newtab"
-      );
+      assert.calledOnce(locationBar.search);
+      assert.calledWithExactly(locationBar.search, "@Foo", {
+        searchModeEntry: "topsites_newtab",
+      });
     });
     it("should call saveToPocket on SAVE_TO_POCKET", () => {
       const action = {
@@ -554,7 +555,7 @@ describe("PlacesFeed", () => {
     beforeEach(() => {
       fakeUrlBar = {
         focus: sinon.spy(),
-        searchWithAlias: sinon.spy(),
+        search: sinon.spy(),
         setHiddenFocus: sinon.spy(),
         removeHiddenFocus: sinon.spy(),
         addEventListener: (ev, cb) => {
@@ -571,12 +572,12 @@ describe("PlacesFeed", () => {
         meta: { fromTarget: {} },
       });
       assert.calledOnce(fakeUrlBar.setHiddenFocus);
-      assert.notCalled(fakeUrlBar.searchWithAlias);
+      assert.notCalled(fakeUrlBar.search);
       assert.notCalled(feed.store.dispatch);
 
       // Now type a character.
       listeners.keydown({ key: "f" });
-      assert.calledOnce(fakeUrlBar.searchWithAlias);
+      assert.calledOnce(fakeUrlBar.search);
       assert.calledOnce(fakeUrlBar.removeHiddenFocus);
       assert.calledOnce(feed.store.dispatch);
       assert.calledWith(feed.store.dispatch, {
@@ -595,13 +596,10 @@ describe("PlacesFeed", () => {
         data: { text: "foo" },
         meta: { fromTarget: {} },
       });
-      assert.calledOnce(fakeUrlBar.searchWithAlias);
-      assert.calledWith(
-        fakeUrlBar.searchWithAlias,
-        "@google ",
-        "handoff",
-        "foo"
-      );
+      assert.calledOnce(fakeUrlBar.search);
+      assert.calledWith(fakeUrlBar.search, "@google foo", {
+        searchModeEntry: "handoff",
+      });
       assert.notCalled(fakeUrlBar.focus);
       assert.notCalled(fakeUrlBar.setHiddenFocus);
 
@@ -625,8 +623,10 @@ describe("PlacesFeed", () => {
         data: { text: "foo" },
         meta: { fromTarget: {} },
       });
-      assert.calledOnce(fakeUrlBar.searchWithAlias);
-      assert.calledWith(fakeUrlBar.searchWithAlias, "@bing ", "handoff", "foo");
+      assert.calledOnce(fakeUrlBar.search);
+      assert.calledWith(fakeUrlBar.search, "@bing foo", {
+        searchModeEntry: "handoff",
+      });
       assert.notCalled(fakeUrlBar.focus);
       assert.notCalled(fakeUrlBar.setHiddenFocus);
 
@@ -650,13 +650,10 @@ describe("PlacesFeed", () => {
         data: { text: "foo" },
         meta: { fromTarget: {} },
       });
-      assert.calledOnce(fakeUrlBar.searchWithAlias);
-      assert.calledWithExactly(
-        fakeUrlBar.searchWithAlias,
-        "@google ",
-        "handoff",
-        "foo"
-      );
+      assert.calledOnce(fakeUrlBar.search);
+      assert.calledWithExactly(fakeUrlBar.search, "@google foo", {
+        searchModeEntry: "handoff",
+      });
       assert.notCalled(fakeUrlBar.focus);
 
       // Now call ESC keydown.
@@ -679,13 +676,10 @@ describe("PlacesFeed", () => {
         data: { text: "foo" },
         meta: { fromTarget: {} },
       });
-      assert.calledOnce(fakeUrlBar.searchWithAlias);
-      assert.calledWithExactly(
-        fakeUrlBar.searchWithAlias,
-        "",
-        "handoff",
-        "foo"
-      );
+      assert.calledOnce(fakeUrlBar.search);
+      assert.calledWithExactly(fakeUrlBar.search, "foo", {
+        searchModeEntry: "handoff",
+      });
     });
   });
 

@@ -1022,10 +1022,11 @@ class Marionette(object):
                 # which wants to reset the context but fails sending the message.
                 pass
 
+            timeout_restart = self.shutdown_timeout + self.startup_timeout
             try:
                 # Wait for a new Marionette connection to appear while the
                 # process restarts itself.
-                self.raise_for_port(timeout=self.shutdown_timeout,
+                self.raise_for_port(timeout=timeout_restart,
                                     check_process_status=False)
             except socket.timeout:
                 exc_cls, _, tb = sys.exc_info()
@@ -1037,7 +1038,7 @@ class Marionette(object):
                     self._send_message("Marionette:AcceptConnections", {"value": True})
 
                     message = "Process still running {}s after restart request"
-                    reraise(exc_cls, exc_cls(message.format(self.shutdown_timeout)), tb)
+                    reraise(exc_cls, exc_cls(message.format(timeout_restart)), tb)
 
                 else:
                     # The process shutdown but didn't start again.
@@ -1390,23 +1391,6 @@ class Marionette(object):
 
         self._send_message("WebDriver:SwitchToFrame",
                            body)
-
-    def switch_to_shadow_root(self, host=None):
-        """Switch the current context to the specified host's Shadow DOM.
-        Subsequent commands will operate in the context of the specified Shadow
-        DOM, if applicable.
-
-        :param host: A reference to the host element containing Shadow DOM.
-            This can be an :class:`~marionette_driver.marionette.HTMLElement`.
-            If you call ``switch_to_shadow_root`` without an argument, it will
-            switch to the parent Shadow DOM or the top-level frame.
-        """
-        body = {}
-        if isinstance(host, HTMLElement):
-            body["id"] = host.id
-
-        return self._send_message("WebDriver:SwitchToShadowRoot",
-                                  body)
 
     def get_url(self):
         """Get a string representing the current URL.

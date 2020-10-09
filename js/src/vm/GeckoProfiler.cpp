@@ -18,8 +18,9 @@
 #include "jit/BaselineJIT.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JSJitFrameIter.h"
+#include "js/ProfilingStack.h"
 #include "js/TraceLoggerAPI.h"
 #include "util/StringBuffer.h"
 #include "vm/FrameIter.h"  // js::OnlyJSJitFrameIter
@@ -50,7 +51,8 @@ void GeckoProfilerThread::setProfilingStack(ProfilingStack* profilingStack,
   profilingStackIfEnabled_ = enabled ? profilingStack : nullptr;
 }
 
-void GeckoProfilerRuntime::setEventMarker(void (*fn)(const char*)) {
+void GeckoProfilerRuntime::setEventMarker(void (*fn)(const char*,
+                                                     const char*)) {
   eventMarker_ = fn;
 }
 
@@ -196,11 +198,11 @@ void GeckoProfilerRuntime::onScriptFinalized(BaseScript* script) {
   }
 }
 
-void GeckoProfilerRuntime::markEvent(const char* event) {
+void GeckoProfilerRuntime::markEvent(const char* event, const char* details) {
   MOZ_ASSERT(enabled());
   if (eventMarker_) {
     JS::AutoSuppressGCAnalysis nogc;
-    eventMarker_(event);
+    eventMarker_(event, details);
   }
 }
 
@@ -499,7 +501,7 @@ JS_FRIEND_API void js::EnableContextProfilingStack(JSContext* cx,
 }
 
 JS_FRIEND_API void js::RegisterContextProfilingEventMarker(
-    JSContext* cx, void (*fn)(const char*)) {
+    JSContext* cx, void (*fn)(const char*, const char*)) {
   MOZ_ASSERT(cx->runtime()->geckoProfiler().enabled());
   cx->runtime()->geckoProfiler().setEventMarker(fn);
 }

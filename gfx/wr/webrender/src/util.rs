@@ -470,6 +470,9 @@ impl<Src, Dst> MatrixHelpers<Src, Dst> for Transform3D<f32, Src, Dst> {
         self.m23 = 0.0;
         self.m33 = 1.0;
         self.m43 = 0.0;
+        self.m31 = 0.0;
+        self.m32 = 0.0;
+        self.m34 = 0.0;
     }
 
     fn cast_unit<NewSrc, NewDst>(&self) -> Transform3D<f32, NewSrc, NewDst> {
@@ -1419,4 +1422,66 @@ fn test_conservative_union_rect() {
         &LayoutRect { origin: point2(1.0, 2.0), size: size2(3.0, 4.0) },
     );
     assert_eq!(r, LayoutRect { origin: point2(0.0, 1.0), size: size2(10.0, 11.0) });
+}
+
+/// This is inspired by the `weak-table` crate.
+/// It holds a Vec of weak pointers that are garbage collected as the Vec
+pub struct WeakTable {
+    inner: Vec<std::sync::Weak<Vec<u8>>>
+}
+
+impl WeakTable {
+    pub fn new() -> WeakTable {
+        WeakTable { inner: Vec::new() }
+    }
+    pub fn insert(&mut self, x: std::sync::Weak<Vec<u8>>) {
+        if self.inner.len() == self.inner.capacity() {
+            self.remove_expired();
+
+            // We want to make sure that we change capacity()
+            // even if remove_expired() removes some entries
+            // so that we don't repeatedly hit remove_expired()
+            if self.inner.len() * 3 < self.inner.capacity() {
+                // We use a different multiple for shrinking then
+                // expanding so that we we don't accidentally
+                // oscilate.
+                self.inner.shrink_to_fit();
+            } else {
+                // Otherwise double our size
+                self.inner.reserve(self.inner.len())
+            }
+        }
+        self.inner.push(x);
+    }
+
+    fn remove_expired(&mut self) {
+        self.inner.retain(|x| x.strong_count() > 0)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Arc<Vec<u8>>> + '_ {
+        self.inner.iter().filter_map(|x| x.upgrade())
+    }
+}
+
+#[test]
+fn weak_table() {
+    let mut tbl = WeakTable::new();
+    let mut things = Vec::new();
+    let target_count = 50;
+    for _ in 0..target_count {
+        things.push(Arc::new(vec![4]));
+    }
+    for i in &things {
+        tbl.insert(Arc::downgrade(i))
+    }
+    assert_eq!(tbl.inner.len(), target_count);
+    drop(things);
+    assert_eq!(tbl.iter().count(), 0);
+
+    // make sure that we shrink the table if it gets too big
+    // by adding a bunch of dead items
+    for _ in 0..target_count*2 {
+        tbl.insert(Arc::downgrade(&Arc::new(vec![5])))
+    }
+    assert!(tbl.inner.capacity() <= 4);
 }

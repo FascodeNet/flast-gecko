@@ -461,6 +461,12 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0102);
       APPEND_DEVICE(0x0106);
       APPEND_DEVICE(0x010a);
+
+      // cherryview
+      APPEND_DEVICE(0x22b0);
+      APPEND_DEVICE(0x22b1);
+      APPEND_DEVICE(0x22b2);
+      APPEND_DEVICE(0x22b3);
 #endif
 
       [[fallthrough]];
@@ -667,6 +673,12 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
 
       // icelake gt1,gt1.5,gt2
       APPEND_RANGE(0x8a50, 0x8a5d);
+
+      // rocketlake
+      APPEND_RANGE(0x4c8a, 0x4c9a);
+
+      // tigerlake
+      APPEND_RANGE(0x9a40, 0x9af8);
       break;
     case DeviceFamily::AtiRolloutWebRender:
       APPEND_RANGE(0x6600, 0x66af);
@@ -919,6 +931,7 @@ const nsAString& GfxDriverInfo::GetDriverVendor(DriverVendor id) {
     DECLARE_DRIVER_VENDOR_ID(MesaSoftPipe, "mesa/softpipe");
     DECLARE_DRIVER_VENDOR_ID(MesaSWRast, "mesa/swrast");
     DECLARE_DRIVER_VENDOR_ID(MesaUnknown, "mesa/unknown");
+    DECLARE_DRIVER_VENDOR_ID(MesaNouveau, "mesa/nouveau");
     DECLARE_DRIVER_VENDOR_ID(NonMesaAll, "non-mesa/all");
     case DriverVendor::Max:  // Suppress a warning.
       DECLARE_DRIVER_VENDOR_ID(All, "");

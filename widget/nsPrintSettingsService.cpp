@@ -8,12 +8,14 @@
 #include "mozilla/embedding/PPrinting.h"
 #include "mozilla/layout/RemotePrintJobChild.h"
 #include "mozilla/RefPtr.h"
+#include "nsCoord.h"
 #include "nsIPrinterList.h"
 #include "nsPrintingProxy.h"
 #include "nsReadableUtils.h"
 #include "nsPrintSettingsImpl.h"
 #include "nsIPrintSession.h"
 #include "nsServiceManagerUtils.h"
+#include "nsSize.h"
 
 #include "nsArray.h"
 #include "nsXPCOM.h"
@@ -46,8 +48,6 @@ static const char kUnwriteableMarginBottom[] =
 static const char kUnwriteableMarginRight[] = "print_unwriteable_margin_right";
 
 // Prefs for Print Options
-static const char kPrintEvenPages[] = "print_evenpages";
-static const char kPrintOddPages[] = "print_oddpages";
 static const char kPrintHeaderStrLeft[] = "print_headerleft";
 static const char kPrintHeaderStrCenter[] = "print_headercenter";
 static const char kPrintHeaderStrRight[] = "print_headerright";
@@ -113,6 +113,11 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   data->printBGColors() = aSettings->GetPrintBGColors();
   data->printBGImages() = aSettings->GetPrintBGImages();
 
+  data->honorPageRuleMargins() = aSettings->GetHonorPageRuleMargins();
+  data->showMarginGuides() = aSettings->GetShowMarginGuides();
+  data->isPrintSelectionRBEnabled() = aSettings->GetIsPrintSelectionRBEnabled();
+  data->printSelectionOnly() = aSettings->GetPrintSelectionOnly();
+
   aSettings->GetPrintRange(&data->printRange());
 
   aSettings->GetTitle(data->title());
@@ -154,8 +159,6 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   aSettings->GetDuplex(&data->duplex());
   aSettings->GetIsInitializedFromPrinter(&data->isInitializedFromPrinter());
   aSettings->GetIsInitializedFromPrefs(&data->isInitializedFromPrefs());
-
-  aSettings->GetPrintOptionsBits(&data->optionFlags());
 
   // Initialize the platform-specific values that don't
   // default-initialize, so that we don't send uninitialized data over
@@ -209,6 +212,10 @@ nsPrintSettingsService::DeserializeToPrintSettings(const PrintData& data,
 
   settings->SetPrintBGColors(data.printBGColors());
   settings->SetPrintBGImages(data.printBGImages());
+  settings->SetHonorPageRuleMargins(data.honorPageRuleMargins());
+  settings->SetShowMarginGuides(data.showMarginGuides());
+  settings->SetIsPrintSelectionRBEnabled(data.isPrintSelectionRBEnabled());
+  settings->SetPrintSelectionOnly(data.printSelectionOnly());
   settings->SetPrintRange(data.printRange());
 
   settings->SetTitle(data.title());
@@ -254,8 +261,6 @@ nsPrintSettingsService::DeserializeToPrintSettings(const PrintData& data,
   settings->SetIsInitializedFromPrinter(data.isInitializedFromPrinter());
   settings->SetIsInitializedFromPrefs(data.isInitializedFromPrefs());
 
-  settings->SetPrintOptionsBits(data.optionFlags());
-
   return NS_OK;
 }
 
@@ -283,38 +288,6 @@ const char* nsPrintSettingsService::GetPrefName(const char* aPrefName,
   return mPrefName.get();
 }
 
-//----------------------------------------------------------------------
-// Testing of read/write prefs
-// This define controls debug output
-#ifdef DEBUG_rods_X
-static void WriteDebugStr(const char* aArg1, const char* aArg2,
-                          const char16_t* aStr) {
-  nsString str(aStr);
-  char16_t s = '&';
-  char16_t r = '_';
-  str.ReplaceChar(s, r);
-
-  printf("%s %s = %s \n", aArg1, aArg2, ToNewUTF8String(str));
-}
-const char* kWriteStr = "Write Pref:";
-const char* kReadStr = "Read Pref:";
-#  define DUMP_STR(_a1, _a2, _a3) \
-    WriteDebugStr((_a1), GetPrefName((_a2), aPrefName), (_a3));
-#  define DUMP_BOOL(_a1, _a2, _a3)                                \
-    printf("%s %s = %s \n", (_a1), GetPrefName((_a2), aPrefName), \
-           (_a3) ? "T" : "F");
-#  define DUMP_INT(_a1, _a2, _a3) \
-    printf("%s %s = %d \n", (_a1), GetPrefName((_a2), aPrefName), (_a3));
-#  define DUMP_DBL(_a1, _a2, _a3) \
-    printf("%s %s = %10.5f \n", (_a1), GetPrefName((_a2), aPrefName), (_a3));
-#else
-#  define DUMP_STR(_a1, _a2, _a3)
-#  define DUMP_BOOL(_a1, _a2, _a3)
-#  define DUMP_INT(_a1, _a2, _a3)
-#  define DUMP_DBL(_a1, _a2, _a3)
-#endif /* DEBUG_rods_X */
-//----------------------------------------------------------------------
-
 /**
  *  This will either read in the generic prefs (not specific to a printer)
  *  or read the prefs in using the printer name to qualify.
@@ -324,59 +297,6 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
                                            const nsAString& aPrinterName,
                                            uint32_t aFlags) {
   NS_ENSURE_ARG_POINTER(aPS);
-
-  if (aFlags & nsIPrintSettings::kInitSaveMargins) {
-    int32_t halfInch = NS_INCHES_TO_INT_TWIPS(0.5);
-    nsIntMargin margin(halfInch, halfInch, halfInch, halfInch);
-    ReadInchesToTwipsPref(GetPrefName(kMarginTop, aPrinterName), margin.top,
-                          kMarginTop);
-    DUMP_INT(kReadStr, kMarginTop, margin.top);
-    ReadInchesToTwipsPref(GetPrefName(kMarginLeft, aPrinterName), margin.left,
-                          kMarginLeft);
-    DUMP_INT(kReadStr, kMarginLeft, margin.left);
-    ReadInchesToTwipsPref(GetPrefName(kMarginBottom, aPrinterName),
-                          margin.bottom, kMarginBottom);
-    DUMP_INT(kReadStr, kMarginBottom, margin.bottom);
-    ReadInchesToTwipsPref(GetPrefName(kMarginRight, aPrinterName), margin.right,
-                          kMarginRight);
-    DUMP_INT(kReadStr, kMarginRight, margin.right);
-    aPS->SetMarginInTwips(margin);
-  }
-
-  if (aFlags & nsIPrintSettings::kInitSaveEdges) {
-    nsIntMargin margin(0, 0, 0, 0);
-    ReadInchesIntToTwipsPref(GetPrefName(kEdgeTop, aPrinterName), margin.top,
-                             kEdgeTop);
-    DUMP_INT(kReadStr, kEdgeTop, margin.top);
-    ReadInchesIntToTwipsPref(GetPrefName(kEdgeLeft, aPrinterName), margin.left,
-                             kEdgeLeft);
-    DUMP_INT(kReadStr, kEdgeLeft, margin.left);
-    ReadInchesIntToTwipsPref(GetPrefName(kEdgeBottom, aPrinterName),
-                             margin.bottom, kEdgeBottom);
-    DUMP_INT(kReadStr, kEdgeBottom, margin.bottom);
-    ReadInchesIntToTwipsPref(GetPrefName(kEdgeRight, aPrinterName),
-                             margin.right, kEdgeRight);
-    DUMP_INT(kReadStr, kEdgeRight, margin.right);
-    aPS->SetEdgeInTwips(margin);
-  }
-
-  if (aFlags & nsIPrintSettings::kInitSaveUnwriteableMargins) {
-    nsIntMargin margin;
-    ReadInchesIntToTwipsPref(GetPrefName(kUnwriteableMarginTop, aPrinterName),
-                             margin.top, kUnwriteableMarginTop);
-    DUMP_INT(kReadStr, kUnwriteableMarginTop, margin.top);
-    ReadInchesIntToTwipsPref(GetPrefName(kUnwriteableMarginLeft, aPrinterName),
-                             margin.left, kUnwriteableMarginLeft);
-    DUMP_INT(kReadStr, kUnwriteableMarginLeft, margin.left);
-    ReadInchesIntToTwipsPref(
-        GetPrefName(kUnwriteableMarginBottom, aPrinterName), margin.bottom,
-        kUnwriteableMarginBottom);
-    DUMP_INT(kReadStr, kUnwriteableMarginBottom, margin.bottom);
-    ReadInchesIntToTwipsPref(GetPrefName(kUnwriteableMarginRight, aPrinterName),
-                             margin.right, kUnwriteableMarginRight);
-    DUMP_INT(kReadStr, kUnwriteableMarginRight, margin.right);
-    aPS->SetUnwriteableMarginInTwips(margin);
-  }
 
   bool b;
   nsAutoString str;
@@ -398,128 +318,191 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
 #define GETDBLPREF(_prefname, _retval) \
   NS_SUCCEEDED(ReadPrefDouble(GetPrefName(_prefname, aPrinterName), _retval))
 
+  bool gotPaperSizeFromPrefs = false;
+  int16_t paperSizeUnit;
+  double paperWidth, paperHeight;
+
   // Paper size prefs are read as a group
   if (aFlags & nsIPrintSettings::kInitSavePaperSize) {
-    int32_t sizeUnit;
-    double width, height;
+    gotPaperSizeFromPrefs = GETINTPREF(kPrintPaperSizeUnit, &iVal) &&
+                            GETDBLPREF(kPrintPaperWidth, paperWidth) &&
+                            GETDBLPREF(kPrintPaperHeight, paperHeight) &&
+                            GETSTRPREF(kPrintPaperId, str);
+    paperSizeUnit = (int16_t)iVal;
 
-    bool success = GETINTPREF(kPrintPaperSizeUnit, &sizeUnit) &&
-                   GETDBLPREF(kPrintPaperWidth, width) &&
-                   GETDBLPREF(kPrintPaperHeight, height) &&
-                   GETSTRPREF(kPrintPaperId, str);
-
-    // Bug 315687: Sanity check paper size to avoid paper size values in
-    // mm when the size unit flag is inches. The value 100 is arbitrary
-    // and can be changed.
-    if (success) {
-      success = (sizeUnit != nsIPrintSettings::kPaperSizeInches) ||
-                (width < 100.0) || (height < 100.0);
+    if (gotPaperSizeFromPrefs &&
+        paperSizeUnit != nsIPrintSettings::kPaperSizeInches &&
+        paperSizeUnit != nsIPrintSettings::kPaperSizeMillimeters) {
+      gotPaperSizeFromPrefs = false;
     }
 
-    if (success) {
-      aPS->SetPaperSizeUnit(sizeUnit);
-      DUMP_INT(kReadStr, kPrintPaperSizeUnit, sizeUnit);
-      aPS->SetPaperWidth(width);
-      DUMP_DBL(kReadStr, kPrintPaperWidth, width);
-      aPS->SetPaperHeight(height);
-      DUMP_DBL(kReadStr, kPrintPaperHeight, height);
+    if (gotPaperSizeFromPrefs) {
+      // Impose some limits to purge at least some corrupt pref values to try to
+      // avoid bugs like bug 315687.  Sizes based on telemetry max/mins.
+      constexpr double minInMM = 10.0;
+      constexpr double maxInMM = 4500.0;
+      constexpr double minInIn = minInMM / 25.4;
+      constexpr double maxInIn = 100.0;  // (~2.4m) used since bug 315687
+
+      if ((paperSizeUnit == nsIPrintSettings::kPaperSizeMillimeters &&
+           (paperWidth < minInMM || paperWidth > maxInMM ||
+            paperHeight < minInMM || paperHeight > maxInMM)) ||
+          (paperWidth < minInIn || paperWidth > maxInIn ||
+           paperHeight < minInIn || paperHeight > maxInIn)) {
+        gotPaperSizeFromPrefs = false;
+      }
+    }
+
+    if (gotPaperSizeFromPrefs) {
+      aPS->SetPaperSizeUnit(paperSizeUnit);
+      aPS->SetPaperWidth(paperWidth);
+      aPS->SetPaperHeight(paperHeight);
       aPS->SetPaperId(str);
-      DUMP_STR(kReadStr, kPrintPaperId, str.get());
     }
   }
 
-  if (aFlags & nsIPrintSettings::kInitSaveOddEvenPages) {
-    if (GETBOOLPREF(kPrintEvenPages, &b)) {
-      aPS->SetPrintOptions(nsIPrintSettings::kPrintEvenPages, b);
-      DUMP_BOOL(kReadStr, kPrintEvenPages, b);
+  nsIntSize pageSizeInTwips;  // to sanity check margins
+  if (!gotPaperSizeFromPrefs) {
+    aPS->GetPaperSizeUnit(&paperSizeUnit);
+    aPS->GetPaperWidth(&paperWidth);
+    aPS->GetPaperHeight(&paperHeight);
+  }
+  if (paperSizeUnit == nsIPrintSettings::kPaperSizeMillimeters) {
+    pageSizeInTwips = nsIntSize((int)NS_MILLIMETERS_TO_TWIPS(paperWidth),
+                                (int)NS_MILLIMETERS_TO_TWIPS(paperHeight));
+  } else {
+    pageSizeInTwips = nsIntSize((int)NS_INCHES_TO_TWIPS(paperWidth),
+                                (int)NS_INCHES_TO_TWIPS(paperHeight));
+  }
+
+  auto MarginIsOK = [&pageSizeInTwips](const nsIntMargin& aMargin) {
+    return aMargin.top >= 0 && aMargin.right >= 0 && aMargin.bottom >= 0 &&
+           aMargin.left >= 0 && aMargin.LeftRight() < pageSizeInTwips.width &&
+           aMargin.TopBottom() < pageSizeInTwips.height;
+  };
+
+  if (aFlags & nsIPrintSettings::kInitSaveUnwriteableMargins) {
+    nsIntMargin margin;
+    ReadInchesIntToTwipsPref(GetPrefName(kUnwriteableMarginTop, aPrinterName),
+                             margin.top, kUnwriteableMarginTop);
+    ReadInchesIntToTwipsPref(GetPrefName(kUnwriteableMarginLeft, aPrinterName),
+                             margin.left, kUnwriteableMarginLeft);
+    ReadInchesIntToTwipsPref(
+        GetPrefName(kUnwriteableMarginBottom, aPrinterName), margin.bottom,
+        kUnwriteableMarginBottom);
+    ReadInchesIntToTwipsPref(GetPrefName(kUnwriteableMarginRight, aPrinterName),
+                             margin.right, kUnwriteableMarginRight);
+    // SetUnwriteableMarginInTwips does its own validation and drops negative
+    // values individually.  We still want to block overly large values though,
+    // so we do that part of MarginIsOK manually.
+    if (margin.LeftRight() < pageSizeInTwips.width &&
+        margin.TopBottom() < pageSizeInTwips.height) {
+      aPS->SetUnwriteableMarginInTwips(margin);
     }
-    if (GETBOOLPREF(kPrintOddPages, &b)) {
-      aPS->SetPrintOptions(nsIPrintSettings::kPrintOddPages, b);
-      DUMP_BOOL(kReadStr, kPrintOddPages, b);
+  }
+
+  if (aFlags & nsIPrintSettings::kInitSaveMargins) {
+    int32_t halfInch = NS_INCHES_TO_INT_TWIPS(0.5);
+    nsIntMargin margin(halfInch, halfInch, halfInch, halfInch);
+    ReadInchesToTwipsPref(GetPrefName(kMarginTop, aPrinterName), margin.top,
+                          kMarginTop);
+    ReadInchesToTwipsPref(GetPrefName(kMarginLeft, aPrinterName), margin.left,
+                          kMarginLeft);
+    ReadInchesToTwipsPref(GetPrefName(kMarginBottom, aPrinterName),
+                          margin.bottom, kMarginBottom);
+    ReadInchesToTwipsPref(GetPrefName(kMarginRight, aPrinterName), margin.right,
+                          kMarginRight);
+    if (MarginIsOK(margin)) {
+      aPS->SetMarginInTwips(margin);
+    }
+  }
+
+  if (aFlags & nsIPrintSettings::kInitSaveEdges) {
+    nsIntMargin margin(0, 0, 0, 0);
+    ReadInchesIntToTwipsPref(GetPrefName(kEdgeTop, aPrinterName), margin.top,
+                             kEdgeTop);
+    ReadInchesIntToTwipsPref(GetPrefName(kEdgeLeft, aPrinterName), margin.left,
+                             kEdgeLeft);
+    ReadInchesIntToTwipsPref(GetPrefName(kEdgeBottom, aPrinterName),
+                             margin.bottom, kEdgeBottom);
+    ReadInchesIntToTwipsPref(GetPrefName(kEdgeRight, aPrinterName),
+                             margin.right, kEdgeRight);
+    if (MarginIsOK(margin)) {
+      aPS->SetEdgeInTwips(margin);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderLeft) {
     if (GETSTRPREF(kPrintHeaderStrLeft, str)) {
       aPS->SetHeaderStrLeft(str);
-      DUMP_STR(kReadStr, kPrintHeaderStrLeft, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderCenter) {
     if (GETSTRPREF(kPrintHeaderStrCenter, str)) {
       aPS->SetHeaderStrCenter(str);
-      DUMP_STR(kReadStr, kPrintHeaderStrCenter, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderRight) {
     if (GETSTRPREF(kPrintHeaderStrRight, str)) {
       aPS->SetHeaderStrRight(str);
-      DUMP_STR(kReadStr, kPrintHeaderStrRight, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterLeft) {
     if (GETSTRPREF(kPrintFooterStrLeft, str)) {
       aPS->SetFooterStrLeft(str);
-      DUMP_STR(kReadStr, kPrintFooterStrLeft, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterCenter) {
     if (GETSTRPREF(kPrintFooterStrCenter, str)) {
       aPS->SetFooterStrCenter(str);
-      DUMP_STR(kReadStr, kPrintFooterStrCenter, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterRight) {
     if (GETSTRPREF(kPrintFooterStrRight, str)) {
       aPS->SetFooterStrRight(str);
-      DUMP_STR(kReadStr, kPrintFooterStrRight, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveBGColors) {
     if (GETBOOLPREF(kPrintBGColors, &b)) {
       aPS->SetPrintBGColors(b);
-      DUMP_BOOL(kReadStr, kPrintBGColors, b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveBGImages) {
     if (GETBOOLPREF(kPrintBGImages, &b)) {
       aPS->SetPrintBGImages(b);
-      DUMP_BOOL(kReadStr, kPrintBGImages, b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveReversed) {
     if (GETBOOLPREF(kPrintReversed, &b)) {
       aPS->SetPrintReversed(b);
-      DUMP_BOOL(kReadStr, kPrintReversed, b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveInColor) {
     if (GETBOOLPREF(kPrintInColor, &b)) {
       aPS->SetPrintInColor(b);
-      DUMP_BOOL(kReadStr, kPrintInColor, b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveOrientation) {
-    if (GETINTPREF(kPrintOrientation, &iVal)) {
+    if (GETINTPREF(kPrintOrientation, &iVal) &&
+        (iVal == nsIPrintSettings::kPortraitOrientation ||
+         iVal == nsIPrintSettings::kLandscapeOrientation)) {
       aPS->SetOrientation(iVal);
-      DUMP_INT(kReadStr, kPrintOrientation, iVal);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSavePrintToFile) {
     if (GETBOOLPREF(kPrintToFile, &b)) {
       aPS->SetPrintToFile(b);
-      DUMP_BOOL(kReadStr, kPrintToFile, b);
     }
   }
 
@@ -534,42 +517,43 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
         str.AppendLiteral("pdf");
       }
       aPS->SetToFileName(str);
-      DUMP_STR(kReadStr, kPrintToFileName, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSavePageDelay) {
-    if (GETINTPREF(kPrintPageDelay, &iVal)) {
+    // milliseconds
+    if (GETINTPREF(kPrintPageDelay, &iVal) && iVal >= 0 && iVal <= 1000) {
       aPS->SetPrintPageDelay(iVal);
-      DUMP_INT(kReadStr, kPrintPageDelay, iVal);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveShrinkToFit) {
     if (GETBOOLPREF(kPrintShrinkToFit, &b)) {
       aPS->SetShrinkToFit(b);
-      DUMP_BOOL(kReadStr, kPrintShrinkToFit, b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveScaling) {
-    if (GETDBLPREF(kPrintScaling, dbl)) {
+    // The limits imposed here are fairly arbitrary and mainly intended to
+    // purge bad values which tend to be negative and/or very large.  If we
+    // get complaints from users that settings outside these values "aren't
+    // saved" then we can consider increasing them.
+    if (GETDBLPREF(kPrintScaling, dbl) && dbl >= 0.05 && dbl <= 20) {
       aPS->SetScaling(dbl);
-      DUMP_DBL(kReadStr, kPrintScaling, dbl);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveResolution) {
-    if (GETINTPREF(kPrintResolution, &iVal)) {
+    // DPI. Again, an arbitrary range mainly to purge bad values that have made
+    // their way into user prefs.
+    if (GETINTPREF(kPrintResolution, &iVal) && iVal >= 50 && iVal <= 12000) {
       aPS->SetResolution(iVal);
-      DUMP_INT(kReadStr, kPrintResolution, iVal);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveDuplex) {
     if (GETINTPREF(kPrintDuplex, &iVal)) {
       aPS->SetDuplex(iVal);
-      DUMP_INT(kReadStr, kPrintDuplex, iVal);
     }
   }
 
@@ -587,31 +571,23 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
   if (aFlags & nsIPrintSettings::kInitSaveMargins) {
     nsIntMargin margin = aPS->GetMarginInTwips();
     WriteInchesFromTwipsPref(GetPrefName(kMarginTop, aPrinterName), margin.top);
-    DUMP_INT(kWriteStr, kMarginTop, margin.top);
     WriteInchesFromTwipsPref(GetPrefName(kMarginLeft, aPrinterName),
                              margin.left);
-    DUMP_INT(kWriteStr, kMarginLeft, margin.top);
     WriteInchesFromTwipsPref(GetPrefName(kMarginBottom, aPrinterName),
                              margin.bottom);
-    DUMP_INT(kWriteStr, kMarginBottom, margin.top);
     WriteInchesFromTwipsPref(GetPrefName(kMarginRight, aPrinterName),
                              margin.right);
-    DUMP_INT(kWriteStr, kMarginRight, margin.top);
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveEdges) {
     nsIntMargin edge = aPS->GetEdgeInTwips();
     WriteInchesIntFromTwipsPref(GetPrefName(kEdgeTop, aPrinterName), edge.top);
-    DUMP_INT(kWriteStr, kEdgeTop, edge.top);
     WriteInchesIntFromTwipsPref(GetPrefName(kEdgeLeft, aPrinterName),
                                 edge.left);
-    DUMP_INT(kWriteStr, kEdgeLeft, edge.top);
     WriteInchesIntFromTwipsPref(GetPrefName(kEdgeBottom, aPrinterName),
                                 edge.bottom);
-    DUMP_INT(kWriteStr, kEdgeBottom, edge.top);
     WriteInchesIntFromTwipsPref(GetPrefName(kEdgeRight, aPrinterName),
                                 edge.right);
-    DUMP_INT(kWriteStr, kEdgeRight, edge.top);
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveUnwriteableMargins) {
@@ -619,19 +595,15 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
     WriteInchesIntFromTwipsPref(
         GetPrefName(kUnwriteableMarginTop, aPrinterName),
         unwriteableMargin.top);
-    DUMP_INT(kWriteStr, kUnwriteableMarginTop, unwriteableMargin.top);
     WriteInchesIntFromTwipsPref(
         GetPrefName(kUnwriteableMarginLeft, aPrinterName),
         unwriteableMargin.left);
-    DUMP_INT(kWriteStr, kUnwriteableMarginLeft, unwriteableMargin.top);
     WriteInchesIntFromTwipsPref(
         GetPrefName(kUnwriteableMarginBottom, aPrinterName),
         unwriteableMargin.bottom);
-    DUMP_INT(kWriteStr, kUnwriteableMarginBottom, unwriteableMargin.top);
     WriteInchesIntFromTwipsPref(
         GetPrefName(kUnwriteableMarginRight, aPrinterName),
         unwriteableMargin.right);
-    DUMP_INT(kWriteStr, kUnwriteableMarginRight, unwriteableMargin.top);
   }
 
   // Paper size prefs are saved as a group
@@ -644,14 +616,10 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
         NS_SUCCEEDED(aPS->GetPaperWidth(&width)) &&
         NS_SUCCEEDED(aPS->GetPaperHeight(&height)) &&
         NS_SUCCEEDED(aPS->GetPaperId(name))) {
-      DUMP_INT(kWriteStr, kPrintPaperSizeUnit, sizeUnit);
       Preferences::SetInt(GetPrefName(kPrintPaperSizeUnit, aPrinterName),
                           int32_t(sizeUnit));
-      DUMP_DBL(kWriteStr, kPrintPaperWidth, width);
       WritePrefDouble(GetPrefName(kPrintPaperWidth, aPrinterName), width);
-      DUMP_DBL(kWriteStr, kPrintPaperHeight, height);
       WritePrefDouble(GetPrefName(kPrintPaperHeight, aPrinterName), height);
-      DUMP_STR(kWriteStr, kPrintPaperId, name.get());
       Preferences::SetString(GetPrefName(kPrintPaperId, aPrinterName), name);
     }
   }
@@ -661,22 +629,8 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
   int32_t iVal;
   double dbl;
 
-  if (aFlags & nsIPrintSettings::kInitSaveOddEvenPages) {
-    if (NS_SUCCEEDED(
-            aPS->GetPrintOptions(nsIPrintSettings::kPrintEvenPages, &b))) {
-      DUMP_BOOL(kWriteStr, kPrintEvenPages, b);
-      Preferences::SetBool(GetPrefName(kPrintEvenPages, aPrinterName), b);
-    }
-    if (NS_SUCCEEDED(
-            aPS->GetPrintOptions(nsIPrintSettings::kPrintOddPages, &b))) {
-      DUMP_BOOL(kWriteStr, kPrintOddPages, b);
-      Preferences::SetBool(GetPrefName(kPrintOddPages, aPrinterName), b);
-    }
-  }
-
   if (aFlags & nsIPrintSettings::kInitSaveHeaderLeft) {
     if (NS_SUCCEEDED(aPS->GetHeaderStrLeft(uStr))) {
-      DUMP_STR(kWriteStr, kPrintHeaderStrLeft, uStr.get());
       Preferences::SetString(GetPrefName(kPrintHeaderStrLeft, aPrinterName),
                              uStr);
     }
@@ -684,7 +638,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderCenter) {
     if (NS_SUCCEEDED(aPS->GetHeaderStrCenter(uStr))) {
-      DUMP_STR(kWriteStr, kPrintHeaderStrCenter, uStr.get());
       Preferences::SetString(GetPrefName(kPrintHeaderStrCenter, aPrinterName),
                              uStr);
     }
@@ -692,7 +645,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderRight) {
     if (NS_SUCCEEDED(aPS->GetHeaderStrRight(uStr))) {
-      DUMP_STR(kWriteStr, kPrintHeaderStrRight, uStr.get());
       Preferences::SetString(GetPrefName(kPrintHeaderStrRight, aPrinterName),
                              uStr);
     }
@@ -700,7 +652,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterLeft) {
     if (NS_SUCCEEDED(aPS->GetFooterStrLeft(uStr))) {
-      DUMP_STR(kWriteStr, kPrintFooterStrLeft, uStr.get());
       Preferences::SetString(GetPrefName(kPrintFooterStrLeft, aPrinterName),
                              uStr);
     }
@@ -708,7 +659,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterCenter) {
     if (NS_SUCCEEDED(aPS->GetFooterStrCenter(uStr))) {
-      DUMP_STR(kWriteStr, kPrintFooterStrCenter, uStr.get());
       Preferences::SetString(GetPrefName(kPrintFooterStrCenter, aPrinterName),
                              uStr);
     }
@@ -716,7 +666,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterRight) {
     if (NS_SUCCEEDED(aPS->GetFooterStrRight(uStr))) {
-      DUMP_STR(kWriteStr, kPrintFooterStrRight, uStr.get());
       Preferences::SetString(GetPrefName(kPrintFooterStrRight, aPrinterName),
                              uStr);
     }
@@ -724,33 +673,28 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveBGColors) {
     b = aPS->GetPrintBGColors();
-    DUMP_BOOL(kWriteStr, kPrintBGColors, b);
     Preferences::SetBool(GetPrefName(kPrintBGColors, aPrinterName), b);
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveBGImages) {
     b = aPS->GetPrintBGImages();
-    DUMP_BOOL(kWriteStr, kPrintBGImages, b);
     Preferences::SetBool(GetPrefName(kPrintBGImages, aPrinterName), b);
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveReversed) {
     if (NS_SUCCEEDED(aPS->GetPrintReversed(&b))) {
-      DUMP_BOOL(kWriteStr, kPrintReversed, b);
       Preferences::SetBool(GetPrefName(kPrintReversed, aPrinterName), b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveInColor) {
     if (NS_SUCCEEDED(aPS->GetPrintInColor(&b))) {
-      DUMP_BOOL(kWriteStr, kPrintInColor, b);
       Preferences::SetBool(GetPrefName(kPrintInColor, aPrinterName), b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveOrientation) {
     if (NS_SUCCEEDED(aPS->GetOrientation(&iVal))) {
-      DUMP_INT(kWriteStr, kPrintOrientation, iVal);
       Preferences::SetInt(GetPrefName(kPrintOrientation, aPrinterName), iVal);
     }
   }
@@ -759,56 +703,48 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
   if ((aFlags & nsIPrintSettings::kInitSavePrinterName) &&
       aPrinterName.IsEmpty()) {
     if (NS_SUCCEEDED(aPS->GetPrinterName(uStr))) {
-      DUMP_STR(kWriteStr, kPrinterName, uStr.get());
       Preferences::SetString(kPrinterName, uStr);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSavePrintToFile) {
     if (NS_SUCCEEDED(aPS->GetPrintToFile(&b))) {
-      DUMP_BOOL(kWriteStr, kPrintToFile, b);
       Preferences::SetBool(GetPrefName(kPrintToFile, aPrinterName), b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveToFileName) {
     if (NS_SUCCEEDED(aPS->GetToFileName(uStr))) {
-      DUMP_STR(kWriteStr, kPrintToFileName, uStr.get());
       Preferences::SetString(GetPrefName(kPrintToFileName, aPrinterName), uStr);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSavePageDelay) {
     if (NS_SUCCEEDED(aPS->GetPrintPageDelay(&iVal))) {
-      DUMP_INT(kWriteStr, kPrintPageDelay, iVal);
       Preferences::SetInt(GetPrefName(kPrintPageDelay, aPrinterName), iVal);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveShrinkToFit) {
     if (NS_SUCCEEDED(aPS->GetShrinkToFit(&b))) {
-      DUMP_BOOL(kWriteStr, kPrintShrinkToFit, b);
       Preferences::SetBool(GetPrefName(kPrintShrinkToFit, aPrinterName), b);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveScaling) {
     if (NS_SUCCEEDED(aPS->GetScaling(&dbl))) {
-      DUMP_DBL(kWriteStr, kPrintScaling, dbl);
       WritePrefDouble(GetPrefName(kPrintScaling, aPrinterName), dbl);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveResolution) {
     if (NS_SUCCEEDED(aPS->GetResolution(&iVal))) {
-      DUMP_INT(kWriteStr, kPrintResolution, iVal);
       Preferences::SetInt(GetPrefName(kPrintResolution, aPrinterName), iVal);
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveDuplex) {
     if (NS_SUCCEEDED(aPS->GetDuplex(&iVal))) {
-      DUMP_INT(kWriteStr, kPrintDuplex, iVal);
       Preferences::SetInt(GetPrefName(kPrintDuplex, aPrinterName), iVal);
     }
   }
@@ -819,32 +755,13 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
   return NS_OK;
 }
 
-nsresult nsPrintSettingsService::_CreatePrintSettings(
-    nsIPrintSettings** _retval) {
-  // does not initially ref count
-  nsPrintSettings* printSettings = new nsPrintSettings();
-  NS_ENSURE_TRUE(printSettings, NS_ERROR_OUT_OF_MEMORY);
-
-  NS_ADDREF(*_retval = printSettings);  // ref count
-
-  nsString printerName;
-  nsresult rv = GetLastUsedPrinterName(printerName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  (*_retval)->SetPrinterName(printerName);
-
-  (void)InitPrintSettingsFromPrefs(*_retval, false,
-                                   nsIPrintSettings::kInitSaveAll);
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP
 nsPrintSettingsService::GetDefaultPrintSettingsForPrinting(
-    nsIPrintSettings** aGlobalPrintSettings) {
-  nsresult rv = GetGlobalPrintSettings(aGlobalPrintSettings);
+    nsIPrintSettings** aPrintSettings) {
+  nsresult rv = GetNewPrintSettings(aPrintSettings);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsIPrintSettings* settings = *aGlobalPrintSettings;
+  nsIPrintSettings* settings = *aPrintSettings;
 
   nsAutoString printerName;
   settings->GetPrinterName(printerName);
@@ -855,12 +772,6 @@ nsPrintSettingsService::GetDefaultPrintSettingsForPrinting(
   InitPrintSettingsFromPrinter(printerName, settings);
   InitPrintSettingsFromPrefs(settings, true, nsIPrintSettings::kInitSaveAll);
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsPrintSettingsService::GetGlobalPrintSettings(
-    nsIPrintSettings** aGlobalPrintSettings) {
-  return GetNewPrintSettings(aGlobalPrintSettings);
 }
 
 NS_IMETHODIMP
@@ -957,10 +868,24 @@ nsPrintSettingsService::InitPrintSettingsFromPrefs(nsIPrintSettings* aPS,
 
   if (isInitialized) return NS_OK;
 
+  auto globalPrintSettings = aFlags;
+#ifndef MOZ_WIDGET_ANDROID
+  globalPrintSettings &= nsIPrintSettings::kInitSaveShrinkToFit |
+                         nsIPrintSettings::kInitSaveHeaderLeft |
+                         nsIPrintSettings::kInitSaveHeaderCenter |
+                         nsIPrintSettings::kInitSaveHeaderRight |
+                         nsIPrintSettings::kInitSaveFooterLeft |
+                         nsIPrintSettings::kInitSaveFooterCenter |
+                         nsIPrintSettings::kInitSaveFooterRight |
+                         nsIPrintSettings::kInitSaveEdges |
+                         nsIPrintSettings::kInitSaveReversed |
+                         nsIPrintSettings::kInitSaveInColor;
+#endif
+
   nsAutoString prtName;
   // read any non printer specific prefs
   // with empty printer name
-  nsresult rv = ReadPrefs(aPS, prtName, aFlags);
+  nsresult rv = ReadPrefs(aPS, prtName, globalPrintSettings);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Get the Printer Name from the PrintSettings to use as a prefix for Pref
@@ -1015,19 +940,26 @@ nsresult nsPrintSettingsService::ReadPrefDouble(const char* aPrefId,
 
   nsAutoCString str;
   nsresult rv = Preferences::GetCString(aPrefId, str);
-  if (NS_SUCCEEDED(rv) && !str.IsEmpty()) {
-    aVal = atof(str.get());
+  if (NS_FAILED(rv) || str.IsEmpty()) {
+    return NS_ERROR_NOT_AVAILABLE;
   }
-  return rv;
+
+  double value = str.ToDouble(&rv);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  aVal = value;
+  return NS_OK;
 }
 
 nsresult nsPrintSettingsService::WritePrefDouble(const char* aPrefId,
                                                  double aVal) {
   NS_ENSURE_ARG_POINTER(aPrefId);
 
-  nsPrintfCString str("%6.2f", aVal);
-  NS_ENSURE_TRUE(!str.IsEmpty(), NS_ERROR_FAILURE);
-
+  nsAutoCString str;
+  // We cast to a float so we only get up to 6 digits precision in the prefs.
+  str.AppendFloat((float)aVal);
   return Preferences::SetCString(aPrefId, str);
 }
 

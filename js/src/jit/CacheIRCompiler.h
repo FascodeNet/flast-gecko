@@ -23,6 +23,8 @@ namespace jit {
 class BaselineCacheIRCompiler;
 class IonCacheIRCompiler;
 
+enum class ICStubEngine : uint8_t;
+
 // [SMDOC] CacheIR Value Representation and Tracking
 //
 // While compiling an IC stub the CacheIR compiler needs to keep track of the
@@ -766,6 +768,10 @@ class MOZ_RAII CacheIRCompiler {
            !allocator.isDeadAfterInstruction(objId);
   }
 
+  bool emitLoadTypedElementExistsResult(ObjOperandId objId,
+                                        Int32OperandId indexId,
+                                        TypedThingLayout layout);
+
   bool emitLoadTypedElementResult(ObjOperandId objId, Int32OperandId indexId,
                                   TypedThingLayout layout,
                                   Scalar::Type elementType, bool handleOOB,
@@ -848,11 +854,11 @@ class MOZ_RAII CacheIRCompiler {
   }
   int32_t int32StubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
-    return readStubWord(offset, StubField::Type::RawWord);
+    return readStubWord(offset, StubField::Type::RawInt32);
   }
   uint32_t uint32StubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
-    return readStubWord(offset, StubField::Type::RawWord);
+    return readStubWord(offset, StubField::Type::RawInt32);
   }
   Shape* shapeStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
@@ -884,15 +890,19 @@ class MOZ_RAII CacheIRCompiler {
   }
   JS::Compartment* compartmentStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
-    return (JS::Compartment*)readStubWord(offset, StubField::Type::RawWord);
+    return (JS::Compartment*)readStubWord(offset, StubField::Type::RawPointer);
   }
   const JSClass* classStubField(uintptr_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
-    return (const JSClass*)readStubWord(offset, StubField::Type::RawWord);
+    return (const JSClass*)readStubWord(offset, StubField::Type::RawPointer);
   }
   const void* proxyHandlerStubField(uintptr_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
-    return (const void*)readStubWord(offset, StubField::Type::RawWord);
+    return (const void*)readStubWord(offset, StubField::Type::RawPointer);
+  }
+  const void* pointerStubField(uintptr_t offset) {
+    MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
+    return (const void*)readStubWord(offset, StubField::Type::RawPointer);
   }
   jsid idStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);

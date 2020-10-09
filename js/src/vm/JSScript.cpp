@@ -33,15 +33,17 @@
 
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
+#include "frontend/CompilationInfo.h"  // frontend::CompilationStencil
 #include "frontend/SharedContext.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
+#include "frontend/StencilXdr.h"   // frontend::StencilXdr::SharedData
 #include "gc/FreeOp.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
 #include "jit/JitCode.h"
 #include "jit/JitOptions.h"
-#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "js/CompileOptions.h"
 #include "js/MemoryMetrics.h"
 #include "js/Printf.h"
@@ -843,8 +845,8 @@ ImmutableScriptData::ImmutableScriptData(uint32_t codeLength,
 }
 
 template <XDRMode mode>
-static XDRResult XDRImmutableScriptData(XDRState<mode>* xdr,
-                                        UniquePtr<ImmutableScriptData>& isd) {
+XDRResult js::XDRImmutableScriptData(XDRState<mode>* xdr,
+                                     UniquePtr<ImmutableScriptData>& isd) {
   uint32_t codeLength = 0;
   uint32_t noteLength = 0;
   uint32_t numResumeOffsets = 0;
@@ -914,38 +916,10 @@ static XDRResult XDRImmutableScriptData(XDRState<mode>* xdr,
   return Ok();
 }
 
-template <XDRMode mode>
-/* static */
-XDRResult RuntimeScriptData::XDR(XDRState<mode>* xdr, HandleScript script) {
-  JSContext* cx = xdr->cx();
-  RuntimeScriptData* rsd = nullptr;
-
-  if (mode == XDR_ENCODE) {
-    rsd = script->sharedData();
-  }
-
-  if (mode == XDR_DECODE) {
-    if (!script->createScriptData(cx)) {
-      return xdr->fail(JS::TranscodeResult_Throw);
-    }
-
-    rsd = script->sharedData();
-  }
-
-  MOZ_TRY(XDRImmutableScriptData<mode>(xdr, rsd->isd_));
-
-  return Ok();
-}
-
-template
-    /* static */
-    XDRResult
-    RuntimeScriptData::XDR(XDRState<XDR_ENCODE>* xdr, HandleScript script);
-
-template
-    /* static */
-    XDRResult
-    RuntimeScriptData::XDR(XDRState<XDR_DECODE>* xdr, HandleScript script);
+template XDRResult js::XDRImmutableScriptData(
+    XDRState<XDR_ENCODE>* xdr, UniquePtr<ImmutableScriptData>& isd);
+template XDRResult js::XDRImmutableScriptData(
+    XDRState<XDR_DECODE>* xdr, UniquePtr<ImmutableScriptData>& isd);
 
 template <XDRMode mode>
 XDRResult js::XDRSourceExtent(XDRState<mode>* xdr, SourceExtent* extent) {
@@ -959,12 +933,69 @@ XDRResult js::XDRSourceExtent(XDRState<mode>* xdr, SourceExtent* extent) {
   return Ok();
 }
 
+template /* static */
+    XDRResult
+    js::XDRSourceExtent(XDRState<XDR_ENCODE>* xdr, SourceExtent* extent);
+
+template /* static */
+    XDRResult
+    js::XDRSourceExtent(XDRState<XDR_DECODE>* xdr, SourceExtent* extent);
+
+void js::FillImmutableFlagsFromCompileOptionsForTopLevel(
+    const ReadOnlyCompileOptions& options, ImmutableScriptFlags& flags) {
+  using ImmutableFlags = ImmutableScriptFlagsEnum;
+
+  js::FillImmutableFlagsFromCompileOptionsForFunction(options, flags);
+
+  flags.setFlag(ImmutableFlags::TreatAsRunOnce, options.isRunOnce);
+  flags.setFlag(ImmutableFlags::NoScriptRval, options.noScriptRval);
+}
+
+void js::FillImmutableFlagsFromCompileOptionsForFunction(
+    const ReadOnlyCompileOptions& options, ImmutableScriptFlags& flags) {
+  using ImmutableFlags = ImmutableScriptFlagsEnum;
+
+  flags.setFlag(ImmutableFlags::SelfHosted, options.selfHostingMode);
+  flags.setFlag(ImmutableFlags::ForceStrict, options.forceStrictMode());
+  flags.setFlag(ImmutableFlags::HasNonSyntacticScope,
+                options.nonSyntacticScope);
+}
+
+// Check if flags matches to compile options for flags set by
+// FillImmutableFlagsFromCompileOptionsForTopLevel above.
+//
+// If isMultiDecode is true, this check minimal set of CompileOptions that is
+// shared across multiple scripts in JS::DecodeMultiOffThreadScripts.
+// Other options should be checked when getting the decoded script from the
+// cache.
+bool js::CheckCompileOptionsMatch(const ReadOnlyCompileOptions& options,
+                                  ImmutableScriptFlags flags,
+                                  bool isMultiDecode) {
+  using ImmutableFlags = ImmutableScriptFlagsEnum;
+
+  bool selfHosted = !!(flags & uint32_t(ImmutableFlags::SelfHosted));
+  bool forceStrict = !!(flags & uint32_t(ImmutableFlags::ForceStrict));
+  bool hasNonSyntacticScope =
+      !!(flags & uint32_t(ImmutableFlags::HasNonSyntacticScope));
+  bool noScriptRval = !!(flags & uint32_t(ImmutableFlags::NoScriptRval));
+  bool treatAsRunOnce = !!(flags & uint32_t(ImmutableFlags::TreatAsRunOnce));
+
+  return options.selfHostingMode == selfHosted &&
+         options.noScriptRval == noScriptRval &&
+         options.isRunOnce == treatAsRunOnce &&
+         (isMultiDecode || (options.forceStrictMode() == forceStrict &&
+                            options.nonSyntacticScope == hasNonSyntacticScope));
+}
+
+JS_PUBLIC_API bool JS::CheckCompileOptionsMatch(
+    const ReadOnlyCompileOptions& options, JSScript* script) {
+  return js::CheckCompileOptionsMatch(options, script->immutableFlags(), false);
+}
+
 template <XDRMode mode>
 XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
                         HandleScriptSourceObject sourceObjectArg,
                         HandleObject funOrMod, MutableHandleScript scriptp) {
-  using ImmutableFlags = JSScript::ImmutableFlags;
-
   /* NB: Keep this in sync with CopyScriptImpl. */
 
   enum XDRScriptFlags {
@@ -998,19 +1029,6 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
 
     MOZ_ASSERT_IF(isFunctionScript, script->function() == funOrMod);
 
-    if (!isFunctionScript && script->treatAsRunOnce() && script->hasRunOnce()) {
-      // This is a toplevel or eval script that's runOnce.  We want to
-      // make sure that we're not XDR-saving an object we emitted for
-      // JSOp::Object that then got modified.  So throw if we're not
-      // cloning in JSOp::Object or if we ever didn't clone in it in the
-      // past.
-      Realm* realm = cx->realm();
-      if (!realm->creationOptions().cloneSingletons() ||
-          !realm->behaviors().getSingletonsAsTemplates()) {
-        return xdr->fail(JS::TranscodeResult_Failure_RunOnceNotSupported);
-      }
-    }
-
     if (!sourceObjectArg) {
       xdrFlags |= OwnSource;
     }
@@ -1034,22 +1052,24 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
   Maybe<CompileOptions> options;
 
   if (mode == XDR_DECODE) {
-    // When loading from the bytecode cache, we get the CompileOptions from
-    // the document. If the noScriptRval or selfHostingMode flag doesn't
-    // match, we should fail. This only applies to the top-level and not
-    // its inner functions.
-    bool noScriptRval =
-        !!(immutableFlags & uint32_t(ImmutableFlags::NoScriptRval));
-    bool selfHosted = !!(immutableFlags & uint32_t(ImmutableFlags::SelfHosted));
-    if (xdr->hasOptions() && (xdrFlags & OwnSource)) {
+    MOZ_ASSERT(xdr->hasOptions());
+
+    // When loading from the bytecode cache, and if we get the CompileOptions
+    // from the document, if the ImmutableFlags and options don't agree, we
+    // should fail. This only applies to the top-level and not its inner
+    // functions.
+    //
+    // Also, JS::DecodeMultiOffThreadScripts uses single CompileOptions for
+    // multiple scripts with different CompileOptions.
+    // We should check minimal set of common flags here, and let the consumer
+    // check the full flags when getting from the cache.
+    if (xdrFlags & OwnSource) {
       options.emplace(xdr->cx(), xdr->options());
-      if (options->noScriptRval != noScriptRval ||
-          options->selfHostingMode != selfHosted) {
+      if (!js::CheckCompileOptionsMatch(*options,
+                                        ImmutableScriptFlags(immutableFlags),
+                                        xdr->isMultiDecode())) {
         return xdr->fail(JS::TranscodeResult_Failure_WrongCompileOption);
       }
-    } else {
-      options.emplace(xdr->cx());
-      (*options).setNoScriptRval(noScriptRval).setSelfHostingMode(selfHosted);
     }
   }
 
@@ -1123,10 +1143,10 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
   // NOTE: The script data is rooted by the script.
   MOZ_TRY(PrivateScriptData::XDR<mode>(xdr, script, sourceObject,
                                        scriptEnclosingScope, funOrMod));
-  MOZ_TRY(RuntimeScriptData::XDR<mode>(xdr, script));
+  MOZ_TRY(frontend::StencilXDR::SharedData<mode>(xdr, script->sharedData_));
 
   if (mode == XDR_DECODE) {
-    if (!script->shareScriptData(cx)) {
+    if (!SharedImmutableScriptData::shareScriptData(cx, script->sharedData_)) {
       return xdr->fail(JS::TranscodeResult_Throw);
     }
   }
@@ -2229,7 +2249,7 @@ template <typename Unit>
 MOZ_MUST_USE bool ScriptSource::setUncompressedSourceHelper(
     JSContext* cx, EntryUnits<Unit>&& source, size_t length,
     SourceRetrievable retrievable) {
-  auto& cache = cx->zone()->runtimeFromAnyThread()->sharedImmutableStrings();
+  auto& cache = cx->runtime()->sharedImmutableStrings();
 
   auto uniqueChars = SourceTypeTraits<Unit>::toCacheable(std::move(source));
   auto deduped = cache.getOrCreate(std::move(uniqueChars), length);
@@ -2333,7 +2353,7 @@ MOZ_MUST_USE bool ScriptSource::initializeWithUnretrievableCompressedSource(
   MOZ_ASSERT(data.is<Missing>(), "shouldn't be double-initializing");
   MOZ_ASSERT(compressed != nullptr);
 
-  auto& cache = cx->zone()->runtimeFromAnyThread()->sharedImmutableStrings();
+  auto& cache = cx->runtime()->sharedImmutableStrings();
   auto deduped = cache.getOrCreate(std::move(compressed), rawLength);
   if (!deduped) {
     ReportOutOfMemory(cx);
@@ -2656,6 +2676,8 @@ bool ScriptSource::xdrEncodeTopLevel(JSContext* cx, HandleScript script) {
   }
 
   MOZ_ASSERT(hasEncoder());
+  AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
+
   auto failureCase =
       mozilla::MakeScopeExit([&] { xdrEncoder_.reset(nullptr); });
 
@@ -2675,10 +2697,65 @@ bool ScriptSource::xdrEncodeTopLevel(JSContext* cx, HandleScript script) {
   return true;
 }
 
+bool ScriptSource::xdrEncodeInitialStencil(
+    JSContext* cx, frontend::CompilationInfo& compilationInfo,
+    UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
+  // Encoding failures are reported by the xdrFinalizeEncoder function.
+  if (containsAsmJS()) {
+    return true;
+  }
+
+  xdrEncoder = js::MakeUnique<XDRIncrementalStencilEncoder>(cx);
+  if (!xdrEncoder) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+
+  AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
+  auto failureCase = mozilla::MakeScopeExit([&] { xdrEncoder.reset(nullptr); });
+
+  XDRResult res = xdrEncoder->codeStencil(compilationInfo);
+  if (res.isErr()) {
+    // On encoding failure, let failureCase destroy encoder and return true
+    // to avoid failing any currently executing script.
+    if (res.unwrapErr() & JS::TranscodeResult_Failure) {
+      return true;
+    }
+
+    return false;
+  }
+
+  failureCase.release();
+  return true;
+}
+
+bool ScriptSource::xdrEncodeStencils(
+    JSContext* cx, frontend::CompilationInfoVector& compilationInfos,
+    UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
+  if (!xdrEncodeInitialStencil(cx, compilationInfos.initial, xdrEncoder)) {
+    return false;
+  }
+
+  for (auto& delazification : compilationInfos.delazifications) {
+    if (!xdrEncodeFunctionStencilWith(cx, delazification.stencil, xdrEncoder)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+void ScriptSource::setIncrementalEncoder(
+    XDRIncrementalEncoderBase* xdrEncoder) {
+  xdrEncoder_.reset(xdrEncoder);
+}
+
 bool ScriptSource::xdrEncodeFunction(JSContext* cx, HandleFunction fun,
                                      HandleScriptSourceObject sourceObject) {
   MOZ_ASSERT(sourceObject->source() == this);
   MOZ_ASSERT(hasEncoder());
+  AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
+
   auto failureCase =
       mozilla::MakeScopeExit([&] { xdrEncoder_.reset(nullptr); });
 
@@ -2697,8 +2774,36 @@ bool ScriptSource::xdrEncodeFunction(JSContext* cx, HandleFunction fun,
   return true;
 }
 
-bool ScriptSource::xdrFinalizeEncoder(JS::TranscodeBuffer& buffer) {
+bool ScriptSource::xdrEncodeFunctionStencil(
+    JSContext* cx, frontend::CompilationStencil& stencil) {
+  MOZ_ASSERT(hasEncoder());
+  AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
+  return xdrEncodeFunctionStencilWith(cx, stencil, xdrEncoder_);
+}
+
+bool ScriptSource::xdrEncodeFunctionStencilWith(
+    JSContext* cx, frontend::CompilationStencil& stencil,
+    UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
+  auto failureCase = mozilla::MakeScopeExit([&] { xdrEncoder.reset(nullptr); });
+
+  XDRResult res = xdrEncoder->codeFunctionStencil(stencil);
+  if (res.isErr()) {
+    // On encoding failure, let failureCase destroy encoder and return true
+    // to avoid failing any currently executing script.
+    if (res.unwrapErr() & JS::TranscodeResult_Failure) {
+      return true;
+    }
+    return false;
+  }
+
+  failureCase.release();
+  return true;
+}
+
+bool ScriptSource::xdrFinalizeEncoder(JSContext* cx,
+                                      JS::TranscodeBuffer& buffer) {
   if (!hasEncoder()) {
+    JS_ReportErrorASCII(cx, "XDR encoding failure");
     return false;
   }
 
@@ -3118,9 +3223,7 @@ XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
     }
     MOZ_TRY(xdr->codeCharsZ(chars));
     if (mode == XDR_DECODE) {
-      // NOTE: If the decoder has an option, then the filename is defined by
-      // the CompileOption from the document.
-      if (!xdr->hasOptions()) {
+      if (!ss->filename()) {
         if (!ss->setFilename(cx, std::move(chars.ref<UniqueChars>()))) {
           return xdr->fail(JS::TranscodeResult_Throw);
         }
@@ -3131,6 +3234,17 @@ XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
 
   return Ok();
 }
+
+template /* static */
+    XDRResult
+    ScriptSource::XDR(XDRState<XDR_ENCODE>* xdr,
+                      const mozilla::Maybe<JS::CompileOptions>& options,
+                      MutableHandle<ScriptSourceHolder> holder);
+template /* static */
+    XDRResult
+    ScriptSource::XDR(XDRState<XDR_DECODE>* xdr,
+                      const mozilla::Maybe<JS::CompileOptions>& options,
+                      MutableHandle<ScriptSourceHolder> holder);
 
 // Format and return a cx->pod_malloc'ed URL for a generated script like:
 //   {filename} line {lineno} > {introducer}
@@ -3364,16 +3478,22 @@ js::UniquePtr<ImmutableScriptData> js::ImmutableScriptData::new_(
   return result;
 }
 
-bool JSScript::createScriptData(JSContext* cx) {
-  MOZ_ASSERT(!sharedData_);
+/* static */
+SharedImmutableScriptData* SharedImmutableScriptData::create(JSContext* cx) {
+  return cx->new_<SharedImmutableScriptData>();
+}
 
-  RefPtr<RuntimeScriptData> rsd(cx->new_<RuntimeScriptData>());
-  if (!rsd) {
-    return false;
+/* static */
+SharedImmutableScriptData* SharedImmutableScriptData::createWith(
+    JSContext* cx, js::UniquePtr<ImmutableScriptData>&& isd) {
+  MOZ_ASSERT(isd.get());
+  SharedImmutableScriptData* sisd = create(cx);
+  if (!sisd) {
+    return nullptr;
   }
 
-  sharedData_ = std::move(rsd);
-  return true;
+  sisd->isd_ = std::move(isd);
+  return sisd;
 }
 
 void JSScript::relazify(JSRuntime* rt) {
@@ -3414,37 +3534,40 @@ void JSScript::relazify(JSRuntime* rt) {
   MOZ_ASSERT(isReadyForDelazification());
 }
 
-// Takes ownership of the script's scriptData_ and either adds it into the
-// runtime's RuntimeScriptDataTable or frees it if a matching entry already
-// exists.
-bool JSScript::shareScriptData(JSContext* cx) {
-  RuntimeScriptData* rsd = sharedData();
-  MOZ_ASSERT(rsd);
-  MOZ_ASSERT(rsd->refCount() == 1);
+// Takes ownership of the passed SharedImmutableScriptData and either adds it
+// into the runtime's SharedImmutableScriptDataTable, or frees it if a matching
+// entry already exists and replaces the passed RefPtr with the existing entry.
+/* static */
+bool SharedImmutableScriptData::shareScriptData(
+    JSContext* cx, RefPtr<SharedImmutableScriptData>& sisd) {
+  MOZ_ASSERT(sisd);
+  MOZ_ASSERT(sisd->refCount() == 1);
+
+  SharedImmutableScriptData* data = sisd.get();
 
   // Calculate the hash before taking the lock. Because the data is reference
   // counted, it also will be freed after releasing the lock if necessary.
-  RuntimeScriptData::Hasher::Lookup lookup(rsd);
+  SharedImmutableScriptData::Hasher::Lookup lookup(data);
 
   AutoLockScriptData lock(cx->runtime());
 
-  RuntimeScriptDataTable::AddPtr p =
+  SharedImmutableScriptDataTable::AddPtr p =
       cx->scriptDataTable(lock).lookupForAdd(lookup);
   if (p) {
-    MOZ_ASSERT(rsd != *p);
-    sharedData_ = *p;
+    MOZ_ASSERT(data != *p);
+    sisd = *p;
   } else {
-    if (!cx->scriptDataTable(lock).add(p, rsd)) {
+    if (!cx->scriptDataTable(lock).add(p, data)) {
       ReportOutOfMemory(cx);
       return false;
     }
 
     // Being in the table counts as a reference on the script data.
-    rsd->AddRef();
+    data->AddRef();
   }
 
-  // Refs: JSScript, RuntimeScriptDataTable
-  MOZ_ASSERT(sharedData()->refCount() >= 2);
+  // Refs: sisd argument, SharedImmutableScriptDataTable
+  MOZ_ASSERT(sisd->refCount() >= 2);
 
   return true;
 }
@@ -3454,10 +3577,11 @@ void js::SweepScriptData(JSRuntime* rt) {
   // i.e. when the only reference to them is from the table entry.
 
   AutoLockScriptData lock(rt);
-  RuntimeScriptDataTable& table = rt->scriptDataTable(lock);
+  SharedImmutableScriptDataTable& table = rt->scriptDataTable(lock);
 
-  for (RuntimeScriptDataTable::Enum e(table); !e.empty(); e.popFront()) {
-    RuntimeScriptData* sharedData = e.front();
+  for (SharedImmutableScriptDataTable::Enum e(table); !e.empty();
+       e.popFront()) {
+    SharedImmutableScriptData* sharedData = e.front();
     if (sharedData->refCount() == 1) {
       sharedData->Release();
       e.removeFront();
@@ -3683,13 +3807,12 @@ bool JSScript::fullyInitFromStencil(JSContext* cx,
     return false;
   }
 
-  // Create and initialize RuntimeScriptData/ImmutableScriptData
-  if (!RuntimeScriptData::InitFromStencil(cx, script, scriptStencil)) {
+  if (!SharedImmutableScriptData::shareScriptData(cx,
+                                                  scriptStencil.sharedData)) {
     return false;
   }
-  if (!script->shareScriptData(cx)) {
-    return false;
-  }
+
+  script->initSharedData(scriptStencil.sharedData);
 
   // NOTE: JSScript is now constructed and should be linked in.
   rollbackGuard.release();
@@ -3731,7 +3854,7 @@ JSScript* JSScript::fromStencil(JSContext* cx,
                                 js::frontend::CompilationGCOutput& gcOutput,
                                 frontend::ScriptStencil& scriptStencil,
                                 HandleFunction fun) {
-  MOZ_ASSERT(scriptStencil.immutableScriptData,
+  MOZ_ASSERT(scriptStencil.sharedData,
              "Need generated bytecode to use JSScript::fromStencil");
 
   RootedObject functionOrGlobal(cx, cx->global());
@@ -4275,7 +4398,7 @@ static JSScript* CopyScriptImpl(JSContext* cx, HandleScript src,
     return nullptr;
   }
 
-  // The RuntimeScriptData can be reused by any zone in the Runtime.
+  // The SharedImmutableScriptData can be reused by any zone in the Runtime.
   dst->initSharedData(src->sharedData());
 
   return dst;
@@ -4435,19 +4558,6 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
   CopySpan(tryNotes, data->tryNotes());
 
   return data;
-}
-
-/* static */
-bool RuntimeScriptData::InitFromStencil(
-    JSContext* cx, js::HandleScript script,
-    frontend::ScriptStencil& scriptStencil) {
-  // Allocate RuntimeScriptData
-  if (!script->createScriptData(cx)) {
-    return false;
-  }
-
-  script->initImmutableScriptData(std::move(scriptStencil.immutableScriptData));
-  return true;
 }
 
 void ScriptWarmUpData::trace(JSTracer* trc) {

@@ -3,7 +3,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-include('/media/webrtc/webrtc.mozbuild')
+include('/dom/media/webrtc/third_party_build/webrtc.mozbuild')
 
 with Files('*'):
     BUG_COMPONENT = ('Core', 'Audio/Video')
@@ -83,7 +83,7 @@ if CONFIG['MOZ_WEBRTC_SIGNALING']:
 
 MOCHITEST_MANIFESTS += [
     'test/mochitest.ini',
-    'tests/mochitest/identity/mochitest.ini',
+    'webrtc/tests/mochitests/identity/mochitest.ini',
 ]
 
 BROWSER_CHROME_MANIFESTS += [
@@ -92,7 +92,7 @@ BROWSER_CHROME_MANIFESTS += [
 ]
 
 if CONFIG['MOZ_WEBRTC']:
-    MOCHITEST_MANIFESTS += ['tests/mochitest/mochitest.ini']
+    MOCHITEST_MANIFESTS += ['webrtc/tests/mochitests/mochitest.ini']
 
 XPIDL_SOURCES += [
     'nsIAudioDeviceInfo.idl',
@@ -372,8 +372,8 @@ LOCAL_INCLUDES += [
 if CONFIG['MOZ_WEBRTC']:
     LOCAL_INCLUDES += [
         '/dom/media/webrtc/common',
-        '/media/webrtc/trunk',
-        '/media/webrtc/trunk/webrtc',
+        '/third_party/libwebrtc',
+        '/third_party/libwebrtc/webrtc',
     ]
 
 DEFINES['MOZILLA_INTERNAL_API'] = True

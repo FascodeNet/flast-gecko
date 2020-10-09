@@ -11,6 +11,7 @@
 #include "InputBlockState.h"
 #include "LayersLogging.h"
 #include "mozilla/layers/APZThreadUtils.h"
+#include "mozilla/ToString.h"
 #include "OverscrollHandoffState.h"
 #include "QueuedInput.h"
 #include "mozilla/StaticPrefs_apz.h"
@@ -243,14 +244,15 @@ nsEventStatus InputQueue::ReceiveMouseInput(
     MOZ_ASSERT(newBlock);
     block = new DragBlockState(aTarget, aFlags, aEvent);
 
-    INPQ_LOG("started new drag block %p id %" PRIu64
-             " for %sconfirmed target %p and %s a scrollthumb\n",
-             block, block->GetBlockId(), aFlags.mTargetConfirmed ? "" : "un",
-             aTarget.get(), aFlags.mHitScrollThumb ? "hits" : "doesn't hit");
+    INPQ_LOG(
+        "started new drag block %p id %" PRIu64
+        "for %sconfirmed target %p; on scrollbar: %d; on scrollthumb: %d\n",
+        block, block->GetBlockId(), aFlags.mTargetConfirmed ? "" : "un",
+        aTarget.get(), aFlags.mHitScrollbar, aFlags.mHitScrollThumb);
 
     mActiveDragBlock = block;
 
-    if (aFlags.mHitScrollThumb) {
+    if (aFlags.mHitScrollThumb || !aFlags.mHitScrollbar) {
       CancelAnimationsForNewBlock(block);
     }
     MaybeRequestContentResponse(aTarget, block);
@@ -787,7 +789,7 @@ void InputQueue::SetConfirmedTargetApzc(
   APZThreadUtils::AssertOnControllerThread();
 
   INPQ_LOG("got a target apzc; block=%" PRIu64 " guid=%s\n", aInputBlockId,
-           aTargetApzc ? Stringify(aTargetApzc->GetGuid()).c_str() : "");
+           aTargetApzc ? ToString(aTargetApzc->GetGuid()).c_str() : "");
   bool success = false;
   InputData* firstInput = nullptr;
   InputBlockState* inputBlock = FindBlockForId(aInputBlockId, &firstInput);
@@ -818,7 +820,7 @@ void InputQueue::ConfirmDragBlock(
   INPQ_LOG("got a target apzc; block=%" PRIu64 " guid=%s dragtarget=%" PRIu64
            "\n",
            aInputBlockId,
-           aTargetApzc ? Stringify(aTargetApzc->GetGuid()).c_str() : "",
+           aTargetApzc ? ToString(aTargetApzc->GetGuid()).c_str() : "",
            aDragMetrics.mViewId);
   bool success = false;
   InputData* firstInput = nullptr;

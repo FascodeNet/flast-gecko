@@ -196,6 +196,19 @@ class Http3Session final : public nsAHttpTransaction,
   // The stream(s) that are not able to send 0RTT data. We need to
   // remember them put them into mReadyForWrite queue when 0RTT finishes.
   nsTArray<WeakPtr<Http3Stream>> mCannotDo0RTTStreams;
+
+  // The following variables are needed for telemetry.
+  TimeStamp mConnectionIdleStart;
+  TimeStamp mConnectionIdleEnd;
+  Maybe<uint64_t> mFirstStreamIdReuseIdleConnection;
+  TimeStamp mTimerShouldTrigger;
+  uint64_t mBlockedByStreamLimitCount = 0;
+  uint64_t mTransactionsBlockedByStreamLimitCount = 0;
+  uint64_t mTransactionsSenderBlockedByFlowControlCount = 0;
+
+  // NS_NET_STATUS_CONNECTED_TO event will be created by the Http3Session.
+  // We want to  propagate it to the first transaction.
+  RefPtr<nsHttpTransaction> mFirstHttpTransaction;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(Http3Session, NS_HTTP3SESSION_IID);

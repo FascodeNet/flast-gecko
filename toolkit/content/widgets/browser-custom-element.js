@@ -45,12 +45,6 @@
   let lazyPrefs = {};
   XPCOMUtils.defineLazyPreferenceGetter(
     lazyPrefs,
-    "sessionHistoryInParent",
-    "fission.sessionHistoryInParent",
-    false
-  );
-  XPCOMUtils.defineLazyPreferenceGetter(
-    lazyPrefs,
     "unloadTimeoutMs",
     "dom.beforeunload_timeout_ms"
   );
@@ -929,6 +923,8 @@
     /**
      * Move the previously-tracked web progress listeners to this <browser>'s
      * current WebProgress.
+     *
+     * Invoked when manually switching remoteness, e.g. by GeckoView
      */
     restoreProgressListeners() {
       let listeners = this.progressListeners;
@@ -1056,7 +1052,6 @@
          * the <browser> element may not be initialized yet.
          */
 
-        let oldNavigation = this._remoteWebNavigation;
         this._remoteWebNavigation = new LazyModules.RemoteWebNavigation(this);
 
         // Initialize contentPrincipal to the about:blank principal for this loadcontext
@@ -1069,13 +1064,6 @@
         // CSP for about:blank is null; if we ever change _contentPrincipal above,
         // we should re-evaluate the CSP here.
         this._csp = null;
-
-        if (!oldNavigation) {
-          // If we weren't remote, then we're transitioning from local to
-          // remote. Add all listeners from the previous <browser> to the new
-          // RemoteWebProgress.
-          this.restoreProgressListeners();
-        }
 
         this.messageManager.loadFrameScript(
           "chrome://global/content/browser-child.js",
@@ -1125,7 +1113,6 @@
 
       if (!this.isRemoteBrowser) {
         this._remoteWebNavigation = null;
-        this.restoreProgressListeners();
         this.addEventListener("pagehide", this.onPageHide, true);
       }
     }
@@ -1183,7 +1170,7 @@
       if (
         this.isRemoteBrowser &&
         this.messageManager &&
-        !lazyPrefs.sessionHistoryInParent
+        !Services.appinfo.sessionHistoryInParent
       ) {
         this._remoteWebNavigation._canGoBack = aCanGoBack;
         this._remoteWebNavigation._canGoForward = aCanGoForward;
@@ -1231,13 +1218,13 @@
     }
 
     purgeSessionHistory() {
-      if (this.isRemoteBrowser && !lazyPrefs.sessionHistoryInParent) {
+      if (this.isRemoteBrowser && !Services.appinfo.sessionHistoryInParent) {
         this._remoteWebNavigation._canGoBack = false;
         this._remoteWebNavigation._canGoForward = false;
       }
 
       try {
-        if (lazyPrefs.sessionHistoryInParent) {
+        if (Services.appinfo.sessionHistoryInParent) {
           let sessionHistory = this.browsingContext?.sessionHistory;
           if (!sessionHistory) {
             return;
@@ -1723,23 +1710,14 @@
       }
 
       this._inPermitUnload.add(wgp);
-      let timeout;
       try {
-        let result = await Promise.race([
-          new Promise(resolve => {
-            timeout = setTimeout(() => {
-              resolve({ permitUnload: true, timedOut: true });
-            }, lazyPrefs.unloadTimeoutMs);
-          }),
-          wgp
-            .permitUnload(action)
-            .then(permitUnload => ({ permitUnload, timedOut: false })),
-        ]);
-
-        return result;
+        let permitUnload = await wgp.permitUnload(
+          action,
+          lazyPrefs.unloadTimeoutMs
+        );
+        return { permitUnload };
       } finally {
         this._inPermitUnload.delete(wgp);
-        clearTimeout(timeout);
       }
     }
 
@@ -1756,7 +1734,7 @@
     permitUnload(action) {
       if (this.isRemoteBrowser) {
         if (!this.hasBeforeUnload) {
-          return { permitUnload: true, timedOut: false };
+          return { permitUnload: true };
         }
 
         let result;
@@ -1773,7 +1751,12 @@
           }
         );
 
-        Services.tm.spinEventLoopUntilOrShutdown(() => success !== undefined);
+        // The permitUnload() promise will, alas, not call its resolution
+        // callbacks after the browser window the promise lives in has closed,
+        // so we have to check for that case explicitly.
+        Services.tm.spinEventLoopUntilOrShutdown(
+          () => window.closed || success !== undefined
+        );
         if (success) {
           return result;
         }
@@ -1781,11 +1764,10 @@
       }
 
       if (!this.docShell || !this.docShell.contentViewer) {
-        return { permitUnload: true, timedOut: false };
+        return { permitUnload: true };
       }
       return {
         permitUnload: this.docShell.contentViewer.permitUnload(),
-        timedOut: false,
       };
     }
 
@@ -1974,7 +1956,7 @@
       // history, and performing the `resumeRedirectedLoad`, in order to get
       // sesssion state set up correctly.
       // FIXME: This probably needs to be hookable by GeckoView.
-      if (!lazyPrefs.sessionHistoryInParent) {
+      if (!Services.appinfo.sessionHistoryInParent) {
         let tabbrowser = this.getTabBrowser();
         if (tabbrowser) {
           tabbrowser.finishBrowserRemotenessChange(this, redirectLoadSwitchId);

@@ -6,13 +6,15 @@
 
 #include "MediaController.h"
 #include "MediaControlUtils.h"
-
 #include "mozilla/Assertions.h"
+#include "mozilla/intl/Localization.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "nsIObserverService.h"
 #include "nsXULAppAPI.h"
+
+using mozilla::intl::Localization;
 
 #undef LOG
 #define LOG(msg, ...)                        \
@@ -107,10 +109,26 @@ MediaControlService::MediaControlService() {
 void MediaControlService::Init() {
   mMediaKeysHandler = new MediaControlKeyHandler();
   mMediaControlKeyManager = new MediaControlKeyManager();
-  mMediaControlKeyManager->Open();
-  MOZ_ASSERT(mMediaControlKeyManager->IsOpened());
   mMediaControlKeyManager->AddListener(mMediaKeysHandler.get());
   mControllerManager = MakeUnique<ControllerManager>(this);
+
+  // Initialize the fallback title
+  nsCOMPtr<nsIGlobalObject> global =
+      xpc::NativeGlobal(xpc::PrivilegedJunkScope());
+  RefPtr<Localization> l10n = Localization::Create(global, true, {});
+  l10n->AddResourceId(u"branding/brand.ftl"_ns);
+  l10n->AddResourceId(u"dom/media.ftl"_ns);
+  {
+    AutoSafeJSContext cx;
+
+    nsAutoCString translation;
+    ErrorResult rv;
+    l10n->FormatValueSync(cx, "mediastatus-fallback-title"_ns, {}, translation,
+                          rv);
+    if (!rv.Failed()) {
+      mFallbackTitle = NS_ConvertUTF8toUTF16(translation);
+    }
+  }
 }
 
 MediaControlService::~MediaControlService() {
@@ -150,7 +168,6 @@ bool MediaControlService::RegisterActiveMediaController(
   }
   LOG("Register media controller %" PRId64 ", currentNum=%" PRId64,
       aController->Id(), GetActiveControllersNum());
-  mMediaControllerAmountChangedEvent.Notify(GetActiveControllersNum());
   if (StaticPrefs::media_mediacontrol_testingevents_enabled()) {
     if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
       obs->NotifyObservers(nullptr, "media-controller-amount-changed", nullptr);
@@ -169,7 +186,6 @@ bool MediaControlService::UnregisterActiveMediaController(
   }
   LOG("Unregister media controller %" PRId64 ", currentNum=%" PRId64,
       aController->Id(), GetActiveControllersNum());
-  mMediaControllerAmountChangedEvent.Notify(GetActiveControllersNum());
   if (StaticPrefs::media_mediacontrol_testingevents_enabled()) {
     if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
       obs->NotifyObservers(nullptr, "media-controller-amount-changed", nullptr);
@@ -260,6 +276,10 @@ MediaSessionPlaybackState MediaControlService::GetMainControllerPlaybackState()
   }
   return GetMainController() ? GetMainController()->PlaybackState()
                              : MediaSessionPlaybackState::None;
+}
+
+nsString MediaControlService::GetFallbackTitle() const {
+  return mFallbackTitle;
 }
 
 // Following functions belong to ControllerManager
@@ -383,15 +403,20 @@ void MediaControlService::ControllerManager::UpdateMainControllerInternal(
 
   if (!mMainController) {
     LOG_MAINCONTROLLER_INFO("Clear main controller");
-    mSource->SetControlledTabBrowsingContextId(Nothing());
-    mSource->SetPlaybackState(MediaSessionPlaybackState::None);
-    mSource->SetMediaMetadata(MediaMetadataBase::EmptyData());
-    mSource->SetSupportedMediaKeys(MediaKeysArray());
+    mSource->Close();
     DisconnectMainControllerEvents();
   } else {
     LOG_MAINCONTROLLER_INFO("Set controller %" PRId64 " as main controller",
                             mMainController->Id());
-    mSource->SetControlledTabBrowsingContextId(Some(mMainController->Id()));
+    if (!mSource->Open()) {
+      LOG("Failed to open source for monitoring media keys");
+    }
+    // We would still update those status to the event source even if it failed
+    // to open, because it would save the result and set them to the real
+    // source when it opens. In addition, another benefit to do that is to
+    // prevent testing from affecting by platform specific issues, because our
+    // testing events rely on those status changes and they are all platform
+    // independent.
     mSource->SetPlaybackState(mMainController->PlaybackState());
     mSource->SetMediaMetadata(mMainController->GetCurrentMediaMetadata());
     mSource->SetSupportedMediaKeys(mMainController->GetSupportedMediaKeys());

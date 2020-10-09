@@ -48,9 +48,10 @@ add_task(async function test_referrer() {
 // Tests that remote access to webnavigation.sessionHistory works.
 add_task(async function test_history() {
   async function checkHistoryIndex(browser, n) {
-    if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+    if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
       return SpecialPowers.spawn(browser, [n], function(n) {
-        let history = docShell.sessionHistory.legacySHistory;
+        let history =
+          docShell.browsingContext.childSessionHistory.legacySHistory;
 
         is(history.index, n, "Should be at the right place in history");
       });
@@ -70,12 +71,12 @@ add_task(async function test_history() {
   browser.webNavigation.loadURI(DUMMY2, LOAD_URI_OPTIONS);
   await waitForLoad(DUMMY2);
 
-  if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+  if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
     await SpecialPowers.spawn(browser, [[DUMMY1, DUMMY2]], function([
       dummy1,
       dummy2,
     ]) {
-      let history = docShell.sessionHistory.legacySHistory;
+      let history = docShell.browsingContext.childSessionHistory.legacySHistory;
 
       is(history.count, 2, "Should be two history items");
       is(history.index, 1, "Should be at the right place in history");
@@ -116,13 +117,14 @@ add_task(async function test_history() {
 // Tests that load flags are passed through to the content process.
 add_task(async function test_flags() {
   async function checkHistory(browser, { count, index }) {
-    if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+    if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
       return SpecialPowers.spawn(browser, [[DUMMY2, count, index]], function([
         dummy2,
         count,
         index,
       ]) {
-        let history = docShell.sessionHistory.legacySHistory;
+        let history =
+          docShell.browsingContext.childSessionHistory.legacySHistory;
         is(history.count, count, "Should be one history item");
         is(history.index, index, "Should be at the right place in history");
         let entry = history.getEntryAtIndex(index);

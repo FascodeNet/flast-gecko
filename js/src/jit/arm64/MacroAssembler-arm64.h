@@ -11,7 +11,6 @@
 #include "jit/arm64/vixl/Debugger-vixl.h"
 #include "jit/arm64/vixl/MacroAssembler-vixl.h"
 #include "jit/AtomicOp.h"
-#include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "vm/BigIntType.h"  // JS::BigInt
 
@@ -249,6 +248,11 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
   void freeStack(Register amount) {
     vixl::MacroAssembler::Drop(Operand(ARMRegister(amount, 64)));
   }
+
+#ifdef ENABLE_WASM_SIMD
+  void PushRegsInMaskForWasmStubs(LiveRegisterSet set);
+  void PopRegsInMaskForWasmStubs(LiveRegisterSet set, LiveRegisterSet ignore);
+#endif
 
   // Update sp with the value of the current active stack pointer, if necessary.
   void syncStackPtr() {
@@ -1322,6 +1326,17 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     Fcmp(ARMFPRegister(lhs, 32), ARMFPRegister(rhs, 32));
   }
 
+  void compareSimd128Int(Assembler::Condition cond, ARMFPRegister dest,
+                         ARMFPRegister lhs, ARMFPRegister rhs);
+  void compareSimd128Float(Assembler::Condition cond, ARMFPRegister dest,
+                           ARMFPRegister lhs, ARMFPRegister rhs);
+  void rightShiftInt8x16(Register rhs, FloatRegister lhsDest,
+                         FloatRegister temp, bool isUnsigned);
+  void rightShiftInt16x8(Register rhs, FloatRegister lhsDest,
+                         FloatRegister temp, bool isUnsigned);
+  void rightShiftInt32x4(Register rhs, FloatRegister lhsDest,
+                         FloatRegister temp, bool isUnsigned);
+
   void branchNegativeZero(FloatRegister reg, Register scratch, Label* label) {
     MOZ_CRASH("branchNegativeZero");
   }
@@ -1990,9 +2005,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
 
   void profilerEnterFrame(Register framePtr, Register scratch);
   void profilerEnterFrame(RegisterOrSP framePtr, Register scratch);
-  void profilerExitFrame() {
-    jump(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
-  }
+  void profilerExitFrame();
   Address ToPayload(Address value) { return value; }
   Address ToType(Address value) { return value; }
 

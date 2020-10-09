@@ -10,13 +10,14 @@
 
 #include "frontend/AbstractScopePtr.h"  // ScopeIndex
 #include "frontend/BytecodeSection.h"   // EmitScriptThingsVector
-#include "frontend/CompilationInfo.h"   // CompilationInfo
+#include "frontend/CompilationInfo.h"  // CompilationInfo, CompilationInfoVector, CompilationGCOutput
 #include "frontend/SharedContext.h"
-#include "gc/AllocKind.h"   // gc::AllocKind
-#include "js/CallArgs.h"    // JSNative
-#include "js/RootingAPI.h"  // Rooted
-#include "js/Value.h"       // ObjectValue
-#include "js/WasmModule.h"  // JS::WasmModule
+#include "gc/AllocKind.h"    // gc::AllocKind
+#include "js/CallArgs.h"     // JSNative
+#include "js/RootingAPI.h"   // Rooted
+#include "js/Transcoding.h"  // JS::TranscodeBuffer
+#include "js/Value.h"        // ObjectValue
+#include "js/WasmModule.h"   // JS::WasmModule
 #include "vm/EnvironmentObject.h"
 #include "vm/GeneratorAndAsyncKind.h"  // GeneratorKind, FunctionAsyncKind
 #include "vm/JSContext.h"              // JSContext
@@ -29,6 +30,7 @@
 #include "vm/Scope.h"         // Scope, ScopeKindString
 #include "vm/StencilEnums.h"  // ImmutableScriptFlagsEnum
 #include "vm/StringType.h"    // JSAtom, js::CopyChars
+#include "vm/Xdr.h"           // XDRMode, XDRResult, XDREncoder
 #include "wasm/AsmJS.h"       // InstantiateAsmJS
 #include "wasm/WasmModule.h"  // wasm::Module
 
@@ -383,9 +385,12 @@ static bool InstantiateScriptStencils(JSContext* cx,
   for (auto item : compilationInfo.functionScriptStencils(gcOutput)) {
     auto& scriptStencil = item.script;
     auto& fun = item.function;
-    if (scriptStencil.immutableScriptData) {
+    if (scriptStencil.sharedData) {
       // If the function was not referenced by enclosing script's bytecode, we
       // do not generate a BaseScript for it. For example, `(function(){});`.
+      //
+      // `wasFunctionEmitted` is false also for standalone functions and
+      // functions being delazified. they are handled in InstantiateTopLevel.
       if (!scriptStencil.wasFunctionEmitted) {
         continue;
       }
@@ -395,6 +400,13 @@ static bool InstantiateScriptStencils(JSContext* cx,
                                                 scriptStencil, fun));
       if (!script) {
         return false;
+      }
+
+      // NOTE: Inner functions can be marked `allowRelazify` after merging
+      // a stencil for delazification into the top-level stencil.
+      if (scriptStencil.allowRelazify) {
+        MOZ_ASSERT(script->isRelazifiable());
+        script->setAllowRelazify();
       }
     } else if (scriptStencil.functionFlags.isAsmJSNative()) {
       MOZ_ASSERT(fun->isAsmJSNative());
@@ -416,34 +428,49 @@ static bool InstantiateScriptStencils(JSContext* cx,
 // includes standalone functions and functions being delazified.
 static bool InstantiateTopLevel(JSContext* cx, CompilationInfo& compilationInfo,
                                 CompilationGCOutput& gcOutput) {
-  ScriptStencil& script =
+  ScriptStencil& scriptStencil =
       compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex];
   RootedFunction fun(cx);
-  if (script.isFunction()) {
+  if (scriptStencil.isFunction()) {
     fun = gcOutput.functions[CompilationInfo::TopLevelIndex];
   }
 
   // Top-level asm.js does not generate a JSScript.
-  if (script.functionFlags.isAsmJSNative()) {
+  if (scriptStencil.functionFlags.isAsmJSNative()) {
     return true;
   }
 
-  MOZ_ASSERT(script.immutableScriptData);
+  MOZ_ASSERT(scriptStencil.sharedData);
 
   if (compilationInfo.input.lazy) {
     gcOutput.script = JSScript::CastFromLazy(compilationInfo.input.lazy);
-    return JSScript::fullyInitFromStencil(cx, compilationInfo, gcOutput,
-                                          gcOutput.script, script, fun);
+
+    if (!JSScript::fullyInitFromStencil(cx, compilationInfo, gcOutput,
+                                        gcOutput.script, scriptStencil, fun)) {
+      return false;
+    }
+
+    if (scriptStencil.allowRelazify) {
+      MOZ_ASSERT(gcOutput.script->isRelazifiable());
+      gcOutput.script->setAllowRelazify();
+    }
+
+    return true;
   }
 
   gcOutput.script =
-      JSScript::fromStencil(cx, compilationInfo, gcOutput, script, fun);
+      JSScript::fromStencil(cx, compilationInfo, gcOutput, scriptStencil, fun);
   if (!gcOutput.script) {
     return false;
   }
 
+  if (scriptStencil.allowRelazify) {
+    MOZ_ASSERT(gcOutput.script->isRelazifiable());
+    gcOutput.script->setAllowRelazify();
+  }
+
   // Finish initializing the ModuleObject if needed.
-  if (script.isModule()) {
+  if (scriptStencil.isModule()) {
     gcOutput.module->initScriptSlots(gcOutput.script);
     gcOutput.module->initStatusSlot();
 
@@ -452,7 +479,7 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInfo& compilationInfo,
     }
 
     // Off-thread compilation with parseGlobal will freeze the module object
-    // in GlobalHelperThreadState::finishModuleParseTask instead
+    // in GlobalHelperThreadState::finishSingleParseTask instead.
     if (!cx->isHelperThreadContext()) {
       if (!ModuleObject::Freeze(cx, gcOutput.module)) {
         return false;
@@ -524,6 +551,57 @@ static void LinkEnclosingLazyScript(CompilationInfo& compilationInfo,
   }
 }
 
+#ifdef DEBUG
+// Some fields aren't used in delazification, given the target functions and
+// scripts are already instantiated, but they still should match.
+static void AssertDelazificationFieldsMatch(CompilationInfo& compilationInfo,
+                                            CompilationGCOutput& gcOutput) {
+  for (auto item : compilationInfo.functionScriptStencils(gcOutput)) {
+    auto& scriptStencil = item.script;
+    auto& fun = item.function;
+
+    BaseScript* script = fun->baseScript();
+
+    // TreatAsRunOnce is updated by UpdateEmittedInnerFunctions.
+    uint32_t acceptableDifferenceForScript =
+        uint32_t(ImmutableScriptFlagsEnum::TreatAsRunOnce);
+    MOZ_ASSERT(
+        (uint32_t(script->immutableFlags()) | acceptableDifferenceForScript) ==
+        (uint32_t(scriptStencil.immutableFlags) |
+         acceptableDifferenceForScript));
+
+    MOZ_ASSERT(script->extent().sourceStart ==
+               scriptStencil.extent.sourceStart);
+    MOZ_ASSERT(script->extent().sourceEnd == scriptStencil.extent.sourceEnd);
+    MOZ_ASSERT(script->extent().toStringStart ==
+               scriptStencil.extent.toStringStart);
+    MOZ_ASSERT(script->extent().toStringEnd ==
+               scriptStencil.extent.toStringEnd);
+    MOZ_ASSERT(script->extent().lineno == scriptStencil.extent.lineno);
+    MOZ_ASSERT(script->extent().column == scriptStencil.extent.column);
+
+    // Names are updated by SetTypeAndNameForExposedFunctions.
+    constexpr uint16_t HAS_INFERRED_NAME =
+        uint16_t(FunctionFlags::Flags::HAS_INFERRED_NAME);
+    constexpr uint16_t HAS_GUESSED_ATOM =
+        uint16_t(FunctionFlags::Flags::HAS_GUESSED_ATOM);
+    constexpr uint16_t MUTABLE_FLAGS =
+        uint16_t(FunctionFlags::Flags::MUTABLE_FLAGS);
+    constexpr uint16_t acceptableDifferenceForFunction =
+        HAS_INFERRED_NAME | HAS_GUESSED_ATOM | MUTABLE_FLAGS;
+
+    MOZ_ASSERT((fun->flags().toRaw() | acceptableDifferenceForFunction) ==
+               (scriptStencil.functionFlags.toRaw() |
+                acceptableDifferenceForFunction));
+
+    // FIXME: If this function is lazily parsed again, nargs isn't set to
+    //        correct value (bug 1666978).
+    MOZ_ASSERT_IF(scriptStencil.sharedData,
+                  fun->nargs() == scriptStencil.nargs);
+  }
+}
+#endif  // DEBUG
+
 // When delazifying, use the existing JSFunctions. The initial and delazifying
 // parse are required to generate the same sequence of functions for lazy
 // parsing to work at all.
@@ -559,6 +637,10 @@ bool CompilationInfo::instantiateStencils(JSContext* cx,
 
   if (input.lazy) {
     FunctionsFromExistingLazy(*this, gcOutput);
+
+#ifdef DEBUG
+    AssertDelazificationFieldsMatch(*this, gcOutput);
+#endif
   } else {
     if (!InstantiateScriptSourceObject(cx, *this, gcOutput)) {
       return false;
@@ -597,6 +679,123 @@ bool CompilationInfo::instantiateStencils(JSContext* cx,
     LinkEnclosingLazyScript(*this, gcOutput);
   }
 
+  return true;
+}
+
+bool CompilationInfoVector::buildDelazificationStencilMap(
+    FunctionMap& functionMap) {
+  // Stantdlone-functions are not supported by XDR.
+  MOZ_ASSERT(!initial.stencil.scriptData[0].isFunction());
+
+  if (!functionMap.reserve(initial.stencil.scriptData.length() - 1)) {
+    return false;
+  }
+
+  for (size_t i = 1; i < initial.stencil.scriptData.length(); i++) {
+    if (!functionMap.put(toFunctionKey(initial.stencil.scriptData[i].extent),
+                         FunctionIndex(i))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CompilationInfoVector::instantiateStencils(JSContext* cx,
+                                                CompilationGCOutput& gcOutput) {
+  if (!initial.instantiateStencils(cx, gcOutput)) {
+    return false;
+  }
+
+  // If no delazifications, we are done.
+  if (delazifications.empty()) {
+    return true;
+  }
+
+  FunctionMap functionMap(cx);
+  if (!buildDelazificationStencilMap(functionMap)) {
+    return false;
+  }
+
+  for (auto& delazification : delazifications) {
+    auto p = functionMap.lookup(
+        toFunctionKey(delazification.stencil.scriptData[0].extent));
+    MOZ_ASSERT(p);
+
+    JSFunction* fun = gcOutput.functions[p->value()];
+    MOZ_ASSERT(fun);
+
+    BaseScript* lazy = fun->baseScript();
+    MOZ_ASSERT(!lazy->hasBytecode());
+
+    // CompilationInfo.input for delazification isn't initialized when
+    // decoding.
+    delazification.input.initFromLazy(lazy);
+
+    CompilationGCOutput gcOutputForDelazification(cx);
+    if (!delazification.instantiateStencils(cx, gcOutputForDelazification)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CompilationInfo::serializeStencils(JSContext* cx, JS::TranscodeBuffer& buf,
+                                        bool* succeededOut) {
+  if (succeededOut) {
+    *succeededOut = false;
+  }
+  XDRIncrementalStencilEncoder encoder(cx);
+
+  XDRResult res = encoder.codeStencil(*this);
+  if (res.isErr()) {
+    if (res.unwrapErr() & JS::TranscodeResult_Failure) {
+      buf.clear();
+      return true;
+    }
+    MOZ_ASSERT(res.unwrapErr() == JS::TranscodeResult_Throw);
+
+    return false;
+  }
+
+  // Lineareize the endcoder, return empty buffer on failure.
+  res = encoder.linearize(buf);
+  if (res.isErr()) {
+    MOZ_ASSERT(cx->isThrowingOutOfMemory());
+    buf.clear();
+    return false;
+  }
+
+  if (succeededOut) {
+    *succeededOut = true;
+  }
+  return true;
+}
+
+bool CompilationInfoVector::deserializeStencils(JSContext* cx,
+                                                const JS::TranscodeRange& range,
+                                                bool* succeededOut) {
+  if (succeededOut) {
+    *succeededOut = false;
+  }
+  MOZ_ASSERT(initial.stencil.parserAtoms.empty());
+  XDRStencilDecoder decoder(cx, &initial.input.options, range,
+                            initial.stencil.parserAtoms);
+
+  XDRResult res = decoder.codeStencils(*this);
+  if (res.isErr()) {
+    if (res.unwrapErr() & JS::TranscodeResult_Failure) {
+      return true;
+    }
+    MOZ_ASSERT(res.unwrapErr() == JS::TranscodeResult_Throw);
+
+    return false;
+  }
+
+  if (succeededOut) {
+    *succeededOut = true;
+  }
   return true;
 }
 
@@ -1166,11 +1365,11 @@ void ScriptStencil::dumpFields(js::JSONPrinter& json) {
   }
   json.endList();
 
-  if (immutableScriptData) {
-    json.formatProperty("immutableScriptData", "u8[%zu]",
-                        immutableScriptData->immutableData().Length());
+  if (sharedData) {
+    json.formatProperty("sharedData", "u8[%zu]",
+                        sharedData->immutableDataLength());
   } else {
-    json.nullProperty("immutableScriptData");
+    json.nullProperty("sharedData");
   }
 
   json.beginObjectProperty("extent");

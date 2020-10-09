@@ -1121,26 +1121,24 @@ GeckoDriver.prototype.execute_ = async function(
     async,
   };
 
+  if (MarionettePrefs.useActors) {
+    return this.getActor().executeScript(script, args, opts);
+  }
+
   let res, els;
 
   switch (this.context) {
-    case Context.Content:
-      // evaluate in content with lasting side-effects
-      if (!sandboxName) {
-        res = await this.listener.execute(script, args, opts);
-
-        // evaluate in content with sandbox
-      } else {
-        res = await this.listener.executeInSandbox(script, args, opts);
-      }
-
-      break;
-
     case Context.Chrome:
       let sb = this.sandboxes.get(sandboxName, newSandbox);
       let wargs = evaluate.fromJSON(args, this.curBrowser.seenEls, sb.window);
       res = await evaluate.sandbox(sb, script, wargs, opts);
       els = this.curBrowser.seenEls;
+      break;
+
+    case Context.Content:
+      // evaluate in content with lasting side-effects
+      opts.useSandbox = !!sandboxName;
+      res = await this.listener.executeScript(script, args, opts);
       break;
 
     default:
@@ -1281,6 +1279,10 @@ GeckoDriver.prototype.getWindowType = function() {
 GeckoDriver.prototype.getPageSource = async function() {
   assert.open(this.getBrowsingContext());
   await this._handleUserPrompts();
+
+  if (MarionettePrefs.useActors) {
+    return this.getActor().getPageSource();
+  }
 
   switch (this.context) {
     case Context.Chrome:
@@ -1746,6 +1748,14 @@ GeckoDriver.prototype.switchToParentFrame = async function() {
 
   if (MarionettePrefs.useActors) {
     this.contentBrowsingContext = browsingContext;
+
+    // Temporarily inform the framescript of the current browsing context to
+    // allow sending the correct page load events. This has to be done until
+    // the web progress listener is used (bug 1664165).
+    if (this.context == Context.Content) {
+      await this.listener.setBrowsingContextId(browsingContext.id);
+    }
+
     return;
   }
 
@@ -1792,6 +1802,14 @@ GeckoDriver.prototype.switchToFrame = async function(cmd) {
     );
 
     this.contentBrowsingContext = browsingContext;
+
+    // Temporarily inform the framescript of the current browsing context to
+    // allow sending the correct page load events. This has to be done until
+    // the web progress listener is used (bug 1664165).
+    if (this.context == Context.Content) {
+      await this.listener.setBrowsingContextId(browsingContext.id);
+    }
+
     return;
   }
 
@@ -1913,7 +1931,13 @@ GeckoDriver.prototype.performActions = async function(cmd) {
   assert.open(this.getBrowsingContext());
   await this._handleUserPrompts();
 
-  let actions = cmd.parameters.actions;
+  const actions = cmd.parameters.actions;
+
+  if (MarionettePrefs.useActors) {
+    await this.getActor().performActions(actions, this.capabilities);
+    return;
+  }
+
   await this.listener.performActions({ actions }, this.capabilities);
 };
 
@@ -1931,6 +1955,11 @@ GeckoDriver.prototype.releaseActions = async function() {
   assert.content(this.context);
   assert.open(this.getBrowsingContext({ top: true }));
   await this._handleUserPrompts();
+
+  if (MarionettePrefs.useActors) {
+    await this.getActor().releaseActions();
+    return;
+  }
 
   await this.listener.releaseActions();
 };
@@ -2133,6 +2162,9 @@ GeckoDriver.prototype.getActiveElement = async function() {
   assert.open(this.getBrowsingContext());
   await this._handleUserPrompts();
 
+  if (MarionettePrefs.useActors) {
+    return this.getActor().getActiveElement();
+  }
   return this.listener.getActiveElement();
 };
 
@@ -2158,6 +2190,23 @@ GeckoDriver.prototype.clickElement = async function(cmd) {
   let id = assert.string(cmd.parameters.id);
   let webEl = WebElement.fromUUID(id, this.context);
 
+  if (MarionettePrefs.useActors) {
+    const actor = this.getActor();
+
+    const target = await actor.getElementAttribute(webEl, "target");
+    await navigate.waitForNavigationCompleted(
+      this,
+      () => actor.clickElement(webEl, this.capabilities),
+      {
+        browsingContext: this.getBrowsingContext(),
+        // The click might trigger a navigation, so don't count on it.
+        requireBeforeUnload: false,
+        loadEventExpected: target !== "_blank",
+      }
+    );
+    return;
+  }
+
   switch (this.context) {
     case Context.Chrome:
       let el = this.curBrowser.seenEls.get(webEl);
@@ -2169,11 +2218,10 @@ GeckoDriver.prototype.clickElement = async function(cmd) {
 
       await navigate.waitForNavigationCompleted(
         this,
-        async () => {
-          await this.listener.clickElement(webEl, this.capabilities);
-        },
+        () => this.listener.clickElement(webEl, this.capabilities),
         {
           browsingContext: this.getBrowsingContext(),
+          // The click might trigger a navigation, so don't count on it.
           requireBeforeUnload: false,
           loadEventExpected: target !== "_blank",
         }
@@ -2388,6 +2436,10 @@ GeckoDriver.prototype.isElementDisplayed = async function(cmd) {
   let id = assert.string(cmd.parameters.id);
   let webEl = WebElement.fromUUID(id, this.context);
 
+  if (MarionettePrefs.useActors) {
+    return this.getActor().isElementDisplayed(webEl, this.capabilities);
+  }
+
   switch (this.context) {
     case Context.Chrome:
       let el = this.curBrowser.seenEls.get(webEl);
@@ -2473,6 +2525,10 @@ GeckoDriver.prototype.isElementEnabled = async function(cmd) {
   let id = assert.string(cmd.parameters.id);
   let webEl = WebElement.fromUUID(id, this.context);
 
+  if (MarionettePrefs.useActors) {
+    return this.getActor().isElementEnabled(webEl, this.capabilities);
+  }
+
   switch (this.context) {
     case Context.Chrome:
       // Selenium atom doesn't quite work here
@@ -2512,6 +2568,10 @@ GeckoDriver.prototype.isElementSelected = async function(cmd) {
   let id = assert.string(cmd.parameters.id);
   let webEl = WebElement.fromUUID(id, this.context);
 
+  if (MarionettePrefs.useActors) {
+    return this.getActor().isElementSelected(webEl, this.capabilities);
+  }
+
   switch (this.context) {
     case Context.Chrome:
       // Selenium atom doesn't quite work here
@@ -2542,6 +2602,10 @@ GeckoDriver.prototype.getElementRect = async function(cmd) {
 
   let id = assert.string(cmd.parameters.id);
   let webEl = WebElement.fromUUID(id, this.context);
+
+  if (MarionettePrefs.useActors) {
+    return this.getActor().getElementRect(webEl);
+  }
 
   switch (this.context) {
     case Context.Chrome:
@@ -2588,6 +2652,11 @@ GeckoDriver.prototype.sendKeysToElement = async function(cmd) {
   let text = assert.string(cmd.parameters.text);
   let webEl = WebElement.fromUUID(id, this.context);
 
+  if (MarionettePrefs.useActors) {
+    await this.getActor().sendKeysToElement(webEl, text, this.capabilities);
+    return;
+  }
+
   switch (this.context) {
     case Context.Chrome:
       let el = this.curBrowser.seenEls.get(webEl);
@@ -2627,6 +2696,11 @@ GeckoDriver.prototype.clearElement = async function(cmd) {
   let id = assert.string(cmd.parameters.id);
   let webEl = WebElement.fromUUID(id, this.context);
 
+  if (MarionettePrefs.useActors) {
+    await this.getActor().clearElement(webEl);
+    return;
+  }
+
   switch (this.context) {
     case Context.Chrome:
       // the selenium atom doesn't work here
@@ -2645,32 +2719,6 @@ GeckoDriver.prototype.clearElement = async function(cmd) {
     default:
       throw new TypeError(`Unknown context: ${this.context}`);
   }
-};
-
-/**
- * Switch to shadow root of the given host element.
- *
- * @param {string=} id
- *     Reference ID to the element.
- *
- * @throws {InvalidArgumentError}
- *     If <var>id</var> is not a string.
- * @throws {NoSuchElementError}
- *     If element represented by reference <var>id</var> is unknown.
- * @throws {NoSuchWindowError}
- *     Browsing context has been discarded.
- */
-GeckoDriver.prototype.switchToShadowRoot = async function(cmd) {
-  assert.content(this.context);
-  assert.open(this.getBrowsingContext());
-
-  let id = cmd.parameters.id;
-  let webEl = null;
-  if (id != null) {
-    assert.string(id);
-    webEl = WebElement.fromUUID(id, this.context);
-  }
-  await this.listener.switchToShadowRoot(webEl);
 };
 
 /**
@@ -2931,6 +2979,9 @@ GeckoDriver.prototype.closeChromeWindow = async function() {
   }
 
   await this.curBrowser.closeWindow();
+  this.chromeBrowsingContext = null;
+  this.contentBrowsingContext = null;
+
   return this.chromeWindowHandles.map(String);
 };
 
@@ -2955,6 +3006,16 @@ GeckoDriver.prototype.deleteSession = function() {
   }
 
   if (MarionettePrefs.useActors) {
+    if (this.getBrowsingContext()) {
+      try {
+        // reset any global state used by parent actor
+        this.getActor().cleanUp();
+      } catch (e) {
+        if (e.result != Cr.NS_ERROR_DOM_NOT_FOUND_ERR) {
+          throw e;
+        }
+      }
+    }
     ChromeUtils.unregisterWindowActor("MarionetteFrame");
   }
 
@@ -3905,7 +3966,6 @@ GeckoDriver.prototype.commands = {
   "WebDriver:SetWindowRect": GeckoDriver.prototype.setWindowRect,
   "WebDriver:SwitchToFrame": GeckoDriver.prototype.switchToFrame,
   "WebDriver:SwitchToParentFrame": GeckoDriver.prototype.switchToParentFrame,
-  "WebDriver:SwitchToShadowRoot": GeckoDriver.prototype.switchToShadowRoot,
   "WebDriver:SwitchToWindow": GeckoDriver.prototype.switchToWindow,
   "WebDriver:TakeScreenshot": GeckoDriver.prototype.takeScreenshot,
 };

@@ -50,8 +50,8 @@
 #include "ReferrerInfo.h"
 #include "nsIOpenWindowInfo.h"
 #include "nsISHistory.h"
-
 #include "nsIURI.h"
+#include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
 
 #include "nsGkAtoms.h"
@@ -371,8 +371,10 @@ static already_AddRefed<BrowsingContextGroup> InitialBrowsingContextGroup(
   // will only ever use 53 bits of precision, so it can be round-tripped through
   // a JS number.
   nsresult rv = NS_OK;
-  int64_t signedGroupId{attrString.ToInteger(&rv, 10)};
+  int64_t signedGroupId = attrString.ToInteger64(&rv, 10);
   if (NS_FAILED(rv) || signedGroupId <= 0) {
+    MOZ_DIAGNOSTIC_ASSERT(
+        false, "we intended to have a particular id, but failed to parse it!");
     return nullptr;
   }
 
@@ -413,6 +415,14 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
   RefPtr<BrowsingContext> context =
       CreateBrowsingContext(aOwner, aOpenWindowInfo, group, aNetworkCreated);
   NS_ENSURE_TRUE(context, nullptr);
+
+  if (XRE_IsParentProcess() && aOpenWindowInfo) {
+    MOZ_ASSERT(context->IsTopContent());
+    if (RefPtr<BrowsingContext> crossGroupOpener =
+            aOpenWindowInfo->GetParent()) {
+      context->Canonical()->SetCrossGroupOpenerId(crossGroupOpener->Id());
+    }
+  }
 
   bool isRemoteFrame = InitialLoadIsRemote(aOwner);
   RefPtr<nsFrameLoader> fl =
@@ -1482,14 +1492,6 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  bool ourPaymentRequestAllowed =
-      ourContent->HasAttr(kNameSpaceID_None, nsGkAtoms::allowpaymentrequest);
-  bool otherPaymentRequestAllowed =
-      otherContent->HasAttr(kNameSpaceID_None, nsGkAtoms::allowpaymentrequest);
-  if (ourPaymentRequestAllowed != otherPaymentRequestAllowed) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
   nsILoadContext* ourLoadContext = ourContent->OwnerDoc()->GetLoadContext();
   nsILoadContext* otherLoadContext = otherContent->OwnerDoc()->GetLoadContext();
   MOZ_ASSERT(ourLoadContext && otherLoadContext,
@@ -1873,7 +1875,7 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
       RefPtr<ChildSHistory> childSHistory =
           browsingContext->Top()->GetChildSessionHistory();
       if (childSHistory) {
-        if (StaticPrefs::fission_sessionHistoryInParent()) {
+        if (mozilla::SessionHistoryInParent()) {
           browsingContext->RemoveFromSessionHistory();
         } else {
           AutoTArray<nsID, 16> ids({browsingContext->GetHistoryID()});
@@ -3151,12 +3153,9 @@ class WebProgressListenerToPromise final : public nsIWebProgressListener {
   NS_IMETHOD OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
                            uint32_t aStateFlags, nsresult aStatus) override {
     if (aStateFlags & nsIWebProgressListener::STATE_STOP &&
-        aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT) {
-      MOZ_ASSERT(mPromise);
-      if (mPromise) {
-        mPromise->MaybeResolveWithUndefined();
-        mPromise = nullptr;
-      }
+        aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT && mPromise) {
+      mPromise->MaybeResolveWithUndefined();
+      mPromise = nullptr;
     }
     return NS_OK;
   }

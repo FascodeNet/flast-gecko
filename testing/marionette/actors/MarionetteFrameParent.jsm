@@ -11,14 +11,18 @@ const { XPCOMUtils } = ChromeUtils.import(
 );
 
 XPCOMUtils.defineLazyModuleGetters(this, {
-  EventEmitter: "resource://gre/modules/EventEmitter.jsm",
-
+  element: "chrome://marionette/content/element.js",
   error: "chrome://marionette/content/error.js",
   evaluate: "chrome://marionette/content/evaluate.js",
+  EventEmitter: "resource://gre/modules/EventEmitter.jsm",
   Log: "chrome://marionette/content/log.js",
+  modal: "chrome://marionette/content/modal.js",
 });
 
 XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
+XPCOMUtils.defineLazyGetter(this, "elementIdCache", () => {
+  return new element.ReferenceStore();
+});
 
 class MarionetteFrameParent extends JSWindowActorParent {
   constructor() {
@@ -28,32 +32,87 @@ class MarionetteFrameParent extends JSWindowActorParent {
   }
 
   actorCreated() {
+    this._resolveDialogOpened = null;
+
+    this.dialogObserver = new modal.DialogObserver();
+    this.dialogObserver.add((action, dialogRef, win) => {
+      if (
+        this._resolveDialogOpened &&
+        action == "opened" &&
+        win == this.browsingContext.topChromeWindow
+      ) {
+        this._resolveDialogOpened({ data: null });
+      }
+    });
+
     logger.trace(`[${this.browsingContext.id}] Parent actor created`);
   }
 
-  receiveMessage(msg) {
+  dialogOpenedPromise() {
+    return new Promise(resolve => {
+      this._resolveDialogOpened = resolve;
+    });
+  }
+
+  async receiveMessage(msg) {
     const { name, data } = msg;
+
+    let rv;
 
     switch (name) {
       case "MarionetteFrameChild:PageLoadEvent":
         this.emit("page-load-event", data);
         break;
+      case "MarionetteFrameChild:ElementIdCacheAdd":
+        rv = elementIdCache.add(data).toJSON();
     }
+
+    return rv;
   }
 
   async sendQuery(name, data) {
-    const serializedData = evaluate.toJSON(data);
-    const result = await super.sendQuery(name, serializedData);
+    const serializedData = evaluate.toJSON(data, elementIdCache);
+
+    // return early if a dialog is opened
+    const result = await Promise.race([
+      super.sendQuery(name, serializedData),
+      this.dialogOpenedPromise(),
+    ]).finally(() => {
+      this._resolveDialogOpened = null;
+    });
 
     if ("error" in result) {
       throw error.WebDriverError.fromJSON(result.error);
     } else {
-      return evaluate.fromJSON(result.data);
+      return evaluate.fromJSON(result.data, elementIdCache);
     }
+  }
+
+  cleanUp() {
+    elementIdCache.clear();
   }
 
   // Proxying methods for WebDriver commands
   // TODO: Maybe using a proxy class instead similar to proxy.js
+
+  clearElement(elem) {
+    return this.sendQuery("MarionetteFrameParent:clearElement", { elem });
+  }
+
+  clickElement(elem, capabilities) {
+    return this.sendQuery("MarionetteFrameParent:clickElement", {
+      elem,
+      capabilities,
+    });
+  }
+
+  async executeScript(script, args, opts) {
+    return this.sendQuery("MarionetteFrameParent:executeScript", {
+      script,
+      args,
+      opts,
+    });
+  }
 
   findElement(strategy, selector, opts) {
     return this.sendQuery("MarionetteFrameParent:findElement", {
@@ -71,44 +130,92 @@ class MarionetteFrameParent extends JSWindowActorParent {
     });
   }
 
+  async getActiveElement() {
+    return this.sendQuery("MarionetteFrameParent:getActiveElement");
+  }
+
   async getCurrentUrl() {
     return this.sendQuery("MarionetteFrameParent:getCurrentUrl");
   }
 
-  async getElementAttribute(webEl, name) {
+  async getElementAttribute(elem, name) {
     return this.sendQuery("MarionetteFrameParent:getElementAttribute", {
+      elem,
       name,
-      webEl,
     });
   }
 
-  async getElementProperty(webEl, name) {
+  async getElementProperty(elem, name) {
     return this.sendQuery("MarionetteFrameParent:getElementProperty", {
+      elem,
       name,
-      webEl,
     });
   }
 
-  async getElementTagName(webEl) {
-    return this.sendQuery("MarionetteFrameParent:getElementTagName", {
-      webEl,
-    });
+  async getElementRect(elem) {
+    return this.sendQuery("MarionetteFrameParent:getElementRect", { elem });
   }
 
-  async getElementText(webEl) {
-    return this.sendQuery("MarionetteFrameParent:getElementText", {
-      webEl,
-    });
+  async getElementTagName(elem) {
+    return this.sendQuery("MarionetteFrameParent:getElementTagName", { elem });
   }
 
-  async getElementValueOfCssProperty(webEl, name) {
+  async getElementText(elem) {
+    return this.sendQuery("MarionetteFrameParent:getElementText", { elem });
+  }
+
+  async getElementValueOfCssProperty(elem, name) {
     return this.sendQuery(
       "MarionetteFrameParent:getElementValueOfCssProperty",
       {
+        elem,
         name,
-        webEl,
       }
     );
+  }
+
+  async getPageSource() {
+    return this.sendQuery("MarionetteFrameParent:getPageSource");
+  }
+
+  async isElementDisplayed(elem, capabilities) {
+    return this.sendQuery("MarionetteFrameParent:isElementDisplayed", {
+      capabilities,
+      elem,
+    });
+  }
+
+  async isElementEnabled(elem, capabilities) {
+    return this.sendQuery("MarionetteFrameParent:isElementEnabled", {
+      capabilities,
+      elem,
+    });
+  }
+
+  async isElementSelected(elem, capabilities) {
+    return this.sendQuery("MarionetteFrameParent:isElementSelected", {
+      capabilities,
+      elem,
+    });
+  }
+
+  async sendKeysToElement(elem, text, capabilities) {
+    return this.sendQuery("MarionetteFrameParent:sendKeysToElement", {
+      capabilities,
+      elem,
+      text,
+    });
+  }
+
+  async performActions(actions, capabilities) {
+    return this.sendQuery("MarionetteFrameParent:performActions", {
+      actions,
+      capabilities,
+    });
+  }
+
+  async releaseActions() {
+    return this.sendQuery("MarionetteFrameParent:releaseActions");
   }
 
   async switchToFrame(id) {

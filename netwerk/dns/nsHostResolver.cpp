@@ -629,6 +629,21 @@ TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
 }
 
 NS_IMETHODIMP
+TypeHostRecord::GetAllRecordsWithEchConfig(
+    bool aNoHttp2, bool aNoHttp3, bool* aAllRecordsHaveEchConfig,
+    nsTArray<RefPtr<nsISVCBRecord>>& aResult) {
+  MutexAutoLock lock(mResultsLock);
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  auto& records = mResults.as<TypeRecordHTTPSSVC>();
+  GetAllRecordsWithEchConfigInternal(aNoHttp2, aNoHttp3, records,
+                                     aAllRecordsHaveEchConfig, aResult);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 TypeHostRecord::GetHasIPAddresses(bool* aResult) {
   NS_ENSURE_ARG(aResult);
 
@@ -1321,6 +1336,12 @@ nsresult nsHostResolver::TrrLookup_unlocked(nsHostRecord* rec, TRR* pushedTRR) {
 }
 
 void nsHostResolver::MaybeRenewHostRecord(nsHostRecord* aRec) {
+  MutexAutoLock lock(mLock);
+  MaybeRenewHostRecordLocked(aRec);
+}
+
+void nsHostResolver::MaybeRenewHostRecordLocked(nsHostRecord* aRec) {
+  mLock.AssertCurrentThreadOwns();
   if (aRec->isInList()) {
     // we're already on the eviction queue. This is a renewal
     MOZ_ASSERT(mEvictionQSize);
@@ -1368,7 +1389,7 @@ nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
     return NS_ERROR_UNKNOWN_HOST;
   }
 
-  MaybeRenewHostRecord(rec);
+  MaybeRenewHostRecordLocked(rec);
 
   bool madeQuery = false;
 
@@ -1473,6 +1494,7 @@ nsresult nsHostResolver::NativeLookup(nsHostRecord* aRec) {
   if (StaticPrefs::network_dns_disabled()) {
     return NS_ERROR_UNKNOWN_HOST;
   }
+  LOG(("NativeLookup host:%s af:%" PRId16, aRec->host.get(), aRec->af));
 
   // Only A/AAAA request are resolve natively.
   MOZ_ASSERT(aRec->IsAddrRecord());
@@ -1486,7 +1508,7 @@ nsresult nsHostResolver::NativeLookup(nsHostRecord* aRec) {
   addrRec->mNativeStart = TimeStamp::Now();
 
   // Add rec to one of the pending queues, possibly removing it from mEvictionQ.
-  MaybeRenewHostRecord(rec);
+  MaybeRenewHostRecordLocked(rec);
 
   switch (AddrHostRecord::GetPriority(rec->flags)) {
     case AddrHostRecord::DNS_PRIORITY_HIGH:
@@ -1865,7 +1887,7 @@ static bool different_rrset(AddrInfo* rrset1, AddrInfo* rrset2) {
 }
 
 void nsHostResolver::AddToEvictionQ(nsHostRecord* rec) {
-  MOZ_ASSERT(!rec->isInList());
+  MOZ_DIAGNOSTIC_ASSERT(!rec->isInList());
   mEvictionQ.insertBack(rec);
   if (mEvictionQSize < mMaxCacheEntries) {
     mEvictionQSize++;
@@ -2023,7 +2045,6 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
       if (!addrRec->mTRRSuccess) {
         // no TRR success
         newRRSet = nullptr;
-        status = NS_ERROR_UNKNOWN_HOST;
 
         // At least one of them was a failure. If the IPv4 response has a
         // recorded reason, we use that (we also care about ipv4 more).
@@ -2041,7 +2062,8 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
 
       if (!addrRec->mTRRSuccess &&
           addrRec->mEffectiveTRRMode == nsIRequest::TRR_FIRST_MODE &&
-          addrRec->mFirstTRRresult != NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
+          addrRec->mFirstTRRresult != NS_ERROR_DEFINITIVE_UNKNOWN_HOST &&
+          status != NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
         MOZ_ASSERT(!addrRec->mResolving);
         NativeLookup(addrRec);
         MOZ_ASSERT(addrRec->mResolving);
@@ -2051,6 +2073,11 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
       if (addrRec->mTRRSuccess && mNCS &&
           (mNCS->GetNAT64() == nsINetworkConnectivityService::OK) && newRRSet) {
         newRRSet = mNCS->MapNAT64IPs(newRRSet);
+      }
+
+      if (NS_FAILED(status)) {
+        // This is the error that consumers expect.
+        status = NS_ERROR_UNKNOWN_HOST;
       }
 
       // continue

@@ -18,6 +18,7 @@
 
 #include "gfxContext.h"
 #include "gfxUtils.h"
+#include "mozilla/DisplayPortUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/dom/Selection.h"
@@ -235,12 +236,10 @@ nsCString ActiveScrolledRoot::ToString(
   return std::move(str);
 }
 
-ViewID ActiveScrolledRoot::GetViewId() const {
-  if (!mViewId.isSome()) {
-    nsIContent* content = mScrollableFrame->GetScrolledFrame()->GetContent();
-    mViewId = Some(nsLayoutUtils::FindOrCreateIDFor(content));
-  }
-  return *mViewId;
+mozilla::layers::ScrollableLayerGuid::ViewID ActiveScrolledRoot::ComputeViewId()
+    const {
+  nsIContent* content = mScrollableFrame->GetScrolledFrame()->GetContent();
+  return nsLayoutUtils::FindOrCreateIDFor(content);
 }
 
 ActiveScrolledRoot::~ActiveScrolledRoot() {
@@ -489,7 +488,7 @@ nsRect nsDisplayListBuilder::OutOfFlowDisplayData::ComputeVisibleRectForFrame(
   bool inPartialUpdate =
       aBuilder->IsRetainingDisplayList() && aBuilder->IsPartialUpdate();
   if (StaticPrefs::apz_allow_zooming() &&
-      nsLayoutUtils::IsFixedPosFrameInDisplayPort(aFrame) &&
+      DisplayPortUtils::IsFixedPosFrameInDisplayPort(aFrame) &&
       aBuilder->IsPaintingToWindow() && !inPartialUpdate) {
     dirtyRectRelativeToDirtyFrame =
         nsRect(nsPoint(0, 0), aFrame->GetParent()->GetSize());
@@ -502,7 +501,7 @@ nsRect nsDisplayListBuilder::OutOfFlowDisplayData::ComputeVisibleRectForFrame(
     PresShell* presShell = aFrame->PresShell();
     if (presShell->IsVisualViewportSizeSet()) {
       dirtyRectRelativeToDirtyFrame =
-          nsRect(presShell->GetVisualViewportOffset(),
+          nsRect(presShell->GetVisualViewportOffsetRelativeToLayoutViewport(),
                  presShell->GetVisualViewportSize());
       // But if we have a displayport, expand it to the displayport, so
       // that async-scrolling the visual viewport within the layout viewport
@@ -513,8 +512,9 @@ nsRect nsDisplayListBuilder::OutOfFlowDisplayData::ComputeVisibleRectForFrame(
         // space: it's relative to the scroll port (= layout viewport), but
         // covers the visual viewport with some margins around it, which is
         // exactly what we want.
-        if (nsLayoutUtils::GetHighResolutionDisplayPort(
-                rootScrollFrame->GetContent(), &displayport)) {
+        if (DisplayPortUtils::GetHighResolutionDisplayPort(
+                rootScrollFrame->GetContent(), &displayport,
+                DisplayPortOptions().With(ContentGeometryType::Fixed))) {
           dirtyRectRelativeToDirtyFrame = displayport;
         }
       }
@@ -1572,14 +1572,14 @@ nsDisplayListBuilder::AGRState nsDisplayListBuilder::IsAnimatedGeometryRoot(
   }
 
   if (!aFrame->GetParent() &&
-      nsLayoutUtils::ViewportHasDisplayPort(aFrame->PresContext())) {
+      DisplayPortUtils::ViewportHasDisplayPort(aFrame->PresContext())) {
     // Viewport frames in a display port need to be animated geometry roots
     // for background-attachment:fixed elements.
     return AGR_YES;
   }
 
   // Fixed-pos frames are parented by the viewport frame, which has no parent.
-  if (nsLayoutUtils::IsFixedPosFrameInDisplayPort(aFrame)) {
+  if (DisplayPortUtils::IsFixedPosFrameInDisplayPort(aFrame)) {
     return AGR_YES;
   }
 
@@ -2353,7 +2353,7 @@ FrameLayerBuilder* nsDisplayList::BuildLayers(nsDisplayListBuilder* aBuilder,
     if (nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame()) {
       nsIContent* content = rootScrollFrame->GetContent();
       if (content) {
-        usingDisplayport = nsLayoutUtils::HasDisplayPort(content);
+        usingDisplayport = DisplayPortUtils::HasDisplayPort(content);
       }
     }
     if (usingDisplayport &&
@@ -6495,7 +6495,7 @@ void nsDisplaySubDocument::Disown() {
 static bool UseDisplayPortForViewport(nsDisplayListBuilder* aBuilder,
                                       nsIFrame* aFrame) {
   return aBuilder->IsPaintingToWindow() &&
-         nsLayoutUtils::ViewportHasDisplayPort(aFrame->PresContext());
+         DisplayPortUtils::ViewportHasDisplayPort(aFrame->PresContext());
 }
 
 nsRect nsDisplaySubDocument::GetBounds(nsDisplayListBuilder* aBuilder,
@@ -6523,9 +6523,9 @@ bool nsDisplaySubDocument::ComputeVisibility(nsDisplayListBuilder* aBuilder,
   nsRect displayport;
   nsIFrame* rootScrollFrame = mFrame->PresShell()->GetRootScrollFrame();
   MOZ_ASSERT(rootScrollFrame);
-  Unused << nsLayoutUtils::GetDisplayPort(rootScrollFrame->GetContent(),
-                                          &displayport,
-                                          DisplayportRelativeTo::ScrollFrame);
+  Unused << DisplayPortUtils::GetDisplayPort(
+      rootScrollFrame->GetContent(), &displayport,
+      DisplayPortOptions().With(DisplayportRelativeTo::ScrollFrame));
 
   nsRegion childVisibleRegion;
   // The visible region for the children may be much bigger than the hole we
@@ -7381,7 +7381,7 @@ void nsDisplayTransform::SetReferenceFrameToAncestor(
   nsIFrame* outerFrame = nsLayoutUtils::GetCrossDocParentFrame(mFrame);
   mReferenceFrame = aBuilder->FindReferenceFrameFor(outerFrame);
   mToReferenceFrame = mFrame->GetOffsetToCrossDoc(mReferenceFrame);
-  if (nsLayoutUtils::IsFixedPosFrameInDisplayPort(mFrame)) {
+  if (DisplayPortUtils::IsFixedPosFrameInDisplayPort(mFrame)) {
     // This is an odd special case. If we are both IsFixedPosFrameInDisplayPort
     // and transformed that we are our own AGR parent.
     // We want our frame to be our AGR because FrameLayerBuilder uses our AGR to
@@ -8590,7 +8590,7 @@ bool nsDisplayTransform::UntransformRect(nsDisplayListBuilder* aBuilder,
 }
 
 void nsDisplayTransform::WriteDebugInfo(std::stringstream& aStream) {
-  AppendToString(aStream, GetTransform().GetMatrix());
+  aStream << GetTransform().GetMatrix();
   if (IsTransformSeparator()) {
     aStream << " transform-separator";
   }

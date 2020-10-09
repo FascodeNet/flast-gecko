@@ -6,6 +6,8 @@
 
 #include "FrameMetrics.h"
 
+#include <ostream>
+
 #include "gfxUtils.h"
 #include "nsStyleConsts.h"
 #include "nsStyleStruct.h"
@@ -16,6 +18,35 @@ namespace mozilla {
 namespace layers {
 
 const ScrollableLayerGuid::ViewID ScrollableLayerGuid::NULL_SCROLL_ID = 0;
+
+std::ostream& operator<<(std::ostream& aStream, const FrameMetrics& aMetrics) {
+  aStream << "{ [cb=" << aMetrics.GetCompositionBounds()
+          << "] [sr=" << aMetrics.GetScrollableRect()
+          << "] [s=" << aMetrics.GetVisualScrollOffset();
+  if (aMetrics.GetVisualScrollUpdateType() != FrameMetrics::eNone) {
+    aStream << "] [vd=" << aMetrics.GetVisualDestination();
+  }
+  aStream << "] [dp=" << aMetrics.GetDisplayPort()
+          << "] [cdp=" << aMetrics.GetCriticalDisplayPort()
+          << "] [rcs=" << aMetrics.GetRootCompositionSize()
+          << "] [v=" << aMetrics.GetLayoutViewport()
+          << nsPrintfCString("] [z=(ld=%.3f r=%.3f",
+                             aMetrics.GetDevPixelsPerCSSPixel().scale,
+                             aMetrics.GetPresShellResolution())
+                 .get()
+          << " cr=" << aMetrics.GetCumulativeResolution()
+          << " z=" << aMetrics.GetZoom()
+          << " er=" << aMetrics.GetExtraResolution()
+          << nsPrintfCString(")] [u=(%d %" PRIu32 ")",
+                             aMetrics.GetVisualScrollUpdateType(),
+                             aMetrics.GetScrollGeneration())
+                 .get()
+          << nsPrintfCString("] [i=(%" PRIu32 " %" PRIu64 " %d)] }",
+                             aMetrics.GetPresShellId(), aMetrics.GetScrollId(),
+                             aMetrics.IsRootContent())
+                 .get();
+  return aStream;
+}
 
 void FrameMetrics::RecalculateLayoutViewportOffset() {
   // For subframes, the visual and layout viewports coincide, so just
@@ -175,6 +206,29 @@ void ScrollSnapInfo::InitializeScrollSnapStrictness(
   }
 }
 
+std::ostream& operator<<(std::ostream& aStream,
+                         const OverscrollBehavior& aBehavior) {
+  switch (aBehavior) {
+    case OverscrollBehavior::Auto: {
+      aStream << "auto";
+      break;
+    }
+    case OverscrollBehavior::Contain: {
+      aStream << "contain";
+      break;
+    }
+    case OverscrollBehavior::None: {
+      aStream << "none";
+      break;
+    }
+  }
+  return aStream;
+}
+
+OverscrollBehaviorInfo::OverscrollBehaviorInfo()
+    : mBehaviorX(OverscrollBehavior::Auto),
+      mBehaviorY(OverscrollBehavior::Auto) {}
+
 static OverscrollBehavior ToOverscrollBehavior(
     StyleOverscrollBehavior aBehavior) {
   switch (aBehavior) {
@@ -195,6 +249,40 @@ OverscrollBehaviorInfo OverscrollBehaviorInfo::FromStyleConstants(
   result.mBehaviorX = ToOverscrollBehavior(aBehaviorX);
   result.mBehaviorY = ToOverscrollBehavior(aBehaviorY);
   return result;
+}
+
+bool OverscrollBehaviorInfo::operator==(
+    const OverscrollBehaviorInfo& aOther) const {
+  return mBehaviorX == aOther.mBehaviorX && mBehaviorY == aOther.mBehaviorY;
+}
+
+std::ostream& operator<<(std::ostream& aStream,
+                         const OverscrollBehaviorInfo& aInfo) {
+  if (aInfo.mBehaviorX == aInfo.mBehaviorY) {
+    aStream << aInfo.mBehaviorX;
+  } else {
+    aStream << "{ x=" << aInfo.mBehaviorX << ", y=" << aInfo.mBehaviorY << " }";
+  }
+  return aStream;
+}
+
+std::ostream& operator<<(std::ostream& aStream,
+                         const ScrollMetadata& aMetadata) {
+  aStream << "{ [metrics=" << aMetadata.GetMetrics()
+          << "] [color=" << aMetadata.GetBackgroundColor();
+  if (aMetadata.GetScrollParentId() != ScrollableLayerGuid::NULL_SCROLL_ID) {
+    aStream << "] [scrollParent=" << aMetadata.GetScrollParentId();
+  }
+  if (aMetadata.HasScrollClip()) {
+    aStream << "] [clip=" << aMetadata.ScrollClip().GetClipRect();
+  }
+  if (aMetadata.HasMaskLayer()) {
+    aStream << "] [mask=" << aMetadata.ScrollClip().GetMaskLayerIndex().value();
+  }
+  aStream << "] [overscroll=" << aMetadata.GetOverscrollBehavior() << "] ["
+          << aMetadata.GetScrollUpdates().Length() << " scrollupdates"
+          << "] }";
+  return aStream;
 }
 
 void ScrollMetadata::SetBackgroundColor(

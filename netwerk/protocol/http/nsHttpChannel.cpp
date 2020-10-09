@@ -634,7 +634,7 @@ nsresult nsHttpChannel::OnBeforeConnect() {
       if (httpOnlyStatus &
           nsILoadInfo::HTTPS_ONLY_UPGRADED_LISTENER_NOT_REGISTERED) {
         RefPtr<nsHTTPSOnlyStreamListener> httpsOnlyListener =
-            new nsHTTPSOnlyStreamListener(mListener);
+            new nsHTTPSOnlyStreamListener(mListener, mLoadInfo);
         mListener = httpsOnlyListener;
 
         httpOnlyStatus ^=
@@ -1599,9 +1599,8 @@ nsresult ProcessXCTO(nsHttpChannel* aChannel, nsIURI* aURI,
   }
 
   auto policyType = aLoadInfo->GetExternalContentPolicyType();
-  if ((policyType == nsIContentPolicy::TYPE_DOCUMENT ||
-       policyType == nsIContentPolicy::TYPE_SUBDOCUMENT) &&
-      gHttpHandler->IsDocumentNosniffEnabled()) {
+  if (policyType == nsIContentPolicy::TYPE_DOCUMENT ||
+      policyType == nsIContentPolicy::TYPE_SUBDOCUMENT) {
     // If the header XCTO nosniff is set for any browsing context, then
     // we set the skipContentSniffing flag on the Loadinfo. Within
     // GetMIMETypeFromContent we then bail early and do not do any sniffing.
@@ -1739,11 +1738,6 @@ nsresult EnsureMIMEOfScript(nsHttpChannel* aChannel, nsIURI* aURI,
   }
 
   if (block) {
-    // Do not block the load if the feature is not enabled.
-    if (!StaticPrefs::security_block_script_with_wrong_mime()) {
-      return NS_OK;
-    }
-
     ReportMimeTypeMismatch(aChannel, "BlockScriptWithWrongMimeType2", aURI,
                            contentType, Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
@@ -1790,11 +1784,6 @@ nsresult EnsureMIMEOfScript(nsHttpChannel* aChannel, nsIURI* aURI,
   // We restrict importScripts() in worker code to JavaScript MIME types.
   nsContentPolicyType internalType = aLoadInfo->InternalContentPolicyType();
   if (internalType == nsIContentPolicy::TYPE_INTERNAL_WORKER_IMPORT_SCRIPTS) {
-    // Do not block the load if the feature is not enabled.
-    if (!StaticPrefs::security_block_importScripts_with_wrong_mime()) {
-      return NS_OK;
-    }
-
     ReportMimeTypeMismatch(aChannel, "BlockImportScriptsWithWrongMimeType",
                            aURI, contentType, Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
@@ -1883,31 +1872,6 @@ void nsHttpChannel::SetCachedContentType() {
   }
 
   mCacheEntry->SetContentType(contentType);
-}
-
-void nsHttpChannel::UpdateAntiTrackingInfo() {
-  Unused << mLoadInfo->SetHasStoragePermission(
-      AntiTrackingUtils::HasStoragePermissionInParent(this));
-
-  AntiTrackingUtils::ComputeIsThirdPartyToTopWindow(this);
-
-  if (mLoadInfo->GetExternalContentPolicyType() ==
-      nsIContentPolicy::TYPE_DOCUMENT) {
-    nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
-    Unused << mLoadInfo->GetCookieJarSettings(
-        getter_AddRefs(cookieJarSettings));
-
-    // Update the IsOnContentBlockingAllowList flag in the CookieJarSettings
-    // if this is a top level loading. For sub-document loading, this flag
-    // would inherit from the parent.
-    mozilla::net::CookieJarSettings::Cast(cookieJarSettings)
-        ->UpdateIsOnContentBlockingAllowList(this);
-
-    // We only need to set FPD for top-level loads. FPD will automatically be
-    // propagated to non-top level loads via CookieJarSetting.
-    mozilla::net::CookieJarSettings::Cast(cookieJarSettings)
-        ->SetPartitionKey(mURI);
-  }
 }
 
 nsresult nsHttpChannel::CallOnStartRequest() {
@@ -6767,7 +6731,7 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
     UpdatePrivateBrowsing();
   }
 
-  UpdateAntiTrackingInfo();
+  AntiTrackingUtils::UpdateAntiTrackingInfoForChannel(this);
 
   if (WaitingForTailUnblock()) {
     // This channel is marked as Tail and is part of a request context
@@ -9682,19 +9646,10 @@ void nsHttpChannel::SetOriginHeader() {
   Unused << mRequestHead.GetHeader(nsHttp::Origin, existingHeader);
   if (!existingHeader.IsEmpty()) {
     LOG(("nsHttpChannel::SetOriginHeader Origin header already present"));
-    Unused << mRequestHead.GetHeader(nsHttp::Origin, existingHeader);
-    auto const shouldNullifyOriginHeader =
-        [&existingHeader](nsHttpChannel* self) {
-          if (self->mTaintedOriginFlag) {
-            return true;
-          }
-
-          nsCOMPtr<nsIURI> uri;
-          return NS_SUCCEEDED(NS_NewURI(getter_AddRefs(uri), existingHeader)) &&
-                 ReferrerInfo::ShouldSetNullOriginHeader(self, uri);
-        };
-
-    if (shouldNullifyOriginHeader(this)) {
+    nsCOMPtr<nsIURI> uri;
+    rv = NS_NewURI(getter_AddRefs(uri), existingHeader);
+    if (NS_SUCCEEDED(rv) &&
+        ReferrerInfo::ShouldSetNullOriginHeader(this, uri)) {
       LOG(("nsHttpChannel::SetOriginHeader null Origin by Referrer-Policy"));
       rv = mRequestHead.SetHeader(nsHttp::Origin, "null"_ns, false /* merge */);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
@@ -9702,27 +9657,33 @@ void nsHttpChannel::SetOriginHeader() {
     return;
   }
 
+  if (StaticPrefs::network_http_sendOriginHeader() == 0) {
+    // Origin header suppressed by user setting
+    return;
+  }
+
   nsCOMPtr<nsIURI> referrer;
   auto* basePrin = BasePrincipal::Cast(mLoadInfo->TriggeringPrincipal());
   basePrin->GetURI(getter_AddRefs(referrer));
+  if (!referrer || !dom::ReferrerInfo::IsReferrerSchemeAllowed(referrer)) {
+    return;
+  }
 
   nsAutoCString origin("null");
+  nsContentUtils::GetASCIIOrigin(referrer, origin);
 
-  if (StaticPrefs::network_http_sendOriginHeader() != 0 && referrer &&
-      ReferrerInfo::IsReferrerSchemeAllowed(referrer) &&
-      !ReferrerInfo::ShouldSetNullOriginHeader(this, referrer) &&
-      !mTaintedOriginFlag) {
-    nsContentUtils::GetASCIIOrigin(referrer, origin);
-
-    // Restrict Origin to same-origin loads if requested by user
-    if (StaticPrefs::network_http_sendOriginHeader() == 1) {
-      nsAutoCString currentOrigin;
-      nsContentUtils::GetASCIIOrigin(mURI, currentOrigin);
-      if (!origin.EqualsIgnoreCase(currentOrigin.get())) {
-        // Origin header suppressed by user setting
-        origin.AssignLiteral("null");
-      }
+  // Restrict Origin to same-origin loads if requested by user
+  if (StaticPrefs::network_http_sendOriginHeader() == 1) {
+    nsAutoCString currentOrigin;
+    nsContentUtils::GetASCIIOrigin(mURI, currentOrigin);
+    if (!origin.EqualsIgnoreCase(currentOrigin.get())) {
+      // Origin header suppressed by user setting
+      return;
     }
+  }
+
+  if (ReferrerInfo::ShouldSetNullOriginHeader(this, referrer)) {
+    origin.AssignLiteral("null");
   }
 
   rv = mRequestHead.SetHeader(nsHttp::Origin, origin, false /* merge */);
@@ -10341,8 +10302,7 @@ void nsHttpChannel::ReEvaluateReferrerAfterTrackingStatusIsKnown() {
               ReferrerInfo::GetDefaultReferrerPolicy(nullptr, nullptr,
                                                      isPrivate)) {
         nsCOMPtr<nsIReferrerInfo> newReferrerInfo =
-            referrerInfo->CloneWithNewPolicy(
-                ReferrerInfo::GetDefaultReferrerPolicy(this, mURI, isPrivate));
+            referrerInfo->CloneWithNewPolicy(ReferrerPolicy::_empty);
         // The arguments passed to SetReferrerInfoInternal here should mirror
         // the arguments passed in
         // HttpChannelChild::RecvOverrideReferrerInfoDuringBeginConnect().

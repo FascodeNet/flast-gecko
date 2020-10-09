@@ -17,6 +17,7 @@
 
 #include "builtin/TypedObject.h"
 #include "gc/GCProbes.h"
+#include "jit/ABIFunctions.h"
 #include "jit/AtomicOp.h"
 #include "jit/AtomicOperations.h"
 #include "jit/Bailouts.h"
@@ -24,21 +25,23 @@
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
 #include "jit/JitOptions.h"
+#include "jit/JitRuntime.h"
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
 #include "jit/MoveEmitter.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/Simulator.h"
 #include "js/Conversions.h"
-#include "js/Printf.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayBufferViewObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
+#include "vm/JSContext.h"
 #include "vm/TraceLogging.h"
 #include "vm/TypedArrayObject.h"
 
 #include "gc/Nursery-inl.h"
+#include "jit/ABIFunctionList-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "jit/TemplateObject-inl.h"
 #include "vm/Interpreter-inl.h"
@@ -411,6 +414,11 @@ template void MacroAssembler::guardTypeSet(
     const ValueOperand& value, const TypeSet* types, BarrierKind kind,
     Register unboxScratch, Register objScratch, Register spectreRegToZero,
     Label* miss);
+
+TrampolinePtr MacroAssembler::preBarrierTrampoline(MIRType type) {
+  const JitRuntime* rt = GetJitContext()->runtime->jitRuntime();
+  return rt->preBarrier(type);
+}
 
 template <typename S, typename T>
 static void StoreToTypedFloatArray(MacroAssembler& masm, int arrayType,
@@ -1876,6 +1884,11 @@ void MacroAssembler::setIsDefinitelyTypedArrayConstructor(Register obj,
   bind(&done);
 }
 
+void MacroAssembler::loadJitActivation(Register dest) {
+  loadJSContext(dest);
+  loadPtr(Address(dest, offsetof(JSContext, activation_)), dest);
+}
+
 void MacroAssembler::guardGroupHasUnanalyzedNewScript(Register group,
                                                       Register scratch,
                                                       Label* fail) {
@@ -2037,10 +2050,11 @@ void MacroAssembler::generateBailoutTail(Register scratch,
     push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)));
 
     // Call a stub to free allocated memory and create arguments objects.
+    using Fn = bool (*)(BaselineBailoutInfo * bailoutInfoArg);
     setupUnalignedABICall(temp);
     passABIArg(bailoutInfo);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void*, FinishBailoutToBaseline),
-                MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+    callWithABI<Fn, FinishBailoutToBaseline>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
     branchIfFalseBool(ReturnReg, exceptionLabel());
 
     // Restore values where they need to be and resume execution.
@@ -2143,6 +2157,16 @@ void MacroAssembler::loadBaselineFramePtr(Register framePtr, Register dest) {
   subPtr(Imm32(BaselineFrame::Size()), dest);
 }
 
+static const uint8_t* ContextInlinedICScriptPtr() {
+  return (
+      static_cast<const uint8_t*>(GetJitContext()->runtime->mainContextPtr()) +
+      JSContext::offsetOfInlinedICScript());
+}
+
+void MacroAssembler::storeICScriptInJSContext(Register icScript) {
+  storePtr(icScript, AbsoluteAddress(ContextInlinedICScriptPtr()));
+}
+
 void MacroAssembler::handleFailure() {
   // Re-entry code is irrelevant because the exception will leave the
   // running function and never come back
@@ -2150,12 +2174,6 @@ void MacroAssembler::handleFailure() {
       GetJitContext()->runtime->jitRuntime()->getExceptionTail();
   jump(excTail);
 }
-
-#ifdef JS_MASM_VERBOSE
-static void AssumeUnreachable_(const char* output) {
-  MOZ_ReportAssertionFailure(output, __FILE__, __LINE__);
-}
-#endif
 
 void MacroAssembler::assumeUnreachable(const char* output) {
 #ifdef JS_MASM_VERBOSE
@@ -2165,11 +2183,12 @@ void MacroAssembler::assumeUnreachable(const char* output) {
     PushRegsInMask(save);
     Register temp = regs.takeAnyGeneral();
 
+    using Fn = void (*)(const char* output);
     setupUnalignedABICall(temp);
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void*, AssumeUnreachable_), MoveOp::GENERAL,
-                CheckUnsafeCallWithABI::DontCheckOther);
+    callWithABI<Fn, AssumeUnreachable>(MoveOp::GENERAL,
+                                       CheckUnsafeCallWithABI::DontCheckOther);
 
     PopRegsInMask(save);
   }
@@ -2192,17 +2211,6 @@ void MacroAssembler::assertTestInt32(Condition cond, const T& value,
 template void MacroAssembler::assertTestInt32(Condition, const Address&,
                                               const char*);
 
-#ifdef JS_MASM_VERBOSE
-static void Printf0_(const char* output) {
-  AutoUnsafeCallWithABI unsafe;
-
-  // Use stderr instead of stdout because this is only used for debug
-  // output. stderr is less likely to interfere with the program's normal
-  // output, and it's always unbuffered.
-  fprintf(stderr, "%s", output);
-}
-#endif
-
 void MacroAssembler::printf(const char* output) {
 #ifdef JS_MASM_VERBOSE
   AllocatableRegisterSet regs(RegisterSet::Volatile());
@@ -2211,26 +2219,15 @@ void MacroAssembler::printf(const char* output) {
 
   Register temp = regs.takeAnyGeneral();
 
+  using Fn = void (*)(const char* output);
   setupUnalignedABICall(temp);
   movePtr(ImmPtr(output), temp);
   passABIArg(temp);
-  callWithABI(JS_FUNC_TO_DATA_PTR(void*, Printf0_));
+  callWithABI<Fn, Printf0>();
 
   PopRegsInMask(save);
 #endif
 }
-
-#ifdef JS_MASM_VERBOSE
-static void Printf1_(const char* output, uintptr_t value) {
-  AutoUnsafeCallWithABI unsafe;
-  AutoEnterOOMUnsafeRegion oomUnsafe;
-  js::UniqueChars line = JS_sprintf_append(nullptr, output, value);
-  if (!line) {
-    oomUnsafe.crash("OOM at masm.printf");
-  }
-  fprintf(stderr, "%s", line.get());
-}
-#endif
 
 void MacroAssembler::printf(const char* output, Register value) {
 #ifdef JS_MASM_VERBOSE
@@ -2242,17 +2239,23 @@ void MacroAssembler::printf(const char* output, Register value) {
 
   Register temp = regs.takeAnyGeneral();
 
+  using Fn = void (*)(const char* output, uintptr_t value);
   setupUnalignedABICall(temp);
   movePtr(ImmPtr(output), temp);
   passABIArg(temp);
   passABIArg(value);
-  callWithABI(JS_FUNC_TO_DATA_PTR(void*, Printf1_));
+  callWithABI<Fn, Printf1>();
 
   PopRegsInMask(save);
 #endif
 }
 
 #ifdef JS_TRACE_LOGGING
+void MacroAssembler::loadTraceLogger(Register logger) {
+  loadJSContext(logger);
+  loadPtr(Address(logger, offsetof(JSContext, traceLogger)), logger);
+}
+
 void MacroAssembler::tracelogStartId(Register logger, uint32_t textId,
                                      bool force) {
   if (!force && !TraceLogTextIdEnabled(textId)) {
@@ -2433,6 +2436,11 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
                                            bool widenFloatToDouble,
                                            bool compilingWasm,
                                            wasm::BytecodeOffset callOffset) {
+  if (compilingWasm) {
+    Push(WasmTlsReg);
+  }
+  int32_t framePushedAfterTls = framePushed();
+
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
     defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
   ScratchDoubleScope fpscratch(*this);
@@ -2457,14 +2465,17 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
   MOZ_ASSERT(src.isDouble());
 
   if (compilingWasm) {
+    int32_t tlsOffset = framePushed() - framePushedAfterTls;
     setupWasmABICall();
     passABIArg(src, MoveOp::DOUBLE);
-    callWithABI(callOffset, wasm::SymbolicAddress::ToInt32);
+    callWithABI(callOffset, wasm::SymbolicAddress::ToInt32,
+                mozilla::Some(tlsOffset));
   } else {
+    using Fn = int32_t (*)(double);
     setupUnalignedABICall(dest);
     passABIArg(src, MoveOp::DOUBLE);
-    callWithABI(mozilla::BitwiseCast<void*, int32_t (*)(double)>(JS::ToInt32),
-                MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    callWithABI<Fn, JS::ToInt32>(MoveOp::GENERAL,
+                                 CheckUnsafeCallWithABI::DontCheckOther);
   }
   storeCallInt32Result(dest);
 
@@ -2478,6 +2489,10 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
 #else
   MOZ_CRASH("MacroAssembler platform hook: outOfLineTruncateSlow");
 #endif
+
+  if (compilingWasm) {
+    Pop(WasmTlsReg);
+  }
 }
 
 void MacroAssembler::convertDoubleToInt(FloatRegister src, Register output,
@@ -2765,7 +2780,7 @@ MacroAssembler::MacroAssembler(JSContext* cx)
       dynamicAlignment_(false),
       emitProfilingInstrumentation_(false) {
   jitContext_.emplace(cx, (js::jit::TempAllocator*)nullptr);
-  alloc_.emplace(cx);
+  alloc_.emplace(&cx->tempLifoAlloc());
   moveResolver_.setAllocator(*jitContext_->temp);
 #if defined(JS_CODEGEN_ARM)
   initWithAllocator();
@@ -2788,7 +2803,7 @@ MacroAssembler::MacroAssembler()
   if (!jcx->temp) {
     JSContext* cx = jcx->cx;
     MOZ_ASSERT(cx);
-    alloc_.emplace(cx);
+    alloc_.emplace(&cx->tempLifoAlloc());
   }
 
   moveResolver_.setAllocator(*jcx->temp);
@@ -3122,27 +3137,23 @@ void MacroAssembler::callWithABINoProfiler(void* fun, MoveOp::Type result,
 
 CodeOffset MacroAssembler::callWithABI(wasm::BytecodeOffset bytecode,
                                        wasm::SymbolicAddress imm,
+                                       mozilla::Maybe<int32_t> tlsOffset,
                                        MoveOp::Type result) {
   MOZ_ASSERT(wasm::NeedsBuiltinThunk(imm));
-
-  // We clobber WasmTlsReg below in the loadWasmTlsRegFromFrame(), but Ion
-  // assumes it is non-volatile, so preserve it manually.
-  Push(WasmTlsReg);
 
   uint32_t stackAdjust;
   callWithABIPre(&stackAdjust, /* callFromWasm = */ true);
 
-  // The TLS register is used in builtin thunks and must be set, by ABI:
-  // reload it after passing arguments, which might have used it at spill
-  // points when placing arguments.
-  loadWasmTlsRegFromFrame();
-
+  // The TLS register is used in builtin thunks and must be set, by ABI.
+  if (tlsOffset) {
+    loadPtr(Address(getStackPointer(), *tlsOffset + stackAdjust), WasmTlsReg);
+  } else {
+    MOZ_CRASH("This can be only for an unsupported architecture.");
+  }
   CodeOffset raOffset = call(
       wasm::CallSiteDesc(bytecode.offset(), wasm::CallSite::Symbolic), imm);
 
   callWithABIPost(stackAdjust, result, /* callFromWasm = */ true);
-
-  Pop(WasmTlsReg);
 
   return raOffset;
 }
@@ -3472,7 +3483,7 @@ void MacroAssembler::loadFunctionLength(Register func, Register funFlags,
     loadPtr(Address(func, JSFunction::offsetOfScript()), output);
     loadPtr(Address(output, JSScript::offsetOfSharedData()), output);
     branchTestPtr(Assembler::Zero, output, output, slowPath);
-    loadPtr(Address(output, RuntimeScriptData::offsetOfISD()), output);
+    loadPtr(Address(output, SharedImmutableScriptData::offsetOfISD()), output);
     load16ZeroExtend(Address(output, ImmutableScriptData::offsetOfFunLength()),
                      output);
   }
@@ -4222,9 +4233,10 @@ void MacroAssembler::packedArrayShift(Register array, ValueOperand output,
 
     PushRegsInMask(volatileRegs);
 
+    using Fn = void (*)(ArrayObject * arr);
     setupUnalignedABICall(temp1);
     passABIArg(array);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void*, ArrayShiftMoveElements));
+    callWithABI<Fn, ArrayShiftMoveElements>();
 
     PopRegsInMask(volatileRegs);
 
@@ -4281,6 +4293,17 @@ void MacroAssembler::loadArgumentsObjectLength(Register obj, Register output,
 
   // Shift out arguments length and return it.
   rshift32(Imm32(ArgumentsObject::PACKED_BITS_COUNT), output);
+}
+
+void MacroAssembler::branchArgumentsObjectHasOverridenIterator(Register obj,
+                                                               Register temp,
+                                                               Label* label) {
+  // Get initial length value.
+  unboxInt32(Address(obj, ArgumentsObject::getInitialLengthSlotOffset()), temp);
+
+  // Ensure no overridden iterator.
+  branchTest32(Assembler::NonZero, temp,
+               Imm32(ArgumentsObject::ITERATOR_OVERRIDDEN_BIT), label);
 }
 
 static constexpr bool ValidateShiftRange(Scalar::Type from, Scalar::Type to) {
@@ -4505,10 +4528,10 @@ ObjectGroup* MacroAssembler::getGroupAndDelayBarrier(const TypeSet* types,
 
 void MacroAssembler::performPendingReadBarriers() {
   for (JSObject* object : pendingObjectReadBarriers_) {
-    JSObject::readBarrier(object);
+    gc::ReadBarrier(object);
   }
   for (ObjectGroup* group : pendingObjectGroupReadBarriers_) {
-    ObjectGroup::readBarrier(group);
+    gc::ReadBarrier(group);
   }
 }
 

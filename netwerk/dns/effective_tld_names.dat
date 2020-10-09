@@ -907,16 +907,18 @@ org.do
 sld.do
 web.do
 
-// dz : https://en.wikipedia.org/wiki/.dz
+// dz : http://www.nic.dz/images/pdf_nic/charte.pdf
 dz
+art.dz
+asso.dz
 com.dz
+edu.dz
+gov.dz
 org.dz
 net.dz
-gov.dz
-edu.dz
-asso.dz
 pol.dz
-art.dz
+soc.dz
+tm.dz
 
 // ec : http://www.nic.ec/reg/paso1.asp
 // Submitted by registry <vabboud@nic.ec>
@@ -7108,7 +7110,7 @@ org.zw
 
 // newGTLDs
 
-// List of new gTLDs imported from https://www.icann.org/resources/registries/gtlds/v2/gtlds.json on 2020-09-17T17:33:58Z
+// List of new gTLDs imported from https://www.icann.org/resources/registries/gtlds/v2/gtlds.json on 2020-10-06T17:44:42Z
 // This list is auto-generated, don't edit it manually.
 // aaa : 2015-02-26 American Automobile Association, Inc.
 aaa
@@ -10239,9 +10241,6 @@ weber
 // website : 2014-04-03 DotWebsite Inc.
 website
 
-// wed : 2013-10-01 Atgron, Inc.
-wed
-
 // wedding : 2014-04-24 Minds + Machines Group Limited
 wedding
 
@@ -11231,6 +11230,10 @@ drud.us
 // Submitted by Richard Harper <richard@duckdns.org>
 duckdns.org
 
+// Bip : https://bip.sh
+// Submitted by Joel Kennedy <joel@bip.sh>
+bip.sh
+
 // bitbridge.net : Submitted by Craig Welch, abeliidev@gmail.com
 bitbridge.net
 
@@ -12001,6 +12004,7 @@ googleapis.com
 googlecode.com
 pagespeedmobilizer.com
 publishproxy.com
+translate.goog
 withgoogle.com
 withyoutube.com
 
@@ -12272,6 +12276,10 @@ members.linode.com
 // LiquidNet Ltd : http://www.liquidnetlimited.com/
 // Submitted by Victor Velchev <admin@liquidnetlimited.com>
 we.bs
+
+// localzone.xyz
+// Submitted by Kenny Niehage <hello@yahe.sh>
+localzone.xyz
 
 // Log'in Line : https://www.loginline.com/
 // Submitted by Rémi Mach <remi.mach@loginline.com>
@@ -13373,7 +13381,9 @@ cx.ua
 
 // WP Engine : https://wpengine.com/
 // Submitted by Michael Smith <michael.smith@wpengine.com>
+// Submitted by Brandon DuRette <brandon.durette@wpengine.com>
 wpenginepowered.com
+js.wpenginepowered.com
 
 // Impertrix Solutions : <https://impertrixcdn.com>
 // Submitted by Zhixiang Zhao <csuite@impertrix.com>

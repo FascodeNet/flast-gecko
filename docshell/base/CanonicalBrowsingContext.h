@@ -23,6 +23,7 @@ class nsISHistory;
 class nsSHistory;
 class nsBrowserStatusFilter;
 class nsSecureBrowserUI;
+class CallerWillNotifyHistoryIndexAndLengthChanges;
 
 namespace mozilla {
 namespace net {
@@ -71,6 +72,13 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void ClearInFlightProcessId(uint64_t aProcessId);
   uint64_t GetInFlightProcessId() const { return mInFlightProcessId; }
 
+  // The ID of the BrowsingContext which caused this BrowsingContext to be
+  // opened, or `0` if this is unknown.
+  // Only set for toplevel content BrowsingContexts, and may be from a different
+  // BrowsingContextGroup.
+  uint64_t GetCrossGroupOpenerId() const { return mCrossGroupOpenerId; }
+  void SetCrossGroupOpenerId(uint64_t aOpenerId);
+
   void GetWindowGlobals(nsTArray<RefPtr<WindowGlobalParent>>& aWindows);
 
   // The current active WindowGlobal.
@@ -113,13 +121,12 @@ class CanonicalBrowsingContext final : public BrowsingContext {
                              Maybe<RefPtr<nsDocShellLoadState>>& aLoadState,
                              Maybe<bool>& aReloadActiveEntry);
 
-  void SetActiveSessionHistoryEntryForTop(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      uint32_t aLoadType, const nsID& aChangeID);
-
-  void SetActiveSessionHistoryEntryForFrame(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      int32_t aChildOffset, const nsID& aChangeID);
+  // See BrowsingContext::SetActiveSessionHistoryEntry.
+  void SetActiveSessionHistoryEntry(const Maybe<nsPoint>& aPreviousScrollPos,
+                                    SessionHistoryInfo* aInfo,
+                                    uint32_t aLoadType, int32_t aChildOffset,
+                                    uint32_t aUpdatedCacheKey,
+                                    const nsID& aChangeID);
 
   void ReplaceActiveSessionHistoryEntry(SessionHistoryInfo* aInfo);
 
@@ -206,8 +213,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // Called when the current URI changes (from an
   // nsIWebProgressListener::OnLocationChange event, so that we
   // can update our security UI for the new location, or when the
-  // mixed content state for our current window is changed.
-  void UpdateSecurityStateForLocationOrMixedContentChange();
+  // mixed content/https-only state for our current window is changed.
+  void UpdateSecurityState();
 
   void MaybeAddAsProgressListener(nsIWebProgress* aWebProgress);
 
@@ -228,6 +235,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void GetLoadingSessionHistoryInfoFromParent(
       Maybe<LoadingSessionHistoryInfo>& aLoadingInfo, int32_t* aRequestedIndex,
       int32_t* aLength);
+
+  void HistoryCommitIndexAndLength();
 
  protected:
   // Called when the browsing context is being discarded.
@@ -288,7 +297,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool SupportsLoadingInParent(nsDocShellLoadState* aLoadState,
                                uint64_t* aOuterWindowId);
 
-  void HistoryCommitIndexAndLength(const nsID& aChangeID);
+  void HistoryCommitIndexAndLength(
+      const nsID& aChangeID,
+      const CallerWillNotifyHistoryIndexAndLengthChanges& aProofOfCaller);
 
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
@@ -300,6 +311,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // The ID of the former owner process during an ownership change, which may
   // have in-flight messages that assume it is still the owner.
   uint64_t mInFlightProcessId = 0;
+
+  uint64_t mCrossGroupOpenerId = 0;
 
   // The current remoteness change which is in a pending state.
   RefPtr<PendingRemotenessChange> mPendingRemotenessChange;

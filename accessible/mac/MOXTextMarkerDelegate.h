@@ -62,6 +62,21 @@
 - (id)moxRightWordTextMarkerRangeForTextMarker:(id)textMarker;
 
 // override
+- (id)moxLineTextMarkerRangeForTextMarker:(id)textMarker;
+
+// override
+- (id)moxLeftLineTextMarkerRangeForTextMarker:(id)textMarker;
+
+// override
+- (id)moxRightLineTextMarkerRangeForTextMarker:(id)textMarker;
+
+// override
+- (id)moxParagraphTextMarkerRangeForTextMarker:(id)textMarker;
+
+// override
+- (id)moxStyleTextMarkerRangeForTextMarker:(id)textMarker;
+
+// override
 - (id)moxNextTextMarkerForTextMarker:(id)textMarker;
 
 // override
@@ -79,6 +94,9 @@
 
 // override
 - (id)moxTextMarkerRangeForUIElement:(id)element;
+
+// override
+- (NSString*)moxMozDebugDescriptionForTextMarker:(id)textMarker;
 
 // override
 - (void)moxSetSelectedTextMarkerRange:(id)textMarkerRange;

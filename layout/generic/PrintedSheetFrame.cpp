@@ -50,19 +50,45 @@ void PrintedSheetFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 // NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state bit and returns true.
 static bool TagIfSkippedByCustomRange(nsPageFrame* aPageFrame, int32_t aPageNum,
                                       nsSharedPageData* aPD) {
-  // Only do page-skipping here if we're using the new tab-modal UI, and only
-  // do it for print-preview.  We have separate legacy code that skips pages
-  // for actual printing (for now).
-  if (!StaticPrefs::print_tab_modal_enabled() ||
-      !aPageFrame->PresContext()->IsScreen()) {
+  if (!aPD->mDoingPageRange) {
+    MOZ_ASSERT(!aPageFrame->HasAnyStateBits(NS_PAGE_SKIPPED_BY_CUSTOM_RANGE),
+               "page frames shouldn't be tagged as skipped if we're not "
+               "printing with a custom page range");
     return false;
   }
 
-  if (!aPD->mDoingPageRange ||
-      (aPD->mFromPageNum <= aPageNum && aPD->mToPageNum >= aPageNum)) {
+  bool isPageSkipped = false;
+
+  // As described in nsSharedPageData documentation: we can use mFromPageNum
+  // and mToPageNum as a quick way to reject entirely-out-of-range pages. For
+  // page numbers inside these bounds, we need to check mRanges to find out if
+  // they're included in our subranges (if there are any).
+  if (aPageNum < aPD->mFromPageNum || aPageNum > aPD->mToPageNum) {
+    // Page is out-of-bounds; it's skipped.
+    isPageSkipped = true;
+  } else {
+    // Check subranges (if there are any).
+    const auto& ranges = aPD->mPageRanges;
+    int32_t length = ranges.Length();
+
+    // Page ranges are pairs (start, end) of included pages.
+    if (length && (length % 2 == 0)) {
+      isPageSkipped = true;
+      for (int32_t i = 0; i < length; i += 2) {
+        if (ranges[i] <= aPageNum && aPageNum <= ranges[i + 1]) {
+          // The page is included in this piece of the custom range,
+          // so it's not skipped.
+          isPageSkipped = false;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!isPageSkipped) {
     MOZ_ASSERT(!aPageFrame->HasAnyStateBits(NS_PAGE_SKIPPED_BY_CUSTOM_RANGE),
-               "page frames in print range shouldn't be tagged with the"
-               "NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state bit");
+               "page frames NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state should "
+               "only be set if we actually want to skip the page");
     return false;
   }
 

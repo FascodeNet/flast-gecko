@@ -33,7 +33,6 @@
 #include "gc/Tracer.h"
 #include "js/AllocationRecording.h"
 #include "js/BuildId.h"  // JS::BuildIdOp
-#include "js/CompilationAndEvaluation.h"
 #include "js/Debug.h"
 #include "js/experimental/SourceHook.h"  // js::SourceHook
 #include "js/friend/StackLimits.h"       // js::ReportOverRecursed
@@ -60,6 +59,7 @@
 #include "vm/OffThreadPromiseRuntimeState.h"  // js::OffThreadPromiseRuntimeState
 #include "vm/Scope.h"
 #include "vm/SharedImmutableStringsCache.h"
+#include "vm/SharedStencil.h"  // js::SharedImmutableScriptDataTable
 #include "vm/Stack.h"
 #include "vm/SymbolType.h"
 #include "wasm/WasmTypes.h"
@@ -885,10 +885,10 @@ struct JSRuntime {
   // within the runtime. This may be modified by threads using
   // AutoLockScriptData.
  private:
-  js::ScriptDataLockData<js::RuntimeScriptDataTable> scriptDataTable_;
+  js::ScriptDataLockData<js::SharedImmutableScriptDataTable> scriptDataTable_;
 
  public:
-  js::RuntimeScriptDataTable& scriptDataTable(
+  js::SharedImmutableScriptDataTable& scriptDataTable(
       const js::AutoLockScriptData& lock) {
     return scriptDataTable_.ref();
   }

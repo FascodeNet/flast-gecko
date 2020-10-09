@@ -448,6 +448,7 @@ class XPCJSContext final : public mozilla::CycleCollectedJSContext,
   // Accumulates total time we actually waited for telemetry
   mozilla::TimeDuration mSlowScriptActualWait;
   bool mTimeoutAccumulated;
+  bool mExecutedChromeScript;
 
   bool mHasScriptActivity;
 
@@ -2087,15 +2088,6 @@ using AutoMarkingWrappedNativeTearOffPtr =
     TypedAutoMarkingPtr<XPCWrappedNativeTearOff>;
 using AutoMarkingWrappedNativeProtoPtr =
     TypedAutoMarkingPtr<XPCWrappedNativeProto>;
-
-/***************************************************************************/
-namespace xpc {
-// Allocates a string that grants all access ("AllAccess")
-char* CloneAllAccess();
-
-// Returns access if wideName is in list
-char* CheckAccessList(const char16_t* wideName, const char* const list[]);
-} /* namespace xpc */
 
 /***************************************************************************/
 // in xpcvariant.cpp...

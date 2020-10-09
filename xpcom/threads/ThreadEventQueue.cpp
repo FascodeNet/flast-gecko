@@ -12,7 +12,6 @@
 #include "nsIThreadInternal.h"
 #include "nsThreadUtils.h"
 #include "nsThread.h"
-#include "PrioritizedEventQueue.h"
 #include "ThreadEventTarget.h"
 #include "mozilla/TaskController.h"
 
@@ -52,8 +51,9 @@ ThreadEventQueue<InnerQueueT>::ThreadEventQueue(UniquePtr<InnerQueueT> aQueue,
                                                 bool aIsMainThread)
     : mBaseQueue(std::move(aQueue)),
       mLock("ThreadEventQueue"),
-      mEventsAvailable(mLock, "EventsAvail") {
-  if (UseTaskController() && aIsMainThread) {
+      mEventsAvailable(mLock, "EventsAvail"),
+      mIsMainThread(aIsMainThread) {
+  if (aIsMainThread) {
     TaskController::Get()->SetConditionVariable(&mEventsAvailable);
   }
   static_assert(std::is_base_of<AbstractEventQueue, InnerQueueT>::value,
@@ -84,7 +84,7 @@ bool ThreadEventQueue<InnerQueueT>::PutEventInternal(
     // Check if the runnable wants to override the passed-in priority.
     // Do this outside the lock, so runnables implemented in JS can QI
     // (and possibly GC) outside of the lock.
-    if (InnerQueueT::SupportsPrioritization) {
+    if (mIsMainThread) {
       auto* e = event.get();  // can't do_QueryInterface on LeakRefPtr.
       if (nsCOMPtr<nsIRunnablePriority> runnablePrio = do_QueryInterface(e)) {
         uint32_t prio = nsIRunnablePriority::PRIORITY_NORMAL;
@@ -378,12 +378,11 @@ template <class InnerQueueT>
 void ThreadEventQueue<InnerQueueT>::SetObserver(nsIThreadObserver* aObserver) {
   MutexAutoLock lock(mLock);
   mObserver = aObserver;
-  if (UseTaskController() && NS_IsMainThread()) {
+  if (NS_IsMainThread()) {
     TaskController::Get()->SetThreadObserver(aObserver);
   }
 }
 
 namespace mozilla {
 template class ThreadEventQueue<EventQueue>;
-template class ThreadEventQueue<PrioritizedEventQueue>;
 }  // namespace mozilla

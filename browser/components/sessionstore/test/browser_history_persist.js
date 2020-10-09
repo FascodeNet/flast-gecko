@@ -25,9 +25,10 @@ add_task(async function check_history_not_persisted() {
   browser = tab.linkedBrowser;
   await promiseTabState(tab, state);
 
-  if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+  if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
     await SpecialPowers.spawn(browser, [], function() {
-      let sessionHistory = docShell.sessionHistory.legacySHistory;
+      let sessionHistory =
+        docShell.browsingContext.childSessionHistory.legacySHistory;
 
       is(sessionHistory.count, 1, "Should be a single history entry");
       is(
@@ -50,9 +51,10 @@ add_task(async function check_history_not_persisted() {
   // Load a new URL into the tab, it should replace the about:blank history entry
   BrowserTestUtils.loadURI(browser, "about:robots");
   await promiseBrowserLoaded(browser);
-  if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+  if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
     await SpecialPowers.spawn(browser, [], function() {
-      let sessionHistory = docShell.sessionHistory.legacySHistory;
+      let sessionHistory =
+        docShell.browsingContext.childSessionHistory.legacySHistory;
 
       is(sessionHistory.count, 1, "Should be a single history entry");
       is(
@@ -97,9 +99,10 @@ add_task(async function check_history_default_persisted() {
   tab = BrowserTestUtils.addTab(gBrowser, "about:blank");
   browser = tab.linkedBrowser;
   await promiseTabState(tab, state);
-  if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+  if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
     await SpecialPowers.spawn(browser, [], function() {
-      let sessionHistory = docShell.sessionHistory.legacySHistory;
+      let sessionHistory =
+        docShell.browsingContext.childSessionHistory.legacySHistory;
 
       is(sessionHistory.count, 1, "Should be a single history entry");
       is(
@@ -122,9 +125,10 @@ add_task(async function check_history_default_persisted() {
   // Load a new URL into the tab, it should replace the about:blank history entry
   BrowserTestUtils.loadURI(browser, "about:robots");
   await promiseBrowserLoaded(browser);
-  if (!SpecialPowers.getBoolPref("fission.sessionHistoryInParent")) {
+  if (!SpecialPowers.Services.appinfo.sessionHistoryInParent) {
     await SpecialPowers.spawn(browser, [], function() {
-      let sessionHistory = docShell.sessionHistory.legacySHistory;
+      let sessionHistory =
+        docShell.browsingContext.childSessionHistory.legacySHistory;
 
       is(sessionHistory.count, 2, "Should be two history entries");
       is(

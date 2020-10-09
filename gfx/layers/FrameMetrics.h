@@ -8,6 +8,8 @@
 #define GFX_FRAMEMETRICS_H
 
 #include <stdint.h>                 // for uint8_t, uint32_t, uint64_t
+#include <iosfwd>
+
 #include "Units.h"                  // for CSSRect, CSSPixel, etc
 #include "mozilla/DefineEnum.h"     // for MOZ_DEFINE_ENUM
 #include "mozilla/HashFunctions.h"  // for HashGeneric
@@ -59,6 +61,8 @@ namespace layers {
  */
 struct FrameMetrics {
   friend struct IPC::ParamTraits<mozilla::layers::FrameMetrics>;
+  friend std::ostream& operator<<(std::ostream& aStream,
+                                  const FrameMetrics& aMetrics);
 
   typedef ScrollableLayerGuid::ViewID ViewID;
 
@@ -89,7 +93,6 @@ struct FrameMetrics {
         mZoom(),
         mScrollGeneration(0),
         mRootCompositionSize(0, 0),
-        mDisplayPortMargins(0, 0, 0, 0),
         mPresShellId(-1),
         mLayoutViewport(0, 0, 0, 0),
         mExtraResolution(),
@@ -115,7 +118,6 @@ struct FrameMetrics {
            // don't compare mZoom
            mScrollGeneration == aOther.mScrollGeneration &&
            mRootCompositionSize == aOther.mRootCompositionSize &&
-           mDisplayPortMargins == aOther.mDisplayPortMargins &&
            mPresShellId == aOther.mPresShellId &&
            mLayoutViewport.IsEqualEdges(aOther.mLayoutViewport) &&
            mExtraResolution == aOther.mExtraResolution &&
@@ -263,6 +265,12 @@ struct FrameMetrics {
       const ScrollPositionUpdate& aUpdate);
 
   void UpdatePendingScrollInfo(const ScrollPositionUpdate& aInfo) {
+    // We only get this "pending scroll info" for paint-skip transactions,
+    // but PureRelative position updates always trigger a full paint, so
+    // we should never enter this code with a PureRelative update type. For
+    // the other types, the destination field on the ScrollPositionUpdate will
+    // tell us the final layout scroll position on the main thread.
+    MOZ_ASSERT(aInfo.GetType() != ScrollUpdateType::PureRelative);
     SetLayoutScrollOffset(aInfo.GetDestination());
     mScrollGeneration = aInfo.GetGeneration();
   }
@@ -352,14 +360,6 @@ struct FrameMetrics {
   }
 
   const CSSSize& GetRootCompositionSize() const { return mRootCompositionSize; }
-
-  void SetDisplayPortMargins(const ScreenMargin& aDisplayPortMargins) {
-    mDisplayPortMargins = aDisplayPortMargins;
-  }
-
-  const ScreenMargin& GetDisplayPortMargins() const {
-    return mDisplayPortMargins;
-  }
 
   uint32_t GetPresShellId() const { return mPresShellId; }
 
@@ -478,7 +478,7 @@ struct FrameMetrics {
   ParentLayerRect mCompositionBounds;
 
   // The area of a scroll frame's contents that has been painted, relative to
-  // mScrollOffset.
+  // GetLayoutScrollOffset().
   //
   // Should not be larger than GetExpandedScrollableRect().
   //
@@ -688,18 +688,19 @@ MOZ_DEFINE_ENUM_CLASS_WITH_BASE(
 ));
 // clang-format on
 
+std::ostream& operator<<(std::ostream& aStream,
+                         const OverscrollBehavior& aBehavior);
+
 struct OverscrollBehaviorInfo {
-  OverscrollBehaviorInfo()
-      : mBehaviorX(OverscrollBehavior::Auto),
-        mBehaviorY(OverscrollBehavior::Auto) {}
+  OverscrollBehaviorInfo();
 
   // Construct from StyleOverscrollBehavior values.
   static OverscrollBehaviorInfo FromStyleConstants(
       StyleOverscrollBehavior aBehaviorX, StyleOverscrollBehavior aBehaviorY);
 
-  bool operator==(const OverscrollBehaviorInfo& aOther) const {
-    return mBehaviorX == aOther.mBehaviorX && mBehaviorY == aOther.mBehaviorY;
-  }
+  bool operator==(const OverscrollBehaviorInfo& aOther) const;
+  friend std::ostream& operator<<(std::ostream& aStream,
+                                  const OverscrollBehaviorInfo& aInfo);
 
   OverscrollBehavior mBehaviorX;
   OverscrollBehavior mBehaviorY;
@@ -753,6 +754,8 @@ typedef Maybe<LayerClip> MaybeLayerClip;  // for passing over IPDL
  */
 struct ScrollMetadata {
   friend struct IPC::ParamTraits<mozilla::layers::ScrollMetadata>;
+  friend std::ostream& operator<<(std::ostream& aStream,
+                                  const ScrollMetadata& aMetadata);
 
   typedef ScrollableLayerGuid::ViewID ViewID;
 
@@ -912,12 +915,13 @@ struct ScrollMetadata {
     return mScrollUpdates;
   }
 
-  void UpdatePendingScrollInfo(const ScrollPositionUpdate& aInfo) {
-    mMetrics.UpdatePendingScrollInfo(aInfo);
+  void UpdatePendingScrollInfo(nsTArray<ScrollPositionUpdate>&& aUpdates) {
+    MOZ_ASSERT(!aUpdates.IsEmpty());
+    mMetrics.UpdatePendingScrollInfo(aUpdates.LastElement());
 
     mDidContentGetPainted = false;
     mScrollUpdates.Clear();
-    mScrollUpdates.AppendElement(aInfo);
+    mScrollUpdates.AppendElements(std::move(aUpdates));
   }
 
  private:
@@ -1018,7 +1022,7 @@ struct ScrollMetadata {
 };
 
 typedef nsDataHashtable<ScrollableLayerGuid::ViewIDHashKey,
-                        ScrollPositionUpdate>
+                        nsTArray<ScrollPositionUpdate>>
     ScrollUpdatesMap;
 
 }  // namespace layers

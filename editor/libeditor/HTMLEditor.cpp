@@ -1805,11 +1805,8 @@ EditorDOMPoint HTMLEditor::InsertNodeIntoProperAncestorWithTransaction(
     if (!pointToInsert.IsInContentNode() ||
         !EditorUtils::IsEditableContent(*pointToInsert.ContainerAsContent(),
                                         EditorType::HTML)) {
-      // There's no suitable place to put the node in this editing host.  Maybe
-      // someone is trying to put block content in a span.  So just put it
-      // where we were originally asked.
-      pointToInsert = aPointToInsert;
-      break;
+      // There's no suitable place to put the node in this editing host.
+      return EditorDOMPoint();
     }
   }
 
@@ -6283,7 +6280,25 @@ nsresult HTMLEditor::GetPreferredIMEState(IMEState* aState) {
 
 already_AddRefed<Element> HTMLEditor::GetInputEventTargetElement() const {
   RefPtr<Element> target = GetActiveEditingHost();
-  return target.forget();
+  if (target) {
+    return target.forget();
+  }
+
+  // When there is no active editing host due to focus node is a
+  // non-editable node, we should look for its editable parent to
+  // dispatch `beforeinput` event.
+  nsIContent* focusContent =
+      nsIContent::FromNodeOrNull(SelectionRefPtr()->GetFocusNode());
+  if (!focusContent || focusContent->IsEditable()) {
+    return nullptr;
+  }
+  for (Element* element : focusContent->AncestorsOfType<Element>()) {
+    if (element->IsEditable()) {
+      target = element->GetEditingHost();
+      return target.forget();
+    }
+  }
+  return nullptr;
 }
 
 Element* HTMLEditor::GetEditorRoot() const { return GetActiveEditingHost(); }

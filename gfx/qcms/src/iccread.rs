@@ -25,6 +25,7 @@ use std::{
     ptr::null_mut,
     slice,
     sync::atomic::{AtomicBool, Ordering},
+    sync::Arc,
 };
 
 use ::libc;
@@ -32,7 +33,7 @@ use libc::{fclose, fopen, fread, free, malloc, memset, FILE};
 
 use crate::{
     double_to_s15Fixed16Number,
-    transform::{get_rgb_colorants, precache_output, precache_release, set_rgb_colorants},
+    transform::{get_rgb_colorants, precache_output, set_rgb_colorants},
 };
 use crate::{
     matrix::matrix, qcms_intent, s15Fixed16Number, s15Fixed16Number_to_float,
@@ -75,7 +76,7 @@ pub const XYZ_SIGNATURE: u32 = 0x58595A20;
 pub const LAB_SIGNATURE: u32 = 0x4C616220;
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct qcms_profile {
     pub class_type: u32,
     pub color_space: u32,
@@ -84,54 +85,22 @@ pub struct qcms_profile {
     pub redColorant: XYZNumber,
     pub blueColorant: XYZNumber,
     pub greenColorant: XYZNumber,
-    pub redTRC: *mut curveType,
-    pub blueTRC: *mut curveType,
-    pub greenTRC: *mut curveType,
-    pub grayTRC: *mut curveType,
-    pub A2B0: *mut lutType,
-    pub B2A0: *mut lutType,
-    pub mAB: *mut lutmABType,
-    pub mBA: *mut lutmABType,
+    pub redTRC: Option<Box<curveType>>,
+    pub blueTRC: Option<Box<curveType>>,
+    pub greenTRC: Option<Box<curveType>>,
+    pub grayTRC: Option<Box<curveType>>,
+    pub A2B0: Option<Box<lutType>>,
+    pub B2A0: Option<Box<lutType>>,
+    pub mAB: Option<Box<lutmABType>>,
+    pub mBA: Option<Box<lutmABType>>,
     pub chromaticAdaption: matrix,
-    pub output_table_r: *mut precache_output,
-    pub output_table_g: *mut precache_output,
-    pub output_table_b: *mut precache_output,
-}
-
-impl Drop for qcms_profile {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.output_table_r.is_null() {
-                precache_release(self.output_table_r);
-            }
-            if !self.output_table_g.is_null() {
-                precache_release(self.output_table_g);
-            }
-            if !self.output_table_b.is_null() {
-                precache_release(self.output_table_b);
-            }
-            if !self.A2B0.is_null() {
-                lut_release(self.A2B0);
-            }
-            if !self.B2A0.is_null() {
-                lut_release(self.B2A0);
-            }
-            if !self.mAB.is_null() {
-                mAB_release(self.mAB);
-            }
-            if !self.mBA.is_null() {
-                mAB_release(self.mBA);
-            }
-            free(self.redTRC as *mut libc::c_void);
-            free(self.blueTRC as *mut libc::c_void);
-            free(self.greenTRC as *mut libc::c_void);
-            free(self.grayTRC as *mut libc::c_void);
-        }
-    }
+    pub output_table_r: Option<Arc<precache_output>>,
+    pub output_table_g: Option<Arc<precache_output>>,
+    pub output_table_b: Option<Arc<precache_output>>,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Clone, Default)]
 pub struct lutmABType {
     pub num_in_channels: u8,
     pub num_out_channels: u8,
@@ -149,25 +118,22 @@ pub struct lutmABType {
     pub e22: s15Fixed16Number,
     pub e23: s15Fixed16Number,
     pub reversed: bool,
-    pub clut_table: *mut f32,
-    pub a_curves: [*mut curveType; 10],
-    pub b_curves: [*mut curveType; 10],
-    pub m_curves: [*mut curveType; 10],
-    pub clut_table_data: [f32; 0],
+    pub clut_table: Option<Vec<f32>>,
+    pub a_curves: [Option<Box<curveType>>; 10],
+    pub b_curves: [Option<Box<curveType>>; 10],
+    pub m_curves: [Option<Box<curveType>>; 10],
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
-pub struct curveType {
-    pub type_0: u32,
-    pub count: u32,
-    pub parameter: [f32; 7],
-    pub data: [uInt16Number; 0],
+#[derive(Clone)]
+pub enum curveType {
+    Curve(Vec<uInt16Number>),
+    Parametric(Vec<f32>),
 }
 pub type uInt16Number = u16;
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct lutType {
     pub num_input_channels: u8,
     pub num_output_channels: u8,
@@ -183,14 +149,13 @@ pub struct lutType {
     pub e22: s15Fixed16Number,
     pub num_input_table_entries: u16,
     pub num_output_table_entries: u16,
-    pub input_table: *mut f32,
-    pub clut_table: *mut f32,
-    pub output_table: *mut f32,
-    pub table_data: [f32; 0],
+    pub input_table: Vec<f32>,
+    pub clut_table: Vec<f32>,
+    pub output_table: Vec<f32>,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct XYZNumber {
     pub X: s15Fixed16Number,
     pub Y: s15Fixed16Number,
@@ -310,10 +275,10 @@ fn read_uInt16Number(mut mem: &mut mem_source, mut offset: usize) -> uInt16Numbe
     return read_u16(mem, offset);
 }
 unsafe extern "C" fn write_u32(mut mem: *mut libc::c_void, mut offset: usize, mut value: u32) {
-    *((mem as *mut libc::c_uchar).offset(offset as isize) as *mut u32) = cpu_to_be32(value);
+    std::ptr::write_unaligned(mem.offset(offset as isize) as *mut u32, cpu_to_be32(value));
 }
 unsafe extern "C" fn write_u16(mut mem: *mut libc::c_void, mut offset: usize, mut value: u16) {
-    *((mem as *mut libc::c_uchar).offset(offset as isize) as *mut u16) = cpu_to_be16(value);
+    std::ptr::write_unaligned(mem.offset(offset as isize) as *mut u16, cpu_to_be16(value));
 }
 
 /* An arbitrary 4MB limit on profile size */
@@ -495,10 +460,10 @@ pub extern "C" fn qcms_profile_is_bogus(mut profile: &mut qcms_profile) -> bool 
     if (*profile).color_space != RGB_SIGNATURE {
         return false;
     }
-    if !(*profile).A2B0.is_null()
-        || !(*profile).B2A0.is_null()
-        || !(*profile).mAB.is_null()
-        || !(*profile).mBA.is_null()
+    if !(*profile).A2B0.is_none()
+        || !(*profile).B2A0.is_none()
+        || !(*profile).mAB.is_none()
+        || !(*profile).mBA.is_none()
     {
         return false;
     }
@@ -574,13 +539,13 @@ const TAG_A2B0: u32 = 0x41324230;
 const TAG_B2A0: u32 = 0x42324130;
 const TAG_CHAD: u32 = 0x63686164;
 
-unsafe fn find_tag(mut index: &tag_index, mut tag_id: u32) -> *const tag {
+fn find_tag(mut index: &tag_index, mut tag_id: u32) -> Option<&tag> {
     for t in index {
         if t.signature == tag_id {
-            return t as *const _;
+            return Some(t);
         }
     }
-    0 as *const tag
+    None
 }
 
 pub const XYZ_TYPE: u32 = 0x58595a20; // 'XYZ '
@@ -592,17 +557,17 @@ pub const LUT_MAB_TYPE: u32 = 0x6d414220; // 'mAB '
 pub const LUT_MBA_TYPE: u32 = 0x6d424120; // 'mBA '
 pub const CHROMATIC_TYPE: u32 = 0x73663332; // 'sf32'
 
-unsafe fn read_tag_s15Fixed16ArrayType(
+fn read_tag_s15Fixed16ArrayType(
     mut src: &mut mem_source,
     mut index: &tag_index,
     mut tag_id: u32,
 ) -> matrix {
-    let mut tag: *const tag = find_tag(index, tag_id);
+    let mut tag = find_tag(index, tag_id);
     let mut matrix: matrix = matrix {
         m: [[0.; 3]; 3],
         invalid: false,
     };
-    if !tag.is_null() {
+    if let Some(tag) = tag {
         let mut i: u8;
         let mut offset: u32 = (*tag).offset;
         let mut type_0: u32 = read_u32(src, offset as usize);
@@ -624,17 +589,13 @@ unsafe fn read_tag_s15Fixed16ArrayType(
     }
     return matrix;
 }
-unsafe fn read_tag_XYZType(
-    mut src: &mut mem_source,
-    mut index: &tag_index,
-    mut tag_id: u32,
-) -> XYZNumber {
+fn read_tag_XYZType(mut src: &mut mem_source, mut index: &tag_index, mut tag_id: u32) -> XYZNumber {
     let mut num: XYZNumber = {
         let mut init = XYZNumber { X: 0, Y: 0, Z: 0 };
         init
     };
-    let mut tag: *const tag = find_tag(&index, tag_id);
-    if !tag.is_null() {
+    let mut tag = find_tag(&index, tag_id);
+    if let Some(tag) = tag {
         let mut offset: u32 = (*tag).offset;
         let mut type_0: u32 = read_u32(src, offset as usize);
         if type_0 != XYZ_TYPE {
@@ -651,93 +612,75 @@ unsafe fn read_tag_XYZType(
 // Read the tag at a given offset rather then the tag_index.
 // This method is used when reading mAB tags where nested curveType are
 // present that are not part of the tag_index.
-unsafe extern "C" fn read_curveType(
+fn read_curveType(
     mut src: &mut mem_source,
     mut offset: u32,
-    mut len: *mut u32,
-) -> *mut curveType {
-    static mut COUNT_TO_LENGTH: [u32; 5] = [1, 3, 4, 5, 7]; //PARAMETRIC_CURVE_TYPE
+    mut len: &mut u32,
+) -> Option<Box<curveType>> {
+    const COUNT_TO_LENGTH: [u32; 5] = [1, 3, 4, 5, 7]; //PARAMETRIC_CURVE_TYPE
     let mut curve: *mut curveType;
     let mut type_0: u32 = read_u32(src, offset as usize);
     let mut count: u32;
     let mut i: u32;
     if type_0 != CURVE_TYPE && type_0 != PARAMETRIC_CURVE_TYPE {
         invalid_source(src, "unexpected type, expected CURV or PARA");
-        return 0 as *mut curveType;
+        return None;
     }
     if type_0 == CURVE_TYPE {
         count = read_u32(src, (offset + 8) as usize);
         //arbitrary
         if count > 40000 {
             invalid_source(src, "curve size too large");
-            return 0 as *mut curveType;
+            return None;
         }
-        curve = malloc(
-            ::std::mem::size_of::<curveType>()
-                + ::std::mem::size_of::<uInt16Number>() * count as usize,
-        ) as *mut curveType;
-        if curve.is_null() {
-            return 0 as *mut curveType;
+        let mut table = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            table.push(read_u16(src, (offset + 12 + i * 2) as usize));
         }
-        (*curve).count = count;
-        (*curve).type_0 = CURVE_TYPE;
-        i = 0;
-        while i < count {
-            *(*curve).data.as_mut_ptr().offset(i as isize) =
-                read_u16(src, (offset + 12 + i * 2) as usize);
-            i = i + 1
-        }
-        *len = 12 + count * 2
+        *len = 12 + count * 2;
+        return Some(Box::new(curveType::Curve(table)));
     } else {
         count = read_u16(src, (offset + 8) as usize) as u32;
         if count > 4 {
             invalid_source(src, "parametric function type not supported.");
-            return 0 as *mut curveType;
+            return None;
         }
-        curve = malloc(::std::mem::size_of::<curveType>()) as *mut curveType;
-        if curve.is_null() {
-            return 0 as *mut curveType;
-        }
-        (*curve).count = count;
-        (*curve).type_0 = PARAMETRIC_CURVE_TYPE;
-        i = 0;
-        while i < COUNT_TO_LENGTH[count as usize] {
-            (*curve).parameter[i as usize] = s15Fixed16Number_to_float(read_s15Fixed16Number(
+        let mut params = Vec::with_capacity(count as usize);
+        for i in 0..COUNT_TO_LENGTH[count as usize] {
+            params.push(s15Fixed16Number_to_float(read_s15Fixed16Number(
                 src,
                 (offset + 12 + i * 4) as usize,
-            ));
-            i = i + 1
+            )));
         }
         *len = 12 + COUNT_TO_LENGTH[count as usize] * 4;
         if count == 1 || count == 2 {
             /* we have a type 1 or type 2 function that has a division by 'a' */
-            let mut a: f32 = (*curve).parameter[1];
+            let mut a: f32 = params[1];
             if a == 0.0 {
                 invalid_source(src, "parametricCurve definition causes division by zero");
             }
         }
+        return Some(Box::new(curveType::Parametric(params)));
     }
-    return curve;
 }
-unsafe fn read_tag_curveType(
+fn read_tag_curveType(
     mut src: &mut mem_source,
     mut index: &tag_index,
     mut tag_id: u32,
-) -> *mut curveType {
-    let mut tag: *const tag = find_tag(index, tag_id);
-    let mut curve: *mut curveType = 0 as *mut curveType;
-    if !tag.is_null() {
+) -> Option<Box<curveType>> {
+    let mut tag = find_tag(index, tag_id);
+    if let Some(tag) = tag {
         let mut len: u32 = 0;
         return read_curveType(src, (*tag).offset, &mut len);
     } else {
         invalid_source(src, "missing curvetag");
     }
-    return curve;
+    return None;
 }
 // arbitrary
-unsafe extern "C" fn read_nested_curveType(
+fn read_nested_curveType(
     mut src: &mut mem_source,
-    mut curveArray: *mut [*mut curveType; 10],
+    mut curveArray: &mut [Option<Box<curveType>>; 10],
     mut num_channels: u8,
     mut curve_offset: u32,
 ) {
@@ -748,7 +691,7 @@ unsafe extern "C" fn read_nested_curveType(
         let mut tag_len: u32 = 0;
         (*curveArray)[i as usize] =
             read_curveType(src, curve_offset + channel_offset, &mut tag_len);
-        if (*curveArray)[i as usize].is_null() {
+        if (*curveArray)[i as usize].is_none() {
             invalid_source(src, "invalid nested curveType curve");
             break;
         } else {
@@ -761,28 +704,9 @@ unsafe extern "C" fn read_nested_curveType(
         }
     }
 }
-unsafe extern "C" fn mAB_release(mut lut: *mut lutmABType) {
-    let mut i: u8;
-    i = 0u8;
-    while (i as i32) < (*lut).num_in_channels as i32 {
-        free((*lut).a_curves[i as usize] as *mut libc::c_void);
-        i = i + 1
-    }
-    i = 0u8;
-    while (i as i32) < (*lut).num_out_channels as i32 {
-        free((*lut).b_curves[i as usize] as *mut libc::c_void);
-        free((*lut).m_curves[i as usize] as *mut libc::c_void);
-        i = i + 1
-    }
-    free(lut as *mut libc::c_void);
-}
+
 /* See section 10.10 for specs */
-unsafe fn read_tag_lutmABType(
-    mut src: &mut mem_source,
-    mut index: &tag_index,
-    mut tag_id: u32,
-) -> *mut lutmABType {
-    let mut tag: *const tag = find_tag(index, tag_id);
+fn read_tag_lutmABType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lutmABType>> {
     let mut offset: u32 = (*tag).offset;
     let mut a_curve_offset: u32;
     let mut b_curve_offset: u32;
@@ -794,22 +718,22 @@ unsafe fn read_tag_lutmABType(
     let mut type_0: u32 = read_u32(src, offset as usize);
     let mut num_in_channels: u8;
     let mut num_out_channels: u8;
-    let mut lut: *mut lutmABType;
+    let mut lut: Box<lutmABType>;
     let mut i: u32;
     if type_0 != LUT_MAB_TYPE && type_0 != LUT_MBA_TYPE {
-        return 0 as *mut lutmABType;
+        return None;
     }
     num_in_channels = read_u8(src, (offset + 8) as usize);
     num_out_channels = read_u8(src, (offset + 9) as usize);
     if num_in_channels as i32 > 10 || num_out_channels as i32 > 10 {
-        return 0 as *mut lutmABType;
+        return None;
     }
     // We require 3in/out channels since we only support RGB->XYZ (or RGB->LAB)
     // XXX: If we remove this restriction make sure that the number of channels
     //      is less or equal to the maximum number of mAB curves in qcmsint.h
     //      also check for clut_size overflow. Also make sure it's != 0
     if num_in_channels as i32 != 3 || num_out_channels as i32 != 3 {
-        return 0 as *mut lutmABType;
+        return None;
     }
     // some of this data is optional and is denoted by a zero offset
     // we also use this to track their existance
@@ -852,17 +776,11 @@ unsafe fn read_tag_lutmABType(
     // 24bits * 3 won't overflow either
     clut_size = clut_size * num_out_channels as libc::c_uint;
     if clut_size > 500000 {
-        return 0 as *mut lutmABType;
+        return None;
     }
-    lut = malloc(
-        ::std::mem::size_of::<lutmABType>() + clut_size as usize * ::std::mem::size_of::<f32>(),
-    ) as *mut lutmABType;
-    if lut.is_null() {
-        return 0 as *mut lutmABType;
-    }
-    // we'll fill in the rest below
-    std::ptr::write_bytes(lut, 0, 1);
-    (*lut).clut_table = (*lut).clut_table_data.as_mut_ptr().offset(0isize) as *mut f32;
+
+    lut = Box::new(lutmABType::default());
+
     if clut_offset != 0 {
         i = 0;
         while i < num_in_channels as libc::c_uint {
@@ -906,40 +824,33 @@ unsafe fn read_tag_lutmABType(
     }
     if clut_offset != 0 {
         clut_precision = read_u8(src, (clut_offset + 16) as usize);
+        let mut clut_table = Vec::with_capacity(clut_size as usize);
         if clut_precision as i32 == 1 {
-            i = 0;
-            while i < clut_size {
-                *(*lut).clut_table.offset(i as isize) = uInt8Number_to_float(read_uInt8Number(
+            for i in 0..clut_size {
+                clut_table.push(uInt8Number_to_float(read_uInt8Number(
                     src,
                     (clut_offset + 20 + i * 1) as usize,
-                ));
-                i = i + 1
+                )));
             }
+            lut.clut_table = Some(clut_table);
         } else if clut_precision as i32 == 2 {
-            i = 0;
-            while i < clut_size {
-                *(*lut).clut_table.offset(i as isize) = uInt16Number_to_float(read_uInt16Number(
+            for i in 0..clut_size {
+                clut_table.push(uInt16Number_to_float(read_uInt16Number(
                     src,
                     (clut_offset + 20 + i * 2) as usize,
-                ));
-                i = i + 1
+                )));
             }
+            lut.clut_table = Some(clut_table);
         } else {
             invalid_source(src, "Invalid clut precision");
         }
     }
     if !(*src).valid {
-        mAB_release(lut);
-        return 0 as *mut lutmABType;
+        return None;
     }
-    return lut;
+    return Some(lut);
 }
-unsafe fn read_tag_lutType(
-    mut src: &mut mem_source,
-    mut index: &tag_index,
-    mut tag_id: u32,
-) -> *mut lutType {
-    let mut tag: *const tag = find_tag(index, tag_id);
+fn read_tag_lutType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lutType>> {
     let mut offset: u32 = (*tag).offset;
     let mut type_0: u32 = read_u32(src, offset as usize);
     let mut num_input_table_entries: u16;
@@ -952,7 +863,6 @@ unsafe fn read_tag_lutType(
     let mut output_offset: u32;
     let mut clut_size: u32;
     let mut entry_size: usize;
-    let mut lut: *mut lutType;
     let mut i: u32;
     if type_0 == LUT8_TYPE {
         num_input_table_entries = 256u16;
@@ -964,14 +874,14 @@ unsafe fn read_tag_lutType(
         num_output_table_entries = read_u16(src, (offset + 50) as usize);
         if num_input_table_entries as i32 == 0 || num_output_table_entries as i32 == 0 {
             invalid_source(src, "Bad channel count");
-            return 0 as *mut lutType;
+            return None;
         }
         entry_size = 2;
         input_offset = 52
     } else {
         debug_assert!(false);
         invalid_source(src, "Unexpected lut type");
-        return 0 as *mut lutType;
+        return None;
     }
     in_chan = read_u8(src, (offset + 8) as usize);
     out_chan = read_u8(src, (offset + 9) as usize);
@@ -979,120 +889,112 @@ unsafe fn read_tag_lutType(
     clut_size = (grid_points as f64).powf(in_chan as f64) as u32;
     if clut_size > 500000 {
         invalid_source(src, "CLUT too large");
-        return 0 as *mut lutType;
+        return None;
     }
     if clut_size <= 0 {
         invalid_source(src, "CLUT must not be empty.");
-        return 0 as *mut lutType;
+        return None;
     }
     if in_chan as i32 != 3 || out_chan as i32 != 3 {
         invalid_source(src, "CLUT only supports RGB");
-        return 0 as *mut lutType;
+        return None;
     }
-    lut = malloc(
-        ::std::mem::size_of::<lutType>()
-            + ((num_input_table_entries as i32 * in_chan as i32) as libc::c_uint
-                + clut_size * out_chan as libc::c_uint
-                + (num_output_table_entries as i32 * out_chan as i32) as libc::c_uint)
-                as usize
-                * ::std::mem::size_of::<f32>(),
-    ) as *mut lutType;
-    if lut.is_null() {
-        invalid_source(src, "CLUT too large");
-        return 0 as *mut lutType;
-    }
-    /* compute the offsets of tables */
-    (*lut).input_table = &mut *(*lut).table_data.as_mut_ptr().offset(0isize) as *mut f32;
-    (*lut).clut_table = &mut *(*lut)
-        .table_data
-        .as_mut_ptr()
-        .offset((in_chan as i32 * num_input_table_entries as i32) as isize)
-        as *mut f32;
-    (*lut).output_table = &mut *(*lut).table_data.as_mut_ptr().offset(
-        ((in_chan as i32 * num_input_table_entries as i32) as libc::c_uint
-            + clut_size * out_chan as libc::c_uint) as isize,
-    ) as *mut f32;
-    (*lut).num_input_table_entries = num_input_table_entries;
-    (*lut).num_output_table_entries = num_output_table_entries;
-    (*lut).num_input_channels = in_chan;
-    (*lut).num_output_channels = out_chan;
-    (*lut).num_clut_grid_points = grid_points;
-    (*lut).e00 = read_s15Fixed16Number(src, (offset + 12) as usize);
-    (*lut).e01 = read_s15Fixed16Number(src, (offset + 16) as usize);
-    (*lut).e02 = read_s15Fixed16Number(src, (offset + 20) as usize);
-    (*lut).e10 = read_s15Fixed16Number(src, (offset + 24) as usize);
-    (*lut).e11 = read_s15Fixed16Number(src, (offset + 28) as usize);
-    (*lut).e12 = read_s15Fixed16Number(src, (offset + 32) as usize);
-    (*lut).e20 = read_s15Fixed16Number(src, (offset + 36) as usize);
-    (*lut).e21 = read_s15Fixed16Number(src, (offset + 40) as usize);
-    (*lut).e22 = read_s15Fixed16Number(src, (offset + 44) as usize);
-    i = 0;
-    while i < ((*lut).num_input_table_entries as i32 * in_chan as i32) as u32 {
+
+    let e00 = read_s15Fixed16Number(src, (offset + 12) as usize);
+    let e01 = read_s15Fixed16Number(src, (offset + 16) as usize);
+    let e02 = read_s15Fixed16Number(src, (offset + 20) as usize);
+    let e10 = read_s15Fixed16Number(src, (offset + 24) as usize);
+    let e11 = read_s15Fixed16Number(src, (offset + 28) as usize);
+    let e12 = read_s15Fixed16Number(src, (offset + 32) as usize);
+    let e20 = read_s15Fixed16Number(src, (offset + 36) as usize);
+    let e21 = read_s15Fixed16Number(src, (offset + 40) as usize);
+    let e22 = read_s15Fixed16Number(src, (offset + 44) as usize);
+
+    let mut input_table = Vec::with_capacity((num_input_table_entries * in_chan as u16) as usize);
+    for i in 0..(num_input_table_entries * in_chan as u16) {
         if type_0 == LUT8_TYPE {
-            *(*lut).input_table.offset(i as isize) = uInt8Number_to_float(read_uInt8Number(
+            input_table.push(uInt8Number_to_float(read_uInt8Number(
                 src,
                 (offset + input_offset) as usize + i as usize * entry_size,
-            ))
+            )))
         } else {
-            *(*lut).input_table.offset(i as isize) = uInt16Number_to_float(read_uInt16Number(
+            input_table.push(uInt16Number_to_float(read_uInt16Number(
                 src,
                 (offset + input_offset) as usize + i as usize * entry_size,
-            ))
+            )))
         }
-        i = i + 1
     }
     clut_offset = ((offset + input_offset) as usize
-        + ((*lut).num_input_table_entries as i32 * in_chan as i32) as usize * entry_size)
+        + (num_input_table_entries as i32 * in_chan as i32) as usize * entry_size)
         as u32;
-    i = 0;
-    while i < clut_size * out_chan as libc::c_uint {
+
+    let mut clut_table = Vec::with_capacity((clut_size * out_chan as u32) as usize);
+    for i in (0..clut_size * out_chan as u32).step_by(3) {
         if type_0 == LUT8_TYPE {
-            *(*lut).clut_table.offset((i + 0) as isize) = uInt8Number_to_float(read_uInt8Number(
+            clut_table.push(uInt8Number_to_float(read_uInt8Number(
                 src,
                 clut_offset as usize + i as usize * entry_size + 0,
-            ));
-            *(*lut).clut_table.offset((i + 1) as isize) = uInt8Number_to_float(read_uInt8Number(
+            )));
+            clut_table.push(uInt8Number_to_float(read_uInt8Number(
                 src,
                 clut_offset as usize + i as usize * entry_size + 1,
-            ));
-            *(*lut).clut_table.offset((i + 2) as isize) = uInt8Number_to_float(read_uInt8Number(
+            )));
+            clut_table.push(uInt8Number_to_float(read_uInt8Number(
                 src,
                 clut_offset as usize + i as usize * entry_size + 2,
-            ))
+            )))
         } else {
-            *(*lut).clut_table.offset((i + 0) as isize) = uInt16Number_to_float(read_uInt16Number(
+            clut_table.push(uInt16Number_to_float(read_uInt16Number(
                 src,
                 clut_offset as usize + i as usize * entry_size + 0,
-            ));
-            *(*lut).clut_table.offset((i + 1) as isize) = uInt16Number_to_float(read_uInt16Number(
+            )));
+            clut_table.push(uInt16Number_to_float(read_uInt16Number(
                 src,
                 clut_offset as usize + i as usize * entry_size + 2,
-            ));
-            *(*lut).clut_table.offset((i + 2) as isize) = uInt16Number_to_float(read_uInt16Number(
+            )));
+            clut_table.push(uInt16Number_to_float(read_uInt16Number(
                 src,
                 clut_offset as usize + i as usize * entry_size + 4,
-            ))
+            )))
         }
-        i = i + 3
     }
     output_offset =
         (clut_offset as usize + (clut_size * out_chan as u32) as usize * entry_size) as u32;
-    i = 0;
-    while i < ((*lut).num_output_table_entries as i32 * out_chan as i32) as u32 {
+
+    let mut output_table =
+        Vec::with_capacity((num_output_table_entries * out_chan as u16) as usize);
+    for i in 0..num_output_table_entries as i32 * out_chan as i32 {
         if type_0 == LUT8_TYPE {
-            *(*lut).output_table.offset(i as isize) = uInt8Number_to_float(read_uInt8Number(
+            output_table.push(uInt8Number_to_float(read_uInt8Number(
                 src,
                 output_offset as usize + i as usize * entry_size,
-            ))
+            )))
         } else {
-            *(*lut).output_table.offset(i as isize) = uInt16Number_to_float(read_uInt16Number(
+            output_table.push(uInt16Number_to_float(read_uInt16Number(
                 src,
                 output_offset as usize + i as usize * entry_size,
-            ))
+            )))
         }
-        i = i + 1
     }
-    return lut;
+    Some(Box::new(lutType {
+        num_input_table_entries: num_input_table_entries,
+        num_output_table_entries: num_output_table_entries,
+        num_input_channels: in_chan,
+        num_output_channels: out_chan,
+        num_clut_grid_points: grid_points,
+        e00,
+        e01,
+        e02,
+        e10,
+        e11,
+        e12,
+        e20,
+        e21,
+        e22,
+        input_table,
+        clut_table,
+        output_table,
+    }))
 }
 fn read_rendering_intent(mut profile: &mut qcms_profile, mut src: &mut mem_source) {
     (*profile).rendering_intent = read_u32(src, 64);
@@ -1104,12 +1006,12 @@ fn read_rendering_intent(mut profile: &mut qcms_profile, mut src: &mut mem_sourc
     };
 }
 #[no_mangle]
-pub unsafe extern "C" fn qcms_profile_create() -> Box<qcms_profile> {
-    Box::new(std::mem::zeroed())
+pub extern "C" fn qcms_profile_create() -> Box<qcms_profile> {
+    Box::new(qcms_profile::default())
 }
 /* build sRGB gamma table */
 /* based on cmsBuildParametricGamma() */
-unsafe extern "C" fn build_sRGB_gamma_table(mut num_entries: i32) -> *mut u16 {
+fn build_sRGB_gamma_table(mut num_entries: i32) -> Vec<u16> {
     let mut i: i32;
     /* taken from lcms: Build_sRGBGamma() */
     let mut gamma: f64 = 2.4f64;
@@ -1117,13 +1019,9 @@ unsafe extern "C" fn build_sRGB_gamma_table(mut num_entries: i32) -> *mut u16 {
     let mut b: f64 = 0.055f64 / 1.055f64;
     let mut c: f64 = 1.0f64 / 12.92f64;
     let mut d: f64 = 0.04045f64;
-    let mut table: *mut u16 =
-        malloc(::std::mem::size_of::<u16>() * num_entries as usize) as *mut u16;
-    if table.is_null() {
-        return 0 as *mut u16;
-    }
-    i = 0;
-    while i < num_entries {
+    let mut table = Vec::with_capacity(num_entries as usize);
+
+    for i in 0..num_entries {
         let mut x: f64 = i as f64 / (num_entries - 1) as f64;
         let mut y: f64;
         let mut output: f64;
@@ -1148,31 +1046,14 @@ unsafe extern "C" fn build_sRGB_gamma_table(mut num_entries: i32) -> *mut u16 {
         if output < 0f64 {
             output = 0f64
         }
-        *table.offset(i as isize) = output.floor() as u16;
-        i += 1
+        table.push(output.floor() as u16);
     }
     return table;
 }
-unsafe extern "C" fn curve_from_table(mut table: *mut u16, mut num_entries: i32) -> *mut curveType {
-    let mut curve: *mut curveType;
-    let mut i: i32;
-    curve = malloc(
-        ::std::mem::size_of::<curveType>()
-            + ::std::mem::size_of::<uInt16Number>() * num_entries as usize,
-    ) as *mut curveType;
-    if curve.is_null() {
-        return 0 as *mut curveType;
-    }
-    (*curve).type_0 = CURVE_TYPE;
-    (*curve).count = num_entries as u32;
-    i = 0;
-    while i < num_entries {
-        *(*curve).data.as_mut_ptr().offset(i as isize) = *table.offset(i as isize);
-        i += 1
-    }
-    return curve;
+fn curve_from_table(mut table: &[u16]) -> Box<curveType> {
+    return Box::new(curveType::Curve(table.to_vec()));
 }
-unsafe extern "C" fn float_to_u8Fixed8Number(mut a: f32) -> u16 {
+fn float_to_u8Fixed8Number(mut a: f32) -> u16 {
     if a > 255.0 + 255.0 / 256f32 {
         return 0xffffu16;
     } else if a < 0.0 {
@@ -1181,20 +1062,9 @@ unsafe extern "C" fn float_to_u8Fixed8Number(mut a: f32) -> u16 {
         return (a * 256.0 + 0.5).floor() as u16;
     };
 }
-unsafe extern "C" fn curve_from_gamma(mut gamma: f32) -> *mut curveType {
-    let mut curve: *mut curveType;
-    let mut num_entries: i32 = 1;
-    curve = malloc(
-        ::std::mem::size_of::<curveType>()
-            + ::std::mem::size_of::<uInt16Number>() * num_entries as usize,
-    ) as *mut curveType;
-    if curve.is_null() {
-        return 0 as *mut curveType;
-    }
-    (*curve).count = num_entries as u32;
-    *(*curve).data.as_mut_ptr().offset(0isize) = float_to_u8Fixed8Number(gamma);
-    (*curve).type_0 = CURVE_TYPE;
-    return curve;
+
+fn curve_from_gamma(mut gamma: f32) -> Box<curveType> {
+    Box::new(curveType::Curve(vec![float_to_u8Fixed8Number(gamma)]))
 }
 //XXX: it would be nice if we had a way of ensuring
 // everything in a profile was initialized regardless of how it was created
@@ -1214,10 +1084,10 @@ pub unsafe extern "C" fn qcms_profile_create_rgb_with_gamma_set(
     if !set_rgb_colorants(&mut profile, white_point, primaries) {
         return 0 as *mut qcms_profile;
     }
-    (*profile).redTRC = curve_from_gamma(redGamma);
-    (*profile).blueTRC = curve_from_gamma(blueGamma);
-    (*profile).greenTRC = curve_from_gamma(greenGamma);
-    if (*profile).redTRC.is_null() || (*profile).blueTRC.is_null() || (*profile).greenTRC.is_null()
+    (*profile).redTRC = Some(curve_from_gamma(redGamma));
+    (*profile).blueTRC = Some(curve_from_gamma(blueGamma));
+    (*profile).greenTRC = Some(curve_from_gamma(greenGamma));
+    if (*profile).redTRC.is_none() || (*profile).blueTRC.is_none() || (*profile).greenTRC.is_none()
     {
         return 0 as *mut qcms_profile;
     }
@@ -1232,8 +1102,8 @@ pub unsafe extern "C" fn qcms_profile_create_rgb_with_gamma_set(
 pub unsafe extern "C" fn qcms_profile_create_gray_with_gamma(mut gamma: f32) -> *mut qcms_profile {
     let mut profile = qcms_profile_create();
 
-    (*profile).grayTRC = curve_from_gamma(gamma);
-    if (*profile).grayTRC.is_null() {
+    (*profile).grayTRC = Some(curve_from_gamma(gamma));
+    if (*profile).grayTRC.is_none() {
         return 0 as *mut qcms_profile;
     }
     (*profile).class_type = DISPLAY_DEVICE_PROFILE;
@@ -1255,26 +1125,38 @@ pub unsafe extern "C" fn qcms_profile_create_rgb_with_gamma(
 pub unsafe extern "C" fn qcms_profile_create_rgb_with_table(
     mut white_point: qcms_CIE_xyY,
     mut primaries: qcms_CIE_xyYTRIPLE,
-    mut table: *mut u16,
+    mut table: *const u16,
     mut num_entries: i32,
 ) -> *mut qcms_profile {
+    let table = slice::from_raw_parts(table, num_entries as usize);
+    let profile = profile_create_rgb_with_table(white_point, primaries, table);
+    match profile {
+        Some(profile) => Box::into_raw(profile),
+        None => null_mut(),
+    }
+}
+fn profile_create_rgb_with_table(
+    mut white_point: qcms_CIE_xyY,
+    mut primaries: qcms_CIE_xyYTRIPLE,
+    table: &[u16],
+) -> Option<Box<qcms_profile>> {
     let mut profile = qcms_profile_create();
     //XXX: should store the whitepoint
     if !set_rgb_colorants(&mut profile, white_point, primaries) {
-        return 0 as *mut qcms_profile;
+        return None;
     }
-    (*profile).redTRC = curve_from_table(table, num_entries);
-    (*profile).blueTRC = curve_from_table(table, num_entries);
-    (*profile).greenTRC = curve_from_table(table, num_entries);
-    if (*profile).redTRC.is_null() || (*profile).blueTRC.is_null() || (*profile).greenTRC.is_null()
+    (*profile).redTRC = Some(curve_from_table(table));
+    (*profile).blueTRC = Some(curve_from_table(table));
+    (*profile).greenTRC = Some(curve_from_table(table));
+    if (*profile).redTRC.is_none() || (*profile).blueTRC.is_none() || (*profile).greenTRC.is_none()
     {
-        return 0 as *mut qcms_profile;
+        return None;
     }
     (*profile).class_type = DISPLAY_DEVICE_PROFILE;
     (*profile).rendering_intent = QCMS_INTENT_PERCEPTUAL;
     (*profile).color_space = RGB_SIGNATURE;
     (*profile).pcs = XYZ_TYPE;
-    return Box::into_raw(profile);
+    return Some(profile);
 }
 /* from lcms: cmsWhitePointFromTemp */
 /* tempK must be >= 4000. and <= 25000.
@@ -1335,7 +1217,7 @@ pub unsafe extern "C" fn qcms_white_point_sRGB() -> qcms_CIE_xyY {
 #[no_mangle]
 pub unsafe extern "C" fn qcms_profile_sRGB() -> *mut qcms_profile {
     let mut profile: *mut qcms_profile;
-    let mut table: *mut u16;
+    let mut table: Vec<u16>;
     let mut Rec709Primaries: qcms_CIE_xyYTRIPLE = {
         let mut init = qcms_CIE_xyYTRIPLE {
             red: {
@@ -1367,11 +1249,8 @@ pub unsafe extern "C" fn qcms_profile_sRGB() -> *mut qcms_profile {
     };
     let D65 = qcms_white_point_sRGB();
     table = build_sRGB_gamma_table(1024);
-    if table.is_null() {
-        return 0 as *mut qcms_profile;
-    }
-    profile = qcms_profile_create_rgb_with_table(D65, Rec709Primaries, table, 1024);
-    free(table as *mut libc::c_void);
+
+    profile = qcms_profile_create_rgb_with_table(D65, Rec709Primaries, table.as_ptr(), 1024);
     return profile;
 }
 /* qcms_profile_from_memory does not hold a reference to the memory passed in */
@@ -1380,29 +1259,37 @@ pub unsafe extern "C" fn qcms_profile_from_memory(
     mut mem: *const libc::c_void,
     mut size: usize,
 ) -> *mut qcms_profile {
+    let mem = slice::from_raw_parts(mem as *const libc::c_uchar, size);
+    let profile = profile_from_slice(mem);
+    match profile {
+        Some(profile) => Box::into_raw(profile),
+        None => null_mut(),
+    }
+}
+
+pub fn profile_from_slice(mem: &[u8]) -> Option<Box<qcms_profile>> {
     let mut length: u32;
     let mut source: mem_source = mem_source {
-        buf: &[],
+        buf: mem,
         valid: false,
         invalid_reason: None,
     };
     let mut index;
-    source.buf = slice::from_raw_parts(mem as *const libc::c_uchar, size);
     source.valid = true;
     let mut src: &mut mem_source = &mut source;
-    if size < 4 {
-        return null_mut();
+    if mem.len() < 4 {
+        return None;
     }
     length = read_u32(src, 0);
-    if length as usize <= size {
+    if length as usize <= mem.len() {
         // shrink the area that we can read if appropriate
         (*src).buf = &(*src).buf[0..length as usize];
     } else {
-        return null_mut();
+        return None;
     }
     /* ensure that the profile size is sane so it's easier to reason about */
     if src.buf.len() <= 64 || src.buf.len() >= MAX_PROFILE_SIZE {
-        return null_mut();
+        return None;
     }
     let mut profile = qcms_profile_create();
 
@@ -1414,15 +1301,15 @@ pub unsafe extern "C" fn qcms_profile_from_memory(
     read_pcs(&mut profile, src);
     //TODO read rest of profile stuff
     if !(*src).valid {
-        return null_mut();
+        return None;
     }
 
     index = read_tag_table(&mut profile, src);
     if !(*src).valid || index.is_empty() {
-        return null_mut();
+        return None;
     }
 
-    if !find_tag(&index, TAG_CHAD).is_null() {
+    if find_tag(&index, TAG_CHAD).is_some() {
         (*profile).chromaticAdaption = read_tag_s15Fixed16ArrayType(src, &index, TAG_CHAD)
     } else {
         (*profile).chromaticAdaption.invalid = true //Signal the data is not present
@@ -1434,68 +1321,61 @@ pub unsafe extern "C" fn qcms_profile_from_memory(
         || (*profile).class_type == COLOR_SPACE_PROFILE
     {
         if (*profile).color_space == RGB_SIGNATURE {
-            if !find_tag(&index, TAG_A2B0).is_null() {
-                if read_u32(src, (*find_tag(&index, TAG_A2B0)).offset as usize) == LUT8_TYPE
-                    || read_u32(src, (*find_tag(&index, TAG_A2B0)).offset as usize) == LUT16_TYPE
-                {
-                    (*profile).A2B0 = read_tag_lutType(src, &index, TAG_A2B0)
-                } else if read_u32(src, (*find_tag(&index, TAG_A2B0)).offset as usize)
-                    == LUT_MAB_TYPE
-                {
-                    (*profile).mAB = read_tag_lutmABType(src, &index, TAG_A2B0)
+            if let Some(A2B0) = find_tag(&index, TAG_A2B0) {
+                let lut_type = read_u32(src, A2B0.offset as usize);
+                if lut_type == LUT8_TYPE || lut_type == LUT16_TYPE {
+                    (*profile).A2B0 = read_tag_lutType(src, A2B0)
+                } else if lut_type == LUT_MAB_TYPE {
+                    (*profile).mAB = read_tag_lutmABType(src, A2B0)
                 }
             }
-            if !find_tag(&index, TAG_B2A0).is_null() {
-                if read_u32(src, (*find_tag(&index, TAG_B2A0)).offset as usize) == LUT8_TYPE
-                    || read_u32(src, (*find_tag(&index, TAG_B2A0)).offset as usize) == LUT16_TYPE
-                {
-                    (*profile).B2A0 = read_tag_lutType(src, &index, TAG_B2A0)
-                } else if read_u32(src, (*find_tag(&index, TAG_B2A0)).offset as usize)
-                    == LUT_MBA_TYPE
-                {
-                    (*profile).mBA = read_tag_lutmABType(src, &index, TAG_B2A0)
+            if let Some(B2A0) = find_tag(&index, TAG_B2A0) {
+                let lut_type = read_u32(src, B2A0.offset as usize);
+                if lut_type == LUT8_TYPE || lut_type == LUT16_TYPE {
+                    (*profile).B2A0 = read_tag_lutType(src, B2A0)
+                } else if lut_type == LUT_MBA_TYPE {
+                    (*profile).mBA = read_tag_lutmABType(src, B2A0)
                 }
             }
-            if !find_tag(&index, TAG_rXYZ).is_null() || !qcms_supports_iccv4.load(Ordering::Relaxed)
+            if find_tag(&index, TAG_rXYZ).is_some() || !qcms_supports_iccv4.load(Ordering::Relaxed)
             {
                 (*profile).redColorant = read_tag_XYZType(src, &index, TAG_rXYZ);
                 (*profile).greenColorant = read_tag_XYZType(src, &index, TAG_gXYZ);
                 (*profile).blueColorant = read_tag_XYZType(src, &index, TAG_bXYZ)
             }
             if !(*src).valid {
-                return null_mut();
+                return None;
             }
 
-            if !find_tag(&index, TAG_rTRC).is_null() || !qcms_supports_iccv4.load(Ordering::Relaxed)
+            if find_tag(&index, TAG_rTRC).is_some() || !qcms_supports_iccv4.load(Ordering::Relaxed)
             {
                 (*profile).redTRC = read_tag_curveType(src, &index, TAG_rTRC);
                 (*profile).greenTRC = read_tag_curveType(src, &index, TAG_gTRC);
                 (*profile).blueTRC = read_tag_curveType(src, &index, TAG_bTRC);
-                if (*profile).redTRC.is_null()
-                    || (*profile).blueTRC.is_null()
-                    || (*profile).greenTRC.is_null()
+                if (*profile).redTRC.is_none()
+                    || (*profile).blueTRC.is_none()
+                    || (*profile).greenTRC.is_none()
                 {
-                    return null_mut();
+                    return None;
                 }
             }
         } else if (*profile).color_space == GRAY_SIGNATURE {
             (*profile).grayTRC = read_tag_curveType(src, &index, TAG_kTRC);
-            if (*profile).grayTRC.is_null() {
-                return null_mut();
+            if (*profile).grayTRC.is_none() {
+                return None;
             }
         } else {
             debug_assert!(false, "read_color_space protects against entering here");
-            return null_mut();
+            return None;
         }
     } else {
-        return null_mut();
+        return None;
     }
 
     if !(*src).valid {
-        return null_mut();
+        return None;
     }
-
-    Box::into_raw(profile)
+    Some(profile)
 }
 #[no_mangle]
 pub unsafe extern "C" fn qcms_profile_get_rendering_intent(
@@ -1509,9 +1389,7 @@ pub unsafe extern "C" fn qcms_profile_get_color_space(
 ) -> icColorSpaceSignature {
     return (*profile).color_space;
 }
-unsafe extern "C" fn lut_release(mut lut: *mut lutType) {
-    free(lut as *mut libc::c_void);
-}
+
 #[no_mangle]
 pub unsafe extern "C" fn qcms_profile_release(mut profile: *mut qcms_profile) {
     drop(Box::from_raw(profile));

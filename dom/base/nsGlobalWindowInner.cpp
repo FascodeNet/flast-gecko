@@ -1018,8 +1018,6 @@ nsGlobalWindowInner::~nsGlobalWindowInner() {
 
   Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_MUTATION_LISTENERS,
                         mMutationBits ? 1 : 0);
-  Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_TEXT_EVENT_LISTENERS,
-                        mMayHaveTextEventListenerInDefaultGroup ? 1 : 0);
 
   // An inner window is destroyed, pull it out of the outer window's
   // list if inner windows.
@@ -1683,13 +1681,9 @@ void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
 
   Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_MUTATION_LISTENERS,
                         mMutationBits ? 1 : 0);
-  Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_TEXT_EVENT_LISTENERS,
-                        mMayHaveTextEventListenerInDefaultGroup ? 1 : 0);
 
   // Clear our mutation bitfield.
   mMutationBits = 0;
-
-  mMayHaveTextEventListenerInDefaultGroup = false;
 }
 
 nsresult nsGlobalWindowInner::EnsureClientSource() {
@@ -4269,7 +4263,7 @@ void nsGlobalWindowInner::SetReadyForFocus() {
   bool oldNeedsFocus = mNeedsFocus;
   mNeedsFocus = false;
 
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     fm->WindowShown(GetOuterWindow(), oldNeedsFocus);
   }
@@ -4280,7 +4274,7 @@ void nsGlobalWindowInner::PageHidden() {
   // no longer valid. Use the persisted field to determine if the document
   // is being destroyed.
 
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     fm->WindowHidden(GetOuterWindow());
   }
@@ -6072,12 +6066,11 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
     timeout->mScriptHandler->GetDescription(handlerDescription);
     str.Append(handlerDescription);
   }
-  AUTO_PROFILER_MARKER_TEXT(
-      "setTimeout callback",
-      JS.WithOptions(
-          MarkerStack::TakeBacktrace(timeout->TakeProfilerBacktrace()),
-          MarkerInnerWindowId(mWindowID)),
-      str);
+  AUTO_PROFILER_MARKER_TEXT("setTimeout callback", JS,
+                            MarkerOptions(MarkerStack::TakeBacktrace(
+                                              timeout->TakeProfilerBacktrace()),
+                                          MarkerInnerWindowId(mWindowID)),
+                            str);
 #endif
 
   bool abortIntervalHandler;
@@ -7486,7 +7479,6 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
       mMayHaveSelectionChangeEventListener(false),
       mMayHaveMouseEnterLeaveEventListener(false),
       mMayHavePointerEnterLeaveEventListener(false),
-      mMayHaveTextEventListenerInDefaultGroup(false),
       mOuterWindow(aOuterWindow),
       mWindowID(0),
       mHasNotifiedGlobalCreated(false),

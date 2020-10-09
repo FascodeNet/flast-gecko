@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/dom/BrowserParent.h"
@@ -162,6 +163,7 @@ void CanonicalBrowsingContext::ReplacedBy(
   }
   aNewContext->mWebProgress = std::move(mWebProgress);
   aNewContext->mFields.SetWithoutSyncing<IDX_BrowserId>(GetBrowserId());
+  aNewContext->mFields.SetWithoutSyncing<IDX_HistoryID>(GetHistoryID());
 
   if (mSessionHistory) {
     mSessionHistory->SetBrowsingContext(aNewContext);
@@ -176,10 +178,9 @@ void CanonicalBrowsingContext::ReplacedBy(
   mActiveEntry.swap(aNewContext->mActiveEntry);
 }
 
-void CanonicalBrowsingContext::
-    UpdateSecurityStateForLocationOrMixedContentChange() {
+void CanonicalBrowsingContext::UpdateSecurityState() {
   if (mSecureBrowserUI) {
-    mSecureBrowserUI->UpdateForLocationOrMixedContentChange();
+    mSecureBrowserUI->RecomputeSecurityFlags();
   }
 }
 
@@ -358,6 +359,9 @@ CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
     MOZ_LOG(gSHLog, LogLevel::Verbose,
             ("SHEntry::GetByLoadId(%" PRIu64 ") -> %p",
              existingLoadingInfo->mLoadId, entry.get()));
+    if (!entry) {
+      return nullptr;
+    }
   } else {
     entry = new SessionHistoryEntry(aLoadState, aChannel);
     if (IsTop()) {
@@ -396,6 +400,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
         mLoadingEntries.RemoveElementAt(i);
         return;
       }
+
+      CallerWillNotifyHistoryIndexAndLengthChanges caller(shistory);
 
       RefPtr<SessionHistoryEntry> newActiveEntry = mLoadingEntries[i].mEntry;
 
@@ -488,7 +494,7 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
         }
       }
 
-      HistoryCommitIndexAndLength(aChangeID);
+      HistoryCommitIndexAndLength(aChangeID, caller);
 
       return;
     }
@@ -563,61 +569,64 @@ void CanonicalBrowsingContext::NotifyOnHistoryReload(
   // the nsDocShell will create a load state based on its document.
 }
 
-void CanonicalBrowsingContext::SetActiveSessionHistoryEntryForTop(
+void CanonicalBrowsingContext::SetActiveSessionHistoryEntry(
     const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-    uint32_t aLoadType, const nsID& aChangeID) {
+    uint32_t aLoadType, int32_t aChildOffset, uint32_t aUpdatedCacheKey,
+    const nsID& aChangeID) {
+  nsISHistory* shistory = GetSessionHistory();
+  if (!shistory) {
+    return;
+  }
+  CallerWillNotifyHistoryIndexAndLengthChanges caller(shistory);
+
   RefPtr<SessionHistoryEntry> oldActiveEntry = mActiveEntry;
   if (aPreviousScrollPos.isSome() && oldActiveEntry) {
     oldActiveEntry->SetScrollPosition(aPreviousScrollPos.ref().x,
                                       aPreviousScrollPos.ref().y);
   }
-  RefPtr<SessionHistoryEntry> newEntry = new SessionHistoryEntry(aInfo);
-  newEntry->SetDocshellID(GetHistoryID());
-  mActiveEntry = newEntry;
-  Maybe<int32_t> previousEntryIndex, loadedEntryIndex;
-  nsISHistory* shistory = GetSessionHistory();
-  if (shistory) {
+  mActiveEntry = new SessionHistoryEntry(aInfo);
+  mActiveEntry->SetDocshellID(GetHistoryID());
+  mActiveEntry->AdoptBFCacheEntry(oldActiveEntry);
+  if (aUpdatedCacheKey != 0) {
+    mActiveEntry->SharedInfo()->mCacheKey = aUpdatedCacheKey;
+  }
+
+  if (IsTop()) {
+    Maybe<int32_t> previousEntryIndex, loadedEntryIndex;
     shistory->AddToRootSessionHistory(
-        true, oldActiveEntry, this, newEntry, aLoadType,
+        true, oldActiveEntry, this, mActiveEntry, aLoadType,
         nsDocShell::ShouldAddToSessionHistory(aInfo->GetURI(), nullptr),
         &previousEntryIndex, &loadedEntryIndex);
-    // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
-    HistoryCommitIndexAndLength(aChangeID);
-  }
-}
-
-void CanonicalBrowsingContext::SetActiveSessionHistoryEntryForFrame(
-    const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-    int32_t aChildOffset, const nsID& aChangeID) {
-  RefPtr<SessionHistoryEntry> oldActiveEntry = mActiveEntry;
-  if (aPreviousScrollPos.isSome() && oldActiveEntry) {
-    oldActiveEntry->SetScrollPosition(aPreviousScrollPos.ref().x,
-                                      aPreviousScrollPos.ref().y);
-  }
-  RefPtr<SessionHistoryEntry> newEntry = new SessionHistoryEntry(aInfo);
-  newEntry->SetDocshellID(GetHistoryID());
-  mActiveEntry = newEntry;
-  nsISHistory* shistory = GetSessionHistory();
-  if (oldActiveEntry) {
-    if (shistory) {
-      shistory->AddChildSHEntryHelper(oldActiveEntry, newEntry, Top(), true);
+  } else {
+    if (oldActiveEntry) {
+      shistory->AddChildSHEntryHelper(oldActiveEntry, mActiveEntry, Top(),
+                                      true);
+    } else if (GetParent() && GetParent()->mActiveEntry) {
+      GetParent()->mActiveEntry->AddChild(mActiveEntry, aChildOffset,
+                                          UseRemoteSubframes());
     }
-  } else if (GetParent() && GetParent()->mActiveEntry) {
-    GetParent()->mActiveEntry->AddChild(newEntry, aChildOffset,
-                                        UseRemoteSubframes());
   }
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
-  HistoryCommitIndexAndLength(aChangeID);
+  HistoryCommitIndexAndLength(aChangeID, caller);
 }
 
 void CanonicalBrowsingContext::ReplaceActiveSessionHistoryEntry(
     SessionHistoryInfo* aInfo) {
   mActiveEntry->SetInfo(aInfo);
+  // Notify children of the update
+  nsSHistory* shistory = static_cast<nsSHistory*>(GetSessionHistory());
+  if (shistory) {
+    shistory->NotifyOnHistoryReplaceEntry();
+    shistory->UpdateRootBrowsingContextState();
+  }
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
 }
 
 void CanonicalBrowsingContext::RemoveDynEntriesFromActiveSessionHistoryEntry() {
   nsISHistory* shistory = GetSessionHistory();
+  // In theory shistory can be null here if the method is called right after
+  // CanonicalBrowsingContext::ReplacedBy call.
+  NS_ENSURE_TRUE_VOID(shistory);
   nsCOMPtr<nsISHEntry> root = nsSHistory::GetRootSHEntry(mActiveEntry);
   shistory->RemoveDynEntries(shistory->GetIndexOfEntry(root), mActiveEntry);
 }
@@ -645,14 +654,25 @@ void CanonicalBrowsingContext::RemoveFromSessionHistory() {
 }
 
 void CanonicalBrowsingContext::HistoryGo(
-    int32_t aIndex, std::function<void(int32_t&&)>&& aResolver) {
+    int32_t aOffset, std::function<void(int32_t&&)>&& aResolver) {
   nsSHistory* shistory = static_cast<nsSHistory*>(GetSessionHistory());
   if (!shistory) {
     return;
   }
 
+  CheckedInt<int32_t> index = shistory->GetRequestedIndex() >= 0
+                                  ? shistory->GetRequestedIndex()
+                                  : shistory->Index();
+  index += aOffset;
+  if (!index.isValid()) {
+    return;
+  }
+
+  // FIXME userinteraction bits may needs tweaks here.
+
+  // GoToIndex checks that index is >= 0 and < length.
   nsTArray<nsSHistory::LoadEntryResult> loadResults;
-  nsresult rv = shistory->GotoIndex(aIndex, loadResults);
+  nsresult rv = shistory->GotoIndex(index.value(), loadResults);
   if (NS_FAILED(rv)) {
     return;
   }
@@ -1438,10 +1458,16 @@ void CanonicalBrowsingContext::EndDocumentLoad(bool aForProcessSwitch) {
   }
 }
 
+void CanonicalBrowsingContext::HistoryCommitIndexAndLength() {
+  nsID changeID = {};
+  CallerWillNotifyHistoryIndexAndLengthChanges caller(nullptr);
+  HistoryCommitIndexAndLength(changeID, caller);
+}
 void CanonicalBrowsingContext::HistoryCommitIndexAndLength(
-    const nsID& aChangeID) {
+    const nsID& aChangeID,
+    const CallerWillNotifyHistoryIndexAndLengthChanges& aProofOfCaller) {
   if (!IsTop()) {
-    Cast(Top())->HistoryCommitIndexAndLength(aChangeID);
+    Cast(Top())->HistoryCommitIndexAndLength(aChangeID, aProofOfCaller);
     return;
   }
 
@@ -1459,6 +1485,13 @@ void CanonicalBrowsingContext::HistoryCommitIndexAndLength(
     Unused << aParent->SendHistoryCommitIndexAndLength(this, index, length,
                                                        aChangeID);
   });
+}
+
+void CanonicalBrowsingContext::SetCrossGroupOpenerId(uint64_t aOpenerId) {
+  MOZ_DIAGNOSTIC_ASSERT(IsTopContent());
+  MOZ_DIAGNOSTIC_ASSERT(mCrossGroupOpenerId == 0,
+                        "Can only set CrossGroupOpenerId once");
+  mCrossGroupOpenerId = aOpenerId;
 }
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(CanonicalBrowsingContext, BrowsingContext,

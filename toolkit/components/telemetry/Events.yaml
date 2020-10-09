@@ -298,6 +298,8 @@ exp_import:
     description: >
       Experimental import logins interface user interactions. Value is the browser suggested.
     expiry_version: "87"
+    extra_keys:
+      profilesCount: Count of profiles found for the selected browser
     notification_emails: ["edilee@mozilla.com"]
     products: ["firefox"]
     record_in_processes: ["main", "content"]
@@ -541,7 +543,8 @@ urlbar:
         type of the selected result in the urlbar panel. One of:
           "autofill", "visit", "bookmark", "history", "keyword", "search",
           "searchsuggestion", "switchtab", "remotetab", "extension", "oneoff",
-          "keywordoffer", "canonized", "tip", "tiphelp", "formhistory", "none"
+          "keywordoffer", "canonized", "tip", "tiphelp", "formhistory",
+          "tabtosearch", "none"
   abandonment:
     objects: ["blur"]
     release_channel_collection: opt-out
@@ -1835,14 +1838,16 @@ security.ui.protections:
   show:
     objects: [
       "protection_report",
+      "vpn_banner",
     ]
     bug_numbers:
       - 1557050
       - 1610897
       - 1643428
       - 1650468
+      - 1661756
     description: >
-      User arrived on the protection report. This also includes a 'value' attribute which defaults to 'direct' or will be the value that a referring website addds to the url.
+      User arrived on the protection report. This also includes a 'value' attribute which defaults to 'direct' or will be the value that a referring website addds to the url. This also indicates if the vpn banner has been seen.
     expiry_version: "86"
     record_in_processes: ["content"]
     release_channel_collection: opt-out
@@ -1885,6 +1890,7 @@ security.ui.protections:
       - 1612091
       - 1637615
       - 1643428
+      - 1661756
     description: >
       User interaction by click events on the protection report.
     objects: [
@@ -1897,6 +1903,11 @@ security.ui.protections:
       "trackers_about_link",
       "mobile_app_link",
       "settings_link",
+      "vpn_banner_link",
+      "vpn_banner_close",
+      "vpn_card_link",
+      "vpn_app_link_android",
+      "vpn_app_link_ios",
     ]
     expiry_version: "86"
     record_in_processes: ["content"]
@@ -2412,6 +2423,7 @@ slow_script_warning:
   shown:
     bug_numbers:
       - 1652613
+      - 1667245
     description: >
       Recorded when a slow script hang is resolved.
     products:

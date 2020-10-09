@@ -16,14 +16,24 @@ class GamepadTestChannelParent final : public PGamepadTestChannelParent {
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GamepadTestChannelParent)
   GamepadTestChannelParent() : mShuttingdown(false) {}
-  virtual void ActorDestroy(ActorDestroyReason aWhy) override {}
+  bool Init();
+  void ActorDestroy(ActorDestroyReason aWhy) override;
   mozilla::ipc::IPCResult RecvGamepadTestEvent(
       const uint32_t& aID, const GamepadChangeEvent& aGamepadEvent);
   mozilla::ipc::IPCResult RecvShutdownChannel();
 
+  void OnMonitoringStateChanged(bool aNewState);
+
  private:
+  struct DeferredGamepadAdded {
+    uint32_t promiseId;
+    GamepadAdded gamepadAdded;
+  };
+  void AddGamepadToPlatformService(uint32_t aPromiseId,
+                                   const GamepadAdded& aGamepadAdded);
   ~GamepadTestChannelParent() = default;
   bool mShuttingdown;
+  nsTArray<DeferredGamepadAdded> mDeferredGamepadAdded;
 };
 
 }  // namespace dom

@@ -374,10 +374,11 @@ static inline bool UnpackTypeCodeNullable(PackedTypeCode ptc) {
   return (uint32_t(ptc) >> PackedTypeNullableShift) == 1;
 }
 
-// Return the TypeCode, but return TypeCode::NullableRef for any reference type.
+// Return the TypeCode, but return AbstractReferenceTypeCode for any reference
+// type.
 //
 // This function is very, very hot, hence what would normally be a switch on the
-// value `c` to map the reference types to TypeCode::NullableRef has been
+// value `c` to map the reference types to AbstractReferenceTypeCode has been
 // distilled into a simple comparison; this is fastest.  Should type codes
 // become too complicated for this to work then a lookup table also has better
 // performance than a switch.
@@ -394,6 +395,15 @@ static inline TypeCode UnpackTypeCodeTypeAbstracted(PackedTypeCode ptc) {
 
 static inline bool IsReferenceType(PackedTypeCode ptc) {
   return UnpackTypeCodeTypeAbstracted(ptc) == AbstractReferenceTypeCode;
+}
+
+// Return a TypeCode with the nullable bit cleared, must only be used on
+// reference types.
+
+static inline PackedTypeCode RepackTypeCodeAsNonNullable(PackedTypeCode ptc) {
+  MOZ_ASSERT(IsReferenceType(ptc));
+  constexpr uint32_t NonNullableMask = ~(1 << PackedTypeNullableShift);
+  return PackedTypeCode(uint32_t(ptc) & NonNullableMask);
 }
 
 // An enum that describes the representation classes for tables; The table
@@ -622,6 +632,11 @@ class ValType {
   bool isReference() const {
     MOZ_ASSERT(isValid());
     return IsReferenceType(tc_);
+  }
+
+  bool isDefaultable() const {
+    MOZ_ASSERT(isValid());
+    return !isReference() || isNullable();
   }
 
   Kind kind() const {
@@ -2661,13 +2676,7 @@ enum class SymbolicAddress {
   HandleThrow,
   HandleTrap,
   ReportV128JSCall,
-  CallImport_Void,
-  CallImport_I32,
-  CallImport_I64,
-  CallImport_V128,
-  CallImport_F64,
-  CallImport_FuncRef,
-  CallImport_AnyRef,
+  CallImport_General,
   CoerceInPlace_ToInt32,
   CoerceInPlace_ToNumber,
   CoerceInPlace_JitEntry,
@@ -3353,6 +3362,9 @@ class DebugFrame {
   // 4-byte aligned, so we add another word to get up to 8-byte
   // alignment.
   uint32_t padding_;
+#endif
+#if defined(ENABLE_WASM_SIMD) && defined(JS_CODEGEN_ARM64)
+  uint64_t padding_;
 #endif
 
  private:

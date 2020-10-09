@@ -13,6 +13,7 @@
 
 #include "jit/BaselineJIT.h"
 #include "jit/IonAnalysis.h"
+#include "jit/IonScript.h"
 #include "jit/JitScript.h"
 #include "vm/RegExpObject.h"
 #include "wasm/AsmJS.h"
@@ -64,7 +65,7 @@ inline void ScriptWarmUpData::initEnclosingScript(BaseScript* enclosingScript) {
                 "BaseScript must be TenuredCell to avoid post-barriers");
 }
 inline void ScriptWarmUpData::clearEnclosingScript() {
-  BaseScript::writeBarrierPre(toEnclosingScript());
+  gc::PreWriteBarrier(toEnclosingScript());
   data_ = ResetState();
 }
 
@@ -75,7 +76,7 @@ inline void ScriptWarmUpData::initEnclosingScope(Scope* enclosingScope) {
                 "Scope must be TenuredCell to avoid post-barriers");
 }
 inline void ScriptWarmUpData::clearEnclosingScope() {
-  Scope::writeBarrierPre(toEnclosingScope());
+  gc::PreWriteBarrier(toEnclosingScope());
   data_ = ResetState();
 }
 

@@ -92,7 +92,7 @@ async function synthKeyAndTestSelectionChanged(
   ]);
 
   EventUtils.synthesizeKey(synthKey, synthEvent);
-  let [, inputEvent] = await selectionChangedEvents;
+  let [webareaEvent, inputEvent] = await selectionChangedEvents;
   is(
     inputEvent.data.AXTextChangeElement.getAttributeValue("AXDOMIdentifier"),
     expectedId,
@@ -107,6 +107,21 @@ async function synthKeyAndTestSelectionChanged(
     rangeString,
     expectedSelectionString,
     `selection has correct value (${expectedSelectionString})`
+  );
+
+  is(
+    webareaEvent.macIface.getAttributeValue("AXDOMIdentifier"),
+    "body",
+    "Input event target is top-level WebArea"
+  );
+  rangeString = webareaEvent.macIface.getParameterizedAttributeValue(
+    "AXStringForTextMarkerRange",
+    inputEvent.data.AXSelectedTextMarkerRange
+  );
+  is(
+    rangeString,
+    expectedSelectionString,
+    `selection has correct value (${expectedSelectionString}) via top document`
   );
 }
 
@@ -256,6 +271,22 @@ addAccessibleTask(
 addAccessibleTask(
   `<div id="input" contentEditable="true" tabindex="0" role="textbox" aria-multiline="true"><div id="inner"><br /></div></div>`,
   async (browser, accDoc) => {
-    await focusIntoInputAndType(accDoc, "input", "inner");
+    const inner = getNativeInterface(accDoc, "inner");
+    const editableAncestor = inner.getAttributeValue("AXEditableAncestor");
+    is(
+      editableAncestor.getAttributeValue("AXDOMIdentifier"),
+      "input",
+      "Editable ancestor is input"
+    );
+    await focusIntoInputAndType(accDoc, "input");
   }
+);
+
+// Test text input in iframe
+addAccessibleTask(
+  `<a href="#">link</a> <input id="input">`,
+  async (browser, accDoc) => {
+    await focusIntoInputAndType(accDoc, "input");
+  },
+  { iframe: true }
 );

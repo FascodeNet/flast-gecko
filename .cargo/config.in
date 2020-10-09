@@ -10,7 +10,7 @@ replace-with = "vendored-sources"
 [source."https://github.com/mozilla/neqo"]
 git = "https://github.com/mozilla/neqo"
 replace-with = "vendored-sources"
-tag = "v0.4.11"
+tag = "v0.4.12"
 
 [source."https://github.com/mozilla/mp4parse-rust"]
 git = "https://github.com/mozilla/mp4parse-rust"
@@ -25,7 +25,7 @@ rev = "9ba519a5739b1976f1d333923d34b7f4916b9e26"
 [source."https://github.com/mozilla-spidermonkey/jsparagus"]
 git = "https://github.com/mozilla-spidermonkey/jsparagus"
 replace-with = "vendored-sources"
-rev = "66dd1ae63d03fc2191d6c83d72c27b940c6aa4ac"
+rev = "1dc60327164a3f64f87180147b1f3a2a9cc74276"
 
 [source."https://github.com/kvark/spirv_cross"]
 branch = "wgpu3"
@@ -40,7 +40,7 @@ rev = "21c26326f5f45f415c49eac4ba5bc41a2f961321"
 [source."https://github.com/jfkthame/mapped_hyph.git"]
 git = "https://github.com/jfkthame/mapped_hyph.git"
 replace-with = "vendored-sources"
-tag = "v0.3.0"
+tag = "v0.4.0"
 
 [source."https://github.com/hsivonen/packed_simd"]
 git = "https://github.com/hsivonen/packed_simd"
@@ -60,7 +60,7 @@ rev = "3224e2dee65c0726c448484d4c3c43956b9330ec"
 [source."https://github.com/bytecodealliance/wasmtime"]
 git = "https://github.com/bytecodealliance/wasmtime"
 replace-with = "vendored-sources"
-rev = "379aed8092cd1241ec7839e77d05557b1dceb234"
+rev = "e22e2c3722f2fbccd3c8d3230119fa04c332c69c"
 
 [source."https://github.com/badboy/failure"]
 git = "https://github.com/badboy/failure"
@@ -80,7 +80,7 @@ rev = "477d8fc53a64705a9d3fbcce9de92f4988558525"
 [source."https://github.com/ChunMinChang/cubeb-coreaudio-rs"]
 git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs"
 replace-with = "vendored-sources"
-rev = "91a7bb50198a9b7578d98d56e9fd32f257abb41f"
+rev = "08a2b75285732a2e1a389bc4ab02518c74a8a9c5"
 
 [source.crates-io]
 replace-with = "vendored-sources"

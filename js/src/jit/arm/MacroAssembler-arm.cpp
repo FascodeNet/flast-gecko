@@ -18,6 +18,7 @@
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/JitFrames.h"
+#include "jit/JitRuntime.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
@@ -6064,6 +6065,9 @@ void MacroAssemblerARM::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
                                       AnyRegister value, Register64 val64,
                                       Register memoryBase, Register ptr,
                                       Register ptrScratch) {
+  static_assert(INT64LOW_OFFSET == 0);
+  static_assert(INT64HIGH_OFFSET == 4);
+
   MOZ_ASSERT(ptr == ptrScratch);
 
   uint32_t offset = access.offset();
@@ -6075,6 +6079,14 @@ void MacroAssemblerARM::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
   // Maybe add the offset.
   if (offset || type == Scalar::Int64) {
     ScratchRegisterScope scratch(asMasm());
+    // We need to store the high word of an Int64 first, so always adjust the
+    // pointer to point to the high word in this case.  The adjustment is always
+    // OK because MaxOffsetGuardLimit is computed so that we can add up to
+    // sizeof(LargestValue)-1 without skipping past the guard page, and we
+    // assert above that offset < MaxOffsetGuardLimit.
+    if (type == Scalar::Int64) {
+      offset += INT64HIGH_OFFSET;
+    }
     if (offset) {
       ma_add(Imm32(offset), ptr, scratch);
     }
@@ -6084,16 +6096,14 @@ void MacroAssemblerARM::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
 
   BufferOffset store;
   if (type == Scalar::Int64) {
-    static_assert(INT64LOW_OFFSET == 0);
-
     store = ma_dataTransferN(IsStore, 32 /* bits */, /* signed */ false,
-                             memoryBase, ptr, val64.low);
+                             memoryBase, ptr, val64.high);
     append(access, store.getOffset());
 
-    as_add(ptr, ptr, Imm8(INT64HIGH_OFFSET));
+    as_sub(ptr, ptr, Imm8(INT64HIGH_OFFSET));
 
     store = ma_dataTransferN(IsStore, 32 /* bits */, /* signed */ true,
-                             memoryBase, ptr, val64.high);
+                             memoryBase, ptr, val64.low);
     append(access, store.getOffset());
   } else {
     if (value.isFloat()) {

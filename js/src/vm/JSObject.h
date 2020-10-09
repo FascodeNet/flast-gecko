@@ -249,21 +249,6 @@ class JSObject
    */
   MOZ_ALWAYS_INLINE bool maybeHasInterestingSymbolProperty() const;
 
-  /*
-   * If this object was instantiated with `new Ctor`, return the constructor's
-   * display atom. Otherwise, return nullptr.
-   */
-  static bool constructorDisplayAtom(JSContext* cx, js::HandleObject obj,
-                                     js::MutableHandleAtom name);
-
-  /*
-   * The same as constructorDisplayAtom above, however if this object has a
-   * lazy group, nullptr is returned. This allows for use in situations that
-   * cannot GC and where having some information, even if it is inconsistently
-   * available, is better than no information.
-   */
-  JSAtom* maybeConstructorDisplayAtom() const;
-
   /* GC support. */
 
   void traceChildren(JSTracer* trc);
@@ -287,9 +272,9 @@ class JSObject
   MOZ_ALWAYS_INLINE JS::shadow::Zone* shadowZoneFromAnyThread() const {
     return JS::shadow::Zone::from(zoneFromAnyThread());
   }
-  static MOZ_ALWAYS_INLINE void writeBarrierPost(void* cellp, JSObject* prev,
+  static MOZ_ALWAYS_INLINE void postWriteBarrier(void* cellp, JSObject* prev,
                                                  JSObject* next) {
-    js::gc::WriteBarrierPostImpl<JSObject>(cellp, prev, next);
+    js::gc::PostWriteBarrierImpl<JSObject>(cellp, prev, next);
   }
 
   /* Return the allocKind we would use if we were to tenure this object. */

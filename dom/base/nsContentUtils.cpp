@@ -214,6 +214,7 @@
 #include "nsIWindowMediator.h"
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
+#include "nsLayoutUtils.h"
 #include "nsMappedAttributes.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
@@ -4327,7 +4328,7 @@ void nsContentUtils::RequestFrameFocus(Element& aFrameElement, bool aCanRaise,
     return;
   }
 
-  nsCOMPtr<nsIFocusManager> fm = nsFocusManager::GetFocusManager();
+  RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     return;
   }
@@ -9161,6 +9162,7 @@ nsresult nsContentUtils::NewXULOrHTMLElement(
       return NS_ERROR_FAILURE;
     }
 
+    AutoAllowLegacyScriptExecution exemption;
     AutoEntryScript aes(global, "create custom elements");
     JSContext* cx = aes.cx();
     ErrorResult rv;

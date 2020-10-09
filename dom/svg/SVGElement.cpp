@@ -1388,13 +1388,11 @@ void SVGElement::MaybeSerializeAttrBeforeRemoval(nsAtom* aName, bool aNotify) {
   mAttrs.SetAndSwapAttr(aName, oldAttrValue, &oldValueSet);
 }
 
-/* static */
 nsAtom* SVGElement::GetEventNameForAttr(nsAtom* aAttr) {
-  if (aAttr == nsGkAtoms::onload) return nsGkAtoms::onSVGLoad;
-  if (aAttr == nsGkAtoms::onunload) return nsGkAtoms::onSVGUnload;
-  if (aAttr == nsGkAtoms::onresize) return nsGkAtoms::onSVGResize;
-  if (aAttr == nsGkAtoms::onscroll) return nsGkAtoms::onSVGScroll;
-  if (aAttr == nsGkAtoms::onzoom) return nsGkAtoms::onSVGZoom;
+  if (IsSVGElement(nsGkAtoms::svg)) {
+    if (aAttr == nsGkAtoms::onload) return nsGkAtoms::onSVGLoad;
+    if (aAttr == nsGkAtoms::onscroll) return nsGkAtoms::onSVGScroll;
+  }
   if (aAttr == nsGkAtoms::onbegin) return nsGkAtoms::onbeginEvent;
   if (aAttr == nsGkAtoms::onrepeat) return nsGkAtoms::onrepeatEvent;
   if (aAttr == nsGkAtoms::onend) return nsGkAtoms::onendEvent;
@@ -1467,9 +1465,13 @@ void SVGElement::DidAnimateLength(uint8_t aAttrEnum) {
     nsCSSPropertyID propId =
         SVGGeometryProperty::AttrEnumToCSSPropId(this, aAttrEnum);
 
-    SMILOverrideStyle()->SetSMILValue(propId,
-                                      GetLengthInfo().mLengths[aAttrEnum]);
-    return;
+    // We don't map use element width/height currently. We can remove this
+    // test when we do.
+    if (propId != eCSSProperty_UNKNOWN) {
+      SMILOverrideStyle()->SetSMILValue(propId,
+                                        GetLengthInfo().mLengths[aAttrEnum]);
+      return;
+    }
   }
 
   nsIFrame* frame = GetPrimaryFrame();

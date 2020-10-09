@@ -101,6 +101,9 @@ inline mozAccessible* GetNativeFromGeckoAccessible(
 // Invalidate cached state.
 - (void)invalidateState;
 
+// Get top level (tab) web area.
+- (mozAccessible*)topWebArea;
+
 #pragma mark - mozAccessible protocol / widget
 
 // override
@@ -183,6 +186,9 @@ inline mozAccessible* GetNativeFromGeckoAccessible(
 
 // override
 - (NSNumber*)moxRequired;
+
+// override
+- (id)moxEditableAncestor;
 
 // override
 - (NSArray*)moxUIElementsForSearchPredicate:(NSDictionary*)searchPredicate;

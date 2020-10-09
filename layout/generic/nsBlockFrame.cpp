@@ -229,7 +229,10 @@ static Maybe<nscolor> GetBackplateColor(nsIFrame* aFrame) {
     }
     nscolor backgroundColor = bg->BackgroundColor(frame);
     if (NS_GET_A(backgroundColor) != 0) {
-      return Some(backgroundColor);
+      // NOTE: We intentionally disregard the alpha channel here for the purpose
+      // of the backplate, in order to guarantee contrast.
+      return Some(NS_RGB(NS_GET_R(backgroundColor), NS_GET_G(backgroundColor),
+                         NS_GET_B(backgroundColor)));
     }
     break;
   }
@@ -1959,7 +1962,7 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     finalSize.BSize(wm) = bSize;
   }
 
-  if (IS_TRUE_OVERFLOW_CONTAINER(this)) {
+  if (IsTrueOverflowContainer()) {
     if (aState.mReflowStatus.IsIncomplete()) {
       // Overflow containers can only be overflow complete.
       // Note that auto height overflow containers have no normal children
@@ -2914,10 +2917,11 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowInput& aState) {
 
   if (skipPull && aState.mNextInFlow) {
     NS_ASSERTION(heightConstrained, "Height should be constrained here\n");
-    if (IS_TRUE_OVERFLOW_CONTAINER(aState.mNextInFlow))
+    if (aState.mNextInFlow->IsTrueOverflowContainer()) {
       aState.mReflowStatus.SetOverflowIncomplete();
-    else
+    } else {
       aState.mReflowStatus.SetIncomplete();
+    }
   }
 
   if (!skipPull && aState.mNextInFlow) {
@@ -4014,10 +4018,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowInput& aState,
               nsOverflowContinuationTracker::AutoFinish fini(
                   aState.mOverflowTracker, frame);
               nsContainerFrame* parent = nextFrame->GetParent();
-              nsresult rv = parent->StealFrame(nextFrame);
-              if (NS_FAILED(rv)) {
-                return;
-              }
+              parent->StealFrame(nextFrame);
               if (parent != this) {
                 ReparentFrame(nextFrame, parent, this);
               }
@@ -4081,10 +4082,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowInput& aState,
                 !nextFrame->HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER)) {
               // It already exists, but as a normal next-in-flow, so we need
               // to dig it out of the child lists.
-              nsresult rv = nextFrame->GetParent()->StealFrame(nextFrame);
-              if (NS_FAILED(rv)) {
-                return;
-              }
+              nextFrame->GetParent()->StealFrame(nextFrame);
             } else if (madeContinuation) {
               mFrames.RemoveFrame(nextFrame);
             }
@@ -4659,8 +4657,7 @@ void nsBlockFrame::SplitFloat(BlockReflowInput& aState, nsIFrame* aFloat,
   nsIFrame* nextInFlow = aFloat->GetNextInFlow();
   if (nextInFlow) {
     nsContainerFrame* oldParent = nextInFlow->GetParent();
-    DebugOnly<nsresult> rv = oldParent->StealFrame(nextInFlow);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "StealFrame failed");
+    oldParent->StealFrame(nextInFlow);
     if (oldParent != this) {
       ReparentFrame(nextInFlow, oldParent, this);
     }
@@ -4685,7 +4682,7 @@ void nsBlockFrame::SplitFloat(BlockReflowInput& aState, nsIFrame* aFloat,
 
   aState.AppendPushedFloatChain(nextInFlow);
   if (MOZ_LIKELY(!HasAnyStateBits(NS_BLOCK_FLOAT_MGR)) ||
-      MOZ_UNLIKELY(IS_TRUE_OVERFLOW_CONTAINER(this))) {
+      MOZ_UNLIKELY(IsTrueOverflowContainer())) {
     aState.mReflowStatus.SetOverflowIncomplete();
   } else {
     aState.mReflowStatus.SetIncomplete();
@@ -6448,16 +6445,16 @@ static bool FindLineFor(nsIFrame* aChild, const nsFrameList& aFrameList,
              : FindInlineLineFor(aChild, aFrameList, aBegin, aEnd, aResult);
 }
 
-nsresult nsBlockFrame::StealFrame(nsIFrame* aChild) {
+void nsBlockFrame::StealFrame(nsIFrame* aChild) {
   MOZ_ASSERT(aChild->GetParent() == this);
 
   if (aChild->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) && aChild->IsFloating()) {
     RemoveFloat(aChild);
-    return NS_OK;
+    return;
   }
 
   if (MaybeStealOverflowContainerFrame(aChild)) {
-    return NS_OK;
+    return;
   }
 
   MOZ_ASSERT(!aChild->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW));
@@ -6471,15 +6468,13 @@ nsresult nsBlockFrame::StealFrame(nsIFrame* aChild) {
     found = FindLineFor(aChild, overflowLines->mFrames,
                         overflowLines->mLines.begin(),
                         overflowLines->mLines.end(), &line);
-    MOZ_ASSERT(found);
+    MOZ_ASSERT(found, "Why can't we find aChild in our overflow lines?");
     RemoveFrameFromLine(aChild, line, overflowLines->mFrames,
                         overflowLines->mLines);
     if (overflowLines->mLines.empty()) {
       DestroyOverflowLines();
     }
   }
-
-  return NS_OK;
 }
 
 void nsBlockFrame::RemoveFrameFromLine(nsIFrame* aChild,
@@ -7689,7 +7684,7 @@ nscoord nsBlockFrame::ComputeFinalBSize(const ReflowInput& aReflowInput,
   // applied to this frame.
   const nscoord computedBSizeLeftOver =
       GetEffectiveComputedBSize(aReflowInput, aConsumed);
-  NS_ASSERTION(!(IS_TRUE_OVERFLOW_CONTAINER(this) && computedBSizeLeftOver),
+  NS_ASSERTION(!(IsTrueOverflowContainer() && computedBSizeLeftOver),
                "overflow container must not have computedBSizeLeftOver");
 
   const nsReflowStatus statusFromChildren = aStatus;

@@ -163,7 +163,7 @@ static const char* GetPrefNameForFeature(int32_t aFeature) {
     case nsIGfxInfo::FEATURE_WEBGL_ANGLE:
       name = BLOCKLIST_PREF_BRANCH "webgl.angle";
       break;
-    case nsIGfxInfo::FEATURE_WEBGL_MSAA:
+    case nsIGfxInfo::UNUSED_FEATURE_WEBGL_MSAA:
       name = BLOCKLIST_PREF_BRANCH "webgl.msaa";
       break;
     case nsIGfxInfo::FEATURE_STAGEFRIGHT:
@@ -221,6 +221,12 @@ static const char* GetPrefNameForFeature(int32_t aFeature) {
       break;
     case nsIGfxInfo::FEATURE_WEBRENDER_SCISSORED_CACHE_CLEARS:
       name = BLOCKLIST_PREF_BRANCH "webrender.scissored_cache_clears";
+      break;
+    case nsIGfxInfo::FEATURE_ALLOW_WEBGL_OUT_OF_PROCESS:
+      name = BLOCKLIST_PREF_BRANCH "webgl.allow-oop";
+      break;
+    case nsIGfxInfo::FEATURE_THREADSAFE_GL:
+      name = BLOCKLIST_PREF_BRANCH "gl.threadsafe";
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unexpected nsIGfxInfo feature?!");
@@ -378,7 +384,7 @@ static int32_t BlocklistFeatureToGfxFeature(const nsAString& aFeature) {
   else if (aFeature.EqualsLiteral("WEBGL_ANGLE"))
     return nsIGfxInfo::FEATURE_WEBGL_ANGLE;
   else if (aFeature.EqualsLiteral("WEBGL_MSAA"))
-    return nsIGfxInfo::FEATURE_WEBGL_MSAA;
+    return nsIGfxInfo::UNUSED_FEATURE_WEBGL_MSAA;
   else if (aFeature.EqualsLiteral("STAGEFRIGHT"))
     return nsIGfxInfo::FEATURE_STAGEFRIGHT;
   else if (aFeature.EqualsLiteral("WEBRTC_HW_ACCELERATION_ENCODE"))
@@ -411,6 +417,10 @@ static int32_t BlocklistFeatureToGfxFeature(const nsAString& aFeature) {
     return nsIGfxInfo::FEATURE_GL_SWIZZLE;
   else if (aFeature.EqualsLiteral("WEBRENDER_SCISSORED_CACHE_CLEARS"))
     return nsIGfxInfo::FEATURE_WEBRENDER_SCISSORED_CACHE_CLEARS;
+  else if (aFeature.EqualsLiteral("ALLOW_WEBGL_OUT_OF_PROCESS"))
+    return nsIGfxInfo::FEATURE_ALLOW_WEBGL_OUT_OF_PROCESS;
+  else if (aFeature.EqualsLiteral("THREADSAFE_GL"))
+    return nsIGfxInfo::FEATURE_THREADSAFE_GL;
 
   // If we don't recognize the feature, it may be new, and something
   // this version doesn't understand.  So, nothing to do.  This is
@@ -1258,7 +1268,7 @@ void GfxInfoBase::EvaluateDownloadedBlocklist(
                         nsIGfxInfo::FEATURE_WEBGL_ANGLE,
                         nsIGfxInfo::FEATURE_WEBRTC_HW_ACCELERATION_ENCODE,
                         nsIGfxInfo::FEATURE_WEBRTC_HW_ACCELERATION_DECODE,
-                        nsIGfxInfo::FEATURE_WEBGL_MSAA,
+                        nsIGfxInfo::UNUSED_FEATURE_WEBGL_MSAA,
                         nsIGfxInfo::FEATURE_STAGEFRIGHT,
                         nsIGfxInfo::FEATURE_WEBRTC_HW_ACCELERATION_H264,
                         nsIGfxInfo::FEATURE_CANVAS2D_ACCELERATION,
@@ -1275,6 +1285,7 @@ void GfxInfoBase::EvaluateDownloadedBlocklist(
                         nsIGfxInfo::FEATURE_DX_P010,
                         nsIGfxInfo::FEATURE_DX_P016,
                         nsIGfxInfo::FEATURE_GL_SWIZZLE,
+                        nsIGfxInfo::FEATURE_ALLOW_WEBGL_OUT_OF_PROCESS,
                         0};
 
   // For every feature we know about, we evaluate whether this blocklist has a
@@ -1587,7 +1598,8 @@ bool GfxInfoBase::BuildFeatureStateLog(JSContext* aCx,
   aOut.setObject(*log);
 
   aFeature.ForEachStatusChange([&](const char* aType, FeatureStatus aStatus,
-                                   const char* aMessage) -> void {
+                                   const char* aMessage,
+                                   const nsCString& aFailureId) -> void {
     JS::Rooted<JSObject*> obj(aCx, JS_NewPlainObject(aCx));
     if (!obj) {
       return;

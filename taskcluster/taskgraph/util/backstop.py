@@ -6,7 +6,11 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 from requests import HTTPError
 
-from taskgraph.util.taskcluster import get_artifact_from_index
+from taskgraph.util.taskcluster import (
+    find_task_id,
+    get_artifact,
+    status_task,
+)
 
 
 BACKSTOP_PUSH_INTERVAL = 20
@@ -50,11 +54,24 @@ def is_backstop(
     index = BACKSTOP_INDEX.format(project=project)
 
     try:
-        last_pushdate = get_artifact_from_index(index, 'public/parameters.yml')["pushdate"]
+        last_backstop_id = find_task_id(index)
+    except KeyError:
+        # Index wasn't found, implying there hasn't been a backstop push yet.
+        return True
+
+    if status_task(last_backstop_id) in ("failed", "exception"):
+        # If the last backstop failed its decision task, make this a backstop.
+        return True
+
+    try:
+        last_pushdate = get_artifact(last_backstop_id, 'public/parameters.yml')["pushdate"]
     except HTTPError as e:
+        # If the last backstop decision task exists in the index, but
+        # parameters.yml isn't available yet, it means the decision task is
+        # still running. If that's the case, we can be pretty sure the time
+        # component will not cause a backstop, so just return False.
         if e.response.status_code == 404:
-            # There hasn't been a backstop push yet.
-            return True
+            return False
         raise
 
     if (pushdate - last_pushdate) / 60 >= time_interval:

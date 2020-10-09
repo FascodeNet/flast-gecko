@@ -1043,41 +1043,38 @@ nsresult EventDispatcher::Dispatch(nsISupports* aTarget,
               // TracingMarkerPayload, so it uses the same payload type.
               // TODO: Change to its own distinct type, but this will require
               // front-end changes.
-              return MakeStringSpan("tracing");
+              return MakeStringSpan("DOMEvent");
             }
             static void StreamJSONMarkerData(
                 JSONWriter& aWriter, const ProfilerString16View& aEventType,
-                const TimeStamp& aEventTimeStamp) {
+                const TimeStamp& aStartTime, const TimeStamp& aEventTimeStamp) {
               aWriter.StringProperty(
                   "eventType", NS_ConvertUTF16toUTF8(aEventType.Data(),
                                                      aEventType.Length()));
-              // Note: This is the event *creation* timestamp, which should be
-              // before the marker's own timestamp. It is used to compute the
-              // event processing latency.
-              baseprofiler::WritePropertyTime(aWriter, "timeStamp",
-                                              aEventTimeStamp);
-              // Note: This is *not* the MarkerCategory, it's a identifier
-              // used to combine pairs of markers. This should disappear after
-              // "set index" is implemented in bug 1661114.
-              aWriter.StringProperty("category", "DOMEvent");
+              // This is the event processing latency, which is the time from
+              // when the event was created, to when it was started to be
+              // processed. Note that the computation of this latency is
+              // deferred until serialization time, at the expense of some extra
+              // memory.
+              aWriter.DoubleProperty(
+                  "latency", (aStartTime - aEventTimeStamp).ToMilliseconds());
             }
           };
 
-          profiler_add_marker<DOMEventMarker>(
-              "DOMEvent",
-              geckoprofiler::category::DOM.WithOptions(
-                  MarkerTiming::IntervalStart(),
-                  MarkerInnerWindowId(innerWindowId)),
-              typeStr, aEvent->mTimeStamp);
+          auto startTime = TimeStamp::NowUnfuzzed();
+          profiler_add_marker("DOMEvent", geckoprofiler::category::DOM,
+                              {MarkerTiming::IntervalStart(),
+                               MarkerInnerWindowId(innerWindowId)},
+                              DOMEventMarker{}, typeStr, startTime,
+                              aEvent->mTimeStamp);
 
           EventTargetChainItem::HandleEventTargetChain(chain, postVisitor,
                                                        aCallback, cd);
 
-          profiler_add_marker<DOMEventMarker>(
-              "DOMEvent",
-              geckoprofiler::category::DOM.WithOptions(
-                  MarkerTiming::IntervalEnd(), std::move(innerWindowId)),
-              typeStr, aEvent->mTimeStamp);
+          profiler_add_marker(
+              "DOMEvent", geckoprofiler::category::DOM,
+              {MarkerTiming::IntervalEnd(), std::move(innerWindowId)},
+              DOMEventMarker{}, typeStr, startTime, aEvent->mTimeStamp);
         } else
 #endif
         {

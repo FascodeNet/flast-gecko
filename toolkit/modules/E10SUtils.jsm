@@ -71,12 +71,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "@mozilla.org/uriloader/external-protocol-service;1",
   "nsIExternalProtocolService"
 );
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "sessionHistoryInParent",
-  "fission.sessionHistoryInParent",
-  false
-);
 
 function getAboutModule(aURL) {
   // Needs to match NS_GetAboutModuleName
@@ -140,15 +134,6 @@ function documentChannelPermittedForURI(aURI) {
     !kDocumentChannelDeniedSchemes.includes(aURI.scheme) &&
     !kDocumentChannelDeniedURIs.includes(aURI.spec)
   );
-}
-
-function canProcessSwitchWithDocumentChannel(
-  aURI,
-  aRemoteSubframes,
-  aDesiredRemoteType,
-  aBrowsingContext
-) {
-  return documentChannelPermittedForURI(aURI);
 }
 
 // Note that even if the scheme fits the criteria for a web-handled scheme
@@ -933,15 +918,7 @@ var E10SUtils = {
     // If we already have a content process, and the load will be
     // handled using DocumentChannel, then we can skip switching
     // for now, and let DocumentChannel do it during the response.
-    if (
-      uriObject &&
-      canProcessSwitchWithDocumentChannel(
-        uriObject,
-        remoteSubframes,
-        requiredRemoteType,
-        browser.browsingContext
-      )
-    ) {
+    if (uriObject && documentChannelPermittedForURI(uriObject)) {
       mustChangeProcess = false;
       newFrameloader = false;
     }
@@ -966,13 +943,7 @@ var E10SUtils = {
       `shouldLoadURIInThisProcess: have ${remoteType} want ${wantRemoteType}`
     );
 
-    if (
-      canProcessSwitchWithDocumentChannel(
-        aURI,
-        aRemoteSubframes,
-        wantRemoteType
-      )
-    ) {
+    if (documentChannelPermittedForURI(aURI)) {
       // We can switch later with documentchannel.
       return true;
     }
@@ -1007,12 +978,7 @@ var E10SUtils = {
     // 1640019).
     if (
       AppConstants.MOZ_WIDGET_TOOLKIT != "android" &&
-      canProcessSwitchWithDocumentChannel(
-        aURI,
-        useRemoteSubframes,
-        wantRemoteType,
-        aDocShell.browsingContext
-      )
+      documentChannelPermittedForURI(aURI)
     ) {
       return true;
     }
@@ -1032,7 +998,7 @@ var E10SUtils = {
     }
 
     // Allow history load if loaded in this process before.
-    if (!sessionHistoryInParent) {
+    if (!Services.appinfo.sessionHistoryInParent) {
       let requestedIndex = sessionHistory.legacySHistory.requestedIndex;
       if (requestedIndex >= 0) {
         this.log().debug("Checking history case\n");
@@ -1078,7 +1044,7 @@ var E10SUtils = {
       csp: aCsp ? this.serializeCSP(aCsp) : null,
     };
     // Retarget the load to the correct process
-    if (sessionHistoryInParent) {
+    if (!Services.appinfo.sessionHistoryInParent) {
       let sessionHistory = aDocShell.QueryInterface(Ci.nsIWebNavigation)
         .sessionHistory;
       actor.sendAsyncMessage("Browser:LoadURI", {

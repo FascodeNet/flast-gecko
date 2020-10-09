@@ -14,6 +14,7 @@
 #include "ds/LifoAlloc.h"
 #include "jit/Bailouts.h"
 #include "jit/JitCode.h"
+#include "jit/JitContext.h"
 #include "jit/shared/Assembler-shared.h"
 #include "util/TrailingArray.h"
 #include "vm/JSContext.h"
@@ -382,7 +383,7 @@ class alignas(uintptr_t) BaselineScript final : public TrailingArray {
     return offsetof(BaselineScript, resumeEntriesOffset_);
   }
 
-  static void writeBarrierPre(Zone* zone, BaselineScript* script);
+  static void preWriteBarrier(Zone* zone, BaselineScript* script);
 
   bool hasPendingIonCompileTask() const { return !!pendingIonCompileTask_; }
 

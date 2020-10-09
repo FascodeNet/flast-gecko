@@ -546,6 +546,9 @@ nsresult ScriptLoader::CreateModuleScript(ModuleLoadRequest* aRequest) {
   }
 
   nsAutoMicroTask mt;
+
+  AutoAllowLegacyScriptExecution exemption;
+
   AutoEntryScript aes(globalObject, "CompileModule", true);
 
   bool oldProcessingScriptTag = context->GetProcessingScriptTag();
@@ -2860,10 +2863,9 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
       // mDataType of the request might remain set to DataType::Unknown.
       MOZ_ASSERT(aRequest->IsTextSource() || aRequest->IsUnknownDataType());
       LOG(("ScriptLoadRequest (%p): Evaluate Module", aRequest));
-      AUTO_PROFILER_MARKER_TEXT(
-          "ModuleEvaluation",
-          JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
-          profilerLabelString);
+      AUTO_PROFILER_MARKER_TEXT("ModuleEvaluation", JS,
+                                MarkerInnerWindowIdFromDocShell(docShell),
+                                profilerLabelString);
 
       // currentScript is set to null for modules.
       AutoCurrentScriptUpdater scriptUpdater(this, nullptr);
@@ -2936,20 +2938,18 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
           } else {
             LOG(("ScriptLoadRequest (%p): Decode Bytecode and Execute",
                  aRequest));
-            AUTO_PROFILER_MARKER_TEXT(
-                "BytecodeDecodeMainThread",
-                JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
-                profilerLabelString);
+            AUTO_PROFILER_MARKER_TEXT("BytecodeDecodeMainThread", JS,
+                                      MarkerInnerWindowIdFromDocShell(docShell),
+                                      profilerLabelString);
 
             rv = exec.Decode(options, aRequest->mScriptBytecode,
                              aRequest->mBytecodeOffset);
           }
 
           if (rv == NS_OK) {
-            AUTO_PROFILER_MARKER_TEXT(
-                "ScriptExecution",
-                JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
-                profilerLabelString);
+            AUTO_PROFILER_MARKER_TEXT("ScriptExecution", JS,
+                                      MarkerInnerWindowIdFromDocShell(docShell),
+                                      profilerLabelString);
             rv = ExecuteCompiledScript(cx, aRequest, exec, classicScript);
           }
 
@@ -2983,8 +2983,8 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
               LOG(("ScriptLoadRequest (%p): Compile And Exec", aRequest));
               if (aRequest->IsBinASTSource()) {
                 AUTO_PROFILER_MARKER_TEXT(
-                    "BinASTDecodeMainThread",
-                    JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                    "BinASTDecodeMainThread", JS,
+                    MarkerInnerWindowIdFromDocShell(docShell),
                     profilerLabelString);
 
                 rv = exec.DecodeBinAST(options,
@@ -2996,8 +2996,8 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
                 rv = GetScriptSource(cx, aRequest, &maybeSource);
                 if (NS_SUCCEEDED(rv)) {
                   AUTO_PROFILER_MARKER_TEXT(
-                      "ScriptCompileMainThread",
-                      JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                      "ScriptCompileMainThread", JS,
+                      MarkerInnerWindowIdFromDocShell(docShell),
                       profilerLabelString);
 
                   rv = maybeSource.constructed<SourceText<char16_t>>()
@@ -3014,8 +3014,8 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
             if (rv == NS_OK) {
               script = exec.GetScript();
               AUTO_PROFILER_MARKER_TEXT(
-                  "ScriptExecution",
-                  JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                  "ScriptExecution", JS,
+                  MarkerInnerWindowIdFromDocShell(docShell),
                   profilerLabelString);
               rv = ExecuteCompiledScript(cx, aRequest, exec, classicScript);
             }
@@ -3140,6 +3140,8 @@ void ScriptLoader::EncodeBytecode() {
     return;
   }
 
+  TimeStamp startTime = TimeStamp::Now();
+
   AutoEntryScript aes(globalObject, "encode bytecode", true);
   RefPtr<ScriptLoadRequest> request;
   while (!mBytecodeEncodingQueue.isEmpty()) {
@@ -3148,6 +3150,10 @@ void ScriptLoader::EncodeBytecode() {
     request->mScriptBytecode.clearAndFree();
     request->DropBytecodeCacheReferences();
   }
+
+  TimeDuration delta = TimeStamp::Now() - startTime;
+  Telemetry::Accumulate(Telemetry::JS_BYTECODE_CACHING_TIME,
+                        static_cast<uint32_t>(delta.ToMilliseconds()));
 }
 
 void ScriptLoader::EncodeRequestBytecode(JSContext* aCx,
@@ -3223,6 +3229,7 @@ void ScriptLoader::GiveUpBytecodeEncoding() {
   // removal of all request from the current list and these large buffers would
   // be removed at the same time as the source object.
   nsCOMPtr<nsIScriptGlobalObject> globalObject = GetScriptGlobalObject();
+  AutoAllowLegacyScriptExecution exemption;
   Maybe<AutoEntryScript> aes;
 
   if (globalObject) {

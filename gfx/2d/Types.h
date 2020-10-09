@@ -13,6 +13,7 @@
 #include "mozilla/MacroArgs.h"  // for MOZ_CONCAT
 #include "mozilla/TypedEnumBits.h"
 
+#include <iosfwd>  // for ostream
 #include <stddef.h>
 #include <stdint.h>
 
@@ -413,6 +414,8 @@ enum class SamplingFilter : int8_t {
   SENTINEL  // one past the last valid value
 };
 
+std::ostream& operator<<(std::ostream& aOut, const SamplingFilter& aFilter);
+
 // clang-format off
 MOZ_DEFINE_ENUM_CLASS_WITH_BASE(PatternType, int8_t, (
   COLOR,
@@ -571,6 +574,9 @@ struct DeviceColor {
   bool operator!=(const DeviceColor& aColor) const {
     return !(*this == aColor);
   }
+
+  friend std::ostream& operator<<(std::ostream& aOut,
+                                  const DeviceColor& aColor);
 
   Float r, g, b, a;
 };

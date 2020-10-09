@@ -633,6 +633,12 @@ const TargetingGetters = {
       host: urls[0].host,
     };
   },
+  get isFissionExperimentEnabled() {
+    return (
+      Services.appinfo.fissionExperimentStatus ===
+      Ci.nsIXULRuntime.eExperimentStatusTreatment
+    );
+  },
 };
 
 this.ASRouterTargeting = {

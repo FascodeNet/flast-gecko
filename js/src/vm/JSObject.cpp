@@ -1229,8 +1229,7 @@ static bool DeepCloneValue(JSContext* cx, Value* vp) {
 
 JSObject* js::DeepCloneObjectLiteral(JSContext* cx, HandleObject obj) {
   /* NB: Keep this in sync with XDRObjectLiteral. */
-  MOZ_ASSERT_IF(obj->isSingleton(),
-                cx->realm()->behaviors().getSingletonsAsTemplates());
+  MOZ_ASSERT(!obj->isSingleton());
   MOZ_ASSERT(obj->is<PlainObject>() || obj->is<ArrayObject>());
 
   if (obj->is<ArrayObject>()) {
@@ -3286,20 +3285,20 @@ JSObject* js::GetThisObjectOfWith(JSObject* env) {
   return GetThisObject(env->as<WithEnvironmentObject>().withThis());
 }
 
-class GetObjectSlotNameFunctor : public JS::CallbackTracer::ContextFunctor {
+class GetObjectSlotNameFunctor : public JS::TracingContext::Functor {
   JSObject* obj;
 
  public:
   explicit GetObjectSlotNameFunctor(JSObject* ctx) : obj(ctx) {}
-  virtual void operator()(JS::CallbackTracer* trc, char* buf,
+  virtual void operator()(JS::TracingContext* trc, char* buf,
                           size_t bufsize) override;
 };
 
-void GetObjectSlotNameFunctor::operator()(JS::CallbackTracer* trc, char* buf,
+void GetObjectSlotNameFunctor::operator()(JS::TracingContext* tcx, char* buf,
                                           size_t bufsize) {
-  MOZ_ASSERT(trc->contextIndex() != JS::CallbackTracer::InvalidIndex);
+  MOZ_ASSERT(tcx->index() != JS::TracingContext::InvalidIndex);
 
-  uint32_t slot = uint32_t(trc->contextIndex());
+  uint32_t slot = uint32_t(tcx->index());
 
   Shape* shape;
   if (obj->isNative()) {
@@ -4028,35 +4027,6 @@ void JSObject::traceChildren(JSTracer* trc) {
   if (trc->isMarkingTracer()) {
     GCMarker::fromTracer(trc)->markImplicitEdges(this);
   }
-}
-
-static JSAtom* displayAtomFromObjectGroup(ObjectGroup& group) {
-  AutoSweepObjectGroup sweep(&group);
-  TypeNewScript* script = group.newScript(sweep);
-  if (!script) {
-    return nullptr;
-  }
-
-  return script->function()->displayAtom();
-}
-
-/* static */
-bool JSObject::constructorDisplayAtom(JSContext* cx, js::HandleObject obj,
-                                      js::MutableHandleAtom name) {
-  ObjectGroup* g = JSObject::getGroup(cx, obj);
-  if (!g) {
-    return false;
-  }
-
-  name.set(displayAtomFromObjectGroup(*g));
-  return true;
-}
-
-JSAtom* JSObject::maybeConstructorDisplayAtom() const {
-  if (hasLazyGroup()) {
-    return nullptr;
-  }
-  return displayAtomFromObjectGroup(*group());
 }
 
 // ES 2016 7.3.20.

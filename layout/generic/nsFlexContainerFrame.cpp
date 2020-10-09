@@ -41,6 +41,8 @@ using CachedBAxisMeasurement = nsFlexContainerFrame::CachedBAxisMeasurement;
 static mozilla::LazyLogModule gFlexContainerLog("FlexContainer");
 #define FLEX_LOG(...) \
   MOZ_LOG(gFlexContainerLog, LogLevel::Debug, (__VA_ARGS__));
+#define FLEX_LOGV(...) \
+  MOZ_LOG(gFlexContainerLog, LogLevel::Verbose, (__VA_ARGS__));
 
 // XXXdholbert Some of this helper-stuff should be separated out into a general
 // "main/cross-axis utils" header, shared by grid & flexbox?
@@ -1525,16 +1527,17 @@ static nscoord PartiallyResolveAutoMinSize(
     }
   }
 
-  // Clamp specified size suggestion by the max main-size property if it’s
-  // definite.
-  if (aFlexItem.MainMaxSize() != NS_UNCONSTRAINEDSIZE) {
-    specifiedSizeSuggestion =
-        std::min(specifiedSizeSuggestion, aFlexItem.MainMaxSize());
-  }
-
   if (specifiedSizeSuggestion != nscoord_MAX) {
+    // Clamp specified size suggestion by the max main-size property if it's
+    // definite.
+    if (aFlexItem.MainMaxSize() != NS_UNCONSTRAINEDSIZE) {
+      specifiedSizeSuggestion =
+          std::min(specifiedSizeSuggestion, aFlexItem.MainMaxSize());
+    }
+
     // We have the specified size suggestion. Return it now since we don't need
     // to consider transferred size suggestion.
+    FLEX_LOGV(" Specified size suggestion: %d", specifiedSizeSuggestion);
     return specifiedSizeSuggestion;
   }
 
@@ -1558,6 +1561,7 @@ static nscoord PartiallyResolveAutoMinSize(
         transferredSizeSuggestion, aFlexItem, aAxisTracker);
   }
 
+  FLEX_LOGV(" Transferred size suggestion: %d", transferredSizeSuggestion);
   return transferredSizeSuggestion;
 }
 
@@ -1613,6 +1617,9 @@ void nsFlexContainerFrame::ResolveAutoFlexBasisAndMinSize(
     // with a used flex-basis of "auto" or a min-main-size of "auto".
     return;
   }
+
+  FLEX_LOGV("Resolving auto main size or main min size for flex item %p",
+            aFlexItem.Frame());
 
   // We may be about to do computations based on our item's cross-size
   // (e.g. using it as a constraint when measuring our content in the
@@ -1724,6 +1731,7 @@ void nsFlexContainerFrame::ResolveAutoFlexBasisAndMinSize(
             std::min(contentSizeSuggestion, aFlexItem.MainMaxSize());
       }
 
+      FLEX_LOGV(" Content size suggestion: %d", contentSizeSuggestion);
       resolvedMinSize = std::min(resolvedMinSize, contentSizeSuggestion);
     }
   }
@@ -2045,7 +2053,7 @@ FlexItem::FlexItem(ReflowInput& aFlexItemReflowInput, float aFlexGrow,
     : mFrame(aFlexItemReflowInput.mFrame),
       mFlexGrow(aFlexGrow),
       mFlexShrink(aFlexShrink),
-      mIntrinsicRatio(mFrame->GetIntrinsicRatio()),
+      mIntrinsicRatio(mFrame->GetAspectRatio()),
       mWM(aFlexItemReflowInput.GetWritingMode()),
       mCBWM(aAxisTracker.GetWritingMode()),
       mMainAxis(aAxisTracker.MainAxis()),
@@ -2182,16 +2190,6 @@ FlexItem::FlexItem(ReflowInput& aFlexItemReflowInput, float aFlexGrow,
     } else if (mAlignSelf._0 == StyleAlignFlags::LAST_BASELINE) {
       mAlignSelf = {StyleAlignFlags::FLEX_END};
     }
-  }
-
-  // FIXME: Bug 1660122: Drop this if nsIFrame::GetIntrinicRatio() takes
-  // aspect-ratio property into account.
-  // Note: We check eReplaced here because replaced elements already handle the
-  // aspect-ratio property in their GetIntrinsicRatio() implementation.
-  const StyleAspectRatio& ratio =
-      aFlexItemReflowInput.mStylePosition->mAspectRatio;
-  if (!mFrame->IsFrameOfType(nsIFrame::eReplaced) && ratio.HasFiniteRatio()) {
-    mIntrinsicRatio = ratio.ratio.AsRatio().ToLayoutRatio();
   }
 }
 
@@ -5545,8 +5543,8 @@ void nsFlexContainerFrame::ReflowPlaceholders(
   }
 }
 
-nscoord nsFlexContainerFrame::IntrinsicISize(
-    gfxContext* aRenderingContext, nsLayoutUtils::IntrinsicISizeType aType) {
+nscoord nsFlexContainerFrame::IntrinsicISize(gfxContext* aRenderingContext,
+                                             IntrinsicISizeType aType) {
   nscoord containerISize = 0;
   const nsStylePosition* stylePos = StylePosition();
   const FlexboxAxisTracker axisTracker(this);

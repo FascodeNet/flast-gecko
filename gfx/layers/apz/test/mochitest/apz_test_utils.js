@@ -24,6 +24,12 @@ function convertEntries(entries) {
 function parseRect(str) {
   var pieces = str.replace(/[()\s]+/g, "").split(",");
   SimpleTest.is(pieces.length, 4, "expected string of form (x,y,w,h)");
+  for (var i = 0; i < 4; i++) {
+    var eq = pieces[i].indexOf("=");
+    if (eq >= 0) {
+      pieces[i] = pieces[i].substring(eq + 1);
+    }
+  }
   return {
     x: parseInt(pieces[0]),
     y: parseInt(pieces[1]),
@@ -1156,4 +1162,18 @@ function assertNotCheckerboarded(utils, scrollerId, msgPrefix) {
   }
   ok(found, `${msgPrefix}: Found the scroller in the APZ data`);
   utils.restoreNormalRefresh();
+}
+
+function waitToClearOutAnyPotentialScrolls(aWindow) {
+  return new Promise(resolve => {
+    aWindow.requestAnimationFrame(() => {
+      aWindow.requestAnimationFrame(() => {
+        flushApzRepaints(() => {
+          aWindow.requestAnimationFrame(() => {
+            aWindow.requestAnimationFrame(resolve);
+          });
+        }, aWindow);
+      });
+    });
+  });
 }

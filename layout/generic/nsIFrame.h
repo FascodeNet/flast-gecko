@@ -58,13 +58,13 @@
 #include "mozilla/Result.h"
 #include "mozilla/SmallPointerArray.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ToString.h"
 #include "mozilla/WritingModes.h"
 #include "nsDirection.h"
 #include "nsFrameList.h"
 #include "nsFrameState.h"
 #include "mozilla/ReflowInput.h"
 #include "nsITheme.h"
-#include "nsLayoutUtils.h"
 #include "nsQueryFrame.h"
 #include "mozilla/ComputedStyle.h"
 #include "nsStyleStruct.h"
@@ -106,6 +106,7 @@ class nsISelectionController;
 class nsBoxLayoutState;
 class nsBoxLayout;
 class nsILineIterator;
+class nsDisplayItem;
 class nsDisplayItemBase;
 class nsDisplayListBuilder;
 class nsDisplayListSet;
@@ -2662,14 +2663,23 @@ class nsIFrame : public nsQueryFrame {
   virtual mozilla::IntrinsicSize GetIntrinsicSize();
 
   /**
-   * Get the intrinsic ratio of this element, or a default-constructed
+   * Get the preferred aspect ratio of this frame, or a default-constructed
+   * AspectRatio if it has none.
+   *
+   * https://drafts.csswg.org/css-sizing-4/#preferred-aspect-ratio
+   */
+  mozilla::AspectRatio GetAspectRatio() const;
+
+  /**
+   * Get the intrinsic aspect ratio of this frame, or a default-constructed
    * AspectRatio if it has no intrinsic ratio.
    *
    * The intrinsic ratio is the ratio of the width/height of a box with an
    * intrinsic size or the intrinsic aspect ratio of a scalable vector image
-   * without an intrinsic size.
+   * without an intrinsic size. A frame class implementing a replaced element
+   * should override this method if it has a intrinsic ratio.
    */
-  virtual mozilla::AspectRatio GetIntrinsicRatio();
+  virtual mozilla::AspectRatio GetIntrinsicRatio() const;
 
   /**
    * Compute the size that a frame will occupy.  Called while
@@ -4502,6 +4512,7 @@ class nsIFrame : public nsQueryFrame {
   inline bool IsStickyPositioned() const;
   inline bool IsAbsolutelyPositioned(
       const nsStyleDisplay* aStyleDisplay = nullptr) const;
+  inline bool IsTrueOverflowContainer() const;
 
   // Does this frame have "column-span: all" style.
   //
@@ -5722,15 +5733,6 @@ template <bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>
     }
   }
   return result;
-}
-
-template <bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>
-/* static */ void nsIFrame::SortFrameList(nsFrameList& aFrameList) {
-  nsIFrame* head = MergeSort<IsLessThanOrEqual>(aFrameList.FirstChild());
-  aFrameList.Clear();
-  aFrameList = nsFrameList(head, nsLayoutUtils::GetLastSibling(head));
-  MOZ_ASSERT(IsFrameListSorted<IsLessThanOrEqual>(aFrameList),
-             "After we sort a frame list, it should be in sorted order...");
 }
 
 template <bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>

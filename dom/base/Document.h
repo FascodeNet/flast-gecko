@@ -912,7 +912,8 @@ class Document : public nsINode,
   /**
    * Resolves a URI based on the document's base URI.
    */
-  Result<nsCOMPtr<nsIURI>, nsresult> ResolveWithBaseURI(const nsAString& aURI);
+  Result<OwningNonNull<nsIURI>, nsresult> ResolveWithBaseURI(
+      const nsAString& aURI);
 
   /**
    * Return the URL data which style system needs for resolving url value.
@@ -2159,10 +2160,6 @@ class Document : public nsINode,
   bool IsTopLevelContentDocument() const { return mIsTopLevelContentDocument; }
   void SetIsTopLevelContentDocument(bool aIsTopLevelContentDocument) {
     mIsTopLevelContentDocument = aIsTopLevelContentDocument;
-    // When a document is set as TopLevelContentDocument, it must be
-    // allowpaymentrequest. We handle the false case while a document is
-    // appended in SetSubDocumentFor
-    SetAllowPaymentRequest(aIsTopLevelContentDocument);
   }
 
   bool IsContentDocument() const { return mIsContentDocument; }
@@ -3406,6 +3403,16 @@ class Document : public nsINode,
   bool Hidden() const { return mVisibilityState != VisibilityState::Visible; }
   dom::VisibilityState VisibilityState() const { return mVisibilityState; }
 
+ private:
+  int32_t mPictureInPictureChildElementCount = 0;
+
+ public:
+  void EnableChildElementInPictureInPictureMode();
+  void DisableChildElementInPictureInPictureMode();
+
+  // True if any child element is being used in picture in picture mode.
+  bool HasPictureInPictureChildElement() const;
+
   void GetSelectedStyleSheetSet(nsAString& aSheetSet);
   void SetSelectedStyleSheetSet(const nsAString& aSheetSet);
   void GetLastStyleSheetSet(nsAString& aSheetSet) {
@@ -3873,12 +3880,6 @@ class Document : public nsINode,
     --mIgnoreOpensDuringUnloadCounter;
   }
 
-  bool AllowPaymentRequest() const { return mAllowPaymentRequest; }
-
-  void SetAllowPaymentRequest(bool aAllowPaymentRequest) {
-    mAllowPaymentRequest = aAllowPaymentRequest;
-  }
-
   mozilla::dom::FeaturePolicy* FeaturePolicy() const;
 
   bool ModuleScriptsEnabled();
@@ -3895,8 +3896,8 @@ class Document : public nsINode,
 
   void ReportShadowDOMUsage();
 
-  // Sets flags for media autoplay telemetry.
-  void SetDocTreeHadAudibleMedia();
+  // Sets flags for media telemetry.
+  void SetDocTreeHadMedia();
 
   dom::XPathEvaluator* XPathEvaluator();
 
@@ -4502,9 +4503,6 @@ class Document : public nsINode,
   // True if we have called BeginLoad and are expecting a paired EndLoad call.
   bool mDidCallBeginLoad : 1;
 
-  // True if the document is allowed to use PaymentRequest.
-  bool mAllowPaymentRequest : 1;
-
   // True if the encoding menu should be disabled.
   bool mEncodingMenuDisabled : 1;
 
@@ -5091,6 +5089,9 @@ class Document : public nsINode,
   // Scope preloads per document.  This is used by speculative loading as well.
   PreloadService mPreloadService;
 
+  // Accumulate JS telemetry collected
+  void AccumulateJSTelemetry();
+
  public:
   // Needs to be public because the bindings code pokes at it.
   JS::ExpandoAndGeneration mExpandoAndGeneration;
@@ -5106,6 +5107,8 @@ class Document : public nsINode,
   void SetSavedResolutionBeforeMVM(float aResolution) {
     mSavedResolutionBeforeMVM = aResolution;
   }
+
+  void LoadEventFired();
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(Document, NS_IDOCUMENT_IID)

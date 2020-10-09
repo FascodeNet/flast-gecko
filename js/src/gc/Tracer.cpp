@@ -38,19 +38,19 @@ void CheckTracedThing(JSTracer* trc, T thing);
 
 /*** Callback Tracer Dispatch ***********************************************/
 template <typename T>
-bool DoCallback(JS::CallbackTracer* trc, T** thingp, const char* name) {
+bool DoCallback(GenericTracer* trc, T** thingp, const char* name) {
   CheckTracedThing(trc, *thingp);
   JS::AutoTracingName ctx(trc, name);
 
   return trc->dispatchToOnEdge(thingp);
 }
 #define INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS(name, type, _, _1) \
-  template bool DoCallback<type>(JS::CallbackTracer*, type**, const char*);
+  template bool DoCallback<type>(GenericTracer*, type**, const char*);
 JS_FOR_EACH_TRACEKIND(INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS);
 #undef INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS
 
 template <typename T>
-bool DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
+bool DoCallback(GenericTracer* trc, T* thingp, const char* name) {
   // Return true by default. For some types the lambda below won't be called.
   bool ret = true;
   auto thing = MapGCThingTyped(*thingp, [trc, name, &ret](auto t) {
@@ -68,37 +68,31 @@ bool DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
   }
   return ret;
 }
-template bool DoCallback<JS::Value>(JS::CallbackTracer*, JS::Value*,
-                                    const char*);
-template bool DoCallback<JS::PropertyKey>(JS::CallbackTracer*, JS::PropertyKey*,
+template bool DoCallback<JS::Value>(GenericTracer*, JS::Value*, const char*);
+template bool DoCallback<JS::PropertyKey>(GenericTracer*, JS::PropertyKey*,
                                           const char*);
-template bool DoCallback<TaggedProto>(JS::CallbackTracer*, TaggedProto*,
+template bool DoCallback<TaggedProto>(GenericTracer*, TaggedProto*,
                                       const char*);
 
-void JS::CallbackTracer::getTracingEdgeName(char* buffer, size_t bufferSize) {
+void JS::TracingContext::getEdgeName(char* buffer, size_t bufferSize) {
   MOZ_ASSERT(bufferSize > 0);
-  if (contextFunctor_) {
-    (*contextFunctor_)(this, buffer, bufferSize);
+  if (functor_) {
+    (*functor_)(this, buffer, bufferSize);
     return;
   }
-  if (contextIndex_ != InvalidIndex) {
-    snprintf(buffer, bufferSize, "%s[%zu]", contextName_, contextIndex_);
+  if (index_ != InvalidIndex) {
+    snprintf(buffer, bufferSize, "%s[%zu]", name_, index_);
     return;
   }
-  snprintf(buffer, bufferSize, "%s", contextName_);
+  snprintf(buffer, bufferSize, "%s", name_);
 }
 
 /*** Public Tracing API *****************************************************/
 
 JS_PUBLIC_API void JS::TraceChildren(JSTracer* trc, GCCellPtr thing) {
-  js::TraceChildren(trc, thing.asCell(), thing.kind());
-}
-
-void js::TraceChildren(JSTracer* trc, void* thing, JS::TraceKind kind) {
-  MOZ_ASSERT(thing);
-  ApplyGCThingTyped(thing, kind, [trc](auto t) {
+  ApplyGCThingTyped(thing.asCell(), thing.kind(), [trc](auto t) {
     MOZ_ASSERT_IF(t->runtimeFromAnyThread() != trc->runtime(),
-                  ThingIsPermanentAtomOrWellKnownSymbol(t) ||
+                  t->isPermanentAndMayBeShared() ||
                       t->zoneFromAnyThread()->isSelfHostingZone());
     t->traceChildren(trc);
   });
@@ -218,9 +212,8 @@ static const char* StringKindHeader(JSString* str) {
   return "linear: ";
 }
 
-JS_PUBLIC_API void JS_GetTraceThingInfo(char* buf, size_t bufsize,
-                                        JSTracer* trc, void* thing,
-                                        JS::TraceKind kind, bool details) {
+void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
+                               JS::TraceKind kind, bool details) {
   const char* name = nullptr; /* silence uninitialized warning */
   size_t n;
 
@@ -365,9 +358,9 @@ JS_PUBLIC_API void JS_GetTraceThingInfo(char* buf, size_t bufsize,
   buf[bufsize - 1] = '\0';
 }
 
-JS::CallbackTracer::CallbackTracer(JSContext* cx,
-                                   WeakMapTraceKind weakTraceKind)
-    : CallbackTracer(cx->runtime(), weakTraceKind) {}
+JS::CallbackTracer::CallbackTracer(JSContext* cx, JS::TracerKind kind,
+                                   JS::TraceOptions options)
+    : CallbackTracer(cx->runtime(), kind, options) {}
 
 uint32_t JSTracer::gcNumberForMarking() const {
   MOZ_ASSERT(isMarkingTracer());

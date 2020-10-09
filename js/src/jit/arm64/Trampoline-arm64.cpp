@@ -5,9 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/Bailouts.h"
+#include "jit/BaselineFrame.h"
+#include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
-#include "jit/Linker.h"
+#include "jit/JitRuntime.h"
 #ifdef JS_ION_PERF
 #  include "jit/PerfSpewer.h"
 #endif
@@ -214,13 +215,14 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.push(BaselineFrameReg, reg_code);
 
     // Initialize the frame, including filling in the slots.
+    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
+                        uint32_t numStackValues);
     masm.setupUnalignedABICall(r19);
     masm.passABIArg(BaselineFrameReg);  // BaselineFrame.
     masm.passABIArg(reg_osrFrame);      // InterpreterFrame.
     masm.passABIArg(reg_osrNStack);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::InitBaselineFrameForOsr),
-                     MoveOp::GENERAL,
-                     CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+    masm.callWithABI<Fn, jit::InitBaselineFrameForOsr>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
     masm.pop(r19, BaselineFrameReg);
     MOZ_ASSERT(r19 != ReturnReg);
@@ -342,13 +344,15 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
            Operand(sizeof(size_t) + sizeof(void*)));
   masm.moveToStackPtr(r2);
 
+  using Fn = bool (*)(InvalidationBailoutStack * sp, size_t * frameSizeOut,
+                      BaselineBailoutInfo * *info);
   masm.setupUnalignedABICall(r10);
   masm.passABIArg(r0);
   masm.passABIArg(r1);
   masm.passABIArg(r2);
 
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, InvalidationBailout),
-                   MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI<Fn, InvalidationBailout>(
+      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
 
   masm.pop(r2, r1);
 
@@ -491,9 +495,7 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
 }
 
 static void PushBailoutFrame(MacroAssembler& masm, Register spArg) {
-#ifdef ENABLE_WASM_SIMD
-#  error "Needs more careful logic if SIMD is enabled"
-#endif
+  // This assumes no SIMD registers, as JS does not support SIMD.
 
   // The stack saved in spArg must be (higher entries have higher memory
   // addresses):
@@ -515,11 +517,12 @@ static void GenerateBailoutThunk(MacroAssembler& masm, Label* bailoutTail) {
   masm.reserveStack(sizeof(void*));
   masm.moveStackPtrTo(r1);
 
+  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
   masm.setupUnalignedABICall(r2);
   masm.passABIArg(r0);
   masm.passABIArg(r1);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, Bailout), MoveOp::GENERAL,
-                   CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI<Fn, Bailout>(MoveOp::GENERAL,
+                                CheckUnsafeCallWithABI::DontCheckOther);
 
   // Get the bailoutInfo outparam.
   masm.pop(r2);

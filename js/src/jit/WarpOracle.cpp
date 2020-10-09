@@ -15,6 +15,7 @@
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIROpsGenerated.h"
 #include "jit/CompileInfo.h"
+#include "jit/JitRealm.h"
 #include "jit/JitScript.h"
 #include "jit/JitSpewer.h"
 #include "jit/MIRGenerator.h"
@@ -60,10 +61,10 @@ class MOZ_STACK_CLASS WarpScriptOracle {
   AbortReasonOr<WarpEnvironment> createEnvironment();
   AbortReasonOr<Ok> maybeInlineIC(WarpOpSnapshotList& snapshots,
                                   BytecodeLocation loc);
-  AbortReasonOr<bool> maybeInlineCallIC(WarpOpSnapshotList& snapshots,
-                                        BytecodeLocation loc, ICStub* stub,
-                                        ICFallbackStub* fallbackStub,
-                                        uint8_t* stubDataCopy);
+  AbortReasonOr<bool> maybeInlineCall(WarpOpSnapshotList& snapshots,
+                                      BytecodeLocation loc, ICStub* stub,
+                                      ICFallbackStub* fallbackStub,
+                                      uint8_t* stubDataCopy);
   MOZ_MUST_USE bool replaceNurseryPointers(ICStub* stub,
                                            const CacheIRStubInfo* stubInfo,
                                            uint8_t* stubDataCopy);
@@ -394,13 +395,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         break;
       }
 
-      case JSOp::Object: {
-        if (!mirGen_.options.cloneSingletons()) {
-          cx_->realm()->behaviors().setSingletonsAsValues();
-        }
-        break;
-      }
-
       case JSOp::GetImport: {
         PropertyName* name = loc.getPropertyName(script_);
         if (!AddWarpGetImport(alloc_, opSnapshots, offset, script_, name)) {
@@ -714,6 +708,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::InitHiddenElemGetter:
       case JSOp::InitHiddenElemSetter:
       case JSOp::NewTarget:
+      case JSOp::Object:
       case JSOp::CheckIsObj:
       case JSOp::CheckObjCoercible:
       case JSOp::FunWithProto:
@@ -934,8 +929,8 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
 
   if (fallbackStub->trialInliningState() == TrialInliningState::Inlined) {
     bool inlinedCall;
-    MOZ_TRY_VAR(inlinedCall, maybeInlineCallIC(snapshots, loc, stub,
-                                               fallbackStub, stubDataCopy));
+    MOZ_TRY_VAR(inlinedCall, maybeInlineCall(snapshots, loc, stub, fallbackStub,
+                                             stubDataCopy));
     if (inlinedCall) {
       return Ok();
     }
@@ -951,20 +946,21 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
   return Ok();
 }
 
-AbortReasonOr<bool> WarpScriptOracle::maybeInlineCallIC(
+AbortReasonOr<bool> WarpScriptOracle::maybeInlineCall(
     WarpOpSnapshotList& snapshots, BytecodeLocation loc, ICStub* stub,
     ICFallbackStub* fallbackStub, uint8_t* stubDataCopy) {
-  Maybe<InlinableCallData> callData = FindInlinableCallData(stub);
-  if (callData.isNothing() || !callData->icScript) {
+  Maybe<InlinableOpData> inlineData = FindInlinableOpData(stub, loc);
+  if (inlineData.isNothing() || !inlineData->icScript) {
     return false;
   }
 
-  RootedFunction targetFunction(cx_, callData->target);
-  RootedScript targetScript(cx_, targetFunction->nonLazyScript());
-  ICScript* icScript = callData->icScript;
+  RootedFunction targetFunction(cx_, inlineData->target);
   if (!TrialInliner::canInline(targetFunction, script_)) {
     return false;
   }
+
+  RootedScript targetScript(cx_, targetFunction->nonLazyScript());
+  ICScript* icScript = inlineData->icScript;
 
   // Add the inlined script to the inline script tree.
   LifoAlloc* lifoAlloc = alloc_.lifoAlloc();
@@ -1048,9 +1044,9 @@ bool WarpScriptOracle::replaceNurseryPointers(ICStub* stub,
   while (true) {
     StubField::Type fieldType = stubInfo->fieldType(field);
     switch (fieldType) {
-      case StubField::Type::RawWord:
+      case StubField::Type::RawInt32:
+      case StubField::Type::RawPointer:
       case StubField::Type::RawInt64:
-      case StubField::Type::DOMExpandoGeneration:
         break;
       case StubField::Type::Shape:
         static_assert(std::is_convertible_v<Shape*, gc::TenuredCell*>,

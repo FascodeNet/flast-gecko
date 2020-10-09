@@ -31,7 +31,7 @@ use crate::scene::{BuiltScene, SceneProperties};
 use crate::space::SpaceMapper;
 use crate::segment::SegmentBuilder;
 use std::{f32, mem};
-use crate::util::{MaxRect, VecHelper, Recycler, Preallocator};
+use crate::util::{VecHelper, Recycler, Preallocator};
 use crate::visibility::{update_primitive_visibility, FrameVisibilityState, FrameVisibilityContext};
 use crate::visibility::{PrimitiveVisibilityMask};
 
@@ -402,9 +402,8 @@ impl FrameBuilder {
         // against the screen world rect, in absence of any
         // other dirty regions.
         let mut default_dirty_region = DirtyRegion::new();
-        default_dirty_region.push(
+        default_dirty_region.add_dirty_region(
             frame_context.global_screen_world_rect,
-            PrimitiveVisibilityMask::all(),
         );
         frame_state.push_dirty_region(default_dirty_region);
 
@@ -413,7 +412,6 @@ impl FrameBuilder {
             .pictures[scene.root_pic_index.0]
             .take_context(
                 scene.root_pic_index,
-                WorldRect::max_rect(),
                 root_spatial_node_index,
                 root_spatial_node_index,
                 ROOT_SURFACE_INDEX,
@@ -531,7 +529,7 @@ impl FrameBuilder {
                 let spatial_node = &scene
                     .spatial_tree
                     .spatial_nodes[spatial_node_index.0 as usize];
-                spatial_node.is_ancestor_or_self_zooming()
+                spatial_node.is_ancestor_or_self_zooming
             });
 
         let mut composite_state = CompositeState::new(

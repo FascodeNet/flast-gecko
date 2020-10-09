@@ -11,6 +11,7 @@
 
 #include <algorithm>
 
+#include "jit/CompileWrappers.h"
 #include "jit/JitAllocPolicy.h"
 #include "jit/JitFrames.h"
 #include "jit/Registers.h"
@@ -252,9 +253,6 @@ class CompileInfo {
     MOZ_ASSERT(JSOp(*pc) == JSOp::LoopHead);
     return pc == osrPc();
   }
-
-  jsbytecode* startPC() const { return script_->code(); }
-  jsbytecode* limitPC() const { return script_->codeEnd(); }
 
   const char* filename() const { return script_->filename(); }
 

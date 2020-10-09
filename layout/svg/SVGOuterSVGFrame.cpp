@@ -246,14 +246,9 @@ IntrinsicSize SVGOuterSVGFrame::GetIntrinsicSize() {
 }
 
 /* virtual */
-AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() {
+AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() const {
   if (IsReplacedAndContainSize(this)) {
     return AspectRatio();
-  }
-
-  const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
-  if (!aspectRatio.auto_) {
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
   // We only have an intrinsic size/ratio if our width and height attributes
@@ -286,11 +281,6 @@ AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() {
 
   if (viewbox) {
     return AspectRatio::FromSize(viewbox->width, viewbox->height);
-  }
-
-  if (aspectRatio.HasRatio()) {
-    // For aspect-ratio: "auto && <ratio>" case.
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
   return SVGDisplayContainerFrame::GetIntrinsicRatio();
@@ -362,8 +352,8 @@ nsIFrame::SizeComputationResult SVGOuterSVGFrame::ComputeSize(
   }
 
   return {ComputeSizeWithIntrinsicDimensions(
-              aRenderingContext, aWritingMode, intrinsicSize,
-              GetIntrinsicRatio(), cbSize, aMargin, aBorderPadding, aFlags),
+              aRenderingContext, aWritingMode, intrinsicSize, GetAspectRatio(),
+              cbSize, aMargin, aBorderPadding, aFlags),
           AspectRatioUsage::None};
 }
 
@@ -914,7 +904,7 @@ void SVGOuterSVGFrame::AppendDirectlyOwnedAnonBoxes(
 
 void SVGOuterSVGFrame::MaybeSendIntrinsicSizeAndRatioToEmbedder() {
   MaybeSendIntrinsicSizeAndRatioToEmbedder(Some(GetIntrinsicSize()),
-                                           Some(GetIntrinsicRatio()));
+                                           Some(GetAspectRatio()));
 }
 
 void SVGOuterSVGFrame::MaybeSendIntrinsicSizeAndRatioToEmbedder(

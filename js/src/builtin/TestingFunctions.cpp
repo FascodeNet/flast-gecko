@@ -43,13 +43,15 @@
 #ifdef DEBUG
 #  include "frontend/TokenStream.h"
 #endif
+#include "frontend/BytecodeCompilation.h"
+#include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationInfoVector
 #include "gc/Allocator.h"
 #include "gc/Zone.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Disassemble.h"
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"
-#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/TrialInlining.h"
 #include "js/Array.h"        // JS::NewArrayObject
 #include "js/ArrayBuffer.h"  // JS::{DetachArrayBuffer,GetArrayBufferLengthAndData,NewArrayBufferWithContents}
@@ -100,6 +102,7 @@
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseSlot_*
 #include "vm/ProxyObject.h"
 #include "vm/SavedStacks.h"
+#include "vm/ScopeKind.h"
 #include "vm/Stack.h"
 #include "vm/StringType.h"
 #include "vm/TraceLogging.h"
@@ -806,25 +809,25 @@ static bool WasmIsSupportedByHardware(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool WasmDebuggingIsSupported(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmDebuggingEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::HasSupport(cx) && wasm::BaselineAvailable(cx));
   return true;
 }
 
-static bool WasmStreamingIsSupported(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmStreamingEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::StreamingCompilationAvailable(cx));
   return true;
 }
 
-static bool WasmCachingIsSupported(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmCachingEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::CodeCachingAvailable(cx));
   return true;
 }
 
-static bool WasmHugeMemoryIsSupported(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmHugeMemorySupported(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef WASM_SUPPORTS_HUGE_MEMORY
   args.rval().setBoolean(true);
@@ -834,7 +837,7 @@ static bool WasmHugeMemoryIsSupported(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool WasmThreadsSupported(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmThreadsEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::ThreadsAvailable(cx));
   return true;
@@ -843,6 +846,13 @@ static bool WasmThreadsSupported(JSContext* cx, unsigned argc, Value* vp) {
 static bool WasmReftypesEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::ReftypesAvailable(cx));
+  return true;
+}
+
+static bool WasmFunctionReferencesEnabled(JSContext* cx, unsigned argc,
+                                          Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(wasm::FunctionReferencesAvailable(cx));
   return true;
 }
 
@@ -858,9 +868,20 @@ static bool WasmMultiValueEnabled(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool WasmSimdSupported(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmSimdEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::SimdAvailable(cx));
+  return true;
+}
+
+static bool WasmSimdExperimentalEnabled(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
+  args.rval().setBoolean(wasm::SimdAvailable(cx));
+#else
+  args.rval().setBoolean(false);
+#endif
   return true;
 }
 
@@ -1863,16 +1884,16 @@ class HasChildTracer final : public JS::CallbackTracer {
   RootedValue child_;
   bool found_;
 
-  bool onChild(const JS::GCCellPtr& thing) override {
+  void onChild(const JS::GCCellPtr& thing) override {
     if (thing.asCell() == child_.toGCThing()) {
       found_ = true;
     }
-    return true;
   }
 
  public:
   HasChildTracer(JSContext* cx, HandleValue child)
-      : JS::CallbackTracer(cx, TraceWeakMapKeysValues),
+      : JS::CallbackTracer(cx, JS::TracerKind::Callback,
+                           JS::WeakMapTraceAction::TraceKeysAndValues),
         child_(cx, child),
         found_(false) {}
 
@@ -1890,7 +1911,7 @@ static bool HasChild(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   HasChildTracer trc(cx, child);
-  TraceChildren(&trc, parent.toGCThing(), parent.traceKind());
+  TraceChildren(&trc, JS::GCCellPtr(parent.toGCThing(), parent.traceKind()));
   args.rval().setBoolean(trc.found());
   return true;
 }
@@ -4872,6 +4893,129 @@ static bool SetLazyParsingDisabled(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool CompileStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!args.requireAtLeast(cx, "compileStencilXDR", 1)) {
+    return false;
+  }
+
+  RootedString src(cx, ToString<CanGC>(cx, args[0]));
+  if (!src) {
+    return false;
+  }
+
+  /* TODO: Retrieve these from an optional `config` object. */
+  const char* filename = "compileStencilXDR-DATA.js";
+  uint32_t lineno = 1;
+
+  /* Linearize the string to obtain a char16_t* range. */
+  AutoStableStringChars linearChars(cx);
+  if (!linearChars.initTwoByte(cx, src)) {
+    return false;
+  }
+  JS::SourceText<char16_t> srcBuf;
+  if (!srcBuf.init(cx, linearChars.twoByteChars(), src->length(),
+                   JS::SourceOwnership::Borrowed)) {
+    return false;
+  }
+
+  /* Compile the script text to stencil. */
+  CompileOptions options(cx);
+  options.setFileAndLine(filename, lineno);
+
+  /* TODO: StencilXDR - Add option to select between full and syntax parse. */
+  options.setForceFullParse();
+
+  Rooted<frontend::CompilationInfo> compilationInfo(
+      cx, frontend::CompilationInfo(cx, options));
+  if (!compilationInfo.get().input.initForGlobal(cx)) {
+    return false;
+  }
+  if (!frontend::CompileGlobalScriptToStencil(cx, compilationInfo.get(), srcBuf,
+                                              ScopeKind::Global)) {
+    return false;
+  }
+
+  /* Serialize the stencil to XDR. */
+  JS::TranscodeBuffer xdrBytes;
+  if (!compilationInfo.get().serializeStencils(cx, xdrBytes)) {
+    return false;
+  }
+
+  /* Dump the bytes into a javascript ArrayBuffer and return a UInt8Array. */
+  RootedObject arrayBuf(cx, JS::NewArrayBuffer(cx, xdrBytes.length()));
+  if (!arrayBuf) {
+    return false;
+  }
+
+  {
+    JS::AutoAssertNoGC nogc;
+    bool isSharedMemory = false;
+    uint8_t* data = JS::GetArrayBufferData(arrayBuf, &isSharedMemory, nogc);
+    std::copy(xdrBytes.begin(), xdrBytes.end(), data);
+  }
+
+  args.rval().setObject(*arrayBuf);
+  return true;
+}
+
+static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!args.requireAtLeast(cx, "evalStencilXDR", 1)) {
+    return false;
+  }
+
+  /* Prepare the input byte array. */
+  if (!args[0].isObject() || !args[0].toObject().is<ArrayBufferObject>()) {
+    JS_ReportErrorASCII(cx, "evalStencilXDR: ArrayBuffer expected");
+    return false;
+  }
+  RootedArrayBufferObject src(cx, &args[0].toObject().as<ArrayBufferObject>());
+
+  const char* filename = "compileStencilXDR-DATA.js";
+  uint32_t lineno = 1;
+
+  /* Prepare the CompilationInfoVector for decoding. */
+  CompileOptions options(cx);
+  options.setFileAndLine(filename, lineno);
+  options.setForceFullParse();
+
+  Rooted<frontend::CompilationInfoVector> compilationInfos(
+      cx, frontend::CompilationInfoVector(cx, options));
+  if (!compilationInfos.get().initial.input.initForGlobal(cx)) {
+    return false;
+  }
+
+  /* Deserialize the stencil from XDR. */
+  JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength());
+  bool succeeded = false;
+  if (!compilationInfos.get().deserializeStencils(cx, xdrRange, &succeeded)) {
+    return false;
+  }
+  if (!succeeded) {
+    JS_ReportErrorASCII(cx, "Decoding failure");
+    return false;
+  }
+
+  /* Instantiate the stencil. */
+  frontend::CompilationGCOutput output(cx);
+  if (!compilationInfos.get().instantiateStencils(cx, output)) {
+    return false;
+  }
+
+  /* Obtain the JSScript and evaluate it. */
+  RootedScript script(cx, output.script);
+  RootedValue retVal(cx, UndefinedValue());
+  if (!JS_ExecuteScript(cx, script, &retVal)) {
+    return false;
+  }
+
+  args.rval().set(retVal);
+  return true;
+}
+
 static bool SetDiscardSource(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -4879,33 +5023,6 @@ static bool SetDiscardSource(JSContext* cx, unsigned argc, Value* vp) {
   cx->realm()->behaviors().setDiscardSource(discard);
 
   args.rval().setUndefined();
-  return true;
-}
-
-static bool GetConstructorName(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  if (!args.requireAtLeast(cx, "getConstructorName", 1)) {
-    return false;
-  }
-
-  if (!args[0].isObject()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_NOT_EXPECTED_TYPE, "getConstructorName",
-                              "Object", InformalValueTypeName(args[0]));
-    return false;
-  }
-
-  RootedAtom name(cx);
-  RootedObject obj(cx, &args[0].toObject());
-  if (!JSObject::constructorDisplayAtom(cx, obj, &name)) {
-    return false;
-  }
-
-  if (name) {
-    args.rval().setString(name);
-  } else {
-    args.rval().setNull();
-  }
   return true;
 }
 
@@ -6657,33 +6774,60 @@ gc::ZealModeHelpText),
 "wasmIsSupportedByHardware()",
 "  Returns a boolean indicating whether WebAssembly is supported on the current hardware (regardless of whether we've enabled support)."),
 
-    JS_FN_HELP("wasmDebuggingIsSupported", WasmDebuggingIsSupported, 0, 0,
-"wasmDebuggingIsSupported()",
+    JS_FN_HELP("wasmDebuggingEnabled", WasmDebuggingEnabled, 0, 0,
+"wasmDebuggingEnabled()",
 "  Returns a boolean indicating whether WebAssembly debugging is supported on the current device;\n"
 "  returns false also if WebAssembly is not supported"),
 
-    JS_FN_HELP("wasmStreamingIsSupported", WasmStreamingIsSupported, 0, 0,
-"wasmStreamingIsSupported()",
+    JS_FN_HELP("wasmStreamingEnabled", WasmStreamingEnabled, 0, 0,
+"wasmStreamingEnabled()",
 "  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
 
-    JS_FN_HELP("wasmCachingIsSupported", WasmCachingIsSupported, 0, 0,
-"wasmCachingIsSupported()",
+    JS_FN_HELP("wasmCachingEnabled", WasmCachingEnabled, 0, 0,
+"wasmCachingEnabled()",
 "  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
 
-    JS_FN_HELP("wasmHugeMemoryIsSupported", WasmHugeMemoryIsSupported, 0, 0,
-"wasmHugeMemoryIsSupported()",
+    JS_FN_HELP("wasmHugeMemorySupported", WasmHugeMemorySupported, 0, 0,
+"wasmHugeMemorySupported()",
 "  Returns a boolean indicating whether WebAssembly supports using a large"
 "  virtual memory reservation in order to elide bounds checks on this platform."),
 
-    JS_FN_HELP("wasmThreadsSupported", WasmThreadsSupported, 0, 0,
-"wasmThreadsSupported()",
+    JS_FN_HELP("wasmThreadsEnabled", WasmThreadsEnabled, 0, 0,
+"wasmThreadsEnabled()",
 "  Returns a boolean indicating whether the WebAssembly threads proposal is\n"
 "  supported on the current device."),
 
-    JS_FN_HELP("wasmSimdSupported", WasmSimdSupported, 0, 0,
-"wasmSimdSupported()",
+    JS_FN_HELP("wasmSimdEnabled", WasmSimdEnabled, 0, 0,
+"wasmSimdEnabled()",
 "  Returns a boolean indicating whether WebAssembly SIMD is supported by the\n"
 "  compilers and runtime."),
+
+    JS_FN_HELP("wasmSimdExperimentalEnabled", WasmSimdExperimentalEnabled, 0, 0,
+"wasmSimdExperimentalEnabled()",
+"  Returns a boolean indicating whether WebAssembly SIMD experimental instructions\n"
+"  are supported by the compilers and runtime."),
+
+    JS_FN_HELP("wasmReftypesEnabled", WasmReftypesEnabled, 1, 0,
+"wasmReftypesEnabled()",
+"  Returns a boolean indicating whether the WebAssembly reftypes proposal is enabled."),
+
+    JS_FN_HELP("wasmFunctionReferencesEnabled", WasmFunctionReferencesEnabled, 1, 0,
+"wasmFunctionReferencesEnabled()",
+"  Returns a boolean indicating whether the WebAssembly function-references proposal is enabled."),
+
+    JS_FN_HELP("wasmGcEnabled", WasmGcEnabled, 1, 0,
+"wasmGcEnabled()",
+"  Returns a boolean indicating whether the WebAssembly GC types proposal is enabled."),
+
+    JS_FN_HELP("wasmMultiValueEnabled", WasmMultiValueEnabled, 1, 0,
+"wasmMultiValueEnabled()",
+"  Returns a boolean indicating whether the WebAssembly multi-value proposal is enabled."),
+
+#if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
+    JS_FN_HELP("wasmSimdAnalysis", WasmSimdAnalysis, 1, 0,
+"wasmSimdAnalysis(...)",
+"  Unstable API for white-box testing.\n"),
+#endif
 
     JS_FN_HELP("wasmCompilersPresent", WasmCompilersPresent, 0, 0,
 "wasmCompilersPresent()",
@@ -6734,24 +6878,6 @@ gc::ZealModeHelpText),
 "wasmLoadedFromCache(module)",
 "  Returns a boolean indicating whether a given module was deserialized directly from a\n"
 "  cache (as opposed to compiled from bytecode)."),
-
-    JS_FN_HELP("wasmReftypesEnabled", WasmReftypesEnabled, 1, 0,
-"wasmReftypesEnabled()",
-"  Returns a boolean indicating whether the WebAssembly reftypes proposal is enabled."),
-
-    JS_FN_HELP("wasmGcEnabled", WasmGcEnabled, 1, 0,
-"wasmGcEnabled()",
-"  Returns a boolean indicating whether the WebAssembly GC types proposal is enabled."),
-
-    JS_FN_HELP("wasmMultiValueEnabled", WasmMultiValueEnabled, 1, 0,
-"wasmMultiValueEnabled()",
-"  Returns a boolean indicating whether the WebAssembly multi-value proposal is enabled."),
-
-#if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
-    JS_FN_HELP("wasmSimdAnalysis", WasmSimdAnalysis, 1, 0,
-"wasmSimdAnalysis(...)",
-"  Unstable API for white-box testing.\n"),
-#endif
 
     JS_FN_HELP("isLazyFunction", IsLazyFunction, 1, 0,
 "isLazyFunction(fun)",
@@ -6979,11 +7105,6 @@ gc::ZealModeHelpText),
 "  Explicitly enable source discarding in the current compartment.  The default is that "
 "  source discarding is not explicitly enabled."),
 
-    JS_FN_HELP("getConstructorName", GetConstructorName, 1, 0,
-"getConstructorName(object)",
-"  If the given object was created with `new Ctor`, return the constructor's display name. "
-"  Otherwise, return null."),
-
     JS_FN_HELP("allocationMarker", AllocationMarker, 0, 0,
 "allocationMarker([options])",
 "  Return a freshly allocated object whose [[Class]] name is\n"
@@ -7187,6 +7308,16 @@ JS_FN_HELP("setDefaultLocale", SetDefaultLocale, 1, 0,
 "  Set the runtime default locale to the given value.\n"
 "  An empty string or undefined resets the runtime locale to its default value.\n"
 "  NOTE: The input string is not fully validated, it must be a valid BCP-47 language tag."),
+
+    JS_FN_HELP("compileStencilXDR", CompileStencilXDR, 1, 0,
+"compileStencilXDR(string)",
+"  Parses the given string argument as js script, produces the stencil"
+"  for it, XDR-encodes the stencil, and returns an ArrayBuf of the contents."),
+
+    JS_FN_HELP("evalStencilXDR", EvalStencilXDR, 1, 0,
+"evalStencilXDR(arrayBuf)",
+"  Reads the given buffer as an XDR-encoded stencil, and evaluates the"
+"  top-level script it defines."),
 
     JS_FS_HELP_END
 };

@@ -171,6 +171,13 @@ int32_t HyperTextIterator::NextLinkOffset() {
 }
 
 bool HyperTextIterator::Next() {
+  if (!mCurrentContainer->Document()->HasLoadState(
+          DocAccessible::eTreeConstructed)) {
+    // If the accessible tree is still being constructed the text tree
+    // is not in a traversable state yet.
+    return false;
+  }
+
   if (mCurrentContainer == mEndContainer &&
       (mCurrentEndOffset == -1 || mEndOffset <= mCurrentEndOffset)) {
     return false;
@@ -247,6 +254,42 @@ void HyperTextAccessibleWrap::OffsetAtIndex(int32_t aIndex,
   }
 }
 
+void HyperTextAccessibleWrap::RangeAt(int32_t aOffset, EWhichRange aRangeType,
+                                      HyperTextAccessible** aStartContainer,
+                                      int32_t* aStartOffset,
+                                      HyperTextAccessible** aEndContainer,
+                                      int32_t* aEndOffset) {
+  switch (aRangeType) {
+    case EWhichRange::eLeftWord:
+      LeftWordAt(aOffset, aStartContainer, aStartOffset, aEndContainer,
+                 aEndOffset);
+      break;
+    case EWhichRange::eRightWord:
+      RightWordAt(aOffset, aStartContainer, aStartOffset, aEndContainer,
+                  aEndOffset);
+      break;
+    case EWhichRange::eLine:
+    case EWhichRange::eLeftLine:
+      LineAt(aOffset, false, aStartContainer, aStartOffset, aEndContainer,
+             aEndOffset);
+      break;
+    case EWhichRange::eRightLine:
+      LineAt(aOffset, true, aStartContainer, aStartOffset, aEndContainer,
+             aEndOffset);
+      break;
+    case EWhichRange::eParagraph:
+      ParagraphAt(aOffset, aStartContainer, aStartOffset, aEndContainer,
+                  aEndOffset);
+      break;
+    case EWhichRange::eStyle:
+      StyleAt(aOffset, aStartContainer, aStartOffset, aEndContainer,
+              aEndOffset);
+      break;
+    default:
+      break;
+  }
+}
+
 void HyperTextAccessibleWrap::LeftWordAt(int32_t aOffset,
                                          HyperTextAccessible** aStartContainer,
                                          int32_t* aStartOffset,
@@ -290,7 +333,7 @@ void HyperTextAccessibleWrap::RightWordAt(int32_t aOffset,
                                           int32_t* aEndOffset) {
   TextPoint here(this, aOffset);
   TextPoint end = FindTextPoint(aOffset, eDirNext, eSelectWord, eEndWord);
-  if (!end.mContainer || end < here) {
+  if (!end.mContainer || end < here || here == end) {
     // If we didn't find a word end, or if we wrapped around (bug 1652833),
     // return with no result.
     return;
@@ -298,11 +341,8 @@ void HyperTextAccessibleWrap::RightWordAt(int32_t aOffset,
 
   if ((NativeState() & states::EDITABLE) &&
       !(end.mContainer->NativeState() & states::EDITABLE)) {
-    // The word search crossed an editable boundary. Return the last word of the
-    // editable root.
-    return EditableRoot()->LeftWordAt(
-        nsIAccessibleText::TEXT_OFFSET_END_OF_TEXT, aStartContainer,
-        aStartOffset, aEndContainer, aEndOffset);
+    // The word search crossed an editable boundary. Return with no result.
+    return;
   }
 
   TextPoint start =
@@ -320,6 +360,100 @@ void HyperTextAccessibleWrap::RightWordAt(int32_t aOffset,
     *aStartOffset = start.mOffset;
     *aEndOffset = end.mOffset;
   }
+}
+
+void HyperTextAccessibleWrap::LineAt(int32_t aOffset, bool aNextLine,
+                                     HyperTextAccessible** aStartContainer,
+                                     int32_t* aStartOffset,
+                                     HyperTextAccessible** aEndContainer,
+                                     int32_t* aEndOffset) {
+  TextPoint here(this, aOffset);
+  TextPoint end =
+      FindTextPoint(aOffset, eDirNext, eSelectEndLine, eDefaultBehavior);
+  if (!end.mContainer || end < here) {
+    // If we didn't find a word end, or if we wrapped around (bug 1652833),
+    // return with no result.
+    return;
+  }
+
+  TextPoint start = static_cast<HyperTextAccessibleWrap*>(end.mContainer)
+                        ->FindTextPoint(end.mOffset, eDirPrevious,
+                                        eSelectBeginLine, eDefaultBehavior);
+
+  if (!aNextLine && here < start) {
+    start = FindTextPoint(aOffset, eDirPrevious, eSelectBeginLine,
+                          eDefaultBehavior);
+    if (!start.mContainer) {
+      return;
+    }
+
+    end = static_cast<HyperTextAccessibleWrap*>(start.mContainer)
+              ->FindTextPoint(start.mOffset, eDirNext, eSelectEndLine,
+                              eDefaultBehavior);
+  }
+
+  *aStartContainer = start.mContainer;
+  *aEndContainer = end.mContainer;
+  *aStartOffset = start.mOffset;
+  *aEndOffset = end.mOffset;
+}
+
+void HyperTextAccessibleWrap::ParagraphAt(int32_t aOffset,
+                                          HyperTextAccessible** aStartContainer,
+                                          int32_t* aStartOffset,
+                                          HyperTextAccessible** aEndContainer,
+                                          int32_t* aEndOffset) {
+  TextPoint here(this, aOffset);
+  TextPoint end =
+      FindTextPoint(aOffset, eDirNext, eSelectParagraph, eDefaultBehavior);
+
+  if (!end.mContainer || end < here) {
+    // If we didn't find a word end, or if we wrapped around (bug 1652833),
+    // return with no result.
+    return;
+  }
+
+  if (end.mOffset == -1 && Parent() && Parent()->IsHyperText()) {
+    // If end offset is -1 we didn't find a paragraph boundary.
+    // This must be an inline container, go to its parent to
+    // retrieve paragraph boundaries.
+    static_cast<HyperTextAccessibleWrap*>(Parent()->AsHyperText())
+        ->ParagraphAt(StartOffset(), aStartContainer, aStartOffset,
+                      aEndContainer, aEndOffset);
+    return;
+  }
+
+  TextPoint start = static_cast<HyperTextAccessibleWrap*>(end.mContainer)
+                        ->FindTextPoint(end.mOffset, eDirPrevious,
+                                        eSelectParagraph, eDefaultBehavior);
+
+  *aStartContainer = start.mContainer;
+  *aEndContainer = end.mContainer;
+  *aStartOffset = start.mOffset;
+  *aEndOffset = end.mOffset;
+}
+
+void HyperTextAccessibleWrap::StyleAt(int32_t aOffset,
+                                      HyperTextAccessible** aStartContainer,
+                                      int32_t* aStartOffset,
+                                      HyperTextAccessible** aEndContainer,
+                                      int32_t* aEndOffset) {
+  // Get the range of the text leaf at this offset.
+  // A text leaf represents a stretch of like-styled text.
+  auto leaf = LeafAtOffset(aOffset);
+  if (!leaf) {
+    return;
+  }
+
+  MOZ_ASSERT(leaf->Parent()->IsHyperText());
+  HyperTextAccessibleWrap* container =
+      static_cast<HyperTextAccessibleWrap*>(leaf->Parent()->AsHyperText());
+  if (!container) {
+    return;
+  }
+
+  *aStartContainer = *aEndContainer = container;
+  container->RangeOfChild(leaf, aStartOffset, aEndOffset);
 }
 
 void HyperTextAccessibleWrap::NextClusterAt(
@@ -376,7 +510,7 @@ Accessible* HyperTextAccessibleWrap::LeafAtOffset(int32_t aOffset) {
     }
 
     child = text->GetChildAt(childIdx);
-    if (!child || nsAccUtils::MustPrune(child)) {
+    if (!child || nsAccUtils::MustPrune(text)) {
       return text;
     }
 
@@ -436,7 +570,19 @@ TextPoint HyperTextAccessibleWrap::FindTextPoint(
       }
     }
 
-    innerOffset -= text->GetChildOffset(childIdx);
+    int32_t childOffset = text->GetChildOffset(childIdx);
+
+    if (child->IsHyperText() && aDirection == eDirPrevious && childIdx > 0 &&
+        innerOffset - childOffset == 0) {
+      // If we are searching backwards, and this is the begining of a
+      // segment, get the previous sibling so that layout will start
+      // its search there.
+      childIdx--;
+      innerOffset -= text->GetChildOffset(childIdx);
+      child = text->GetChildAt(childIdx);
+    } else {
+      innerOffset -= childOffset;
+    }
 
     text = child->AsHyperText();
   } while (text);

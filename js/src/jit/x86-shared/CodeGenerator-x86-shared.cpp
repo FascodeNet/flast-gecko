@@ -13,8 +13,7 @@
 
 #include "jit/CodeGenerator.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
-#include "jit/Linker.h"
+#include "jit/JitRuntime.h"
 #include "jit/RangeAnalysis.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/TraceLogging.h"
@@ -343,6 +342,12 @@ void CodeGenerator::visitWasmSelect(LWasmSelect* ins) {
       masm.moveDouble(ToFloatRegister(ins->falseExpr()), out);
     } else {
       masm.loadDouble(falseExpr, out);
+    }
+  } else if (mirType == MIRType::Simd128) {
+    if (falseExpr.kind() == Operand::FPREG) {
+      masm.moveSimd128(ToFloatRegister(ins->falseExpr()), out);
+    } else {
+      masm.loadUnalignedSimd128(falseExpr, out);
     }
   } else {
     MOZ_CRASH("unhandled type in visitWasmSelect!");
@@ -2308,10 +2313,10 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.bitwiseNotAndSimd128(rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16AvgrU:
-      masm.averageInt8x16(rhs, lhsDest);
+      masm.unsignedAverageInt8x16(rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8AvgrU:
-      masm.averageInt16x8(rhs, lhsDest);
+      masm.unsignedAverageInt16x8(rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16Add:
       masm.addInt8x16(rhs, lhsDest);

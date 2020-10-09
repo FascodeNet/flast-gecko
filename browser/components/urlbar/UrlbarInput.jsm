@@ -357,10 +357,7 @@ class UrlbarInput {
     // the URI is valid, exit search mode.  This must happen after setting
     // proxystate above because search mode depends on it.
     if (dueToTabSwitch) {
-      let searchMode = this._searchModesByBrowser.get(
-        this.window.gBrowser.selectedBrowser
-      );
-      this.setSearchMode(searchMode || {});
+      this.restoreSearchModeState();
     } else if (valid) {
       this.setSearchMode({});
     }
@@ -608,8 +605,9 @@ class UrlbarInput {
 
   handleRevert() {
     this.window.gBrowser.userTypedValue = null;
-    this.setURI(null, true);
+    // Nullify search mode before setURI so it won't try to restore it.
     this.setSearchMode({});
+    this.setURI(null, true);
     if (this.value && this.focused) {
       this.select();
     }
@@ -991,7 +989,7 @@ class UrlbarInput {
       ) {
         // Enter search mode without starting a query. This will just preview
         // search mode.
-        let enteredSearchMode = this.maybePromoteKeywordToSearchMode({
+        let enteredSearchMode = this.maybePromoteResultToSearchMode({
           result,
           checkValue: false,
           startQuery: false,
@@ -1104,7 +1102,7 @@ class UrlbarInput {
       firstResult.heuristic &&
       firstResult.payload.keyword &&
       !firstResult.payload.keywordOffer &&
-      this.maybePromoteKeywordToSearchMode({
+      this.maybePromoteResultToSearchMode({
         result: firstResult,
         entry: "typed",
         checkValue: false,
@@ -1221,18 +1219,54 @@ class UrlbarInput {
    * @param {string} value
    *   The input's value will be set to this value, and the search will
    *   use it as its query.
+   * @param {UrlbarUtils.SEARCH_MODE_ENTRY} [options.searchModeEntry]
+   *   If provided, we will record this parameter as the search mode entry point
+   *   in Telemetry. Consumers should provide this if they expect their call
+   *   to enter search mode.
    * @param {boolean} [options.focus]
    *   If true, the urlbar will be focused.  If false, the focus will remain
    *   unchanged.
    */
-  search(value, { focus = true } = {}) {
+  search(value, { searchModeEntry, focus = true } = {}) {
     if (focus) {
       this.focus();
     }
 
-    // If the value is a restricted token, append a space.
-    if (Object.values(UrlbarTokenizer.RESTRICT).includes(value)) {
-      this.inputField.value = value + " ";
+    let tokens = value.trim().split(UrlbarTokenizer.REGEXP_SPACES);
+    // Enter search mode if the string starts with a restriction token.
+    let searchMode;
+    if (UrlbarPrefs.get("update2")) {
+      // Check if the string starts with a restriction token.
+      searchMode = UrlbarUtils.searchModeForToken(tokens[0]);
+      if (!searchMode) {
+        // Check if the string starts with an engine alias.
+        let engine = Services.search.getEngineByAlias(tokens[0]);
+        if (engine) {
+          searchMode = { engineName: engine.name };
+        }
+      }
+    }
+
+    if (searchMode) {
+      searchMode.entry = searchModeEntry;
+      this.setSearchMode(searchMode);
+      // Remove the restriction token/alias from the string to be searched for
+      // in search mode.
+      value = value.replace(tokens[0], "");
+      if (UrlbarTokenizer.REGEXP_SPACES.test(value[0])) {
+        // If there was a trailing space after the restriction token/alias,
+        // remove it.
+        value = value.slice(1);
+      }
+      this.inputField.value = value;
+      this._revertOnBlurValue = this.value;
+    } else if (Object.values(UrlbarTokenizer.RESTRICT).includes(tokens[0])) {
+      this.setSearchMode({});
+      // If the entire value is a restricted token, append a space.
+      if (Object.values(UrlbarTokenizer.RESTRICT).includes(value)) {
+        value += " ";
+      }
+      this.inputField.value = value;
       this._revertOnBlurValue = this.value;
     } else {
       this.inputField.value = value;
@@ -1251,35 +1285,6 @@ class UrlbarInput {
     let event = this.document.createEvent("UIEvents");
     event.initUIEvent("input", true, false, this.window, 0);
     this.inputField.dispatchEvent(event);
-  }
-
-  /**
-   * Starts a search with a given alias. If update2 is enabled, search mode is
-   * entered. Otherwise, this just calls search().
-   * @param {string} alias
-   *   A search engine alias.
-   * @param {string} entry
-   *   A string describing the caller. Should be a value from
-   *   UrlbarUtils.SEARCH_MODE_ENTRY.
-   * @param {string} [value]
-   *   The input's value will be set to this value, and the search will
-   *   use it as its query.
-   */
-  searchWithAlias(alias, entry, value = "") {
-    alias = alias.trim();
-    if (UrlbarPrefs.get("update2")) {
-      // Enter search mode.
-      let engine = Services.search.getEngineByAlias(alias);
-      if (engine) {
-        this.setSearchMode({ engineName: engine.name, entry });
-        this.search(value);
-      } else {
-        this.search(`${alias} ${value}`);
-      }
-    } else {
-      // Pass the provided text to the Urlbar. Prepend the @engine shortcut.
-      this.search(`${alias} ${value}`);
-    }
   }
 
   /**
@@ -1449,6 +1454,16 @@ class UrlbarInput {
   }
 
   /**
+   * Restores the current browser search mode from a previously stored state.
+   */
+  restoreSearchModeState() {
+    let state = this._searchModesByBrowser.get(
+      this.window.gBrowser.selectedBrowser
+    );
+    this.setSearchMode(state || {});
+  }
+
+  /**
    * Enters search mode with the default engine.
    * If update2 is not enabled, it searches with the SEARCH restriction token
    * instead.
@@ -1492,6 +1507,11 @@ class UrlbarInput {
       this.window.gBrowser.selectedBrowser,
       this.searchMode
     );
+
+    // Unselect the one-off search button to ensure UI consistency.
+    // Do this after updating the searchModes map, or we may start a race
+    // condition with the one-off buttons selection change handler.
+    this.view.oneOffSearchButtons.selectedButton = null;
 
     try {
       BrowserUsageTelemetry.recordSearchMode(this.searchMode);
@@ -1575,11 +1595,13 @@ class UrlbarInput {
       return;
     }
 
-    if (UrlbarPrefs.get("disableExtendForTests")) {
-      this.setAttribute("breakout-extend-disabled", "true");
-      return;
+    if (Cu.isInAutomation) {
+      if (UrlbarPrefs.get("disableExtendForTests")) {
+        this.setAttribute("breakout-extend-disabled", "true");
+        return;
+      }
+      this.removeAttribute("breakout-extend-disabled");
     }
-    this.removeAttribute("breakout-extend-disabled");
 
     this._toolbar.setAttribute("urlbar-exceeds-toolbar-bounds", "true");
     this.setAttribute("breakout-extend", "true");
@@ -1674,7 +1696,7 @@ class UrlbarInput {
    * @returns {boolean}
    *   True if we entered search mode and false if not.
    */
-  maybePromoteKeywordToSearchMode({
+  maybePromoteResultToSearchMode({
     entry,
     result = this._resultForCurrentValue,
     checkValue = true,
@@ -1703,6 +1725,7 @@ class UrlbarInput {
   observe(subject, topic, data) {
     switch (topic) {
       case SearchUtils.TOPIC_ENGINE_MODIFIED: {
+        subject.QueryInterface(Ci.nsISearchEngine);
         switch (data) {
           case SearchUtils.MODIFIED_TYPE.CHANGED:
           case SearchUtils.MODIFIED_TYPE.REMOVED:
@@ -2448,48 +2471,38 @@ class UrlbarInput {
       return null;
     }
 
-    // Search mode is determined by the result's keyword.
-    if (!result.payload.keyword) {
+    // Search mode is determined by the result's keyword or engine.
+    if (!result.payload.keyword && !result.payload.engine) {
       return null;
     }
 
-    let searchMode = null;
-    switch (result.payload.keyword) {
-      case UrlbarTokenizer.RESTRICT.BOOKMARK:
-        searchMode = { source: UrlbarUtils.RESULT_SOURCE.BOOKMARKS };
-        break;
-      case UrlbarTokenizer.RESTRICT.HISTORY:
-        searchMode = { source: UrlbarUtils.RESULT_SOURCE.HISTORY };
-        break;
-      case UrlbarTokenizer.RESTRICT.OPENPAGE:
-        searchMode = { source: UrlbarUtils.RESULT_SOURCE.TABS };
-        break;
-      case UrlbarTokenizer.RESTRICT.SEARCH:
-        searchMode = {
-          engineName: UrlbarSearchUtils.getDefaultEngine(this.isPrivate).name,
-        };
-        break;
-      default:
-        // If result.originalEngine is set, then the user is Alt+Tabbing
-        // through the one-offs, so the keyword doesn't match the engine.
-        if (
-          result.payload.engine &&
-          (!result.payload.originalEngine ||
-            result.payload.engine == result.payload.originalEngine)
-        ) {
-          searchMode = { engineName: result.payload.engine };
-        }
-        break;
+    let searchMode = UrlbarUtils.searchModeForToken(result.payload.keyword);
+    // If result.originalEngine is set, then the user is Alt+Tabbing
+    // through the one-offs, so the keyword doesn't match the engine.
+    if (
+      !searchMode &&
+      result.payload.engine &&
+      (!result.payload.originalEngine ||
+        result.payload.engine == result.payload.originalEngine)
+    ) {
+      searchMode = { engineName: result.payload.engine };
     }
 
     if (searchMode) {
       if (entry) {
         searchMode.entry = entry;
       } else {
-        searchMode.entry =
-          result.providerName == "UrlbarProviderTopSites"
-            ? "topsites_urlbar"
-            : "keywordoffer";
+        switch (result.providerName) {
+          case "UrlbarProviderTopSites":
+            searchMode.entry = "topsites_urlbar";
+            break;
+          case "TabToSearch":
+            searchMode.entry = "tabtosearch";
+            break;
+          default:
+            searchMode.entry = "keywordoffer";
+            break;
+        }
       }
     }
 
@@ -2604,6 +2617,7 @@ class UrlbarInput {
 
     if (event.target == this._searchModeIndicatorClose && event.button != 2) {
       this.setSearchMode({});
+      this.view.oneOffSearchButtons.selectedButton = null;
       if (this.view.isOpen) {
         this.startQuery({
           event,
@@ -2774,7 +2788,7 @@ class UrlbarInput {
       this.view.clear();
     } else if (!value && !UrlbarPrefs.get("suggest.topsites")) {
       this.view.clear();
-      if (!this.searchMode) {
+      if (!this.searchMode || !this.view.oneOffSearchButtons.hasView) {
         this.view.close();
         return;
       }

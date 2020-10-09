@@ -17,7 +17,6 @@
 #include "frontend/TokenStream.h"
 #include "gc/HashUtil.h"
 #include "irregexp/RegExpAPI.h"
-#include "jit/VMFunctions.h"
 #include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "js/Object.h"              // JS::GetBuiltinClass
 #include "js/RegExp.h"
@@ -1130,7 +1129,7 @@ bool js::ParseRegExpFlags(JSContext* cx, JSString* flagStr,
   }
 
   if (!ok) {
-    TwoByteChars range(&invalidFlag, 1);
+    JS::TwoByteChars range(&invalidFlag, 1);
     UniqueChars utf8(JS::CharsToNewUTF8CharsZ(cx, range).c_str());
     if (!utf8) {
       return false;

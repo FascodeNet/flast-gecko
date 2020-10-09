@@ -21,10 +21,6 @@ class nsPrintObject;
 class nsIPrintProgressParams;
 class nsIWebProgressListener;
 
-namespace mozilla {
-class PrintPreviewUserEventSuppressor;
-}  // namespace mozilla
-
 //------------------------------------------------------------------------
 // nsPrintData Class
 //
@@ -33,9 +29,6 @@ class PrintPreviewUserEventSuppressor;
 //   off right before we go to the timer.
 //------------------------------------------------------------------------
 class nsPrintData {
-  typedef mozilla::PrintPreviewUserEventSuppressor
-      PrintPreviewUserEventSuppressor;
-
  public:
   typedef enum { eIsPrinting, eIsPrintPreview } ePrintDataType;
 
@@ -75,11 +68,9 @@ class nsPrintData {
   bool mPreparingForPrint;  // see comments above
   bool mShrinkToFit;
   int32_t mNumPrintablePages;
-  int32_t mNumPagesPrinted;
   float mShrinkRatio;
 
   nsCOMPtr<nsIPrintSettings> mPrintSettings;
-  RefPtr<PrintPreviewUserEventSuppressor> mPPEventSuppressor;
 
  private:
   nsPrintData() = delete;

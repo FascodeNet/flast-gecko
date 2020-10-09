@@ -40,6 +40,7 @@
 #include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/ToString.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/EventStateManager.h"  // for WheelPrefs
 #include "mozilla/webrender/WebRenderAPI.h"
@@ -1004,7 +1005,9 @@ template <class ScrollNode>
 void APZCTreeManager::PrintAPZCInfo(const ScrollNode& aLayer,
                                     const AsyncPanZoomController* apzc) {
   const FrameMetrics& metrics = aLayer.Metrics();
-  mApzcTreeLog << "APZC " << apzc->GetGuid()
+  std::stringstream guidStr;
+  guidStr << apzc->GetGuid();
+  mApzcTreeLog << "APZC " << guidStr.str()
                << "\tcb=" << metrics.GetCompositionBounds()
                << "\tsr=" << metrics.GetScrollableRect()
                << (metrics.IsScrollInfoLayer() ? "\tscrollinfo" : "")
@@ -1431,7 +1434,7 @@ static bool WillHandleInput(const PanGestureOrScrollWheelInput& aPanInput) {
     return true;
   }
 
-  WidgetWheelEvent wheelEvent = aPanInput.ToWidgetWheelEvent(nullptr);
+  WidgetWheelEvent wheelEvent = aPanInput.ToWidgetEvent(nullptr);
   return APZInputBridge::ActionForWheelEvent(&wheelEvent).isSome();
 }
 
@@ -1653,7 +1656,7 @@ APZEventResult APZCTreeManager::ReceiveInputEvent(InputData& aEvent) {
       // GetUserPrefsForWheelEvent in IAPZCTreeManager.cpp for why these fields
       // are stored separately.
       MOZ_ASSERT(NS_IsMainThread());
-      WidgetWheelEvent wheelEvent = panInput.ToWidgetWheelEvent(nullptr);
+      WidgetWheelEvent wheelEvent = panInput.ToWidgetEvent(nullptr);
       EventStateManager::GetUserPrefsForWheelEvent(
           &wheelEvent, &panInput.mUserDeltaMultiplierX,
           &panInput.mUserDeltaMultiplierY);
@@ -2430,11 +2433,10 @@ void APZCTreeManager::UpdateZoomConstraints(
   // which have their own zoom constraints or are in a different layers id.
   if (aConstraints) {
     APZCTM_LOG("Recording constraints %s for guid %s\n",
-               Stringify(aConstraints.value()).c_str(),
-               Stringify(aGuid).c_str());
+               ToString(aConstraints.value()).c_str(), ToString(aGuid).c_str());
     mZoomConstraints[aGuid] = aConstraints.ref();
   } else {
-    APZCTM_LOG("Removing constraints for guid %s\n", Stringify(aGuid).c_str());
+    APZCTM_LOG("Removing constraints for guid %s\n", ToString(aGuid).c_str());
     mZoomConstraints.erase(aGuid);
   }
   if (node && aConstraints) {
@@ -2795,8 +2797,7 @@ APZCTreeManager::HitTestResult APZCTreeManager::GetAPZCAtPointWR(
     return hit;
   }
 
-  APZCTM_LOG("Hit-testing point %s with WR\n",
-             Stringify(aHitTestPoint).c_str());
+  APZCTM_LOG("Hit-testing point %s with WR\n", ToString(aHitTestPoint).c_str());
   std::vector<wr::WrHitResult> results =
       wr->HitTest(wr::ToWorldPoint(aHitTestPoint));
 
@@ -2804,7 +2805,7 @@ APZCTreeManager::HitTestResult APZCTreeManager::GetAPZCAtPointWR(
   for (const wr::WrHitResult& result : results) {
     ScrollableLayerGuid guid{result.mLayersId, 0, result.mScrollId};
     APZCTM_LOG("Examining result with guid %s hit info 0x%x... ",
-               Stringify(guid).c_str(), result.mHitInfo.serialize());
+               ToString(guid).c_str(), result.mHitInfo.serialize());
     if (result.mHitInfo == CompositorHitTestInvisibleToHit) {
       APZCTM_LOG("skipping due to invisibility.\n");
       continue;
@@ -3033,10 +3034,9 @@ APZCTreeManager::HitTestResult APZCTreeManager::GetAPZCAtPoint(
         // are more "in front".
         Maybe<LayerPoint> hitTestPoint = aNode->Untransform(
             hitTestPointForParent, ComputeTransformForNode(aNode));
-        APZCTM_LOG(
-            "Transformed ParentLayer point %s to layer %s\n",
-            Stringify(hitTestPointForParent).c_str(),
-            hitTestPoint ? Stringify(hitTestPoint.ref()).c_str() : "nil");
+        APZCTM_LOG("Transformed ParentLayer point %s to layer %s\n",
+                   ToString(hitTestPointForParent).c_str(),
+                   hitTestPoint ? ToString(hitTestPoint.ref()).c_str() : "nil");
         if (!hitTestPoint) {
           return TraversalFlag::Skip;
         }
@@ -3047,7 +3047,7 @@ APZCTreeManager::HitTestResult APZCTreeManager::GetAPZCAtPoint(
         CompositorHitTestInfo hitResult = aNode->HitTest(hitTestPoints.top());
         hitTestPoints.pop();
         APZCTM_LOG("Testing Layer point %s against node %p\n",
-                   Stringify(hitTestPoints.top()).c_str(), aNode);
+                   ToString(hitTestPoints.top()).c_str(), aNode);
         if (hitResult != CompositorHitTestInvisibleToHit) {
           resultNode = aNode;
           hit.mHitResult = hitResult;

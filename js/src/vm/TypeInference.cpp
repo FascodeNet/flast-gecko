@@ -25,7 +25,6 @@
 #include "jit/CompileInfo.h"
 #include "jit/Ion.h"
 #include "jit/IonAnalysis.h"
-#include "jit/JitRealm.h"
 #include "js/MemoryMetrics.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/UniquePtr.h"
@@ -1489,15 +1488,8 @@ class TypeConstraintFreezeStack : public TypeConstraint {
 bool js::FinishCompilation(JSContext* cx, HandleScript script,
                            CompilerConstraintList* constraints,
                            IonCompilationId compilationId, bool* isValidOut) {
+  MOZ_ASSERT(IsTypeInferenceEnabled());
   MOZ_ASSERT(*cx->zone()->types.currentCompilationId() == compilationId);
-
-  if (!IsTypeInferenceEnabled()) {
-    MOZ_ASSERT(!constraints->failed());
-    MOZ_ASSERT(constraints->length() == 0);
-    MOZ_ASSERT(constraints->numFrozenScripts() == 0);
-    *isValidOut = true;
-    return true;
-  }
 
   if (constraints->failed()) {
     return false;
@@ -3601,7 +3593,7 @@ void PreliminaryObjectArrayWithTemplate::trace(JSTracer* trc) {
 }
 
 /* static */
-void PreliminaryObjectArrayWithTemplate::writeBarrierPre(
+void PreliminaryObjectArrayWithTemplate::preWriteBarrier(
     PreliminaryObjectArrayWithTemplate* objects) {
   Shape* shape = objects->shape();
 
@@ -4074,7 +4066,7 @@ bool TypeNewScript::maybeAnalyze(JSContext* cx, ObjectGroup* group,
 
   // prefixShape was read via a weak pointer, so we need a read barrier before
   // we store it into the heap.
-  Shape::readBarrier(prefixShape);
+  gc::ReadBarrier(prefixShape);
 
   initializedShape_ = prefixShape;
   initializedGroup_ = group;
@@ -4201,7 +4193,7 @@ void TypeNewScript::trace(JSTracer* trc) {
 }
 
 /* static */
-void TypeNewScript::writeBarrierPre(TypeNewScript* newScript) {
+void TypeNewScript::preWriteBarrier(TypeNewScript* newScript) {
   if (JS::RuntimeHeapIsCollecting()) {
     return;
   }

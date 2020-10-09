@@ -7,7 +7,6 @@ import pytest
 from mozunit import main
 from tryselect.selectors.auto import TRY_AUTO_PARAMETERS
 
-from taskgraph.transforms.tests import CHUNK_SUITES_BLACKLIST
 from taskgraph.util.bugbug import push_schedules
 from taskgraph.util.chunking import BugbugLoader
 
@@ -45,13 +44,35 @@ def test_only_important_manifests(params, full_task_graph, filter_tasks):
     for task in filter_tasks(full_task_graph, lambda t: t.kind == "test"):
         attr = task.attributes.get
 
-        if attr("unittest_suite") in CHUNK_SUITES_BLACKLIST:
-            assert not attr("test_manifests")
-        else:
+        if "test_manifests" in task.attributes:
             unimportant = [
                 t for t in attr("test_manifests") if t not in important_manifests
             ]
-            assert unimportant == []
+
+            # Manifest scheduling is disabled for mochitest-ally.
+            if attr("unittest_suite") == "mochitest-a11y":
+                assert len(unimportant) > 0
+            else:
+                assert unimportant == []
+
+
+@pytest.mark.parametrize(
+    "func,min_expected",
+    (
+        pytest.param(
+            lambda t: (
+                t.kind == "test"
+                and t.attributes["unittest_suite"] == "mochitest-browser-chrome"
+            ),
+            5,
+            id="mochitest-browser-chrome",
+        ),
+    ),
+)
+def test_tasks_are_scheduled(optimized_task_graph, filter_tasks, func, min_expected):
+    """Ensure the specified tasks are scheduled on mozilla-central."""
+    tasks = [t.label for t in filter_tasks(optimized_task_graph, func)]
+    assert len(tasks) >= min_expected
 
 
 @pytest.mark.parametrize(
@@ -67,9 +88,12 @@ def test_only_important_manifests(params, full_task_graph, filter_tasks):
             id="no fuzzing builds",
         ),
         pytest.param(
+            lambda t: t.kind == "build" and "ccov" in t.attributes["build_platform"],
+            id="no ccov builds",
+        ),
+        pytest.param(
             lambda t: t.kind == "build-signing",
             id="no build-signing",
-            marks=pytest.mark.xfail,
         ),
         pytest.param(
             lambda t: t.kind == "upload-symbols",

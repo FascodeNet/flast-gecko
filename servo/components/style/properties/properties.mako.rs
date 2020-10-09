@@ -1342,8 +1342,8 @@ impl LonghandId {
             // preferences properly, see bug 1165538.
             LonghandId::MozMinFontSizeRatio |
 
-            // Needed to do font-size for MathML. :(
-            LonghandId::MozScriptLevel |
+            // font-size depends on math-depth's computed value.
+            LonghandId::MathDepth |
             % endif
 
             // Needed to compute the first available font, in order to
@@ -2966,7 +2966,7 @@ impl ComputedValues {
 
     /// Returns the visited style, if any.
     pub fn visited_style(&self) -> Option<<&ComputedValues> {
-        self.visited_style.as_ref().map(|s| &**s)
+        self.visited_style.as_deref()
     }
 
     /// Returns the visited rules, if applicable.

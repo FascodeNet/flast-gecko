@@ -46,6 +46,7 @@
 #include "mozilla/StaticPrefs_page_load.h"
 #include "mozilla/StaticPtr.h"
 #include "nsIURIFixup.h"
+#include "nsIXULRuntime.h"
 
 #include "nsDocShell.h"
 #include "nsFocusManager.h"
@@ -414,7 +415,7 @@ void BrowsingContext::CreateFromIPC(BrowsingContext::IPCInitializer&& aInit,
   context->mCreatedDynamically = aInit.mCreatedDynamically;
   if (context->GetHasSessionHistory()) {
     context->CreateChildSHistory();
-    if (StaticPrefs::fission_sessionHistoryInParent()) {
+    if (mozilla::SessionHistoryInParent()) {
       context->GetChildSessionHistory()->SetIndexAndLength(
           aInit.mSessionHistoryIndex, aInit.mSessionHistoryCount, nsID());
     }
@@ -2084,7 +2085,7 @@ BrowsingContext::IPCInitializer BrowsingContext::GetIPCInitializer() {
   init.mUseRemoteSubframes = mUseRemoteSubframes;
   init.mCreatedDynamically = mCreatedDynamically;
   init.mOriginAttributes = mOriginAttributes;
-  if (mChildSessionHistory && StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mChildSessionHistory && mozilla::SessionHistoryInParent()) {
     init.mSessionHistoryIndex = mChildSessionHistory->Index();
     init.mSessionHistoryCount = mChildSessionHistory->Count();
   }
@@ -2501,6 +2502,19 @@ void BrowsingContext::DidSet(FieldIndex<IDX_AncestorLoading>) {
   }
 }
 
+void BrowsingContext::DidSet(FieldIndex<IDX_AuthorStyleDisabledDefault>) {
+  MOZ_ASSERT(IsTop(),
+             "Should only set AuthorStyleDisabledDefault in the top "
+             "browsing context");
+
+  // We don't need to handle changes to this field, since PageStyleChild.jsm
+  // will respond to the PageStyle:Disable message in all content processes.
+  //
+  // But we store the state here on the top BrowsingContext so that the
+  // docshell has somewhere to look for the current author style disabling
+  // state when new iframes are inserted.
+}
+
 void BrowsingContext::DidSet(FieldIndex<IDX_TextZoom>, float aOldValue) {
   if (GetTextZoom() == aOldValue) {
     return;
@@ -2582,7 +2596,7 @@ void BrowsingContext::InitSessionHistory() {
 }
 
 ChildSHistory* BrowsingContext::GetChildSessionHistory() {
-  if (!StaticPrefs::fission_sessionHistoryInParent()) {
+  if (!mozilla::SessionHistoryInParent()) {
     // For now we're checking that the session history object for the child
     // process is available before returning the ChildSHistory object, because
     // it is the actual implementation that ChildSHistory forwards to. This can
@@ -2640,7 +2654,7 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_PendingInitialization>,
 
 void BrowsingContext::SessionHistoryChanged(int32_t aIndexDelta,
                                             int32_t aLengthDelta) {
-  if (XRE_IsParentProcess() || StaticPrefs::fission_sessionHistoryInParent()) {
+  if (XRE_IsParentProcess() || mozilla::SessionHistoryInParent()) {
     // This method is used to test index and length for the session history
     // in child process only.
     return;
@@ -2678,37 +2692,26 @@ bool BrowsingContext::IsPopupAllowed() {
   return false;
 }
 
-void BrowsingContext::SetActiveSessionHistoryEntryForTop(
+void BrowsingContext::SetActiveSessionHistoryEntry(
     const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-    uint32_t aLoadType) {
+    uint32_t aLoadType, int32_t aChildOffset, uint32_t aUpdatedCacheKey) {
   if (XRE_IsContentProcess()) {
-    nsID changeID = {};
-    RefPtr<ChildSHistory> shistory = GetChildSessionHistory();
-    if (shistory) {
-      changeID = shistory->AddPendingHistoryChange(1, 1);
+    if (aUpdatedCacheKey != 0) {
+      aInfo->SetCacheKey(aUpdatedCacheKey);
     }
-    ContentChild::GetSingleton()->SendSetActiveSessionHistoryEntryForTop(
-        this, aPreviousScrollPos, *aInfo, aLoadType, changeID);
-  } else {
-    Canonical()->SetActiveSessionHistoryEntryForTop(aPreviousScrollPos, aInfo,
-                                                    aLoadType, nsID());
-  }
-}
 
-void BrowsingContext::SetActiveSessionHistoryEntryForFrame(
-    const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-    int32_t aChildOffset) {
-  if (XRE_IsContentProcess()) {
     nsID changeID = {};
-    RefPtr<ChildSHistory> shistory = GetChildSessionHistory();
+    RefPtr<ChildSHistory> shistory = Top()->GetChildSessionHistory();
     if (shistory) {
-      changeID = shistory->AddPendingHistoryChange(1, 1);
+      changeID = shistory->AddPendingHistoryChange();
     }
-    ContentChild::GetSingleton()->SendSetActiveSessionHistoryEntryForFrame(
-        this, aPreviousScrollPos, *aInfo, aChildOffset, changeID);
+    ContentChild::GetSingleton()->SendSetActiveSessionHistoryEntry(
+        this, aPreviousScrollPos, *aInfo, aLoadType, aChildOffset,
+        aUpdatedCacheKey, changeID);
   } else {
-    Canonical()->SetActiveSessionHistoryEntryForFrame(aPreviousScrollPos, aInfo,
-                                                      aChildOffset, nsID());
+    Canonical()->SetActiveSessionHistoryEntry(aPreviousScrollPos, aInfo,
+                                              aLoadType, aChildOffset,
+                                              aUpdatedCacheKey, nsID());
   }
 }
 
@@ -2739,15 +2742,15 @@ void BrowsingContext::RemoveFromSessionHistory() {
   }
 }
 
-void BrowsingContext::HistoryGo(int32_t aIndex,
+void BrowsingContext::HistoryGo(int32_t aOffset,
                                 std::function<void(int32_t&&)>&& aResolver) {
   if (XRE_IsContentProcess()) {
     ContentChild::GetSingleton()->SendHistoryGo(
-        this, aIndex, std::move(aResolver),
+        this, aOffset, std::move(aResolver),
         [](mozilla::ipc::
                ResponseRejectReason) { /* FIXME Is ignoring this fine? */ });
   } else {
-    Canonical()->HistoryGo(aIndex, std::move(aResolver));
+    Canonical()->HistoryGo(aOffset, std::move(aResolver));
   }
 }
 

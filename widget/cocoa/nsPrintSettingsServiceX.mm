@@ -99,20 +99,14 @@ nsresult nsPrintSettingsServiceX::SerializeToPrintDataParent(nsIPrintSettings* a
   }
   data->orientation() = orientation;
 
-  NSSize paperSize = [printInfo paperSize];
   float widthScale, heightScale;
   settingsX->GetInchesScale(&widthScale, &heightScale);
   if (orientation == nsIPrintSettings::kLandscapeOrientation) {
-    // switch widths and heights
     data->widthScale() = heightScale;
     data->heightScale() = widthScale;
-    data->paperWidth() = paperSize.height / heightScale;
-    data->paperHeight() = paperSize.width / widthScale;
   } else {
     data->widthScale() = widthScale;
     data->heightScale() = heightScale;
-    data->paperWidth() = paperSize.width / widthScale;
-    data->paperHeight() = paperSize.height / heightScale;
   }
 
   data->numCopies() = [[dict objectForKey:NSPrintCopies] intValue];
@@ -179,7 +173,17 @@ nsresult nsPrintSettingsServiceX::_CreatePrintSettings(nsIPrintSettings** _retva
     return rv;
   }
 
-  InitPrintSettingsFromPrefs(*_retval, false, nsIPrintSettings::kInitSaveAll);
+  auto globalPrintSettings =
+      nsIPrintSettings::kInitSaveShrinkToFit | nsIPrintSettings::kInitSaveHeaderLeft |
+      nsIPrintSettings::kInitSaveHeaderCenter | nsIPrintSettings::kInitSaveHeaderRight |
+      nsIPrintSettings::kInitSaveFooterLeft | nsIPrintSettings::kInitSaveFooterCenter |
+      nsIPrintSettings::kInitSaveFooterRight | nsIPrintSettings::kInitSaveEdges |
+      nsIPrintSettings::kInitSaveReversed | nsIPrintSettings::kInitSaveInColor;
+
+  // XXX Why is Mac special? Why are we copying global print settings here?
+  // nsPrintSettingsService::InitPrintSettingsFromPrefs already gets the few
+  // global defaults that we want, doesn't it?
+  InitPrintSettingsFromPrefs(*_retval, false, globalPrintSettings);
   return rv;
 }
 

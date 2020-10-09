@@ -31,6 +31,7 @@
 #include "jit/Ion.h"
 #include "jit/IonAnalysis.h"
 #include "jit/Jit.h"
+#include "jit/JitRuntime.h"
 #include "js/CharacterEncoding.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
@@ -442,14 +443,25 @@ bool js::RunScript(JSContext* cx, RunState& state) {
 
   GeckoProfilerEntryMarker marker(cx, state.script());
 
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
   bool measuringTime = !cx->isMeasuringExecutionTime();
-  int64_t startTime = 0;
+  mozilla::TimeStamp startTime;
   if (measuringTime) {
     cx->setIsMeasuringExecutionTime(true);
-    startTime = PRMJ_Now();
+    startTime = ReallyNow();
   }
+  auto timerEnd = mozilla::MakeScopeExit([&]() {
+    if (measuringTime) {
+      mozilla::TimeDuration delta = ReallyNow() - startTime;
+      cx->realm()->timers.executionTime += delta;
+
+#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
+      int64_t runtimeMicros = delta.ToMicroseconds();
+      cx->runtime()->addTelemetry(JS_TELEMETRY_RUN_TIME_US, runtimeMicros);
 #endif
+
+      cx->setIsMeasuringExecutionTime(false);
+    }
+  });
 
   jit::EnterJitStatus status = jit::MaybeEnterJit(cx, state);
   switch (status) {
@@ -467,15 +479,6 @@ bool js::RunScript(JSContext* cx, RunState& state) {
   }
 
   bool ok = Interpret(cx, state);
-
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-  if (measuringTime) {
-    int64_t endTime = PRMJ_Now();
-    int64_t runtimeMicros = endTime - startTime;
-    cx->runtime()->addTelemetry(JS_TELEMETRY_RUN_TIME_US, runtimeMicros);
-    cx->setIsMeasuringExecutionTime(false);
-  }
-#endif
 
   return ok;
 }
@@ -3544,11 +3547,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(Symbol)
 
     CASE(Object) {
-      JSObject* obj = SingletonObjectLiteralOperation(cx, script, REGS.pc);
-      if (!obj) {
-        goto error;
-      }
-      PUSH_OBJECT(*obj);
+      MOZ_ASSERT(script->treatAsRunOnce());
+      PUSH_OBJECT(*script->getObject(REGS.pc));
     }
     END_CASE(Object)
 
@@ -4942,20 +4942,6 @@ bool js::DefFunOperation(JSContext* cx, HandleScript script,
   /* Step 5f. */
   RootedId id(cx, NameToId(name));
   return PutProperty(cx, parent, id, rval, script->strict());
-}
-
-JSObject* js::SingletonObjectLiteralOperation(JSContext* cx,
-                                              HandleScript script,
-                                              jsbytecode* pc) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::Object);
-
-  RootedObject obj(cx, script->getObject(pc));
-  if (cx->realm()->creationOptions().cloneSingletons()) {
-    return DeepCloneObjectLiteral(cx, obj);
-  }
-
-  cx->realm()->behaviors().setSingletonsAsValues();
-  return obj;
 }
 
 JSObject* js::ImportMetaOperation(JSContext* cx, HandleScript script) {

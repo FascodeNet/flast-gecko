@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmReftypesEnabled() || !wasmGcEnabled() || wasmCompileMode() != 'baseline'
+// |jit-test| skip-if: !wasmGcEnabled()
 
 // Moving a JS value through a wasm externref is a pair of boxing/unboxing
 // conversions that leaves the value unchanged.  There are many cases,
@@ -9,19 +9,6 @@
 //  - function parameters and returns, see externref-boxing.js
 //  - struct fields [for the gc feature], this file
 //  - TypedObject fields when we construct with the externref type; this file
-
-let VALUES = [null,
-              undefined,
-              true,
-              false,
-              {x:1337},
-              ["abracadabra"],
-              1337,
-              13.37,
-              "hi",
-              37n,
-              Symbol("status"),
-              () => 1337];
 
 // Struct fields of externref type can receive their value in these ways:
 //
@@ -40,7 +27,7 @@ let VALUES = [null,
 
 // Write with struct.new, read with the JS getter
 
-for (let v of VALUES)
+for (let v of WasmExternrefValues)
 {
     let ins = wasmEvalText(
         `(module
@@ -53,7 +40,7 @@ for (let v of VALUES)
 
 // Write with JS setter, read with struct.get
 
-for (let v of VALUES)
+for (let v of WasmExternrefValues)
 {
     let ins = wasmEvalText(
         `(module
@@ -69,7 +56,7 @@ for (let v of VALUES)
 
 // Write with JS constructor, read with struct.get
 
-for (let v of VALUES)
+for (let v of WasmExternrefValues)
 {
     let ins = wasmEvalText(
         `(module
@@ -86,7 +73,7 @@ for (let v of VALUES)
 // TypedObject.WasmAnyRef exists and is an identity operation
 
 assertEq(typeof TypedObject.WasmAnyRef, "function");
-for (let v of VALUES) {
+for (let v of WasmExternrefValues) {
     assertEq(TypedObject.WasmAnyRef(v), v);
 }
 

@@ -16,6 +16,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/DisplayPortUtils.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/ImageTracker.h"
 #include "mozilla/dom/Selection.h"
@@ -3270,9 +3271,10 @@ void nsIFrame::BuildDisplayListForStackingContext(
           nsLayoutUtils::GetNearestScrollableFrame(
               GetParent(), nsLayoutUtils::SCROLLABLE_SAME_DOC |
                                nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN));
-  bool useFixedPosition = disp->mPosition == StylePositionProperty::Fixed &&
-                          (nsLayoutUtils::IsFixedPosFrameInDisplayPort(this) ||
-                           BuilderHasScrolledClip(aBuilder));
+  bool useFixedPosition =
+      disp->mPosition == StylePositionProperty::Fixed &&
+      (DisplayPortUtils::IsFixedPosFrameInDisplayPort(this) ||
+       BuilderHasScrolledClip(aBuilder));
 
   nsDisplayListBuilder::AutoBuildingDisplayList buildingDisplayList(
       aBuilder, this, visibleRect, dirtyRect, isTransformed);
@@ -5962,8 +5964,34 @@ IntrinsicSize nsIFrame::GetIntrinsicSize() {
   return IntrinsicSize();  // default is width/height set to eStyleUnit_None
 }
 
+AspectRatio nsIFrame::GetAspectRatio() const {
+  // Per spec, 'aspect-ratio' property applies to all elements except inline
+  // boxes and internal ruby or table boxes.
+  // https://drafts.csswg.org/css-sizing-4/#aspect-ratio
+  //
+  // Bug 1667501: If any caller is used for the elements supporting and not
+  // supporting 'aspect-ratio', we may need to add explicit exclusion to early
+  // return here.
+
+  const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
+  if (!aspectRatio.auto_) {
+    // Non-auto. Return the preferred aspect ratio from the aspect-ratio style.
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
+  // The rest of the cases are when aspect-ratio has 'auto'.
+  if (auto intrinsicRatio = GetIntrinsicRatio()) {
+    return intrinsicRatio;
+  }
+  if (aspectRatio.HasRatio()) {
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
+  return AspectRatio();
+}
+
 /* virtual */
-AspectRatio nsIFrame::GetIntrinsicRatio() { return AspectRatio(); }
+AspectRatio nsIFrame::GetIntrinsicRatio() const { return AspectRatio(); }
 
 static nscoord ComputeInlineSizeFromAspectRatio(
     WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aBlockSize,
@@ -6161,7 +6189,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     result.ISize(aWM) = ComputeInlineSizeFromAspectRatio(
         aWM, stylePos->mAspectRatio, bSize, boxSizingAdjust);
     aspectRatioUsage = AspectRatioUsage::ToComputeISize;
-  } else if (MOZ_UNLIKELY(isGridItem) && !IS_TRUE_OVERFLOW_CONTAINER(this)) {
+  } else if (MOZ_UNLIKELY(isGridItem) && !IsTrueOverflowContainer()) {
     // 'auto' inline-size for grid-level box - fill the CB for 'stretch' /
     // 'normal' and clamp it to the CB if requested:
     bool stretch = false;
@@ -6260,7 +6288,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
       MOZ_ASSERT(aspectRatioUsage == AspectRatioUsage::None);
       aspectRatioUsage = AspectRatioUsage::ToComputeBSize;
     } else if (MOZ_UNLIKELY(isGridItem) && blockStyleCoord->IsAuto() &&
-               !IS_TRUE_OVERFLOW_CONTAINER(this) &&
+               !IsTrueOverflowContainer() &&
                !alignCB->IsMasonry(isOrthogonal ? eLogicalAxisInline
                                                 : eLogicalAxisBlock)) {
       auto cbSize = aCBSize.BSize(aWM);
@@ -6942,7 +6970,7 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
            ViewportUtils::IsZoomedContentRoot(aAncestor) ||
            ((aFlags & STOP_AT_STACKING_CONTEXT_AND_DISPLAY_PORT) &&
             (aAncestor->IsStackingContext() ||
-             nsLayoutUtils::FrameHasDisplayPort(aAncestor, aCurrent)));
+             DisplayPortUtils::FrameHasDisplayPort(aAncestor, aCurrent)));
   };
   while (*aOutAncestor != aStopAtAncestor.mFrame &&
          !shouldStopAt(current, *aOutAncestor, aFlags)) {
@@ -8665,22 +8693,11 @@ nsresult nsIFrame::PeekOffsetForLineEdge(nsPeekOffsetStruct* aPos) {
 
   if (aPos->mVisual && PresContext()->BidiEnabled()) {
     nsIFrame* firstFrame;
-    bool lineIsRTL = it->GetDirection();
     bool isReordered;
     nsIFrame* lastFrame;
     MOZ_TRY(
         it->CheckLineOrder(thisLine, &isReordered, &firstFrame, &lastFrame));
     baseFrame = endOfLine ? lastFrame : firstFrame;
-    if (baseFrame) {
-      bool frameIsRTL =
-          (nsBidiPresUtils::FrameDirection(baseFrame) == NSBIDI_RTL);
-      // If the direction of the frame on the edge is opposite to
-      // that of the line, we'll need to drill down to its opposite
-      // end, so reverse endOfLine.
-      if (frameIsRTL != lineIsRTL) {
-        endOfLine = !endOfLine;
-      }
-    }
   } else {
     auto line = it->GetLine(thisLine).unwrap();
 
@@ -11108,6 +11125,10 @@ CompositorHitTestInfo nsIFrame::GetCompositorHitTestInfo(
     if (pluginFrame && pluginFrame->WantsToHandleWheelEventAsDefaultAction()) {
       result += CompositorHitTestFlags::eApzAwareListeners;
     }
+  } else if (IsRangeFrame()) {
+    // Range frames handle touch events directly without having a touch listener
+    // so we need to let APZ know that this area cares about events.
+    result += CompositorHitTestFlags::eApzAwareListeners;
   }
 
   if (aBuilder->IsTouchEventPrefEnabledDoc()) {

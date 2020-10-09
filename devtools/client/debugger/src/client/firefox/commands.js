@@ -4,11 +4,12 @@
 
 // @flow
 
-import { prepareSourcePayload, createThread, createFrame } from "./create";
+import { createThread, createFrame } from "./create";
 import {
   addThreadEventListeners,
   clientEvents,
   removeThreadEventListeners,
+  ensureSourceActor,
 } from "./events";
 import { makePendingLocationId } from "../../utils/breakpoint";
 
@@ -22,7 +23,6 @@ import type {
   PendingLocation,
   Frame,
   FrameId,
-  GeneratedSourceData,
   Script,
   SourceId,
   SourceActor,
@@ -39,7 +39,6 @@ import type {
   ThreadFront,
   ObjectFront,
   ExpressionResult,
-  SourcesPacket,
 } from "./types";
 
 import type { EventListenerCategoryList } from "../../actions/types";
@@ -318,6 +317,13 @@ function getProperties(thread: string, grip: Grip): Promise<*> {
 async function getFrames(thread: string) {
   const threadFront = lookupThreadFront(thread);
   const response = await threadFront.getFrames(0, CALL_STACK_PAGE_SIZE);
+
+  // Ensure that each frame has its source already available.
+  // Because of throttling, the source may be available a bit late.
+  await Promise.all(
+    response.frames.map(frame => ensureSourceActor(frame.where.actor))
+  );
+
   return response.frames.map<?Frame>((frame, i) =>
     createFrame(thread, frame, i)
   );
@@ -396,14 +402,6 @@ function registerSourceActor(sourceActorId: string, sourceId: SourceId) {
   sourceActors[sourceActorId] = sourceId;
 }
 
-async function getSources(
-  client: ThreadFront
-): Promise<Array<GeneratedSourceData>> {
-  const { sources }: SourcesPacket = await client.getSources();
-
-  return sources.map(source => prepareSourcePayload(client, source));
-}
-
 async function toggleEventLogging(logEventBreakpoints: boolean) {
   return forEachThread(thread =>
     thread.toggleEventLogging(logEventBreakpoints)
@@ -416,21 +414,6 @@ function getAllThreadFronts(): ThreadFront[] {
     fronts.push(threadFront);
   }
   return fronts;
-}
-
-// Fetch the sources for all the targets
-async function fetchSources(): Promise<Array<GeneratedSourceData>> {
-  let sources = [];
-  for (const threadFront of getAllThreadFronts()) {
-    sources = sources.concat(await getSources(threadFront));
-  }
-  return sources;
-}
-
-async function fetchThreadSources(
-  thread: string
-): Promise<Array<GeneratedSourceData>> {
-  return getSources(lookupThreadFront(thread));
 }
 
 // Check if any of the targets were paused before we opened
@@ -555,8 +538,6 @@ const clientCommands = {
   getFrames,
   pauseOnExceptions,
   toggleEventLogging,
-  fetchSources,
-  fetchThreadSources,
   checkIfAlreadyPaused,
   registerSourceActor,
   addThread,

@@ -24,7 +24,10 @@
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineJIT.h"
 #include "jit/InlinableNatives.h"
+#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
+#include "jit/JitZone.h"
 #include "jit/Linker.h"
 #include "jit/Lowering.h"
 #ifdef JS_ION_PERF
@@ -637,7 +640,7 @@ void ICFallbackStub::maybeInvalidateWarp(JSContext* cx, JSScript* script) {
 
 void ICStub::updateCode(JitCode* code) {
   // Write barrier on the old code.
-  JitCode::writeBarrierPre(jitCode());
+  gc::PreWriteBarrier(jitCode());
   stubCode_ = code->raw();
 }
 

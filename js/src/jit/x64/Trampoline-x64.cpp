@@ -5,9 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/Bailouts.h"
+#include "jit/BaselineFrame.h"
+#include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
-#include "jit/Linker.h"
+#include "jit/JitRuntime.h"
 #ifdef JS_ION_PERF
 #  include "jit/PerfSpewer.h"
 #endif
@@ -227,13 +228,14 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.push(framePtr);
     masm.push(reg_code);
 
+    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
+                        uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(framePtr);     // BaselineFrame
     masm.passABIArg(OsrFrameReg);  // InterpreterFrame
     masm.passABIArg(numStackValues);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::InitBaselineFrameForOsr),
-                     MoveOp::GENERAL,
-                     CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+    masm.callWithABI<Fn, jit::InitBaselineFrameForOsr>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
     masm.pop(reg_code);
     masm.pop(framePtr);
@@ -373,12 +375,14 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   masm.reserveStack(sizeof(void*));
   masm.movq(rsp, r9);
 
+  using Fn = bool (*)(InvalidationBailoutStack * sp, size_t * frameSizeOut,
+                      BaselineBailoutInfo * *info);
   masm.setupUnalignedABICall(rdx);
   masm.passABIArg(rax);
   masm.passABIArg(rbx);
   masm.passABIArg(r9);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, InvalidationBailout),
-                   MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI<Fn, InvalidationBailout>(
+      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
 
   masm.pop(r9);   // Get the bailoutInfo outparam.
   masm.pop(rbx);  // Get the frameSize outparam.
@@ -583,11 +587,12 @@ static void GenerateBailoutThunk(MacroAssembler& masm, uint32_t frameClass,
   masm.movq(rsp, r9);
 
   // Call the bailout function.
+  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
   masm.setupUnalignedABICall(rax);
   masm.passABIArg(r8);
   masm.passABIArg(r9);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, Bailout), MoveOp::GENERAL,
-                   CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI<Fn, Bailout>(MoveOp::GENERAL,
+                                CheckUnsafeCallWithABI::DontCheckOther);
 
   masm.pop(r9);  // Get the bailoutInfo outparam.
 

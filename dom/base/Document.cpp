@@ -1292,7 +1292,6 @@ Document::Document(const char* aContentType)
       mIsTopLevelContentDocument(false),
       mIsContentDocument(false),
       mDidCallBeginLoad(false),
-      mAllowPaymentRequest(false),
       mEncodingMenuDisabled(false),
       mLinksEnabled(true),
       mIsSVGGlyphsDocument(false),
@@ -1872,6 +1871,83 @@ bool Document::IsAboutPage() const {
 
 void Document::ConstructUbiNode(void* storage) {
   JS::ubi::Concrete<Document>::construct(storage, this);
+}
+
+void Document::LoadEventFired() {
+  // Accumulate timing data located in each document's realm and report to
+  // telemetry.
+  AccumulateJSTelemetry();
+
+  // Release the JS bytecode cache from its wait on the load event, and
+  // potentially dispatch the encoding of the bytecode.
+  if (ScriptLoader()) {
+    ScriptLoader()->LoadEventFired();
+  }
+}
+
+static uint32_t CalcPercentage(TimeDuration aSubTimer,
+                               TimeDuration aTotalTimer) {
+  return static_cast<uint32_t>(100.0 * aSubTimer.ToMilliseconds() /
+                               aTotalTimer.ToMilliseconds());
+}
+
+void Document::AccumulateJSTelemetry() {
+  if (!IsTopLevelContentDocument()) {
+    return;
+  }
+
+  // Try to only measure real websites
+  if (!(GetDocumentURI()->SchemeIs("http") ||
+        GetDocumentURI()->SchemeIs("https"))) {
+    return;
+  }
+
+  if (!GetScopeObject() || !GetScopeObject()->GetGlobalJSObject()) {
+    return;
+  }
+
+  AutoJSContext cx;
+  JSObject* globalObject = GetScopeObject()->GetGlobalJSObject();
+  JSAutoRealm ar(cx, globalObject);
+  JS::JSTimers timers = JS::GetJSTimers(cx);
+
+  TimeDuration totalExecutionTime = timers.executionTime;
+  TimeDuration totalDelazificationTime = timers.delazificationTime;
+  TimeDuration totalXDREncodingTime = timers.xdrEncodingTime;
+  TimeDuration totalBaselineCompileTime = timers.baselineCompileTime;
+
+  if (totalExecutionTime.IsZero()) {
+    return;
+  }
+
+  if (!totalDelazificationTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_DELAZIFICATION_PROPORTION,
+        CalcPercentage(totalDelazificationTime, totalExecutionTime));
+  }
+
+  if (!totalXDREncodingTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_XDR_ENCODING_PROPORTION,
+        CalcPercentage(totalXDREncodingTime, totalExecutionTime));
+  }
+
+  if (!totalBaselineCompileTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_BASELINE_COMPILE_PROPORTION,
+        CalcPercentage(totalBaselineCompileTime, totalExecutionTime));
+  }
+
+  TimeStamp loadEventStart =
+      GetNavigationTiming()->GetLoadEventStartTimeStamp();
+  TimeStamp navigationStart =
+      GetNavigationTiming()->GetNavigationStartTimeStamp();
+
+  if (loadEventStart && navigationStart) {
+    TimeDuration pageLoadTime = loadEventStart - navigationStart;
+    Telemetry::Accumulate(Telemetry::JS_EXECUTION_PROPORTION,
+                          CalcPercentage(totalExecutionTime, pageLoadTime));
+  }
 }
 
 Document::~Document() {
@@ -3168,10 +3244,10 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   mBlockAllMixedContent = loadInfo->GetBlockAllMixedContent();
   mBlockAllMixedContentPreloads = mBlockAllMixedContent;
 
+  // HTTPS-Only Mode flags
   // The HTTPS_ONLY_EXEMPT flag of the HTTPS-Only state gets propagated to all
   // sub-resources and sub-documents.
-  mHttpsOnlyStatus =
-      loadInfo->GetHttpsOnlyStatus() & nsILoadInfo::HTTPS_ONLY_EXEMPT;
+  mHttpsOnlyStatus = loadInfo->GetHttpsOnlyStatus();
 
   nsresult rv = InitReferrerInfo(aChannel);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -4097,7 +4173,7 @@ SVGSVGElement* Document::GetSVGRootElement() const {
 /* Return true if the document is in the focused top-level window, and is an
  * ancestor of the focused DOMWindow. */
 bool Document::HasFocus(ErrorResult& rv) const {
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     rv.Throw(NS_ERROR_NOT_AVAILABLE);
     return false;
@@ -6014,12 +6090,12 @@ void Document::SetBaseURI(nsIURI* aURI) {
   RefreshLinkHrefs();
 }
 
-Result<nsCOMPtr<nsIURI>, nsresult> Document::ResolveWithBaseURI(
+Result<OwningNonNull<nsIURI>, nsresult> Document::ResolveWithBaseURI(
     const nsAString& aURI) {
-  nsCOMPtr<nsIURI> resolvedURI;
+  RefPtr<nsIURI> resolvedURI;
   MOZ_TRY(
       NS_NewURI(getter_AddRefs(resolvedURI), aURI, nullptr, GetDocBaseURI()));
-  return resolvedURI;
+  return OwningNonNull<nsIURI>(std::move(resolvedURI));
 }
 
 URLExtraData* Document::DefaultStyleAttrURLData() {
@@ -6222,6 +6298,12 @@ already_AddRefed<PresShell> Document::CreatePresShell(
   // is ready to update we'll flush the font set.
   MarkUserFontSetDirty();
 
+  // Take the author style disabled state from the top browsing cvontext.
+  // (PageStyleChild.jsm ensures this is up to date.)
+  if (BrowsingContext* bc = GetBrowsingContext()) {
+    presShell->SetAuthorStyleDisabled(bc->Top()->AuthorStyleDisabledDefault());
+  }
+
   return presShell.forget();
 }
 
@@ -6387,9 +6469,6 @@ nsresult Document::SetSubDocumentFor(Element* aElement, Document* aSubDoc) {
     // aSubDoc is nullptr, remove the mapping
 
     if (mSubDocuments) {
-      if (Document* subDoc = GetSubDocumentFor(aElement)) {
-        subDoc->SetAllowPaymentRequest(false);
-      }
       mSubDocuments->Remove(aElement);
     }
   } else {
@@ -6412,7 +6491,6 @@ nsresult Document::SetSubDocumentFor(Element* aElement, Document* aSubDoc) {
     }
 
     if (entry->mSubDocument) {
-      entry->mSubDocument->SetAllowPaymentRequest(false);
       entry->mSubDocument->SetParentDocument(nullptr);
 
       // Release the old sub document
@@ -6421,23 +6499,6 @@ nsresult Document::SetSubDocumentFor(Element* aElement, Document* aSubDoc) {
 
     entry->mSubDocument = aSubDoc;
     NS_ADDREF(entry->mSubDocument);
-
-    // set allowpaymentrequest for the binding subdocument
-    if (!mAllowPaymentRequest) {
-      aSubDoc->SetAllowPaymentRequest(false);
-    } else {
-      nsresult rv = nsContentUtils::CheckSameOrigin(aElement, aSubDoc);
-      if (NS_SUCCEEDED(rv)) {
-        aSubDoc->SetAllowPaymentRequest(true);
-      } else {
-        if (aElement->IsHTMLElement(nsGkAtoms::iframe) &&
-            aElement->GetBoolAttr(nsGkAtoms::allowpaymentrequest)) {
-          aSubDoc->SetAllowPaymentRequest(true);
-        } else {
-          aSubDoc->SetAllowPaymentRequest(false);
-        }
-      }
-    }
 
     aSubDoc->SetParentDocument(this);
   }
@@ -11189,11 +11250,11 @@ nsresult Document::CloneDocHelper(Document* clone) const {
     // document, even if they are only paused.
     MOZ_ASSERT(!clone->GetNavigationTiming(),
                "Navigation time was already set?");
-    MOZ_ASSERT(mTiming,
-               "Timing should have been setup before making a static clone");
-    RefPtr<nsDOMNavigationTiming> timing =
-        mTiming->CloneNavigationTime(nsDocShell::Cast(clone->GetDocShell()));
-    clone->SetNavigationTiming(timing);
+    if (mTiming) {
+      RefPtr<nsDOMNavigationTiming> timing =
+          mTiming->CloneNavigationTime(nsDocShell::Cast(clone->GetDocShell()));
+      clone->SetNavigationTiming(timing);
+    }
     clone->SetCsp(mCSP);
   }
 
@@ -11405,7 +11466,7 @@ void Document::NotifyAbortedLoad() {
 
 static void FireOrClearDelayedEvents(nsTArray<nsCOMPtr<Document>>& aDocuments,
                                      bool aFireEvents) {
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) return;
 
   for (uint32_t i = 0; i < aDocuments.Length(); ++i) {
@@ -15544,10 +15605,10 @@ bool Document::ConsumeTransientUserGestureActivation() {
   return wc && wc->ConsumeTransientUserGestureActivation();
 }
 
-void Document::SetDocTreeHadAudibleMedia() {
+void Document::SetDocTreeHadMedia() {
   RefPtr<WindowContext> topWc = GetTopLevelWindowContext();
-  if (topWc && !topWc->IsDiscarded() && !topWc->GetDocTreeHadAudibleMedia()) {
-    MOZ_ALWAYS_SUCCEEDS(topWc->SetDocTreeHadAudibleMedia(true));
+  if (topWc && !topWc->IsDiscarded() && !topWc->GetDocTreeHadMedia()) {
+    MOZ_ALWAYS_SUCCEEDS(topWc->SetDocTreeHadMedia(true));
   }
 }
 
@@ -16898,6 +16959,20 @@ void Document::GetConnectedShadowRoots(
   for (const auto& entry : mComposedShadowRoots) {
     aOut.AppendElement(entry.GetKey());
   }
+}
+
+bool Document::HasPictureInPictureChildElement() const {
+  return mPictureInPictureChildElementCount > 0;
+}
+
+void Document::EnableChildElementInPictureInPictureMode() {
+  mPictureInPictureChildElementCount++;
+  MOZ_ASSERT(mPictureInPictureChildElementCount >= 0);
+}
+
+void Document::DisableChildElementInPictureInPictureMode() {
+  mPictureInPictureChildElementCount--;
+  MOZ_ASSERT(mPictureInPictureChildElementCount >= 0);
 }
 
 }  // namespace dom

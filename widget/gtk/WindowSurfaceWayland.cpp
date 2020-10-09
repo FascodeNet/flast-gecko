@@ -10,6 +10,7 @@
 #include "nsPrintfCString.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Tools.h"
+#include "gfx2DGlue.h"
 #include "gfxPlatform.h"
 #include "MozContainer.h"
 #include "nsTArray.h"
@@ -35,6 +36,9 @@ extern mozilla::LazyLogModule gWidgetWaylandLog;
 
 // Maximal compositing timeout it miliseconds
 #define COMPOSITING_TIMEOUT 200
+
+// Maximal timeout between frame callbacks
+#define FRAME_CALLBACK_TIMEOUT 20
 
 namespace mozilla {
 namespace widget {
@@ -940,8 +944,12 @@ void WindowSurfaceWayland::CommitWaylandBuffer() {
     if (waylandSurface == mLastCommittedSurface) {
       LOGWAYLAND(("    [%p] wait for frame callback.\n", (void*)this));
       // We have an active frame callback pending from our recent surface.
-      // It means we should defer the commit to FrameCallbackHandler().
-      return;
+      // It means we should defer the commit to FrameCallbackHandler(),
+      // but only if we're under frame callback timeout range.
+      if (mLastCommitTime && (g_get_monotonic_time() / 1000) - mLastCommitTime <
+                                 FRAME_CALLBACK_TIMEOUT) {
+        return;
+      }
     }
     // If our stored wl_surface does not match the actual one it means the frame
     // callback is no longer active and we should release it.

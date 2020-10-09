@@ -551,33 +551,27 @@
       <hbox id="ctrlTab-showAll-container" pack="center"/>
     </panel>
 
-    <panel id="pageActionPanel"
-           class="cui-widget-panel panel-no-padding"
-           role="group"
-           type="arrow"
-           hidden="true"
-           flip="slide"
-           position="bottomcenter topright"
-           tabspecific="true"
-           noautofocus="true"
-           pinTab-title="&pinTab.label;"
-           unpinTab-title="&unpinTab.label;"
-           pocket-title="&saveToPocketCmd.label;"
-           copyURL-title="&pageAction.copyLink.label;"
-           emailLink-title="&emailPageCmd.label;"
-           sendToDevice-notReadyTitle="&sendToDevice.syncNotReady.label;"
-           shareURL-title="&pageAction.shareUrl.label;"
-           shareMore-label="&pageAction.shareMore.label;">
-      <panelmultiview id="pageActionPanelMultiView"
-                      mainViewId="pageActionPanelMainView"
-                      viewCacheId="appMenu-viewCache">
-        <panelview id="pageActionPanelMainView"
-                   context="pageActionContextMenu"
-                   class="PanelUI-subView">
-          <vbox class="panel-subview-body"/>
-        </panelview>
-      </panelmultiview>
-    </panel>
+    <html:template id="pageActionPanelTemplate">
+      <panel id="pageActionPanel"
+             class="cui-widget-panel panel-no-padding"
+             role="group"
+             type="arrow"
+             hidden="true"
+             flip="slide"
+             position="bottomcenter topright"
+             tabspecific="true"
+             noautofocus="true">
+        <panelmultiview id="pageActionPanelMultiView"
+                        mainViewId="pageActionPanelMainView"
+                        viewCacheId="appMenu-viewCache">
+          <panelview id="pageActionPanelMainView"
+                     context="pageActionContextMenu"
+                     class="PanelUI-subView">
+            <vbox class="panel-subview-body"/>
+          </panelview>
+        </panelmultiview>
+      </panel>
+    </html:template>
 
     <html:template id="confirmation-hint-wrapper">
       <panel id="confirmation-hint"
@@ -2050,22 +2044,6 @@
              collapsed="true"
              customizable="true">
       <toolbartabstop skipintoolbarset="true"/>
-
-      <toolbarbutton id="managed-bookmarks"
-                     class="bookmark-item"
-                     data-l10n-id="managed-bookmarks"
-                     context="placesContextManaged"
-                     container="true"
-                     removable="false"
-                     hidden="true"
-                     type="menu">
-        <menupopup id="managed-bookmarks-popup"
-                   oncommand="PlacesToolbarHelper.openManagedBookmark(event);"
-                   onclick="checkForMiddleClick(this, event);"
-                   ondragover="event.dataTransfer.effectAllowed='none';"
-                   ondragstart="PlacesToolbarHelper.onDragStartManaged(event);"
-                   onpopupshowing="PlacesToolbarHelper.populateManagedBookmarks(this);"/>
-      </toolbarbutton>
 
       <toolbaritem id="personal-bookmarks"
                    title="&bookmarksToolbarItem.label;"

@@ -813,10 +813,10 @@ class LayerManager : public FrameRecorder {
    * per-scrollid basis. This is used for empty transactions that push over
    * scroll position updates to the APZ code.
    */
-  virtual bool SetPendingScrollUpdateForNextTransaction(
+  virtual bool AddPendingScrollUpdateForNextTransaction(
       ScrollableLayerGuid::ViewID aScrollId,
       const ScrollPositionUpdate& aUpdateInfo);
-  Maybe<ScrollPositionUpdate> GetPendingScrollInfoUpdate(
+  Maybe<nsTArray<ScrollPositionUpdate>> GetPendingScrollInfoUpdate(
       ScrollableLayerGuid::ViewID aScrollId);
   std::unordered_set<ScrollableLayerGuid::ViewID>
   ClearPendingScrollInfoUpdate();
@@ -1037,15 +1037,7 @@ class Layer {
    * CONSTRUCTION PHASE ONLY
    * Set the event handling region.
    */
-  void SetEventRegions(const EventRegions& aRegions) {
-    if (mEventRegions != aRegions) {
-      MOZ_LAYERS_LOG_IF_SHADOWABLE(
-          this, ("Layer::Mutated(%p) eventregions were %s, now %s", this,
-                 mEventRegions.ToString().get(), aRegions.ToString().get()));
-      mEventRegions = aRegions;
-      Mutated();
-    }
-  }
+  void SetEventRegions(const EventRegions& aRegions);
 
   /**
    * CONSTRUCTION PHASE ONLY

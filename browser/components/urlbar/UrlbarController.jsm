@@ -320,10 +320,14 @@ class UrlbarController {
       case KeyEvent.DOM_VK_TAB:
         // It's always possible to tab through results when the urlbar was
         // focused with the mouse, or has a search string.
+        // We allow tabbing without a search string when in search mode preview,
+        // since that means the user has interacted with the Urlbar since
+        // opening it.
         // When there's no search string, we want to focus the next toolbar item
         // instead, for accessibility reasons.
         let allowTabbingThroughResults =
           this.input.focusedViaMousedown ||
+          this.input.searchMode?.isPreview ||
           (this.input.value &&
             this.input.getAttribute("pageproxystate") != "valid");
         if (
@@ -377,7 +381,7 @@ class UrlbarController {
         break;
       case KeyEvent.DOM_VK_RIGHT:
       case KeyEvent.DOM_VK_END:
-        this.input.maybePromoteKeywordToSearchMode({
+        this.input.maybePromoteResultToSearchMode({
           entry: "typed",
         });
       // Fall through.
@@ -393,6 +397,7 @@ class UrlbarController {
           !event.shiftKey
         ) {
           this.input.setSearchMode({});
+          this.input.view.oneOffSearchButtons.selectedButton = null;
           this.input.startQuery({
             allowAutofill: false,
             event,
@@ -537,6 +542,8 @@ class UrlbarController {
       case UrlbarUtils.RESULT_TYPE.SEARCH:
         if (result.source == UrlbarUtils.RESULT_SOURCE.HISTORY) {
           telemetryType = "formhistory";
+        } else if (result.providerName == "TabToSearch") {
+          telemetryType = "tabtosearch";
         } else {
           telemetryType = result.payload.suggestion
             ? "searchsuggestion"
@@ -912,6 +919,9 @@ class TelemetryEvent {
         case UrlbarUtils.RESULT_TYPE.SEARCH:
           if (row.result.source == UrlbarUtils.RESULT_SOURCE.HISTORY) {
             return "formhistory";
+          }
+          if (row.result.providerName == "TabToSearch") {
+            return "tabtosearch";
           }
           return row.result.payload.suggestion ? "searchsuggestion" : "search";
         case UrlbarUtils.RESULT_TYPE.URL:

@@ -87,6 +87,32 @@ __declspec(dllexport) __attribute__((naked)) void NearJump() {
       :
       : "i"(JumpDestination));
 }
+
+__declspec(dllexport) __attribute__((naked)) void OpcodeFF() {
+  // Skip PUSH (FF /6) because clang prefers Opcode 50+rd
+  // to translate PUSH r64 rather than Opcode FF.
+  asm volatile(
+      "incl %eax;"
+      "decl %ebx;"
+      "call *%rcx;"
+      "jmp *(%rip);"  // Indirect jump to 0xcccccccc`cccccccc
+      "int $3;int $3;int $3;int $3;"
+      "int $3;int $3;int $3;int $3;");
+}
+
+__declspec(dllexport) __attribute__((naked)) void IndirectCall() {
+  asm volatile(
+      "call *(%rip);"  // Indirect call to 0x90909090`90909090
+      "nop;nop;nop;nop;nop;nop;nop;nop;"
+      "ret;");
+}
+
+__declspec(dllexport) __attribute__((naked)) void MovImm64() {
+  asm volatile(
+      "mov $0x1234567812345678, %r10;"
+      "nop;nop;nop");
+}
+
 #  elif defined(_M_IX86)
 constexpr uintptr_t JumpDestination = 0x7fff0000;
 

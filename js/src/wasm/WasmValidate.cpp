@@ -401,8 +401,8 @@ bool wasm::EncodeLocalEntries(Encoder& e, const ValTypeVector& locals) {
 }
 
 bool wasm::DecodeLocalEntries(Decoder& d, const TypeDefVector& types,
-                              bool refTypesEnabled, bool gcTypesEnabled,
-                              bool v128Enabled, ValTypeVector* locals) {
+                              const FeatureArgs& features,
+                              ValTypeVector* locals) {
   uint32_t numLocalEntries;
   if (!d.readVarU32(&numLocalEntries)) {
     return d.fail("failed to read number of local entries");
@@ -419,9 +419,12 @@ bool wasm::DecodeLocalEntries(Decoder& d, const TypeDefVector& types,
     }
 
     ValType type;
-    if (!d.readValType(types, refTypesEnabled, gcTypesEnabled, v128Enabled,
-                       &type)) {
+    if (!d.readValType(types, features, &type)) {
       return false;
+    }
+
+    if (!type.isDefaultable()) {
+      return d.fail("cannot have a non-defaultable local");
     }
 
     if (!locals->appendN(type, count)) {
@@ -480,10 +483,11 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
   if (!(c)) return false; \
   break
 
-#define CHECK_EXPERIMENTAL_SIMD()        \
-  if (!SimdExperimentalEnabled) {        \
-    return iter.unrecognizedOpcode(&op); \
-  }
+#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
+#  define CHECK_SIMD_EXPERIMENTAL() (void)(0)
+#else
+#  define CHECK_SIMD_EXPERIMENTAL() return iter.unrecognizedOpcode(&op)
+#endif
 
   while (true) {
     OpBytes op;
@@ -1055,7 +1059,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::F64x2PMaxExperimental):
           case uint32_t(SimdOp::F64x2PMinExperimental):
           case uint32_t(SimdOp::I32x4DotSI16x8Experimental):
-            CHECK_EXPERIMENTAL_SIMD();
+            CHECK_SIMD_EXPERIMENTAL();
             CHECK(iter.readBinary(ValType::V128, &nothing, &nothing));
 
           case uint32_t(SimdOp::I8x16Neg):
@@ -1094,7 +1098,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::F64x2FloorExperimental):
           case uint32_t(SimdOp::F64x2TruncExperimental):
           case uint32_t(SimdOp::F64x2NearestExperimental):
-            CHECK_EXPERIMENTAL_SIMD();
+            CHECK_SIMD_EXPERIMENTAL();
             CHECK(iter.readUnary(ValType::V128, &nothing));
 
           case uint32_t(SimdOp::I8x16Shl):
@@ -1174,13 +1178,13 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
 
           case uint32_t(SimdOp::V128Load32ZeroExperimental): {
             LinearMemoryAddress<Nothing> addr;
-            CHECK_EXPERIMENTAL_SIMD();
+            CHECK_SIMD_EXPERIMENTAL();
             CHECK(iter.readLoadSplat(4, &addr));
           }
 
           case uint32_t(SimdOp::V128Load64ZeroExperimental): {
             LinearMemoryAddress<Nothing> addr;
-            CHECK_EXPERIMENTAL_SIMD();
+            CHECK_SIMD_EXPERIMENTAL();
             CHECK(iter.readLoadSplat(8, &addr));
           }
 
@@ -1272,6 +1276,22 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
         }
         break;
       }
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+      case uint16_t(Op::RefAsNonNull): {
+        if (!env.functionReferencesEnabled()) {
+          return iter.unrecognizedOpcode(&op);
+        }
+        CHECK(iter.readRefAsNonNull(&nothing));
+      }
+      case uint16_t(Op::BrOnNull): {
+        if (!env.functionReferencesEnabled()) {
+          return iter.unrecognizedOpcode(&op);
+        }
+        uint32_t unusedDepth;
+        CHECK(
+            iter.readBrOnNull(&unusedDepth, &unusedType, &nothings, &nothing));
+      }
+#endif
 #ifdef ENABLE_WASM_GC
       case uint16_t(Op::RefEq): {
         if (!env.gcTypesEnabled()) {
@@ -1300,7 +1320,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
       }
 #endif
       case uint16_t(Op::ThreadPrefix): {
-        if (env.sharedMemoryEnabled == Shareable::False) {
+        if (env.sharedMemoryEnabled() == Shareable::False) {
           return iter.unrecognizedOpcode(&op);
         }
         switch (op.b1) {
@@ -1488,7 +1508,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
   MOZ_CRASH("unreachable");
 
 #undef CHECK
-#undef CHECK_EXPERIMENTAL_SIMD
+#undef CHECK_SIMD_EXPERIMENTAL
 }
 
 bool wasm::ValidateFunctionBody(const ModuleEnvironment& env,
@@ -1501,8 +1521,7 @@ bool wasm::ValidateFunctionBody(const ModuleEnvironment& env,
 
   const uint8_t* bodyBegin = d.currentPosition();
 
-  if (!DecodeLocalEntries(d, env.types, env.refTypesEnabled(),
-                          env.gcTypesEnabled(), env.v128Enabled(), &locals)) {
+  if (!DecodeLocalEntries(d, env.types, env.features, &locals)) {
     return false;
   }
 
@@ -1576,9 +1595,7 @@ static bool DecodeTypeVector(Decoder& d, ModuleEnvironment* env,
   }
 
   for (uint32_t i = 0; i < count; i++) {
-    if (!d.readValType(env->types.length(), env->refTypesEnabled(),
-                       env->gcTypesEnabled(), env->v128Enabled(),
-                       &(*types)[i])) {
+    if (!d.readValType(env->types.length(), env->features, &(*types)[i])) {
       return false;
     }
     if (!ValidateTypeState(d, typeState, (*types)[i])) {
@@ -1647,9 +1664,7 @@ static bool DecodeStructType(Decoder& d, ModuleEnvironment* env,
 
   StructMetaTypeDescr::Layout layout;
   for (uint32_t i = 0; i < numFields; i++) {
-    if (!d.readValType(env->types.length(), env->refTypesEnabled(),
-                       env->gcTypesEnabled(), env->v128Enabled(),
-                       &fields[i].type)) {
+    if (!d.readValType(env->types.length(), env->features, &fields[i].type)) {
       return false;
     }
 
@@ -1883,15 +1898,14 @@ static bool DecodeLimits(Decoder& d, Limits* limits,
   return true;
 }
 
-static bool DecodeTableTypeAndLimits(Decoder& d, bool refTypesEnabled,
-                                     bool gcTypesEnabled,
+static bool DecodeTableTypeAndLimits(Decoder& d, const FeatureArgs& features,
                                      const TypeDefVector& types,
                                      TableDescVector* tables) {
   RefType tableElemType;
-  if (!d.readRefType(types, gcTypesEnabled, &tableElemType)) {
+  if (!d.readRefType(types, features.withRefTypes(true), &tableElemType)) {
     return false;
   }
-  if (!refTypesEnabled && !tableElemType.isFunc()) {
+  if (!features.refTypes && !tableElemType.isFunc()) {
     return d.fail("expected 'funcref' element type");
   }
   if (!tableElemType.isNullable()) {
@@ -1959,10 +1973,9 @@ static bool GlobalIsJSCompatible(Decoder& d, ValType type) {
 }
 
 static bool DecodeGlobalType(Decoder& d, const TypeDefVector& types,
-                             bool refTypesEnabled, bool gcTypesEnabled,
-                             bool v128Enabled, ValType* type, bool* isMutable) {
-  if (!d.readValType(types, refTypesEnabled, gcTypesEnabled, v128Enabled,
-                     type)) {
+                             const FeatureArgs& features, ValType* type,
+                             bool* isMutable) {
+  if (!d.readValType(types, features, type)) {
     return d.fail("expected global type");
   }
 
@@ -2013,7 +2026,7 @@ static bool DecodeMemoryLimits(Decoder& d, ModuleEnvironment* env) {
   ConvertMemoryPagesToBytes(&memory);
 
   if (memory.shared == Shareable::True &&
-      env->sharedMemoryEnabled == Shareable::False) {
+      env->sharedMemoryEnabled() == Shareable::False) {
     return d.fail("shared memory is disabled");
   }
 
@@ -2056,14 +2069,16 @@ static bool DecodeImport(Decoder& d, ModuleEnvironment* env) {
       if (!env->funcTypes.append(&env->types[funcTypeIndex].funcType())) {
         return false;
       }
+      if (!env->funcTypeIndices.append(funcTypeIndex)) {
+        return false;
+      }
       if (env->funcTypes.length() > MaxFuncs) {
         return d.fail("too many functions");
       }
       break;
     }
     case DefinitionKind::Table: {
-      if (!DecodeTableTypeAndLimits(d, env->refTypesEnabled(),
-                                    env->gcTypesEnabled(), env->types,
+      if (!DecodeTableTypeAndLimits(d, env->features, env->types,
                                     &env->tables)) {
         return false;
       }
@@ -2079,9 +2094,7 @@ static bool DecodeImport(Decoder& d, ModuleEnvironment* env) {
     case DefinitionKind::Global: {
       ValType type;
       bool isMutable;
-      if (!DecodeGlobalType(d, env->types, env->refTypesEnabled(),
-                            env->gcTypesEnabled(), env->v128Enabled(), &type,
-                            &isMutable)) {
+      if (!DecodeGlobalType(d, env->types, env->features, &type, &isMutable)) {
         return false;
       }
       if (!GlobalIsJSCompatible(d, type)) {
@@ -2163,6 +2176,9 @@ static bool DecodeFunctionSection(Decoder& d, ModuleEnvironment* env) {
   if (!env->funcTypes.reserve(numFuncs.value())) {
     return false;
   }
+  if (!env->funcTypeIndices.reserve(numFuncs.value())) {
+    return false;
+  }
 
   for (uint32_t i = 0; i < numDefs; i++) {
     uint32_t funcTypeIndex;
@@ -2170,6 +2186,7 @@ static bool DecodeFunctionSection(Decoder& d, ModuleEnvironment* env) {
       return false;
     }
     env->funcTypes.infallibleAppend(&env->types[funcTypeIndex].funcType());
+    env->funcTypeIndices.infallibleAppend(funcTypeIndex);
   }
 
   return d.finishSection(*range, "function");
@@ -2190,9 +2207,7 @@ static bool DecodeTableSection(Decoder& d, ModuleEnvironment* env) {
   }
 
   for (uint32_t i = 0; i < numTables; ++i) {
-    if (!DecodeTableTypeAndLimits(d, env->refTypesEnabled(),
-                                  env->gcTypesEnabled(), env->types,
-                                  &env->tables)) {
+    if (!DecodeTableTypeAndLimits(d, env->features, env->types, &env->tables)) {
       return false;
     }
   }
@@ -2287,7 +2302,7 @@ static bool DecodeInitializerExpression(Decoder& d, ModuleEnvironment* env,
     case uint16_t(Op::RefNull): {
       MOZ_ASSERT_IF(env->isStructType(expected), env->gcTypesEnabled());
       RefType initType;
-      if (!d.readHeapType(env->types, env->gcTypesEnabled(), true, &initType)) {
+      if (!d.readHeapType(env->types, env->features, true, &initType)) {
         return false;
       }
       if (!expected.isReference() ||
@@ -2397,9 +2412,7 @@ static bool DecodeGlobalSection(Decoder& d, ModuleEnvironment* env) {
   for (uint32_t i = 0; i < numDefs; i++) {
     ValType type;
     bool isMutable;
-    if (!DecodeGlobalType(d, env->types, env->refTypesEnabled(),
-                          env->gcTypesEnabled(), env->v128Enabled(), &type,
-                          &isMutable)) {
+    if (!DecodeGlobalType(d, env->types, env->features, &type, &isMutable)) {
       return false;
     }
 
@@ -2681,7 +2694,7 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
     } else {
       switch (payload) {
         case ElemSegmentPayload::ElemExpression: {
-          if (!d.readRefType(env->types, env->gcTypesEnabled(), &elemType)) {
+          if (!d.readRefType(env->types, env->features, &elemType)) {
             return false;
           }
           break;
@@ -2764,7 +2777,7 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
             initType = RefType::func();
             break;
           case uint16_t(Op::RefNull):
-            if (!d.readRefType(env->types, env->gcTypesEnabled(), &initType)) {
+            if (!d.readHeapType(env->types, env->features, true, &initType)) {
               return false;
             }
             needIndex = false;
@@ -2864,8 +2877,6 @@ bool wasm::DecodeModuleEnvironment(Decoder& d, ModuleEnvironment* env) {
   if (!DecodePreamble(d)) {
     return false;
   }
-
-  env->compilerEnv->computeParameters(d);
 
   if (!DecodeTypeSection(d, env)) {
     return false;
@@ -3214,21 +3225,8 @@ bool wasm::Validate(JSContext* cx, const ShareableBytes& bytecode,
                     UniqueChars* error) {
   Decoder d(bytecode.bytes, 0, error);
 
-  bool gcTypesConfigured = GcTypesAvailable(cx);
-  bool refTypesConfigured = ReftypesAvailable(cx);
-  bool multiValueConfigured = MultiValuesAvailable(cx);
-  bool hugeMemory = false;
-  bool v128Configured = SimdAvailable(cx);
-
-  CompilerEnvironment compilerEnv(
-      CompileMode::Once, Tier::Optimized, OptimizedBackend::Ion,
-      DebugEnabled::False, multiValueConfigured, refTypesConfigured,
-      gcTypesConfigured, hugeMemory, v128Configured);
-  ModuleEnvironment env(
-      &compilerEnv,
-      cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled()
-          ? Shareable::True
-          : Shareable::False);
+  FeatureArgs features = FeatureArgs::build(cx);
+  ModuleEnvironment env(features);
   if (!DecodeModuleEnvironment(d, &env)) {
     return false;
   }

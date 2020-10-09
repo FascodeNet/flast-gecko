@@ -33,6 +33,9 @@ search-input-box =
 
 managed-notice = Your browser is being managed by your organization.
 
+category-list =
+    .aria-label = Categories
+
 pane-general-title = General
 category-general =
     .tooltiptext = { pane-general-title }
@@ -618,6 +621,8 @@ home-prefs-search-header =
 home-prefs-topsites-header =
     .label = Top Sites
 home-prefs-topsites-description = The sites you visit most
+home-prefs-topsites-by-option-sponsored =
+    .label = Sponsored Top Sites
 
 ## Variables:
 ##  $provider (String): Name of the corresponding content provider, e.g "Pocket".

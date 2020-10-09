@@ -820,7 +820,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SearchTelemetry: "resource:///modules/SearchTelemetry.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
-  ShellService: "resource:///modules/ShellService.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TabUnloader: "resource:///modules/TabUnloader.jsm",
   TRRRacer: "resource:///modules/TRRPerformance.jsm",
@@ -1876,6 +1875,8 @@ BrowserGlue.prototype = {
 
     PageActions.init();
 
+    DoHController.init();
+
     this._firstWindowTelemetry(aWindow);
     this._firstWindowLoaded();
 
@@ -2386,7 +2387,6 @@ BrowserGlue.prototype = {
       this._showNewInstallModal();
     }
 
-    DoHController.init();
     FirefoxMonitor.init();
   },
 
@@ -2575,7 +2575,7 @@ BrowserGlue.prototype = {
       },
 
       // request startup of Chromium remote debugging protocol
-      // (observer will only be notified when --remote-debugger is passed)
+      // (observer will only be notified when --remote-debugging-port is passed)
       {
         condition: AppConstants.ENABLE_REMOTE_AGENT,
         task: () => {
@@ -3896,9 +3896,11 @@ BrowserGlue.prototype = {
           {}
         );
         if (willPrompt) {
-          // Prevent the related notification from appearing if we're
-          // showing the modal prompt.
+          // Prevent the related notification from appearing and
+          // show the modal prompt.
           DefaultBrowserNotification.notifyModalDisplayed();
+          let win = BrowserWindowTracker.getTopWindow();
+          DefaultBrowserCheck.prompt(win);
         }
       }
     );
@@ -4721,9 +4723,9 @@ var DefaultBrowserCheck = {
       shouldAsk
     );
     if (rv == 0) {
-      ShellService.setAsDefault();
+      win.getShellService().setAsDefault();
     } else if (!shouldAsk.value) {
-      ShellService.shouldCheckDefaultBrowser = false;
+      win.getShellService().shouldCheckDefaultBrowser = false;
     }
 
     try {
@@ -4743,14 +4745,17 @@ var DefaultBrowserCheck = {
    * @returns {boolean} True if the default browser check prompt will be shown.
    */
   async willCheckDefaultBrowser(isStartupCheck) {
+    let win = BrowserWindowTracker.getTopWindow();
+    let shellService = win.getShellService();
+
     // Perform default browser checking.
-    if (!ShellService) {
+    if (!shellService) {
       return false;
     }
 
     let shouldCheck =
       !AppConstants.DEBUG &&
-      ShellService.shouldCheckDefaultBrowser &&
+      shellService.shouldCheckDefaultBrowser &&
       !Services.prefs.getBoolPref(
         "browser.defaultbrowser.notificationbar",
         false
@@ -4787,7 +4792,7 @@ var DefaultBrowserCheck = {
     let isDefault = false;
     let isDefaultError = false;
     try {
-      isDefault = ShellService.isDefaultBrowser(isStartupCheck, false);
+      isDefault = shellService.isDefaultBrowser(isStartupCheck, false);
     } catch (ex) {
       isDefaultError = true;
     }

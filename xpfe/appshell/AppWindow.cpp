@@ -63,7 +63,7 @@
 #include "mozilla/EventDispatcher.h"
 
 #ifdef XP_WIN
-#  include "mozilla/EarlyBlankWindow.h"
+#  include "mozilla/PreXULSkeletonUI.h"
 #endif
 
 #ifdef MOZ_NEW_XULSTORE
@@ -1797,7 +1797,7 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
     return NS_OK;
   }
 
-  PersistEarlyBlankWindowValues(aRect.X(), aRect.Y(), aRect.Width(),
+  PersistPreXULSkeletonUIValues(aRect.X(), aRect.Y(), aRect.Width(),
                                 aRect.Height(),
                                 mWindow->GetDefaultScale().scale);
 #endif
@@ -2846,7 +2846,9 @@ void AppWindow::WindowActivated() {
   nsCOMPtr<nsPIDOMWindowOuter> window =
       mDocShell ? mDocShell->GetWindow() : nullptr;
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm && window) fm->WindowRaised(window);
+  if (fm && window) {
+    fm->WindowRaised(window);
+  }
 
   if (mChromeLoaded) {
     PersistentAttributesDirty(PAD_POSITION | PAD_SIZE | PAD_MISC);
@@ -2860,7 +2862,9 @@ void AppWindow::WindowDeactivated() {
   nsCOMPtr<nsPIDOMWindowOuter> window =
       mDocShell ? mDocShell->GetWindow() : nullptr;
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm && window && !fm->IsTestMode()) fm->WindowLowered(window);
+  if (fm && window && !fm->IsTestMode()) {
+    fm->WindowLowered(window);
+  }
 }
 
 #ifdef USE_NATIVE_MENUS

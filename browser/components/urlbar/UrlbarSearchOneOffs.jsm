@@ -110,8 +110,9 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
    */
   get hasView() {
     // Return true if the one-offs are enabled.  We set style.display = "none"
-    // when they're disabled, so use that to check.
-    return this.style.display != "none";
+    // when they're disabled, and we hide the container when there are no
+    // engines to show.
+    return this.style.display != "none" && !this.container.hidden;
   }
 
   /**
@@ -131,12 +132,6 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
   set selectedButton(button) {
     super.selectedButton = button;
 
-    // We don't want to enter search mode preview if we're already in full
-    // search mode.
-    if (this.input.searchMode && !this.input.searchMode.isPreview) {
-      return;
-    }
-
     let expectedSearchMode;
     if (
       button &&
@@ -147,17 +142,11 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
         source: button.source,
         entry: "oneoff",
       };
-    }
-
-    // selectedButton is set every time the up/down arrows are pressed,
-    // including when cycling through the results. If a one-off hasn't set
-    // expectedSearchMode, we may still want to call setSearchMode({}) to exit
-    // search mode when moving from a one-off to the settings button or to a
-    // result. We avoid calling setSearchMode({}) when we're not already in
-    // search mode as an optimization  in the common case of cycling through
-    // normal results.
-    if (expectedSearchMode || this.input.searchMode) {
-      this.input.setSearchMode(expectedSearchMode || {});
+      this.input.setSearchMode(expectedSearchMode);
+    } else if (this.input.searchMode) {
+      // Restore the previous state. We do this only if we're in search mode, as
+      // an optimization in the common case of cycling through normal results.
+      this.input.restoreSearchModeState();
     }
   }
 
@@ -317,14 +306,14 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
    *   that branch.
    */
   onPrefChanged(changedPref) {
-    // Null out this._engines when the local-one-offs-related prefs change so
-    // that they rebuild themselves the next time the view opens.
+    // Invalidate the engine cache when the local-one-offs-related prefs change
+    // so that the one-offs rebuild themselves the next time the view opens.
     if (
       ["update2", "update2.localOneOffs", "update2.oneOffsRefresh"].includes(
         changedPref
       )
     ) {
-      this._engines = null;
+      this.invalidateCache();
     }
     this._setupOneOffsHorizontalKeyNavigation();
   }

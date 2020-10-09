@@ -1772,18 +1772,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         "FEATURE_UNQUALIFIED_WEBRENDER_WINDOWS_8_1");
 #endif
 
-    // Previously we had window jumping with certain Intel drivers
-    // which caused us to conservatively block drivers older than
-    // 21.20.16.4590. We're keeping that blocking for now, just to minimize
-    // risk.
-#ifndef EARLY_BETA_OR_EARLIER
-    APPEND_TO_DRIVER_BLOCKLIST2(
-        OperatingSystem::Windows, DeviceFamily::IntelAll,
-        nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
-        V(21, 20, 16, 4590), "FEATURE_FAILURE_INTEL_WR_OLD_DRIVERS");
-#endif
-
     // Bug 1615421 / 1607860 - Playing videos appear to crash with WebRender
     // with this particular driver.
     APPEND_TO_DRIVER_BLOCKLIST2(
@@ -1805,21 +1793,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         "FEATURE_ROLLOUT_BATTERY_S_SCRN_NV_RECENT");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::None,
-        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
-        DeviceFamily::IntelRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_DESKTOP_INTEL_S_SCRN");
-
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::RecentWindows10, ScreenSizeStatus::All,
-        BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
-        DriverVendor::All, DeviceFamily::IntelModernRolloutWebRender,
-        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-        DRIVER_GREATER_THAN_OR_EQUAL, V(21, 20, 16, 4550),
-        "FEATURE_ROLLOUT_BATTERY_INTEL");
-
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::AtiRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
@@ -1833,14 +1806,14 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_DESKTOP_NV");
 
-#ifdef EARLY_BETA_OR_EARLIER
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::IntelRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_EARLY_BETA_OR_EARLIER_INTEL");
+        V(0, 0, 0, 0), "FEATURE_ROLLOUT_INTEL");
 
+#ifdef EARLY_BETA_OR_EARLIER
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
@@ -1865,13 +1838,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
                                 nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
                                 DRIVER_LESS_THAN_OR_EQUAL, V(8, 17, 10, 1129),
                                 "FEATURE_FAILURE_CHROME_BUG_800950");
-
-    // Block all non-recent Win10
-    APPEND_TO_DRIVER_BLOCKLIST2(
-        OperatingSystem::NotRecentWindows10, DeviceFamily::All,
-        nsIGfxInfo::FEATURE_WEBRENDER_COMPOSITOR,
-        nsIGfxInfo::FEATURE_BLOCKED_OS_VERSION, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_FAILURE_NOT_RECENT_WIN10");
 #endif
 
     // WebRender is unable to use scissored clears in some cases

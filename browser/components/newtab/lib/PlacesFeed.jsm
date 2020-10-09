@@ -279,6 +279,7 @@ class PlacesFeed {
     const params = {
       private: isPrivate,
       targetBrowser: action._target.browser,
+      fromChrome: false, // This ensure we maintain user preference for how to open new tabs.
     };
 
     // Always include the referrer (even for http links) if we have one
@@ -389,10 +390,9 @@ class PlacesFeed {
   }
 
   fillSearchTopSiteTerm({ _target, data }) {
-    _target.browser.ownerGlobal.gURLBar.searchWithAlias(
-      data.label,
-      "topsites_newtab"
-    );
+    _target.browser.ownerGlobal.gURLBar.search(data.label, {
+      searchModeEntry: "topsites_newtab",
+    });
   }
 
   _getSearchPrefix(isPrivateWindow) {
@@ -416,7 +416,9 @@ class PlacesFeed {
     if (!data || !data.text) {
       urlBar.setHiddenFocus();
     } else {
-      urlBar.searchWithAlias(searchAlias, "handoff", data.text);
+      urlBar.search(searchAlias + data.text, {
+        searchModeEntry: "handoff",
+      });
       isFirstChange = false;
     }
 
@@ -427,7 +429,7 @@ class PlacesFeed {
       if (isFirstChange) {
         isFirstChange = false;
         urlBar.removeHiddenFocus();
-        urlBar.searchWithAlias(searchAlias, "handoff");
+        urlBar.search(searchAlias, { searchModeEntry: "handoff" });
         this.store.dispatch(
           ac.OnlyToOneContent({ type: at.HIDE_SEARCH }, meta.fromTarget)
         );

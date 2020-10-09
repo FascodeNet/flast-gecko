@@ -32,6 +32,10 @@ struct PrintData {
   double scaling;
   bool printBGColors;
   bool printBGImages;
+  bool honorPageRuleMargins;
+  bool showMarginGuides;
+  bool isPrintSelectionRBEnabled;
+  bool printSelectionOnly;
   short printRange;
   nsString title;
   nsString docURL;
@@ -64,7 +68,6 @@ struct PrintData {
   int32_t duplex;
   bool isInitializedFromPrinter;
   bool isInitializedFromPrefs;
-  int32_t optionFlags;
 
   /* Windows-specific things */
   nsString driverName;

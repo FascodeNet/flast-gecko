@@ -277,7 +277,6 @@ EXPORTS.mozilla.layers += [
     'wr/WebRenderDrawEventRecorder.h',
     'wr/WebRenderImageHost.h',
     'wr/WebRenderLayerManager.h',
-    'wr/WebRenderLayersLogging.h',
     'wr/WebRenderMessageUtils.h',
     'wr/WebRenderScrollData.h',
     'wr/WebRenderScrollDataWrapper.h',
@@ -365,6 +364,7 @@ UNIFIED_SOURCES += [
     'apz/src/CheckerboardEvent.cpp',
     'apz/src/DragTracker.cpp',
     'apz/src/ExpectedGeckoMetrics.cpp',
+    'apz/src/FlingAccelerator.cpp',
     'apz/src/FocusState.cpp',
     'apz/src/FocusTarget.cpp',
     'apz/src/GenericScrollAnimation.cpp',
@@ -530,6 +530,7 @@ UNIFIED_SOURCES += [
     'RotatedBuffer.cpp',
     'SampleTime.cpp',
     'ScreenshotGrabber.cpp',
+    'ScrollableLayerGuid.cpp',
     'ShareableCanvasRenderer.cpp',
     'SourceSurfaceSharedData.cpp',
     'SourceSurfaceVolatileData.cpp',
@@ -552,9 +553,9 @@ UNIFIED_SOURCES += [
     'wr/WebRenderDrawEventRecorder.cpp',
     'wr/WebRenderImageHost.cpp',
     'wr/WebRenderLayerManager.cpp',
-    'wr/WebRenderLayersLogging.cpp',
     'wr/WebRenderScrollData.cpp',
     'wr/WebRenderUserData.cpp',
+    'ZoomConstraints.cpp',
     # XXX here are some unified build error.
     #'wr/WebRenderTextureHost.cpp'
 ]

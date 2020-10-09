@@ -60,7 +60,7 @@
 
 #include "mozilla/AppShutdown.h"
 #include "mozilla/AutoRestore.h"
-#include "mozilla/EarlyBlankWindow.h"
+#include "mozilla/PreXULSkeletonUI.h"
 #include "mozilla/Logging.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MiscEvents.h"
@@ -743,14 +743,14 @@ void nsWindow::SendAnAPZEvent(InputData& aEvent) {
 
   if (aEvent.mInputType == PANGESTURE_INPUT) {
     PanGestureInput& panInput = aEvent.AsPanGestureInput();
-    WidgetWheelEvent event = panInput.ToWidgetWheelEvent(this);
+    WidgetWheelEvent event = panInput.ToWidgetEvent(this);
     ProcessUntransformedAPZEvent(&event, result);
 
     return;
   }
 
   PinchGestureInput& pinchInput = aEvent.AsPinchGestureInput();
-  WidgetWheelEvent event = pinchInput.ToWidgetWheelEvent(this);
+  WidgetWheelEvent event = pinchInput.ToWidgetEvent(this);
   ProcessUntransformedAPZEvent(&event, result);
 }
 
@@ -893,7 +893,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
   }
 
   if (aInitData->mWindowType == eWindowType_toplevel && !aParent) {
-    mWnd = ConsumeEarlyBlankWindowHandle();
+    mWnd = ConsumePreXULSkeletonUIHandle();
     if (mWnd) {
       mWasPreXulSkeletonUI = true;
       ::SetWindowLongPtrW(mWnd, GWL_STYLE, style);

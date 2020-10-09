@@ -97,12 +97,15 @@ def get_session():
     return requests_retry_session(retries=5)
 
 
-def _do_request(url, force_get=False, **kwargs):
+def _do_request(url, method=None, **kwargs):
+    if method is None:
+        method = "post" if kwargs else "get"
+
     session = get_session()
-    if kwargs and not force_get:
-        response = session.post(url, **kwargs)
-    else:
-        response = session.get(url, stream=True, **kwargs)
+    if method == "get":
+        kwargs["stream"] = True
+    response = getattr(session, method)(url, **kwargs)
+
     if response.status_code >= 400:
         # Consume content before raise_for_status, so that the connection can be
         # reused.
@@ -217,6 +220,21 @@ def list_tasks(index_path, use_proxy=False):
     return [t['taskId'] for t in results]
 
 
+def insert_index(index_path, task_id, data=None, use_proxy=False):
+    index_url = get_index_url(index_path, use_proxy=use_proxy)
+
+    # Find task expiry.
+    expires = get_task_definition(task_id, use_proxy=use_proxy)["expires"]
+
+    response = _do_request(index_url, method="put", json={
+        "taskId": task_id,
+        "rank": 0,
+        "data": data or {},
+        "expires": expires,
+    })
+    return response
+
+
 def parse_time(timestamp):
     """Turn a "JSON timestamp" as used in TC APIs into a datetime"""
     return datetime.datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ')
@@ -312,7 +330,7 @@ def list_task_group_tasks(task_group_id):
     while True:
         url = liburls.api(get_root_url(False), 'queue', 'v1',
                           'task-group/{}/list'.format(task_group_id))
-        resp = _do_request(url, force_get=True, params=params).json()
+        resp = _do_request(url, method="get", params=params).json()
         for task in resp['tasks']:
             yield task
         if resp.get('continuationToken'):

@@ -42,7 +42,9 @@
 #ifdef JS_HAS_TYPED_OBJECTS
 #  include "builtin/TypedObject.h"
 #endif
+#include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScriptToStencil, frontend::InstantiateStencils
 #include "frontend/BytecodeCompiler.h"
+#include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationInfoVector, frontend::CompilationGCOutput
 #include "gc/FreeOp.h"
 #include "gc/Marking.h"
 #include "gc/Policy.h"
@@ -74,6 +76,7 @@
 #include "js/Utility.h"
 #include "js/WasmModule.h"
 #include "js/Wrapper.h"
+#include "proxy/DOMProxy.h"
 #include "util/CompleteFile.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
@@ -424,6 +427,13 @@ JS_PUBLIC_API JS::ContextOptions& JS::ContextOptionsRef(JSContext* cx) {
 JS::ContextOptions& JS::ContextOptions::setWasmCranelift(bool flag) {
 #ifdef ENABLE_WASM_CRANELIFT
   wasmCranelift_ = flag;
+#endif
+  return *this;
+}
+
+JS::ContextOptions& JS::ContextOptions::setWasmFunctionReferences(bool flag) {
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+  wasmFunctionReferences_ = flag;
 #endif
   return *this;
 }
@@ -5683,6 +5693,14 @@ JS_PUBLIC_API void JS::detail::AssertArgumentsAreSane(JSContext* cx,
 JS_PUBLIC_API JS::TranscodeResult JS::EncodeScript(JSContext* cx,
                                                    TranscodeBuffer& buffer,
                                                    HandleScript scriptArg) {
+  // Run-once top-level scripts may mutate singleton objects so do not allow
+  // encoding them. It could be possible to encode early enough to avoid this,
+  // but for consistency with `CopyScriptImpl` we always disallow.
+  MOZ_ASSERT(!scriptArg->isFunction());
+  if (scriptArg->treatAsRunOnce()) {
+    return JS::TranscodeResult_Failure_RunOnceNotSupported;
+  }
+
   XDREncoder encoder(cx, buffer, buffer.length());
   RootedScript script(cx, scriptArg);
   XDRResult res = encoder.codeScript(&script);
@@ -5695,10 +5713,11 @@ JS_PUBLIC_API JS::TranscodeResult JS::EncodeScript(JSContext* cx,
 }
 
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
-    JSContext* cx, TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
     size_t cursorIndex) {
   Rooted<UniquePtr<XDRDecoder>> decoder(
-      cx, js::MakeUnique<XDRDecoder>(cx, buffer, cursorIndex));
+      cx, js::MakeUnique<XDRDecoder>(cx, &options, buffer, cursorIndex));
   if (!decoder) {
     ReportOutOfMemory(cx);
     return JS::TranscodeResult_Throw;
@@ -5711,11 +5730,62 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
   return JS::TranscodeResult_Ok;
 }
 
+static JS::TranscodeResult DecodeStencil(
+    JSContext* cx, JS::TranscodeBuffer& buffer,
+    frontend::CompilationInfoVector& compilationInfos, size_t cursorIndex) {
+  XDRStencilDecoder decoder(cx, &compilationInfos.initial.input.options, buffer,
+                            cursorIndex,
+                            compilationInfos.initial.stencil.parserAtoms);
+
+  if (!compilationInfos.initial.input.initForGlobal(cx)) {
+    return JS::TranscodeResult_Throw;
+  }
+
+  XDRResult res = decoder.codeStencils(compilationInfos);
+  if (res.isErr()) {
+    return res.unwrapErr();
+  }
+
+  return JS::TranscodeResult_Ok;
+}
+
+JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
+    size_t cursorIndex) {
+  MOZ_ASSERT(options.useOffThreadParseGlobal == js::UseOffThreadParseGlobal());
+  if (js::UseOffThreadParseGlobal()) {
+    // The buffer contains JSScript.
+    return JS::DecodeScript(cx, options, buffer, scriptp, cursorIndex);
+  }
+
+  // The buffer contains stencil.
+
+  Rooted<frontend::CompilationInfoVector> compilationInfos(
+      cx, frontend::CompilationInfoVector(cx, options));
+
+  JS::TranscodeResult res =
+      DecodeStencil(cx, buffer, compilationInfos.get(), cursorIndex);
+  if (res != JS::TranscodeResult_Ok) {
+    return res;
+  }
+
+  frontend::CompilationGCOutput gcOutput(cx);
+  if (!frontend::InstantiateStencils(cx, compilationInfos.get(), gcOutput)) {
+    return JS::TranscodeResult_Throw;
+  }
+
+  MOZ_ASSERT(gcOutput.script);
+  scriptp.set(gcOutput.script);
+
+  return JS::TranscodeResult_Ok;
+}
+
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
-    JSContext* cx, const TranscodeRange& range,
-    JS::MutableHandleScript scriptp) {
-  Rooted<UniquePtr<XDRDecoder>> decoder(cx,
-                                        js::MakeUnique<XDRDecoder>(cx, range));
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    const TranscodeRange& range, JS::MutableHandleScript scriptp) {
+  Rooted<UniquePtr<XDRDecoder>> decoder(
+      cx, js::MakeUnique<XDRDecoder>(cx, &options, range));
   if (!decoder) {
     ReportOutOfMemory(cx);
     return JS::TranscodeResult_Throw;
@@ -5729,16 +5799,48 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
 }
 
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
-    JSContext* cx, TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
     size_t cursorIndex) {
-  JS::TranscodeResult res = JS::DecodeScript(cx, buffer, scriptp, cursorIndex);
+  MOZ_ASSERT(options.useOffThreadParseGlobal == js::UseOffThreadParseGlobal());
+  if (js::UseOffThreadParseGlobal()) {
+    JS::TranscodeResult res =
+        JS::DecodeScript(cx, options, buffer, scriptp, cursorIndex);
+    if (res != JS::TranscodeResult_Ok) {
+      return res;
+    }
+
+    if (!scriptp->scriptSource()->xdrEncodeTopLevel(cx, scriptp)) {
+      return JS::TranscodeResult_Throw;
+    }
+
+    return JS::TranscodeResult_Ok;
+  }
+
+  Rooted<frontend::CompilationInfoVector> compilationInfos(
+      cx, frontend::CompilationInfoVector(cx, options));
+
+  JS::TranscodeResult res =
+      DecodeStencil(cx, buffer, compilationInfos.get(), cursorIndex);
   if (res != JS::TranscodeResult_Ok) {
     return res;
   }
 
-  if (!scriptp->scriptSource()->xdrEncodeTopLevel(cx, scriptp)) {
+  UniquePtr<XDRIncrementalEncoderBase> xdrEncoder;
+  if (!compilationInfos.get().initial.input.source()->xdrEncodeStencils(
+          cx, compilationInfos.get(), xdrEncoder)) {
     return JS::TranscodeResult_Throw;
   }
+
+  frontend::CompilationGCOutput gcOutput(cx);
+  if (!frontend::InstantiateStencils(cx, compilationInfos.get(), gcOutput)) {
+    return JS::TranscodeResult_Throw;
+  }
+
+  MOZ_ASSERT(gcOutput.script);
+  gcOutput.script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
+
+  scriptp.set(gcOutput.script);
 
   return JS::TranscodeResult_Ok;
 }
@@ -5749,7 +5851,7 @@ JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,
   if (!script) {
     return false;
   }
-  if (!script->scriptSource()->xdrFinalizeEncoder(buffer)) {
+  if (!script->scriptSource()->xdrFinalizeEncoder(cx, buffer)) {
     return false;
   }
   return true;
@@ -5847,6 +5949,10 @@ JS_PUBLIC_API void js::SetStackFormat(JSContext* cx, js::StackFormat format) {
 
 JS_PUBLIC_API js::StackFormat js::GetStackFormat(JSContext* cx) {
   return cx->runtime()->stackFormat();
+}
+
+JS_PUBLIC_API JS::JSTimers JS::GetJSTimers(JSContext* cx) {
+  return cx->realm()->timers;
 }
 
 namespace js {

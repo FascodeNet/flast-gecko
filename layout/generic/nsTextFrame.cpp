@@ -3782,6 +3782,23 @@ void nsTextFrame::PropertyProvider::SetupJustificationSpacing(
   }
 }
 
+void nsTextFrame::PropertyProvider::InitFontGroupAndFontMetrics() const {
+  if (!mFontMetrics) {
+    if (mWhichTextRun == nsTextFrame::eInflated) {
+      if (!mFrame->InflatedFontMetrics()) {
+        float inflation = mFrame->GetFontSizeInflation();
+        mFontMetrics = nsLayoutUtils::GetFontMetricsForFrame(mFrame, inflation);
+        mFrame->SetInflatedFontMetrics(mFontMetrics);
+      } else {
+        mFontMetrics = mFrame->InflatedFontMetrics();
+      }
+    } else {
+      mFontMetrics = nsLayoutUtils::GetFontMetricsForFrame(mFrame, 1.0f);
+    }
+  }
+  mFontGroup = mFontMetrics->GetThebesFontGroup();
+}
+
 //----------------------------------------------------------------------
 
 static nscolor EnsureDifferentColors(nscolor colorA, nscolor colorB) {
@@ -7921,7 +7938,10 @@ bool ClusterIterator::NextCluster() {
       mCharIndex = mIterator.GetOriginalOffset();
       mIterator.AdvanceOriginal(1);
     } else {
-      if (mIterator.GetOriginalOffset() <= mTrimmed.mStart) return false;
+      if (mIterator.GetOriginalOffset() <= mTrimmed.mStart) {
+        // Trimming can skip backward word breakers, see bug 1667138
+        return mHaveWordBreak;
+      }
       mIterator.AdvanceOriginal(-1);
       keepGoing = mIterator.IsOriginalCharSkipped() ||
                   mIterator.GetOriginalOffset() >= mTrimmed.GetEnd() ||

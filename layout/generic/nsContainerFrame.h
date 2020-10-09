@@ -10,9 +10,9 @@
 #define nsContainerFrame_h___
 
 #include "mozilla/Attributes.h"
+#include "LayoutConstants.h"
 #include "nsSplittableFrame.h"
 #include "nsFrameList.h"
-#include "nsLayoutUtils.h"
 #include "nsLineBox.h"
 
 class nsOverflowContinuationTracker;
@@ -213,7 +213,7 @@ class nsContainerFrame : public nsSplittableFrame {
   // Used by both nsInlineFrame and nsFirstLetterFrame.
   void DoInlineIntrinsicISize(gfxContext* aRenderingContext,
                               InlineIntrinsicISizeData* aData,
-                              nsLayoutUtils::IntrinsicISizeType aType);
+                              mozilla::IntrinsicISizeType aType);
 
   /**
    * This is the CSS block concept of computing 'auto' widths, which most
@@ -389,10 +389,14 @@ class nsContainerFrame : public nsSplittableFrame {
    * Continuations are not affected.  Checks the principal and overflow lists,
    * and also the [excess] overflow containers lists if the frame bit
    * NS_FRAME_IS_OVERFLOW_CONTAINER is set.  It does not check any other lists.
-   * Returns NS_ERROR_UNEXPECTED if aChild wasn't found on any of the lists
-   * mentioned above.
+   * aChild must be in one of the above mentioned lists, or an assertion is
+   * triggered.
+   *
+   * Note: This method can destroy either overflow list or [excess] overflow
+   * containers list if aChild is the only child in the list. Any pointer to the
+   * list obtained prior to calling this method shouldn't be used.
    */
-  virtual nsresult StealFrame(nsIFrame* aChild);
+  virtual void StealFrame(nsIFrame* aChild);
 
   /**
    * Removes the next-siblings of aChild without destroying them and without
@@ -828,6 +832,8 @@ class nsContainerFrame : public nsSplittableFrame {
   /**
    * Calculate the used values for 'width' and 'height' for a replaced element.
    *   http://www.w3.org/TR/CSS21/visudet.html#min-max-widths
+   *
+   * @param aIntrinsicRatio the aspect ratio calculated by GetAspectRatio().
    */
   mozilla::LogicalSize ComputeSizeWithIntrinsicDimensions(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
@@ -905,15 +911,6 @@ class nsContainerFrame : public nsSplittableFrame {
  * container. This isn't an ideal solution, but it lets us print the content
  * at least. See bug 154892.
  */
-
-#define IS_TRUE_OVERFLOW_CONTAINER(frame)                      \
-  ((frame)->HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER) && \
-   !((frame)->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) &&         \
-     (frame)->IsAbsolutelyPositioned()))
-// XXXfr This check isn't quite correct, because it doesn't handle cases
-//      where the out-of-flow has overflow.. but that's rare.
-//      We'll need to revisit the way abspos continuations are handled later
-//      for various reasons, this detail is one of them. See bug 154892
 
 /**
  * Helper class for tracking overflow container continuations during reflow.

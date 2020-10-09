@@ -13,18 +13,26 @@
 
 const directory = "/html/cross-origin-opener-policy/reporting";
 const executor_path = directory + "/resources/executor.html?pipe=";
+const redirect_path = directory + "/resources/redirect.py?";
+const same_origin = get_host_info().HTTPS_ORIGIN;
 const cross_origin = get_host_info().HTTPS_REMOTE_ORIGIN;
 const coep_header = '|header(Cross-Origin-Embedder-Policy,require-corp)';
 
-promise_test(async t => {
+let runTest = (openee_redirect, name) => promise_test(async t => {
   const report_token = token();
   const openee_token = token();
+
+  const opener_url = location.href;
 
   const reportTo = reportToHeaders(report_token);
   const openee_url = cross_origin + executor_path +
     reportTo.header + reportTo.coopReportOnlySameOriginHeader + coep_header +
     `&uuid=${openee_token}`;
-  const openee = window.open(openee_url);
+  const openee_redirect_url = same_origin + redirect_path + openee_url
+  const openee_requested_url = openee_redirect ? openee_redirect_url
+                                               : openee_url;
+
+  const openee = window.open(openee_requested_url);
   t.add_cleanup(() => send(openee_token, "window.close()"))
 
   // 1. Try to access the opener. A report is sent, because of COOP-RO+COEP.
@@ -35,13 +43,20 @@ promise_test(async t => {
   // 2. Check a report is sent to the openee.
   let report =
     await receiveReport(report_token, "access-from-coop-page-to-opener")
-  assert_not_equals(report, "timeout", "Report not received");
   assert_equals(report.type, "coop");
   assert_equals(report.url, openee_url.replace(/"/g, '%22'));
   assert_equals(report.body.disposition, "reporting");
   assert_equals(report.body.effectivePolicy, "same-origin-plus-coep");
   assert_equals(report.body.property, "blur");
   assert_source_location_found(report);
-}, "Openee (COOP-RO+COEP) accesses opener. Report to openee");
+  assert_equals(report.body.openerURL, "");
+  assert_equals(report.body.openeeURL, undefined);
+  assert_equals(report.body.otherDocumentURL, undefined);
+  assert_equals(report.body.referrer, opener_url);
+  assert_equals(report.body.initialPopupURL, undefined);
+}, name);
+
+runTest(false, "access-from-coop-page-to-opener, cross-origin");
+runTest(true , "access-from-coop-page-to-opener, cross-origin + redirect");
 
 </script>

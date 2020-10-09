@@ -174,9 +174,9 @@ class MediaCache {
   void CloseStreamsForPrivateBrowsing();
 
   // Cache-file access methods. These are the lowest-level cache methods.
-  // mReentrantMonitor must be held; these can be called on any thread.
+  // mMonitor must be held; these can be called on any thread.
   // This can return partial reads.
-  // Note mReentrantMonitor will be dropped while doing IO. The caller need
+  // Note mMonitor will be dropped while doing IO. The caller need
   // to handle changes happening when the monitor is not held.
   nsresult ReadCacheFile(AutoLock&, int64_t aOffset, void* aData,
                          int32_t aLength, int32_t* aBytes);
@@ -184,7 +184,7 @@ class MediaCache {
   // The generated IDs are always positive.
   int64_t AllocateResourceID(AutoLock&) { return ++mNextResourceID; }
 
-  // mReentrantMonitor must be held, called on main thread.
+  // mMonitor must be held, called on main thread.
   // These methods are used by the stream to set up and tear down streams,
   // and to handle reads and writes.
   // Add aStream to the list of streams.
@@ -199,7 +199,7 @@ class MediaCache {
       MediaCacheStream::ReadMode aMode, Span<const uint8_t> aData1,
       Span<const uint8_t> aData2 = Span<const uint8_t>());
 
-  // mReentrantMonitor must be held; can be called on any thread
+  // mMonitor must be held; can be called on any thread
   // Notify the cache that a seek has been requested. Some blocks may
   // need to change their class between PLAYED_BLOCK and READAHEAD_BLOCK.
   // This does not trigger channel seeks directly, the next Update()
@@ -303,11 +303,6 @@ class MediaCache {
       LOG("~MediaCache(Global file-backed MediaCache)");
       // This is the file-backed MediaCache, reset the global pointer.
       gMediaCache = nullptr;
-      LOG("MediaCache::~MediaCache(this=%p) MEDIACACHE_WATERMARK_KB=%u", this,
-          unsigned(mIndexWatermark * MediaCache::BLOCK_SIZE / 1024));
-      LOG("MediaCache::~MediaCache(this=%p) "
-          "MEDIACACHE_BLOCKOWNERS_WATERMARK=%u",
-          this, unsigned(mBlockOwnersWatermark));
     } else {
       LOG("~MediaCache(Memory-backed MediaCache %p)", this);
     }
@@ -452,11 +447,7 @@ class MediaCache {
   nsTArray<MediaCacheStream*> mStreams;
   // The Blocks describing the cache entries.
   nsTArray<Block> mIndex;
-  // Keep track for highest number of blocks used, for telemetry purposes.
-  int32_t mIndexWatermark = 0;
-  // Keep track for highest number of blocks owners, for telemetry purposes.
-  uint32_t mBlockOwnersWatermark = 0;
-  // Writer which performs IO, asynchronously writing cache blocks.
+
   RefPtr<MediaBlockCacheBase> mBlockCache;
   // The list of free blocks; they are not ordered.
   BlockList mFreeBlocks;
@@ -922,7 +913,6 @@ int32_t MediaCache::FindBlockForIncomingData(AutoLock& aLock, TimeStamp aNow,
       // XXX(Bug 1631371) Check if this should use a fallible operation as it
       // pretended earlier.
       mIndex.AppendElement();
-      mIndexWatermark = std::max(mIndexWatermark, blockIndex + 1);
       mFreeBlocks.AddFirstBlock(blockIndex);
       return blockIndex;
     }
@@ -1121,8 +1111,6 @@ void MediaCache::AddBlockOwnerAsReadahead(AutoLock& aLock, int32_t aBlockIndex,
     mFreeBlocks.RemoveBlock(aBlockIndex);
   }
   BlockOwner* bo = block->mOwners.AppendElement();
-  mBlockOwnersWatermark =
-      std::max(mBlockOwnersWatermark, uint32_t(block->mOwners.Length()));
   bo->mStream = aStream;
   bo->mStreamBlock = aStreamBlockIndex;
   aStream->mBlocks[aStreamBlockIndex] = aBlockIndex;
@@ -1712,8 +1700,6 @@ void MediaCache::AllocateAndWriteBlock(AutoLock& aLock,
         block->mOwners.Clear();
         return;
       }
-      mBlockOwnersWatermark =
-          std::max(mBlockOwnersWatermark, uint32_t(block->mOwners.Length()));
       bo->mStream = stream;
     }
 

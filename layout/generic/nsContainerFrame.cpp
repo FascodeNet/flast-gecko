@@ -11,6 +11,8 @@
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/dom/HTMLSummaryElement.h"
+#include "mozilla/gfx/2D.h"
+#include "mozilla/gfx/Types.h"
 #include "nsAbsoluteContainingBlock.h"
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
@@ -37,11 +39,18 @@
 #include "mozilla/AutoRestore.h"
 #include "nsIFrameInlines.h"
 #include "nsPrintfCString.h"
+#include "mozilla/webrender/WebRenderAPI.h"
 #include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layout;
+
+using mozilla::gfx::ColorPattern;
+using mozilla::gfx::DeviceColor;
+using mozilla::gfx::Rect;
+using mozilla::gfx::sRGBColor;
+using mozilla::gfx::ToDeviceColor;
 
 nsContainerFrame::~nsContainerFrame() = default;
 
@@ -873,9 +882,9 @@ static nscoord GetCoord(const LengthPercentageOrAuto& aCoord,
   return GetCoord(aCoord.AsLengthPercentage(), aIfNotCoord);
 }
 
-void nsContainerFrame::DoInlineIntrinsicISize(
-    gfxContext* aRenderingContext, InlineIntrinsicISizeData* aData,
-    nsLayoutUtils::IntrinsicISizeType aType) {
+void nsContainerFrame::DoInlineIntrinsicISize(gfxContext* aRenderingContext,
+                                              InlineIntrinsicISizeData* aData,
+                                              IntrinsicISizeType aType) {
   if (GetPrevInFlow()) return;  // Already added.
 
   MOZ_ASSERT(
@@ -1369,10 +1378,7 @@ void nsContainerFrame::ReflowOverflowContainerChildren(
                                                                        this);
         } else if (!nif->HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER)) {
           // used to be a normal next-in-flow; steal it from the child list
-          nsresult rv = nif->GetParent()->StealFrame(nif);
-          if (NS_FAILED(rv)) {
-            return;
-          }
+          nif->GetParent()->StealFrame(nif);
         }
 
         tracker.Insert(nif, frameStatus);
@@ -1433,7 +1439,7 @@ bool nsContainerFrame::MaybeStealOverflowContainerFrame(nsIFrame* aChild) {
   return removed;
 }
 
-nsresult nsContainerFrame::StealFrame(nsIFrame* aChild) {
+void nsContainerFrame::StealFrame(nsIFrame* aChild) {
 #ifdef DEBUG
   if (!mFrames.ContainsFrame(aChild)) {
     nsFrameList* list = GetOverflowFrames();
@@ -1449,27 +1455,28 @@ nsresult nsContainerFrame::StealFrame(nsIFrame* aChild) {
   }
 #endif
 
-  bool removed = MaybeStealOverflowContainerFrame(aChild);
-  if (!removed) {
-    // NOTE nsColumnSetFrame and nsCanvasFrame have their overflow containers
-    // on the normal lists so we might get here also if the frame bit
-    // NS_FRAME_IS_OVERFLOW_CONTAINER is set.
-    removed = mFrames.StartRemoveFrame(aChild);
-    if (!removed) {
-      // We didn't find the child in our principal child list.
-      // Maybe it's on the overflow list?
-      nsFrameList* frameList = GetOverflowFrames();
-      if (frameList) {
-        removed = frameList->ContinueRemoveFrame(aChild);
-        if (frameList->IsEmpty()) {
-          DestroyOverflowList();
-        }
-      }
-    }
+  if (MaybeStealOverflowContainerFrame(aChild)) {
+    return;
   }
 
-  MOZ_ASSERT(removed, "StealFrame: can't find aChild");
-  return removed ? NS_OK : NS_ERROR_UNEXPECTED;
+  // NOTE nsColumnSetFrame and nsCanvasFrame have their overflow containers
+  // on the normal lists so we might get here also if the frame bit
+  // NS_FRAME_IS_OVERFLOW_CONTAINER is set.
+  if (mFrames.StartRemoveFrame(aChild)) {
+    return;
+  }
+
+  // We didn't find the child in our principal child list.
+  // Maybe it's on the overflow list?
+  nsFrameList* frameList = GetOverflowFrames();
+  if (frameList && frameList->ContinueRemoveFrame(aChild)) {
+    if (frameList->IsEmpty()) {
+      DestroyOverflowList();
+    }
+    return;
+  }
+
+  MOZ_ASSERT_UNREACHABLE("StealFrame: can't find aChild");
 }
 
 nsFrameList nsContainerFrame::StealFramesAfter(nsIFrame* aChild) {
@@ -1563,8 +1570,7 @@ void nsContainerFrame::DeleteNextInFlowChild(nsIFrame* aNextInFlow,
   }
 
   // Take the next-in-flow out of the parent's child list
-  DebugOnly<nsresult> rv = StealFrame(aNextInFlow);
-  NS_ASSERTION(NS_SUCCEEDED(rv), "StealFrame failure");
+  StealFrame(aNextInFlow);
 
 #ifdef DEBUG
   if (aDeletingEmptyFrames) {
@@ -1871,13 +1877,14 @@ void nsContainerFrame::NormalizeChildLists() {
         f = next;
       }
 
+      if (ourOverflow->IsEmpty()) {
+        DestroyOverflowList();
+        ourOverflow = nullptr;
+      }
       if (items.NotEmpty()) {
         PullItemsNextInFlow(items);
       }
       MergeSortedFrameLists(mFrames, items, GetContent());
-      if (ourOverflow->IsEmpty()) {
-        DestroyOverflowList();
-      }
     }
   }
 
@@ -2524,7 +2531,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
   } else if (MOZ_UNLIKELY(isGridItem) &&
              !parentFrame->IsMasonry(isOrthogonal ? eLogicalAxisBlock
                                                   : eLogicalAxisInline)) {
-    MOZ_ASSERT(!IS_TRUE_OVERFLOW_CONTAINER(this));
+    MOZ_ASSERT(!IsTrueOverflowContainer());
     // 'auto' inline-size for grid-level box - apply 'stretch' as needed:
     auto cbSize = aCBSize.ISize(aWM);
     if (cbSize != NS_UNCONSTRAINEDSIZE) {
@@ -2585,7 +2592,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
   } else if (MOZ_UNLIKELY(isGridItem) &&
              !parentFrame->IsMasonry(isOrthogonal ? eLogicalAxisInline
                                                   : eLogicalAxisBlock)) {
-    MOZ_ASSERT(!IS_TRUE_OVERFLOW_CONTAINER(this));
+    MOZ_ASSERT(!IsTrueOverflowContainer());
     // 'auto' block-size for grid-level box - apply 'stretch' as needed:
     auto cbSize = aCBSize.BSize(aWM);
     if (cbSize != NS_UNCONSTRAINEDSIZE) {
@@ -2995,8 +3002,7 @@ nsresult nsOverflowContinuationTracker::Insert(nsIFrame* aOverflowCont,
       NS_ASSERTION(!(mOverflowContList &&
                      mOverflowContList->ContainsFrame(aOverflowCont)),
                    "overflow containers out of order");
-      rv = aOverflowCont->GetParent()->StealFrame(aOverflowCont);
-      NS_ENSURE_SUCCESS(rv, rv);
+      aOverflowCont->GetParent()->StealFrame(aOverflowCont);
     } else {
       aOverflowCont->AddStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER);
     }
@@ -3065,8 +3071,7 @@ nsresult nsOverflowContinuationTracker::Insert(nsIFrame* aOverflowCont,
               (!reparented && f->GetParent() == mParent) ||
               (reparented && f->GetParent() != mParent))) {
       if (!f->HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER)) {
-        rv = f->GetParent()->StealFrame(f);
-        NS_ENSURE_SUCCESS(rv, rv);
+        f->GetParent()->StealFrame(f);
       }
       Insert(f, aReflowStatus);
     }

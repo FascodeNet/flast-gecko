@@ -597,7 +597,28 @@ void AntiTrackingUtils::ComputeIsThirdPartyToTopWindow(nsIChannel* aChannel) {
   if (topWindowPrincipal && !topWindowPrincipal->GetIsNullPrincipal()) {
     auto* basePrin = BasePrincipal::Cast(topWindowPrincipal);
     bool isThirdParty = true;
-    basePrin->IsThirdPartyURI(uri, &isThirdParty);
+
+    // For about:blank, we can't just compare uri to determine whether the page
+    // is third-party, so we use channel result principal instead. By doing
+    // this, an about:blank inherits the principal from its parent is considered
+    // not a third-party.
+    if (NS_IsAboutBlank(uri)) {
+      nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
+      if (NS_WARN_IF(!ssm)) {
+        return;
+      }
+
+      nsCOMPtr<nsIPrincipal> principal;
+      nsresult rv =
+          ssm->GetChannelResultPrincipal(aChannel, getter_AddRefs(principal));
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+      }
+
+      basePrin->IsThirdPartyPrincipal(principal, &isThirdParty);
+    } else {
+      basePrin->IsThirdPartyURI(uri, &isThirdParty);
+    }
 
     loadInfo->SetIsThirdPartyContextToTopWindow(isThirdParty);
   }
@@ -673,4 +694,52 @@ nsCString AntiTrackingUtils::GrantedReasonToString(
     default:
       return "stroage access API"_ns;
   }
+}
+
+/* static */
+void AntiTrackingUtils::UpdateAntiTrackingInfoForChannel(nsIChannel* aChannel) {
+  MOZ_ASSERT(aChannel);
+
+  if (!XRE_IsParentProcess()) {
+    return;
+  }
+
+  MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
+
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+
+  Unused << loadInfo->SetHasStoragePermission(
+      AntiTrackingUtils::HasStoragePermissionInParent(aChannel));
+
+  AntiTrackingUtils::ComputeIsThirdPartyToTopWindow(aChannel);
+
+  // We only update the IsOnContentBlockingAllowList flag and the partition key
+  // for the top-level http channel.
+  //
+  // The IsOnContentBlockingAllowList is only for http. For other types of
+  // channels, such as 'file:', there will be no interface to modify this. So,
+  // we only update it in http channels.
+  //
+  // The partition key is computed based on the site, so it's no point to set it
+  // for channels other than http channels.
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+  if (!httpChannel || loadInfo->GetExternalContentPolicyType() !=
+                          nsIContentPolicy::TYPE_DOCUMENT) {
+    return;
+  }
+
+  nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
+  Unused << loadInfo->GetCookieJarSettings(getter_AddRefs(cookieJarSettings));
+
+  // Update the IsOnContentBlockingAllowList flag in the CookieJarSettings
+  // if this is a top level loading. For sub-document loading, this flag
+  // would inherit from the parent.
+  net::CookieJarSettings::Cast(cookieJarSettings)
+      ->UpdateIsOnContentBlockingAllowList(aChannel);
+
+  // We only need to set FPD for top-level loads. FPD will automatically be
+  // propagated to non-top level loads via CookieJarSetting.
+  nsCOMPtr<nsIURI> uri;
+  Unused << aChannel->GetURI(getter_AddRefs(uri));
+  net::CookieJarSettings::Cast(cookieJarSettings)->SetPartitionKey(uri);
 }

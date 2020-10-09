@@ -13,6 +13,7 @@
 #include "nsDocShell.h"
 #include "nsIObserverService.h"
 #include "nsIClassifiedChannel.h"
+#include "nsIXULRuntime.h"
 
 extern mozilla::LazyLogModule gDocumentChannelLog;
 #define LOG(fmt) MOZ_LOG(gDocumentChannelLog, mozilla::LogLevel::Verbose, fmt)
@@ -69,7 +70,7 @@ ParentProcessDocumentChannel::RedirectToRealChannel(
   mStreamFilterEndpoints = std::move(aStreamFilterEndpoints);
 
   if (mDocumentLoadListener->IsDocumentLoad() &&
-      StaticPrefs::fission_sessionHistoryInParent() && GetDocShell()) {
+      mozilla::SessionHistoryInParent() && GetDocShell()) {
     GetDocShell()->SetLoadingSessionHistoryInfo(
         *mDocumentLoadListener->GetLoadingSessionHistoryInfo());
   }

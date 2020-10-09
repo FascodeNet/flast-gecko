@@ -6,7 +6,11 @@
 package org.mozilla.geckoview.test
 
 import android.os.Parcel
+import android.os.SystemClock
+import android.view.KeyEvent
+
 import androidx.test.platform.app.InstrumentationRegistry
+
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule
@@ -14,6 +18,7 @@ import org.mozilla.geckoview.test.rule.GeckoSessionTestRule
 import org.hamcrest.Matcher
 import org.hamcrest.Matchers
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assume.assumeThat
 import org.junit.Rule
 import org.junit.rules.ErrorCollector
@@ -76,6 +81,7 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
         const val MEDIA_SESSION_DOM1_PATH = "/assets/www/media_session_dom1.html"
         const val MEDIA_SESSION_DEFAULT1_PATH = "/assets/www/media_session_default1.html"
         const val TOUCH_HTML_PATH = "/assets/www/touch.html"
+        const val GETUSERMEDIA_XORIGIN_CONTAINER_HTML_PATH = "/assets/www/getusermedia_xorigin_container.html"
 
         const val TEST_ENDPOINT = GeckoSessionTestRule.TEST_ENDPOINT
     }
@@ -107,21 +113,6 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
 
     fun GeckoSession.loadTestPath(path: String) =
             this.loadUri(createTestUrl(path))
-
-    inline fun GeckoSession.toParcel(lambda: (Parcel) -> Unit) {
-        val parcel = Parcel.obtain()
-        try {
-            val pos = parcel.dataPosition()
-            parcel.setDataPosition(0)
-
-            lambda(parcel)
-
-            assertThat("Read parcel matches written parcel",
-                       parcel.dataPosition(), Matchers.equalTo(pos))
-        } finally {
-            parcel.recycle()
-        }
-    }
 
     inline fun GeckoRuntimeSettings.toParcel(lambda: (Parcel) -> Unit) {
         val parcel = Parcel.obtain()
@@ -184,8 +175,30 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
 
     fun GeckoSession.waitForRoundTrip() = sessionRule.waitForRoundTrip(this)
 
+    fun GeckoSession.pressKey(keyCode: Int) {
+        // Create a Promise to listen to the key event, and wait on it below.
+        val promise = this.evaluatePromiseJS(
+                """new Promise(r => window.addEventListener(
+                    'keyup', r, { once: true }))""")
+        val time = SystemClock.uptimeMillis()
+        val keyEvent = KeyEvent(time, time, KeyEvent.ACTION_DOWN, keyCode, 0)
+        this.textInput.onKeyDown(keyCode, keyEvent)
+        this.textInput.onKeyUp(
+                keyCode, KeyEvent.changeAction(keyEvent, KeyEvent.ACTION_UP))
+        promise.value
+    }
+
     @Suppress("UNCHECKED_CAST")
     fun Any?.asJsonArray(): JSONArray = this as JSONArray
+
+    @Suppress("UNCHECKED_CAST")
+    fun<V> JSONObject.asMap(): Map<String?,V?> {
+        val result = HashMap<String?,V?>()
+        for (key in this.keys()) {
+            result[key] = this[key] as V
+        }
+        return result
+    }
 
     @Suppress("UNCHECKED_CAST")
     fun<T> Any?.asJSList(): List<T> {

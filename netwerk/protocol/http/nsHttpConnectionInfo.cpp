@@ -22,6 +22,7 @@
 #include "nsICryptoHash.h"
 #include "nsIDNSByTypeRecord.h"
 #include "nsIProtocolProxyService.h"
+#include "nsHttpHandler.h"
 #include "nsNetCID.h"
 #include "nsProxyInfo.h"
 #include "prnetdb.h"
@@ -339,6 +340,7 @@ already_AddRefed<nsHttpConnectionInfo> nsHttpConnectionInfo::Clone() const {
   clone->SetIPv4Disabled(GetIPv4Disabled());
   clone->SetIPv6Disabled(GetIPv6Disabled());
   clone->SetHasIPHintAddress(HasIPHintAddress());
+  clone->SetEchConfig(GetEchConfig());
   MOZ_ASSERT(clone->Equals(this));
 
   return clone.forget();
@@ -357,22 +359,26 @@ nsHttpConnectionInfo::CloneAndAdoptHTTPSSVCRecord(
   // Try to get the port and Alpn. If this record has SvcParamKeyPort defined,
   // the new port will be used as mRoutedPort.
   Maybe<uint16_t> port = aRecord->GetPort();
-  Maybe<nsCString> alpn = aRecord->GetAlpn();
+  Maybe<Tuple<nsCString, bool>> alpn = aRecord->GetAlpn();
+
+  // Let the new conn info learn h3 will be used.
+  bool isHttp3 = alpn ? Get<1>(*alpn) : false;
 
   LOG(("HTTPSSVC: use new routed host (%s) and new npnToken (%s)", name.get(),
-       alpn ? alpn->get() : "None"));
+       alpn ? Get<0>(*alpn).get() : "None"));
 
   RefPtr<nsHttpConnectionInfo> clone;
   if (name.IsEmpty()) {
     clone = new nsHttpConnectionInfo(
-        mOrigin, mOriginPort, alpn ? *alpn : ""_ns, mUsername, mTopWindowOrigin,
-        mProxyInfo, mOriginAttributes, mEndToEndSSL, mIsolated, mIsHttp3);
+        mOrigin, mOriginPort, alpn ? Get<0>(*alpn) : EmptyCString(), mUsername,
+        mTopWindowOrigin, mProxyInfo, mOriginAttributes, mEndToEndSSL,
+        mIsolated, isHttp3);
   } else {
     MOZ_ASSERT(mEndToEndSSL);
     clone = new nsHttpConnectionInfo(
-        mOrigin, mOriginPort, alpn ? *alpn : ""_ns, mUsername, mTopWindowOrigin,
-        mProxyInfo, mOriginAttributes, name, port ? *port : mRoutedPort,
-        mIsolated, mIsHttp3);
+        mOrigin, mOriginPort, alpn ? Get<0>(*alpn) : EmptyCString(), mUsername,
+        mTopWindowOrigin, mProxyInfo, mOriginAttributes, name,
+        port ? *port : mRoutedPort, mIsolated, isHttp3);
   }
 
   // Make sure the anonymous, insecure-scheme, and private flags are transferred
@@ -392,6 +398,10 @@ nsHttpConnectionInfo::CloneAndAdoptHTTPSSVCRecord(
   if (hasIPHint) {
     clone->SetHasIPHintAddress(hasIPHint);
   }
+
+  nsAutoCString echConfig;
+  Unused << aRecord->GetEchConfig(echConfig);
+  clone->SetEchConfig(echConfig);
 
   return clone.forget();
 }
@@ -421,6 +431,7 @@ void nsHttpConnectionInfo::SerializeHttpConnectionInfo(
   aArgs.topWindowOrigin() = aInfo->GetTopWindowOrigin();
   aArgs.isHttp3() = aInfo->IsHttp3();
   aArgs.hasIPHintAddress() = aInfo->HasIPHintAddress();
+  aArgs.echConfig() = aInfo->GetEchConfig();
 
   if (!aInfo->ProxyInfo()) {
     return;
@@ -465,6 +476,7 @@ nsHttpConnectionInfo::DeserializeHttpConnectionInfoCloneArgs(
   cinfo->SetIPv4Disabled(aInfoArgs.isIPv4Disabled());
   cinfo->SetIPv6Disabled(aInfoArgs.isIPv6Disabled());
   cinfo->SetHasIPHintAddress(aInfoArgs.hasIPHintAddress());
+  cinfo->SetEchConfig(aInfoArgs.echConfig());
 
   return cinfo.forget();
 }
@@ -491,6 +503,7 @@ void nsHttpConnectionInfo::CloneAsDirectRoute(nsHttpConnectionInfo** outCI) {
   clone->SetIPv4Disabled(GetIPv4Disabled());
   clone->SetIPv6Disabled(GetIPv6Disabled());
   clone->SetHasIPHintAddress(HasIPHintAddress());
+  clone->SetEchConfig(GetEchConfig());
 
   clone.forget(outCI);
 }

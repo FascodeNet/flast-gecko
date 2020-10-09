@@ -1564,9 +1564,10 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
   MOZ_ASSERT(!lazy->hasBytecode(), "Script is already compiled!");
   MOZ_ASSERT(lazy->function() == fun);
 
+  AutoIncrementalTimer timer(cx->realm()->timers.delazificationTime);
+
   size_t sourceStart = lazy->sourceStart();
   size_t sourceLength = lazy->sourceEnd() - lazy->sourceStart();
-  bool hadLazyScriptData = lazy->hasPrivateScriptData();
 
   {
     MOZ_ASSERT(ss->hasSourceText());
@@ -1598,7 +1599,13 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
       return false;
     }
 
-    // TODO: encode stencil here.
+    if (!js::UseOffThreadParseGlobal()) {
+      if (ss->hasEncoder()) {
+        if (!ss->xdrEncodeFunctionStencil(cx, compilationInfo.get().stencil)) {
+          return false;
+        }
+      }
+    }
 
     if (!frontend::InstantiateStencilsForDelazify(cx, compilationInfo.get())) {
       // The frontend shouldn't fail after linking the function and the
@@ -1609,19 +1616,14 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
     }
   }
 
-  RootedScript script(cx, fun->nonLazyScript());
-
-  // NOTE: Only allow relazification if there was no lazy PrivateScriptData.
-  // This excludes non-leaf functions and all script class constructors.
-  if (script->isRelazifiable() && !hadLazyScriptData) {
-    script->setAllowRelazify();
-  }
-
-  // XDR the newly delazified function.
-  if (ss->hasEncoder()) {
-    RootedScriptSourceObject sourceObject(cx, script->sourceObject());
-    if (!ss->xdrEncodeFunction(cx, fun, sourceObject)) {
-      return false;
+  if (js::UseOffThreadParseGlobal()) {
+    // XDR the newly delazified function.
+    if (ss->hasEncoder()) {
+      RootedScriptSourceObject sourceObject(
+          cx, fun->nonLazyScript()->sourceObject());
+      if (!ss->xdrEncodeFunction(cx, fun, sourceObject)) {
+        return false;
+      }
     }
   }
 
@@ -1739,7 +1741,7 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
   }
 
   if (isSelfHostedBuiltin()) {
-    BaseScript::writeBarrierPre(script);
+    gc::PreWriteBarrier(script);
     initSelfHostedLazyScript(&rt->selfHostedLazyScript.ref());
   } else {
     script->relazify(rt);

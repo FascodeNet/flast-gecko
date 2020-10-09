@@ -18,6 +18,7 @@
 #include "gc/PublicIterators.h"
 #include "jit/AliasAnalysis.h"
 #include "jit/AlignmentMaskAnalysis.h"
+#include "jit/AutoWritableJitCode.h"
 #include "jit/BacktrackingAllocator.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineInspector.h"
@@ -37,7 +38,9 @@
 #include "jit/JitcodeMap.h"
 #include "jit/JitCommon.h"
 #include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
+#include "jit/JitZone.h"
 #include "jit/LICM.h"
 #include "jit/Linker.h"
 #include "jit/LIR.h"
@@ -398,7 +401,8 @@ uint8_t* jit::LazyLinkTopActivation(JSContext* cx,
 }
 
 /* static */
-void JitRuntime::Trace(JSTracer* trc, const AutoAccessAtomsZone& access) {
+void JitRuntime::TraceAtomZoneRoots(JSTracer* trc,
+                                    const AutoAccessAtomsZone& access) {
   MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
 
   // Shared stubs are allocated in the atoms zone, so do not iterate
@@ -738,7 +742,7 @@ void IonScript::trace(JSTracer* trc) {
 }
 
 /* static */
-void IonScript::writeBarrierPre(Zone* zone, IonScript* ionScript) {
+void IonScript::preWriteBarrier(Zone* zone, IonScript* ionScript) {
   if (zone->needsIncrementalBarrier()) {
     ionScript->trace(zone->barrierTracer());
   }
@@ -2714,12 +2718,12 @@ void jit::Invalidate(JSContext* cx, JSScript* script, bool resetUses,
     }
 
     // Construct the descriptive string.
-    UniqueChars buf = JS_smprintf("Invalidate %s:%u:%u", filename,
-                                  script->lineno(), script->column());
+    UniqueChars buf =
+        JS_smprintf("%s:%u:%u", filename, script->lineno(), script->column());
 
     // Ignore the event on allocation failure.
     if (buf) {
-      cx->runtime()->geckoProfiler().markEvent(buf.get());
+      cx->runtime()->geckoProfiler().markEvent("Invalidate", buf.get());
     }
   }
 

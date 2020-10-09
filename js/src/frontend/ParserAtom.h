@@ -51,6 +51,7 @@ enum class WellKnownAtomId : uint32_t {
 #define ENUM_ENTRY_(name, clasp) name,
       JS_FOR_EACH_PROTOTYPE(ENUM_ENTRY_)
 #undef ENUM_ENTRY_
+          Limit,
 };
 
 // These types correspond into indices in the StaticStrings arrays.
@@ -183,13 +184,36 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
   template <typename CharT>
   bool equalsSeq(HashNumber hash, InflatedChar16Sequence<CharT> seq) const;
 
+  WellKnownAtomId toWellKnownAtomId() const {
+    MOZ_ASSERT(isWellKnownAtomId());
+    return WellKnownAtomId(atomIndex_);
+  }
+  StaticParserString1 toStaticParserString1() const {
+    MOZ_ASSERT(isStaticParserString1());
+    return StaticParserString1(atomIndex_);
+  }
+  StaticParserString2 toStaticParserString2() const {
+    MOZ_ASSERT(isStaticParserString2());
+    return StaticParserString2(atomIndex_);
+  }
+
+  bool isWellKnownAtomId() const {
+    return atomIndexKind_ == AtomIndexKind::WellKnown;
+  }
+  bool isStaticParserString1() const {
+    return atomIndexKind_ == AtomIndexKind::Static1;
+  }
+  bool isStaticParserString2() const {
+    return atomIndexKind_ == AtomIndexKind::Static2;
+  }
+
  private:
   void setAtomIndex(AtomIndex index) {
     atomIndex_ = index;
     atomIndexKind_ = AtomIndexKind::AtomIndex;
   }
-  constexpr void setWellKnownAtomId(WellKnownAtomId kind) {
-    atomIndex_ = static_cast<uint32_t>(kind);
+  constexpr void setWellKnownAtomId(WellKnownAtomId atomId) {
+    atomIndex_ = static_cast<uint32_t>(atomId);
     atomIndexKind_ = AtomIndexKind::WellKnown;
   }
   constexpr void setStaticParserString1(StaticParserString1 s) {
@@ -311,27 +335,38 @@ class WellKnownParserAtoms_ROM {
 
     // Length-1 static atoms
     for (size_t i = 0; i < ASCII_STATIC_LIMIT; ++i) {
-      constexpr size_t len = 1;
-      char16_t buf[] = {static_cast<char16_t>(i),
-                        /* null-terminator */ 0};
-      length1Table[i].setHashAndLength(mozilla::HashString(buf), len);
-      length1Table[i].setStaticParserString1(StaticParserString1(i));
-      length1Table[i].storage()[0] = buf[0];
+      init(length1Table[i], i);
     }
 
     // Length-2 static atoms
     for (size_t i = 0; i < NUM_LENGTH2_ENTRIES; ++i) {
-      constexpr size_t len = 2;
-      char16_t buf[] = {StaticStrings::fromSmallChar(i >> 6),
-                        StaticStrings::fromSmallChar(i & 0x003F),
-                        /* null-terminator */ 0};
-      length2Table[i].setHashAndLength(mozilla::HashString(buf), len);
-      length2Table[i].setStaticParserString2(StaticParserString2(i));
-      length2Table[i].storage()[0] = buf[0];
-      length2Table[i].storage()[1] = buf[1];
+      init(length2Table[i], i);
     }
   }
 
+ private:
+  // Initialization moved out of the constructor to workaround bug 1668238.
+  static constexpr void init(StaticParserAtomEntry<1>& entry, size_t i) {
+    constexpr size_t len = 1;
+    char16_t buf[] = {static_cast<char16_t>(i),
+                      /* null-terminator */ 0};
+    entry.setHashAndLength(mozilla::HashString(buf), len);
+    entry.setStaticParserString1(StaticParserString1(i));
+    entry.storage()[0] = buf[0];
+  }
+
+  static constexpr void init(StaticParserAtomEntry<2>& entry, size_t i) {
+    constexpr size_t len = 2;
+    char16_t buf[] = {StaticStrings::fromSmallChar(i >> 6),
+                      StaticStrings::fromSmallChar(i & 0x003F),
+                      /* null-terminator */ 0};
+    entry.setHashAndLength(mozilla::HashString(buf), len);
+    entry.setStaticParserString2(StaticParserString2(i));
+    entry.storage()[0] = buf[0];
+    entry.storage()[1] = buf[1];
+  }
+
+ public:
   // Fast-path tiny strings since they are abundant in minified code.
   template <typename CharsT>
   const ParserAtom* lookupTiny(CharsT chars, size_t length) const {
@@ -403,7 +438,7 @@ class WellKnownParserAtoms {
   bool initTinyStringAlias(JSContext* cx, const ParserName** name,
                            const char* str);
   bool initSingle(JSContext* cx, const ParserName** name, const char* str,
-                  WellKnownAtomId kind);
+                  WellKnownAtomId atomId);
 
  public:
   WellKnownParserAtoms() = default;
@@ -452,11 +487,16 @@ class ParserAtomsTable {
       InflatedChar16Sequence<SeqCharT> seq, uint32_t length);
 
  public:
+  bool empty() const { return entrySet_.empty(); }
+
   JS::Result<const ParserAtom*, OOM> internAscii(JSContext* cx,
                                                  const char* asciiPtr,
                                                  uint32_t length);
 
   JS::Result<const ParserAtom*, OOM> internLatin1(
+      JSContext* cx, const JS::Latin1Char* latin1Ptr, uint32_t length);
+
+  JS::Result<const ParserAtom*, OOM> internLatin1ForXDR(
       JSContext* cx, const JS::Latin1Char* latin1Ptr, uint32_t length);
 
   JS::Result<const ParserAtom*, OOM> internUtf8(
@@ -466,11 +506,20 @@ class ParserAtomsTable {
                                                   const char16_t* char16Ptr,
                                                   uint32_t length);
 
+  // This only exists for XDR support.
+  JS::Result<const ParserAtom*, OOM> internChar16LE(JSContext* cx,
+                                                    LittleEndianChars twoByteLE,
+                                                    uint32_t length);
+
   JS::Result<const ParserAtom*, OOM> internJSAtom(
       JSContext* cx, CompilationInfo& compilationInfo, JSAtom* atom);
 
   JS::Result<const ParserAtom*, OOM> concatAtoms(
       JSContext* cx, mozilla::Range<const ParserAtom*> atoms);
+
+  const ParserAtom* getWellKnown(WellKnownAtomId atomId) const;
+  const ParserAtom* getStatic1(StaticParserString1 s) const;
+  const ParserAtom* getStatic2(StaticParserString2 s) const;
 };
 
 template <typename CharT>

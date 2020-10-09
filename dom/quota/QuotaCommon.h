@@ -391,7 +391,7 @@
 
 #define QM_VOID
 
-#define QM_PROPAGATE tryTempResult.propagateErr()
+#define QM_PROPAGATE Err(tryTempError)
 
 // QM_MISSING_ARGS and QM_HANDLE_ERROR macros are implementation details of
 // QM_TRY/QM_TRY_VAR/QM_FAIL and shouldn't be used directly.
@@ -426,7 +426,7 @@
   auto tryResult = ::mozilla::ToResult(expr);                            \
   static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>); \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
-    auto tryTempResult MOZ_MAYBE_UNUSED = std::move(tryResult);          \
+    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();          \
     ns::QM_HANDLE_ERROR(expr);                                           \
     return customRetVal;                                                 \
   }
@@ -438,9 +438,9 @@
   auto tryResult = ::mozilla::ToResult(expr);                                 \
   static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>);      \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                      \
-    auto tryTempResult MOZ_MAYBE_UNUSED = std::move(tryResult);               \
+    auto tryTempError = tryResult.unwrapErr();                                \
     ns::QM_HANDLE_ERROR(expr);                                                \
-    cleanup(tryTempResult);                                                   \
+    cleanup(tryTempError);                                                    \
     return customRetVal;                                                      \
   }
 
@@ -488,95 +488,114 @@
 // QM_TRY_VAR_CUSTOM_RET_VAL_WITH_CLEANUP and QM_TRY_VAR_GLUE macros are
 // implementation details of QM_TRY_VAR and shouldn't be used directly.
 
-// Handles the four arguments case when the error is propagated.
-#define QM_TRY_VAR_PROPAGATE_ERR(ns, tryResult, target, expr) \
-  auto tryResult = (expr);                                    \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                      \
-    ns::QM_HANDLE_ERROR(expr);                                \
-    return tryResult.propagateErr();                          \
-  }                                                           \
-  MOZ_REMOVE_PAREN(target) = tryResult.unwrap();
+// Handles the five arguments case when the error is propagated.
+#define QM_TRY_VAR_PROPAGATE_ERR(ns, tryResult, accessFunction, target, expr) \
+  auto tryResult = (expr);                                                    \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                      \
+    ns::QM_HANDLE_ERROR(expr);                                                \
+    return tryResult.propagateErr();                                          \
+  }                                                                           \
+  MOZ_REMOVE_PAREN(target) = tryResult.accessFunction();
 
-// Handles the five arguments case when a custom return value needs to be
+// Handles the six arguments case when a custom return value needs to be
 // returned
-#define QM_TRY_VAR_CUSTOM_RET_VAL(ns, tryResult, target, expr, customRetVal) \
-  auto tryResult = (expr);                                                   \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                     \
-    auto tryTempResult MOZ_MAYBE_UNUSED = std::move(tryResult);              \
-    ns::QM_HANDLE_ERROR(expr);                                               \
-    return customRetVal;                                                     \
-  }                                                                          \
-  MOZ_REMOVE_PAREN(target) = tryResult.unwrap();
+#define QM_TRY_VAR_CUSTOM_RET_VAL(ns, tryResult, accessFunction, target, expr, \
+                                  customRetVal)                                \
+  auto tryResult = (expr);                                                     \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                       \
+    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();                \
+    ns::QM_HANDLE_ERROR(expr);                                                 \
+    return customRetVal;                                                       \
+  }                                                                            \
+  MOZ_REMOVE_PAREN(target) = tryResult.accessFunction();
 
-// Handles the six arguments case when a cleanup function needs to be called
+// Handles the seven arguments case when a cleanup function needs to be called
 // before a custom return value is returned
-#define QM_TRY_VAR_CUSTOM_RET_VAL_WITH_CLEANUP(ns, tryResult, target, expr, \
-                                               customRetVal, cleanup)       \
-  auto tryResult = (expr);                                                  \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                    \
-    auto tryTempResult MOZ_MAYBE_UNUSED = std::move(tryResult);             \
-    ns::QM_HANDLE_ERROR(expr);                                              \
-    cleanup(tryTempResult);                                                 \
-    return customRetVal;                                                    \
-  }                                                                         \
-  MOZ_REMOVE_PAREN(target) = tryResult.unwrap();
+#define QM_TRY_VAR_CUSTOM_RET_VAL_WITH_CLEANUP(                         \
+    ns, tryResult, accessFunction, target, expr, customRetVal, cleanup) \
+  auto tryResult = (expr);                                              \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                \
+    auto tryTempError = tryResult.unwrapErr();                          \
+    ns::QM_HANDLE_ERROR(expr);                                          \
+    cleanup(tryTempError);                                              \
+    return customRetVal;                                                \
+  }                                                                     \
+  MOZ_REMOVE_PAREN(target) = tryResult.accessFunction();
 
 // Chooses the final implementation macro for given argument count.
 // It can be used by other modules to define module specific error handling.
 // See also the comment for QM_TRY_META.
-#define QM_TRY_VAR_META(...)                                            \
-  MOZ_ARG_8(, ##__VA_ARGS__,                                            \
-            QM_TRY_VAR_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__),        \
-            QM_TRY_VAR_CUSTOM_RET_VAL(__VA_ARGS__),                     \
-            QM_TRY_VAR_PROPAGATE_ERR(__VA_ARGS__),                      \
-            QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
-            QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
+#define QM_TRY_VAR_META(...)                                                \
+  MOZ_ARG_9(                                                                \
+      , ##__VA_ARGS__, QM_TRY_VAR_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__), \
+      QM_TRY_VAR_CUSTOM_RET_VAL(__VA_ARGS__),                               \
+      QM_TRY_VAR_PROPAGATE_ERR(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__),  \
+      QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__),           \
+      QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
 
 // Specifies the namespace and generates unique variable name. This extra
 // internal macro (along with __COUNTER__) allows nesting of the final macro.
-#define QM_TRY_VAR_GLUE(...) \
-  QM_TRY_VAR_META(mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), ##__VA_ARGS__)
+#define QM_TRY_VAR_GLUE(accessFunction, ...)                      \
+  QM_TRY_VAR_META(mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), \
+                  accessFunction, ##__VA_ARGS__)
 
 /**
- * QM_TRY_VAR(target, expr[, customRetVal, cleanup]) is the C++ equivalent of
+ * QM_TRY_UNWRAP(target, expr[, customRetVal, cleanup]) is the C++ equivalent of
  * Rust's `target = try!(expr);`. First, it evaluates expr, which must produce
- * a Result value. On success, the result's success value is assigned to
- * target. On error, it calls HandleError and an additional cleanup function (
- * if the fourth argument was passed) and finally returns the error result or a
- * custom return value (if the third argument was passed). |target| must be an
- * lvalue.
+ * a Result value. On success, the result's success value is unwrapped and
+ * assigned to target. On error, it calls HandleError and an additional cleanup
+ * function (if the fourth argument was passed) and finally returns the error
+ * result or a custom return value (if the third argument was passed). |target|
+ * must be an lvalue.
  */
-#define QM_TRY_VAR(...) QM_TRY_VAR_GLUE(__VA_ARGS__)
+#define QM_TRY_UNWRAP(...) QM_TRY_VAR_GLUE(unwrap, __VA_ARGS__)
+
+/**
+ * QM_TRY_INSPECT is similar to QM_TRY_VAR, but it does not unwrap a success
+ * value, but inspects it and binds it to the target. It can therefore only be
+ * used when the target declares a const&. In general,
+ *
+ *   QM_TRY_INSPECT(const auto &target, DoSomething())
+ *
+ * should be preferred over
+ *
+ *   QM_TRY_UNWRAP(const auto target, DoSomething())
+ *
+ * as it avoids unnecessary moves/copies.
+ */
+#define QM_TRY_INSPECT(...) QM_TRY_VAR_GLUE(inspect, __VA_ARGS__)
 
 /**
  * QM_DEBUG_VAR_TRY works like QM_TRY_VAR in debug builds, it has has no effect
  * in non-debug builds.
  */
 #ifdef DEBUG
-#  define QM_DEBUG_TRY_VAR(...) QM_TRY_VAR(__VA_ARGS__)
+#  define QM_DEBUG_TRY_UNWRAP(...) QM_TRY_UNWRAP(__VA_ARGS__)
 #else
-#  define QM_DEBUG_TRY_VAR(...)
+#  define QM_DEBUG_TRY_UNWRAP(...)
 #endif
 
 // QM_TRY_RETURN_PROPAGATE_ERR, QM_TRY_RETURN_CUSTOM_RET_VAL,
 // QM_TRY_RETURN_CUSTOM_RET_VAL_WITH_CLEANUP and QM_TRY_RETURN_GLUE macros are
 // implementation details of QM_TRY_RETURN and shouldn't be used directly.
 
-// Handles the three arguments case when the error is propagated.
+// Handles the three arguments case when the error is (also) propagated.
+// Note that this deliberately uses a single return statement without going
+// through unwrap/unwrapErr/propagateErr, so that this does not prevent NRVO or
+// tail call optimizations when possible.
 #define QM_TRY_RETURN_PROPAGATE_ERR(ns, tryResult, expr) \
   auto tryResult = (expr);                               \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                 \
     ns::QM_HANDLE_ERROR(expr);                           \
-    return tryResult.propagateErr();                     \
   }                                                      \
-  return tryResult.unwrap();
+  return tryResult;
 
 // Handles the four arguments case when a custom return value needs to be
 // returned
 #define QM_TRY_RETURN_CUSTOM_RET_VAL(ns, tryResult, expr, customRetVal) \
   auto tryResult = (expr);                                              \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                \
-    auto tryTempResult MOZ_MAYBE_UNUSED = std::move(tryResult);         \
+    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();         \
     ns::QM_HANDLE_ERROR(expr);                                          \
     return customRetVal;                                                \
   }                                                                     \
@@ -588,9 +607,9 @@
                                                   customRetVal, cleanup) \
   auto tryResult = (expr);                                               \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
-    auto tryTempResult MOZ_MAYBE_UNUSED = std::move(tryResult);          \
+    auto tryTempError = tryResult.unwrapErr();                           \
     ns::QM_HANDLE_ERROR(expr);                                           \
-    cleanup(tryTempResult);                                              \
+    cleanup(tryTempError);                                               \
     return customRetVal;                                                 \
   }                                                                      \
   return tryResult.unwrap();
@@ -943,63 +962,51 @@ Result<bool, nsresult> WarnIfFileIsUnknown(nsIFile& aFile,
                                            int32_t aSourceLine);
 #endif
 
-// XXX Since this uses thread_local, we currently disable it on android, see Bug
-// 1324316
-//#if (defined(EARLY_BETA_OR_EARLIER) || defined(DEBUG)) &&
-//! defined(MOZ_WIDGET_ANDROID)
-//#  define QM_ENABLE_SCOPED_LOG_EXTRA_INFO
-//#endif
+#if defined(EARLY_BETA_OR_EARLIER) || defined(DEBUG)
+#  define QM_ENABLE_SCOPED_LOG_EXTRA_INFO
+#endif
 
 struct MOZ_STACK_CLASS ScopedLogExtraInfo {
   static constexpr const char kTagQuery[] = "query";
 
 #ifdef QM_ENABLE_SCOPED_LOG_EXTRA_INFO
-  using ScopedLogExtraInfoMap = std::map<const char*, nsCString>;
+ private:
+  static auto FindSlot(const char* aTag);
 
+ public:
   template <size_t N>
   ScopedLogExtraInfo(const char (&aTag)[N], const nsACString& aExtraInfo)
-      : mTag{aTag} {
-    AddInfo(aTag, aExtraInfo);
+      : mTag{aTag}, mCurrentValue{aExtraInfo} {
+    // Initialize is currently only called in the parent process, we could call
+    // it directly from nsLayoutStatics::Initialize in the content process to
+    // allow use of ScopedLogExtraInfo in that too. The check in GetExtraInfoMap
+    // must be removed then.
+    MOZ_ASSERT(XRE_IsParentProcess());
+
+    AddInfo();
   }
 
-  ~ScopedLogExtraInfo() {
-    if (mTag) {
-      if (mPreviousValue.IsEmpty()) {
-        sInfos.erase(mTag);
-      } else {
-        sInfos.find(mTag)->second = mPreviousValue;
-      }
-    }
-  }
+  ~ScopedLogExtraInfo();
 
-  ScopedLogExtraInfo(ScopedLogExtraInfo&& aOther)
-      : mTag(aOther.mTag), mPreviousValue(std::move(aOther.mPreviousValue)) {
-    aOther.mTag = nullptr;
-  }
+  ScopedLogExtraInfo(ScopedLogExtraInfo&& aOther);
   ScopedLogExtraInfo& operator=(ScopedLogExtraInfo&& aOther) = delete;
 
   ScopedLogExtraInfo(const ScopedLogExtraInfo&) = delete;
   ScopedLogExtraInfo& operator=(const ScopedLogExtraInfo&) = delete;
 
-  static const ScopedLogExtraInfoMap* GetExtraInfoMap() { return &sInfos; }
+  using ScopedLogExtraInfoMap = std::map<const char*, const nsACString*>;
+  static ScopedLogExtraInfoMap GetExtraInfoMap();
+
+  static void Initialize();
 
  private:
   const char* mTag;
-  nsCString mPreviousValue;
+  const nsACString* mPreviousValue;
+  nsCString mCurrentValue;
 
-  inline static thread_local ScopedLogExtraInfoMap sInfos;
+  static MOZ_THREAD_LOCAL(const nsACString*) sQueryValue;
 
-  void AddInfo(const char* aTag, const nsACString& aExtraInfo) {
-    auto foundIt = sInfos.find(aTag);
-
-    if (foundIt != sInfos.end()) {
-      mPreviousValue = std::move(foundIt->second);
-      foundIt->second = aExtraInfo;
-    } else {
-      sInfos.emplace(aTag, aExtraInfo);
-    }
-  }
-
+  void AddInfo();
 #else
   template <size_t N>
   ScopedLogExtraInfo(const char (&aTag)[N], const nsACString& aExtraInfo) {}

@@ -16,6 +16,7 @@
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/webrender/webrender_ffi.h"
 #include "mozilla/layers/PaintThread.h"
+#include "mozilla/gfx/BuildConstants.h"
 #include "mozilla/gfx/gfxConfigManager.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/GPUProcessManager.h"
@@ -769,6 +770,7 @@ WebRenderMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
         helper.Report(aReport.render_tasks, "render-tasks");
         helper.Report(aReport.hit_testers, "hit-testers");
         helper.Report(aReport.fonts, "resource-cache/fonts");
+        helper.Report(aReport.weak_fonts, "resource-cache/weak-fonts");
         helper.Report(aReport.images, "resource-cache/images");
         helper.Report(aReport.rasterized_blobs,
                       "resource-cache/rasterized-blobs");
@@ -2549,6 +2551,62 @@ void gfxPlatform::InitAcceleration() {
       gfxVars::SetUseDoubleBufferingWithCompositor(true);
     }
 #endif
+
+    if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_WEBGL2,
+                                               discardFailureId, &status))) {
+      gfxVars::SetAllowWebgl2(status == nsIGfxInfo::FEATURE_STATUS_OK);
+    }
+    if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_WEBGL_OPENGL,
+                                               discardFailureId, &status))) {
+      gfxVars::SetWebglAllowWindowsNativeGl(status ==
+                                            nsIGfxInfo::FEATURE_STATUS_OK);
+    }
+    if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_WEBGL_ANGLE,
+                                               discardFailureId, &status))) {
+      gfxVars::SetAllowWebglAccelAngle(status == nsIGfxInfo::FEATURE_STATUS_OK);
+    }
+
+    if (kIsMacOS) {
+      // Avoid crash for Intel HD Graphics 3000 on OSX. (Bug 1413269)
+      nsString vendorID, deviceID;
+      gfxInfo->GetAdapterVendorID(vendorID);
+      gfxInfo->GetAdapterDeviceID(deviceID);
+      if (vendorID.EqualsLiteral("0x8086") &&
+          (deviceID.EqualsLiteral("0x0116") ||
+           deviceID.EqualsLiteral("0x0126"))) {
+        gfxVars::SetWebglAllowCoreProfile(false);
+      }
+    }
+
+    const auto IsFeatureOk = [&](const int32_t feature) {
+      nsCString discardFailureId;
+      int32_t status;
+      MOZ_RELEASE_ASSERT(NS_SUCCEEDED(
+          gfxInfo->GetFeatureStatus(feature, discardFailureId, &status)));
+      return (status == nsIGfxInfo::FEATURE_STATUS_OK);
+    };
+
+    {
+      bool allowWebGLOop =
+          IsFeatureOk(nsIGfxInfo::FEATURE_ALLOW_WEBGL_OUT_OF_PROCESS);
+
+      const bool threadsafeGl = IsFeatureOk(nsIGfxInfo::FEATURE_THREADSAFE_GL);
+      if (gfxVars::UseWebRender() && !threadsafeGl) {
+        allowWebGLOop = false;
+      }
+
+      gfxVars::SetAllowWebglOop(allowWebGLOop);
+    }
+
+    if (kIsAndroid) {
+      // Don't enable robust buffer access on Adreno 630 devices.
+      // It causes the linking of some shaders to fail. See bug 1485441.
+      nsAutoString renderer;
+      gfxInfo->GetAdapterDeviceID(renderer);
+      if (renderer.Find("Adreno (TM) 630") != -1) {
+        gfxVars::SetAllowEglRbab(false);
+      }
+    }
   }
 
   if (Preferences::GetBool("media.hardware-video-decoding.enabled", false) &&
@@ -3213,7 +3271,6 @@ uint32_t gfxPlatform::TargetFrameRate() {
 
 /* static */
 bool gfxPlatform::UseDesktopZoomingScrollbars() {
-  // bug 1657822 to enable this by default
   return StaticPrefs::apz_allow_zooming() &&
          !StaticPrefs::apz_force_disable_desktop_zooming_scrollbars();
 }

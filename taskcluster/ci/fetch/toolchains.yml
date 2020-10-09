@@ -288,12 +288,12 @@ wine-5.0:
             sig-url: "{url}.sign"
             key-path: build/unix/build-gcc/DA23579A74D4AD9AF9D3F945CEFAC8EAAF17519D.key
 
-cbindgen-0.14.3:
+cbindgen-0.15.0:
     description: cbindgen source code
     fetch:
         type: git
         repo: https://github.com/eqrion/cbindgen
-        revision: cc2876f709808a52d132a5f84e53ca1964eb92db
+        revision: 83b3be9f884697a51f8717af8b5498866a81e62e
 
 cctools-port:
     description: cctools-port source code
@@ -352,7 +352,7 @@ sccache:
         type: git
         repo: https://github.com/mozilla/sccache
         # 0.2.13 release + various changes
-        revision: ea4d1464625e507a287be913697494a37fe7343c
+        revision: 6628e1f70db3d583cb5e79210603ad878de3d315
 
 fxc2:
     description: fxc2 source code
@@ -430,16 +430,6 @@ clang-11:
         type: git
         repo: https://github.com/llvm/llvm-project
         revision: 8aca41f39c207b6f9efe2e448986d109892072ad
-
-civet-source:
-    description: Repository for external static analysis checks
-    artifact-prefix: project/civet
-    fetch:
-        type: git
-        repo: git@github.com:mozilla-services/civet.git
-        revision: 1a7a27f0a3bede8f94ac1e7c73f400de797296b5
-        ssh-key: project/civet/github-deploy-key
-        artifact-name: civet-source.tar.zst
 
 wasi-sdk:
     description: wasi-sdk source code

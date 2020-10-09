@@ -9,7 +9,6 @@
 #include "mozilla/dom/SessionStoreUtilsBinding.h"
 #include "mozilla/dom/StorageEvent.h"
 #include "mozilla/dom/BrowserChild.h"
-#include "mozilla/StaticPrefs_fission.h"
 #include "nsGenericHTMLElement.h"
 #include "nsDocShell.h"
 #include "nsIAppWindow.h"
@@ -20,6 +19,7 @@
 #include "nsITimer.h"
 #include "nsIWebProgress.h"
 #include "nsIXPConnect.h"
+#include "nsIXULRuntime.h"
 #include "nsPresContext.h"
 #include "nsPrintfCString.h"
 #include "SessionStoreFunctions.h"
@@ -46,7 +46,6 @@ ContentSessionStore::ContentSessionStore(nsIDocShell* aDocShell)
       mFormDataChanged(NO_CHANGE),
       mStorageStatus(NO_STORAGE),
       mDocCapChanged(false),
-      mSHistoryInParent(StaticPrefs::fission_sessionHistoryInParent()),
       mSHistoryChanged(false),
       mSHistoryChangedFromParent(false) {
   MOZ_ASSERT(mDocShell);
@@ -117,6 +116,15 @@ void ContentSessionStore::ResetStorageChanges() {
   mValues.Clear();
 }
 
+void ContentSessionStore::SetSHistoryChanged() {
+  mSHistoryChanged = mozilla::SessionHistoryInParent();
+}
+
+// Request "collect sessionHistory" from the parent process
+void ContentSessionStore::SetSHistoryFromParentChanged() {
+  mSHistoryChangedFromParent = mozilla::SessionHistoryInParent();
+}
+
 void ContentSessionStore::OnDocumentStart() {
   mScrollChanged = PAGELOADEDSTART;
   mFormDataChanged = PAGELOADEDSTART;
@@ -128,7 +136,7 @@ void ContentSessionStore::OnDocumentStart() {
 
   SetFullStorageNeeded();
 
-  if (mSHistoryInParent) {
+  if (mozilla::SessionHistoryInParent()) {
     mSHistoryChanged = true;
   }
 }
@@ -137,7 +145,7 @@ void ContentSessionStore::OnDocumentEnd() {
   mScrollChanged = WITH_CHANGE;
   SetFullStorageNeeded();
 
-  if (mSHistoryInParent) {
+  if (mozilla::SessionHistoryInParent()) {
     mSHistoryChanged = true;
   }
 }
@@ -168,8 +176,7 @@ TabListener::TabListener(nsIDocShell* aDocShell, Element* aElement)
       mUpdatedTimer(nullptr),
       mTimeoutDisabled(false),
       mUpdateInterval(15000),
-      mEpoch(0),
-      mSHistoryInParent(StaticPrefs::fission_sessionHistoryInParent()) {
+      mEpoch(0) {
   MOZ_ASSERT(mDocShell);
 }
 
@@ -219,7 +226,7 @@ nsresult TabListener::Init() {
   eventTarget->AddSystemEventListener(u"mozvisualscroll"_ns, this, false);
   eventTarget->AddSystemEventListener(u"input"_ns, this, false);
 
-  if (mSHistoryInParent) {
+  if (mozilla::SessionHistoryInParent()) {
     eventTarget->AddSystemEventListener(u"DOMTitleChanged"_ns, this, false);
   }
 
@@ -759,8 +766,8 @@ bool TabListener::UpdateSessionStore(uint32_t aFlushId, bool aIsFinal) {
   NS_ENSURE_TRUE(ok, false);
 
   nsresult rv = funcs->UpdateSessionStore(
-      mOwnerContent, aFlushId, aIsFinal, mEpoch, dataVal,
-      mSessionStore->GetAndClearSHistoryChanged());
+      mOwnerContent, mDocShell->GetBrowsingContext(), aFlushId, aIsFinal,
+      mEpoch, dataVal, mSessionStore->GetAndClearSHistoryChanged());
   NS_ENSURE_SUCCESS(rv, false);
   StopTimerForUpdate();
   return true;
@@ -809,7 +816,7 @@ void TabListener::RemoveListeners() {
         eventTarget->RemoveSystemEventListener(u"mozvisualscroll"_ns, this,
                                                false);
         eventTarget->RemoveSystemEventListener(u"input"_ns, this, false);
-        if (mSHistoryInParent) {
+        if (mozilla::SessionHistoryInParent()) {
           eventTarget->RemoveSystemEventListener(u"DOMTitleChanged"_ns, this,
                                                  false);
         }

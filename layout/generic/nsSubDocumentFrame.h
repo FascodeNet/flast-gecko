@@ -56,7 +56,7 @@ class nsSubDocumentFrame final : public nsAtomicContainerFrame,
   nscoord GetPrefISize(gfxContext* aRenderingContext) override;
 
   mozilla::IntrinsicSize GetIntrinsicSize() override;
-  mozilla::AspectRatio GetIntrinsicRatio() override;
+  mozilla::AspectRatio GetIntrinsicRatio() const override;
 
   mozilla::LogicalSize ComputeAutoSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWritingMode,
@@ -95,7 +95,7 @@ class nsSubDocumentFrame final : public nsAtomicContainerFrame,
   mozilla::a11y::AccType AccessibleType() override;
 #endif
 
-  nsIDocShell* GetDocShell();
+  nsIDocShell* GetDocShell() const;
   nsresult BeginSwapDocShells(nsIFrame* aOther);
   void EndSwapDocShells(nsIFrame* aOther);
   nsView* EnsureInnerView();

@@ -21,6 +21,7 @@
 #include "gc/WeakMap.h"
 #include "js/CharacterEncoding.h"
 #include "js/experimental/CodeCoverage.h"
+#include "js/experimental/Intl.h"  // JS::Add{,Moz}DisplayNamesConstructor, JS::AddMozDateTimeFormatConstructor
 #include "js/friend/StackLimits.h"  // JS_STACK_GROWTH_DIRECTION
 #include "js/friend/WindowProxy.h"  // js::ToWindowIfWindowProxy
 #include "js/Object.h"              // JS::GetClass
@@ -867,15 +868,15 @@ static bool IntlNotEnabled(JSContext* cx) {
   return false;
 }
 
-bool js::AddMozDateTimeFormatConstructor(JSContext* cx, JS::HandleObject intl) {
+bool JS::AddMozDateTimeFormatConstructor(JSContext* cx, JS::HandleObject intl) {
   return IntlNotEnabled(cx);
 }
 
-bool js::AddMozDisplayNamesConstructor(JSContext* cx, JS::HandleObject intl) {
+bool JS::AddMozDisplayNamesConstructor(JSContext* cx, JS::HandleObject intl) {
   return IntlNotEnabled(cx);
 }
 
-bool js::AddDisplayNamesConstructor(JSContext* cx, JS::HandleObject intl) {
+bool JS::AddDisplayNamesConstructor(JSContext* cx, JS::HandleObject intl) {
   return IntlNotEnabled(cx);
 }
 

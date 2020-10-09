@@ -38,6 +38,8 @@
 #include "jit/IonOptimizationLevels.h"
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
+#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/Linker.h"
 #include "jit/Lowering.h"
@@ -51,6 +53,7 @@
 #include "js/experimental/JitInfo.h"  // JSJit{Getter,Setter}CallArgs, JSJitMethodCallArgsTraits, JSJitInfo
 #include "js/RegExpFlags.h"  // JS::RegExpFlag
 #include "js/ScalarType.h"   // js::Scalar::Type
+#include "proxy/DOMProxy.h"
 #include "util/CheckedArithmetic.h"
 #include "util/Unicode.h"
 #include "vm/ArrayBufferViewObject.h"
@@ -73,6 +76,7 @@
 #include "wasm/WasmStubs.h"
 
 #include "builtin/Boolean-inl.h"
+#include "jit/ABIFunctionList-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/shared/CodeGenerator-shared-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
@@ -3388,11 +3392,12 @@ void CodeGenerator::visitOutOfLineRegExpPrototypeOptimizable(
 
   saveVolatile(output);
 
+  using Fn = bool (*)(JSContext * cx, JSObject * proto);
   masm.setupUnalignedABICall(output);
   masm.loadJSContext(output);
   masm.passABIArg(output);
   masm.passABIArg(object);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, RegExpPrototypeOptimizableRaw));
+  masm.callWithABI<Fn, RegExpPrototypeOptimizableRaw>();
   masm.storeCallBoolResult(output);
 
   restoreVolatile(output);
@@ -3439,12 +3444,13 @@ void CodeGenerator::visitOutOfLineRegExpInstanceOptimizable(
 
   saveVolatile(output);
 
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, JSObject * proto);
   masm.setupUnalignedABICall(output);
   masm.loadJSContext(output);
   masm.passABIArg(output);
   masm.passABIArg(object);
   masm.passABIArg(proto);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, RegExpInstanceOptimizableRaw));
+  masm.callWithABI<Fn, RegExpInstanceOptimizableRaw>();
   masm.storeCallBoolResult(output);
 
   restoreVolatile(output);
@@ -3863,13 +3869,6 @@ void CodeGenerator::visitTableSwitchV(LTableSwitchV* ins) {
   masm.bind(&isInt);
 
   emitTableSwitchDispatch(mir, index, ToRegisterOrInvalid(ins->tempPointer()));
-}
-
-void CodeGenerator::visitCloneLiteral(LCloneLiteral* lir) {
-  pushArg(ToRegister(lir->getObjectLiteral()));
-
-  using Fn = JSObject* (*)(JSContext*, HandleObject);
-  callVM<Fn, DeepCloneObjectLiteral>(lir);
 }
 
 void CodeGenerator::visitParameter(LParameter* lir) {}
@@ -4758,6 +4757,16 @@ void CodeGenerator::visitGuardIsNotArrayBufferMaybeShared(
   bailoutFrom(&bail, guard->snapshot());
 }
 
+void CodeGenerator::visitGuardIsTypedArray(LGuardIsTypedArray* guard) {
+  Register obj = ToRegister(guard->input());
+  Register temp = ToRegister(guard->temp());
+
+  Label bail;
+  masm.loadObjClassUnsafe(obj, temp);
+  masm.branchIfClassIsNotTypedArray(temp, &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
 void CodeGenerator::visitGuardObjectGroup(LGuardObjectGroup* guard) {
   Register obj = ToRegister(guard->input());
   Register temp = ToTempRegisterOrInvalid(guard->temp());
@@ -5179,11 +5188,13 @@ void CodeGenerator::visitGuardNullOrUndefined(LGuardNullOrUndefined* lir) {
 void CodeGenerator::visitGuardFunctionFlags(LGuardFunctionFlags* lir) {
   Register function = ToRegister(lir->function());
 
-  Assembler::Condition cond =
-      lir->mir()->bailWhenSet() ? Assembler::NonZero : Assembler::Zero;
-
   Label bail;
-  masm.branchTestFunctionFlags(function, lir->mir()->flags(), cond, &bail);
+  if (uint16_t flags = lir->mir()->expectedFlags()) {
+    masm.branchTestFunctionFlags(function, flags, Assembler::Zero, &bail);
+  }
+  if (uint16_t flags = lir->mir()->unexpectedFlags()) {
+    masm.branchTestFunctionFlags(function, flags, Assembler::NonZero, &bail);
+  }
   bailoutFrom(&bail, lir->snapshot());
 }
 
@@ -6973,9 +6984,12 @@ void CodeGenerator::emitAssertGCThingResult(Register input,
     masm.bind(&ok);
   }
 
+#  ifndef JS_SIMULATOR
   // Check that we have a valid GC pointer.
   // Disable for wasm because we don't have a context on wasm compilation
   // threads and this needs a context.
+  // Also disable for simulator builds because the C++ call is a lot slower
+  // there than on actual hardware.
   if (JitOptions.fullDebugChecks && !IsCompilingWasm()) {
     saveVolatile();
     masm.setupUnalignedABICall(temp);
@@ -7007,6 +7021,7 @@ void CodeGenerator::emitAssertGCThingResult(Register input,
     masm.callWithABI(callee);
     restoreVolatile();
   }
+#  endif
 
   masm.bind(&done);
   masm.pop(temp);
@@ -7363,10 +7378,11 @@ void CodeGenerator::visitAtan2D(LAtan2D* lir) {
   FloatRegister y = ToFloatRegister(lir->y());
   FloatRegister x = ToFloatRegister(lir->x());
 
+  using Fn = double (*)(double x, double y);
   masm.setupUnalignedABICall(temp);
   masm.passABIArg(y, MoveOp::DOUBLE);
   masm.passABIArg(x, MoveOp::DOUBLE);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ecmaAtan2), MoveOp::DOUBLE);
+  masm.callWithABI<Fn, ecmaAtan2>(MoveOp::DOUBLE);
 
   MOZ_ASSERT(ToFloatRegister(lir->output()) == ReturnDoubleReg);
 }
@@ -7381,15 +7397,21 @@ void CodeGenerator::visitHypot(LHypot* lir) {
   }
 
   switch (numArgs) {
-    case 2:
-      masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ecmaHypot), MoveOp::DOUBLE);
+    case 2: {
+      using Fn = double (*)(double x, double y);
+      masm.callWithABI<Fn, ecmaHypot>(MoveOp::DOUBLE);
       break;
-    case 3:
-      masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, hypot3), MoveOp::DOUBLE);
+    }
+    case 3: {
+      using Fn = double (*)(double x, double y, double z);
+      masm.callWithABI<Fn, hypot3>(MoveOp::DOUBLE);
       break;
-    case 4:
-      masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, hypot4), MoveOp::DOUBLE);
+    }
+    case 4: {
+      using Fn = double (*)(double x, double y, double z, double w);
+      masm.callWithABI<Fn, hypot4>(MoveOp::DOUBLE);
       break;
+    }
     default:
       MOZ_CRASH("Unexpected number of arguments to hypot function.");
   }
@@ -7997,6 +8019,9 @@ void CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir) {
     masm.moveStackPtrTo(temp);
     masm.addPtr(Imm32(masm.framePushed()), temp);
 
+    using Fn =
+        ArgumentsObject* (*)(JSContext * cx, jit::JitFrameLayout * frame,
+                             JSObject * scopeChain, ArgumentsObject * obj);
     masm.setupUnalignedABICall(cxTemp);
     masm.loadJSContext(cxTemp);
     masm.passABIArg(cxTemp);
@@ -8004,8 +8029,7 @@ void CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir) {
     masm.passABIArg(callObj);
     masm.passABIArg(objTemp);
 
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, ArgumentsObject::finishForIonPure));
+    masm.callWithABI<Fn, ArgumentsObject::finishForIonPure>();
     masm.branchTestPtr(Assembler::Zero, ReturnReg, ReturnReg, &failure);
 
     // Discard saved callObj on the stack.
@@ -8084,6 +8108,16 @@ void CodeGenerator::visitArgumentsObjectLength(LArgumentsObjectLength* lir) {
 
   Label bail;
   masm.loadArgumentsObjectLength(argsObj, out, &bail);
+  bailoutFrom(&bail, lir->snapshot());
+}
+
+void CodeGenerator::visitGuardArgumentsObjectNotOverriddenIterator(
+    LGuardArgumentsObjectNotOverriddenIterator* lir) {
+  Register argsObj = ToRegister(lir->getArgsObject());
+  Register temp = ToRegister(lir->temp());
+
+  Label bail;
+  masm.branchArgumentsObjectHasOverridenIterator(argsObj, temp, &bail);
   bailoutFrom(&bail, lir->snapshot());
 }
 
@@ -8789,11 +8823,12 @@ void CodeGenerator::visitPowI(LPowI* ins) {
 
   MOZ_ASSERT(power != temp);
 
+  using Fn = double (*)(double x, int32_t y);
   masm.setupUnalignedABICall(temp);
   masm.passABIArg(value, MoveOp::DOUBLE);
   masm.passABIArg(power);
 
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, js::powi), MoveOp::DOUBLE);
+  masm.callWithABI<Fn, js::powi>(MoveOp::DOUBLE);
   MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
 }
 
@@ -8802,10 +8837,11 @@ void CodeGenerator::visitPowD(LPowD* ins) {
   FloatRegister power = ToFloatRegister(ins->power());
   Register temp = ToRegister(ins->temp());
 
+  using Fn = double (*)(double x, double y);
   masm.setupUnalignedABICall(temp);
   masm.passABIArg(value, MoveOp::DOUBLE);
   masm.passABIArg(power, MoveOp::DOUBLE);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ecmaPow), MoveOp::DOUBLE);
+  masm.callWithABI<Fn, ecmaPow>(MoveOp::DOUBLE);
 
   MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
 }
@@ -8924,24 +8960,39 @@ void CodeGenerator::visitMathFunctionF(LMathFunctionF* ins) {
 }
 
 void CodeGenerator::visitModD(LModD* ins) {
+  MOZ_ASSERT(!gen->compilingWasm());
+
   FloatRegister lhs = ToFloatRegister(ins->lhs());
   FloatRegister rhs = ToFloatRegister(ins->rhs());
 
   MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
-  MOZ_ASSERT(ins->temp()->isBogusTemp() == gen->compilingWasm());
+  MOZ_ASSERT(!ins->temp()->isBogusTemp());
 
-  if (gen->compilingWasm()) {
-    masm.setupWasmABICall();
-    masm.passABIArg(lhs, MoveOp::DOUBLE);
-    masm.passABIArg(rhs, MoveOp::DOUBLE);
-    masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
-                     MoveOp::DOUBLE);
-  } else {
-    masm.setupUnalignedABICall(ToRegister(ins->temp()));
-    masm.passABIArg(lhs, MoveOp::DOUBLE);
-    masm.passABIArg(rhs, MoveOp::DOUBLE);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, NumberMod), MoveOp::DOUBLE);
-  }
+  using Fn = double (*)(double a, double b);
+  masm.setupUnalignedABICall(ToRegister(ins->temp()));
+  masm.passABIArg(lhs, MoveOp::DOUBLE);
+  masm.passABIArg(rhs, MoveOp::DOUBLE);
+  masm.callWithABI<Fn, NumberMod>(MoveOp::DOUBLE);
+}
+
+void CodeGenerator::visitWasmBuiltinModD(LWasmBuiltinModD* ins) {
+  masm.Push(WasmTlsReg);
+  int32_t framePushedAfterTls = masm.framePushed();
+
+  FloatRegister lhs = ToFloatRegister(ins->lhs());
+  FloatRegister rhs = ToFloatRegister(ins->rhs());
+
+  MOZ_ASSERT(ToFloatRegister(ins->output()) == ReturnDoubleReg);
+
+  masm.setupWasmABICall();
+  masm.passABIArg(lhs, MoveOp::DOUBLE);
+  masm.passABIArg(rhs, MoveOp::DOUBLE);
+
+  int32_t tlsOffset = masm.framePushed() - framePushedAfterTls;
+  masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
+                   mozilla::Some(tlsOffset), MoveOp::DOUBLE);
+
+  masm.Pop(WasmTlsReg);
 }
 
 void CodeGenerator::visitFloor(LFloor* lir) {
@@ -10742,9 +10793,10 @@ void CodeGenerator::emitArrayPopShift(LInstruction* lir,
     temps.add(elementsTemp);
 
     saveVolatile(temps);
+    using Fn = void (*)(ArrayObject * arr);
     masm.setupUnalignedABICall(elementsTemp);
     masm.passABIArg(obj);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, js::ArrayShiftMoveElements));
+    masm.callWithABI<Fn, js::ArrayShiftMoveElements>();
     restoreVolatile(temps);
 
     // Reload elementsTemp as ArrayShiftMoveElements may have moved it.
@@ -11450,7 +11502,9 @@ bool CodeGenerator::generate() {
 
 static bool AddInlinedCompilations(HandleScript script,
                                    IonCompilationId compilationId,
-                                   const WarpSnapshot* snapshot) {
+                                   const WarpSnapshot* snapshot,
+                                   bool* isValid) {
+  MOZ_ASSERT(!*isValid);
   RecompileInfo recompileInfo(script, compilationId);
 
   for (const auto* scriptSnapshot : snapshot->scripts()) {
@@ -11458,6 +11512,18 @@ static bool AddInlinedCompilations(HandleScript script,
     if (inlinedScript == script) {
       continue;
     }
+
+    // TODO(post-Warp): This matches FinishCompilation and is necessary to
+    // ensure in-progress compilations are canceled when an inlined functon
+    // becomes a debuggee. See the breakpoint-14.js jit-test.
+    // When TI is gone, try to clean this up by moving AddInlinedCompilations to
+    // WarpOracle so that we can handle this as part of addPendingRecompile
+    // instead of requiring this separate check.
+    if (inlinedScript->isDebuggee()) {
+      *isValid = false;
+      return true;
+    }
+
     AutoSweepJitScript sweep(inlinedScript);
     if (!inlinedScript->jitScript()->addInlinedCompilation(sweep,
                                                            recompileInfo)) {
@@ -11465,6 +11531,7 @@ static bool AddInlinedCompilations(HandleScript script,
     }
   }
 
+  *isValid = true;
   return true;
 }
 
@@ -11511,19 +11578,20 @@ bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints,
   // prevent future compilations. Otherwise, if an invalidation occured, then
   // skip the current compilation.
   bool isValid = false;
-  if (!FinishCompilation(cx, script, constraints, compilationId, &isValid)) {
-    return false;
-  }
-  if (!isValid) {
-    return true;
-  }
 
   if (JitOptions.warpBuilder) {
     // If an inlined script is invalidated (for example, by attaching
     // a debugger), we must also invalidate the parent IonScript.
-    if (!AddInlinedCompilations(script, compilationId, snapshot)) {
+    if (!AddInlinedCompilations(script, compilationId, snapshot, &isValid)) {
       return false;
     }
+  } else {
+    if (!FinishCompilation(cx, script, constraints, compilationId, &isValid)) {
+      return false;
+    }
+  }
+  if (!isValid) {
+    return true;
   }
 
   // IonMonkey could have inferred better type information during
@@ -15111,6 +15179,23 @@ void CodeGenerator::visitLoadWrapperTarget(LLoadWrapperTarget* lir) {
   masm.unboxObject(
       Address(output, js::detail::ProxyReservedSlots::offsetOfPrivateSlot()),
       output);
+}
+
+void CodeGenerator::visitGuardHasGetterSetter(LGuardHasGetterSetter* lir) {
+  Register object = ToRegister(lir->object());
+  Register temp1 = ToRegister(lir->temp1());
+  Register temp2 = ToRegister(lir->temp2());
+
+  masm.movePtr(ImmGCPtr(lir->mir()->shape()), temp2);
+
+  masm.setupUnalignedABICall(temp1);
+  masm.loadJSContext(temp1);
+  masm.passABIArg(temp1);
+  masm.passABIArg(object);
+  masm.passABIArg(temp2);
+  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ObjectHasGetterSetterPure));
+
+  bailoutIfFalseBool(ReturnReg, lir->snapshot());
 }
 
 template <size_t NumDefs>

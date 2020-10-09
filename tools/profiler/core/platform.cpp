@@ -2517,7 +2517,7 @@ static void StreamMetaJSCustomObject(
     const PreRecordedMetaInformation& aPreRecordedMetaInformation) {
   MOZ_RELEASE_ASSERT(CorePS::Exists() && ActivePS::Exists(aLock));
 
-  aWriter.IntProperty("version", 20);
+  aWriter.IntProperty("version", 21);
 
   // The "startTime" field holds the number of milliseconds since midnight
   // January 1, 1970 GMT. This grotty code computes (Now - (Now -
@@ -3972,6 +3972,7 @@ void profiler_init(void* aStackTop) {
   Vector<const char*> filters;
   MOZ_RELEASE_ASSERT(filters.append("GeckoMain"));
   MOZ_RELEASE_ASSERT(filters.append("Compositor"));
+  MOZ_RELEASE_ASSERT(filters.append("Renderer"));
   MOZ_RELEASE_ASSERT(filters.append("DOM Worker"));
 
   PowerOfTwo32 capacity = PROFILER_DEFAULT_ENTRIES;
@@ -5425,9 +5426,10 @@ void profiler_add_marker(const char* aMarkerName,
 
 // This is a simplified version of profiler_add_marker that can be easily passed
 // into the JS engine.
-void profiler_add_js_marker(const char* aMarkerName) {
-  PROFILER_MARKER_UNTYPED(
-      ProfilerString8View::WrapNullTerminatedString(aMarkerName), JS);
+void profiler_add_js_marker(const char* aMarkerName, const char* aMarkerText) {
+  PROFILER_MARKER_TEXT(
+      ProfilerString8View::WrapNullTerminatedString(aMarkerName), JS, {},
+      ProfilerString8View::WrapNullTerminatedString(aMarkerText));
 }
 
 void profiler_add_js_allocation_marker(JS::RecordAllocationInfo&& info) {

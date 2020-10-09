@@ -85,19 +85,18 @@ nsReflowStatus nsPageFrame::ReflowPageContent(
   kidReflowInput.mFlags.mIsTopOfPage = true;
   kidReflowInput.mFlags.mTableIsSplittable = true;
 
-  // Use the margins given in the @page rule.
-  // If a margin is 'auto', use the margin from the print settings for that
-  // side.
-  const auto& marginStyle = kidReflowInput.mStyleMargin->mMargin;
-  for (const auto side : mozilla::AllPhysicalSides()) {
-    if (marginStyle.Get(side).IsAuto()) {
-      mPageContentMargin.Side(side) =
-          aPresContext->GetDefaultPageMargin().Side(side);
-    } else {
-      nscoord unwriteable = nsPresContext::CSSTwipsToAppUnits(
-          mPD->mPrintSettings->GetUnwriteableMarginInTwips().Side(side));
-      mPageContentMargin.Side(side) = std::max(
-          kidReflowInput.ComputedPhysicalMargin().Side(side), unwriteable);
+  mPageContentMargin = aPresContext->GetDefaultPageMargin();
+
+  // Use the margins given in the @page rule if told to do so.
+  if (mPD->mPrintSettings->GetHonorPageRuleMargins()) {
+    const auto& margin = kidReflowInput.mStyleMargin->mMargin;
+    for (const auto side : mozilla::AllPhysicalSides()) {
+      if (!margin.Get(side).IsAuto()) {
+        nscoord unwriteable = nsPresContext::CSSTwipsToAppUnits(
+            mPD->mPrintSettings->GetUnwriteableMarginInTwips().Side(side));
+        mPageContentMargin.Side(side) = std::max(
+            kidReflowInput.ComputedPhysicalMargin().Side(side), unwriteable);
+      }
     }
   }
 
@@ -492,9 +491,9 @@ static void PaintMarginGuides(nsIFrame* aFrame, DrawTarget* aDrawTarget,
                        /* dash offset */ 0.0f);
   DrawOptions options;
 
-  // FIXME(emilio, bug 1659834): Shouldn't this use the page-specific margins,
-  // which account for @page?
-  const nsMargin& margin = aFrame->PresContext()->GetDefaultPageMargin();
+  MOZ_RELEASE_ASSERT(aFrame->IsPageFrame());
+  const nsMargin& margin =
+      static_cast<nsPageFrame*>(aFrame)->GetUsedPageContentMargin();
   int32_t appUnitsPerDevPx = aFrame->PresContext()->AppUnitsPerDevPixel();
 
   // Get the frame's rect and inset by the margins to get the edges of the
@@ -626,14 +625,11 @@ void nsPageFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     set.Content()->AppendNewToTop<nsDisplayHeaderFooter>(aBuilder, this);
 
     // For print-preview, show margin guides if requested in the settings.
-    if (pc->Type() == nsPresContext::eContext_PrintPreview) {
-      bool showGuides;
-      if (NS_SUCCEEDED(mPD->mPrintSettings->GetShowMarginGuides(&showGuides)) &&
-          showGuides) {
-        set.Content()->AppendNewToTop<nsDisplayGeneric>(
-            aBuilder, this, PaintMarginGuides, "MarginGuides",
-            DisplayItemType::TYPE_MARGIN_GUIDES);
-      }
+    if (pc->Type() == nsPresContext::eContext_PrintPreview &&
+        mPD->mPrintSettings->GetShowMarginGuides()) {
+      set.Content()->AppendNewToTop<nsDisplayGeneric>(
+          aBuilder, this, PaintMarginGuides, "MarginGuides",
+          DisplayItemType::TYPE_MARGIN_GUIDES);
     }
   }
 

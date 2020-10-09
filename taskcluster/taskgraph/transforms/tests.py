@@ -47,9 +47,11 @@ from taskgraph.util.schema import (
 from taskgraph.optimize.schema import OptimizationSchema
 from taskgraph.util.chunking import (
     chunk_manifests,
+    get_manifest_loader,
     get_runtimes,
     guess_mozinfo_from_task,
     manifest_loaders,
+    DefaultLoader,
 )
 from taskgraph.util.taskcluster import (
     get_artifact_path,
@@ -77,7 +79,7 @@ WINDOWS_WORKER_TYPES = {
       'virtual-with-gpu': 't-win7-32-gpu',
       'hardware': 't-win10-64-1803-hw',
     },
-    'windows7-32-devedition': {
+    'windows7-32-devedition': {  # build only, tests have no value
       'virtual': 't-win7-32',
       'virtual-with-gpu': 't-win7-32-gpu',
       'hardware': 't-win10-64-1803-hw',
@@ -272,8 +274,8 @@ TEST_VARIANTS = {
                 'by-test-platform': {
                     'mac.*': ['trunk'],
                     'default': [],
-                }
-            }
+                },
+            },
         },
         'merge': {
             'mozharness': {
@@ -281,48 +283,9 @@ TEST_VARIANTS = {
                     '--setpref=webgl.out-of-process=true',
                 ],
             },
-            'tier': 2
-        }
-    }
+        },
+    },
 }
-
-
-CHUNK_SUITES_BLACKLIST = (
-    'awsy',
-    'cppunittest',
-    'crashtest',
-    'crashtest-qr',
-    'firefox-ui-functional-local',
-    'firefox-ui-functional-remote',
-    'geckoview-junit',
-    'gtest',
-    'jittest',
-    'jsreftest',
-    'marionette',
-    'mochitest-browser-chrome-screenshots',
-    'mochitest-browser-chrome-thunderbird',
-    'mochitest-valgrind-plain',
-    'mochitest-webgl1-core',
-    'mochitest-webgl1-ext',
-    'mochitest-webgl2-core',
-    'mochitest-webgl2-ext',
-    'raptor',
-    'reftest',
-    'reftest-qr',
-    'reftest-gpu',
-    'reftest-no-accel',
-    'talos',
-    'telemetry-tests-client',
-    'test-coverage',
-    'test-coverage-wpt',
-    'test-verify',
-    'test-verify-gpu',
-    'test-verify-wpt',
-    'web-platform-tests-backlog',
-    'web-platform-tests-print-reftest',
-    'web-platform-tests-reftest-backlog',
-)
-"""These suites will be chunked at test runtime rather than here in the taskgraph."""
 
 
 DYNAMIC_CHUNK_DURATION = 20 * 60  # seconds
@@ -431,6 +394,12 @@ test_description_schema = Schema({
     Required('chunks'): optionally_keyed_by(
         'test-platform',
         Any(int, 'dynamic')),
+
+
+    # Custom 'test_manifest_loader' to use, overriding the one configured in the
+    # parameters. When 'null', no test chunking will be performed. Can also
+    # be used to disable "manifest scheduling".
+    Optional('test-manifest-loader'): Any(None, *list(manifest_loaders)),
 
     # the time (with unit) after which this task is deleted; default depends on
     # the branch (see below)
@@ -1123,34 +1092,34 @@ def setup_browsertime(config, tasks):
 
         cd_fetches = {
             'android.*': [
-                'linux64-chromedriver-81',
                 'linux64-chromedriver-84',
-                'linux64-chromedriver-85'
+                'linux64-chromedriver-85',
+                'linux64-chromedriver-86',
             ],
             'linux.*': [
-                'linux64-chromedriver-81',
                 'linux64-chromedriver-84',
-                'linux64-chromedriver-85'
+                'linux64-chromedriver-85',
+                'linux64-chromedriver-86',
             ],
             'macosx.*': [
-                'mac64-chromedriver-81',
                 'mac64-chromedriver-84',
-                'mac64-chromedriver-85'
+                'mac64-chromedriver-85',
+                'mac64-chromedriver-86',
             ],
             'windows.*aarch64.*': [
-                'win32-chromedriver-81',
                 'win32-chromedriver-84',
-                'win32-chromedriver-85'
+                'win32-chromedriver-85',
+                'win32-chromedriver-86',
             ],
             'windows.*-32.*': [
-                'win32-chromedriver-81',
                 'win32-chromedriver-84',
-                'win32-chromedriver-85'
+                'win32-chromedriver-85',
+                'win32-chromedriver-86',
             ],
             'windows.*-64.*': [
-                'win32-chromedriver-81',
                 'win32-chromedriver-84',
-                'win32-chromedriver-85'
+                'win32-chromedriver-85',
+                'win32-chromedriver-86',
             ],
         }
 
@@ -1496,11 +1465,10 @@ def set_test_verify_chunks(config, tasks):
 def set_test_manifests(config, tasks):
     """Determine the set of test manifests that should run in this task."""
 
-    loader_cls = manifest_loaders[config.params['test_manifest_loader']]
-    loader = loader_cls(config.params)
-
     for task in tasks:
-        if task['suite'] in CHUNK_SUITES_BLACKLIST:
+        # When a task explicitly requests no 'test_manifest_loader', test
+        # resolving will happen at test runtime rather than in the taskgraph.
+        if 'test-manifest-loader' in task and task['test-manifest-loader'] is None:
             yield task
             continue
 
@@ -1526,21 +1494,19 @@ def set_test_manifests(config, tasks):
 
         mozinfo = guess_mozinfo_from_task(task)
 
+        loader_name = task.pop('test-manifest-loader', config.params['test_manifest_loader'])
+        loader = get_manifest_loader(loader_name, config.params)
+
         task['test-manifests'] = loader.get_manifests(
             task['suite'],
             frozenset(mozinfo.items()),
         )
 
-        # Skip the task if the loader doesn't return any manifests for the
-        # associated suite.
-        if not task['test-manifests']['active'] and not task['test-manifests']['skipped']:
-            continue
-
         # The default loader loads all manifests. If we use a non-default
         # loader, we'll only run some subset of manifests and the hardcoded
         # chunk numbers will no longer be valid. Dynamic chunking should yield
         # better results.
-        if config.params['test_manifest_loader'] != 'default':
+        if not isinstance(loader, DefaultLoader):
             task['chunks'] = "dynamic"
 
         yield task
@@ -1613,9 +1579,12 @@ def split_chunks(config, tasks):
                 manifests['active'],
             )
 
-            # Add all skipped manifests to the first chunk so they still show up in the
-            # logs. They won't impact runtime much.
-            chunked_manifests[0].extend(manifests['skipped'])
+            # Add all skipped manifests to the first chunk of backstop pushes
+            # so they still show up in the logs. They won't impact runtime much
+            # and this way tools like ActiveData are still aware that they
+            # exist.
+            if config.params["backstop"] and manifests["active"]:
+                chunked_manifests[0].extend(manifests['skipped'])
 
         for i in range(task['chunks']):
             this_chunk = i + 1
@@ -1625,12 +1594,7 @@ def split_chunks(config, tasks):
             chunked['this-chunk'] = this_chunk
 
             if chunked_manifests is not None:
-                manifests = sorted(chunked_manifests[i])
-                if not manifests:
-                    raise Exception(
-                        'Chunking algorithm yielded no manifests for chunk {} of {} on {}'.format(
-                            this_chunk, task['test-name'], task['test-platform']))
-                chunked['test-manifests'] = manifests
+                chunked['test-manifests'] = sorted(chunked_manifests[i])
 
             group, symbol = split_symbol(chunked['treeherder-symbol'])
             if task['chunks'] > 1 or not symbol:
@@ -1849,9 +1813,11 @@ def make_job_description(config, tasks):
             'build_type': attr_build_type,
             'test_platform': task['test-platform'],
             'test_chunk': str(task['this-chunk']),
-            'test_manifests': task.get('test-manifests'),
             attr_try_name: try_name,
         })
+
+        if 'test-manifests' in task:
+            attributes['test_manifests'] = task['test-manifests']
 
         jobdesc = {}
         name = '{}-{}'.format(task['test-platform'], task['test-name'])

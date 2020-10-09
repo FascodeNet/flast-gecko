@@ -25,6 +25,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Base64.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/EditAction.h"
 #include "mozilla/EditorDOMPoint.h"
 #include "mozilla/EditorUtils.h"
@@ -1125,7 +1126,8 @@ void HTMLEditor::HTMLTransferablePreparer::AddDataFlavorsInBestOrder(
   // we want to get out of the transferable
   // This should only happen in html editors, not plaintext
   if (!mHTMLEditor.IsPlaintextEditor()) {
-    nsresult rvIgnored = aTransferable.AddDataFlavor(kNativeHTMLMime);
+    DebugOnly<nsresult> rvIgnored =
+        aTransferable.AddDataFlavor(kNativeHTMLMime);
     NS_WARNING_ASSERTION(
         NS_SUCCEEDED(rvIgnored),
         "nsITransferable::AddDataFlavor(kNativeHTMLMime) failed, but ignored");
@@ -1196,7 +1198,7 @@ void HTMLEditor::HTMLTransferablePreparer::AddDataFlavorsInBestOrder(
         break;
     }
   }
-  nsresult rvIgnored = aTransferable.AddDataFlavor(kUnicodeMime);
+  DebugOnly<nsresult> rvIgnored = aTransferable.AddDataFlavor(kUnicodeMime);
   NS_WARNING_ASSERTION(
       NS_SUCCEEDED(rvIgnored),
       "nsITransferable::AddDataFlavor(kUnicodeMime) failed, but ignored");
@@ -2178,8 +2180,8 @@ nsresult HTMLEditor::PasteNoFormattingAsAction(int32_t aSelectionType,
     return rv;
   }
 
-  const nsString& empty = u""_ns;
-  rv = InsertFromTransferable(transferable, nullptr, empty, empty, false, true);
+  rv = InsertFromTransferable(transferable, nullptr, u""_ns, u""_ns, false,
+                              true);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "HTMLEditor::InsertFromTransferable() failed");
   return EditorBase::ToGenericNSResult(rv);

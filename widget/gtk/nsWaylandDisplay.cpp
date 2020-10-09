@@ -127,44 +127,18 @@ void nsWaylandDisplay::SetSeat(wl_seat* aSeat) { mSeat = aSeat; }
 
 void nsWaylandDisplay::SetPrimarySelectionDeviceManager(
     gtk_primary_selection_device_manager* aPrimarySelectionDeviceManager) {
-  mPrimarySelectionDeviceManager = aPrimarySelectionDeviceManager;
+  mPrimarySelectionDeviceManagerGtk = aPrimarySelectionDeviceManager;
+}
+
+void nsWaylandDisplay::SetPrimarySelectionDeviceManager(
+    zwp_primary_selection_device_manager_v1* aPrimarySelectionDeviceManager) {
+  mPrimarySelectionDeviceManagerZwpV1 = aPrimarySelectionDeviceManager;
 }
 
 void nsWaylandDisplay::SetIdleInhibitManager(
     zwp_idle_inhibit_manager_v1* aIdleInhibitManager) {
   mIdleInhibitManager = aIdleInhibitManager;
 }
-
-void nsWaylandDisplay::SetDmabuf(zwp_linux_dmabuf_v1* aDmabuf) {
-  mDmabuf = aDmabuf;
-}
-
-static void dmabuf_modifiers(void* data,
-                             struct zwp_linux_dmabuf_v1* zwp_linux_dmabuf,
-                             uint32_t format, uint32_t modifier_hi,
-                             uint32_t modifier_lo) {
-  switch (format) {
-    case GBM_FORMAT_ARGB8888:
-      GetDMABufDevice()->AddFormatModifier(true, format, modifier_hi,
-                                           modifier_lo);
-      break;
-    case GBM_FORMAT_XRGB8888:
-      GetDMABufDevice()->AddFormatModifier(false, format, modifier_hi,
-                                           modifier_lo);
-      break;
-    default:
-      break;
-  }
-}
-
-static void dmabuf_format(void* data,
-                          struct zwp_linux_dmabuf_v1* zwp_linux_dmabuf,
-                          uint32_t format) {
-  // XXX: deprecated
-}
-
-static const struct zwp_linux_dmabuf_v1_listener dmabuf_listener = {
-    dmabuf_format, dmabuf_modifiers};
 
 static void global_registry_handler(void* data, wl_registry* registry,
                                     uint32_t id, const char* interface,
@@ -198,6 +172,15 @@ static void global_registry_handler(void* data, wl_registry* registry,
     wl_proxy_set_queue((struct wl_proxy*)primary_selection_device_manager,
                        display->GetEventQueue());
     display->SetPrimarySelectionDeviceManager(primary_selection_device_manager);
+  } else if (strcmp(interface, "zwp_primary_selection_device_manager_v1") ==
+             0) {
+    auto* primary_selection_device_manager =
+        WaylandRegistryBind<gtk_primary_selection_device_manager>(
+            registry, id, &zwp_primary_selection_device_manager_v1_interface,
+            1);
+    wl_proxy_set_queue((struct wl_proxy*)primary_selection_device_manager,
+                       display->GetEventQueue());
+    display->SetPrimarySelectionDeviceManager(primary_selection_device_manager);
   } else if (strcmp(interface, "zwp_idle_inhibit_manager_v1") == 0) {
     auto* idle_inhibit_manager =
         WaylandRegistryBind<zwp_idle_inhibit_manager_v1>(
@@ -217,18 +200,6 @@ static void global_registry_handler(void* data, wl_registry* registry,
     wl_proxy_set_queue((struct wl_proxy*)subcompositor,
                        display->GetEventQueue());
     display->SetSubcompositor(subcompositor);
-  } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0 && version > 2) {
-    auto* dmabuf = WaylandRegistryBind<zwp_linux_dmabuf_v1>(
-        registry, id, &zwp_linux_dmabuf_v1_interface, 3);
-    LOGDMABUF(("zwp_linux_dmabuf_v1 is available."));
-    display->SetDmabuf(dmabuf);
-    // Get formats for main thread display only
-    if (display->IsMainThreadDisplay()) {
-      GetDMABufDevice()->ResetFormatsModifiers();
-      zwp_linux_dmabuf_v1_add_listener(dmabuf, &dmabuf_listener, data);
-    }
-  } else if (strcmp(interface, "wl_drm") == 0) {
-    LOGDMABUF(("wl_drm is available."));
   }
 }
 
@@ -327,10 +298,10 @@ nsWaylandDisplay::nsWaylandDisplay(wl_display* aDisplay, bool aLighWrapper)
       mSeat(nullptr),
       mShm(nullptr),
       mSyncCallback(nullptr),
-      mPrimarySelectionDeviceManager(nullptr),
+      mPrimarySelectionDeviceManagerGtk(nullptr),
+      mPrimarySelectionDeviceManagerZwpV1(nullptr),
       mIdleInhibitManager(nullptr),
       mRegistry(nullptr),
-      mDmabuf(nullptr),
       mExplicitSync(false) {
   if (!aLighWrapper) {
     mRegistry = wl_display_get_registry(mDisplay);

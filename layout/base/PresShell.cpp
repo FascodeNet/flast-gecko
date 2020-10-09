@@ -14,6 +14,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/ContentIterator.h"
+#include "mozilla/DisplayPortUtils.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventStateManager.h"
 #include "mozilla/EventStates.h"
@@ -2340,7 +2341,7 @@ PresShell::PageMove(bool aForward, bool aExtend) {
         GetScrollableFrameToScroll(ScrollableDirection::Vertical));
     // If there is no scrollable frame, get the frame to move caret instead.
   }
-  if (!frame) {
+  if (!frame || frame->PresContext() != mPresContext) {
     frame = mSelection->GetFrameToPageSelect();
     if (!frame) {
       return NS_OK;
@@ -2866,18 +2867,6 @@ already_AddRefed<nsIContent> PresShell::GetSelectedContentForScrolling() const {
   return selectedContent.forget();
 }
 
-nsIScrollableFrame* PresShell::GetNearestScrollableFrame(
-    nsIFrame* aFrame, ScrollableDirection aDirection) {
-  if (aDirection == ScrollableDirection::Either) {
-    return nsLayoutUtils::GetNearestScrollableFrame(aFrame);
-  }
-
-  return nsLayoutUtils::GetNearestScrollableFrameForDirection(
-      aFrame, aDirection == ScrollableDirection::Vertical
-                  ? nsLayoutUtils::eVertical
-                  : nsLayoutUtils::eHorizontal);
-}
-
 nsIScrollableFrame* PresShell::GetScrollableFrameToScrollForContent(
     nsIContent* aContent, ScrollableDirection aDirection) {
   nsIScrollableFrame* scrollFrame = nullptr;
@@ -2888,7 +2877,8 @@ nsIScrollableFrame* PresShell::GetScrollableFrameToScrollForContent(
       if (scrollFrame) {
         startFrame = scrollFrame->GetScrolledFrame();
       }
-      scrollFrame = GetNearestScrollableFrame(startFrame, aDirection);
+      scrollFrame = nsLayoutUtils::GetNearestScrollableFrameForDirection(
+          startFrame, aDirection);
     }
   }
   if (!scrollFrame) {
@@ -2896,8 +2886,8 @@ nsIScrollableFrame* PresShell::GetScrollableFrameToScrollForContent(
     if (!scrollFrame || !scrollFrame->GetScrolledFrame()) {
       return nullptr;
     }
-    scrollFrame =
-        GetNearestScrollableFrame(scrollFrame->GetScrolledFrame(), aDirection);
+    scrollFrame = nsLayoutUtils::GetNearestScrollableFrameForDirection(
+        scrollFrame->GetScrolledFrame(), aDirection);
   }
   return scrollFrame;
 }
@@ -3206,7 +3196,7 @@ nsresult PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
     // Now focus the document itself if focus is on an element within it.
     nsPIDOMWindowOuter* win = mDocument->GetWindow();
 
-    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+    nsFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm && win) {
       nsCOMPtr<mozIDOMWindowProxy> focusedWindow;
       fm->GetFocusedWindow(getter_AddRefs(focusedWindow));
@@ -4060,26 +4050,9 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
   MOZ_ASSERT(NeedFlush(flushType), "Why did we get called?");
 
 #ifdef MOZ_GECKO_PROFILER
-  // clang-format off
-  static const EnumeratedArray<FlushType, FlushType::Count, const char*>
-      flushTypeNames = {
-    "",
-    "Event",
-    "Content",
-    "ContentAndNotify",
-    "Style",
-    // As far as the profiler is concerned, EnsurePresShellInitAndFrames and
-    // Frames are the same
-    "Style",
-    "Style",
-    "InterruptibleLayout",
-    "Layout",
-    "Display"
-  };
-  // clang-format on
   AUTO_PROFILER_LABEL_DYNAMIC_CSTR_NONSENSITIVE(
       "PresShell::DoFlushPendingNotifications", LAYOUT,
-      flushTypeNames[flushType]);
+      kFlushTypeNames[flushType]);
 #endif
 
 #ifdef ACCESSIBILITY
@@ -5445,8 +5418,8 @@ void PresShell::SynthesizeMouseMove(bool aFromScroll) {
     RefPtr<nsSynthMouseMoveEvent> ev =
         new nsSynthMouseMoveEvent(this, aFromScroll);
 
-    GetPresContext()->RefreshDriver()->AddRefreshObserver(ev,
-                                                          FlushType::Display);
+    GetPresContext()->RefreshDriver()->AddRefreshObserver(
+        ev, FlushType::Display, "Synthetic mouse move event");
     mSynthMouseMoveEvent = std::move(ev);
   }
 }
@@ -5897,7 +5870,7 @@ void PresShell::MarkFramesInSubtreeApproximatelyVisible(
   nsIScrollableFrame* scrollFrame = do_QueryFrame(aFrame);
   if (scrollFrame) {
     bool ignoreDisplayPort = false;
-    if (nsLayoutUtils::IsMissingDisplayPortBaseRect(aFrame->GetContent())) {
+    if (DisplayPortUtils::IsMissingDisplayPortBaseRect(aFrame->GetContent())) {
       // We can properly set the base rect for root scroll frames on top level
       // and root content documents. Otherwise the base rect we compute might
       // be way too big without the limiting that
@@ -5909,7 +5882,7 @@ void PresShell::MarkFramesInSubtreeApproximatelyVisible(
         nsRect baseRect =
             nsRect(nsPoint(0, 0),
                    nsLayoutUtils::CalculateCompositionSizeForFrame(aFrame));
-        nsLayoutUtils::SetDisplayPortBase(aFrame->GetContent(), baseRect);
+        DisplayPortUtils::SetDisplayPortBase(aFrame->GetContent(), baseRect);
       } else {
         ignoreDisplayPort = true;
       }
@@ -5917,9 +5890,9 @@ void PresShell::MarkFramesInSubtreeApproximatelyVisible(
 
     nsRect displayPort;
     bool usingDisplayport =
-        !ignoreDisplayPort && nsLayoutUtils::GetDisplayPortForVisibilityTesting(
-                                  aFrame->GetContent(), &displayPort,
-                                  DisplayportRelativeTo::ScrollFrame);
+        !ignoreDisplayPort &&
+        DisplayPortUtils::GetDisplayPortForVisibilityTesting(
+            aFrame->GetContent(), &displayPort);
 
     scrollFrame->NotifyApproximateFrameVisibilityUpdate(!usingDisplayport);
 
@@ -6546,7 +6519,7 @@ PresShell::GetFocusedDOMWindowInOurWindow() {
 }
 
 already_AddRefed<nsIContent> PresShell::GetFocusedContentInOurWindow() const {
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm && mDocument) {
     RefPtr<Element> focusedElement;
     fm->GetFocusedElementForWindow(mDocument->GetWindow(), false, nullptr,
@@ -6973,14 +6946,14 @@ nsresult PresShell::EventHandler::HandleEventUsingCoordinates(
   }
 
   // Only capture mouse events and pointer events.
-  nsCOMPtr<nsIContent> pointerCapturingContent =
-      PointerEventHandler::GetPointerCapturingContent(aGUIEvent);
+  RefPtr<Element> pointerCapturingElement =
+      PointerEventHandler::GetPointerCapturingElement(aGUIEvent);
 
-  if (pointerCapturingContent) {
-    rootFrameToHandleEvent = pointerCapturingContent->GetPrimaryFrame();
+  if (pointerCapturingElement) {
+    rootFrameToHandleEvent = pointerCapturingElement->GetPrimaryFrame();
     if (!rootFrameToHandleEvent) {
       return HandleEventWithPointerCapturingContentWithoutItsFrame(
-          aFrameForPresShell, aGUIEvent, pointerCapturingContent, aEventStatus);
+          aFrameForPresShell, aGUIEvent, pointerCapturingElement, aEventStatus);
     }
   }
 
@@ -6998,7 +6971,7 @@ nsresult PresShell::EventHandler::HandleEventUsingCoordinates(
   // mouse out events at the root EventStateManager.
   EventTargetData eventTargetData(rootFrameToHandleEvent);
   if (!isCaptureRetargeted && !isWindowLevelMouseExit &&
-      !pointerCapturingContent) {
+      !pointerCapturingElement) {
     if (!ComputeEventTargetFrameAndPresShellAtEventPoint(
             rootFrameToHandleEvent, aGUIEvent, &eventTargetData)) {
       *aEventStatus = nsEventStatus_eIgnore;
@@ -7010,7 +6983,7 @@ nsresult PresShell::EventHandler::HandleEventUsingCoordinates(
   // retargeted at the capturing content instead. This will be the case when
   // capture retargeting is being used, no frame was found or the frame's
   // content is not a descendant of the capturing content.
-  if (capturingContent && !pointerCapturingContent &&
+  if (capturingContent && !pointerCapturingElement &&
       (PresShell::sCapturingContentInfo.mRetargetToElement ||
        !eventTargetData.mFrame->GetContent() ||
        !nsContentUtils::ContentIsCrossDocDescendantOf(
@@ -7055,7 +7028,7 @@ nsresult PresShell::EventHandler::HandleEventUsingCoordinates(
   // pointer event listeners change the layout, eventTargetData is
   // automatically updated.
   if (!DispatchPrecedingPointerEvent(
-          aFrameForPresShell, aGUIEvent, pointerCapturingContent,
+          aFrameForPresShell, aGUIEvent, pointerCapturingElement,
           aDontRetargetEvents, &eventTargetData, aEventStatus)) {
     return NS_OK;
   }
@@ -9944,12 +9917,14 @@ PresShell::Observe(nsISupports* aSubject, const char* aTopic,
 }
 
 bool PresShell::AddRefreshObserver(nsARefreshObserver* aObserver,
-                                   FlushType aFlushType) {
+                                   FlushType aFlushType,
+                                   const char* aObserverDescription) {
   nsPresContext* presContext = GetPresContext();
   if (MOZ_UNLIKELY(!presContext)) {
     return false;
   }
-  presContext->RefreshDriver()->AddRefreshObserver(aObserver, aFlushType);
+  presContext->RefreshDriver()->AddRefreshObserver(aObserver, aFlushType,
+                                                   aObserverDescription);
   return true;
 }
 
@@ -11217,22 +11192,33 @@ void PresShell::ResetVisualViewportSize() {
 
 bool PresShell::SetVisualViewportOffset(const nsPoint& aScrollOffset,
                                         const nsPoint& aPrevLayoutScrollPos) {
+  nsPoint newOffset = aScrollOffset;
+  nsIScrollableFrame* rootScrollFrame = GetRootScrollFrameAsScrollable();
+  if (rootScrollFrame) {
+    // See the comment in nsHTMLScrollFrame::Reflow above the call to
+    // SetVisualViewportOffset for why we need to do this.
+    nsRect scrollRange = rootScrollFrame->GetScrollRangeForUserInputEvents();
+    if (!scrollRange.Contains(newOffset)) {
+      newOffset.x = std::min(newOffset.x, scrollRange.XMost());
+      newOffset.x = std::max(newOffset.x, scrollRange.x);
+      newOffset.y = std::min(newOffset.y, scrollRange.YMost());
+      newOffset.y = std::max(newOffset.y, scrollRange.y);
+    }
+  }
+
   nsPoint prevOffset = GetVisualViewportOffset();
-  if (prevOffset == aScrollOffset) {
+  if (prevOffset == newOffset) {
     return false;
   }
 
-  mVisualViewportOffset = Some(aScrollOffset);
+  mVisualViewportOffset = Some(newOffset);
 
   if (auto* window = nsGlobalWindowInner::Cast(mDocument->GetInnerWindow())) {
     window->VisualViewport()->PostScrollEvent(prevOffset, aPrevLayoutScrollPos);
   }
 
-  if (IsVisualViewportSizeSet()) {
-    if (nsIScrollableFrame* rootScrollFrame =
-            GetRootScrollFrameAsScrollable()) {
-      rootScrollFrame->Anchor()->UserScrolled();
-    }
+  if (IsVisualViewportSizeSet() && rootScrollFrame) {
+    rootScrollFrame->Anchor()->UserScrolled();
   }
 
   if (gfxPlatform::UseDesktopZoomingScrollbars()) {

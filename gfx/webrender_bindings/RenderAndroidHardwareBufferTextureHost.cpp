@@ -66,8 +66,14 @@ bool RenderAndroidHardwareBufferTextureHost::EnsureLockable(
     EGLSync sync =
         egl->fCreateSync(LOCAL_EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
     if (sync) {
-      // XXX use eglWaitSyncKHR() if possible. See Bug 1661371.
-      egl->fClientWaitSync(sync, 0, LOCAL_EGL_FOREVER);
+      // Release fd here, since it is owned by EGLSync
+      Unused << rawFD.release();
+
+      if (egl->IsExtensionSupported(gl::EGLExtension::KHR_wait_sync)) {
+        egl->fWaitSync(sync, 0);
+      } else {
+        egl->fClientWaitSync(sync, 0, LOCAL_EGL_FOREVER);
+      }
       egl->fDestroySync(sync);
     } else {
       gfxCriticalNote << "Failed to create EGLSync from acquire fence fd";

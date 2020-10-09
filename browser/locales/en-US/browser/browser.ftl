@@ -164,6 +164,51 @@ page-action-remove-from-urlbar =
 page-action-remove-extension =
     .label = Remove Extension
 
+## Page Action menu
+
+# Variables
+# $tabCount (integer) - Number of tabs selected
+page-action-send-tabs-panel =
+  .label = { $tabCount ->
+      [1] Send Tab to Device
+     *[other] Send { $tabCount } Tabs to Device
+  }
+page-action-send-tabs-urlbar =
+  .tooltiptext = { $tabCount ->
+      [1] Send Tab to Device
+     *[other] Send { $tabCount } Tabs to Device
+  }
+page-action-pocket-panel =
+  .label = Save Page to { -pocket-brand-name }
+page-action-copy-url-panel =
+  .label = Copy Link
+page-action-copy-url-urlbar =
+  .tooltiptext = Copy Link
+page-action-email-link-panel =
+  .label = Email Link…
+page-action-email-link-urlbar =
+  .tooltiptext = Email Link…
+page-action-share-url-panel =
+  .label = Share
+page-action-share-url-urlbar =
+  .tooltiptext = Share
+page-action-share-more-panel =
+  .label = More…
+page-action-send-tab-not-ready =
+  .label = Syncing Devices…
+# "Pin" is being used as a metaphor for expressing the fact that these tabs
+# are "pinned" to the left edge of the tabstrip. Really we just want the
+# string to express the idea that this is a lightweight and reversible
+# action that keeps your tab where you can reach it easily.
+page-action-pin-tab-panel =
+  .label = Pin Tab
+page-action-pin-tab-urlbar =
+  .tooltiptext = Pin Tab
+page-action-unpin-tab-panel =
+  .label = Unpin Tab
+page-action-unpin-tab-urlbar =
+  .tooltiptext = Unpin Tab
+
 ## Auto-hide Context Menu
 
 full-screen-autohide =
@@ -245,6 +290,19 @@ identity-passive-loaded = Parts of this page are not secure (such as images).
 identity-active-loaded = You have disabled protection on this page.
 identity-weak-encryption = This page uses weak encryption.
 identity-insecure-login-forms = Logins entered on this page could be compromised.
+
+identity-https-only-connection-upgraded = (upgraded to HTTPS)
+identity-https-only-label = HTTPS-Only Mode
+identity-https-only-dropdown-on =
+    .label = On
+identity-https-only-dropdown-off =
+    .label = Off
+identity-https-only-dropdown-off-temporarily =
+    .label = Off temporarily
+identity-https-only-info-turn-on = Turn on if you want { -brand-short-name } to upgrade to a secure connection when possible.
+identity-https-only-info-turn-off = If the site seems broken, you may want to turn off HTTPS-Only Mode to reload using insecure HTTP.
+identity-https-only-info-no-upgrade = Unable to upgrade connection from HTTP.
+
 identity-permissions =
     .value = Permissions
 identity-permissions-reload-hint = You may need to reload the page for changes to apply.
@@ -387,6 +445,40 @@ urlbar-page-action-button =
 urlbar-pocket-button =
   .tooltiptext = Save to { -pocket-brand-name }
 
+## Action text shown in urlbar results, usually appended after the search
+## string or the url, like "result value - action text".
+
+# Used when the private browsing engine differs from the default engine.
+# The "with" format was chosen because the search engine name can end with
+# "Search", and we would like to avoid strings like "Search MSN Search".
+# Variables
+#  $engine (String): the name of a search engine
+urlbar-result-action-search-in-private-w-engine = Search with { $engine } in a Private Window
+# Used when the private browsing engine is the same as the default engine.
+urlbar-result-action-search-in-private = Search in a Private Window
+# The "with" format was chosen because the search engine name can end with
+# "Search", and we would like to avoid strings like "Search MSN Search".
+# Variables
+#  $engine (String): the name of a search engine
+urlbar-result-action-search-w-engine = Search with { $engine }
+urlbar-result-action-switch-tab = Switch to Tab
+urlbar-result-action-visit = Visit
+
+## Action text shown in urlbar results, usually appended after the search
+## string or the url, like "result value - action text".
+## In these actions "Search" is a verb, followed by where the search is performed.
+
+urlbar-result-action-search-bookmarks = Search Bookmarks
+urlbar-result-action-search-history = Search History
+urlbar-result-action-search-tabs = Search Tabs
+# Variables
+#  $engine (String): the name of a search engine that searches the entire Web
+#  (e.g. Google).
+urlbar-result-action-tabtosearch-web = Search with { $engine } directly from the address bar
+# Variables
+#  $engine (String): the name of a search engine that searches a specific site
+#  (e.g. Amazon).
+urlbar-result-action-tabtosearch-other-engine = Search { $engine } directly from the address bar
 
 ## Full Screen and Pointer Lock UI
 

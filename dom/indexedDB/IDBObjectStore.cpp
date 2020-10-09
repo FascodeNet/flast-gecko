@@ -61,19 +61,14 @@ using namespace mozilla::ipc;
 
 namespace {
 
-IndexUpdateInfo MakeIndexUpdateInfo(const int64_t aIndexID, const Key& aKey,
-                                    const nsCString& aLocale,
-                                    ErrorResult* const aRv) {
+Result<IndexUpdateInfo, nsresult> MakeIndexUpdateInfo(
+    const int64_t aIndexID, const Key& aKey, const nsCString& aLocale) {
   IndexUpdateInfo indexUpdateInfo;
   indexUpdateInfo.indexId() = aIndexID;
   indexUpdateInfo.value() = aKey;
   if (!aLocale.IsEmpty()) {
-    auto result = aKey.ToLocaleAwareKey(aLocale);
-    if (!result.Is(Ok)) {
-      *aRv = result.ExtractErrorResult(
-          InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR>);
-    }
-    indexUpdateInfo.localizedValue() = result.Unwrap();
+    IDB_TRY_UNWRAP(indexUpdateInfo.localizedValue(),
+                   aKey.ToLocaleAwareKey(aLocale));
   }
   return indexUpdateInfo;
 }
@@ -521,8 +516,11 @@ void IDBObjectStore::AppendIndexUpdateInfo(
       return;
     }
 
-    *aUpdateInfoArray->AppendElement() =
-        MakeIndexUpdateInfo(aIndexID, key, aLocale, aRv);
+    IDB_TRY_UNWRAP(auto item, MakeIndexUpdateInfo(aIndexID, key, aLocale),
+                   QM_VOID,
+                   [aRv](const nsresult tryResult) { aRv->Throw(tryResult); });
+
+    aUpdateInfoArray->AppendElement(std::move(item));
     return;
   }
 
@@ -575,33 +573,37 @@ void IDBObjectStore::AppendIndexUpdateInfo(
 
       Key value;
       auto result = value.SetFromJSVal(aCx, arrayItem);
-      if (!result.Is(Ok) || value.IsUnset()) {
+      if (result.isErr() || value.IsUnset()) {
         // Not a value we can do anything with, ignore it.
-        if (result.Is(SpecialValues::Exception)) {
-          result.AsException().SuppressException();
+        if (result.isErr() &&
+            result.inspectErr().Is(SpecialValues::Exception)) {
+          result.unwrapErr().AsException().SuppressException();
         }
         continue;
       }
 
-      *aUpdateInfoArray->AppendElement() =
-          MakeIndexUpdateInfo(aIndexID, value, aLocale, aRv);
-      if (aRv->Failed()) {
-        return;
-      }
+      IDB_TRY_UNWRAP(
+          auto item, MakeIndexUpdateInfo(aIndexID, value, aLocale), QM_VOID,
+          [aRv](const nsresult tryResult) { aRv->Throw(tryResult); });
+
+      aUpdateInfoArray->AppendElement(std::move(item));
     }
   } else {
     Key value;
     auto result = value.SetFromJSVal(aCx, val);
-    if (!result.Is(Ok) || value.IsUnset()) {
+    if (result.isErr() || value.IsUnset()) {
       // Not a value we can do anything with, ignore it.
-      if (result.Is(SpecialValues::Exception)) {
-        result.AsException().SuppressException();
+      if (result.isErr() && result.inspectErr().Is(SpecialValues::Exception)) {
+        result.unwrapErr().AsException().SuppressException();
       }
       return;
     }
 
-    *aUpdateInfoArray->AppendElement() =
-        MakeIndexUpdateInfo(aIndexID, value, aLocale, aRv);
+    IDB_TRY_UNWRAP(auto item, MakeIndexUpdateInfo(aIndexID, value, aLocale),
+                   QM_VOID,
+                   [aRv](const nsresult tryResult) { aRv->Throw(tryResult); });
+
+    aUpdateInfoArray->AppendElement(std::move(item));
   }
 }
 
@@ -676,8 +678,8 @@ void IDBObjectStore::GetAddInfo(JSContext* aCx, ValueWrapper& aValueWrapper,
   if (!HasValidKeyPath()) {
     // Out-of-line keys must be passed in.
     auto result = aKey.SetFromJSVal(aCx, aKeyVal);
-    if (!result.Is(Ok)) {
-      aRv = result.ExtractErrorResult(
+    if (result.isErr()) {
+      aRv = result.unwrapErr().ExtractErrorResult(
           InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
       return;
     }
@@ -826,7 +828,7 @@ RefPtr<IDBRequest> IDBObjectStore::AddOrPut(JSContext* aCx,
   commonParams.indexUpdateInfos() = std::move(updateInfos);
 
   // Convert any blobs or mutable files into FileAddInfo.
-  IDB_TRY_VAR(
+  IDB_TRY_UNWRAP(
       commonParams.fileAddInfos(),
       TransformIntoNewArrayAbortOnErr(
           cloneWriteInfo.mFiles,
@@ -882,7 +884,7 @@ RefPtr<IDBRequest> IDBObjectStore::AddOrPut(JSContext* aCx,
             }
           },
           fallible),
-      nullptr, [&aRv](auto& result) { aRv = result.unwrapErr(); });
+      nullptr, [&aRv](const nsresult result) { aRv = result; });
 
   const auto& params =
       aOverwrite ? RequestParams{ObjectStorePutParams(std::move(commonParams))}

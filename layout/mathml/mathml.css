@@ -37,12 +37,6 @@ math[display="inline" i] {
   display: inline;
   math-style: compact;
 }
-math[displaystyle="false" i] {
-  math-style: compact;
-}
-math[displaystyle="true" i] {
-  math-style: normal;
-}
 
 /**************************************************************************/
 /* Token elements                                                         */
@@ -88,7 +82,7 @@ ms[rquote]:after {
    - mathvariant -> -moz-math-variant
    - scriptsizemultiplier -> -moz-script-size-multiplier
    - scriptminsize -> -moz-script-min-size
-   - scriptlevel -> -moz-script-level
+   - scriptlevel -> math-depth
    - mathsize -> font-size
    - mathcolor -> color
    - mathbackground -> background
@@ -227,29 +221,19 @@ mtable[framespacing] > mtr > mtd {
   and display attributes. See the <math> section above.
 */
 
-/*
-  Map mstyle@displaystyle to math-style.
-*/
-mstyle[displaystyle="false" i] {
-  math-style: compact;
-}
-mstyle[displaystyle="true" i] {
-  math-style: normal;
-}
-
 /*  munder, mover and munderover change the scriptlevels of their children
    using -moz-math-increment-script-level because regular CSS rules are
    insufficient to control when the scriptlevel should be incremented. All other
    cases can be described using regular CSS, so we do it this way because it's
    more efficient and less code. */
-:-moz-math-increment-script-level { -moz-script-level: +1; }
+:-moz-math-increment-script-level { math-depth: add(1); }
 
 /*
    The mfrac element sets displaystyle to "false", or if it was already false
    increments scriptlevel by 1, within numerator and denominator.
 */
 mfrac > * {
-    -moz-script-level: auto;
+    math-depth: auto-add;
     math-style: compact;
 }
 
@@ -259,7 +243,7 @@ mfrac > * {
    The msqrt element leaves both attributes unchanged within its argument.
 */
 mroot > :not(:first-child) {
-    -moz-script-level: +2;
+    math-depth: add(2);
     math-style: compact;
 }
 
@@ -283,7 +267,7 @@ msub > :not(:first-child),
 msup > :not(:first-child),
 msubsup > :not(:first-child),
 mmultiscripts > :not(:first-child) {
-    -moz-script-level: +1;
+    math-depth: add(1);
     math-style: compact;
 }
 
@@ -313,14 +297,13 @@ munderover > :not(:first-child) {
    mtable element sets displaystyle to "false" within the table elements.
 */
 mtable { math-style: compact; }
-mtable[displaystyle="true" i] { math-style: normal; }
 
 /*
    The mscarries element sets displaystyle to "false", and increments
    scriptlevel by 1, so the children are typically displayed in a smaller font.
    XXXfredw: This element is not implemented yet. See bug 534967.
 mscarries {
-  -moz-script-level: +1;
+  math-depth: add(1);
   math-style: compact;
 }
 */

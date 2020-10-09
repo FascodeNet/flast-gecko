@@ -10,9 +10,11 @@
 
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
+#include "jit/CalleeToken.h"
 #include "jit/FixedList.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitcodeMap.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/Linker.h"
 #ifdef JS_ION_PERF
@@ -196,6 +198,7 @@ MethodStatus BaselineCompiler::compile() {
   JitSpew(JitSpew_Codegen, "# Emitting baseline code for script %s:%u:%u",
           script->filename(), script->lineno(), script->column());
 
+  AutoIncrementalTimer timer(cx->realm()->timers.baselineCompileTime);
   TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
   TraceLoggerEvent scriptEvent(TraceLogger_AnnotateScripts, script);
   AutoTraceLog logScript(logger, scriptEvent);
@@ -475,7 +478,8 @@ void BaselineInterpreterCodeGen::emitInitializeLocals() {
   Register scratch = R0.scratchReg();
   loadScript(scratch);
   masm.loadPtr(Address(scratch, JSScript::offsetOfSharedData()), scratch);
-  masm.loadPtr(Address(scratch, RuntimeScriptData::offsetOfISD()), scratch);
+  masm.loadPtr(Address(scratch, SharedImmutableScriptData::offsetOfISD()),
+               scratch);
   masm.load32(Address(scratch, ImmutableScriptData::offsetOfNfixed()), scratch);
 
   Label top, done;
@@ -834,7 +838,8 @@ void BaselineInterpreterCodeGen::subtractScriptSlotsSize(Register reg,
   MOZ_ASSERT(reg != scratch);
   loadScript(scratch);
   masm.loadPtr(Address(scratch, JSScript::offsetOfSharedData()), scratch);
-  masm.loadPtr(Address(scratch, RuntimeScriptData::offsetOfISD()), scratch);
+  masm.loadPtr(Address(scratch, SharedImmutableScriptData::offsetOfISD()),
+               scratch);
   masm.load32(Address(scratch, ImmutableScriptData::offsetOfNslots()), scratch);
   static_assert(sizeof(Value) == 8,
                 "shift by 3 below assumes Value is 8 bytes");
@@ -913,6 +918,8 @@ static gc::Cell* GetScriptGCThing(JSScript* script, jsbytecode* pc,
       return script->getAtom(pc);
     case ScriptGCThingType::RegExp:
       return script->getRegExp(pc);
+    case ScriptGCThingType::Object:
+      return script->getObject(pc);
     case ScriptGCThingType::Function:
       return script->getFunction(pc);
     case ScriptGCThingType::Scope:
@@ -957,6 +964,7 @@ void BaselineInterpreterCodeGen::loadScriptGCThing(ScriptGCThingType type,
       masm.xorPtr(Imm32(2), dest);
       break;
     case ScriptGCThingType::RegExp:
+    case ScriptGCThingType::Object:
     case ScriptGCThingType::Function:
       // No-op because GCCellPtr tag bits are zero for objects.
       static_assert(uintptr_t(TraceKind::Object) == 0,
@@ -1181,7 +1189,8 @@ void BaselineInterpreterCodeGen::emitInitFrameFields(Register nonFunctionEnv) {
 
   // Initialize interpreter pc.
   masm.loadPtr(Address(scratch1, JSScript::offsetOfSharedData()), scratch1);
-  masm.loadPtr(Address(scratch1, RuntimeScriptData::offsetOfISD()), scratch1);
+  masm.loadPtr(Address(scratch1, SharedImmutableScriptData::offsetOfISD()),
+               scratch1);
   masm.addPtr(Imm32(ImmutableScriptData::offsetOfCode()), scratch1);
 
   if (HasInterpreterPCReg()) {
@@ -2602,38 +2611,18 @@ bool BaselineInterpreterCodeGen::emit_Symbol() {
   return true;
 }
 
-JSObject* BaselineCompilerHandler::maybeNoCloneSingletonObject() {
-  Realm* realm = script()->realm();
-  if (realm->creationOptions().cloneSingletons()) {
-    return nullptr;
-  }
-
-  realm->behaviors().setSingletonsAsValues();
-  return script()->getObject(pc());
+template <>
+bool BaselineCompilerCodeGen::emit_Object() {
+  frame.push(ObjectValue(*handler.script()->getObject(handler.pc())));
+  return true;
 }
 
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_Object() {
-  // If we know we don't have to clone the object literal, just push it
-  // directly. Note that the interpreter always does the VM call; that's fine
-  // because this op is only used in run-once code.
-  if (JSObject* obj = handler.maybeNoCloneSingletonObject()) {
-    frame.push(ObjectValue(*obj));
-    return true;
-  }
-
-  prepareVMCall();
-
-  pushBytecodePCArg();
-  pushScriptArg();
-
-  using Fn = JSObject* (*)(JSContext*, HandleScript, jsbytecode*);
-  if (!callVM<Fn, SingletonObjectLiteralOperation>()) {
-    return false;
-  }
-
-  // Box and push return value.
-  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
+template <>
+bool BaselineInterpreterCodeGen::emit_Object() {
+  Register scratch1 = R0.scratchReg();
+  Register scratch2 = R1.scratchReg();
+  loadScriptGCThing(ScriptGCThingType::Object, scratch1, scratch2);
+  masm.tagValue(JSVAL_TYPE_OBJECT, scratch1, R0);
   frame.push(R0);
   return true;
 }
@@ -4804,7 +4793,8 @@ void BaselineCodeGen<Handler>::emitInterpJumpToResumeEntry(Register script,
                                                            Register scratch) {
   // Load JSScript::immutableScriptData() into |script|.
   masm.loadPtr(Address(script, JSScript::offsetOfSharedData()), script);
-  masm.loadPtr(Address(script, RuntimeScriptData::offsetOfISD()), script);
+  masm.loadPtr(Address(script, SharedImmutableScriptData::offsetOfISD()),
+               script);
 
   // Load the resume pcOffset in |resumeIndex|.
   masm.load32(

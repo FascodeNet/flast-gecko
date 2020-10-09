@@ -1563,8 +1563,8 @@ function _loadURI(browser, uri, params = {}) {
       browser.webNavigation.loadURI(uri, loadURIOptions);
     } else {
       // Check if the current browser is allowed to unload.
-      let { permitUnload, timedOut } = browser.permitUnload();
-      if (!timedOut && !permitUnload) {
+      let { permitUnload } = browser.permitUnload();
+      if (!permitUnload) {
         return;
       }
 
@@ -2098,9 +2098,11 @@ var gBrowserInit = {
           child => !("toplevel_name" in child)
         );
         if (children.length) {
-          let managedBookmarksButton = document.getElementById(
-            "managed-bookmarks"
+          let managedBookmarksButton = document.createXULElement(
+            "toolbarbutton"
           );
+          managedBookmarksButton.setAttribute("id", "managed-bookmarks");
+          managedBookmarksButton.setAttribute("class", "bookmark-item");
           let toplevel = managedBookmarks.find(
             element => "toplevel_name" in element
           );
@@ -2109,9 +2111,58 @@ var gBrowserInit = {
               "label",
               toplevel.toplevel_name
             );
-            managedBookmarksButton.removeAttribute("data-l10n-id");
+          } else {
+            managedBookmarksButton.setAttribute(
+              "data-l10n-id",
+              "managed-bookmarks"
+            );
           }
-          managedBookmarksButton.hidden = false;
+          managedBookmarksButton.setAttribute("context", "placesContext");
+          managedBookmarksButton.setAttribute("container", "true");
+          managedBookmarksButton.setAttribute("removable", "false");
+          managedBookmarksButton.setAttribute("type", "menu");
+
+          let managedBookmarksPopup = document.createXULElement("menupopup");
+          managedBookmarksPopup.setAttribute("id", "managed-bookmarks-popup");
+          managedBookmarksPopup.setAttribute(
+            "oncommand",
+            "PlacesToolbarHelper.openManagedBookmark(event);"
+          );
+          managedBookmarksPopup.setAttribute(
+            "onclick",
+            "checkForMiddleClick(this, event);"
+          );
+          managedBookmarksPopup.setAttribute(
+            "ondragover",
+            "event.dataTransfer.effectAllowed='none';"
+          );
+          managedBookmarksPopup.setAttribute(
+            "ondragstart",
+            "PlacesToolbarHelper.onDragStartManaged(event);"
+          );
+          managedBookmarksPopup.setAttribute(
+            "onpopupshowing",
+            "PlacesToolbarHelper.populateManagedBookmarks(this);"
+          );
+          managedBookmarksPopup.setAttribute("placespopup", "true");
+          managedBookmarksPopup.setAttribute("is", "places-popup");
+          managedBookmarksButton.appendChild(managedBookmarksPopup);
+
+          gNavToolbox.palette.appendChild(managedBookmarksButton);
+
+          CustomizableUI.ensureWidgetPlacedInWindow(
+            "managed-bookmarks",
+            window
+          );
+
+          // Add button if it doesn't exist
+          if (!CustomizableUI.getPlacementOfWidget("managed-bookmarks")) {
+            CustomizableUI.addWidgetToArea(
+              "managed-bookmarks",
+              CustomizableUI.AREA_BOOKMARKS,
+              0
+            );
+          }
         }
       }
     }
@@ -4319,25 +4370,24 @@ const BrowserSearch = {
    *
    * @param searchText
    *        The search terms to use for the search.
-   *
    * @param where
    *        String indicating where the search should load. Most commonly used
    *        are 'tab' or 'window', defaults to 'current'.
-   *
    * @param usePrivate
    *        Whether to use the Private Browsing mode default search engine.
    *        Defaults to `false`.
-   *
    * @param purpose [optional]
    *        A string meant to indicate the context of the search request. This
    *        allows the search service to provide a different nsISearchSubmission
    *        depending on e.g. where the search is triggered in the UI.
-   *
    * @param triggeringPrincipal
    *        The principal to use for a new window or tab.
-   *
    * @param csp
    *        The content security policy to use for a new window or tab.
+   * @param engine [optional]
+   *        The search engine to use for the search.
+   * @param tab [optional]
+   *        The tab to show the search result.
    *
    * @return engine The search engine used to perform a search, or null if no
    *                search was performed.
@@ -4348,7 +4398,9 @@ const BrowserSearch = {
     usePrivate,
     purpose,
     triggeringPrincipal,
-    csp
+    csp,
+    engine = null,
+    tab = null
   ) {
     if (!triggeringPrincipal) {
       throw new Error(
@@ -4356,9 +4408,11 @@ const BrowserSearch = {
       );
     }
 
-    let engine = usePrivate
-      ? await Services.search.getDefaultPrivate()
-      : await Services.search.getDefault();
+    if (!engine) {
+      engine = usePrivate
+        ? await Services.search.getDefaultPrivate()
+        : await Services.search.getDefault();
+    }
 
     let submission = engine.getSubmission(searchText, null, purpose); // HTML response
 
@@ -4373,6 +4427,7 @@ const BrowserSearch = {
     let inBackground = Services.prefs.getBoolPref(
       "browser.search.context.loadInBackground"
     );
+
     openLinkIn(submission.uri.spec, where || "current", {
       private: usePrivate && !PrivateBrowsingUtils.isWindowPrivate(window),
       postData: submission.postData,
@@ -4380,6 +4435,7 @@ const BrowserSearch = {
       relatedToCurrent: true,
       triggeringPrincipal,
       csp,
+      targetBrowser: tab?.linkedBrowser,
     });
 
     return { engine, url: submission.uri };
@@ -4424,6 +4480,26 @@ const BrowserSearch = {
     if (engine) {
       BrowserSearch.recordSearchInTelemetry(engine, "system", { url });
     }
+  },
+
+  /**
+   * Perform a search initiated from an extension.
+   */
+  async loadSearchFromExtension(terms, engine, tab, triggeringPrincipal) {
+    const result = await BrowserSearch._loadSearch(
+      terms,
+      tab ? "current" : "tab",
+      PrivateBrowsingUtils.isWindowPrivate(window),
+      "webextension",
+      triggeringPrincipal,
+      null,
+      engine,
+      tab
+    );
+
+    BrowserSearch.recordSearchInTelemetry(result.engine, "webextension", {
+      url: result.url,
+    });
   },
 
   pasteAndSearch(event) {
@@ -5007,6 +5083,7 @@ var XULBrowserWindow = {
     return (this._elementsForTextBasedTypes = [
       document.getElementById("pageStyleMenu"),
       document.getElementById("context-viewpartialsource-selection"),
+      document.getElementById("context-print-selection"),
     ]);
   },
   get _elementsForFind() {
@@ -5385,7 +5462,7 @@ var XULBrowserWindow = {
     // Always enable find commands in PDF documents, otherwise do it only for
     // text documents whose location is not in the blacklist.
     let enableFind =
-      browser.documentContentType == "application/pdf" ||
+      browser.contentPrincipal?.spec == "resource://pdf.js/web/viewer.html" ||
       (isText && BrowserUtils.canFindInPage(gBrowser.currentURI.spec));
     for (let element of this._elementsForFind) {
       if (enableFind) {
@@ -6433,6 +6510,29 @@ function onViewToolbarCommand(aEvent) {
   CustomizableUI.setToolbarVisibility(toolbarId, isVisible);
   BrowserUsageTelemetry.recordToolbarVisibility(toolbarId, isVisible, menuId);
   updateToggleControlLabel(node);
+}
+
+function toggleBookmarksToolbar() {
+  // We only show the bookmarks toolbar if the shortcut is enabled.
+  const shortcutEnabled = Services.prefs.getBoolPref(
+    "browser.toolbars.bookmarks.2h2020",
+    false
+  );
+
+  if (!shortcutEnabled) {
+    PlacesCommandHook.showPlacesOrganizer("UnfiledBookmarks");
+    return;
+  }
+
+  let toolbar = document.getElementById("PersonalToolbar");
+  let isVisible = toolbar.getAttribute("collapsed") === "true";
+
+  CustomizableUI.setToolbarVisibility("PersonalToolbar", isVisible);
+  BrowserUsageTelemetry.recordToolbarVisibility(
+    "PersonalToolbar",
+    isVisible,
+    "shortcut"
+  );
 }
 
 function setToolbarVisibility(toolbar, isVisible, persist = true) {
@@ -7696,14 +7796,26 @@ var WebAuthnPromptHelper = {
     let mgr = aSubject.QueryInterface(Ci.nsIU2FTokenManager);
     let data = JSON.parse(aData);
 
+    // If we receive a cancel, it might be a WebAuthn prompt starting in another
+    // window, and the other window's browsing context will send out the
+    // cancellations, so any cancel action we get should prompt us to cancel.
+    if (data.action == "cancel") {
+      this.cancel(data);
+    }
+
+    if (
+      data.browsingContextId !== gBrowser.selectedBrowser.browsingContext.id
+    ) {
+      // Must belong to some other window.
+      return;
+    }
+
     if (data.action == "register") {
       this.register(mgr, data);
     } else if (data.action == "register-direct") {
       this.registerDirect(mgr, data);
     } else if (data.action == "sign") {
       this.sign(mgr, data);
-    } else if (data.action == "cancel") {
-      this.cancel(data);
     }
   },
 
@@ -7771,6 +7883,7 @@ var WebAuthnPromptHelper = {
 
     options.name = origin;
     options.hideClose = true;
+    options.persistent = true;
     options.eventCallback = event => {
       if (event == "removed") {
         this._current = null;
@@ -7830,27 +7943,13 @@ function CanCloseWindow() {
     return true;
   }
 
-  let timedOutProcesses = new WeakSet();
-
   for (let browser of gBrowser.browsers) {
     // Don't instantiate lazy browsers.
     if (!browser.isConnected) {
       continue;
     }
 
-    let pmm = browser.messageManager.processMessageManager;
-
-    if (timedOutProcesses.has(pmm)) {
-      continue;
-    }
-
-    let { permitUnload, timedOut } = browser.permitUnload();
-
-    if (timedOut) {
-      timedOutProcesses.add(pmm);
-      continue;
-    }
-
+    let { permitUnload } = browser.permitUnload();
     if (!permitUnload) {
       return false;
     }
@@ -9398,10 +9497,8 @@ var ConfirmationHint = {
 };
 
 function reportRemoteSubframesEnabledTelemetry() {
-  let autostart = Services.prefs.getBoolPref("fission.autostart");
-
   let categoryLabel = gFissionBrowser ? "Enabled" : "Disabled";
-  if (autostart == gFissionBrowser) {
+  if (gFissionBrowser == Services.appinfo.fissionAutostart) {
     categoryLabel += "ByAutostart";
   } else {
     categoryLabel += "ByUser";
@@ -9416,8 +9513,7 @@ if (AppConstants.NIGHTLY_BUILD) {
   var FissionTestingUI = {
     init() {
       // Handle the Fission/Non-Fission testing UI.
-      let autostart = Services.prefs.getBoolPref("fission.autostart");
-      if (!autostart) {
+      if (!Services.appinfo.fissionAutostart) {
         return;
       }
 

@@ -163,24 +163,12 @@ static inline bool IsThingPoisoned(T* thing) {
   }
   return false;
 }
-
-bool js::IsTracerKind(JSTracer* trc, JS::CallbackTracer::TracerKind kind) {
-  return trc->isCallbackTracer() &&
-         trc->asCallbackTracer()->getTracerKind() == kind;
-}
 #endif
-
-bool ThingIsPermanentAtomOrWellKnownSymbol(JSString* str) {
-  return str->isPermanentAtom();
-}
-bool ThingIsPermanentAtomOrWellKnownSymbol(JS::Symbol* sym) {
-  return sym->isWellKnownSymbol();
-}
 
 template <typename T>
 static inline bool IsOwnedByOtherRuntime(JSRuntime* rt, T thing) {
   bool other = thing->runtimeFromAnyThread() != rt;
-  MOZ_ASSERT_IF(other, ThingIsPermanentAtomOrWellKnownSymbol(thing) ||
+  MOZ_ASSERT_IF(other, thing->isPermanentAndMayBeShared() ||
                            thing->zoneFromAnyThread()->isSelfHostingZone());
   return other;
 }
@@ -191,12 +179,8 @@ void js::CheckTracedThing(JSTracer* trc, T* thing) {
   MOZ_ASSERT(trc);
   MOZ_ASSERT(thing);
 
-  if (!trc->checkEdges()) {
-    return;
-  }
-
   if (IsForwarded(thing)) {
-    MOZ_ASSERT(IsTracerKind(trc, JS::CallbackTracer::TracerKind::Moving) ||
+    MOZ_ASSERT(IsTracerKind(trc, JS::TracerKind::Moving) ||
                trc->isTenuringTracer());
     thing = Forwarded(thing);
   }
@@ -219,21 +203,18 @@ void js::CheckTracedThing(JSTracer* trc, T* thing) {
   MOZ_ASSERT(zone->runtimeFromAnyThread() == rt);
 
   bool isGcMarkingTracer = trc->isMarkingTracer();
-  bool isUnmarkGrayTracer =
-      IsTracerKind(trc, JS::CallbackTracer::TracerKind::UnmarkGray);
-  bool isClearEdgesTracer =
-      IsTracerKind(trc, JS::CallbackTracer::TracerKind::ClearEdges);
+  bool isUnmarkGrayTracer = IsTracerKind(trc, JS::TracerKind::UnmarkGray);
+  bool isClearEdgesTracer = IsTracerKind(trc, JS::TracerKind::ClearEdges);
 
   if (TlsContext.get()->isMainThreadContext()) {
     // If we're on the main thread we must have access to the runtime and zone.
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
     MOZ_ASSERT(CurrentThreadCanAccessZone(zone));
   } else {
-    MOZ_ASSERT(
-        isGcMarkingTracer || isUnmarkGrayTracer || isClearEdgesTracer ||
-        IsTracerKind(trc, JS::CallbackTracer::TracerKind::Moving) ||
-        IsTracerKind(trc, JS::CallbackTracer::TracerKind::GrayBuffering) ||
-        IsTracerKind(trc, JS::CallbackTracer::TracerKind::Sweeping));
+    MOZ_ASSERT(isGcMarkingTracer || isUnmarkGrayTracer || isClearEdgesTracer ||
+               IsTracerKind(trc, JS::TracerKind::Moving) ||
+               IsTracerKind(trc, JS::TracerKind::GrayBuffering) ||
+               IsTracerKind(trc, JS::TracerKind::Sweeping));
     MOZ_ASSERT_IF(!isClearEdgesTracer, CurrentThreadIsPerformingGC());
   }
 
@@ -408,9 +389,9 @@ void js::gc::AssertRootMarkingPhase(JSTracer* trc) {
 /*** Tracing Interface ******************************************************/
 
 template <typename T>
-bool DoCallback(JS::CallbackTracer* trc, T** thingp, const char* name);
+bool DoCallback(GenericTracer* trc, T** thingp, const char* name);
 template <typename T>
-bool DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name);
+bool DoCallback(GenericTracer* trc, T* thingp, const char* name);
 template <typename T>
 void DoMarking(GCMarker* gcmarker, T* thing);
 template <typename T>
@@ -601,7 +582,7 @@ template void js::TraceWeakMapKeyEdgeInternal<BaseScript>(JSTracer*, Zone*,
 template <typename T>
 void js::TraceProcessGlobalRoot(JSTracer* trc, T* thing, const char* name) {
   AssertRootMarkingPhase(trc);
-  MOZ_ASSERT(ThingIsPermanentAtomOrWellKnownSymbol(thing));
+  MOZ_ASSERT(thing->isPermanentAndMayBeShared());
 
   // We have to mark permanent atoms and well-known symbols through a special
   // method because the default DoMarking implementation automatically skips
@@ -693,16 +674,19 @@ bool js::gc::TraceEdgeInternal(JSTracer* trc, T* thingp, const char* name) {
                 "Only the base cell layout types are allowed into "
                 "marking/tracing internals");
 #undef IS_SAME_TYPE_OR
+
   if (trc->isMarkingTracer()) {
     DoMarking(GCMarker::fromTracer(trc), *thingp);
     return true;
   }
+
   if (trc->isTenuringTracer()) {
     static_cast<TenuringTracer*>(trc)->traverse(thingp);
     return true;
   }
-  MOZ_ASSERT(trc->isCallbackTracer());
-  return DoCallback(trc->asCallbackTracer(), thingp, name);
+
+  MOZ_ASSERT(trc->isGenericTracer());
+  return DoCallback(trc->asGenericTracer(), thingp, name);
 }
 
 template <typename T>
@@ -1013,7 +997,7 @@ JS_PUBLIC_API void js::gc::PerformIncrementalReadBarrier(JS::GCCellPtr thing) {
 // tracing will not recurse.
 template <typename T>
 void js::GCMarker::markAndTraceChildren(T* thing) {
-  if (ThingIsPermanentAtomOrWellKnownSymbol(thing)) {
+  if (thing->isPermanentAndMayBeShared()) {
     return;
   }
   if (mark(thing)) {
@@ -1045,7 +1029,7 @@ void GCMarker::traverse(RegExpShared* thing) {
 // manual inlining, implemented by eagerlyTraceChildren.
 template <typename T>
 void js::GCMarker::markAndScan(T* thing) {
-  if (ThingIsPermanentAtomOrWellKnownSymbol(thing)) {
+  if (thing->isPermanentAndMayBeShared()) {
     return;
   }
   if (mark(thing)) {
@@ -1109,16 +1093,16 @@ template <typename S, typename T>
 static void CheckTraversedEdge(S source, T* target) {
   // Atoms and Symbols do not have or mark their internal pointers,
   // respectively.
-  MOZ_ASSERT(!ThingIsPermanentAtomOrWellKnownSymbol(source));
+  MOZ_ASSERT(!source->isPermanentAndMayBeShared());
 
   // The Zones must match, unless the target is an atom.
   MOZ_ASSERT_IF(
-      !ThingIsPermanentAtomOrWellKnownSymbol(target),
+      !target->isPermanentAndMayBeShared(),
       target->zone()->isAtomsZone() || target->zone() == source->zone());
 
   // If we are marking an atom, that atom must be marked in the source zone's
   // atom bitmap.
-  MOZ_ASSERT_IF(!ThingIsPermanentAtomOrWellKnownSymbol(target) &&
+  MOZ_ASSERT_IF(!target->isPermanentAndMayBeShared() &&
                     target->zone()->isAtomsZone() &&
                     !source->zone()->isAtomsZone(),
                 target->runtimeFromAnyThread()->gc.atomMarking.atomIsMarked(
@@ -1126,7 +1110,7 @@ static void CheckTraversedEdge(S source, T* target) {
 
   // Atoms and Symbols do not have access to a compartment pointer, or we'd need
   // to adjust the subsequent check to catch that case.
-  MOZ_ASSERT_IF(ThingIsPermanentAtomOrWellKnownSymbol(target),
+  MOZ_ASSERT_IF(target->isPermanentAndMayBeShared(),
                 !target->maybeCompartment());
   MOZ_ASSERT_IF(target->zoneFromAnyThread()->isAtomsZone(),
                 !target->maybeCompartment());
@@ -1663,9 +1647,8 @@ void js::gc::VisitTraceList(JSTracer* trc, JSObject* obj,
                             const uint32_t* traceList, uint8_t* memory) {
   if (trc->isMarkingTracer()) {
     auto* marker = GCMarker::fromTracer(trc);
-    VisitTraceListWithFunctor(
-        [=](auto thingp) { marker->traverseEdge(obj, *thingp); }, traceList,
-        memory);
+    VisitTraceListWithFunctor([=](auto thingp) { DoMarking(marker, *thingp); },
+                              traceList, memory);
     return;
   }
 
@@ -2462,13 +2445,15 @@ inline void MarkStackIter::nextArray() {
 /*** GCMarker ***************************************************************/
 
 /*
- * ExpandWeakMaps: the GC is recomputing the liveness of WeakMap entries by
- * expanding each live WeakMap into its constituent key->value edges, a table
- * of which will be consulted in a later phase whenever marking a potential
- * key.
+ * WeakMapTraceAction::Expand: the GC is recomputing the liveness of WeakMap
+ * entries by expanding each live WeakMap into its constituent key->value edges,
+ * a table of which will be consulted in a later phase whenever marking a
+ * potential key.
  */
 GCMarker::GCMarker(JSRuntime* rt)
-    : JSTracer(rt, JSTracer::TracerKindTag::Marking, ExpandWeakMaps),
+    : JSTracer(rt, JS::TracerKind::Marking,
+               JS::TraceOptions(JS::WeakMapTraceAction::Expand,
+                                JS::WeakEdgeTraceAction::Skip)),
       stack(),
       auxStack(),
       mainStackColor(MarkColor::Black),
@@ -2486,7 +2471,6 @@ GCMarker::GCMarker(JSRuntime* rt)
 #endif
 {
   setMarkColorUnchecked(MarkColor::Black);
-  setTraceWeakEdges(false);
 }
 
 bool GCMarker::init(JSGCMode gcMode) {
@@ -2619,7 +2603,7 @@ void GCMarker::repush(JSObject* obj) {
 }
 
 bool GCMarker::enterWeakMarkingMode() {
-  MOZ_ASSERT(weakMapAction() == ExpandWeakMaps);
+  MOZ_ASSERT(weakMapAction() == JS::WeakMapTraceAction::Expand);
   MOZ_ASSERT(state != MarkingState::WeakMarking);
   if (state == MarkingState::IterativeMarking) {
     return false;
@@ -2768,7 +2752,7 @@ void GCMarker::markDelayedChildren(Arena* arena, MarkColor color) {
   AutoSetMarkColor setColor(*this, color);
   for (ArenaCellIterUnderGC cell(arena); !cell.done(); cell.next()) {
     if (cell->isMarked(color)) {
-      js::TraceChildren(this, cell, kind);
+      JS::TraceChildren(this, JS::GCCellPtr(cell, kind));
     }
   }
 }
@@ -3807,7 +3791,7 @@ static inline void CheckIsMarkedThing(T* thingp) {
 
   // Allow any thread access to uncollected things.
   T thing = *thingp;
-  if (ThingIsPermanentAtomOrWellKnownSymbol(thing)) {
+  if (thing->isPermanentAndMayBeShared()) {
     return;
   }
 
@@ -3888,8 +3872,7 @@ bool js::gc::IsAboutToBeFinalizedInternal(T** thingp) {
   JSRuntime* rt = thing->runtimeFromAnyThread();
 
   /* Permanent atoms are never finalized by non-owning runtimes. */
-  if (ThingIsPermanentAtomOrWellKnownSymbol(thing) &&
-      TlsContext.get()->runtime() != rt) {
+  if (thing->isPermanentAndMayBeShared() && TlsContext.get()->runtime() != rt) {
     return false;
   }
 
@@ -3930,7 +3913,7 @@ inline bool SweepingTracer::sweepEdge(T** thingp) {
   T* thing = *thingp;
   JSRuntime* rt = thing->runtimeFromAnyThread();
 
-  if (ThingIsPermanentAtomOrWellKnownSymbol(thing) && runtime() != rt) {
+  if (thing->isPermanentAndMayBeShared() && runtime() != rt) {
     return true;
   }
 
@@ -3969,6 +3952,7 @@ bool SweepingTracer::onObjectGroupEdge(ObjectGroup** groupp) {
   return sweepEdge(groupp);
 }
 bool SweepingTracer::onBigIntEdge(BigInt** bip) { return sweepEdge(bip); }
+bool SweepingTracer::onSymbolEdge(JS::Symbol** symp) { return sweepEdge(symp); }
 
 namespace js {
 namespace gc {
@@ -4049,24 +4033,24 @@ JS_FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(INSTANTIATE_INTERNAL_IATBF_FUNCTION)
 
 #ifdef DEBUG
 struct AssertNonGrayTracer final : public JS::CallbackTracer {
-  explicit AssertNonGrayTracer(JSRuntime* rt) : JS::CallbackTracer(rt) {}
-  bool onChild(const JS::GCCellPtr& thing) override {
-    MOZ_ASSERT(!thing.asCell()->isMarkedGray());
-    return true;
-  }
-  // This is used by the UnmarkGray tracer only, and needs to report itself
-  // as the non-gray tracer to not trigger assertions.  Do not use it in another
+  // This is used by the UnmarkGray tracer only, and needs to report itself as
+  // the non-gray tracer to not trigger assertions.  Do not use it in another
   // context without making this more generic.
-  TracerKind getTracerKind() const override { return TracerKind::UnmarkGray; }
+  explicit AssertNonGrayTracer(JSRuntime* rt)
+      : JS::CallbackTracer(rt, JS::TracerKind::UnmarkGray) {}
+  void onChild(const JS::GCCellPtr& thing) override {
+    MOZ_ASSERT(!thing.asCell()->isMarkedGray());
+  }
 };
 #endif
 
 class UnmarkGrayTracer final : public JS::CallbackTracer {
  public:
-  // We set weakMapAction to DoNotTraceWeakMaps because the cycle collector
-  // will fix up any color mismatches involving weakmaps when it runs.
+  // We set weakMapAction to WeakMapTraceAction::Skip because the cycle
+  // collector will fix up any color mismatches involving weakmaps when it runs.
   explicit UnmarkGrayTracer(JSRuntime* rt)
-      : JS::CallbackTracer(rt, DoNotTraceWeakMaps),
+      : JS::CallbackTracer(rt, JS::TracerKind::UnmarkGray,
+                           JS::WeakMapTraceAction::Skip),
         unmarkedAny(false),
         oom(false),
         stack(rt->gc.unmarkGrayStack) {}
@@ -4083,14 +4067,10 @@ class UnmarkGrayTracer final : public JS::CallbackTracer {
   // Stack of cells to traverse.
   Vector<JS::GCCellPtr, 0, SystemAllocPolicy>& stack;
 
-  bool onChild(const JS::GCCellPtr& thing) override;
-
-#ifdef DEBUG
-  TracerKind getTracerKind() const override { return TracerKind::UnmarkGray; }
-#endif
+  void onChild(const JS::GCCellPtr& thing) override;
 };
 
-bool UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
+void UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
   Cell* cell = thing.asCell();
 
   // Cells in the nursery cannot be gray, and nor can certain kinds of tenured
@@ -4100,9 +4080,9 @@ bool UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
 #ifdef DEBUG
     MOZ_ASSERT(!cell->isMarkedGray());
     AssertNonGrayTracer nongray(runtime());
-    TraceChildren(&nongray, cell, thing.kind());
+    JS::TraceChildren(&nongray, thing);
 #endif
-    return true;
+    return;
   }
 
   TenuredCell& tenured = cell->asTenured();
@@ -4120,11 +4100,11 @@ bool UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
       MOZ_ASSERT(tmp == cell);
       unmarkedAny = true;
     }
-    return true;
+    return;
   }
 
   if (!tenured.isMarkedGray()) {
-    return true;
+    return;
   }
 
   tenured.markBlack();
@@ -4133,7 +4113,6 @@ bool UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
   if (!stack.append(thing)) {
     oom = true;
   }
-  return true;
 }
 
 void UnmarkGrayTracer::unmark(JS::GCCellPtr cell) {
@@ -4176,6 +4155,10 @@ JS_FRIEND_API bool JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr thing) {
   gcstats::AutoPhase innerPhase(rt->gc.stats(),
                                 gcstats::PhaseKind::UNMARK_GRAY);
   return UnmarkGrayGCThingUnchecked(rt, thing);
+}
+
+void js::gc::UnmarkGrayGCThingRecursively(TenuredCell* cell) {
+  JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr(cell, cell->getTraceKind()));
 }
 
 bool js::UnmarkGrayShapeRecursively(Shape* shape) {

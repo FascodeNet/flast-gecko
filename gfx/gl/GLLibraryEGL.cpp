@@ -19,7 +19,6 @@
 #include "mozilla/webrender/RenderThread.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
-#include "nsIGfxInfo.h"
 #include "nsPrintfCString.h"
 #ifdef XP_WIN
 #  include "mozilla/gfx/DeviceManagerDx.h"
@@ -76,7 +75,8 @@ static const char* sEGLExtensionNames[] = {
     "EGL_MOZ_create_context_provoking_vertex_dont_care",
     "EGL_EXT_swap_buffers_with_damage",
     "EGL_KHR_swap_buffers_with_damage",
-    "EGL_EXT_buffer_age"};
+    "EGL_EXT_buffer_age",
+    "EGL_KHR_partial_update"};
 
 PRLibrary* LoadApitraceLibrary() {
   const char* path = nullptr;
@@ -207,26 +207,19 @@ std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplay(
   return ret;
 }
 
-static bool IsAccelAngleSupported(const nsCOMPtr<nsIGfxInfo>& gfxInfo,
-                                  nsACString* const out_failureId) {
+static bool IsAccelAngleSupported(nsACString* const out_failureId) {
   if (wr::RenderThread::IsInRenderThread()) {
     // We can only enter here with WebRender, so assert that this is a
     // WebRender-enabled build.
     return true;
   }
-  int32_t angleSupport;
-  nsCString failureId;
-  gfxUtils::ThreadSafeGetFeatureStatus(gfxInfo, nsIGfxInfo::FEATURE_WEBGL_ANGLE,
-                                       failureId, &angleSupport);
-  if (failureId.IsEmpty() && angleSupport != nsIGfxInfo::FEATURE_STATUS_OK) {
-    // This shouldn't happen, if we see this it's because we've missed
-    // some failure paths
-    failureId = "FEATURE_FAILURE_ACCL_ANGLE_NOT_OK"_ns;
+  if (!gfxVars::AllowWebglAccelAngle()) {
+    if (out_failureId->IsEmpty()) {
+      *out_failureId = "FEATURE_FAILURE_ACCL_ANGLE_NOT_OK"_ns;
+    }
+    return false;
   }
-  if (out_failureId->IsEmpty()) {
-    *out_failureId = failureId;
-  }
-  return (angleSupport == nsIGfxInfo::FEATURE_STATUS_OK);
+  return true;
 }
 
 class AngleErrorReporting {
@@ -599,6 +592,12 @@ bool GLLibraryEGL::Init(nsACString* const out_failureId) {
         END_OF_SYMBOLS};
     (void)fnLoadSymbols(symbols);
   }
+  {
+    const SymLoadStruct symbols[] = {
+        {(PRFuncPtr*)&mSymbols.fSetDamageRegion, {{"eglSetDamageRegionKHR"}}},
+        END_OF_SYMBOLS};
+    (void)fnLoadSymbols(symbols);
+  }
 
   return true;
 }
@@ -711,14 +710,11 @@ std::shared_ptr<EglDisplay> GLLibraryEGL::DefaultDisplay(
 
 std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplay(
     const bool forceAccel, nsACString* const out_failureId) {
-  const nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
-
   std::shared_ptr<EglDisplay> ret;
 
   if (IsExtensionSupported(EGLLibExtension::ANGLE_platform_angle_d3d)) {
     nsCString accelAngleFailureId;
-    bool accelAngleSupport =
-        IsAccelAngleSupported(gfxInfo, &accelAngleFailureId);
+    bool accelAngleSupport = IsAccelAngleSupported(&accelAngleFailureId);
     bool shouldTryAccel = forceAccel || accelAngleSupport;
     bool shouldTryWARP = !forceAccel;  // Only if ANGLE not supported or fails
 

@@ -46,7 +46,6 @@ const contentId = content.docShell.browsingContext.id;
 const curContainer = {
   _frame: null,
   _parentFrame: null,
-  shadowRoot: null,
 
   get frame() {
     return this._frame;
@@ -56,7 +55,6 @@ const curContainer = {
     this._frame = frame;
     this._parentFrame = frame.parent;
     this.id = frame.browsingContext.id;
-    this.shadowRoot = null;
   },
 
   get parentFrame() {
@@ -138,16 +136,15 @@ let isElementSelectedFn = dispatch(isElementSelected);
 let clearElementFn = dispatch(clearElement);
 let isElementDisplayedFn = dispatch(isElementDisplayed);
 let getElementValueOfCssPropertyFn = dispatch(getElementValueOfCssProperty);
-let switchToShadowRootFn = dispatch(switchToShadowRoot);
 let singleTapFn = dispatch(singleTap);
 let performActionsFn = dispatch(performActions);
 let releaseActionsFn = dispatch(releaseActions);
 let actionChainFn = dispatch(actionChain);
 let multiActionFn = dispatch(multiAction);
-let executeFn = dispatch(execute);
-let executeInSandboxFn = dispatch(executeInSandbox);
+let executeScriptFn = dispatch(executeScript);
 let sendKeysToElementFn = dispatch(sendKeysToElement);
 let reftestWaitFn = dispatch(reftestWait);
+let setBrowsingContextIdFn = dispatch(setBrowsingContextId);
 
 function startListeners() {
   eventDispatcher.enable();
@@ -161,8 +158,7 @@ function startListeners() {
     "Marionette:DOM:RemoveEventListener",
     domRemoveEventListener
   );
-  addMessageListener("Marionette:execute", executeFn);
-  addMessageListener("Marionette:executeInSandbox", executeInSandboxFn);
+  addMessageListener("Marionette:executeScript", executeScriptFn);
   addMessageListener("Marionette:findElementContent", findElementContentFn);
   addMessageListener("Marionette:findElementsContent", findElementsContentFn);
   addMessageListener("Marionette:getActiveElement", getActiveElementFn);
@@ -188,10 +184,10 @@ function startListeners() {
   addMessageListener("Marionette:releaseActions", releaseActionsFn);
   addMessageListener("Marionette:sendKeysToElement", sendKeysToElementFn);
   addMessageListener("Marionette:Session:Delete", deleteSession);
+  addMessageListener("Marionette:setBrowsingContextId", setBrowsingContextIdFn);
   addMessageListener("Marionette:singleTap", singleTapFn);
   addMessageListener("Marionette:switchToFrame", switchToFrame);
   addMessageListener("Marionette:switchToParentFrame", switchToParentFrame);
-  addMessageListener("Marionette:switchToShadowRoot", switchToShadowRootFn);
 }
 
 function deregister() {
@@ -201,8 +197,7 @@ function deregister() {
   removeMessageListener("Marionette:clearElement", clearElementFn);
   removeMessageListener("Marionette:clickElement", clickElementFn);
   removeMessageListener("Marionette:Deregister", deregister);
-  removeMessageListener("Marionette:execute", executeFn);
-  removeMessageListener("Marionette:executeInSandbox", executeInSandboxFn);
+  removeMessageListener("Marionette:executeScript", executeScriptFn);
   removeMessageListener("Marionette:findElementContent", findElementContentFn);
   removeMessageListener(
     "Marionette:findElementsContent",
@@ -236,10 +231,13 @@ function deregister() {
   removeMessageListener("Marionette:releaseActions", releaseActionsFn);
   removeMessageListener("Marionette:sendKeysToElement", sendKeysToElementFn);
   removeMessageListener("Marionette:Session:Delete", deleteSession);
+  removeMessageListener(
+    "Marionette:setBrowsingContextId",
+    setBrowsingContextIdFn
+  );
   removeMessageListener("Marionette:singleTap", singleTapFn);
   removeMessageListener("Marionette:switchToFrame", switchToFrame);
   removeMessageListener("Marionette:switchToParentFrame", switchToParentFrame);
-  removeMessageListener("Marionette:switchToShadowRoot", switchToShadowRootFn);
 }
 
 function deleteSession() {
@@ -309,13 +307,15 @@ function sendError(err, uuid) {
   sendToServer(uuid, err);
 }
 
-async function execute(script, args, opts) {
-  let sb = sandbox.createMutable(curContainer.frame);
-  return evaluate.sandbox(sb, script, args, opts);
-}
+async function executeScript(script, args, opts = {}) {
+  let sb;
 
-async function executeInSandbox(script, args, opts) {
-  let sb = sandboxes.get(opts.sandboxName, opts.newSandbox);
+  if (opts.useSandbox) {
+    sb = sandboxes.get(opts.sandboxName, opts.newSandbox);
+  } else {
+    sb = sandbox.createMutable(curContainer.frame);
+  }
+
   return evaluate.sandbox(sb, script, args, opts);
 }
 
@@ -725,6 +725,17 @@ function getBrowsingContextId(topContext = false) {
 }
 
 /**
+ * Set the current browsing context.
+ *
+ * @param {number} browsingContextId
+ *     Id of the current BrowsingContext.
+ */
+function setBrowsingContextId(browsingContextId) {
+  const bc = BrowsingContext.get(browsingContextId);
+  curContainer.frame = bc.window;
+}
+
+/**
  * Return the current visible URL.
  *
  * @return {string}
@@ -855,38 +866,6 @@ async function sendKeysToElement(el, val, capabilities) {
 /** Clear the text of an element. */
 function clearElement(el) {
   interaction.clearElement(el);
-}
-
-/** Switch the current context to the specified host's Shadow DOM. */
-function switchToShadowRoot(el) {
-  if (!element.isElement(el)) {
-    // If no host element is passed, attempt to find a parent shadow
-    // root or, if none found, unset the current shadow root
-    if (curContainer.shadowRoot) {
-      let parent;
-      try {
-        parent = curContainer.shadowRoot.host;
-      } catch (e) {
-        // There is a chance that host element is dead and we are trying to
-        // access a dead object.
-        curContainer.shadowRoot = null;
-        return;
-      }
-      while (parent && !(parent instanceof curContainer.frame.ShadowRoot)) {
-        parent = parent.parentNode;
-      }
-      curContainer.shadowRoot = parent;
-    }
-    return;
-  }
-
-  let foundShadowRoot = el.shadowRoot;
-  if (!foundShadowRoot) {
-    throw new error.NoSuchElementError(
-      pprint`Unable to locate shadow root: ${el}`
-    );
-  }
-  curContainer.shadowRoot = foundShadowRoot;
 }
 
 /**

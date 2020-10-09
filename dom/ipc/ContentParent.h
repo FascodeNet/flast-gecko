@@ -739,6 +739,16 @@ class ContentParent final
       sJSPluginContentParents;
   static UniquePtr<LinkedList<ContentParent>> sContentParents;
 
+  /**
+   * In order to avoid rapidly creating and destroying content processes when
+   * running under e10s, we may keep alive a single unused "web" content
+   * process if it previously had a very short lifetime.
+   *
+   * This process will be re-used during process selection, avoiding spawning a
+   * new process, if the "web" remote type is being requested.
+   */
+  static StaticRefPtr<ContentParent> sRecycledE10SProcess;
+
   void AddShutdownBlockers();
   void RemoveShutdownBlockers();
 
@@ -812,6 +822,14 @@ class ContentParent final
   bool TryToRecycle();
 
   /**
+   * If this process is currently being recycled, unmark it as the recycled
+   * content process.
+   * If `aForeground` is true, will also restore the process' foreground
+   * priority if it was previously the recycled content process.
+   */
+  void StopRecycling(bool aForeground = true);
+
+  /**
    * Removing it from the static array so it won't be returned for new tabs in
    * GetNewOrUsedBrowserProcess.
    */
@@ -829,16 +847,24 @@ class ContentParent final
   bool ShouldKeepProcessAlive();
 
   /**
-   * Mark this ContentParent as "troubled". This means that it is still alive,
-   * but it won't be returned for new tabs in GetNewOrUsedBrowserProcess.
-   */
-  void MarkAsTroubled();
-
-  /**
    * Mark this ContentParent as dead for the purposes of Get*().
    * This method is idempotent.
    */
   void MarkAsDead();
+
+  /**
+   * Check if this process is ready to be shut down, and if it is, begin the
+   * shutdown process. Should be called whenever a change occurs which could
+   * cause the decisions made by `ShouldKeepProcessAlive` to change.
+   *
+   * @param aExpectedBrowserCount The number of PBrowser actors which should
+   *                              not block shutdown. This should usually be 0.
+   * @param aSendShutDown If true, will send the shutdown message in addition
+   *                      to marking the process as dead and starting the force
+   *                      kill timer.
+   */
+  void MaybeBeginShutDown(uint32_t aExpectedBrowserCount = 0,
+                          bool aSendShutDown = true);
 
   /**
    * How we will shut down this ContentParent and its subprocess.
@@ -1103,7 +1129,7 @@ class ContentParent final
       const MaybeDiscarded<WindowContext>& aContext,
       WindowContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
 
-  mozilla::ipc::IPCResult RecvAddMixedContentSecurityState(
+  mozilla::ipc::IPCResult RecvAddSecurityState(
       const MaybeDiscarded<WindowContext>& aContext, uint32_t aStateFlags);
 
   mozilla::ipc::IPCResult RecvFirstIdle();
@@ -1349,15 +1375,11 @@ class ContentParent final
       const MaybeDiscarded<BrowsingContext>& aContext,
       GetLoadingSessionHistoryInfoFromParentResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForTop(
+  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntry(
       const MaybeDiscarded<BrowsingContext>& aContext,
       const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-      uint32_t aLoadType, const nsID& aChangeID);
-
-  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForFrame(
-      const MaybeDiscarded<BrowsingContext>& aContext,
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-      int32_t aChildOffset, const nsID& aChangeID);
+      uint32_t aLoadType, int32_t aChildOffset, uint32_t aUpdatedCacheKey,
+      const nsID& aChangeID);
 
   mozilla::ipc::IPCResult RecvReplaceActiveSessionHistoryEntry(
       const MaybeDiscarded<BrowsingContext>& aContext,

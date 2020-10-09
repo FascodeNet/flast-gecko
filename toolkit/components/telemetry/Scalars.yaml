@@ -1816,6 +1816,7 @@ os.environment:
     release_channel_collection: opt-out
     products:
       - 'firefox'
+      - 'thunderbird'
     record_in_processes:
       - main
     operating_systems:
@@ -2119,81 +2120,24 @@ mediarecorder:
       - content
 
 media:
-  page_count:
+  element_in_page_count:
     bug_numbers:
       - 1476456
       - 1499803
       - 1570634
+      - 1652108
     description: >
-      The number of times a top level document is loaded.
-    expires: "74"
+      The number of times a document hierarchy contained at least one HTMLMediaElement. In addition, the telemetry probe 'MIXED_CONTENT_UNBLOCK_COUNTER' records the total number of loaded top level content documents, which can help us calculate the result of the percentage of documents using media.
+    expires: never
     kind: uint
     notification_emails:
-      - cpearce@mozilla.com
       - alwu@mozilla.com
       - nohlmeier@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
-      - content
-
-  page_had_media_count:
-    bug_numbers:
-      - 1476456
-      - 1499803
-      - 1570634
-    description: >
-      The number of times a document hierarchy contained at least one audible HTMLMediaElement that had play() called upon it.
-    expires: "74"
-    kind: uint
-    notification_emails:
-      - cpearce@mozilla.com
-      - alwu@mozilla.com
-      - nohlmeier@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - content
-
-  autoplay_would_not_be_allowed_count:
-    bug_numbers:
-      - 1476456
-      - 1499803
-      - 1570634
-    description: >
-      The number of HTMLMediaElement autoplays on audible HTMLMediaElements which would not be allowed to play if block autoplay was enabled; we'd either prompt for permission to play or block outright depending on user preferences.
-    expires: "74"
-    kind: uint
-    notification_emails:
-      - cpearce@mozilla.com
-      - alwu@mozilla.com
-      - nohlmeier@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - content
-
-  autoplay_would_be_allowed_count:
-    bug_numbers:
-      - 1476456
-      - 1499803
-      - 1570634
-    description: >
-      The number of HTMLMediaElement autoplays on audible HTMLMediaElements that would have been allowed (not blocked) by the autoplay policy if block autoplay was enabled.
-    expires: "74"
-    kind: uint
-    notification_emails:
-      - cpearce@mozilla.com
-      - alwu@mozilla.com
-      - nohlmeier@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - content
+      - main
 
 # The following section contains content process base counters.
 dom.contentprocess:
@@ -4011,6 +3955,24 @@ unknowncontenttype:
 
 # The following section contains scalars for printing.
 printing:
+  paper_size:
+    bug_numbers:
+      - 1660686
+    description: >
+      A counter of the number of times a given paper size (recorded as
+      "width x height" in points) is used for printing.
+    keyed: true
+    expires: "89"
+    kind: uint
+    notification_emails:
+      - jwatt@jwatt.org
+      - jkew@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
+
   dialog_opened_without_preview:
     bug_numbers:
       - 1600623
@@ -4483,6 +4445,21 @@ widget:
     record_in_processes:
       - 'main'
 
+  gtk_theme_has_scrollbar_buttons:
+    bug_numbers:
+      - 1669135
+    description: >
+      Whether the active Gtk theme has scrollbar buttons.
+    kind: boolean
+    expires: "87"
+    notification_emails:
+      - layout-telemetry-alerts@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 # The following section contains memory reporter counters.
 memoryreporter:
   max_ghost_windows:
@@ -4545,24 +4522,6 @@ update:
     products:
       - 'firefox'
       - 'fennec'
-    record_in_processes:
-      - main
-    operating_systems:
-      - windows
-
-  fix_permissions_attempted:
-    bug_numbers:
-      - 1577317
-      - 1615065
-    description: Set when we attempt to fix update directory permissions.
-    expires: "84"
-    kind: boolean
-    notification_emails:
-      - application-update-telemetry-alerts@mozilla.com
-      - agashlin@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
     record_in_processes:
       - main
     operating_systems:
@@ -4928,6 +4887,7 @@ networking:
       - 1572666
       - 1590124
       - 1621800
+      - 1668604
     description: >
       How many KB of HTTP data transferred by type, there are some categories
       separated by keys based on 5 parameters:
@@ -4962,11 +4922,13 @@ networking:
         "Y21_P3FpLead",
         "Y22_P3FpBg",
         "Y23_P3FpOth"
-    expires: "84"
+    expires: "91"
     keyed: true
     kind: uint
     notification_emails:
-      - gachen@mozilla.com
+      - arthur@mozilla.com
+      - tanvi@mozilla.com
+      - tihuang@mozilla.com
     products:
       - 'firefox'
       - 'fennec'
@@ -5393,6 +5355,41 @@ urlbar:
       - main
 
 urlbar.searchmode:
+  bookmarkmenu:
+    bug_numbers:
+      - 1665076
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecing the Search Bookmarks menu item in the Library menu.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  handoff:
+    bug_numbers:
+      - 1654680
+      - 1665076
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecing the Search Bookmarks menu item in the Library menu.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
   keywordoffer:
     bug_numbers:
       - 1654680
@@ -5444,6 +5441,40 @@ urlbar.searchmode:
       - 'firefox'
     record_in_processes:
       - main
+  tabmenu:
+    bug_numbers:
+      - 1665076
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecing the Search Tabs menu item in the Tab Overflow menu.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  tabtosearch:
+    bug_numbers:
+      - 1647923
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a tab-to-search result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
   topsites_newtab:
     bug_numbers:
       - 1654680
@@ -5467,6 +5498,23 @@ urlbar.searchmode:
     description: >
       A keyed uint recording how many times the user entered a particular search
       mode after selecting a search shortcut Top Site in the Urlbar..
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  touchbar:
+    bug_numbers:
+      - 1657414
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a search shortcut on the macOS Touch Bar.
     expires: never
     kind: uint
     keyed: true

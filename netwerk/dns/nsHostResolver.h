@@ -120,6 +120,7 @@ class nsHostRecord : public mozilla::LinkedListElement<RefPtr<nsHostRecord>>,
     TRR_DECODE_FAILED = 25,        // DohDecode failed
     TRR_EXCLUDED = 26,             // ExcludedFromTRR
     TRR_SERVER_RESPONSE_ERR = 27,  // Server responded with non-200 code
+    TRR_RCODE_FAIL = 28,           // DNS response contains a non-NOERROR rcode
   };
 
   // Records the first reason that caused TRR to be skipped or to fail.
@@ -579,6 +580,7 @@ class nsHostResolver : public nsISupports, public AHostResolver {
   // Kick-off a name resolve operation, using native resolver and/or TRR
   nsresult NameLookup(nsHostRecord*);
   bool GetHostToLookup(AddrHostRecord** result);
+  void MaybeRenewHostRecordLocked(nsHostRecord* aRec);
 
   // Removes the first element from the list and returns it AddRef-ed in aResult
   // Should not be called for an empty linked list.

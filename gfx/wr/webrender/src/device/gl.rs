@@ -1490,8 +1490,18 @@ impl Device {
 
         info!("GL texture cache {:?}, bgra {:?} swizzle {:?}, texture storage {:?}, depth {:?}",
             color_formats, bgra_formats, bgra8_sampling_swizzle, texture_storage_usage, depth_format);
-        let supports_copy_image_sub_data = supports_extension(&extensions, "GL_EXT_copy_image") ||
-            supports_extension(&extensions, "GL_ARB_copy_image");
+
+        // On Mali devices glCopyImageSubData appears to stall the pipeline until any pending
+        // renders to the source texture have completed. Using an alternative such as
+        // glBlitFramebuffer is preferable on such devices, so pretend we don't support
+        // glCopyImageSubData. This was observed on a Mali-T830, but as a precaution we avoid this
+        // on Mali-G too. See bug 1669494.
+        let supports_copy_image_sub_data = if renderer_name.starts_with("Mali") {
+            false
+        } else {
+            supports_extension(&extensions, "GL_EXT_copy_image") ||
+            supports_extension(&extensions, "GL_ARB_copy_image")
+        };
 
         // Due to a bug on Adreno devices, blitting to an fbo bound to
         // a non-0th layer of a texture array is not supported.
@@ -2396,9 +2406,6 @@ impl Device {
 
     /// Notifies the device that the contents of a render target are no longer
     /// needed.
-    ///
-    /// FIXME(bholley): We could/should invalidate the depth targets earlier
-    /// than the color targets, i.e. immediately after each pass.
     pub fn invalidate_render_target(&mut self, texture: &Texture) {
         let (fbos, attachments) = if texture.supports_depth() {
             (&texture.fbos_with_depth,
@@ -2416,6 +2423,16 @@ impl Device {
             self.gl.invalidate_framebuffer(gl::FRAMEBUFFER, attachments);
         }
         self.bind_external_draw_target(original_bound_fbo);
+    }
+
+    /// Notifies the device that the contents of the current framebuffer's depth
+    /// attachment is no longer needed. Unlike invalidate_render_target, this can
+    /// be called even when the contents of the colour attachment is still required.
+    /// This should be called before unbinding the framebuffer at the end of a pass,
+    /// to allow tiled GPUs to avoid writing the contents back to memory.
+    pub fn invalidate_depth_target(&mut self) {
+        assert!(self.depth_available);
+        self.gl.invalidate_framebuffer(gl::DRAW_FRAMEBUFFER, &[gl::DEPTH_ATTACHMENT]);
     }
 
     /// Notifies the device that a render target is about to be reused.

@@ -85,10 +85,6 @@ body[invalid] #sheet-count {
   visibility: hidden;
 }
 
-#print:not([platform="win"]) button[name="print"] {
-  order: 1;
-}
-
 form#print {
   display: flex;
   flex: 1 1 auto;
@@ -149,12 +145,12 @@ input[type="radio"]:checked {
   fill: #3485ff;
 }
 
-input[type="radio"]:not(:disabled):focus,
+input[type="radio"]:not(:disabled):-moz-focusring,
 input[type="radio"]:not(:disabled):hover {
   border-color: var(--in-content-border-focus);
 }
 
-input[type="radio"]:not(:disabled):focus {
+input[type="radio"]:not(:disabled):-moz-focusring {
   outline: 2px solid var(--in-content-border-active);
   /* offset outline to align with 1px border-width set for buttons/menulists above. */
   outline-offset: -1px;
@@ -173,6 +169,10 @@ input[type="text"] {
   padding: 2px;
   padding-inline-start: 4px;
   outline: none !important;
+}
+
+.cols-2 > input {
+  flex: none;
 }
 
 .toggle-group-label {
@@ -269,6 +269,23 @@ input[type="text"] {
 
 #range-picker {
   margin-bottom: 8px;
+}
+
+.vertical-margins,
+.horizontal-margins {
+  display: flex;
+  gap: 20px;
+  margin-block: 5px;
+}
+
+.margin-input {
+  width: 6em !important;
+}
+
+.margin-descriptor {
+  text-align: center;
+  display: block;
+  margin-top: 2px;
 }
 
 input[type="number"]:invalid {

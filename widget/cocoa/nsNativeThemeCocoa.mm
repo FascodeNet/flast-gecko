@@ -1206,6 +1206,20 @@ void nsNativeThemeCocoa::DrawMenuItem(CGContextRef cgContext, const CGRect& inBo
 
 void nsNativeThemeCocoa::DrawMenuSeparator(CGContextRef cgContext, const CGRect& inBoxRect,
                                            const MenuItemParams& aParams) {
+  // Workaround for visual artifacts issues with
+  // HIThemeDrawMenuSeparator on macOS Big Sur.
+  if (nsCocoaFeatures::OnBigSurOrLater()) {
+    CGRect separatorRect = inBoxRect;
+    separatorRect.size.height = 1;
+    separatorRect.size.width -= 42;
+    separatorRect.origin.x += 21;
+    // Use a gray color similar to the native separator
+    DeviceColor color = ToDeviceColor(mozilla::gfx::sRGBColor::FromU8(211, 211, 211, 255));
+    CGContextSetRGBFillColor(cgContext, color.r, color.g, color.b, color.a);
+    CGContextFillRect(cgContext, separatorRect);
+    return;
+  }
+
   ThemeMenuState menuState;
   if (aParams.disabled) {
     menuState = kThemeMenuDisabled;
@@ -2376,6 +2390,16 @@ nsNativeThemeCocoa::ScrollbarParams nsNativeThemeCocoa::ComputeScrollbarParams(n
       params.faceColor = colors.thumb.CalcColor(*style);
     }
   }
+
+  // With APZ zooming, we need to be able to draw scrollbars manually because
+  // the native CG drawing doesn't apply our desired scale. The easiest way to
+  // do this is set the custom flag with the default scrollbar colors.
+  if (!params.custom) {
+    params.custom = true;
+    params.trackColor = NS_RGBA(250, 250, 250, 255);
+    params.faceColor = NS_RGBA(194, 194, 194, 255);
+  }
+
   return params;
 }
 
@@ -3524,6 +3548,12 @@ LayoutDeviceIntMargin nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aCont
       result = DirectionAwareMargin(kAquaDropdownBorder, aFrame);
       break;
 
+    case StyleAppearance::Menuarrow:
+      if (nsCocoaFeatures::OnBigSurOrLater()) {
+        result.SizeTo(0, 0, 0, 28);
+      }
+      break;
+
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield: {
       SInt32 frameOutset = 0;
@@ -3614,6 +3644,13 @@ bool nsNativeThemeCocoa::GetWidgetPadding(nsDeviceContext* aContext, nsIFrame* a
     case StyleAppearance::Radio:
       aResult->SizeTo(0, 0, 0, 0);
       return true;
+
+    case StyleAppearance::Menuarrow:
+      if (nsCocoaFeatures::OnBigSurOrLater()) {
+        return true;
+      }
+      break;
+
     default:
       break;
   }

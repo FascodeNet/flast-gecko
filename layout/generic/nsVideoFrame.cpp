@@ -25,6 +25,7 @@
 #include "nsImageFrame.h"
 #include "nsIImageLoadingContent.h"
 #include "nsContentUtils.h"
+#include "nsLayoutUtils.h"
 #include "ImageContainer.h"
 #include "ImageLayers.h"
 #include "nsStyleUtil.h"
@@ -147,7 +148,7 @@ void nsVideoFrame::AppendAnonymousContentTo(nsTArray<nsIContent*>& aElements,
   }
 }
 
-nsIContent* nsVideoFrame::GetVideoControls() {
+nsIContent* nsVideoFrame::GetVideoControls() const {
   if (!mContent->GetShadowRoot()) {
     return nullptr;
   }
@@ -576,9 +577,8 @@ nsIFrame::SizeComputationResult nsVideoFrame::ComputeSize(
   nsSize size = GetVideoIntrinsicSize(aRenderingContext);
   IntrinsicSize intrinsicSize(size.width, size.height);
 
-  auto intrinsicRatio = GetIntrinsicRatio();
   return {ComputeSizeWithIntrinsicDimensions(
-              aRenderingContext, aWM, intrinsicSize, intrinsicRatio, aCBSize,
+              aRenderingContext, aWM, intrinsicSize, GetAspectRatio(), aCBSize,
               aMargin, aBorderPadding, aFlags),
           AspectRatioUsage::None};
 }
@@ -627,9 +627,9 @@ nscoord nsVideoFrame::GetPrefISize(gfxContext* aRenderingContext) {
   return result;
 }
 
-static Maybe<nsSize> GetPosterImageSize(nsVideoFrame* aFrame) {
+Maybe<nsSize> nsVideoFrame::PosterImageSize() const {
   // Use the poster image frame's size.
-  nsIFrame* child = aFrame->GetPosterImage()->GetPrimaryFrame();
+  nsIFrame* child = GetPosterImage()->GetPrimaryFrame();
   nsImageFrame* imageFrame = do_QueryFrame(child);
   nsSize imgSize;
   if (NS_SUCCEEDED(imageFrame->GetIntrinsicImageSize(imgSize))) {
@@ -638,7 +638,7 @@ static Maybe<nsSize> GetPosterImageSize(nsVideoFrame* aFrame) {
   return Nothing();
 }
 
-AspectRatio nsVideoFrame::GetIntrinsicRatio() {
+AspectRatio nsVideoFrame::GetIntrinsicRatio() const {
   if (!HasVideoElement()) {
     // Audio elements have no intrinsic ratio.
     return AspectRatio();
@@ -647,11 +647,6 @@ AspectRatio nsVideoFrame::GetIntrinsicRatio() {
   // 'contain:size' replaced elements have intrinsic size 0,0.
   if (StyleDisplay()->IsContainSize()) {
     return AspectRatio();
-  }
-
-  const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
-  if (!aspectRatio.auto_) {
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
   nsIntSize size(REPLACED_ELEM_FALLBACK_PX_WIDTH,
@@ -663,18 +658,15 @@ AspectRatio nsVideoFrame::GetIntrinsicRatio() {
   }
 
   if (ShouldDisplayPoster()) {
-    if (Maybe<nsSize> imgSize = GetPosterImageSize(this)) {
+    if (Maybe<nsSize> imgSize = PosterImageSize()) {
       return AspectRatio::FromSize(imgSize->width, imgSize->height);
     }
-  } else if (aspectRatio.HasRatio()) {
-    // For aspect-ratio: "auto && <ratio>" case.
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
   return AspectRatio::FromSize(size.width, size.height);
 }
 
-bool nsVideoFrame::ShouldDisplayPoster() {
+bool nsVideoFrame::ShouldDisplayPoster() const {
   if (!HasVideoElement()) return false;
 
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
@@ -708,7 +700,7 @@ nsSize nsVideoFrame::GetVideoIntrinsicSize(gfxContext* aRenderingContext) {
 
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
   if (NS_FAILED(element->GetVideoSize(&size)) && ShouldDisplayPoster()) {
-    if (Maybe<nsSize> imgSize = GetPosterImageSize(this)) {
+    if (Maybe<nsSize> imgSize = PosterImageSize()) {
       return *imgSize;
     }
   }
@@ -757,11 +749,11 @@ void nsVideoFrame::OnVisibilityChange(
   nsContainerFrame::OnVisibilityChange(aNewVisibility, aNonvisibleAction);
 }
 
-bool nsVideoFrame::HasVideoElement() {
+bool nsVideoFrame::HasVideoElement() const {
   return static_cast<HTMLMediaElement*>(GetContent())->IsVideo();
 }
 
-bool nsVideoFrame::HasVideoData() {
+bool nsVideoFrame::HasVideoData() const {
   if (!HasVideoElement()) return false;
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
   nsIntSize size(0, 0);

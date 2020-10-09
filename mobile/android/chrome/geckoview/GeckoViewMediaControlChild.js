@@ -48,12 +48,14 @@ class GeckoViewMediaControl extends GeckoViewChildModule {
   }
 
   handleFullscreenChanged() {
+    debug`handleFullscreenChanged`;
+
     const element = content && content.document.fullscreenElement;
     const mediaElement = MediaUtils.findMediaElement(element);
 
     if (element && !mediaElement) {
       // Non-media element fullscreen.
-      return;
+      debug`No fullscreen media element found.`;
     }
 
     const message = {

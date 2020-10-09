@@ -11,7 +11,6 @@
 #include "nsIClassInfoImpl.h"
 #include "nsTArray.h"
 #include "nsXULAppAPI.h"
-#include "MainThreadQueue.h"
 #include "mozilla/AbstractThread.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventQueue.h"
@@ -21,7 +20,6 @@
 #include "mozilla/TaskQueue.h"
 #include "mozilla/ThreadEventQueue.h"
 #include "mozilla/ThreadLocal.h"
-#include "PrioritizedEventQueue.h"
 #include "TaskController.h"
 #ifdef MOZ_CANARY
 #  include <fcntl.h>
@@ -375,10 +373,20 @@ nsresult nsThreadManager::Init() {
 
   TaskController::Initialize();
 
+  // Initialize idle handling.
   nsCOMPtr<nsIIdlePeriod> idlePeriod = new MainThreadIdlePeriod();
+  TaskController::Get()->SetIdleTaskManager(
+      new IdleTaskManager(idlePeriod.forget()));
+
+  // Create main thread queue that forwards events to TaskController and
+  // construct main thread.
+  UniquePtr<EventQueue> queue = MakeUnique<EventQueue>(true);
+
+  RefPtr<ThreadEventQueue<EventQueue>> synchronizedQueue =
+      new ThreadEventQueue<EventQueue>(std::move(queue), true);
 
   mMainThread =
-      CreateMainThread<ThreadEventQueue<PrioritizedEventQueue>>(idlePeriod);
+      new nsThread(WrapNotNull(synchronizedQueue), nsThread::MAIN_THREAD, 0);
 
   nsresult rv = mMainThread->InitCurrentThread();
   if (NS_FAILED(rv)) {

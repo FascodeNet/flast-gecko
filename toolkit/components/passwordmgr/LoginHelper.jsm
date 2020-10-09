@@ -38,6 +38,8 @@ this.LoginHelper = {
   includeOtherSubdomainsInLookup: null,
   insecureAutofill: null,
   privateBrowsingCaptureEnabled: null,
+  remoteRecipesEnabled: null,
+  remoteRecipesCollection: "password-recipes",
   schemeUpgrades: null,
   showAutoCompleteFooter: null,
   showAutoCompleteImport: null,
@@ -51,6 +53,27 @@ this.LoginHelper = {
     this.updateSignonPrefs();
     Services.telemetry.setEventRecordingEnabled("pwmgr", true);
     Services.telemetry.setEventRecordingEnabled("form_autocomplete", true);
+
+    // Enable experiment event recording when the specific experiment is active.
+    const setImportRecording = exp =>
+      Services.telemetry.setEventRecordingEnabled("exp_import", exp?.active);
+    let ExperimentAPI;
+    try {
+      ({ ExperimentAPI } = ChromeUtils.import(
+        "resource://messaging-system/experiments/ExperimentAPI.jsm"
+      ));
+    } catch (ex) {
+      // Some platforms like android/geckoview don't support experiments yet.
+    }
+    if (ExperimentAPI) {
+      const slug = "password-autocomplete-wizardless";
+      ExperimentAPI.ready().then(() =>
+        setImportRecording(ExperimentAPI.getExperiment({ slug }))
+      );
+      ExperimentAPI.on(`update:${slug}`, (ev, exp) => setImportRecording(exp));
+    } else {
+      setImportRecording();
+    }
   },
 
   updateSignonPrefs() {
@@ -96,16 +119,10 @@ this.LoginHelper = {
       "signon.showAutoCompleteFooter"
     );
 
-    // Only enable experiment telemetry for specific pref-controlled branches.
     this.showAutoCompleteImport = Services.prefs.getStringPref(
       "signon.showAutoCompleteImport",
       ""
     );
-    if (["control"].includes(this.showAutoCompleteImport)) {
-      Services.telemetry.setEventRecordingEnabled("exp_import", true);
-    } else {
-      Services.telemetry.setEventRecordingEnabled("exp_import", false);
-    }
 
     this.storeWhenAutocompleteOff = Services.prefs.getBoolPref(
       "signon.storeWhenAutocompleteOff"
@@ -136,6 +153,9 @@ this.LoginHelper = {
 
     this.userInputRequiredToCapture = Services.prefs.getBoolPref(
       "signon.userInputRequiredToCapture.enabled"
+    );
+    this.remoteRecipesEnabled = Services.prefs.getBoolPref(
+      "signon.recipes.remoteRecipesEnabled"
     );
   },
 

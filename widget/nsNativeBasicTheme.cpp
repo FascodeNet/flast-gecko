@@ -6,6 +6,7 @@
 #include "nsNativeBasicTheme.h"
 
 #include "nsCSSRendering.h"
+#include "nsLayoutUtils.h"
 #include "PathHelpers.h"
 
 using namespace mozilla;
@@ -872,7 +873,7 @@ void nsNativeBasicTheme::PaintButton(nsIFrame* aFrame, DrawTarget* aDrawTarget,
 void nsNativeBasicTheme::PaintScrollbarthumbHorizontal(
     DrawTarget* aDrawTarget, const Rect& aRect, const EventStates& aState) {
   sRGBColor thumbColor = sScrollbarThumbColor;
-  if (aState.HasAllStates(NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE)) {
+  if (aState.HasState(NS_EVENT_STATE_ACTIVE)) {
     thumbColor = sScrollbarThumbColorActive;
   } else if (aState.HasState(NS_EVENT_STATE_HOVER)) {
     thumbColor = sScrollbarThumbColorHover;
@@ -883,7 +884,7 @@ void nsNativeBasicTheme::PaintScrollbarthumbHorizontal(
 void nsNativeBasicTheme::PaintScrollbarthumbVertical(
     DrawTarget* aDrawTarget, const Rect& aRect, const EventStates& aState) {
   sRGBColor thumbColor = sScrollbarThumbColor;
-  if (aState.HasAllStates(NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE)) {
+  if (aState.HasState(NS_EVENT_STATE_ACTIVE)) {
     thumbColor = sScrollbarThumbColorActive;
   } else if (aState.HasState(NS_EVENT_STATE_HOVER)) {
     thumbColor = sScrollbarThumbColorHover;
@@ -892,7 +893,8 @@ void nsNativeBasicTheme::PaintScrollbarthumbVertical(
 }
 
 void nsNativeBasicTheme::PaintScrollbarHorizontal(DrawTarget* aDrawTarget,
-                                                  const Rect& aRect) {
+                                                  const Rect& aRect,
+                                                  bool aIsRoot) {
   aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(sScrollbarColor)));
   RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
   builder->MoveTo(Point(aRect.x, aRect.y));
@@ -902,7 +904,8 @@ void nsNativeBasicTheme::PaintScrollbarHorizontal(DrawTarget* aDrawTarget,
 }
 
 void nsNativeBasicTheme::PaintScrollbarVerticalAndCorner(
-    DrawTarget* aDrawTarget, const Rect& aRect, uint32_t aDpiRatio) {
+    DrawTarget* aDrawTarget, const Rect& aRect, uint32_t aDpiRatio,
+    bool aIsRoot) {
   aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(sScrollbarColor)));
   RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
   builder->MoveTo(Point(aRect.x, aRect.y));
@@ -917,8 +920,7 @@ void nsNativeBasicTheme::PaintScrollbarbutton(DrawTarget* aDrawTarget,
                                               const Rect& aRect,
                                               const EventStates& aState,
                                               uint32_t aDpiRatio) {
-  bool isActive =
-      aState.HasAllStates(NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE);
+  bool isActive = aState.HasState(NS_EVENT_STATE_ACTIVE);
   bool isHovered = aState.HasState(NS_EVENT_STATE_HOVER);
 
   aDrawTarget->FillRect(
@@ -978,6 +980,15 @@ void nsNativeBasicTheme::PaintScrollbarbutton(DrawTarget* aDrawTarget,
   RefPtr<Path> path = builder->Finish();
   aDrawTarget->Stroke(path, ColorPattern(ToDeviceColor(sScrollbarBorderColor)),
                       StrokeOptions(1.0f * aDpiRatio));
+}
+
+// Checks whether the frame is for a root <scrollbar> or <scrollcorner>, which
+// influences some platforms' scrollbar rendering.
+bool nsNativeBasicTheme::IsRootScrollbar(nsIFrame* aFrame) {
+  return CheckBooleanAttr(aFrame, nsGkAtoms::root_) &&
+         aFrame->PresContext()->IsRootContentDocument() &&
+         aFrame->GetContent() &&
+         aFrame->GetContent()->IsInNamespace(kNameSpaceID_XUL);
 }
 
 NS_IMETHODIMP
@@ -1069,11 +1080,12 @@ nsNativeBasicTheme::DrawWidgetBackground(gfxContext* aContext, nsIFrame* aFrame,
       PaintScrollbarthumbVertical(dt, devPxRect, eventState);
       break;
     case StyleAppearance::ScrollbarHorizontal:
-      PaintScrollbarHorizontal(dt, devPxRect);
+      PaintScrollbarHorizontal(dt, devPxRect, IsRootScrollbar(aFrame));
       break;
     case StyleAppearance::ScrollbarVertical:
     case StyleAppearance::Scrollcorner:
-      PaintScrollbarVerticalAndCorner(dt, devPxRect, dpiRatio);
+      PaintScrollbarVerticalAndCorner(dt, devPxRect, dpiRatio,
+                                      IsRootScrollbar(aFrame));
       break;
     case StyleAppearance::ScrollbarbuttonUp:
     case StyleAppearance::ScrollbarbuttonDown:

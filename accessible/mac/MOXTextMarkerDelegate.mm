@@ -7,9 +7,13 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "mozilla/Preferences.h"
+
 #import "MOXTextMarkerDelegate.h"
 
 using namespace mozilla::a11y;
+
+#define PREF_ACCESSIBILITY_MAC_DEBUG "accessibility.mac.debug"
 
 static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
 
@@ -96,23 +100,6 @@ static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
 }
 
 - (NSString*)moxStringForTextMarkerRange:(id)textMarkerRange {
-  if (mGeckoDocAccessible.IsAccessible()) {
-    if (!mGeckoDocAccessible.AsAccessible()->AsDoc()->HasLoadState(
-            DocAccessible::eTreeConstructed)) {
-      // If the accessible tree is still being constructed the text tree
-      // is not in a traversable state yet.
-      return @"";
-    }
-  } else {
-    if (mGeckoDocAccessible.AsProxy()->State() & states::STALE) {
-      // In the proxy case we don't have access to load state,
-      // so we need to use the less granular generic STALE state
-      // this state also includes DOM unloaded, which isn't ideal.
-      // Since we really only care if the a11y tree is loaded.
-      return @"";
-    }
-  }
-
   mozilla::a11y::GeckoTextMarkerRange range(mGeckoDocAccessible,
                                             textMarkerRange);
   if (!range.IsValid()) {
@@ -166,7 +153,8 @@ static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
     return nil;
   }
 
-  return geckoTextMarker.LeftWordRange().CreateAXTextMarkerRange();
+  return geckoTextMarker.Range(EWhichRange::eLeftWord)
+      .CreateAXTextMarkerRange();
 }
 
 - (id)moxRightWordTextMarkerRangeForTextMarker:(id)textMarker {
@@ -175,7 +163,57 @@ static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
     return nil;
   }
 
-  return geckoTextMarker.RightWordRange().CreateAXTextMarkerRange();
+  return geckoTextMarker.Range(EWhichRange::eRightWord)
+      .CreateAXTextMarkerRange();
+}
+
+- (id)moxLineTextMarkerRangeForTextMarker:(id)textMarker {
+  GeckoTextMarker geckoTextMarker(mGeckoDocAccessible, textMarker);
+  if (!geckoTextMarker.IsValid()) {
+    return nil;
+  }
+
+  return geckoTextMarker.Range(EWhichRange::eLine).CreateAXTextMarkerRange();
+}
+
+- (id)moxLeftLineTextMarkerRangeForTextMarker:(id)textMarker {
+  GeckoTextMarker geckoTextMarker(mGeckoDocAccessible, textMarker);
+  if (!geckoTextMarker.IsValid()) {
+    return nil;
+  }
+
+  return geckoTextMarker.Range(EWhichRange::eLeftLine)
+      .CreateAXTextMarkerRange();
+}
+
+- (id)moxRightLineTextMarkerRangeForTextMarker:(id)textMarker {
+  GeckoTextMarker geckoTextMarker(mGeckoDocAccessible, textMarker);
+  if (!geckoTextMarker.IsValid()) {
+    return nil;
+  }
+
+  return geckoTextMarker.Range(EWhichRange::eRightLine)
+      .CreateAXTextMarkerRange();
+}
+
+- (id)moxParagraphTextMarkerRangeForTextMarker:(id)textMarker {
+  GeckoTextMarker geckoTextMarker(mGeckoDocAccessible, textMarker);
+  if (!geckoTextMarker.IsValid()) {
+    return nil;
+  }
+
+  return geckoTextMarker.Range(EWhichRange::eParagraph)
+      .CreateAXTextMarkerRange();
+}
+
+// override
+- (id)moxStyleTextMarkerRangeForTextMarker:(id)textMarker {
+  GeckoTextMarker geckoTextMarker(mGeckoDocAccessible, textMarker);
+  if (!geckoTextMarker.IsValid()) {
+    return nil;
+  }
+
+  return geckoTextMarker.Range(EWhichRange::eStyle).CreateAXTextMarkerRange();
 }
 
 - (id)moxNextTextMarkerForTextMarker:(id)textMarker {
@@ -259,6 +297,38 @@ static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
 
   GeckoTextMarkerRange range([element geckoAccessible]);
   return range.CreateAXTextMarkerRange();
+}
+
+- (NSString*)moxMozDebugDescriptionForTextMarker:(id)textMarker {
+  if (!Preferences::GetBool(PREF_ACCESSIBILITY_MAC_DEBUG)) {
+    return nil;
+  }
+
+  GeckoTextMarker geckoTextMarker(mGeckoDocAccessible, textMarker);
+  if (!geckoTextMarker.IsValid()) {
+    return @"<GeckoTextMarker 0x0 [0]>";
+  }
+
+  return [NSString stringWithFormat:@"<GeckoTextMarker 0x%lx [%d]>",
+                                    geckoTextMarker.mContainer.Bits(),
+                                    geckoTextMarker.mOffset];
+}
+
+- (NSString*)moxMozDebugDescriptionForTextMarkerRange:(id)textMarkerRange {
+  if (!Preferences::GetBool(PREF_ACCESSIBILITY_MAC_DEBUG)) {
+    return nil;
+  }
+
+  mozilla::a11y::GeckoTextMarkerRange range(mGeckoDocAccessible,
+                                            textMarkerRange);
+  if (!range.IsValid()) {
+    return @"<GeckoTextMarkerRange 0x0 [0] - 0x0 [0]>";
+  }
+
+  return [NSString
+      stringWithFormat:@"<GeckoTextMarkerRange 0x%lx [%d] - 0x%lx [%d]>",
+                       range.mStart.mContainer.Bits(), range.mStart.mOffset,
+                       range.mEnd.mContainer.Bits(), range.mEnd.mOffset];
 }
 
 - (void)moxSetSelectedTextMarkerRange:(id)textMarkerRange {

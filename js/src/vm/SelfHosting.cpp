@@ -2112,7 +2112,7 @@ static bool intrinsic_NewPrivateName(JSContext* cx, unsigned argc, Value* vp) {
   MOZ_ASSERT(args.length() == 1);
 
   RootedString desc(cx, args[0].toString());
-  auto* symbol = Symbol::new_(cx, JS::SymbolCode::PrivateNameSymbol, desc);
+  auto* symbol = JS::Symbol::new_(cx, JS::SymbolCode::PrivateNameSymbol, desc);
   if (!symbol) {
     return false;
   }
@@ -2444,7 +2444,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
 
     JS_FN("ObjectIsTypeDescr", js::ObjectIsTypeDescr, 1, 0),
     JS_FN("ObjectIsTypedObject", js::ObjectIsTypedObject, 1, 0),
-    JS_FN("TypeDescrIsArrayType", js::TypeDescrIsArrayType, 1, 0),
     JS_FN("TypeDescrIsSimpleType", js::TypeDescrIsSimpleType, 1, 0),
 
     JS_FN("IsBoxedWasmAnyRef", js::IsBoxedWasmAnyRef, 1, 0),

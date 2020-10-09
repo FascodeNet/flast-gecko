@@ -44,7 +44,7 @@ templates['saved_premiumshell'] = template({"compiler":[6,">= 2.0.0-beta.1"],"ma
 
   return "<div class=\"pkt_ext_suggestedtag_detail pkt_ext_suggestedtag_detail_loading\">\n    <h4>"
     + this.escapeExpression(((helper = (helper = helpers.suggestedtags || (depth0 != null ? depth0.suggestedtags : depth0)) != null ? helper : helpers.helperMissing),(typeof helper === "function" ? helper.call(depth0,{"name":"suggestedtags","hash":{},"data":data}) : helper)))
-    + "</h4>\n    <div class=\"pkt_ext_loadingspinner\"><div></div></div>\n    <ul class=\"pkt_ext_cf\">\n    </ul>\n</div>\n";
+    + "</h4>\n    <div class=\"pkt_ext_loadingspinner\"><div></div></div>\n    <ul class=\"pkt_ext_cf\">\n    </ul>\n</div>\n\n<hr/>\n";
 },"useData":true});
 templates['saved_shell'] = template({"compiler":[6,">= 2.0.0-beta.1"],"main":function(depth0,helpers,partials,data) {
     var helper, alias1=helpers.helperMissing, alias2="function", alias3=this.escapeExpression;
@@ -297,18 +297,22 @@ templates['signupstoryboard_shell'] = template({"1":function(depth0,helpers,part
     + "\n</div>\n";
 },"useData":true});
 templates['item_recs'] = template({"1":function(depth0,helpers,partials,data) {
+    return "  <h4>Similar Stories</h4>\n";
+},"3":function(depth0,helpers,partials,data) {
+    return "  <h4>Similar Story</h4>\n";
+},"5":function(depth0,helpers,partials,data) {
     var stack1, alias1=this.lambda, alias2=this.escapeExpression;
 
   return "    <li>\n      <a href=\""
     + alias2(alias1(((stack1 = (depth0 != null ? depth0.item : depth0)) != null ? stack1.resolved_url : stack1), depth0))
     + "\" class=\"pkt_ext_item_recs_link\" target=\"_blank\">\n\n"
-    + ((stack1 = helpers['if'].call(depth0,((stack1 = (depth0 != null ? depth0.item : depth0)) != null ? stack1.encodedThumbURL : stack1),{"name":"if","hash":{},"fn":this.program(2, data, 0),"inverse":this.noop,"data":data})) != null ? stack1 : "")
+    + ((stack1 = helpers['if'].call(depth0,((stack1 = (depth0 != null ? depth0.item : depth0)) != null ? stack1.encodedThumbURL : stack1),{"name":"if","hash":{},"fn":this.program(6, data, 0),"inverse":this.noop,"data":data})) != null ? stack1 : "")
     + "\n        <p class=\"rec-title\">"
     + alias2(alias1(((stack1 = (depth0 != null ? depth0.item : depth0)) != null ? stack1.title : stack1), depth0))
     + "</p>\n        <p class=\"rec-source\">"
     + alias2(alias1(((stack1 = ((stack1 = (depth0 != null ? depth0.item : depth0)) != null ? stack1.domain_metadata : stack1)) != null ? stack1.name : stack1), depth0))
     + "</p>\n      </a>\n    </li>\n";
-},"2":function(depth0,helpers,partials,data) {
+},"6":function(depth0,helpers,partials,data) {
     var stack1;
 
   return "        <img class=\"rec-thumb\" src=\"https://img-getpocket.cdn.mozilla.net/80x80/filters:format(jpeg):quality(60):no_upscale():strip_exif()/"
@@ -317,8 +321,10 @@ templates['item_recs'] = template({"1":function(depth0,helpers,partials,data) {
 },"compiler":[6,">= 2.0.0-beta.1"],"main":function(depth0,helpers,partials,data) {
     var stack1;
 
-  return "<hr/>\n\n<header>\n  <h4>Similar Stories</h4>\n  <a target=\"_blank\" href=\"https://getpocket.com/story_recommendations_learn_more\">Learn More</a>\n</header>\n\n<ol>\n"
-    + ((stack1 = helpers.each.call(depth0,(depth0 != null ? depth0.recommendations : depth0),{"name":"each","hash":{},"fn":this.program(1, data, 0),"inverse":this.noop,"data":data})) != null ? stack1 : "")
+  return "<header>\n"
+    + ((stack1 = helpers['if'].call(depth0,((stack1 = (depth0 != null ? depth0.recommendations : depth0)) != null ? stack1['1'] : stack1),{"name":"if","hash":{},"fn":this.program(1, data, 0),"inverse":this.program(3, data, 0),"data":data})) != null ? stack1 : "")
+    + "  <a class=\"pkt_ext_learn_more\" target=\"_blank\" href=\"https://getpocket.com/story_recommendations_learn_more\">Learn more</a>\n</header>\n\n<ol>\n"
+    + ((stack1 = helpers.each.call(depth0,(depth0 != null ? depth0.recommendations : depth0),{"name":"each","hash":{},"fn":this.program(5, data, 0),"inverse":this.noop,"data":data})) != null ? stack1 : "")
     + "</ol>\n";
 },"useData":true});
 })();

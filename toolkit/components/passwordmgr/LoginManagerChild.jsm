@@ -400,9 +400,17 @@ const observer = {
           (aEvent.keyCode == aEvent.DOM_VK_TAB ||
             aEvent.keyCode == aEvent.DOM_VK_RETURN)
         ) {
-          LoginManagerChild.forWindow(window).onUsernameAutocompleted(
-            aEvent.composedTarget
-          );
+          const autofillForm =
+            LoginHelper.autofillForms &&
+            !PrivateBrowsingUtils.isContentWindowPrivate(
+              ownerDocument.defaultView
+            );
+
+          if (autofillForm) {
+            LoginManagerChild.forWindow(window).onUsernameAutocompleted(
+              aEvent.composedTarget
+            );
+          }
         }
         break;
       }
@@ -599,11 +607,12 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
         }
 
         this._fieldsWithPasswordGenerationForcedOn.add(inputElement);
-        // Clear the cache of previous autocomplete results so that the
-        // generation option appears.
-        gFormFillService.QueryInterface(Ci.nsIAutoCompleteInput);
-        gFormFillService.controller.resetInternalState();
-        gFormFillService.showPopup();
+        this.repopulateAutocompletePopup();
+        break;
+      }
+
+      case "PasswordManager:repopulateAutocompletePopup": {
+        this.repopulateAutocompletePopup();
         break;
       }
 
@@ -618,6 +627,13 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
     }
 
     return undefined;
+  }
+
+  repopulateAutocompletePopup() {
+    // Clear the cache of previous autocomplete results to show new options.
+    gFormFillService.QueryInterface(Ci.nsIAutoCompleteInput);
+    gFormFillService.controller.resetInternalState();
+    gFormFillService.showPopup();
   }
 
   shouldIgnoreLoginManagerEvent(event) {

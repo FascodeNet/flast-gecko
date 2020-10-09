@@ -402,11 +402,15 @@ add_task(
     let revokedInStashIssuer = constructCertFromFile(
       "test_cert_storage_direct/revoked-in-stash-issuer.pem"
     );
+    let noSCTCertIssuer = constructCertFromFile(
+      "test_cert_storage_direct/no-sct-issuer.pem"
+    );
 
     let crliteEnrollmentRecords = [
       getCRLiteEnrollmentRecordFor(validCertIssuer),
       getCRLiteEnrollmentRecordFor(revokedCertIssuer),
       getCRLiteEnrollmentRecordFor(revokedInStashIssuer),
+      getCRLiteEnrollmentRecordFor(noSCTCertIssuer),
     ];
 
     await IntermediatePreloadsClient.onSync({
@@ -419,11 +423,11 @@ add_task(
     });
 
     let result = await syncAndDownload([
-      { timestamp: "2019-11-19T00:00:00Z", type: "full", id: "0000" },
+      { timestamp: "2019-01-19T00:00:00Z", type: "full", id: "0000" },
     ]);
     equal(
       result,
-      "finished;2019-11-19T00:00:00Z-full",
+      "finished;2019-01-19T00:00:00Z-full",
       "CRLite filter download should have run"
     );
 
@@ -471,9 +475,9 @@ add_task(
     );
 
     result = await syncAndDownload([
-      { timestamp: "2019-11-20T00:00:00Z", type: "full", id: "0000" },
+      { timestamp: "2019-01-20T00:00:00Z", type: "full", id: "0000" },
       {
-        timestamp: "2019-11-20T06:00:00Z",
+        timestamp: "2019-01-20T06:00:00Z",
         type: "diff",
         id: "0001",
         parent: "0000",
@@ -483,7 +487,7 @@ add_task(
     equal(status, "finished", "CRLite filter download should have run");
     deepEqual(
       filters,
-      ["2019-11-20T00:00:00Z-full", "2019-11-20T06:00:00Z-diff"],
+      ["2019-01-20T00:00:00Z-full", "2019-01-20T06:00:00Z-diff"],
       "Should have downloaded the expected CRLite filters"
     );
 
@@ -521,6 +525,58 @@ add_task(
       "schunk-group.com",
       Ci.nsIX509CertDB.FLAG_LOCAL_ONLY
     );
+
+    // This certificate has no embedded SCTs, so it is not guaranteed to be in
+    // CT, so CRLite can't be guaranteed to give the correct answer, so it is
+    // not consulted.
+    let noSCTCert = constructCertFromFile(
+      "test_cert_storage_direct/no-sct.pem"
+    );
+    // Currently OCSP will always be consulted for certificates that are not
+    // revoked in CRLite, but if/when OCSP gets skipped for all certificates
+    // covered by CRLite, this test will ensure that certificates without
+    // embedded SCTs will cause OCSP to be consulted.
+    // NB: this will cause an OCSP request to be sent to localhost:80, but
+    // since an OCSP responder shouldn't be running on that port, this should
+    // fail safely.
+    Services.prefs.setCharPref("network.dns.localDomains", "ocsp.digicert.com");
+    Services.prefs.setBoolPref("security.OCSP.require", true);
+    Services.prefs.setIntPref("security.OCSP.enabled", 1);
+    await checkCertErrorGenericAtTime(
+      certdb,
+      noSCTCert,
+      SEC_ERROR_OCSP_SERVER_ERROR,
+      certificateUsageSSLServer,
+      new Date("2020-11-20T00:00:00Z").getTime() / 1000,
+      false,
+      "mail233.messagelabs.com",
+      0
+    );
+    Services.prefs.clearUserPref("network.dns.localDomains");
+    Services.prefs.clearUserPref("security.OCSP.require");
+    Services.prefs.clearUserPref("security.OCSP.enabled");
+
+    // If the earliest certificate timestamp is within the merge delay of the
+    // logs for the filter we have, it won't be looked up, and thus won't be
+    // revoked.
+    // The earliest timestamp in this certificate is in May 2018, whereas the
+    // filter timestamp is in Janurary 2019, so setting the merge delay to this
+    // large value simluates the situation being tested.
+    Services.prefs.setIntPref(
+      "security.pki.crlite_ct_merge_delay_seconds",
+      60 * 60 * 24 * 360
+    );
+    await checkCertErrorGenericAtTime(
+      certdb,
+      revokedCert,
+      PRErrorCodeSuccess,
+      certificateUsageSSLServer,
+      new Date("2019-11-20T00:00:00Z").getTime() / 1000,
+      false,
+      "schunk-group.com",
+      Ci.nsIX509CertDB.FLAG_LOCAL_ONLY
+    );
+    Services.prefs.clearUserPref("security.pki.crlite_ct_merge_delay_seconds");
   }
 );
 

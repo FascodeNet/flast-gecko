@@ -573,7 +573,7 @@ impl SwCompositeGraphNode {
 
     /// After processing a band, check all child dependencies and remove this parent from
     /// their dependency counts. If applicable, queue the new child bands for composition.
-    fn unblock_children(&self, sender: &channel::Sender<Arc<SwCompositeGraphNode>>) {
+    fn unblock_children(&self, sender: &channel::crossbeam::Sender<Arc<SwCompositeGraphNode>>) {
         if self.num_bands.fetch_sub(1, Ordering::SeqCst) > 1 {
             return;
         }
@@ -597,12 +597,12 @@ impl SwCompositeGraphNode {
 /// the job count.
 struct SwCompositeThread {
     /// Queue of available composite jobs
-    job_sender: channel::Sender<Arc<SwCompositeGraphNode>>,
-    job_receiver: channel::Receiver<Arc<SwCompositeGraphNode>>,
+    job_sender: channel::crossbeam::Sender<Arc<SwCompositeGraphNode>>,
+    job_receiver: channel::crossbeam::Receiver<Arc<SwCompositeGraphNode>>,
     /// Count of unprocessed jobs still in the queue
     job_count: AtomicUsize,
     /// Condition signaled when there are no more jobs left to process.
-    jobs_completed: channel::Receiver<()>,
+    jobs_completed: channel::crossbeam::Receiver<()>,
 }
 
 /// The SwCompositeThread struct is shared between the SwComposite thread
@@ -613,8 +613,8 @@ impl SwCompositeThread {
     /// Create the SwComposite thread. Requires a SWGL context in which
     /// to do the composition.
     fn new() -> Arc<SwCompositeThread> {
-        let (job_sender, job_receiver) = channel::unbounded_channel();
-        let (notify_completed, jobs_completed) = channel::fast_channel(1);
+        let (job_sender, job_receiver) = channel::crossbeam::unbounded();
+        let (notify_completed, jobs_completed) = channel::crossbeam::bounded(1);
         let info = Arc::new(SwCompositeThread {
             job_sender,
             job_receiver,
@@ -707,7 +707,15 @@ impl SwCompositeThread {
     /// Wait for all queued composition jobs to be processed.
     /// Instead of blocking on the SwComposite thread to complete all jobs,
     /// this may steal some jobs and attempt to process them while waiting.
-    fn wait_for_composites(&self) {
+    /// This may optionally process jobs synchronously. When normally doing
+    /// asynchronous processing, the graph dependencies are relied upon to
+    /// properly order the jobs, which makes it safe for the render thread
+    /// to steal jobs from the composite thread without violating those
+    /// dependencies. Synchronous processing just disables this job stealing
+    /// so that the composite thread always handles the jobs in the order
+    /// they were queued without having to rely upon possibly unavailable
+    /// graph dependencies.
+    fn wait_for_composites(&self, sync: bool) {
         // Subtract off the bias to signal we're now waiting on composition and
         // need to know if jobs are completed. If the job count hits zero here,
         // then we know the SwComposite thread is already done since all queued
@@ -715,9 +723,15 @@ impl SwCompositeThread {
         if self.job_count.fetch_sub(1, Ordering::SeqCst) <= 1 {
             return;
         }
+        if sync {
+            // If processing synchronously, just wait for the composite thread
+            // to complete, then bail.
+            let _ = self.jobs_completed.recv();
+            return;
+        }
         // Otherwise, there are remaining jobs that we need to wait for.
         loop {
-            channel::select! {
+            channel::crossbeam::select! {
                 // Steal jobs from the SwComposite thread if it is busy.
                 recv(self.job_receiver) -> graph_node => if let Ok(graph_node) = graph_node {
                     if self.process_job(graph_node) {
@@ -730,6 +744,13 @@ impl SwCompositeThread {
             }
         }
     }
+
+    /// Check if there is a non-zero job count (including sentinel job) that
+    /// would indicate we are starting to already process jobs in the composite
+    /// thread.
+    fn is_busy_compositing(&self) -> bool {
+        self.job_count.load(Ordering::SeqCst) > 0
+    }
 }
 
 /// Adapter for RenderCompositors to work with SWGL that shuttles between
@@ -740,6 +761,15 @@ pub struct SwCompositor {
     compositor: Option<WrCompositor>,
     surfaces: HashMap<NativeSurfaceId, SwSurface>,
     frame_surfaces: Vec<(
+        NativeSurfaceId,
+        CompositorSurfaceTransform,
+        DeviceIntRect,
+        ImageRendering,
+    )>,
+    /// Any surface added after we're already compositing (i.e. debug overlay)
+    /// needs to be processed after those frame surfaces. For simplicity we
+    /// store them in a separate queue that gets processed later.
+    late_surfaces: Vec<(
         NativeSurfaceId,
         CompositorSurfaceTransform,
         DeviceIntRect,
@@ -777,6 +807,7 @@ impl SwCompositor {
             compositor,
             surfaces: HashMap::new(),
             frame_surfaces: Vec::new(),
+            late_surfaces: Vec::new(),
             cur_tile: NativeTileId {
                 surface_id: NativeSurfaceId(0),
                 x: 0,
@@ -959,7 +990,7 @@ impl SwCompositor {
 
     /// Look for any attached external images that have been locked and then unlock them.
     fn unlock_composite_surfaces(&mut self) {
-        for &(ref id, _, _, _) in &self.frame_surfaces {
+        for &(ref id, _, _, _) in self.frame_surfaces.iter().chain(self.late_surfaces.iter()) {
             if let Some(surface) = self.surfaces.get_mut(id) {
                 if let Some(external_image) = surface.external_image {
                     if surface.composite_surface.is_some() {
@@ -1367,6 +1398,7 @@ impl Compositor for SwCompositor {
             compositor.begin_frame();
         }
         self.frame_surfaces.clear();
+        self.late_surfaces.clear();
 
         self.reset_overlaps();
         if self.composite_thread.is_some() {
@@ -1389,6 +1421,15 @@ impl Compositor for SwCompositor {
             // If the surface has an attached external image, try to lock that now.
             self.try_lock_composite_surface(&id);
 
+            // If we're already busy compositing, then add to the queue of late
+            // surfaces instead of trying to sort into the main frame queue.
+            // These late surfaces will not have any overlap tracking done for
+            // them and must be processed synchronously at the end of the frame.
+            if self.composite_thread.as_ref().unwrap().is_busy_compositing() {
+                self.late_surfaces.push((id, transform, clip_rect, filter));
+                return;
+            }
+
             // Compute overlap dependencies for the surface.
             if let Some(surface) = self.surfaces.get(&id) {
                 for tile in &surface.tiles {
@@ -1401,7 +1442,10 @@ impl Compositor for SwCompositor {
     }
 
     /// Now that all the dependency graph nodes have been built, start queuing
-    /// composition jobs.
+    /// composition jobs. Any surfaces that get added after this point in the
+    /// frame will not have overlap dependencies assigned and so must instead
+    /// be added to the late_surfaces queue to be processed at the end of the
+    /// frame.
     fn start_compositing(&mut self) {
         if let Some(ref composite_thread) = self.composite_thread {
             composite_thread.start_compositing();
@@ -1462,7 +1506,25 @@ impl Compositor for SwCompositor {
             draw_tile.disable();
         } else if let Some(ref composite_thread) = self.composite_thread {
             // Need to wait for the SwComposite thread to finish any queued jobs.
-            composite_thread.wait_for_composites();
+            composite_thread.wait_for_composites(false);
+
+            if !self.late_surfaces.is_empty() {
+                // All of the main frame surface have been processed by now. But if there
+                // are any late surfaces, we need to kick off a new synchronous composite
+                // phase. These late surfaces don't have any overlap/dependency tracking,
+                // so we just queue them directly and wait synchronously for the composite
+                // thread to process them in order.
+                composite_thread.start_compositing();
+                for &(ref id, ref transform, ref clip_rect, filter) in &self.late_surfaces {
+                    if let Some(surface) = self.surfaces.get(id) {
+                        for tile in &surface.tiles {
+                            self.queue_composite(surface, transform, clip_rect, filter, tile);
+                        }
+                    }
+                }
+                composite_thread.wait_for_composites(true);
+            }
+
             self.locked_framebuffer = None;
 
             self.unlock_composite_surfaces();

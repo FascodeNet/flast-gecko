@@ -1,4 +1,4 @@
-Building Firefox On Windows
+﻿Building Firefox On Windows
 ===========================
 
 Thank you for helping us build the world's best browser on the world's
@@ -87,7 +87,7 @@ MozillaBuild
 ^^^^^^^^^^^^
 
 Finally, download the `MozillaBuild
-Package <https://ftp.mozilla.org/pub/mozilla.org/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`_
+Package <https://ftp.mozilla.org/pub/mozilla.org/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`__
 from Mozilla. Accept the default settings, in particular the default
 installation directory: ``c:\mozilla-build\``. On some versions of
 Windows an error dialog will give you the option to ‘reinstall with the
@@ -158,7 +158,7 @@ source directory as before and type
 
 The ``./mach bootstrap`` step is a catch-all for any dependencies not
 covered in this documentation. Note that, bootstrap works **only with
-the Mercuial repo of the source**, not with source tar balls, nor the
+the Mercurial repo of the source**, not with source tar balls, nor the
 github mirror. If you are working on Firefox or Firefox for Android
 frontends or building Firefox without any changes, select :ref:`Artifact Builds
 <Understanding Artifact Builds>` in
@@ -253,7 +253,7 @@ successfully. There are notes on these software requirements below.
    android-emulator", or run talos tests locally, you should install it
    for building psutil.
 #. Download and install the
-   `MozillaBuild <https://ftp.mozilla.org/pub/mozilla.org/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`_
+   `MozillaBuild <https://ftp.mozilla.org/pub/mozilla.org/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`__
    package, containing additional build tools. If you have Cygwin
    installed, read the note in the tips section. If you see a Windows
    error dialog giving you the option to re-install with the 'correct
@@ -301,8 +301,8 @@ Installing Visual Studio in a different language than the system can cause issue
    contains spaces. It is strongly recommended that you accept the default
    settings for all installation locations.
 
-MozillaBuild
-~~~~~~~~~~~~
+MozillaBuild package
+~~~~~~~~~~~~~~~~~~~~
 
 The MozillaBuild package contains other software prerequisites necessary
 for building Mozilla, including the MSYS build environment,
@@ -402,8 +402,7 @@ Command prompt tips and caveats
 Common problems, hints, and restrictions
 ----------------------------------------
 
--  `Debugging Firefox on Windows
-   FAQ <https://developer.mozilla.org/docs/Mozilla/Debugging/Debugging_Mozilla_on_Windows_FAQ>`_:
+-  :ref:`Debugging Firefox on Windows FAQ <Debugging On Windows>`:
    Tips on how to debug Mozilla on Windows.
 -  Your installed MozillaBuild may be too old. The build system may
    assume you have new features and bugfixes that are only present in

@@ -642,22 +642,13 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
 }
 
 /* virtual */
-AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() {
-  const auto& aspectRatio = StylePosition()->mAspectRatio;
-  if (!aspectRatio.auto_) {
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
-  }
-
+AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() const {
   // FIXME(emilio): This should probably respect contain: size and return no
   // ratio in the case subDocRoot is non-null. Otherwise we do it by virtue of
   // using a zero-size below and reusing GetIntrinsicSize().
   if (mSubdocumentIntrinsicRatio && *mSubdocumentIntrinsicRatio) {
     // Use the intrinsic aspect ratio from the child SVG document, if available.
     return *mSubdocumentIntrinsicRatio;
-  }
-
-  if (aspectRatio.HasRatio()) {
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
   // NOTE(emilio): Even though we have an intrinsic size, we may not have an
@@ -688,7 +679,7 @@ nsIFrame::SizeComputationResult nsSubDocumentFrame::ComputeSize(
     nscoord aAvailableISize, const LogicalSize& aMargin,
     const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   return {ComputeSizeWithIntrinsicDimensions(
-              aRenderingContext, aWM, GetIntrinsicSize(), GetIntrinsicRatio(),
+              aRenderingContext, aWM, GetIntrinsicSize(), GetAspectRatio(),
               aCBSize, aMargin, aBorderPadding, aFlags),
           AspectRatioUsage::None};
 }
@@ -943,7 +934,7 @@ void nsSubDocumentFrame::ResetFrameLoader() {
 
 // XXX this should be called ObtainDocShell or something like that,
 // to indicate that it could have side effects
-nsIDocShell* nsSubDocumentFrame::GetDocShell() {
+nsIDocShell* nsSubDocumentFrame::GetDocShell() const {
   // How can FrameLoader() return null???
   if (NS_WARN_IF(!FrameLoader())) {
     return nullptr;

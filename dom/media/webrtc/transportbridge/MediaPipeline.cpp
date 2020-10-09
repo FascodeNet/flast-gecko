@@ -1048,6 +1048,11 @@ nsresult MediaPipelineTransmit::SetTrack(RefPtr<MediaStreamTrack> aDomTrack) {
   return NS_OK;
 }
 
+RefPtr<dom::MediaStreamTrack> MediaPipelineTransmit::GetTrack() const {
+  MOZ_ASSERT(NS_IsMainThread());
+  return mDomTrack;
+}
+
 void MediaPipelineTransmit::SetSendTrack(
     RefPtr<ProcessedMediaTrack> aSendTrack) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -1360,7 +1365,9 @@ class MediaPipelineReceiveAudio::PipelineListener
                           "AudioPipelineListener")),
         mPlayedTicks(0),
         mPrincipalHandle(aPrincipalHandle),
-        mForceSilence(false) {
+        mForceSilence(false) {}
+
+  void Init() {
     mSource->SetAppendDataSourceRate(mRate);
     mSource->AddListener(this);
   }
@@ -1529,6 +1536,9 @@ MediaPipelineReceiveAudio::MediaPipelineReceiveAudio(
                                               mConduit, aPrincipalHandle)
                        : nullptr) {
   mDescription = mPc + "| Receive audio";
+  if (mListener) {
+    mListener->Init();
+  }
 }
 
 void MediaPipelineReceiveAudio::DetachMedia() {
@@ -1575,9 +1585,9 @@ class MediaPipelineReceiveVideo::PipelineListener
         mImageContainer(
             LayerManager::CreateImageContainer(ImageContainer::ASYNCHRONOUS)),
         mMutex("MediaPipelineReceiveVideo::PipelineListener::mMutex"),
-        mPrincipalHandle(aPrincipalHandle) {
-    mSource->AddListener(this);
-  }
+        mPrincipalHandle(aPrincipalHandle) {}
+
+  void Init() { mSource->AddListener(this); }
 
   void MakePrincipalPrivate_s() {
     {
@@ -1698,6 +1708,9 @@ MediaPipelineReceiveVideo::MediaPipelineReceiveVideo(
                                               aPrincipalHandle)
                        : nullptr) {
   mDescription = mPc + "| Receive video";
+  if (mListener) {
+    mListener->Init();
+  }
   static_cast<VideoSessionConduit*>(mConduit.get())->AttachRenderer(mRenderer);
 }
 

@@ -53,14 +53,19 @@
 
   /* Match urlbar-background's border. */
   border-inline: 1px solid transparent;
+}
 
-  /* Offsets the toolbar overlap so the view's top border aligns with the
-     toolbar. */
+/* If the view is open, offset the toolbar overlap so the view's top border
+   aligns with the toolbar. */
+#urlbar[open] > .urlbarView {
   margin-block-start: -@urlbarBreakoutExtend@;
 }
 
 .urlbarView-body-inner {
   width: 100%;
+}
+
+#urlbar[open] > .urlbarView > .urlbarView-body-outer > .urlbarView-body-inner {
   border-top: 1px solid var(--urlbar-separator-color);
 }
 
@@ -417,6 +422,25 @@
   color: var(--urlbar-popup-action-color);
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes urlbarView-action-slide-in {
+    0% {
+      transform: translateX(200px);
+      opacity: 0;
+    }
+    100% {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  .urlbarView-results:not([wrap]) > .urlbarView-row > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title:not(:empty) ~ .urlbarView-action[slide-in] {
+    animation-name: urlbarView-action-slide-in;
+    animation-duration: 250ms;
+    animation-timing-function: var(--animation-easing-function);
+  }
+}
+
 .urlbarView-url {
   overflow: hidden;
   color: var(--urlbar-popup-url-color);
@@ -512,6 +536,7 @@
   flex-grow: 1;
 }
 
+.urlbarView-row[source="bookmarks"] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 #urlbar-engine-one-off-item-bookmarks {
   list-style-image: url("chrome://browser/skin/bookmark.svg");
   fill: #0060df; /* Blue-60 */
@@ -519,6 +544,7 @@
   -moz-context-properties: fill, fill-opacity;
 }
 
+.urlbarView-row[source="tabs"] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 #urlbar-engine-one-off-item-tabs {
   list-style-image: url("chrome://browser/skin/tab.svg");
   fill: #008eaf; /* Teal-70 */
@@ -526,6 +552,7 @@
   -moz-context-properties: fill, fill-opacity;
 }
 
+.urlbarView-row[source="history"] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 #urlbar-engine-one-off-item-history {
   list-style-image: url("chrome://browser/skin/history.svg");
   fill: currentColor;
@@ -533,14 +560,18 @@
   -moz-context-properties: fill, fill-opacity;
 }
 
+:root[lwt-toolbar-field-brighttext] .urlbarView-row[source="bookmarks"]:not([selected]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 :root[lwt-toolbar-field-brighttext] #urlbar-engine-one-off-item-bookmarks:not([selected]) {
   fill: #0a84ff; /* Blue-50 */
 }
 
+:root[lwt-toolbar-field-brighttext] .urlbarView-row[source="tabs"]:not([selected]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 :root[lwt-toolbar-field-brighttext] #urlbar-engine-one-off-item-tabs:not([selected]) {
   fill: #00c8d7; /* Teal-60 */
 }
 
+.urlbarView-row[source="bookmarks"][selected] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
+.urlbarView-row[source="tabs"][selected] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 #urlbar-engine-one-off-item-bookmarks[selected],
 #urlbar-engine-one-off-item-tabs[selected] {
   fill: currentColor;

@@ -12,6 +12,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_ui.h"
+#include "mozilla/ToString.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "nsFrameList.h"  // for DEBUG_FRAME_DUMP
 #include "nsHTMLParts.h"
@@ -25,7 +26,6 @@
 #include "nsIContentInlines.h"
 #include "nsIFrame.h"
 #include <algorithm>
-#include "LayersLogging.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -161,8 +161,8 @@ static bool HasTouchListener(nsIContent* aContent) {
     return false;
   }
 
-  return elm->HasListenersFor(nsGkAtoms::ontouchstart) ||
-         elm->HasListenersFor(nsGkAtoms::ontouchend);
+  return elm->HasNonSystemGroupListenersFor(nsGkAtoms::ontouchstart) ||
+         elm->HasNonSystemGroupListenersFor(nsGkAtoms::ontouchend);
 }
 
 static bool HasPointerListener(nsIContent* aContent) {
@@ -395,7 +395,7 @@ static nsIFrame* GetClosest(RelativeTo aRoot,
         f, nsRect(nsPoint(0, 0), f->GetSize()), aRoot,
         &preservesAxisAlignedRectangles);
     PET_LOG("Checking candidate %p with border box %s\n", f,
-            mozilla::layers::Stringify(borderBox).c_str());
+            ToString(borderBox).c_str());
     nsRegion region;
     region.And(exposedRegion, borderBox);
     if (region.IsEmpty()) {
@@ -463,6 +463,21 @@ static nsIFrame* GetClosest(RelativeTo aRoot,
   return bestTarget;
 }
 
+// Walk from aTarget up to aRoot, and return the first frame found with an
+// explicit z-index set on it. If no such frame is found, aRoot is returned.
+static const nsIFrame* FindZIndexAncestor(const nsIFrame* aTarget,
+                                          const nsIFrame* aRoot) {
+  const nsIFrame* candidate = aTarget;
+  while (candidate && candidate != aRoot) {
+    if (candidate->ZIndex().valueOr(0) > 0) {
+      PET_LOG("Restricting search to z-index root %p\n", candidate);
+      return candidate;
+    }
+    candidate = candidate->GetParent();
+  }
+  return aRoot;
+}
+
 nsIFrame* FindFrameTargetedByInputEvent(
     WidgetGUIEvent* aEvent, RelativeTo aRootFrame,
     const nsPoint& aPointRelativeToRootFrame, uint32_t aFlags) {
@@ -477,7 +492,7 @@ nsIFrame* FindFrameTargetedByInputEvent(
       "Found initial target %p for event class %s message %s point %s "
       "relative to root frame %s\n",
       target, ToChar(aEvent->mClass), ToChar(aEvent->mMessage),
-      mozilla::layers::Stringify(aPointRelativeToRootFrame).c_str(),
+      ToString(aPointRelativeToRootFrame).c_str(),
       ToString(aRootFrame).c_str());
 
   EventRadiusPrefs prefs(aEvent->mClass);
@@ -500,13 +515,22 @@ nsIFrame* FindFrameTargetedByInputEvent(
   // a mouse event handler for example, targets that are !GetClickableAncestor
   // can never be targeted --- something nsSubDocumentFrame in an ancestor
   // document would be targeted instead.
-  const nsIFrame* restrictToDescendants =
-      target ? target->PresShell()->GetRootFrame() : aRootFrame.mFrame;
+  const nsIFrame* restrictToDescendants = [&]() -> const nsIFrame* {
+    if (target && target->PresContext() != aRootFrame.mFrame->PresContext()) {
+      return target->PresShell()->GetRootFrame();
+    }
+    return aRootFrame.mFrame;
+  }();
+
+  // If the target element inside an element with a z-index, restrict the
+  // search to other elements inside that z-index. This is a heuristic
+  // intended to help with a class of scenarios involving web modals or
+  // web popup type things. In particular it helps alleviate bug 1666792.
+  restrictToDescendants = FindZIndexAncestor(target, restrictToDescendants);
 
   nsRect targetRect = GetTargetRect(aRootFrame, aPointRelativeToRootFrame,
                                     restrictToDescendants, prefs, aFlags);
-  PET_LOG("Expanded point to target rect %s\n",
-          mozilla::layers::Stringify(targetRect).c_str());
+  PET_LOG("Expanded point to target rect %s\n", ToString(targetRect).c_str());
   AutoTArray<nsIFrame*, 8> candidates;
   nsresult rv = nsLayoutUtils::GetFramesForArea(aRootFrame, targetRect,
                                                 candidates, options);
@@ -552,7 +576,11 @@ nsIFrame* FindFrameTargetedByInputEvent(
   // Note that dumping the frame tree at the top of the function may flood
   // logcat on Android devices and cause the PET_LOGs to get dropped.
   if (MOZ_LOG_TEST(sEvtTgtLog, LogLevel::Verbose)) {
-    aRootFrame.mFrame->DumpFrameTree();
+    if (target) {
+      target->DumpFrameTree();
+    } else {
+      aRootFrame.mFrame->DumpFrameTree();
+    }
   }
 #endif
 

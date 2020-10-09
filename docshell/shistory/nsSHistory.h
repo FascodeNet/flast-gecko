@@ -70,7 +70,7 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
   NS_DECL_ISUPPORTS
   NS_DECL_NSISHISTORY
 
-  // One time initialization method called upon docshell module construction
+  // One time initialization method
   static nsresult Startup();
   static void Shutdown();
   static void UpdatePrefs();
@@ -135,6 +135,8 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
 
   nsTArray<nsCOMPtr<nsISHEntry>>& Entries() { return mEntries; }
 
+  void NotifyOnHistoryReplaceEntry();
+
   void RemoveEntries(nsTArray<nsID>& aIDs, int32_t aStartIndex,
                      bool* aDidRemove);
 
@@ -180,6 +182,10 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
     // we should replace the entry at requested index instead.
     return mRequestedIndex == -1 ? mIndex : mRequestedIndex;
   }
+
+  // Update the root browsing context state when adding, removing or
+  // replacing entries.
+  void UpdateRootBrowsingContextState();
 
  protected:
   virtual ~nsSHistory();
@@ -243,10 +249,6 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
                                             nsISHEntry* aOldEntry,
                                             nsISHEntry* aNewEntry);
 
-  // Update the root browsing context state when adding, removing or
-  // replacing entries.
-  void UpdateRootBrowsingContextState();
-
  protected:
   bool mHasOngoingUpdate;
   bool mIsRemote;
@@ -265,6 +267,31 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
 
   // Max viewers allowed total, across all SHistory objects
   static int32_t sHistoryMaxTotalViewers;
+};
+
+// CallerWillNotifyHistoryIndexAndLengthChanges is used to prevent
+// SHistoryChangeNotifier to send automatic index and length updates.
+// When that is done, it is up to the caller to explicitly send those updates.
+// This is needed in cases when the update is a reaction to some change in a
+// child process and child process passes a changeId to the parent side.
+class MOZ_STACK_CLASS CallerWillNotifyHistoryIndexAndLengthChanges {
+ public:
+  explicit CallerWillNotifyHistoryIndexAndLengthChanges(
+      nsISHistory* aSHistory) {
+    nsSHistory* shistory = static_cast<nsSHistory*>(aSHistory);
+    if (shistory && !shistory->HasOngoingUpdate()) {
+      shistory->SetHasOngoingUpdate(true);
+      mSHistory = shistory;
+    }
+  }
+
+  ~CallerWillNotifyHistoryIndexAndLengthChanges() {
+    if (mSHistory) {
+      mSHistory->SetHasOngoingUpdate(false);
+    }
+  }
+
+  RefPtr<nsSHistory> mSHistory;
 };
 
 inline nsISupports* ToSupports(nsSHistory* aObj) {

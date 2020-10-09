@@ -227,6 +227,37 @@ panelview {
   -moz-box-flex: 1;
 }
 
+.panel-info-button {
+  appearance: none;
+  padding: 0;
+  margin-inline-end: 4px;
+  border-radius: var(--toolbarbutton-border-radius);
+}
+
+.panel-info-button[disabled=true] {
+  visibility: hidden;
+}
+
+.panel-info-button@buttonStateHover@ {
+  background-color: var(--arrowpanel-dimmed);
+}
+
+.panel-info-button:not(:hover)[checked] {
+  background-color: var(--arrowpanel-dimmed-further);
+}
+
+.panel-info-button@buttonStateActive@ {
+  background-color: var(--arrowpanel-dimmed-even-further);
+}
+
+.panel-info-button > image {
+  list-style-image: url(chrome://global/skin/icons/identity-icon.svg);
+  -moz-context-properties: fill, fill-opacity;
+  fill: currentColor;
+  fill-opacity: var(--toolbarbutton-icon-fill-opacity);
+  padding: 4px;
+}
+
 #wrapper-edit-controls:is([place="palette"],[place="menu-panel"]) > #edit-controls,
 #wrapper-zoom-controls:is([place="palette"],[place="menu-panel"]) > #zoom-controls {
   margin-inline-start: 0;
@@ -780,7 +811,7 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
 }
 
 #fxa-menu-header-description {
-  color: var(--panel-disabled-color);
+  color: var(--panel-description-color);
 }
 
 #fxa-menu-avatar {
@@ -903,7 +934,7 @@ panelmultiview[mainViewId="PanelUI-fxa"] #PanelUI-remotetabs-syncnow {
 }
 
 .PanelUI-remotetabs-notabsforclient-label {
-  color: var(--panel-disabled-color);
+  color: var(--panel-description-color);
   /* This margin is to line this label up with the labels in toolbarbuttons. */
   margin-inline-start: 28px;
 }
@@ -959,7 +990,7 @@ panelmultiview[mainViewId="PanelUI-fxa"] #PanelUI-remotetabs-syncnow {
 }
 
 .PanelUI-remotetabs-clientcontainer > label[itemtype="client"] {
-  color: var(--panel-disabled-color);
+  color: var(--panel-description-color);
 }
 
 /* Collapse the non-active vboxes in the remotetabs deck to use only the
@@ -1129,8 +1160,7 @@ panelview .toolbarbutton-1,
   float: inline-end;
 }
 
-.PanelUI-subView .subviewbutton-nav::after,
-#protections-popup-message button::after {
+.PanelUI-subView .subviewbutton-nav::after {
   -moz-context-properties: fill, fill-opacity;
   content: url(chrome://browser/skin/back-12.svg);
   fill: currentColor;
@@ -1139,22 +1169,13 @@ panelview .toolbarbutton-1,
   transform: translateY(1px);
 }
 
-#protections-popup-message button::after {
-  transform: scale(1.5) translateY(1px);
-}
-
 .PanelUI-subView .subviewbutton-nav:-moz-locale-dir(ltr)::after {
   transform: scaleX(-1) translateY(1px);
 }
 
-#protections-popup-message button:-moz-locale-dir(ltr)::after {
-  transform: scaleX(-1) translateY(1px) scale(1.5);
-}
-
 .subviewbutton[shortcut]::after,
 .subviewbutton[shortcut]::after,
-.PanelUI-subView .subviewbutton-nav::after,
-#protections-popup-message button::after {
+.PanelUI-subView .subviewbutton-nav::after {
   margin-inline-start: 10px;
 }
 
@@ -1284,7 +1305,7 @@ panelmultiview .toolbaritem-combined-buttons > spacer.after-label {
 }
 
 .subview-subheader {
-  color: var(--panel-disabled-color);
+  color: var(--panel-description-color);
 }
 
 panelview .toolbarbutton-1 {
@@ -1597,7 +1618,7 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
 }
 
 #PanelUI-panic-actionlist-main-label {
-  color: var(--panel-disabled-color);
+  color: var(--panel-description-color);
   font-size: 0.9em;
 }
 
@@ -1768,7 +1789,7 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
 }
 
 .subviewbutton.download > .toolbarbutton-text > .status-text {
-  color: var(--panel-disabled-color);
+  color: var(--panel-description-color);
   font-size: .9em;
 }
 
@@ -2058,12 +2079,6 @@ panelview:not([mainview]) #PanelUI-whatsNew-title {
   color: #0060df;
 }
 
-#protections-popup-message button {
-  color: white;
-  width: 100%;
-  text-align: end;
-}
-
 #PanelUI-profiler {
   /* On Linux, the popup was too wide for the content due to this rule. This is marked
      as !important to get over the specificity of the CustomizeableUI base rules. */
@@ -2086,6 +2101,11 @@ panelview:not([mainview]) #PanelUI-whatsNew-title {
 #PanelUI-profiler-header[isinfocollapsed="false"] {
   background: radial-gradient(circle farthest-side at top right, #03b1f4, #0556cd);
   color: #fff;
+  /* Set custom hover/focus/active states on the info button,
+     to make them more visible on the header background */
+  --arrowpanel-dimmed: #0003;
+  --arrowpanel-dimmed-further: #0005;
+  --arrowpanel-dimmed-even-further: #0007;
 }
 
 #PanelUI-profiler-header-bar {
@@ -2105,14 +2125,6 @@ panelview:not([mainview]) #PanelUI-whatsNew-title {
 
 #PanelUI-profiler-header[isinfocollapsed="true"] #PanelUI-profiler-header-bar {
   border-bottom: 1px solid var(--panel-separator-color);
-}
-
-#PanelUI-profiler-header[isinfocollapsed="false"] #PanelUI-profiler-info-button {
-  background-color: #0003;
-}
-
-#PanelUI-profiler-header[isinfocollapsed="false"] #PanelUI-profiler-info-button:hover {
-  background-color: #0005;
 }
 
 #PanelUI-profiler-info {
@@ -2282,7 +2294,7 @@ panelview:not([mainview]) #PanelUI-whatsNew-title {
 #PanelUI-profiler-content-description {
   margin: 4px 15px;
   font-size: 12px;
-  opacity: 0.75;
+  color: var(--panel-description-color);
 }
 
 #PanelUI-profiler-content-recording {

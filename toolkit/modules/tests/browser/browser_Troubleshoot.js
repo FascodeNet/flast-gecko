@@ -181,6 +181,12 @@ const SNAPSHOT_SCHEMA = {
         autoStartStatus: {
           type: "number",
         },
+        fissionAutoStart: {
+          type: "boolean",
+        },
+        fissionDecisionStatus: {
+          type: "string",
+        },
         numTotalWindows: {
           type: "number",
         },
@@ -334,6 +340,10 @@ const SNAPSHOT_SCHEMA = {
       type: "object",
       properties: {
         "fission.autostart": {
+          required: false,
+          type: "boolean",
+        },
+        "fission.autostart.session": {
           required: false,
           type: "boolean",
         },

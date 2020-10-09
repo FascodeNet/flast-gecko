@@ -101,8 +101,30 @@ var PrintUtils = {
    * @return true on success, false on failure
    */
   showPageSetup() {
+    let printSettings = this.getPrintSettings();
+    // If we come directly from the Page Setup menu, the hack in
+    // _enterPrintPreview will not have been invoked to set the last used
+    // printer name. For the reasons outlined at that hack, we want that set
+    // here too.
+    let lastUsedPrinterName = this._getLastUsedPrinterName();
+    if (!lastUsedPrinterName) {
+      if (printSettings.printerName) {
+        let PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
+          Ci.nsIPrintSettingsService
+        );
+        PSSVC.savePrintSettingsToPrefs(
+          printSettings,
+          false,
+          Ci.nsIPrintSettings.kInitSavePrinterName
+        );
+        PSSVC.savePrintSettingsToPrefs(
+          printSettings,
+          true,
+          Ci.nsIPrintSettings.kInitSaveAll
+        );
+      }
+    }
     try {
-      var printSettings = this.getPrintSettings();
       var PRINTPROMPTSVC = Cc[
         "@mozilla.org/embedcomp/printingprompt-service;1"
       ].getService(Ci.nsIPrintingPromptService);
@@ -166,13 +188,17 @@ var PrintUtils = {
    *        The time the print was initiated (typically by the user) as obtained
    *        from `Date.now()`.  That is, the initiation time as the number of
    *        milliseconds since January 1, 1970.
+   * @param aPrintSelectionOnly
+   *        Whether to print only the active selection of the given browsing
+   *        context.
    * @return promise resolving when the dialog is open, rejected if the preview
    *         fails.
    */
   async _openTabModalPrint(
     aBrowsingContext,
     aExistingPreviewBrowser,
-    aPrintInitiationTime
+    aPrintInitiationTime,
+    aPrintSelectionOnly
   ) {
     let sourceBrowser = aBrowsingContext.top.embedderElement;
     let previewBrowser = this.getPreviewBrowser(sourceBrowser);
@@ -191,6 +217,7 @@ var PrintUtils = {
     // Create a preview browser.
     let args = PromptUtils.objectToPropBag({
       previewBrowser: aExistingPreviewBrowser,
+      printSelectionOnly: !!aPrintSelectionOnly,
     });
     let dialogBox = gBrowser.getTabDialogBox(sourceBrowser);
     return dialogBox.open(
@@ -213,7 +240,7 @@ var PrintUtils = {
    *        nsIOpenWindowInfo object that has to be passed down to
    *        createBrowser in order for the child process to clone into it.
    */
-  startPrintWindow(aBrowsingContext, aOpenWindowInfo) {
+  startPrintWindow(aBrowsingContext, aOpenWindowInfo, aPrintSelectionOnly) {
     const printInitiationTime = Date.now();
     let browser = null;
     if (aOpenWindowInfo) {
@@ -248,7 +275,8 @@ var PrintUtils = {
       this._openTabModalPrint(
         aBrowsingContext,
         browser,
-        printInitiationTime
+        printInitiationTime,
+        aPrintSelectionOnly
       ).catch(() => {});
       return browser;
     }
@@ -259,7 +287,9 @@ var PrintUtils = {
       return browser;
     }
 
-    this.printWindow(aBrowsingContext, null);
+    let settings = this.getPrintSettings();
+    settings.printSelectionOnly = aPrintSelectionOnly;
+    this.printWindow(aBrowsingContext, settings);
     return null;
   },
 
@@ -582,6 +612,15 @@ var PrintUtils = {
   ) {
     if (!aPrintSettings.printerName) {
       aPrintSettings.printerName = aPSSVC.lastUsedPrinterName;
+      if (!aPrintSettings.printerName) {
+        // It is important to try to avoid passing settings over to the
+        // content process in the old print UI by saving to unprefixed prefs.
+        // To avoid that we try to get the name of a printer we can use.
+        let printerList = Cc["@mozilla.org/gfx/printerlist;1"].getService(
+          Ci.nsIPrinterList
+        );
+        aPrintSettings.printerName = printerList.systemDefaultPrinterName;
+      }
     }
 
     // First get any defaults from the printer. We want to skip this for Save to
@@ -609,7 +648,7 @@ var PrintUtils = {
       var PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
         Ci.nsIPrintSettingsService
       );
-      printSettings = PSSVC.globalPrintSettings;
+      printSettings = PSSVC.newPrintSettings;
       if (aPrinterName) {
         printSettings.printerName = aPrinterName;
       }
@@ -691,6 +730,32 @@ var PrintUtils = {
     this._currentPPBrowser = ppBrowser;
     let mm = ppBrowser.messageManager;
     let lastUsedPrinterName = this._getLastUsedPrinterName();
+    if (!lastUsedPrinterName) {
+      // We "pass" print settings over to the content process by saving them to
+      // prefs (yuck!). It is important to try to avoid saving to prefs without
+      // prefixing them with a printer name though, so this hack tries to make
+      // sure that (in the common case) we have set the "last used" printer,
+      // which makes us save to prefs prefixed with its name, and makes sure
+      // the content process will pick settings up from those prefixed prefs
+      // too.
+      let settings = this.getPrintSettings();
+      if (settings.printerName) {
+        let PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
+          Ci.nsIPrintSettingsService
+        );
+        PSSVC.savePrintSettingsToPrefs(
+          settings,
+          false,
+          Ci.nsIPrintSettings.kInitSavePrinterName
+        );
+        PSSVC.savePrintSettingsToPrefs(
+          settings,
+          true,
+          Ci.nsIPrintSettings.kInitSaveAll
+        );
+        lastUsedPrinterName = settings.printerName;
+      }
+    }
 
     let sendEnterPreviewMessage = function(browser, simplified) {
       mm.sendAsyncMessage("Printing:Preview:Enter", {

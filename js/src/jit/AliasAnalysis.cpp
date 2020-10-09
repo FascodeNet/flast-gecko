@@ -159,6 +159,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::ArgumentsObjectLength:
     case MDefinition::Opcode::FunctionLength:
     case MDefinition::Opcode::FunctionName:
+    case MDefinition::Opcode::GuardArgumentsObjectNotOverriddenIterator:
       object = ins->getOperand(0);
       break;
     case MDefinition::Opcode::GetPropertyCache:
@@ -184,6 +185,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::AtomicExchangeTypedArrayElement:
     case MDefinition::Opcode::AtomicTypedArrayElementBinop:
     case MDefinition::Opcode::LoadWrapperTarget:
+    case MDefinition::Opcode::GuardHasGetterSetter:
     case MDefinition::Opcode::AsmJSLoadHeap:
     case MDefinition::Opcode::AsmJSStoreHeap:
     case MDefinition::Opcode::WasmHeapBase:

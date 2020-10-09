@@ -122,6 +122,7 @@
 #include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
 #include "nsISecureBrowserUI.h"
+#include "nsIXULRuntime.h"
 
 #ifdef XP_WIN
 #  include "mozilla/plugins/PluginWidgetParent.h"
@@ -762,7 +763,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvMoveFocus(
     return IPC_OK();
   }
 
-  nsCOMPtr<nsIFocusManager> fm = nsFocusManager::GetFocusManager();
+  RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager();
   if (fm) {
     RefPtr<Element> dummy;
 
@@ -1306,14 +1307,14 @@ IPCResult BrowserParent::RecvIndexedDBPermissionRequest(
       new indexedDB::PermissionRequestHelper(mFrameElement, principal,
                                              aResolve);
 
-  indexedDB::PermissionRequestBase::PermissionValue permission;
-  nsresult rv = actor->PromptIfNeeded(&permission);
-  if (NS_FAILED(rv)) {
+  mozilla::Result permissionOrErr = actor->PromptIfNeeded();
+  if (permissionOrErr.isErr()) {
     return IPC_FAIL_NO_REASON(this);
   }
 
-  if (permission != indexedDB::PermissionRequestBase::kPermissionPrompt) {
-    aResolve(permission);
+  if (permissionOrErr.inspect() !=
+      indexedDB::PermissionRequestBase::kPermissionPrompt) {
+    aResolve(permissionOrErr.inspect());
   }
 
   return IPC_OK();
@@ -1982,7 +1983,7 @@ bool BrowserParent::SendHandleTap(TapType aType,
     return false;
   }
   if ((aType == TapType::eSingleTap || aType == TapType::eSecondTap)) {
-    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+    nsFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm) {
       RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
       if (frameLoader) {
@@ -2687,7 +2688,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
   // the current window global, but that happens before this and we have a lot
   // of tests that depend on the specific ordering of messages.
   if (!(aFlags & nsIWebProgressListener::LOCATION_CHANGE_SAME_DOCUMENT)) {
-    GetBrowsingContext()->UpdateSecurityStateForLocationOrMixedContentChange();
+    GetBrowsingContext()->UpdateSecurityState();
   }
   return IPC_OK();
 }
@@ -2882,8 +2883,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
   bool ok = ToJSValue(jsapi.cx(), data, &dataVal);
   NS_ENSURE_TRUE(ok, IPC_OK());
 
-  nsresult rv = funcs->UpdateSessionStore(
-      mFrameElement, aFlushId, aIsFinal, aEpoch, dataVal, aNeedCollectSHistory);
+  nsresult rv = funcs->UpdateSessionStore(mFrameElement, mBrowsingContext,
+                                          aFlushId, aIsFinal, aEpoch, dataVal,
+                                          aNeedCollectSHistory);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 
   return IPC_OK();
@@ -3519,7 +3521,7 @@ bool BrowserParent::CanCancelContentJS(
     nsIURI* aNavigationURI) const {
   // Pre-checking if we can cancel content js in the parent is only
   // supported when session history in the parent is enabled.
-  if (!StaticPrefs::fission_sessionHistoryInParent()) {
+  if (!mozilla::SessionHistoryInParent()) {
     // If session history in the parent isn't enabled, this check will
     // be fully done in BrowserChild::CanCancelContentJS
     return true;

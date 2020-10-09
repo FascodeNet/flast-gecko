@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "ExtendedValidation.h"
+#include "MultiLogCTVerifier.h"
 #include "NSSErrorsService.h"
 #include "OCSPVerificationTrustDomain.h"
 #include "PublicKeyPinningService.h"
@@ -54,6 +55,7 @@
 #include "TrustOverride-SymantecData.inc"
 
 using namespace mozilla;
+using namespace mozilla::ct;
 using namespace mozilla::pkix;
 
 extern LazyLogModule gCertVerifierLog;
@@ -72,6 +74,7 @@ NSSCertDBTrustDomain::NSSCertDBTrustDomain(
     ValidityCheckingMode validityCheckingMode, CertVerifier::SHA1Mode sha1Mode,
     NetscapeStepUpPolicy netscapeStepUpPolicy,
     DistrustedCAPolicy distrustedCAPolicy, CRLiteMode crliteMode,
+    uint64_t crliteCTMergeDelaySeconds,
     const OriginAttributes& originAttributes,
     const Vector<Input>& thirdPartyRootInputs,
     const Vector<Input>& thirdPartyIntermediateInputs,
@@ -94,6 +97,7 @@ NSSCertDBTrustDomain::NSSCertDBTrustDomain(
       mNetscapeStepUpPolicy(netscapeStepUpPolicy),
       mDistrustedCAPolicy(distrustedCAPolicy),
       mCRLiteMode(crliteMode),
+      mCRLiteCTMergeDelaySeconds(crliteCTMergeDelaySeconds),
       mSawDistrustedCAByPolicyError(false),
       mOriginAttributes(originAttributes),
       mThirdPartyRootInputs(thirdPartyRootInputs),
@@ -605,11 +609,34 @@ static Result GetOCSPAuthorityInfoAccessLocation(const UniquePLArenaPool& arena,
   return Success;
 }
 
+Result GetEarliestSCTTimestamp(Input sctExtension,
+                               Maybe<uint64_t>& earliestTimestamp) {
+  earliestTimestamp.reset();
+
+  Input sctList;
+  Result rv =
+      ExtractSignedCertificateTimestampListFromExtension(sctExtension, sctList);
+  if (rv != Success) {
+    return rv;
+  }
+  std::vector<SignedCertificateTimestamp> decodedSCTs;
+  size_t decodingErrors;
+  DecodeSCTs(sctList, decodedSCTs, decodingErrors);
+  Unused << decodingErrors;
+  for (const auto& scts : decodedSCTs) {
+    if (!earliestTimestamp.isSome() || scts.timestamp < *earliestTimestamp) {
+      earliestTimestamp = Some(scts.timestamp);
+    }
+  }
+  return Success;
+}
+
 Result NSSCertDBTrustDomain::CheckRevocation(
     EndEntityOrCA endEntityOrCA, const CertID& certID, Time time,
-    Time certValidityPeriodBeginning, Duration validityDuration,
+    Duration validityDuration,
     /*optional*/ const Input* stapledOCSPResponse,
-    /*optional*/ const Input* aiaExtension) {
+    /*optional*/ const Input* aiaExtension,
+    /*optional*/ const Input* sctExtension) {
   // Actively distrusted certificates will have already been blocked by
   // GetCertTrust.
 
@@ -619,10 +646,20 @@ Result NSSCertDBTrustDomain::CheckRevocation(
   MOZ_LOG(gCertVerifierLog, LogLevel::Debug,
           ("NSSCertDBTrustDomain: Top of CheckRevocation\n"));
 
+  Maybe<uint64_t> earliestSCTTimestamp = Nothing();
+  if (sctExtension) {
+    Result rv = GetEarliestSCTTimestamp(*sctExtension, earliestSCTTimestamp);
+    if (rv != Success) {
+      MOZ_LOG(
+          gCertVerifierLog, LogLevel::Debug,
+          ("decoding SCT extension failed - CRLite will be not be consulted"));
+    }
+  }
+
   Maybe<TimeDuration> crliteLookupDuration;
 #ifdef MOZ_NEW_CERT_STORAGE
   if (endEntityOrCA == EndEntityOrCA::MustBeEndEntity &&
-      mCRLiteMode != CRLiteMode::Disabled) {
+      mCRLiteMode != CRLiteMode::Disabled && earliestSCTTimestamp.isSome()) {
     MOZ_LOG(gCertVerifierLog, LogLevel::Debug,
             ("NSSCertDBTrustDomain::CheckRevocation: checking CRLite"));
     nsTArray<uint8_t> issuerBytes;
@@ -668,12 +705,36 @@ Result NSSCertDBTrustDomain::CheckRevocation(
         crliteLookupDuration.emplace(crliteLookupAfter - crliteLookupBefore);
       }
       Time filterTimestampTime(TimeFromEpochInSeconds(filterTimestamp));
-      // We can only use this result if this certificate's `notBefore` time
-      // (i.e. the beginning of its validity period) is older than what cert
-      // storage returned for its CRLite timestamp. Otherwise, the CRLite filter
-      // cascade may have been created before this certificate existed, and if
-      // it would create a false positive, it hasn't been accounted for.
-      if (certValidityPeriodBeginning <= filterTimestampTime &&
+      // We can only use this result if the earliest embedded signed
+      // certificate timestamp from the certificate is older than what cert
+      // storage returned for its CRLite timestamp. Otherwise, the CRLite
+      // filter cascade may have been created before this certificate existed,
+      // and if it would create a false positive, it hasn't been accounted for.
+      // SCT timestamps are milliseconds since the epoch.
+      Time earliestCertificateTimestamp(
+          TimeFromEpochInSeconds(*earliestSCTTimestamp / 1000));
+      Result result =
+          earliestCertificateTimestamp.AddSeconds(mCRLiteCTMergeDelaySeconds);
+      if (result != Success) {
+        // This shouldn't happen - the merge delay is at most a year in seconds,
+        // and the SCT timestamp is supposed to be in the past.
+        MOZ_LOG(gCertVerifierLog, LogLevel::Debug,
+                ("NSSCertDBTrustDomain::CheckRevocation: integer overflow "
+                 "calculating sct timestamp + merge delay (%llu + %llu)",
+                 static_cast<unsigned long long>(*earliestSCTTimestamp / 1000),
+                 static_cast<unsigned long long>(mCRLiteCTMergeDelaySeconds)));
+        if (mCRLiteMode == CRLiteMode::Enforce) {
+          // While we do have control over the possible values of the CT merge
+          // delay parameter, we don't have control over the SCT timestamp.
+          // Thus, if we've reached this point, the CA has probably made a
+          // mistake and we should treat this certificate as revoked.
+          return Result::ERROR_REVOKED_CERTIFICATE;
+        }
+        // If Time::AddSeconds fails, the original value is unchanged. Since in
+        // this case `earliestCertificateTimestamp` must represent a value far
+        // in the future, any CRLite result will be discarded.
+      }
+      if (earliestCertificateTimestamp <= filterTimestampTime &&
           crliteRevocationState == nsICertStorage::STATE_ENFORCE) {
         if (mCRLiteTelemetryInfo) {
           mCRLiteTelemetryInfo->mLookupResult =
@@ -707,7 +768,7 @@ Result NSSCertDBTrustDomain::CheckRevocation(
           mCRLiteTelemetryInfo->mLookupResult =
               CRLiteLookupResult::FilterNotAvailable;
         }
-      } else if (certValidityPeriodBeginning > filterTimestampTime) {
+      } else if (earliestCertificateTimestamp > filterTimestampTime) {
         MOZ_LOG(gCertVerifierLog, LogLevel::Debug,
                 ("NSSCertDBTrustDomain::CheckRevocation: cert too new"));
         if (mCRLiteTelemetryInfo) {

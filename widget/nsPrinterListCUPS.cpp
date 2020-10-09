@@ -31,6 +31,34 @@ static void GetDisplayNameForPrinter(const cups_dest_t& aDest,
 #endif
 }
 
+NS_IMETHODIMP
+nsPrinterListCUPS::InitPrintSettingsFromPrinter(
+    const nsAString& aPrinterName, nsIPrintSettings* aPrintSettings) {
+  MOZ_ASSERT(aPrintSettings);
+
+  // Set a default file name.
+  nsAutoString filename;
+  nsresult rv = aPrintSettings->GetToFileName(filename);
+  if (NS_FAILED(rv) || filename.IsEmpty()) {
+    const char* path = PR_GetEnv("PWD");
+    if (!path) {
+      path = PR_GetEnv("HOME");
+    }
+
+    if (path) {
+      CopyUTF8toUTF16(mozilla::MakeStringSpan(path), filename);
+      filename.AppendLiteral("/mozilla.pdf");
+    } else {
+      filename.AssignLiteral("mozilla.pdf");
+    }
+
+    aPrintSettings->SetToFileName(filename);
+  }
+
+  aPrintSettings->SetIsInitializedFromPrinter(true);
+  return NS_OK;
+}
+
 nsTArray<PrinterInfo> nsPrinterListCUPS::Printers() const {
   if (!sCupsShim.EnsureInitialized()) {
     return {};
@@ -39,11 +67,29 @@ nsTArray<PrinterInfo> nsPrinterListCUPS::Printers() const {
   nsTArray<PrinterInfo> printerInfoList;
 
   cups_dest_t* printers = nullptr;
+  // Ideally we should use cupsEnumDests with CUPS_PRINTER_DISCOVERED, etc.
+  // flags instead of calling cupsGetDests and filtering out
+  // CUPS_PRINTER_DISCOVERED later, because it should be faster than the
+  // cupsGetDests call.  That being said, unfortunately at least on Ubuntu 20.20
+  // cupsEnumDests doesn't filter out CUPS_PRINTER_DISCOVERED-ed printers at
+  // all. So for now we use cupsGetDests but if we still have perf issues when
+  // we enumerate available printers on Mac, we should use cupsEnumDest at least
+  // on Mac.
   auto numPrinters = sCupsShim.cupsGetDests(&printers);
   printerInfoList.SetCapacity(numPrinters);
 
   for (auto i : mozilla::IntegerRange(0, numPrinters)) {
     cups_dest_t* dest = printers + i;
+
+    if (const char* printerType = sCupsShim.cupsGetOption(
+            "printer-type", dest->num_options, dest->options)) {
+      nsresult rv;
+      int64_t type = nsAutoCString(printerType).ToInteger64(&rv);
+      if (NS_SUCCEEDED(rv) && (type & (CUPS_PRINTER_FAX | CUPS_PRINTER_SCANNER |
+                                       CUPS_PRINTER_DISCOVERED))) {
+        continue;
+      }
+    }
 
     cups_dest_t* ownedDest = nullptr;
     mozilla::DebugOnly<const int> numCopied =
@@ -130,6 +176,7 @@ Maybe<PrinterInfo> nsPrinterListCUPS::PrinterBySystemName(
   }
   return rv;
 }
+
 nsresult nsPrinterListCUPS::SystemDefaultPrinterName(nsAString& aName) const {
   aName.Truncate();
 
@@ -151,33 +198,5 @@ nsresult nsPrinterListCUPS::SystemDefaultPrinterName(nsAString& aName) const {
   }
 
   sCupsShim.cupsFreeDests(1, dest);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsPrinterListCUPS::InitPrintSettingsFromPrinter(
-    const nsAString& aPrinterName, nsIPrintSettings* aPrintSettings) {
-  MOZ_ASSERT(aPrintSettings);
-
-  // Set a default file name.
-  nsAutoString filename;
-  nsresult rv = aPrintSettings->GetToFileName(filename);
-  if (NS_FAILED(rv) || filename.IsEmpty()) {
-    const char* path = PR_GetEnv("PWD");
-    if (!path) {
-      path = PR_GetEnv("HOME");
-    }
-
-    if (path) {
-      CopyUTF8toUTF16(mozilla::MakeStringSpan(path), filename);
-      filename.AppendLiteral("/mozilla.pdf");
-    } else {
-      filename.AssignLiteral("mozilla.pdf");
-    }
-
-    aPrintSettings->SetToFileName(filename);
-  }
-
-  aPrintSettings->SetIsInitializedFromPrinter(true);
   return NS_OK;
 }

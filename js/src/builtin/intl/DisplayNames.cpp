@@ -30,6 +30,7 @@
 #include "gc/Rooting.h"
 #include "js/CallArgs.h"
 #include "js/Class.h"
+#include "js/experimental/Intl.h"  // JS::AddMozDateTimeFormatConstructor, JS::AddDisplayNamesConstructor
 #include "js/GCVector.h"
 #include "js/PropertyDescriptor.h"
 #include "js/PropertySpec.h"
@@ -223,7 +224,7 @@ void js::DisplayNamesObject::finalize(JSFreeOp* fop, JSObject* obj) {
   }
 }
 
-bool js::AddDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
+bool JS::AddDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
   JSObject* ctor =
       GlobalObject::getOrCreateConstructor(cx, JSProto_DisplayNames);
   if (!ctor) {
@@ -234,7 +235,7 @@ bool js::AddDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
   return DefineDataProperty(cx, intl, cx->names().DisplayNames, ctorValue, 0);
 }
 
-bool js::AddMozDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
+bool JS::AddMozDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
   RootedObject ctor(cx, GlobalObject::createConstructor(
                             cx, MozDisplayNames, cx->names().DisplayNames, 2));
   if (!ctor) {

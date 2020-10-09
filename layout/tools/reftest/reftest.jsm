@@ -162,11 +162,11 @@ function OnRefTestLoad(win)
     var env = Cc["@mozilla.org/process/environment;1"].
               getService(Ci.nsIEnvironment);
 
+    g.browserIsRemote = Services.appinfo.browserTabsRemoteAutostart;
+    g.browserIsFission = Services.appinfo.fissionAutostart;
+
     var prefs = Cc["@mozilla.org/preferences-service;1"].
                 getService(Ci.nsIPrefBranch);
-    g.browserIsRemote = prefs.getBoolPref("browser.tabs.remote.autostart", false);
-    g.browserIsFission = prefs.getBoolPref("fission.autostart", false);
-
     g.browserIsIframe = prefs.getBoolPref("reftest.browser.iframe.enabled", false);
 
     g.logLevel = prefs.getStringPref("reftest.logLevel", "info");
@@ -1700,9 +1700,8 @@ function RecvStartPrint(isPrintSelection, printRange)
     ps.printToFile = true;
     ps.toFileName = file.path;
     ps.outputFormat = Ci.nsIPrintSettings.kOutputFormatPDF;
-    if (isPrintSelection) {
-        ps.printRange = Ci.nsIPrintSettings.kRangeSelection;
-    } else if (printRange) {
+    ps.printSelectionOnly = isPrintSelection;
+    if (printRange) {
         ps.printRange = Ci.nsIPrintSettings.kRangeSpecifiedPageRange;
         let range = printRange.split('-');
         ps.startPageRange = +range[0] || 1;

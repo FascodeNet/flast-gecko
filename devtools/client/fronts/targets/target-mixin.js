@@ -42,15 +42,14 @@ function TargetMixin(parentClass) {
       this._forceChrome = false;
 
       this.destroy = this.destroy.bind(this);
-      this._onNewSource = this._onNewSource.bind(this);
 
       this.threadFront = null;
 
-      // By default, we close the DevToolsClient of local tabs which
-      // are instanciated from TargetFactory module.
-      // This flag will also be set on local targets opened from about:debugging,
-      // for which a dedicated DevToolsClient is also created.
-      this.shouldCloseClient = this.isLocalTab;
+      // This flag will be set to true from:
+      // - TabDescriptorFront getTarget(), for local tab targets
+      // - targetFromURL(), for local targets (about:debugging)
+      // - initToolbox(), for some test-only targets
+      this.shouldCloseClient = false;
 
       this._client = client;
 
@@ -58,7 +57,28 @@ function TargetMixin(parentClass) {
       // [typeName:string => Front instance]
       this.fronts = new Map();
 
+      // `resource-available-form` events can be emitted by target actors before the
+      // ResourceWatcher could add event listeners. The target front will cache those
+      // events until the ResourceWatcher has added the listeners.
+      this._resourceCache = [];
+      this._onResourceAvailable = this._onResourceAvailable.bind(this);
+      // In order to avoid destroying the `_resourceCache`, we need to call `super.on()`
+      // instead of `this.on()`.
+      super.on("resource-available-form", this._onResourceAvailable);
+
       this._setupRemoteListeners();
+    }
+
+    on(eventName, listener) {
+      if (eventName === "resource-available-form" && this._resourceCache) {
+        this.off("resource-available-form", this._onResourceAvailable);
+        for (const cache of this._resourceCache) {
+          listener(cache);
+        }
+        this._resourceCache = null;
+      }
+
+      super.on(eventName, listener);
     }
 
     /**
@@ -77,6 +97,11 @@ function TargetMixin(parentClass) {
      * by targets created by RootActor methods (listSomething methods).
      */
     get descriptorFront() {
+      if (this.isDestroyed()) {
+        // If the target was already destroyed, parentFront will be null.
+        return null;
+      }
+
       if (this.parentFront.typeName.endsWith("Descriptor")) {
         return this.parentFront;
       }
@@ -291,18 +316,12 @@ function TargetMixin(parentClass) {
       return this.client.traits[traitName];
     }
 
-    /**
-     * The following getters: isLocalTab, localTab, ... will be overriden for
-     * local tabs by some code in devtools/client/fronts/targets/local-tab.js.
-     * They are all specific to local tabs, i.e. when you are debugging a tab of
-     * the current Firefox instance.
-     */
     get isLocalTab() {
-      return false;
+      return !!this.descriptorFront?.isLocalTab;
     }
 
     get localTab() {
-      return null;
+      return this.descriptorFront?.localTab || null;
     }
 
     // Get a promise of the RootActor's form
@@ -392,7 +411,7 @@ function TargetMixin(parentClass) {
     }
 
     get isWorkerTarget() {
-      return this.typeName === "workerTarget";
+      return this.typeName === "workerDescriptor";
     }
 
     get isLegacyAddon() {
@@ -567,14 +586,7 @@ function TargetMixin(parentClass) {
 
       await this.threadFront.attach(options);
 
-      this.threadFront.on("newSource", this._onNewSource);
-
       return this.threadFront;
-    }
-
-    // Listener for "newSource" event fired by the thread actor
-    _onNewSource(packet) {
-      this.emit("source-updated", packet);
     }
 
     /**
@@ -595,11 +607,6 @@ function TargetMixin(parentClass) {
         this.client.off("closed", this.destroy);
       }
       this.off("tabDetached", this.destroy);
-
-      // Remove listeners set in attachThread
-      if (this.threadFront) {
-        this.threadFront.off("newSource", this._onNewSource);
-      }
 
       // Remove listeners set in attachConsole
       if (this.removeOnInspectObjectListener) {
@@ -736,6 +743,12 @@ function TargetMixin(parentClass) {
 
       this._title = null;
       this._url = null;
+    }
+
+    _onResourceAvailable(resources) {
+      if (this._resourceCache) {
+        this._resourceCache.push(resources);
+      }
     }
 
     toString() {

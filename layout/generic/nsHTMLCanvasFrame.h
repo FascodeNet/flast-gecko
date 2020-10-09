@@ -61,12 +61,12 @@ class nsHTMLCanvasFrame final : public nsContainerFrame {
                                  WebRenderCanvasData* aCanvasData);
 
   /* get the size of the canvas's image */
-  nsIntSize GetCanvasSize();
+  nsIntSize GetCanvasSize() const;
 
   virtual nscoord GetMinISize(gfxContext* aRenderingContext) override;
   virtual nscoord GetPrefISize(gfxContext* aRenderingContext) override;
   virtual mozilla::IntrinsicSize GetIntrinsicSize() override;
-  virtual mozilla::AspectRatio GetIntrinsicRatio() override;
+  mozilla::AspectRatio GetIntrinsicRatio() const override;
 
   SizeComputationResult ComputeSize(gfxContext* aRenderingContext,
                                     mozilla::WritingMode aWM,

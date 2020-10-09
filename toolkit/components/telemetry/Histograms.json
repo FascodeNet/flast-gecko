@@ -1677,17 +1677,6 @@
     "description": "Time between receiving a scroll event on the event loop and compositing its result onto the screen (ms)",
     "bug_numbers": [1500465, 1604818]
   },
-  "PENDING_CRITICAL_INPUT_WHEN_TIMEOUT": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": ["perfteam@mozilla.com", "seanfeng@mozilla.com"],
-    "expires_in_version": "84",
-    "kind": "enumerated",
-    "n_values": 80,
-    "releaseChannelCollection": "opt-out",
-    "description": "Measures the number of pending critical input events in the IPC channel when the timeout handler is about to run",
-    "bug_numbers": [1648284]
-  },
   "CANVAS_2D_USED": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -2417,9 +2406,9 @@
   "NETWORK_BACK_PRESSURE_SUSPENSION_RATE_V2": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "84",
-    "alert_emails": ["necko@mozilla.com", "junior@mozilla.com"],
-    "bug_numbers": [1280629, 1494133, 1524552, 1616069],
+    "expires_in_version": "90",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1280629, 1494133, 1524552, 1616069, 1668513],
     "kind": "categorical",
     "labels": ["Suspended", "NotSuspended", "SuspendedLocal", "NotSuspendedLocal"],
     "description": "Collect whether the resource is suspended by back pressure. And split by local-ness."
@@ -2427,9 +2416,9 @@
   "NETWORK_BACK_PRESSURE_SUSPENSION_CP_TYPE": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "84",
-    "alert_emails": ["necko@mozilla.com", "junior@mozilla.com"],
-    "bug_numbers": [1487559, 1524552, 1616069],
+    "expires_in_version": "90",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1487559, 1524552, 1616069, 1668513],
     "kind": "enumerated",
     "n_values": 64,
     "description": "Collect the content policy when the resource is non-local and suspended by back pressure (0-44 from nsContentPolicyType in nsIContentPolicy.idl)."
@@ -2437,9 +2426,9 @@
   "NETWORK_BACK_PRESSURE_SUSPENSION_DELAY_TIME_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "84",
-    "alert_emails": ["necko@mozilla.com", "junior@mozilla.com"],
-    "bug_numbers": [1498434, 1524552, 1616069],
+    "expires_in_version": "90",
+    "alert_emails": ["necko@mozilla.com", "damjanovic@mozilla.com"],
+    "bug_numbers": [1498434, 1524552, 1616069, 1668513],
     "kind": "exponential",
     "high": 60000,
     "n_buckets": 100,
@@ -2521,34 +2510,34 @@
   "TLS_EARLY_DATA_NEGOTIATED": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "71",
+    "expires_in_version": "99",
     "kind": "enumerated",
     "n_values": 3,
     "description": "Sending TLS early data was possible: 0 - not possible, 1 - possible but not used, 2 - possible and used.",
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1296288],
+    "bug_numbers": [1296288, 1654309],
     "releaseChannelCollection": "opt-out"
   },
   "TLS_EARLY_DATA_ACCEPTED": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "71",
+    "expires_in_version": "99",
     "kind": "boolean",
     "description": "TLS early data was used and it was accepted (true) or rejected (false) by the remote host.",
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1296288],
+    "bug_numbers": [1296288, 1654309],
     "releaseChannelCollection": "opt-out"
   },
   "TLS_EARLY_DATA_BYTES_WRITTEN": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "71",
+    "expires_in_version": "99",
     "kind": "exponential",
     "high": 60000,
     "n_buckets": 100,
     "description": "Amount of bytes sent using TLS early data at the start of a TLS connection for a given channel.",
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1296288],
+    "bug_numbers": [1296288, 1654309],
     "releaseChannelCollection": "opt-out"
   },
   "ESNI_KEYS_RECORD_FETCH_DELAYS": {
@@ -3295,6 +3284,29 @@
     "keyed": true,
     "description": "Error code when http3 connection is closed. Look at Http3Session for more details."
   },
+  "HTTP3_TIME_TO_REUSE_IDLE_CONNECTTION_MS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "expires_in_version": "never",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "kind": "exponential",
+    "high": 60000,
+    "n_buckets": 50,
+    "keyed": true,
+    "description": "Time to reuse an idle connection in HTTP3(ms); keyed by the transaction reusing an idle connection has succeeded or failed",
+    "bug_numbers": [1655566]
+  },
+  "HTTP3_TIMER_DELAYED": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "expires_in_version": "never",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "kind": "exponential",
+    "high": 60000,
+    "n_buckets": 50,
+    "description": "Time difference between setting timer value and actually firing the timer for calling neqo",
+    "bug_numbers": [1655566]
+  },
   "HTTP3_REQUEST_PER_CONN": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
@@ -3305,6 +3317,50 @@
     "n_buckets": 50,
     "bug_numbers": [1652104],
     "description": "HTTP3: Streams created per connection"
+  },
+  "HTTP3_BLOCKED_BY_STREAM_LIMIT_PER_CONN": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1655566],
+    "description": "HTTP3: number of times a connection is blocked by maximum allowed number of parallel streams per connection"
+  },
+  "HTTP3_TRANS_BLOCKED_BY_STREAM_LIMIT_PER_CONN": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1655566],
+    "description": "HTTP3: number of transactions that are blocked by maximum allowed number of parallel streams per connection"
+  },
+  "HTTP3_TRANS_SENDING_BLOCKED_BY_FLOW_CONTROL_PER_CONN": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1655566],
+    "description": "HTTP3: number of times streams are blocked by the flow control while sending data per connection"
+  },
+  "HTTP3_SENDING_BLOCKED_BY_FLOW_CONTROL_PER_TRANS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1655566],
+    "description": "HTTP3: number of times when a stream is blocked by the flow control while sendnig data."
   },
   "HTTP_CONTENT_ENCODING": {
     "record_in_processes": ["main", "content"],
@@ -5244,24 +5300,6 @@
     "high": 32768,
     "n_buckets": 3,
     "description": "SQLite write (bytes)"
-  },
-  "MOZ_STORAGE_ASYNC_REQUESTS_MS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "40",
-    "kind": "exponential",
-    "high": 32768,
-    "n_buckets": 20,
-    "description": "mozStorage async requests completion (ms) *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
-  },
-  "MOZ_STORAGE_ASYNC_REQUESTS_SUCCESS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "40",
-    "kind": "boolean",
-    "description": "mozStorage async requests success *** No longer needed (bug 1156565). Delete histogram and accumulation code! ***"
   },
   "STARTUP_CACHE_REQUESTS": {
     "record_in_processes": ["main"],
@@ -7860,16 +7898,6 @@
     "kind": "boolean",
     "description": "Deleted or to-be-reused innerwindow which has had mutation event listeners."
   },
-  "INNERWINDOWS_WITH_TEXT_EVENT_LISTENERS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["mnakano@mozilla.com"],
-    "bug_numbers": [1506434,1288640],
-    "expires_in_version": "67",
-    "kind": "boolean",
-    "releaseChannelCollection": "opt-out",
-    "description": "Deleted or to-be-reused innerwindow which has had text event listeners in the default group."
-  },
   "ENCODING_OVERRIDE_SITUATION": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -9266,11 +9294,11 @@
   "REGION_LOCATION_SERVICES_DIFFERENCE": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "kind": "exponential",
     "n_buckets": 20,
     "high": 12742000,
-    "bug_numbers": [1637402, 1664723],
+    "bug_numbers": [1637402, 1664723, 1666977],
     "alert_emails": ["dharvey@mozilla.com"],
     "releaseChannelCollection": "opt-out",
     "description": "The distance(m) between the the result of 2 services that detect the users location"
@@ -11997,8 +12025,9 @@
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
     "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
     "kind": "flag",
-    "description": "If a master-password is enabled for this profile"
+    "description": "If a primary-password is enabled for this profile"
   },
   "DISPLAY_SCALING" : {
     "record_in_processes": ["main", "content"],
@@ -12322,21 +12351,6 @@
     "bug_numbers": [1202706],
     "alert_emails": ["tdsmith@mozilla.com", "compatibility@lists.mozilla.org"],
     "description": "Number of service workers destroyed; used in conjunction with use counter histograms"
-  },
-  "ONBEFOREUNLOAD_PROMPT_ACTION" : {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "45",
-    "kind": "enumerated",
-    "n_values": 3,
-    "description": "What button a user clicked in an onbeforeunload prompt.  (Stay on Page = 0, Leave Page = 1, prompt aborted = 2)"
-  },
-  "ONBEFOREUNLOAD_PROMPT_COUNT" : {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "45",
-    "kind": "count",
-    "description": "How many onbeforeunload prompts has the user encountered in their session?"
   },
   "SUBPROCESS_ABNORMAL_ABORT": {
     "record_in_processes": ["main", "content"],
@@ -13261,6 +13275,66 @@
     "n_values": 12,
     "releaseChannelCollection": "opt-out",
     "description": "Plugin drawing model. 0 when windowed, otherwise NPDrawingModel + 1."
+  },
+  "JS_EXECUTION_PROPORTION" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["dpalmeiro@mozilla.com","perfteam@mozilla.com"],
+    "expires_in_version": "89",
+    "releaseChannelCollection": "opt-out",
+    "kind": "linear",
+    "high": 100,
+    "n_buckets": 20,
+    "bug_numbers": [1664475],
+    "description": "Percentage of page load time spent executing Javascript."
+  },
+  "JS_DELAZIFICATION_PROPORTION" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["dpalmeiro@mozilla.com","perfteam@mozilla.com"],
+    "expires_in_version": "89",
+    "releaseChannelCollection": "opt-out",
+    "kind": "linear",
+    "high": 100,
+    "n_buckets": 20,
+    "bug_numbers": [1664475],
+    "description": "Percentage of execution time spent during delazification for JS scripts up until the page load event fires."
+  },
+  "JS_XDR_ENCODING_PROPORTION" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["dpalmeiro@mozilla.com","perfteam@mozilla.com"],
+    "expires_in_version": "89",
+    "releaseChannelCollection": "opt-out",
+    "kind": "linear",
+    "high": 100,
+    "n_buckets": 20,
+    "bug_numbers": [1664475],
+    "description": "Percentage of execution time spent during XDR encoding for JS scripts up until the page load event fires."
+  },
+  "JS_BASELINE_COMPILE_PROPORTION" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["dpalmeiro@mozilla.com","perfteam@mozilla.com"],
+    "expires_in_version": "89",
+    "releaseChannelCollection": "opt-out",
+    "kind": "linear",
+    "high": 100,
+    "n_buckets": 20,
+    "bug_numbers": [1664475],
+    "description": "Percentage of execution time spent during Baseline compilation for JS scripts up until the page load event fires."
+  },
+  "JS_BYTECODE_CACHING_TIME" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["dpalmeiro@mozilla.com","perfteam@mozilla.com"],
+    "expires_in_version": "89",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 100,
+    "bug_numbers": [1664475],
+    "description": "Time in milliseconds spent caching JS bytecode for scripts executed during a page load."
   },
   "DOM_SCRIPT_KIND": {
     "record_in_processes": ["main", "content"],
@@ -14912,11 +14986,11 @@
       "nohlmeier@mozilla.com",
       "padenot@mozilla.com"
     ],
-    "expires_in_version": "88",
+    "expires_in_version": "90",
     "kind": "linear",
     "high": 60,
     "n_buckets": 10,
-    "bug_numbers": [1490074, 1570634, 1606206],
+    "bug_numbers": [1490074, 1570634, 1606206, 1652196],
     "description": "How long the AudioContext would become audible since it was created, time unit is seconds.",
     "releaseChannelCollection": "opt-out"
   },
@@ -14942,25 +15016,11 @@
       "padenot@mozilla.com",
       "ktomlinson@mozilla.com"
     ],
-    "expires_in_version": "70",
+    "expires_in_version": "90",
     "kind": "categorical",
     "labels": ["NeverBlocked", "AllowedAfterBlocked", "NeverAllowed"],
-    "bug_numbers": [1512277],
+    "bug_numbers": [1512277, 1652196],
     "description": "The number of times an AudioContext is allowed to start after being blocked, or the number of AudioContexts attempting to start which were never blocked or never allowed.",
-    "releaseChannelCollection": "opt-out"
-  },
-  "MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "alwu@mozilla.com",
-      "nohlmeier@mozilla.com"
-    ],
-    "expires_in_version": "72",
-    "kind": "categorical",
-    "labels": ["VPlayedMoreThan7s", "VPlayedLessThan7s", "VPlayedToTheEnd", "APlayedMoreThan7s", "APlayedLessThan7s", "APlayedToTheEnd"],
-    "bug_numbers": [1525156],
-    "description": "The number of times autoplay media (audio and video), which has been blocked by autoplay policy, played exactly 7 seconds or more, or less than 7 seconds after it has been resumed from the blocked state. If media's duration is less than 7 seconds and it played to the end before user pauses it, it would be in another category which is different from 'play >= 7 seconds' and 'play < 7 seconds'.",
     "releaseChannelCollection": "opt-out"
   },
   "QM_QUOTA_INFO_LOAD_TIME_V0": {
@@ -15157,9 +15217,9 @@
   "HTTP_TRAFFIC_ANALYSIS_3": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "alert_emails": ["gachen@mozilla.com"],
-    "bug_numbers": [1533363, 1546796, 1546906, 1550756, 1572666, 1590124, 1621800],
-    "expires_in_version": "84",
+    "alert_emails": ["arthur@mozilla.com", "tanvi@mozilla.com", "tihuang@mozilla.com"],
+    "bug_numbers": [1533363, 1546796, 1546906, 1550756, 1572666, 1590124, 1621800, 1668604],
+    "expires_in_version": "91",
     "kind": "categorical",
     "n_values": 50,
     "labels": [
@@ -15364,7 +15424,7 @@
     "record_in_processes": ["main"],
     "products": ["firefox"],
     "alert_emails": ["nika@mozilla.com"],
-    "expires_in_version": "82",
+    "expires_in_version": "89",
     "kind": "categorical",
     "labels": [
       "EnabledByAutostart",
@@ -15681,8 +15741,8 @@
     "record_in_processes": ["content"],
     "products": ["firefox"],
     "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
-    "bug_numbers": [1658532, 1583604],
-    "expires_in_version": "84",
+    "bug_numbers": [1658532, 1583604, 1666981],
+    "expires_in_version": "90",
     "kind": "categorical",
     "labels": [
       "TYPE_SCRIPT_USED",

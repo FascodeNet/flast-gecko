@@ -19,7 +19,7 @@
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
-#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/PcScriptCache.h"
 #include "jit/Recover.h"
@@ -2217,9 +2217,7 @@ MachineState MachineState::FromBailout(RegisterDump::GPRArray& regs,
     machine.setRegisterLocation(
         FloatRegister(FloatRegisters::Encoding(i), FloatRegisters::Double),
         &fpregs[i]);
-#  ifdef ENABLE_WASM_SIMD
-#    error "More care needed here"
-#  endif
+    // No SIMD support in bailouts, SIMD is internal to wasm
   }
 
 #elif defined(JS_CODEGEN_NONE)

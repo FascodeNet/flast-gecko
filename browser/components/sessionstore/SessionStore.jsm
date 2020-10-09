@@ -439,9 +439,10 @@ var SessionStore = {
     );
   },
 
-  updateSessionStoreFromTablistener(aBrowser, aData) {
+  updateSessionStoreFromTablistener(aBrowser, aBrowsingContext, aData) {
     return SessionStoreInternal.updateSessionStoreFromTablistener(
       aBrowser,
+      aBrowsingContext,
       aData
     );
   },
@@ -900,10 +901,7 @@ var SessionStoreInternal = {
     );
     Services.prefs.addObserver("privacy.resistFingerprinting", this);
 
-    this._shistoryInParent = Services.prefs.getBoolPref(
-      "fission.sessionHistoryInParent",
-      false
-    );
+    this._shistoryInParent = Services.appinfo.sessionHistoryInParent;
   },
 
   /**
@@ -1183,7 +1181,7 @@ var SessionStoreInternal = {
     );
   },
 
-  updateSessionStoreFromTablistener(aBrowser, aData) {
+  updateSessionStoreFromTablistener(aBrowser, aBrowsingContext, aData) {
     if (aBrowser.permanentKey == undefined) {
       return;
     }
@@ -1212,45 +1210,33 @@ var SessionStoreInternal = {
         if (!aData.sHistoryNeeded && listener._fromIdx == kNoIndex) {
           // No shistory changes needed.
           listener._sHistoryChanges = false;
+        } else if (aBrowsingContext.sessionHistory) {
+          let uri = aBrowser.currentURI
+            ? aBrowser.currentURI.displaySpec
+            : listener._lastKnownUri;
+          let body = aBrowser.ownerGlobal
+            ? aBrowser.ownerGlobal.document.body
+            : listener._lastKnownBody;
+          let userContextId = aBrowser.contentPrincipal
+            ? aBrowser.contentPrincipal.originAttributes.userContextId
+            : listener._lastKnownUserContextId;
+          aData.data.historychange = SessionHistory.collectFromParent(
+            uri,
+            body,
+            aBrowsingContext.sessionHistory,
+            userContextId,
+            listener._sHistoryChanges ? listener._fromIdx : -1
+          );
+          listener._sHistoryChanges = false;
+          listener._fromIdx = kNoIndex;
         } else {
-          // |browser.frameLoader| might be empty if the browser was already
-          // destroyed and its tab removed. In that case we still have the last
-          // frameLoader we know about to compare.
-          let frameLoader =
-            aBrowser.frameLoader ||
-            this._lastKnownFrameLoader.get(aBrowser.permanentKey);
-          if (
-            frameLoader &&
-            frameLoader.browsingContext &&
-            frameLoader.browsingContext.sessionHistory
-          ) {
-            let uri = aBrowser.currentURI
-              ? aBrowser.currentURI.displaySpec
-              : listener._lastKnownUri;
-            let body = aBrowser.ownerGlobal
-              ? aBrowser.ownerGlobal.document.body
-              : listener._lastKnownBody;
-            let userContextId = aBrowser.contentPrincipal
-              ? aBrowser.contentPrincipal.originAttributes.userContextId
-              : listener._lastKnownUserContextId;
-            aData.data.historychange = SessionHistory.collectFromParent(
-              uri,
-              body,
-              frameLoader.browsingContext.sessionHistory,
-              userContextId,
-              listener._sHistoryChanges ? listener._fromIdx : -1
-            );
-            listener._sHistoryChanges = false;
-            listener._fromIdx = kNoIndex;
-          } else {
-            debug(
-              "updateSessionStoreFromTablistener() with sHistoryNeeded, but no fL.bC.sessionHistory."
-            );
-          }
+          debug(
+            "updateSessionStoreFromTablistener() with sHistoryNeeded, but no sessionHistory.\n"
+          );
         }
       } else {
         debug(
-          "updateSessionStoreFromTablistener() with sHistoryNeeded, but no sHlistener."
+          "updateSessionStoreFromTablistener() with sHistoryNeeded, but no sHlistener.\n"
         );
       }
     }
@@ -6028,8 +6014,8 @@ var SessionStoreInternal = {
             let dataPrincipal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
               origin
             );
-            let principal = Services.scriptSecurityManager.createContentPrincipal(
-              dataPrincipal.URI,
+            let principal = Services.scriptSecurityManager.principalWithOA(
+              dataPrincipal,
               attrs
             );
             frameLoader.remoteTab.transmitPermissionsForPrincipal(principal);

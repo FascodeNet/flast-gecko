@@ -26,22 +26,17 @@ def get_parser_options(moz_app_version):
     }
 
 
-def main(output_fd, metrics_index_path, which_array, moz_app_version):
+def main(output_fd, _metrics_index, *args):
 
-    # Source the list of input files from `metrics_index.py`
-    sys.path.append(str(Path(metrics_index_path).parent))
-    from metrics_index import METRICS, PINGS
-    if which_array == 'METRICS':
-        input_files = METRICS
-    elif which_array == 'PINGS':
-        input_files = PINGS
-    else:
-        print("Build system's asking for unknown array {}".format(which_array))
-        sys.exit(1)
+    # Unfortunately, GeneratedFile appends `flags` directly after `inputs`
+    # instead of listifying either, so we need to pull stuff from a *args.
+    yaml_array = args[:-1]
+    moz_app_version = args[-1]
+
+    input_files = [Path(x) for x in yaml_array]
 
     # Derived heavily from glean_parser.translate.translate.
     # Adapted to how mozbuild sends us a fd, and to expire on versions not dates.
-    input_files = [Path(x) for x in input_files]
 
     options = get_parser_options(moz_app_version)
     all_objs = parser.parse_objects(input_files, options)

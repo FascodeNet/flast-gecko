@@ -8,24 +8,46 @@
 #define jit_BaselineIC_h
 
 #include "mozilla/Assertions.h"
+#include "mozilla/Attributes.h"
 
-#include "builtin/TypedObject.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "gc/Barrier.h"
 #include "gc/GC.h"
+#include "gc/Rooting.h"
 #include "jit/BaselineICList.h"
-#include "jit/BaselineJIT.h"
 #include "jit/ICState.h"
+#include "jit/ICStubSpace.h"
+#include "jit/JitCode.h"
+#include "jit/JitOptions.h"
+#include "jit/Registers.h"
+#include "jit/RegisterSets.h"
+#include "jit/shared/Assembler-shared.h"
 #include "jit/SharedICRegisters.h"
-#include "js/GCVector.h"
-#include "proxy/DOMProxy.h"  // js::GetDOMProxyHandlerFamily
+#include "js/TypeDecls.h"
+#include "js/Value.h"
 #include "vm/ArrayObject.h"
-#include "vm/BytecodeUtil.h"
-#include "vm/JSContext.h"
-#include "vm/ProxyObject.h"
-#include "vm/Realm.h"
+#include "vm/JSScript.h"
+
+class JS_PUBLIC_API JSTracer;
 
 namespace js {
+
+class StackTypeSet;
+
+MOZ_COLD void ReportOutOfMemory(JSContext* cx);
+
 namespace jit {
+
+class BaselineFrame;
+class CacheIRStubInfo;
+class ICScript;
+class MacroAssembler;
+
+enum class TailCallVMFunctionId;
+enum class VMFunctionId;
 
 // [SMDOC] JIT Inline Caches (ICs)
 //
@@ -1830,21 +1852,6 @@ class ICNewObject_Fallback : public ICFallbackStub {
 
   void setTemplateObject(JSObject* obj) { templateObject_ = obj; }
 };
-
-inline bool IsCacheableDOMProxy(JSObject* obj) {
-  if (!obj->is<ProxyObject>()) {
-    return false;
-  }
-
-  const BaseProxyHandler* handler = obj->as<ProxyObject>().handler();
-  if (handler->family() != GetDOMProxyHandlerFamily()) {
-    return false;
-  }
-
-  // Some DOM proxies have dynamic prototypes.  We can't really cache those very
-  // well.
-  return obj->hasStaticPrototype();
-}
 
 struct IonOsrTempData;
 

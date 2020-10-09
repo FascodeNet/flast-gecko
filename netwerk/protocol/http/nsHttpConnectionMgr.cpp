@@ -4237,7 +4237,7 @@ nsresult nsHttpConnectionMgr::nsHalfOpenSocket::SetupStreams(
   }
 
   if (ci->GetLessThanTls13()) {
-    tmpFlags |= nsISocketTransport::DONT_TRY_ESNI;
+    tmpFlags |= nsISocketTransport::DONT_TRY_ESNI_OR_ECH;
   }
 
   if (((mCaps & NS_HTTP_BE_CONSERVATIVE) || ci->GetBeConservative()) &&
@@ -4329,6 +4329,11 @@ nsresult nsHttpConnectionMgr::nsHalfOpenSocket::SetupStreams(
 
   rv = socketTransport->SetSecurityCallbacks(this);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  if (gHttpHandler->EchConfigEnabled()) {
+    rv = socketTransport->SetEchConfig(ci->GetEchConfig());
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   Telemetry::Accumulate(Telemetry::HTTP_CONNECTION_ENTRY_CACHE_HIT_1,
                         mEnt->mUsedForConnection);
@@ -5057,6 +5062,18 @@ nsresult nsHttpConnectionMgr::nsHalfOpenSocket::SetupConn(
         connTCP->SetFastOpenStatus(TFO_INIT_FAILED);
       }
     }
+
+    if (nullTrans) {
+      nullTrans->Close(rv);
+    } else if (nsHttpTransaction* trans =
+                   mTransaction->QueryHttpTransaction()) {
+      if (mIsHttp3) {
+        trans->DisableHttp3();
+        gHttpHandler->ExcludeHttp3(mEnt->mConnInfo);
+      }
+      Unused << gHttpHandler->ConnMgr()->CancelTransaction(trans, rv);
+    }
+
     return rv;
   }
 
