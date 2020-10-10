@@ -212,7 +212,6 @@ class nsContextMenu {
     this.onCTPPlugin = context.onCTPPlugin;
     this.onDRMMedia = context.onDRMMedia;
     this.onPiPVideo = context.onPiPVideo;
-    this.onMediaStreamVideo = context.onMediaStreamVideo;
     this.onEditable = context.onEditable;
     this.onImage = context.onImage;
     this.onKeywordField = context.onKeywordField;
@@ -837,7 +836,6 @@ class nsContextMenu {
           "media.videocontrols.picture-in-picture.enabled"
         ) &&
         this.onVideo &&
-        !this.onMediaStreamVideo &&
         !this.target.ownerDocument.fullscreen;
       this.showItem("context-video-pictureinpicture", shouldDisplay);
     }
@@ -1890,11 +1888,15 @@ class nsContextMenu {
   }
 
   printFrame() {
-    PrintUtils.startPrintWindow(this.actor.browsingContext);
+    PrintUtils.startPrintWindow(
+      "context_print_frame",
+      this.actor.browsingContext
+    );
   }
 
   printSelection() {
     PrintUtils.startPrintWindow(
+      "context_print_selection",
       this.actor.browsingContext,
       /* aOpenWindowInfo = */ null,
       /* aPrintSelectionOnly = */ true

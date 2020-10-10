@@ -39,6 +39,7 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Icon;
@@ -82,6 +83,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -386,20 +388,13 @@ public class GeckoViewActivity
     private TabSessionManager mTabSessionManager;
     private GeckoView mGeckoView;
     private boolean mFullAccessibilityTree;
-    private boolean mUseTrackingProtection;
-    private String mEnhancedTackingProtection;
-    private boolean mUseDynamicFirstPartyIsolation;
-    private boolean mAllowAutoplay;
     private boolean mUsePrivateBrowsing;
-    private boolean mEnableRemoteDebugging;
     private boolean mKillProcessOnDestroy;
     private boolean mDesktopMode;
-    private String mUserAgentOverride;
-    private boolean mAllowExtensionsInPrivateBrowsing;
+    private boolean mTrackingProtectionException;
 
     private TabSession mPopupSession;
     private View mPopupView;
-    private int mPreferredColorScheme;
 
     private boolean mShowNotificationsRejected;
     private ArrayList<String> mAcceptedPersistentStorage = new ArrayList<String>();
@@ -440,46 +435,195 @@ public class GeckoViewActivity
         return newSession;
     }
 
-    private void onPreferencesChange(SharedPreferences preferences) {
-        boolean remoteDebugging = preferences.getBoolean(
-                getString(R.string.key_remote_debugging), false);
-        boolean trackingProtection = preferences.getBoolean(
-                getString(R.string.key_tracking_protection), false);
-        String enhancedTrackingProtection = preferences.getString(
-                getString(R.string.key_enhanced_tracking_protection), "standard");
-        boolean dfpi = preferences.getBoolean(
-                getString(R.string.key_dfpi), false);
-        boolean autoplay = preferences.getBoolean(
-                getString(R.string.key_autoplay), false);
-        int colorScheme = Integer.parseInt(preferences.getString(
-                getString(R.string.key_preferred_color_scheme),
-                Integer.toString(GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM)));
-        String userAgentOverride = preferences.getString(
-                getString(R.string.key_user_agent_override), "");
-        boolean allowExtensionsInPrivateBrowsing = preferences.getBoolean(
-                getString(R.string.key_allow_extensions_in_private_browsing),
-                false);
+    private final List<Setting<?>> SETTINGS = new ArrayList<>();
 
-        if (mEnableRemoteDebugging != remoteDebugging) {
-            if (sGeckoRuntime != null) {
-                sGeckoRuntime.getSettings().setRemoteDebuggingEnabled(remoteDebugging);
-            }
-            mEnableRemoteDebugging = remoteDebugging;
+    private abstract class Setting<T> {
+        private int mKey;
+        private int mDefaultKey;
+        private final boolean mReloadCurrentSession;
+        private T mValue;
+
+        public Setting(final int key, final int defaultValueKey, final boolean reloadCurrentSession) {
+            mKey = key;
+            mDefaultKey = defaultValueKey;
+            mReloadCurrentSession = reloadCurrentSession;
+
+            SETTINGS.add(this);
         }
 
-        final GeckoSession currentSession = mTabSessionManager.getCurrentSession();
-
-        if (mUseTrackingProtection != trackingProtection) {
-            mTabSessionManager.setUseTrackingProtection(trackingProtection);
-            if (sGeckoRuntime != null) {
-                sGeckoRuntime.getSettings().getContentBlocking().setStrictSocialTrackingProtection(trackingProtection);
+        public void onPrefChange(SharedPreferences pref) {
+            final T defaultValue = getDefaultValue(mDefaultKey, getResources());
+            final String key = getResources().getString(this.mKey);
+            final T value = getValue(key, defaultValue, pref);
+            if (!value().equals(value)) {
+                setValue(value);
             }
-            mUseTrackingProtection = trackingProtection;
         }
 
-        if (mEnhancedTackingProtection != enhancedTrackingProtection) {
+        private void setValue(final T newValue) {
+            mValue = newValue;
+            for (final TabSession session : mTabSessionManager.getSessions()) {
+                setValue(session.getSettings(), value());
+            }
+            if (sGeckoRuntime != null) {
+                setValue(sGeckoRuntime.getSettings(), value());
+                if (sExtensionManager != null) {
+                    setValue(sGeckoRuntime.getWebExtensionController(), value());
+                }
+            }
+
+            final GeckoSession current = mTabSessionManager.getCurrentSession();
+            if (mReloadCurrentSession && current != null) {
+                current.reload();
+            }
+        }
+
+        public T value() {
+            return mValue == null ? getDefaultValue(mDefaultKey, getResources()) : mValue;
+        }
+
+        protected abstract T getDefaultValue(final int key, final Resources res);
+        protected abstract T getValue(final String key, final T defaultValue,
+                                      final SharedPreferences preferences);
+
+        /** Override one of these to define the behavior when this setting changes. */
+        protected void setValue(final GeckoSessionSettings settings, final T value) {}
+        protected void setValue(final GeckoRuntimeSettings settings, final T value) {}
+        protected void setValue(final WebExtensionController controller, final T value) {}
+    }
+
+    private class StringSetting extends Setting<String> {
+        public StringSetting(final int key, final int defaultValueKey) {
+            this(key, defaultValueKey, false);
+        }
+
+        public StringSetting(final int key, final int defaultValueKey,
+                             final boolean reloadCurrentSession) {
+            super(key, defaultValueKey, reloadCurrentSession);
+        }
+
+        @Override
+        protected String getDefaultValue(int key, final Resources res) {
+            return res.getString(key);
+        }
+
+        @Override
+        public String getValue(final String key, final String defaultValue,
+                               final SharedPreferences preferences) {
+            return preferences.getString(key, defaultValue);
+        }
+    }
+
+    private class BooleanSetting extends Setting<Boolean> {
+        public BooleanSetting(final int key, final int defaultValueKey) {
+            this(key, defaultValueKey, false);
+        }
+
+        public BooleanSetting(final int key, final int defaultValueKey,
+                              final boolean reloadCurrentSession) {
+            super(key, defaultValueKey, reloadCurrentSession);
+        }
+
+        @Override
+        protected Boolean getDefaultValue(int key, Resources res) {
+            return res.getBoolean(key);
+        }
+
+        @Override
+        public Boolean getValue(final String key, final Boolean defaultValue,
+                                final SharedPreferences preferences) {
+            return preferences.getBoolean(key, defaultValue);
+        }
+    }
+
+    private class IntSetting extends Setting<Integer> {
+        public IntSetting(final int key, final int defaultValueKey) {
+            this(key, defaultValueKey, false);
+        }
+
+        public IntSetting(final int key, final int defaultValueKey,
+                          final boolean reloadCurrentSession) {
+            super(key, defaultValueKey, reloadCurrentSession);
+        }
+
+        @Override
+        protected Integer getDefaultValue(int key, Resources res) {
+            return res.getInteger(key);
+        }
+
+        @Override
+        public Integer getValue(final String key, final Integer defaultValue,
+                                final SharedPreferences preferences) {
+            return Integer.parseInt(
+                    preferences.getString(key, Integer.toString(defaultValue)));
+        }
+    }
+
+    private final IntSetting mDisplayMode = new IntSetting(
+            R.string.key_display_mode, R.integer.display_mode_default) {
+        @Override
+        public void setValue(final GeckoSessionSettings settings, final Integer value) {
+            settings.setDisplayMode(value);
+        }
+    };
+
+    private final IntSetting mPreferredColorScheme = new IntSetting(
+            R.string.key_preferred_color_scheme, R.integer.preferred_color_scheme_default,
+            /* reloadCurrentSession */ true
+    ) {
+        @Override
+        public void setValue(final GeckoRuntimeSettings settings, final Integer value) {
+            settings.setPreferredColorScheme(value);
+        }
+    };
+
+    private final StringSetting mUserAgent = new StringSetting(
+            R.string.key_user_agent_override, R.string.user_agent_override_default,
+            /* reloadCurrentSession */ true
+    ) {
+        @Override
+        public void setValue(final GeckoSessionSettings settings, final String value) {
+            settings.setUserAgentOverride(value.isEmpty() ? null : value);
+        }
+    };
+
+    private final BooleanSetting mRemoteDebugging = new BooleanSetting(
+            R.string.key_remote_debugging, R.bool.remote_debugging_default
+    ) {
+        @Override
+        public void setValue(final GeckoRuntimeSettings settings, final Boolean value) {
+            settings.setRemoteDebuggingEnabled(value);
+        }
+    };
+
+    private final BooleanSetting mJavascriptEnabled = new BooleanSetting(
+            R.string.key_javascript_enabled, R.bool.javascript_enabled_default,
+            /* reloadCurrentSession */ true
+    ) {
+        @Override
+        public void setValue(final GeckoRuntimeSettings settings, final Boolean value) {
+            settings.setJavaScriptEnabled(value);
+        }
+    };
+
+    private final BooleanSetting mTrackingProtection = new BooleanSetting(
+            R.string.key_tracking_protection, R.bool.tracking_protection_default
+    ) {
+        @Override
+        public void setValue(final GeckoRuntimeSettings settings, final Boolean value) {
+            mTabSessionManager.setUseTrackingProtection(value);
+            settings.getContentBlocking()
+                    .setStrictSocialTrackingProtection(value);
+        }
+    };
+
+    private final StringSetting mEnhancedTrackingProtection = new StringSetting(
+            R.string.key_enhanced_tracking_protection, R.string.enhanced_tracking_protection_default
+    ) {
+        @Override
+        public void setValue(final GeckoRuntimeSettings settings, final String value) {
             int etpLevel;
-            switch (enhancedTrackingProtection) {
+            switch (value) {
                 case "disabled":
                     etpLevel = ContentBlocking.EtpLevel.NONE;
                     break;
@@ -490,61 +634,44 @@ public class GeckoViewActivity
                     etpLevel = ContentBlocking.EtpLevel.STRICT;
                     break;
                 default:
-                    throw new RuntimeException("Invalid ETP level: " + enhancedTrackingProtection);
+                    throw new RuntimeException("Invalid ETP level: " + value);
             }
 
-            if (sGeckoRuntime != null) {
-                sGeckoRuntime.getSettings().getContentBlocking().setEnhancedTrackingProtectionLevel(etpLevel);
-            }
-
-            mEnhancedTackingProtection = enhancedTrackingProtection;
+            settings.getContentBlocking().setEnhancedTrackingProtectionLevel(etpLevel);
         }
+    };
 
-        if (mUseDynamicFirstPartyIsolation != dfpi) {
-            if (sGeckoRuntime != null) {
-                int cookieBehavior = dfpi ?
-                        ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS :
-                        ContentBlocking.CookieBehavior.ACCEPT_NON_TRACKERS;
-                sGeckoRuntime.getSettings().getContentBlocking().setCookieBehavior(cookieBehavior);
-            }
-            mUseDynamicFirstPartyIsolation = dfpi;
+    private final BooleanSetting mDynamicFirstPartyIsolation = new BooleanSetting(
+            R.string.key_dfpi, R.bool.dfpi_default
+    ) {
+        @Override
+        public void setValue(final GeckoRuntimeSettings settings, final Boolean value) {
+            int cookieBehavior = value ?
+                    ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS :
+                    ContentBlocking.CookieBehavior.ACCEPT_NON_TRACKERS;
+            settings.getContentBlocking().setCookieBehavior(cookieBehavior);
         }
+    };
 
-        if (mAllowAutoplay != autoplay) {
-            if (currentSession != null) {
-                currentSession.reload();
-            }
-            mAllowAutoplay = autoplay;
+    private final BooleanSetting mAllowAutoplay = new BooleanSetting(
+            R.string.key_autoplay, R.bool.autoplay_default, /* reloadCurrentSession */ true
+    );
+
+    private final BooleanSetting mAllowExtensionsInPrivateBrowsing = new BooleanSetting(
+            R.string.key_allow_extensions_in_private_browsing,
+            R.bool.allow_extensions_in_private_browsing_default
+    ) {
+        @Override
+        public void setValue(final WebExtensionController controller, final Boolean value) {
+            controller.setAllowedInPrivateBrowsing(
+                    sExtensionManager.extension,
+                    value);
         }
+    };
 
-        if (mPreferredColorScheme != colorScheme) {
-            if (sGeckoRuntime != null) {
-                sGeckoRuntime.getSettings().setPreferredColorScheme(colorScheme);
-            }
-            mPreferredColorScheme = colorScheme;
-            if (currentSession != null) {
-                currentSession.reload();
-            }
-        }
-
-        if (!userAgentOverride.equals(mUserAgentOverride)) {
-            mUserAgentOverride = !userAgentOverride.isEmpty() ? userAgentOverride : null;
-            for (final TabSession session : mTabSessionManager.getSessions()) {
-                session.getSettings().setUserAgentOverride(mUserAgentOverride);
-            }
-            if (currentSession != null) {
-                currentSession.reload();
-            }
-        }
-
-        if (mAllowExtensionsInPrivateBrowsing != allowExtensionsInPrivateBrowsing) {
-            if (sGeckoRuntime != null && sExtensionManager != null
-                    && sExtensionManager.extension != null) {
-                sGeckoRuntime.getWebExtensionController().setAllowedInPrivateBrowsing(
-                        sExtensionManager.extension,
-                        allowExtensionsInPrivateBrowsing);
-            }
-            mAllowExtensionsInPrivateBrowsing = allowExtensionsInPrivateBrowsing;
+    private void onPreferencesChange(SharedPreferences preferences) {
+        for (Setting<?> setting : SETTINGS) {
+            setting.onPrefChange(preferences);
         }
     }
 
@@ -596,7 +723,7 @@ public class GeckoViewActivity
             }
             runtimeSettingsBuilder
                     .useMultiprocess(useMultiprocess)
-                    .remoteDebuggingEnabled(mEnableRemoteDebugging)
+                    .remoteDebuggingEnabled(mRemoteDebugging.value())
                     .consoleOutput(true)
                     .contentBlocking(new ContentBlocking.Settings.Builder()
                         .antiTracking(ContentBlocking.AntiTracking.DEFAULT |
@@ -606,8 +733,9 @@ public class GeckoViewActivity
                         .enhancedTrackingProtectionLevel(ContentBlocking.EtpLevel.DEFAULT)
                         .build())
                     .crashHandler(ExampleCrashHandler.class)
-                    .preferredColorScheme(mPreferredColorScheme)
+                    .preferredColorScheme(mPreferredColorScheme.value())
                     .telemetryDelegate(new ExampleTelemetryDelegate())
+                    .javaScriptEnabled(mJavascriptEnabled.value())
                     .aboutConfigEnabled(true);
 
             sGeckoRuntime = GeckoRuntime.create(this, runtimeSettingsBuilder.build());
@@ -822,14 +950,15 @@ public class GeckoViewActivity
         settingsBuilder
                 .usePrivateMode(mUsePrivateBrowsing)
                 .fullAccessibilityTree(mFullAccessibilityTree)
-                .userAgentOverride(mUserAgentOverride)
+                .userAgentOverride(mUserAgent.value())
                 .viewportMode(mDesktopMode
                         ? GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
                         : GeckoSessionSettings.VIEWPORT_MODE_MOBILE)
                 .userAgentMode(mDesktopMode
                         ? GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
                         : GeckoSessionSettings.USER_AGENT_MODE_MOBILE)
-                .useTrackingProtection(mUseTrackingProtection);
+                .useTrackingProtection(mTrackingProtection.value())
+                .displayMode(mDisplayMode.value());
 
         if (cookieStoreId != null) {
             settingsBuilder.contextId(cookieStoreId);
@@ -936,10 +1065,26 @@ public class GeckoViewActivity
         return true;
     }
 
+    private void updateTrackingProtectionException() {
+        if (sGeckoRuntime == null) {
+            return;
+        }
+
+        final GeckoSession session = mTabSessionManager.getCurrentSession();
+        if (session == null) {
+            return;
+        }
+
+        sGeckoRuntime.getContentBlockingController()
+                .checkException(session)
+                .accept(value -> mTrackingProtectionException = value.booleanValue());
+    }
+
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
         menu.findItem(R.id.action_pb).setChecked(mUsePrivateBrowsing);
         menu.findItem(R.id.desktop_mode).setChecked(mDesktopMode);
+        menu.findItem(R.id.action_tpe).setChecked(mTrackingProtectionException);
         menu.findItem(R.id.action_forward).setEnabled(mCanGoForward);
         return true;
     }
@@ -958,10 +1103,8 @@ public class GeckoViewActivity
                 sGeckoRuntime.getContentBlockingController().checkException(session).accept(value -> {
                     if (value.booleanValue()) {
                         sGeckoRuntime.getContentBlockingController().removeException(session);
-                        item.setTitle(R.string.tracking_protection_ex);
                     } else {
                         sGeckoRuntime.getContentBlockingController().addException(session);
-                        item.setTitle(R.string.tracking_protection_ex2);
                     }
                     session.reload();
                 });
@@ -1020,7 +1163,7 @@ public class GeckoViewActivity
                 return controller.install(uri);
             }).then(extension ->
                 sGeckoRuntime.getWebExtensionController().setAllowedInPrivateBrowsing(
-                        extension, mAllowExtensionsInPrivateBrowsing)
+                        extension, mAllowExtensionsInPrivateBrowsing.value())
             ).accept(extension ->
                 sExtensionManager.registerExtension(extension));
         });
@@ -1609,7 +1752,7 @@ public class GeckoViewActivity
             } else if (PERMISSION_XR == type) {
                 resId = R.string.request_xr;
             } else if (PERMISSION_AUTOPLAY_AUDIBLE == type || PERMISSION_AUTOPLAY_INAUDIBLE == type) {
-                if (!mAllowAutoplay) {
+                if (!mAllowAutoplay.value()) {
                     Log.d(LOGTAG, "Rejecting autoplay request");
                     callback.reject();
                 } else {
@@ -1704,6 +1847,7 @@ public class GeckoViewActivity
                 tabSession.onLocationChange(url);
             }
             mCurrentUri = url;
+            updateTrackingProtectionException();
         }
 
         @Override

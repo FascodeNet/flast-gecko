@@ -280,29 +280,29 @@ class ScriptStencilIterable {
  public:
   class ScriptAndFunction {
    public:
-    ScriptStencil& script;
+    const ScriptStencil& script;
     HandleFunction function;
     FunctionIndex functionIndex;
 
     ScriptAndFunction() = delete;
-    ScriptAndFunction(ScriptStencil& script, HandleFunction function,
+    ScriptAndFunction(const ScriptStencil& script, HandleFunction function,
                       FunctionIndex functionIndex)
         : script(script), function(function), functionIndex(functionIndex) {}
   };
 
   class Iterator {
     size_t index_ = 0;
-    CompilationStencil& stencil_;
+    const CompilationStencil& stencil_;
     CompilationGCOutput& gcOutput_;
 
-    Iterator(CompilationStencil& stencil, CompilationGCOutput& gcOutput,
+    Iterator(const CompilationStencil& stencil, CompilationGCOutput& gcOutput,
              size_t index)
         : index_(index), stencil_(stencil), gcOutput_(gcOutput) {
       skipNonFunctions();
     }
 
    public:
-    explicit Iterator(CompilationStencil& stencil,
+    explicit Iterator(const CompilationStencil& stencil,
                       CompilationGCOutput& gcOutput)
         : stencil_(stencil), gcOutput_(gcOutput) {
       skipNonFunctions();
@@ -335,23 +335,23 @@ class ScriptStencilIterable {
     }
 
     ScriptAndFunction operator*() {
-      ScriptStencil& script = stencil_.scriptData[index_];
+      const ScriptStencil& script = stencil_.scriptData[index_];
 
       FunctionIndex functionIndex = FunctionIndex(index_);
       return ScriptAndFunction(script, gcOutput_.functions[functionIndex],
                                functionIndex);
     }
 
-    static Iterator end(CompilationStencil& stencil,
+    static Iterator end(const CompilationStencil& stencil,
                         CompilationGCOutput& gcOutput) {
       return Iterator(stencil, gcOutput, stencil.scriptData.length());
     }
   };
 
-  CompilationStencil& stencil_;
+  const CompilationStencil& stencil_;
   CompilationGCOutput& gcOutput_;
 
-  explicit ScriptStencilIterable(CompilationStencil& stencil,
+  explicit ScriptStencilIterable(const CompilationStencil& stencil,
                                  CompilationGCOutput& gcOutput)
       : stencil_(stencil), gcOutput_(gcOutput) {}
 

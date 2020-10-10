@@ -236,10 +236,13 @@ RefPtr<PlanarYCbCrImage> ImageContainer::CreatePlanarYCbCrImage() {
 RefPtr<SharedRGBImage> ImageContainer::CreateSharedRGBImage() {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
   EnsureImageClient();
-  if (!mImageClient || !mImageClient->AsImageClientSingle()) {
-    return nullptr;
+  if (mImageClient && mImageClient->AsImageClientSingle()) {
+    return new SharedRGBImage(mImageClient);
   }
-  return new SharedRGBImage(mImageClient);
+  if (mRecycleAllocator) {
+    return new SharedRGBImage(mRecycleAllocator);
+  }
+  return nullptr;
 }
 
 void ImageContainer::SetCurrentImageInternal(
@@ -424,16 +427,7 @@ void ImageContainer::EnsureRecycleAllocatorForRDD(
     return;
   }
 
-  bool useRecycleAllocator =
-      StaticPrefs::layers_recycle_allocator_rdd_AtStartup();
-#ifdef XP_MACOSX
-  // Disable RecycleAllocator for RDD on MacOS without WebRender.
-  // Recycling caused rendering artifact on a MacOS PC with OpenGL compositor.
-  if (!gfxVars::UseWebRender()) {
-    useRecycleAllocator = false;
-  }
-#endif
-  if (!useRecycleAllocator) {
+  if (!StaticPrefs::layers_recycle_allocator_rdd_AtStartup()) {
     return;
   }
 

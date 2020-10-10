@@ -44,6 +44,8 @@ class GPUVideoTextureHost : public TextureHost {
 
   gfx::IntSize GetSize() const override;
 
+  bool IsValid() override;
+
 #ifdef MOZ_LAYERS_HAVE_LOG
   const char* Name() override { return "GPUVideoTextureHost"; }
 #endif
@@ -68,6 +70,9 @@ class GPUVideoTextureHost : public TextureHost {
                         const Range<wr::ImageKey>& aImageKeys,
                         const bool aPreferCompositorSurface) override;
 
+  void UnbindTextureSource() override;
+  void NotifyNotUsed() override;
+
  protected:
   GPUVideoTextureHost(TextureFlags aFlags,
                       const SurfaceDescriptorGPUVideo& aDescriptor);
@@ -77,6 +82,10 @@ class GPUVideoTextureHost : public TextureHost {
   void UpdatedInternal(const nsIntRegion* Region) override;
 
   RefPtr<TextureHost> mWrappedTextureHost;
+  RefPtr<TextureSourceProvider> mPendingSourceProvider;
+  bool mPendingUpdatedInternal = false;
+  Maybe<nsIntRegion> mPendingIntRegion;
+  Maybe<CompositableTextureSourceRef> mPendingPrepareTextureSource;
   SurfaceDescriptorGPUVideo mDescriptor;
 };
 

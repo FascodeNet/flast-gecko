@@ -595,11 +595,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::ContextData<bool> runningOOMTest;
 #endif
 
-  // True if we should assert that
-  //     !comp->validAccessPtr || *comp->validAccessPtr
-  // is true for every |comp| that we run JS code in.
-  js::ContextData<unsigned> enableAccessValidation;
-
   /*
    * Some regions of code are hard for the static rooting hazard analysis to
    * understand. In those cases, we trade the static analysis for a dynamic
@@ -1133,7 +1128,7 @@ class MOZ_RAII AutoLockScriptData {
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt) ||
                CurrentThreadIsParseThread());
     runtime = rt;
-    if (runtime->hasHelperThreadZones()) {
+    if (runtime->hasParseTasks()) {
       runtime->scriptDataLock.lock();
     } else {
       MOZ_ASSERT(!runtime->activeThreadHasScriptDataAccess);
@@ -1143,7 +1138,7 @@ class MOZ_RAII AutoLockScriptData {
     }
   }
   ~AutoLockScriptData() {
-    if (runtime->hasHelperThreadZones()) {
+    if (runtime->hasParseTasks()) {
       runtime->scriptDataLock.unlock();
     } else {
       MOZ_ASSERT(runtime->activeThreadHasScriptDataAccess);

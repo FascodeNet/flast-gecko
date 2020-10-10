@@ -635,6 +635,9 @@ with Files("tests/resource-timing/**"):
 with Files("tests/resources/**"):
     BUG_COMPONENT = ("Testing", "web-platform-tests")
 
+with Files("tests/sanitizer-api/**"):
+    BUG_COMPONENT = ("Core", "DOM: Security")
+
 with Files("tests/screen-capture/**"):
     BUG_COMPONENT = ("Core", "WebRTC: Audio/Video")
 
@@ -738,9 +741,6 @@ with Files("tests/webrtc-identity/**"):
     BUG_COMPONENT = ("Core", "WebRTC")
 
 with Files("tests/webrtc-insertable-streams/**"):
-    BUG_COMPONENT = ("Core", "WebRTC")
-
-with Files("tests/webrtc-quic/**"):
     BUG_COMPONENT = ("Core", "WebRTC")
 
 with Files("tests/webrtc-stats/**"):

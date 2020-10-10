@@ -37,7 +37,8 @@
 using namespace js;
 using namespace js::frontend;
 
-AbstractScopePtr ScopeStencil::enclosing(CompilationInfo& compilationInfo) {
+AbstractScopePtr ScopeStencil::enclosing(
+    CompilationInfo& compilationInfo) const {
   if (enclosing_) {
     return AbstractScopePtr(compilationInfo, *enclosing_);
   }
@@ -47,7 +48,7 @@ AbstractScopePtr ScopeStencil::enclosing(CompilationInfo& compilationInfo) {
 
 Scope* ScopeStencil::createScope(JSContext* cx,
                                  CompilationInfo& compilationInfo,
-                                 CompilationGCOutput& gcOutput) {
+                                 CompilationGCOutput& gcOutput) const {
   Scope* scope = nullptr;
   switch (kind()) {
     case ScopeKind::Function: {
@@ -138,7 +139,8 @@ uint32_t ScopeStencil::nextFrameSlot() const {
 
 static bool CreateLazyScript(JSContext* cx, CompilationInfo& compilationInfo,
                              CompilationGCOutput& gcOutput,
-                             ScriptStencil& script, HandleFunction function) {
+                             const ScriptStencil& script,
+                             HandleFunction function) {
   const ScriptThingsVector& gcthings = script.gcThings;
 
   Rooted<BaseScript*> lazy(
@@ -161,7 +163,7 @@ static bool CreateLazyScript(JSContext* cx, CompilationInfo& compilationInfo,
 
 static JSFunction* CreateFunction(JSContext* cx,
                                   CompilationInfo& compilationInfo,
-                                  ScriptStencil& script,
+                                  const ScriptStencil& script,
                                   FunctionIndex functionIndex) {
   GeneratorKind generatorKind =
       script.immutableFlags.hasFlag(ImmutableScriptFlagsEnum::IsGenerator)
@@ -310,7 +312,7 @@ static bool InstantiateScopes(JSContext* cx, CompilationInfo& compilationInfo,
     return false;
   }
 
-  for (auto& scd : compilationInfo.stencil.scopeData) {
+  for (const ScopeStencil& scd : compilationInfo.stencil.scopeData) {
     Scope* scope = scd.createScope(cx, compilationInfo, gcOutput);
     if (!scope) {
       return false;
@@ -428,7 +430,7 @@ static bool InstantiateScriptStencils(JSContext* cx,
 // includes standalone functions and functions being delazified.
 static bool InstantiateTopLevel(JSContext* cx, CompilationInfo& compilationInfo,
                                 CompilationGCOutput& gcOutput) {
-  ScriptStencil& scriptStencil =
+  const ScriptStencil& scriptStencil =
       compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex];
   RootedFunction fun(cx);
   if (scriptStencil.isFunction()) {

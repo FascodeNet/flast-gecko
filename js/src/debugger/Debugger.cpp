@@ -44,7 +44,7 @@
 #include "frontend/Parser.h"             // for Parser
 #include "gc/Barrier.h"                  // for GCPtrNativeObject
 #include "gc/FreeOp.h"                   // for JSFreeOp
-#include "gc/GC.h"                       // for IterateLazyScripts
+#include "gc/GC.h"                       // for IterateScripts
 #include "gc/GCMarker.h"                 // for GCMarker
 #include "gc/GCRuntime.h"                // for GCRuntime, AutoEnterIteration
 #include "gc/HashUtil.h"                 // for DependentAddPtr
@@ -4880,8 +4880,7 @@ class MOZ_STACK_CLASS Debugger::QueryBase {
       : cx(cx),
         debugger(dbg),
         iterMarker(&cx->runtime()->gc),
-        realms(cx->zone()),
-        oom(false) {}
+        realms(cx->zone()) {}
 
   // The context in which we should do our work.
   JSContext* cx;
@@ -4898,7 +4897,7 @@ class MOZ_STACK_CLASS Debugger::QueryBase {
   RealmSet realms;
 
   // Indicates whether OOM has occurred while matching.
-  bool oom;
+  bool oom = false;
 
   bool addRealm(Realm* realm) { return realms.put(realm); }
 
@@ -4939,13 +4938,9 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
       : QueryBase(cx, dbg),
         url(cx),
         displayURLString(cx),
-        hasSource(false),
         source(cx, AsVariant(static_cast<ScriptSourceObject*>(nullptr))),
-        hasLine(false),
-        line(0),
-        innermost(false),
-        innermostForRealm(cx, cx->zone()),
         scriptVector(cx, BaseScriptVector(cx)),
+        partialMatchVector(cx, BaseScriptVector(cx)),
         wasmInstanceVector(cx, WasmInstanceObjectVector(cx)) {}
 
   /*
@@ -5064,13 +5059,14 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
         return false;
       }
       double doubleLine = lineProperty.toNumber();
-      if (doubleLine <= 0 || (unsigned int)doubleLine != doubleLine) {
+      uint32_t uintLine = (uint32_t)doubleLine;
+      if (doubleLine <= 0 || uintLine != doubleLine) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_DEBUG_BAD_LINE);
         return false;
       }
       hasLine = true;
-      line = doubleLine;
+      line = uintLine;
     } else {
       JS_ReportErrorNumberASCII(
           cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
@@ -5116,14 +5112,6 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
       return false;
     }
 
-    bool delazified = false;
-    if (needsDelazifyBeforeQuery()) {
-      if (!delazifyScripts()) {
-        return false;
-      }
-      delazified = true;
-    }
-
     Realm* singletonRealm = nullptr;
     if (realms.count() == 1) {
       singletonRealm = realms.all().front();
@@ -5131,25 +5119,115 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
 
     // Search each realm for debuggee scripts.
     MOZ_ASSERT(scriptVector.empty());
+    MOZ_ASSERT(partialMatchVector.empty());
     oom = false;
     IterateScripts(cx, singletonRealm, this, considerScript);
-    if (!delazified) {
-      IterateLazyScripts(cx, singletonRealm, this, considerLazyScript);
-    }
     if (oom) {
       ReportOutOfMemory(cx);
       return false;
     }
 
-    // For most queries, we just accumulate results in 'scriptVector' as we find
-    // them. But if this is an 'innermost' query, then we've accumulated the
-    // results in the 'innermostForRealm' map. In that case, we now need to walk
-    // that map and populate 'scriptVector'.
+    // If we are filtering by line number, the lazy BaseScripts were not checked
+    // yet since they do not implement `GetScriptLineExtent`. Instead we revisit
+    // each result script and delazify its children and add any matching ones to
+    // the results list.
+    MOZ_ASSERT(hasLine || partialMatchVector.empty());
+    Rooted<BaseScript*> script(cx);
+    RootedFunction fun(cx);
+    while (!partialMatchVector.empty()) {
+      script = partialMatchVector.popCopy();
+
+      MOZ_ASSERT(script->isFunction());
+      MOZ_ASSERT(script->isReadyForDelazification());
+
+      fun = script->function();
+
+      // Delazify script.
+      JSScript* compiledScript = GetOrCreateFunctionScript(cx, fun);
+      if (!compiledScript) {
+        return false;
+      }
+
+      // If target line isn't in script, we are done with it.
+      MOZ_ASSERT(line >= compiledScript->lineno());
+      if (compiledScript->lineno() + GetScriptLineExtent(compiledScript) <
+          line) {
+        continue;
+      }
+
+      // Add script to results now that we've completed checks.
+      if (!scriptVector.append(compiledScript)) {
+        return false;
+      }
+
+      // If script was a leaf we are done with it. This is an optional
+      // optimization to avoid inspecting the `gcthings` list below.
+      if (!script->hasInnerFunctions()) {
+        continue;
+      }
+
+      // Now add inner scripts to `partialMatchVector` work list to determine if
+      // they are matches. Note that out IterateScripts callback ignored them
+      // already since they did not have a compiled parent at the time.
+      for (const JS::GCCellPtr& thing : script->gcthings()) {
+        if (!thing.is<JSObject>() || !thing.as<JSObject>().is<JSFunction>()) {
+          continue;
+        }
+        if (!thing.as<JSObject>().as<JSFunction>().hasBaseScript()) {
+          continue;
+        }
+        BaseScript* inner = thing.as<JSObject>().as<JSFunction>().baseScript();
+
+        // If target line isn't in script, we are done with it.
+        if (line < inner->lineno()) {
+          continue;
+        }
+
+        // Add the matching inner script to the back of the results queue
+        // where it will be processed recursively.
+        if (!partialMatchVector.append(inner)) {
+          return false;
+        }
+      }
+    }
+
+    // If this is an 'innermost' query, we want to filter the results again to
+    // only return the innermost script for each realm. To do this we build a
+    // hashmap to track innermost and then recreate the `scriptVector` with the
+    // results that remain in the hashmap.
     if (innermost) {
+      using RealmToScriptMap =
+          GCHashMap<Realm*, BaseScript*, DefaultHasher<Realm*>>;
+
+      Rooted<RealmToScriptMap> innermostForRealm(cx);
+
+      // Visit each candidate script and find innermost in each realm.
+      for (BaseScript* script : scriptVector) {
+        Realm* realm = script->realm();
+        RealmToScriptMap::AddPtr p = innermostForRealm.lookupForAdd(realm);
+        if (p) {
+          // Is our newly found script deeper than the last one we found?
+          BaseScript* incumbent = p->value();
+          if (script->asJSScript()->innermostScope()->chainLength() >
+              incumbent->asJSScript()->innermostScope()->chainLength()) {
+            p->value() = script;
+          }
+        } else {
+          // This is the first matching script we've encountered for this
+          // realm, so it is thus the innermost such script.
+          if (!innermostForRealm.add(p, realm, script)) {
+            return false;
+          }
+        }
+      }
+
+      // Reset the results vector.
+      scriptVector.clear();
+
+      // Re-add only the innermost scripts to the results.
       for (RealmToScriptMap::Range r = innermostForRealm.all(); !r.empty();
            r.popFront()) {
         if (!scriptVector.append(r.front().value())) {
-          ReportOutOfMemory(cx);
           return false;
         }
       }
@@ -5193,27 +5271,17 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
    * to this instance. Ideally we'd use a Maybe here, but Maybe interacts
    * very badly with Rooted's LIFO invariant.
    */
-  bool hasSource;
+  bool hasSource = false;
   Rooted<DebuggerSourceReferent> source;
 
   /* True if the query contained a 'line' property. */
-  bool hasLine;
+  bool hasLine = false;
 
   /* The line matching scripts must cover. */
-  unsigned int line;
+  uint32_t line = 0;
 
   /* True if the query has an 'innermost' property whose value is true. */
-  bool innermost;
-
-  using RealmToScriptMap =
-      GCHashMap<Realm*, JSScript*, DefaultHasher<Realm*>, ZoneAllocPolicy>;
-
-  /*
-   * For 'innermost' queries, a map from realms to the innermost script
-   * we've seen so far in that realm. (Template instantiation code size
-   * explosion ho!)
-   */
-  Rooted<RealmToScriptMap> innermostForRealm;
+  bool innermost = false;
 
   /*
    * Accumulate the scripts in an Rooted<BaseScriptVector> instead of creating
@@ -5221,6 +5289,16 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
    * we use the CellIter.
    */
   Rooted<BaseScriptVector> scriptVector;
+
+  /*
+   * While in the CellIter we may find BaseScripts that need to be compiled
+   * before the query can be fully checked. Since we cannot compile while under
+   * CellIter we accumulate them here instead.
+   *
+   * This occurs when matching line numbers since `GetScriptLineExtent` cannot
+   * be computed without bytecode existing.
+   */
+  Rooted<BaseScriptVector> partialMatchVector;
 
   /*
    * Like above, but for wasm modules.
@@ -5244,37 +5322,10 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
     return true;
   }
 
-  bool delazifyScripts() {
-    // All scripts in debuggee realms must be visible, so delazify
-    // everything.
-    for (auto r = realms.all(); !r.empty(); r.popFront()) {
-      Realm* realm = r.front();
-      if (!realm->ensureDelazifyScriptsForDebugger(cx)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   static void considerScript(JSRuntime* rt, void* data, BaseScript* script,
                              const JS::AutoRequireNoGC& nogc) {
     ScriptQuery* self = static_cast<ScriptQuery*>(data);
-    self->consider(script->asJSScript(), nogc);
-  }
-
-  static void considerLazyScript(JSRuntime* rt, void* data, BaseScript* script,
-                                 const JS::AutoRequireNoGC& nogc) {
-    ScriptQuery* self = static_cast<ScriptQuery*>(data);
-    self->considerLazy(script, nogc);
-  }
-
-  bool needsDelazifyBeforeQuery() const {
-    // * innermost
-    //   Currently not supported, since this is not used outside of test.
-    //
-    // * hasLine
-    //   Only JSScript supports GetScriptLineExtent.
-    return innermost || hasLine;
+    self->consider(script, nogc);
   }
 
   template <typename T>
@@ -5315,86 +5366,54 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
   }
 
   /*
-   * If |script| matches this query, append it to |scriptVector| or place it
-   * in |innermostForRealm|, as appropriate. Set |oom| if an out of memory
-   * condition occurred.
+   * If |script| matches this query, append it to |scriptVector|. Set |oom| if
+   * an out of memory condition occurred.
    */
-  void consider(JSScript* script, const JS::AutoRequireNoGC& nogc) {
+  void consider(BaseScript* script, const JS::AutoRequireNoGC& nogc) {
     if (oom || script->selfHosted()) {
       return;
     }
+
     Realm* realm = script->realm();
     if (!realms.has(realm)) {
       return;
     }
+
     if (!commonFilter(script, nogc)) {
       return;
     }
-    if (hasLine) {
-      if (line < script->lineno() ||
-          script->lineno() + GetScriptLineExtent(script) < line) {
-        return;
-      }
-    }
 
-    if (innermost) {
-      // For 'innermost' queries, we don't place scripts in
-      // |scriptVector| right away; we may later find another script that
-      // is nested inside this one. Instead, we record the innermost
-      // script we've found so far for each realm in innermostForRealm,
-      // and only populate |scriptVector| at the bottom of findScripts,
-      // when we've traversed all the scripts.
-      //
-      // So: check this script against the innermost one we've found so
-      // far (if any), as recorded in innermostForRealm, and replace that
-      // if it's better.
-      RealmToScriptMap::AddPtr p = innermostForRealm.lookupForAdd(realm);
-      if (p) {
-        // Is our newly found script deeper than the last one we found?
-        JSScript* incumbent = p->value();
-        if (script->innermostScope()->chainLength() >
-            incumbent->innermostScope()->chainLength()) {
-          p->value() = script;
-        }
-      } else {
-        // This is the first matching script we've encountered for this
-        // realm, so it is thus the innermost such script.
-        if (!innermostForRealm.add(p, realm, script)) {
-          oom = true;
+    bool partial = false;
+
+    if (hasLine) {
+      if (script->hasBytecode()) {
+        // Check if line is within script (or any of its inner scripts).
+        if (line < script->lineno() ||
+            script->lineno() + GetScriptLineExtent(script->asJSScript()) <
+                line) {
           return;
         }
+      } else {
+        // GetScriptLineExtent is not available on lazy scripts so instead to
+        // the partial match list for be compiled and reprocessed later. We only
+        // add scripts that are ready for delazification and they may in turn
+        // process their inner functions.
+        if (!script->isReadyForDelazification()) {
+          return;
+        }
+        if (line < script->lineno()) {
+          return;
+        }
+        partial = true;
       }
-    } else {
-      // Record this matching script in the results scriptVector.
-      if (!scriptVector.append(script)) {
-        oom = true;
-        return;
-      }
-    }
-  }
-
-  void considerLazy(BaseScript* lazyScript, const JS::AutoRequireNoGC& nogc) {
-    MOZ_ASSERT(!needsDelazifyBeforeQuery());
-
-    if (oom) {
-      return;
-    }
-    Realm* realm = lazyScript->realm();
-    if (!realms.has(realm)) {
-      return;
     }
 
-    // If the script is already delazified, it should be in scriptVector.
-    if (lazyScript->hasBytecode()) {
-      return;
-    }
+    // If innermost filter is required, we collect everything that matches the
+    // line number and filter at the end of `findScripts`.
+    MOZ_ASSERT_IF(innermost, hasLine);
 
-    if (!commonFilter(lazyScript, nogc)) {
-      return;
-    }
-
-    /* Record this matching script in the results scriptVector. */
-    if (!scriptVector.append(lazyScript)) {
+    Rooted<BaseScriptVector>& vec = partial ? partialMatchVector : scriptVector;
+    if (!vec.append(script)) {
       oom = true;
     }
   }
@@ -5493,7 +5512,6 @@ class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase {
     MOZ_ASSERT(sources.empty());
     oom = false;
     IterateScripts(cx, singletonRealm, this, considerScript);
-    IterateLazyScripts(cx, singletonRealm, this, considerLazyScript);
     if (oom) {
       ReportOutOfMemory(cx);
       return false;
@@ -5523,50 +5541,20 @@ class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase {
   static void considerScript(JSRuntime* rt, void* data, BaseScript* script,
                              const JS::AutoRequireNoGC& nogc) {
     SourceQuery* self = static_cast<SourceQuery*>(data);
-    self->consider(script->asJSScript(), nogc);
+    self->consider(script, nogc);
   }
 
-  static void considerLazyScript(JSRuntime* rt, void* data, BaseScript* script,
-                                 const JS::AutoRequireNoGC& nogc) {
-    SourceQuery* self = static_cast<SourceQuery*>(data);
-    self->considerLazy(script, nogc);
-  }
-
-  void consider(JSScript* script, const JS::AutoRequireNoGC& nogc) {
+  void consider(BaseScript* script, const JS::AutoRequireNoGC& nogc) {
     if (oom || script->selfHosted()) {
       return;
     }
+
     Realm* realm = script->realm();
     if (!realms.has(realm)) {
       return;
     }
 
-    if (!script->sourceObject()) {
-      return;
-    }
-
-    ScriptSourceObject* source =
-        &UncheckedUnwrap(script->sourceObject())->as<ScriptSourceObject>();
-    if (!sources.put(source)) {
-      oom = true;
-    }
-  }
-
-  void considerLazy(BaseScript* lazyScript, const JS::AutoRequireNoGC& nogc) {
-    if (oom) {
-      return;
-    }
-    Realm* realm = lazyScript->realm();
-    if (!realms.has(realm)) {
-      return;
-    }
-
-    // If the script is already delazified, it should already be handled.
-    if (lazyScript->hasBytecode()) {
-      return;
-    }
-
-    ScriptSourceObject* source = lazyScript->sourceObject();
+    ScriptSourceObject* source = script->sourceObject();
     if (!sources.put(source)) {
       oom = true;
     }

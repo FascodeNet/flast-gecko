@@ -18,6 +18,7 @@
 
 #include "jstypes.h"
 
+#include "jit/ABIFunctions.h"
 #include "jit/BaselineICList.h"
 #include "jit/BaselineJIT.h"
 #include "jit/CalleeToken.h"
@@ -246,8 +247,7 @@ class JitRuntime {
   void generateDoubleToInt32ValueStub(MacroAssembler& masm);
   void generateProfilerExitFrameTailStub(MacroAssembler& masm,
                                          Label* profilerExitTail);
-  void generateExceptionTailStub(MacroAssembler& masm, void* handler,
-                                 Label* profilerExitTail);
+  void generateExceptionTailStub(MacroAssembler& masm, Label* profilerExitTail);
   void generateBailoutTailStub(MacroAssembler& masm, Label* bailoutTail);
   void generateEnterJIT(JSContext* cx, MacroAssembler& masm);
   void generateArgumentsRectifier(MacroAssembler& masm,
@@ -262,7 +262,7 @@ class JitRuntime {
   JitCode* generateDebugTrapHandler(JSContext* cx, DebugTrapHandlerKind kind);
 
   bool generateVMWrapper(JSContext* cx, MacroAssembler& masm,
-                         const VMFunctionData& f, void* nativeFun,
+                         const VMFunctionData& f, DynFn nativeFun,
                          uint32_t* wrapperOffset);
 
   template <typename IdT>

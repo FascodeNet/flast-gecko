@@ -116,15 +116,6 @@ extern JS_FRIEND_API void JS_TraceObjectGroupCycleCollectorChildren(
 
 extern JS_FRIEND_API JSPrincipals* JS_GetScriptPrincipals(JSScript* script);
 
-namespace js {
-
-// Release-assert the compartment contains exactly one realm.
-extern JS_FRIEND_API void AssertCompartmentHasSingleRealm(
-    JS::Compartment* comp);
-
-extern JS_FRIEND_API JS::Realm* GetScriptRealm(JSScript* script);
-} /* namespace js */
-
 extern JS_FRIEND_API bool JS_ScriptHasMutedErrors(JSScript* script);
 
 extern JS_FRIEND_API JSObject* JS_CloneObject(JSContext* cx,
@@ -151,14 +142,10 @@ namespace js {
 
 JS_FRIEND_API bool IsArgumentsObject(JS::HandleObject obj);
 
-JS_FRIEND_API const char* ObjectClassName(JSContext* cx, JS::HandleObject obj);
-
 JS_FRIEND_API bool AddRawValueRoot(JSContext* cx, JS::Value* vp,
                                    const char* name);
 
 JS_FRIEND_API void RemoveRawValueRoot(JSContext* cx, JS::Value* vp);
-
-JS_FRIEND_API JSAtom* GetPropertyNameFromPC(JSScript* script, jsbytecode* pc);
 
 }  // namespace js
 
@@ -197,26 +184,6 @@ extern JS_FRIEND_API bool GetIsSecureContext(JS::Realm* realm);
  */
 extern JS_FRIEND_API bool JS_CopyOwnPropertiesAndPrivateFields(
     JSContext* cx, JS::HandleObject target, JS::HandleObject obj);
-
-/*
- * Single-property version of the above. This function asserts that an |own|
- * property of the given name exists on |obj|.
- *
- * On entry, |cx| must be same-compartment with |obj|. |target| must not be a
- * cross-compartment wrapper because we have to enter its realm.
- *
- * The copyBehavior argument controls what happens with
- * non-configurable properties.
- */
-typedef enum {
-  MakeNonConfigurableIntoConfigurable,
-  CopyNonConfigurableAsIs
-} PropertyCopyBehavior;
-
-extern JS_FRIEND_API bool JS_CopyPropertyFrom(
-    JSContext* cx, JS::HandleId id, JS::HandleObject target,
-    JS::HandleObject obj,
-    PropertyCopyBehavior copyBehavior = CopyNonConfigurableAsIs);
 
 extern JS_FRIEND_API bool JS_WrapPropertyDescriptor(
     JSContext* cx, JS::MutableHandle<JS::PropertyDescriptor> desc);
@@ -288,8 +255,6 @@ extern JS_FRIEND_API bool IsSystemRealm(JS::Realm* realm);
 extern JS_FRIEND_API bool IsSystemCompartment(JS::Compartment* comp);
 
 extern JS_FRIEND_API bool IsSystemZone(JS::Zone* zone);
-
-extern JS_FRIEND_API bool IsAtomsZone(JS::Zone* zone);
 
 struct WeakMapTracer {
   JSRuntime* runtime;
@@ -400,8 +365,6 @@ static MOZ_ALWAYS_INLINE JS::Realm* GetNonCCWObjectRealm(JSObject* obj) {
   return reinterpret_cast<JS::shadow::Object*>(obj)->group->realm;
 }
 
-JS_FRIEND_API JSObject* GetPrototypeNoProxy(JSObject* obj);
-
 JS_FRIEND_API void AssertSameCompartment(JSContext* cx, JSObject* obj);
 
 JS_FRIEND_API void AssertSameCompartment(JSContext* cx, JS::HandleValue v);
@@ -483,12 +446,9 @@ JS_FRIEND_API bool AppendUnique(JSContext* cx, JS::MutableHandleIdVector base,
 JS_FRIEND_API bool StringIsArrayIndex(JSLinearString* str, uint32_t* indexp);
 
 /**
- * Overloads of StringIsArrayIndex taking (char*,length) pairs.  These
- * behave the same as the JSLinearString version.
+ * Overload of StringIsArrayIndex taking a (char16_t*,length) pair. Behaves
+ * the same as the JSLinearString version.
  */
-JS_FRIEND_API bool StringIsArrayIndex(const char* str, uint32_t length,
-                                      uint32_t* indexp);
-
 JS_FRIEND_API bool StringIsArrayIndex(const char16_t* str, uint32_t length,
                                       uint32_t* indexp);
 
@@ -546,9 +506,6 @@ extern JS_FRIEND_API JSObject* GetTestingFunctions(JSContext* cx);
 extern JS_FRIEND_API JSLinearString* GetErrorTypeName(JSContext* cx,
                                                       int16_t exnType);
 
-extern JS_FRIEND_API RegExpShared* RegExpToSharedNonInline(
-    JSContext* cx, JS::HandleObject regexp);
-
 /* Implemented in CrossCompartmentWrapper.cpp. */
 typedef enum NukeReferencesToWindow {
   NukeWindowReferences,
@@ -570,18 +527,6 @@ struct CompartmentFilter {
 
 struct AllCompartments : public CompartmentFilter {
   virtual bool match(JS::Compartment* c) const override { return true; }
-};
-
-struct ContentCompartmentsOnly : public CompartmentFilter {
-  virtual bool match(JS::Compartment* c) const override {
-    return !IsSystemCompartment(c);
-  }
-};
-
-struct ChromeCompartmentsOnly : public CompartmentFilter {
-  virtual bool match(JS::Compartment* c) const override {
-    return IsSystemCompartment(c);
-  }
 };
 
 struct SingleCompartment : public CompartmentFilter {
@@ -621,32 +566,21 @@ extern JS_FRIEND_API uint64_t GetSCOffset(JSStructuredCloneWriter* writer);
 
 namespace js {
 
-static MOZ_ALWAYS_INLINE JS::shadow::Function* FunctionObjectToShadowFunction(
-    JSObject* fun) {
-  MOZ_ASSERT(JS::GetClass(fun) == FunctionClassPtr);
-  return reinterpret_cast<JS::shadow::Function*>(fun);
-}
-
 /* Statically asserted in FunctionFlags.cpp. */
 static const unsigned JS_FUNCTION_INTERPRETED_BITS = 0x0060;
-
-// Return whether the given function object is native.
-static MOZ_ALWAYS_INLINE bool FunctionObjectIsNative(JSObject* fun) {
-  return !(FunctionObjectToShadowFunction(fun)->flags &
-           JS_FUNCTION_INTERPRETED_BITS);
-}
-
-static MOZ_ALWAYS_INLINE JSNative GetFunctionObjectNative(JSObject* fun) {
-  MOZ_ASSERT(FunctionObjectIsNative(fun));
-  return FunctionObjectToShadowFunction(fun)->native;
-}
 
 }  // namespace js
 
 static MOZ_ALWAYS_INLINE const JSJitInfo* FUNCTION_VALUE_TO_JITINFO(
     const JS::Value& v) {
-  MOZ_ASSERT(js::FunctionObjectIsNative(&v.toObject()));
-  return js::FunctionObjectToShadowFunction(&v.toObject())->jitinfo;
+  JSObject* obj = &v.toObject();
+  MOZ_ASSERT(JS::GetClass(obj) == js::FunctionClassPtr);
+
+  auto* fun = reinterpret_cast<JS::shadow::Function*>(obj);
+  MOZ_ASSERT(!(fun->flags & js::JS_FUNCTION_INTERPRETED_BITS),
+             "Unexpected non-native function");
+
+  return fun->jitinfo;
 }
 
 static MOZ_ALWAYS_INLINE void SET_JITINFO(JSFunction* func,
@@ -849,9 +783,6 @@ extern JS_FRIEND_API void SetJitExceptionHandler(JitExceptionHandler handler);
 
 extern JS_FRIEND_API bool ReportIsNotFunction(JSContext* cx, JS::HandleValue v);
 
-extern JS_FRIEND_API JSObject* ConvertArgsToArray(JSContext* cx,
-                                                  const JS::CallArgs& args);
-
 class MOZ_STACK_CLASS JS_FRIEND_API AutoAssertNoContentJS {
  public:
   explicit AutoAssertNoContentJS(JSContext* cx);
@@ -861,24 +792,6 @@ class MOZ_STACK_CLASS JS_FRIEND_API AutoAssertNoContentJS {
   JSContext* context_;
   bool prevAllowContentJS_;
 };
-
-// Turn on assertions so that we assert that
-//     !realm->validAccessPtr || *realm->validAccessPtr
-// is true for every |realm| that we run JS code in. The realm's validAccessPtr
-// is set via SetRealmValidAccessPtr.
-extern JS_FRIEND_API void EnableAccessValidation(JSContext* cx, bool enabled);
-
-// See EnableAccessValidation above. The caller must guarantee that accessp will
-// live at least as long as |global| is alive. The JS engine reads accessp from
-// threads that are allowed to run code on |global|, so all changes to *accessp
-// should be made from whichever thread owns |global| at a given time.
-extern JS_FRIEND_API void SetRealmValidAccessPtr(JSContext* cx,
-                                                 JS::HandleObject global,
-                                                 bool* accessp);
-
-// Returns true if the system zone is available (i.e., if no cooperative
-// contexts are using it now).
-extern JS_FRIEND_API bool SystemZoneAvailable(JSContext* cx);
 
 /**
  * This function only reports GC heap memory,

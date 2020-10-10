@@ -277,15 +277,13 @@ class GCRuntime {
   void setPerformanceHint(PerformanceHint hint);
 
   MOZ_MUST_USE bool triggerGC(JS::GCReason reason);
-  // Check whether to trigger a zone GC after allocating GC cells. During an
-  // incremental GC, optionally count |nbytes| towards the threshold for
-  // performing the next slice.
-  void maybeAllocTriggerZoneGC(Zone* zone);
+  // Check whether to trigger a zone GC after allocating GC cells.
+  void maybeTriggerGCAfterAlloc(Zone* zone);
   // Check whether to trigger a zone GC after malloc memory.
-  void maybeMallocTriggerZoneGC(Zone* zone);
-  bool maybeMallocTriggerZoneGC(Zone* zone, const HeapSize& heap,
-                                const HeapThreshold& threshold,
-                                JS::GCReason reason);
+  void maybeTriggerGCAfterMalloc(Zone* zone);
+  bool maybeTriggerGCAfterMalloc(Zone* zone, const HeapSize& heap,
+                                 const HeapThreshold& threshold,
+                                 JS::GCReason reason);
   // The return value indicates if we were able to do the GC.
   bool triggerZoneGC(Zone* zone, JS::GCReason reason, size_t usedBytes,
                      size_t thresholdBytes);
@@ -594,6 +592,9 @@ class GCRuntime {
   TriggerResult checkHeapThreshold(Zone* zone, const HeapSize& heapSize,
                                    const HeapThreshold& heapThreshold);
 
+  void updateGCThresholdsAfterCollection(const AutoLockGC& lock);
+  void updateAllGCStartThresholds(const AutoLockGC& lock);
+
   // Delete an empty zone after its contents have been merged.
   void deleteEmptyZone(Zone* zone);
 
@@ -845,7 +846,7 @@ class GCRuntime {
 
   Vector<JS::GCCellPtr, 0, SystemAllocPolicy> unmarkGrayStack;
 
-  /* Track heap size for this runtime. */
+  /* Track total GC heap size for this runtime. */
   HeapSize heapSize;
 
   /* GC scheduling state and parameters. */

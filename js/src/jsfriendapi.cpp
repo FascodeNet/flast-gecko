@@ -157,10 +157,6 @@ JS_FRIEND_API bool JS::GetIsSecureContext(JS::Realm* realm) {
   return realm->creationOptions().secureContext();
 }
 
-JS_FRIEND_API void js::AssertCompartmentHasSingleRealm(JS::Compartment* comp) {
-  MOZ_RELEASE_ASSERT(comp->realms().length() == 1);
-}
-
 JS_FRIEND_API JSPrincipals* JS::GetRealmPrincipals(JS::Realm* realm) {
   return realm->principals();
 }
@@ -196,10 +192,6 @@ JS_FRIEND_API void JS::SetRealmPrincipals(JS::Realm* realm,
 
 JS_FRIEND_API JSPrincipals* JS_GetScriptPrincipals(JSScript* script) {
   return script->principals();
-}
-
-JS_FRIEND_API JS::Realm* js::GetScriptRealm(JSScript* script) {
-  return script->realm();
 }
 
 JS_FRIEND_API bool JS_ScriptHasMutedErrors(JSScript* script) {
@@ -344,10 +336,6 @@ JS_FRIEND_API bool js::IsSystemRealm(JS::Realm* realm) {
 
 JS_FRIEND_API bool js::IsSystemZone(Zone* zone) { return zone->isSystemZone(); }
 
-JS_FRIEND_API bool js::IsAtomsZone(JS::Zone* zone) {
-  return zone->isAtomsZone();
-}
-
 JS_FRIEND_API bool js::IsFunctionObject(JSObject* obj) {
   return obj->is<JSFunction>();
 }
@@ -358,11 +346,6 @@ JS_FRIEND_API bool js::IsSavedFrame(JSObject* obj) {
 
 JS_FRIEND_API bool js::UninlinedIsCrossCompartmentWrapper(const JSObject* obj) {
   return js::IsCrossCompartmentWrapper(obj);
-}
-
-JS_FRIEND_API JSObject* js::GetPrototypeNoProxy(JSObject* obj) {
-  MOZ_ASSERT(!obj->is<js::ProxyObject>());
-  return obj->staticPrototype();
 }
 
 JS_FRIEND_API void js::AssertSameCompartment(JSContext* cx, JSObject* obj) {
@@ -799,21 +782,6 @@ JS_FRIEND_API bool js::ForwardToNative(JSContext* cx, JSNative native,
   return native(cx, args.length(), args.base());
 }
 
-JS_FRIEND_API JSObject* js::ConvertArgsToArray(JSContext* cx,
-                                               const CallArgs& args) {
-  RootedObject argsArray(cx,
-                         NewDenseCopiedArray(cx, args.length(), args.array()));
-  return argsArray;
-}
-
-JS_FRIEND_API JSAtom* js::GetPropertyNameFromPC(JSScript* script,
-                                                jsbytecode* pc) {
-  if (!IsGetPropPC(pc) && !IsSetPropPC(pc)) {
-    return nullptr;
-  }
-  return script->getName(pc);
-}
-
 AutoAssertNoContentJS::AutoAssertNoContentJS(JSContext* cx)
     : context_(cx), prevAllowContentJS_(cx->runtime()->allowContentJS_) {
   cx->runtime()->allowContentJS_ = false;
@@ -823,20 +791,7 @@ AutoAssertNoContentJS::~AutoAssertNoContentJS() {
   context_->runtime()->allowContentJS_ = prevAllowContentJS_;
 }
 
-JS_FRIEND_API void js::EnableAccessValidation(JSContext* cx, bool enabled) {
-  cx->enableAccessValidation = enabled;
-}
-
 JS_FRIEND_API void js::EnableCodeCoverage() { js::coverage::EnableLCov(); }
-
-JS_FRIEND_API void js::SetRealmValidAccessPtr(JSContext* cx,
-                                              JS::HandleObject global,
-                                              bool* accessp) {
-  MOZ_ASSERT(global->is<GlobalObject>());
-  global->as<GlobalObject>().realm()->setValidAccessPtr(accessp);
-}
-
-JS_FRIEND_API bool js::SystemZoneAvailable(JSContext* cx) { return true; }
 
 JS_FRIEND_API JS::Value js::MaybeGetScriptPrivate(JSObject* object) {
   if (!object->is<ScriptSourceObject>()) {
