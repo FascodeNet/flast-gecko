@@ -2483,7 +2483,7 @@ EditorBase::ComputeInsertedRange(const EditorDOMPointInText& aInsertedPoint,
   // The DOM was potentially modified during the transaction. This is possible
   // through mutation event listeners. That is, the node could've been removed
   // from the doc or otherwise modified.
-  if (!MaybeHasMutationEventListeners(
+  if (!MayHaveMutationEventListeners(
           NS_EVENT_BITS_MUTATION_CHARACTERDATAMODIFIED)) {
     EditorDOMPointInText endOfInsertion(
         aInsertedPoint.ContainerAsText(),
@@ -5416,6 +5416,9 @@ nsresult EditorBase::AutoEditActionDataSetter::MaybeDispatchBeforeInputEvent(
     return rv;
   }
   mBeforeInputEventCanceled = status == nsEventStatus_eConsumeNoDefault;
+  if (mBeforeInputEventCanceled && mEditorBase.IsHTMLEditor()) {
+    mEditorBase.AsHTMLEditor()->mHasBeforeInputBeenCanceled = true;
+  }
   return mBeforeInputEventCanceled ? NS_ERROR_EDITOR_ACTION_CANCELED : NS_OK;
 }
 

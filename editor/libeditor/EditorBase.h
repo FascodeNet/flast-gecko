@@ -205,7 +205,7 @@ class EditorBase : public nsIEditor,
   }
 
   /**
-   * MaybeHasMutationEventListeners() returns true when the window may have
+   * MayHaveMutationEventListeners() returns true when the window may have
    * mutation event listeners.
    *
    * @param aMutationEventType  One or multiple of NS_EVENT_BITS_MUTATION_*.
@@ -213,7 +213,7 @@ class EditorBase : public nsIEditor,
    *                            and at least one of NS_EVENT_BITS_MUTATION_* is
    *                            set to the window or in debug build.
    */
-  bool MaybeHasMutationEventListeners(
+  bool MayHaveMutationEventListeners(
       uint32_t aMutationEventType = 0xFFFFFFFF) const {
     if (IsTextEditor()) {
       // DOM mutation event listeners cannot catch the changes of
@@ -230,6 +230,37 @@ class EditorBase : public nsIEditor,
     nsPIDOMWindowInner* window = GetInnerWindow();
     return window ? window->HasMutationListeners(aMutationEventType) : false;
 #endif  // #ifdef DEBUG #else
+  }
+
+  /**
+   * MayHaveBeforeInputEventListenersForTelemetry() returns true when the
+   * window may have or have had one or more `beforeinput` event listeners.
+   * Note that this may return false even if there is a `beforeinput`.
+   * See nsPIDOMWindowInner::HasBeforeInputEventListenersForTelemetry()'s
+   * comment for the detail.
+   */
+  bool MayHaveBeforeInputEventListenersForTelemetry() const {
+    if (const nsPIDOMWindowInner* window = GetInnerWindow()) {
+      return window->HasBeforeInputEventListenersForTelemetry();
+    }
+    return false;
+  }
+
+  /**
+   * MutationObserverHasObservedNodeForTelemetry() returns true when a node in
+   * the window may have been observed by the web apps with a mutation observer
+   * (i.e., `MutationObserver.observe()` called by chrome script and addon's
+   * script does not make this returns true).
+   * Note that this may return false even if there is a node observed by
+   * a MutationObserver.  See
+   * nsPIDOMWindowInner::MutationObserverHasObservedNodeForTelemetry()'s comment
+   * for the detail.
+   */
+  bool MutationObserverHasObservedNodeForTelemetry() const {
+    if (const nsPIDOMWindowInner* window = GetInnerWindow()) {
+      return window->MutationObserverHasObservedNodeForTelemetry();
+    }
+    return false;
   }
 
   PresShell* GetPresShell() const {

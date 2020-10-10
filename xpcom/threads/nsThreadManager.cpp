@@ -14,6 +14,7 @@
 #include "mozilla/AbstractThread.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventQueue.h"
+#include "mozilla/InputTaskManager.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPtr.h"
@@ -382,8 +383,8 @@ nsresult nsThreadManager::Init() {
   // construct main thread.
   UniquePtr<EventQueue> queue = MakeUnique<EventQueue>(true);
 
-  RefPtr<ThreadEventQueue<EventQueue>> synchronizedQueue =
-      new ThreadEventQueue<EventQueue>(std::move(queue), true);
+  RefPtr<ThreadEventQueue> synchronizedQueue =
+      new ThreadEventQueue(std::move(queue), true);
 
   mMainThread =
       new nsThread(WrapNotNull(synchronizedQueue), nsThread::MAIN_THREAD, 0);
@@ -629,8 +630,8 @@ nsThreadManager::NewNamedThread(const nsACString& aName, uint32_t aStackSize,
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  RefPtr<ThreadEventQueue<EventQueue>> queue =
-      new ThreadEventQueue<EventQueue>(MakeUnique<EventQueue>());
+  RefPtr<ThreadEventQueue> queue =
+      new ThreadEventQueue(MakeUnique<EventQueue>());
   RefPtr<nsThread> thr =
       new nsThread(WrapNotNull(queue), nsThread::NOT_MAIN_THREAD, aStackSize);
   nsresult rv =
@@ -778,22 +779,22 @@ nsThreadManager::DispatchToMainThread(nsIRunnable* aEvent, uint32_t aPriority,
 void nsThreadManager::EnableMainThreadEventPrioritization() {
   MOZ_ASSERT(NS_IsMainThread());
   InputEventStatistics::Get().SetEnable(true);
-  mMainThread->EnableInputEventPrioritization();
+  InputTaskManager::Get()->EnableInputEventPrioritization();
 }
 
 void nsThreadManager::FlushInputEventPrioritization() {
   MOZ_ASSERT(NS_IsMainThread());
-  mMainThread->FlushInputEventPrioritization();
+  InputTaskManager::Get()->FlushInputEventPrioritization();
 }
 
 void nsThreadManager::SuspendInputEventPrioritization() {
   MOZ_ASSERT(NS_IsMainThread());
-  mMainThread->SuspendInputEventPrioritization();
+  InputTaskManager::Get()->SuspendInputEventPrioritization();
 }
 
 void nsThreadManager::ResumeInputEventPrioritization() {
   MOZ_ASSERT(NS_IsMainThread());
-  mMainThread->ResumeInputEventPrioritization();
+  InputTaskManager::Get()->ResumeInputEventPrioritization();
 }
 
 // static

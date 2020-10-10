@@ -32,7 +32,6 @@
 namespace mozilla {
 class CycleCollectedJSContext;
 class EventQueue;
-template <typename>
 class ThreadEventQueue;
 class ThreadEventTarget;
 }  // namespace mozilla
@@ -211,22 +210,6 @@ class nsThread : public nsIThreadInternal,
 
   static const uint32_t kRunnableNameBufSize = 1000;
   static mozilla::Array<char, kRunnableNameBufSize> sMainThreadRunnableName;
-
-  void EnableInputEventPrioritization() {
-    EventQueue()->EnableInputEventPrioritization();
-  }
-
-  void FlushInputEventPrioritization() {
-    EventQueue()->FlushInputEventPrioritization();
-  }
-
-  void SuspendInputEventPrioritization() {
-    EventQueue()->SuspendInputEventPrioritization();
-  }
-
-  void ResumeInputEventPrioritization() {
-    EventQueue()->ResumeInputEventPrioritization();
-  }
 
   mozilla::SynchronizedEventQueue* EventQueue() { return mEvents.get(); }
 

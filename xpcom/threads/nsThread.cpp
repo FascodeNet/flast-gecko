@@ -923,7 +923,8 @@ nsThread::HasPendingHighPriorityEvents(bool* aResult) {
     return NS_ERROR_NOT_SAME_THREAD;
   }
 
-  *aResult = mEvents->HasPendingHighPriorityEvents();
+  // This function appears to never be called anymore.
+  *aResult = false;
   return NS_OK;
 }
 
@@ -1080,9 +1081,7 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
   bool reallyWait = aMayWait && (mNestedEventLoopDepth > 0 || !ShuttingDown());
 
   if (mIsInLocalExecutionMode) {
-    EventQueuePriority priority;
-    if (nsCOMPtr<nsIRunnable> event =
-            mEvents->GetEvent(reallyWait, &priority)) {
+    if (nsCOMPtr<nsIRunnable> event = mEvents->GetEvent(reallyWait)) {
       *aResult = true;
       LogRunnable::Run log(event);
       event->Run();
@@ -1138,16 +1137,12 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
     // Scope for |event| to make sure that its destructor fires while
     // mNestedEventLoopDepth has been incremented, since that destructor can
     // also do work.
-    // This value is only needed, and set, properly when not using
-    // TaskController. This will be removed once TaskController is enabled by
-    // default.
-    EventQueuePriority priority = EventQueuePriority::Normal;
     nsCOMPtr<nsIRunnable> event;
     bool usingTaskController = mIsMainThread;
     if (usingTaskController) {
       event = TaskController::Get()->GetRunnableForMTTask(reallyWait);
     } else {
-      event = mEvents->GetEvent(reallyWait, &priority, &mLastEventDelay);
+      event = mEvents->GetEvent(reallyWait, &mLastEventDelay);
     }
 
     *aResult = (event.get() != nullptr);
@@ -1191,42 +1186,10 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
         BackgroundHangMonitor().NotifyActivity();
       }
 
-#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
-      // If we're on the main thread, we want to record our current
-      // runnable's name in a static so that BHR can record it.
-      Array<char, kRunnableNameBufSize> restoreRunnableName;
-      restoreRunnableName[0] = '\0';
-      auto clear = MakeScopeExit([&] {
-        if (!usingTaskController && mIsMainThread) {
-          MOZ_ASSERT(NS_IsMainThread());
-          sMainThreadRunnableName = restoreRunnableName;
-        }
-      });
-      if (!usingTaskController && mIsMainThread) {
-        nsAutoCString name;
-        GetLabeledRunnableName(event, name, priority);
-
-        MOZ_ASSERT(NS_IsMainThread());
-        restoreRunnableName = sMainThreadRunnableName;
-
-        // Copy the name into sMainThreadRunnableName's buffer, and append a
-        // terminating null.
-        uint32_t length = std::min((uint32_t)kRunnableNameBufSize - 1,
-                                   (uint32_t)name.Length());
-        memcpy(sMainThreadRunnableName.begin(), name.BeginReading(), length);
-        sMainThreadRunnableName[length] = '\0';
-      }
-#endif
-      Maybe<AutoTimeDurationHelper> timeDurationHelper;
       Maybe<PerformanceCounterState::Snapshot> snapshot;
       if (!usingTaskController) {
-        // Note, with TaskController InputTaskManager handles these updates.
-        if (priority == EventQueuePriority::InputHigh) {
-          timeDurationHelper.emplace();
-        }
         snapshot.emplace(mPerformanceCounterState.RunnableWillRun(
-            GetPerformanceCounter(event), now,
-            priority == EventQueuePriority::Idle));
+            GetPerformanceCounter(event), now, false));
       }
 
       mLastEventStart = now;
@@ -1236,7 +1199,6 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
       if (usingTaskController) {
         *aResult = TaskController::Get()->MTTaskRunnableProcessedTask();
       } else {
-        mEvents->DidRunEvent();
         mPerformanceCounterState.RunnableDidRun(std::move(snapshot.ref()));
       }
 
