@@ -35,10 +35,11 @@ fn sets_string_value() {
 fn string_ipc() {
     // StringMetric doesn't support IPC.
     let _lock = lock_test();
+    let _t = setup_glean(None);
     let store_names: Vec<String> = vec!["store1".into()];
     let _raii = ipc::test_set_need_ipc(true);
     let child_metric = StringMetric::new(CommonMetricData {
-        name: "string metric".into(),
+        name: "string_metric".into(),
         category: "ipc".into(),
         send_in_pings: store_names.clone(),
         disabled: false,

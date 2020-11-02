@@ -54,8 +54,8 @@ use crate::{
 };
 
 use ::libc::{self, free, malloc};
-use std::{ptr::null_mut, sync::atomic::Ordering};
 use std::sync::Arc;
+use std::{ptr::null_mut, sync::atomic::Ordering};
 
 const PRECACHE_OUTPUT_SIZE: usize = 8192;
 const PRECACHE_OUTPUT_MAX: usize = PRECACHE_OUTPUT_SIZE - 1;
@@ -159,7 +159,7 @@ impl Default for qcms_transform {
             output_table_g: Default::default(),
             output_table_b: Default::default(),
             transform_fn: Default::default(),
-         }
+        }
     }
 }
 
@@ -1233,8 +1233,8 @@ pub unsafe extern "C" fn qcms_profile_precache_output_transform(mut profile: *mu
 #[no_mangle]
 pub unsafe extern "C" fn qcms_transform_precacheLUT_float(
     mut transform: *mut qcms_transform,
-    mut in_0: *mut qcms_profile,
-    mut out: *mut qcms_profile,
+    mut in_0: &qcms_profile,
+    mut out: &qcms_profile,
     mut samples: i32,
     mut in_type: qcms_data_type,
 ) -> *mut qcms_transform {
@@ -1304,9 +1304,9 @@ pub unsafe extern "C" fn qcms_transform_precacheLUT_float(
 }
 #[no_mangle]
 pub unsafe extern "C" fn qcms_transform_create(
-    mut in_0: *mut qcms_profile,
+    mut in_0: &qcms_profile,
     mut in_type: qcms_data_type,
-    mut out: *mut qcms_profile,
+    mut out: &qcms_profile,
     mut out_type: qcms_data_type,
     mut intent: qcms_intent,
 ) -> *mut qcms_transform {

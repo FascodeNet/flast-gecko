@@ -1229,6 +1229,12 @@ nsresult HTMLEditor::AutoDeleteRangesHandler::ComputeRangesToDelete(
                     caretPoint)
               : wsRunScannerAtCaret.ScanPreviousVisibleNodeOrBlockBoundaryFrom(
                     caretPoint);
+      if (scanFromCaretPointResult.Failed()) {
+        NS_WARNING(
+            "WSRunScanner::Scan(Next|Previous)VisibleNodeOrBlockBoundaryFrom() "
+            "failed");
+        return NS_ERROR_FAILURE;
+      }
       if (!scanFromCaretPointResult.GetContent()) {
         return NS_SUCCESS_DOM_NO_OPERATION;
       }
@@ -1498,6 +1504,12 @@ EditActionResult HTMLEditor::AutoDeleteRangesHandler::Run(
                     caretPoint.ref())
               : wsRunScannerAtCaret.ScanPreviousVisibleNodeOrBlockBoundaryFrom(
                     caretPoint.ref());
+      if (scanFromCaretPointResult.Failed()) {
+        NS_WARNING(
+            "WSRunScanner::Scan(Next|Previous)VisibleNodeOrBlockBoundaryFrom() "
+            "failed");
+        return EditActionResult(NS_ERROR_FAILURE);
+      }
       if (!scanFromCaretPointResult.GetContent()) {
         return EditActionCanceled();
       }
@@ -1557,6 +1569,12 @@ EditActionResult HTMLEditor::AutoDeleteRangesHandler::Run(
                     : wsRunScannerAtCaret
                           .ScanPreviousVisibleNodeOrBlockBoundaryFrom(
                               caretPoint.ref());
+            if (scanFromCaretPointResult.Failed()) {
+              NS_WARNING(
+                  "WSRunScanner::Scan(Next|Previous)"
+                  "VisibleNodeOrBlockBoundaryFrom() failed");
+              return EditActionResult(NS_ERROR_FAILURE);
+            }
             if (scanFromCaretPointResult.ReachedBRElement() &&
                 !aHTMLEditor.IsVisibleBRElement(
                     scanFromCaretPointResult.BRElementPtr())) {
@@ -2139,6 +2157,10 @@ nsresult HTMLEditor::AutoDeleteRangesHandler::ComputeRangesToDeleteHRElement(
 
   WSScanResult forwardScanFromCaretResult =
       aWSRunScannerAtCaret.ScanNextVisibleNodeOrBlockBoundaryFrom(aCaretPoint);
+  if (forwardScanFromCaretResult.Failed()) {
+    NS_WARNING("WSRunScanner::ScanNextVisibleNodeOrBlockBoundaryFrom() failed");
+    return NS_ERROR_FAILURE;
+  }
   if (!forwardScanFromCaretResult.ReachedBRElement()) {
     // Restore original caret position if we won't delete anyting.
     nsresult rv = aRangesToDelete.Collapse(aCaretPoint);
@@ -2209,6 +2231,10 @@ EditActionResult HTMLEditor::AutoDeleteRangesHandler::HandleDeleteHRElement(
 
   WSScanResult forwardScanFromCaretResult =
       aWSRunScannerAtCaret.ScanNextVisibleNodeOrBlockBoundaryFrom(aCaretPoint);
+  if (forwardScanFromCaretResult.Failed()) {
+    NS_WARNING("WSRunScanner::ScanNextVisibleNodeOrBlockBoundaryFrom() failed");
+    return EditActionResult(NS_ERROR_FAILURE);
+  }
   if (!forwardScanFromCaretResult.ReachedBRElement()) {
     return EditActionHandled();
   }
@@ -2442,21 +2468,25 @@ nsresult HTMLEditor::AutoDeleteRangesHandler::AutoBlockElementsJoiner::
       aDirectionAndAmount == nsIEditor::ePrevious
           ? EditorRawDOMPoint::AtEndOf(*mLeafContentInOtherBlock)
           : EditorRawDOMPoint(mLeafContentInOtherBlock, 0);
+  // If new caret position is same as current caret position, we can do
+  // nothing anymore.
+  if (aRangesToDelete.IsCollapsed() &&
+      aRangesToDelete.FocusRef() == newCaretPoint.ToRawRangeBoundary()) {
+    return NS_OK;
+  }
   // TODO: Stop modifying the `Selection` for computing the targer ranges.
   nsresult rv = aHTMLEditor.CollapseSelectionTo(newCaretPoint);
-  if (!aHTMLEditor.SelectionRefPtr()->RangeCount()) {
-    NS_WARNING("Failed to put caret to new position");
-    return NS_ERROR_FAILURE;
-  }
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "HTMLEditor::CollapseSelectionTo() failed, but ignored");
-  aRangesToDelete.Initialize(*aHTMLEditor.SelectionRefPtr());
-  AutoDeleteRangesHandler anotherHandler(mDeleteRangesHandlerConst);
-  rv = anotherHandler.ComputeRangesToDelete(aHTMLEditor, aDirectionAndAmount,
-                                            aRangesToDelete);
-  NS_WARNING_ASSERTION(
-      NS_SUCCEEDED(rv),
-      "Recursive AutoDeleteRangesHandler::ComputeRangesToDelete() failed");
+                       "HTMLEditor::CollapseSelectionTo() failed");
+  if (NS_SUCCEEDED(rv)) {
+    aRangesToDelete.Initialize(*aHTMLEditor.SelectionRefPtr());
+    AutoDeleteRangesHandler anotherHandler(mDeleteRangesHandlerConst);
+    rv = anotherHandler.ComputeRangesToDelete(aHTMLEditor, aDirectionAndAmount,
+                                              aRangesToDelete);
+    NS_WARNING_ASSERTION(
+        NS_SUCCEEDED(rv),
+        "Recursive AutoDeleteRangesHandler::ComputeRangesToDelete() failed");
+  }
   // Restore selection.
   nsresult rvCollapsingSelectionTo =
       aHTMLEditor.CollapseSelectionTo(aCaretPoint);
@@ -2557,17 +2587,17 @@ EditActionResult HTMLEditor::AutoDeleteRangesHandler::AutoBlockElementsJoiner::
           aDirectionAndAmount == nsIEditor::ePrevious
               ? EditorRawDOMPoint::AtEndOf(*mLeafContentInOtherBlock)
               : EditorRawDOMPoint(mLeafContentInOtherBlock, 0);
+      // If new caret position is same as current caret position, we can do
+      // nothing anymore.
+      if (aRangesToDelete.IsCollapsed() &&
+          aRangesToDelete.FocusRef() == newCaretPoint.ToRawRangeBoundary()) {
+        return EditActionCanceled();
+      }
       nsresult rv = aHTMLEditor.CollapseSelectionTo(newCaretPoint);
-      if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
-        return result.SetResult(NS_ERROR_EDITOR_DESTROYED);
+      if (NS_FAILED(rv)) {
+        NS_WARNING("HTMLEditor::CollapseSelectionTo() failed");
+        return result.SetResult(rv);
       }
-      if (!aHTMLEditor.SelectionRefPtr()->RangeCount()) {
-        NS_WARNING("Failed to put caret to new position");
-        return EditActionHandled(rv);
-      }
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rv),
-          "HTMLEditor::CollapseSelectionTo() failed, but ignored");
       AutoRangeArray rangesToDelete(*aHTMLEditor.SelectionRefPtr());
       AutoDeleteRangesHandler anotherHandler(mDeleteRangesHandler);
       result = anotherHandler.Run(aHTMLEditor, aDirectionAndAmount,
@@ -3578,6 +3608,10 @@ HTMLEditor::AutoDeleteRangesHandler::DeleteParentBlocksWithTransactionIfEmpty(
   // Next, check there is visible contents after the point in current block.
   WSScanResult forwardScanFromPointResult =
       wsScannerForPoint.ScanNextVisibleNodeOrBlockBoundaryFrom(aPoint);
+  if (forwardScanFromPointResult.Failed()) {
+    NS_WARNING("WSRunScanner::ScanNextVisibleNodeOrBlockBoundaryFrom() failed");
+    return NS_ERROR_FAILURE;
+  }
   if (forwardScanFromPointResult.ReachedBRElement()) {
     // XXX In my understanding, this is odd.  The end reason may not be
     //     same as the reached <br> element because the equality is
@@ -3593,10 +3627,15 @@ HTMLEditor::AutoDeleteRangesHandler::DeleteParentBlocksWithTransactionIfEmpty(
       return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
     }
     if (wsScannerForPoint.GetEndReasonContent()->GetNextSibling()) {
-      if (!WSRunScanner::ScanNextVisibleNodeOrBlockBoundary(
-               aHTMLEditor, EditorRawDOMPoint::After(
-                                *wsScannerForPoint.GetEndReasonContent()))
-               .ReachedCurrentBlockBoundary()) {
+      WSScanResult scanResult =
+          WSRunScanner::ScanNextVisibleNodeOrBlockBoundary(
+              aHTMLEditor, EditorRawDOMPoint::After(
+                               *wsScannerForPoint.GetEndReasonContent()));
+      if (scanResult.Failed()) {
+        NS_WARNING("WSRunScanner::ScanNextVisibleNodeOrBlockBoundary() failed");
+        return NS_ERROR_FAILURE;
+      }
+      if (!scanResult.ReachedCurrentBlockBoundary()) {
         // If we couldn't reach the block's end after the invisible <br>,
         // that means that there is visible content.
         return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;

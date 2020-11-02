@@ -37,5 +37,15 @@ dom/localstorage/
 dom/manifest/
 dom/mathml/
 dom/media/
+dom/messagechannel/
+dom/midi/
+dom/network/
+dom/notification/
+dom/offline/
+dom/payments/
+dom/performance/
+dom/permission/
+dom/plugins/
+dom/power/
 dom/quota/
 dom/simpledb/

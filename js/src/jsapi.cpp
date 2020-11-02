@@ -55,6 +55,7 @@
 #include "js/ContextOptions.h"  // JS::ContextOptions{,Ref}
 #include "js/Conversions.h"
 #include "js/Date.h"
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"  // js::CheckSystemRecursionLimit
 #include "js/Initialization.h"
 #include "js/JSON.h"
@@ -3460,6 +3461,7 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   nonSyntacticScope = rhs.nonSyntacticScope;
   privateClassFields = rhs.privateClassFields;
   privateClassMethods = rhs.privateClassMethods;
+  useStencilXDR = rhs.useStencilXDR;
   useOffThreadParseGlobal = rhs.useOffThreadParseGlobal;
 };
 
@@ -3554,6 +3556,8 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
       cx->options().throwOnAsmJSValidationFailure();
   privateClassFields = cx->options().privateClassFields();
   privateClassMethods = cx->options().privateClassMethods();
+
+  useStencilXDR = !UseOffThreadParseGlobal();
   useOffThreadParseGlobal = UseOffThreadParseGlobal();
 
   sourcePragmas_ = cx->options().sourcePragmas();
@@ -5751,8 +5755,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
     size_t cursorIndex) {
-  MOZ_ASSERT(options.useOffThreadParseGlobal == js::UseOffThreadParseGlobal());
-  if (js::UseOffThreadParseGlobal()) {
+  if (!options.useStencilXDR) {
     // The buffer contains JSScript.
     return JS::DecodeScript(cx, options, buffer, scriptp, cursorIndex);
   }
@@ -5801,8 +5804,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
     size_t cursorIndex) {
-  MOZ_ASSERT(options.useOffThreadParseGlobal == js::UseOffThreadParseGlobal());
-  if (js::UseOffThreadParseGlobal()) {
+  if (!options.useStencilXDR) {
     JS::TranscodeResult res =
         JS::DecodeScript(cx, options, buffer, scriptp, cursorIndex);
     if (res != JS::TranscodeResult_Ok) {

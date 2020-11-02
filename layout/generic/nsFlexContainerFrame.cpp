@@ -1551,21 +1551,22 @@ static nscoord PartiallyResolveAutoMinSize(
   // Compute the transferred size suggestion, which is the cross size converted
   // through the aspect ratio (if the item has an aspect ratio and a definite
   // cross size).
-  nscoord transferredSizeSuggestion = nscoord_MAX;
   if (aFlexItem.HasIntrinsicRatio() &&
       aFlexItem.IsCrossSizeDefinite(aItemReflowInput)) {
     // We have a usable aspect ratio. (not going to divide by 0)
-    transferredSizeSuggestion = MainSizeFromAspectRatio(
+    nscoord transferredSizeSuggestion = MainSizeFromAspectRatio(
         aFlexItem.CrossSize(), aFlexItem.IntrinsicRatio(), aAxisTracker);
 
     // Clamp the transferred size suggestion by any definite min and max
     // cross size converted through the aspect ratio.
     transferredSizeSuggestion = ClampMainSizeViaCrossAxisConstraints(
         transferredSizeSuggestion, aFlexItem, aAxisTracker);
+
+    FLEX_LOGV(" Transferred size suggestion: %d", transferredSizeSuggestion);
+    return transferredSizeSuggestion;
   }
 
-  FLEX_LOGV(" Transferred size suggestion: %d", transferredSizeSuggestion);
-  return transferredSizeSuggestion;
+  return nscoord_MAX;
 }
 
 // Note: If & when we handle "min-height: min-content" for flex items,
@@ -1615,8 +1616,21 @@ void nsFlexContainerFrame::ResolveAutoFlexBasisAndMinSize(
 
     if (aFlexItem.IsInlineAxisMainAxis()) {
       if (minSizeNeedsToMeasureContent) {
-        contentSizeSuggestion =
-            aFlexItem.Frame()->GetMinISize(aItemReflowInput.mRenderingContext);
+        // Compute the flex item's content size suggestion, which is the
+        // 'min-content' size on the main axis.
+        // https://drafts.csswg.org/css-flexbox-1/#content-size-suggestion
+        const auto cbWM = aAxisTracker.GetWritingMode();
+        const auto itemWM = aFlexItem.GetWritingMode();
+        const nscoord availISize = 0;  // for min-content size
+        const auto sizeInItemWM = aFlexItem.Frame()->ComputeSize(
+            aItemReflowInput.mRenderingContext, itemWM,
+            aItemReflowInput.mContainingBlockSize, availISize,
+            aItemReflowInput.ComputedLogicalMargin().Size(itemWM),
+            aItemReflowInput.ComputedLogicalBorderPadding().Size(itemWM),
+            {ComputeSizeFlag::UseAutoISize, ComputeSizeFlag::ShrinkWrap});
+
+        contentSizeSuggestion = aAxisTracker.MainComponent(
+            sizeInItemWM.mLogicalSize.ConvertTo(cbWM, itemWM));
       }
       NS_ASSERTION(!flexBasisNeedsToMeasureContent,
                    "flex-basis:auto should have been resolved in the "

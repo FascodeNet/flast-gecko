@@ -369,6 +369,8 @@ CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
       // Only top level pages care about Get/SetPersist.
       entry->SetPersist(
           nsDocShell::ShouldAddToSessionHistory(aLoadState->URI(), aChannel));
+    } else if (mActiveEntry || !mLoadingEntries.IsEmpty()) {
+      entry->SetIsSubFrame(true);
     }
     entry->SetDocshellID(GetHistoryID());
     entry->SetIsDynamicallyAdded(CreatedDynamically());
@@ -406,6 +408,8 @@ CanonicalBrowsingContext::ReplaceLoadingSessionHistoryEntryForLoad(
     nsCOMPtr<nsIURI> uri;
     aChannel->GetURI(getter_AddRefs(uri));
     newEntry->SetPersist(nsDocShell::ShouldAddToSessionHistory(uri, aChannel));
+  } else {
+    newEntry->SetIsSubFrame(aInfo->mInfo.IsSubFrame());
   }
   newEntry->SetDocshellID(GetHistoryID());
   newEntry->SetIsDynamicallyAdded(CreatedDynamically());
@@ -427,6 +431,9 @@ CanonicalBrowsingContext::ReplaceLoadingSessionHistoryEntryForLoad(
 void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
                                                     const nsID& aChangeID,
                                                     uint32_t aLoadType) {
+  MOZ_LOG(gSHLog, LogLevel::Verbose,
+          ("CanonicalBrowsingContext::SessionHistoryCommit %p %" PRIu64, this,
+           aLoadId));
   for (size_t i = 0; i < mLoadingEntries.Length(); ++i) {
     if (mLoadingEntries[i].mLoadId == aLoadId) {
       nsSHistory* shistory = static_cast<nsSHistory*>(GetSessionHistory());
@@ -512,18 +519,17 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
               mActiveEntry = newActiveEntry;
             }
           } else {
-            SessionHistoryEntry* parentEntry =
-                static_cast<CanonicalBrowsingContext*>(GetParent())
-                    ->mActiveEntry;
+            SessionHistoryEntry* parentEntry = GetParent()->mActiveEntry;
             // XXX What should happen if parent doesn't have mActiveEntry?
             //     Or can that even happen ever?
             if (parentEntry) {
               mActiveEntry = newActiveEntry;
-              // FIXME The docshell code sometime uses -1 for aChildOffset!
               // FIXME Using IsInProcess for aUseRemoteSubframes isn't quite
               //       right, but aUseRemoteSubframes should be going away.
-              parentEntry->AddChild(mActiveEntry, Children().Length() - 1,
-                                    IsInProcess());
+              parentEntry->AddChild(
+                  mActiveEntry,
+                  CreatedDynamically() ? -1 : GetParent()->IndexOf(this),
+                  IsInProcess());
             }
           }
         }
@@ -609,8 +615,7 @@ void CanonicalBrowsingContext::NotifyOnHistoryReload(
 
 void CanonicalBrowsingContext::SetActiveSessionHistoryEntry(
     const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-    uint32_t aLoadType, int32_t aChildOffset, uint32_t aUpdatedCacheKey,
-    const nsID& aChangeID) {
+    uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID) {
   nsISHistory* shistory = GetSessionHistory();
   if (!shistory) {
     return;
@@ -640,8 +645,9 @@ void CanonicalBrowsingContext::SetActiveSessionHistoryEntry(
       shistory->AddChildSHEntryHelper(oldActiveEntry, mActiveEntry, Top(),
                                       true);
     } else if (GetParent() && GetParent()->mActiveEntry) {
-      GetParent()->mActiveEntry->AddChild(mActiveEntry, aChildOffset,
-                                          UseRemoteSubframes());
+      GetParent()->mActiveEntry->AddChild(
+          mActiveEntry, CreatedDynamically() ? -1 : GetParent()->IndexOf(this),
+          UseRemoteSubframes());
     }
   }
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.

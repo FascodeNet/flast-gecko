@@ -18,6 +18,7 @@
 #include "builtin/SelfHostingDefines.h"
 #include "frontend/BytecodeCompiler.h"
 #include "jit/InlinableNatives.h"
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
 #include "js/PropertySpec.h"
 #include "js/UniquePtr.h"
@@ -1613,10 +1614,7 @@ static bool EnumerableOwnProperties(JSContext* cx, const JS::CallArgs& args) {
     if (obj->is<NativeObject>()) {
       HandleNativeObject nobj = obj.as<NativeObject>();
       if (JSID_IS_INT(id) && nobj->containsDenseElement(JSID_TO_INT(id))) {
-        if (!nobj->getDenseOrTypedArrayElement<CanGC>(cx, JSID_TO_INT(id),
-                                                      &value)) {
-          return false;
-        }
+        value.set(nobj->getDenseElement(JSID_TO_INT(id)));
       } else {
         shape = nobj->lookup(cx, id);
         if (!shape || !shape->enumerable()) {

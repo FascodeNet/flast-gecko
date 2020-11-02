@@ -455,7 +455,7 @@
 # new scrollbar code for desktop zooming
 - name: apz.force_disable_desktop_zooming_scrollbars
   type: RelaxedAtomicBool
-  value: @IS_ANDROID@
+  value: false
   mirror: always
 
 #ifdef MOZ_WIDGET_GTK
@@ -2086,6 +2086,16 @@
 - name: dom.keyboardevent.keypress.set_keycode_and_charcode_to_same_value
   type: bool
   value: true
+  mirror: always
+
+# Whether the LinkStyle.sheet and DocumentOrShadowRoot.styleSheets accessor
+# exposes in-progress-loading stylesheets.
+#
+# Historical behavior is `true`, but other browsers (and also a bit of common
+# sense) match `false`.
+- name: dom.expose-incomplete-stylesheets
+  type: bool
+  value: false
   mirror: always
 
 # Whether the Large-Allocation header is enabled.
@@ -8398,6 +8408,14 @@
 - name: network.dns.resolver_shutdown_timeout_ms
   type: uint32_t
   value: 2000
+  mirror: always
+
+# When true on Windows DNS resolutions for single label domains
+# (domains that don't contain a dot) will be resolved using the DnsQuery
+# API instead of PR_GetAddrInfoByName
+- name: network.dns.dns_query_single_label
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 # The proxy type. See nsIProtocolProxyService.idl
