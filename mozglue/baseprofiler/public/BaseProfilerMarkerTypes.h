@@ -39,31 +39,18 @@ struct Tracing {
       aWriter.StringProperty("category", aCategory);
     }
   }
-};
-
-struct FileIO {
-  static constexpr Span<const char> MarkerTypeName() {
-    return MakeStringSpan("FileIO");
-  }
-  static void StreamJSONMarkerData(JSONWriter& aWriter,
-                                   const ProfilerString8View& aOperation,
-                                   const ProfilerString8View& aSource,
-                                   const ProfilerString8View& aFilename,
-                                   MarkerThreadId aOperationThreadId) {
-    aWriter.StringProperty("operation", aOperation);
-    aWriter.StringProperty("source", aSource);
-    if (aFilename.Length() != 0) {
-      aWriter.StringProperty("filename", aFilename);
-    }
-    if (!aOperationThreadId.IsUnspecified()) {
-      aWriter.IntProperty("threadId", aOperationThreadId.ThreadId());
-    }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineOverview};
+    schema.AddKeyLabelFormat("category", "Type", MS::Format::string);
+    return schema;
   }
 };
 
 struct UserTimingMark {
   static constexpr Span<const char> MarkerTypeName() {
-    return MakeStringSpan("UserTiming");
+    return MakeStringSpan("UserTimingMark");
   }
   static void StreamJSONMarkerData(JSONWriter& aWriter,
                                    const ProfilerString8View& aName) {
@@ -72,11 +59,23 @@ struct UserTimingMark {
     aWriter.NullProperty("startMark");
     aWriter.NullProperty("endMark");
   }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.SetAllLabels("{marker.data.name}");
+    schema.AddStaticLabelValue("Marker", "UserTiming");
+    schema.AddKeyLabelFormat("entryType", "Entry Type", MS::Format::string);
+    schema.AddKeyLabelFormat("name", "Name", MS::Format::string);
+    schema.AddStaticLabelValue(
+        "Description",
+        "UserTimingMark is created using the DOM API performance.mark().");
+    return schema;
+  }
 };
 
 struct UserTimingMeasure {
   static constexpr Span<const char> MarkerTypeName() {
-    return MakeStringSpan("UserTiming");
+    return MakeStringSpan("UserTimingMeasure");
   }
   static void StreamJSONMarkerData(JSONWriter& aWriter,
                                    const ProfilerString8View& aName,
@@ -96,6 +95,20 @@ struct UserTimingMeasure {
       aWriter.NullProperty("endMark");
     }
   }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.SetAllLabels("{marker.data.name}");
+    schema.AddStaticLabelValue("Marker", "UserTiming");
+    schema.AddKeyLabelFormat("entryType", "Entry Type", MS::Format::string);
+    schema.AddKeyLabelFormat("name", "Name", MS::Format::string);
+    schema.AddKeyLabelFormat("startMark", "Start Mark", MS::Format::string);
+    schema.AddKeyLabelFormat("endMark", "End Mark", MS::Format::string);
+    schema.AddStaticLabelValue("Description",
+                               "UserTimingMeasure is created using the DOM API "
+                               "performance.measure().");
+    return schema;
+  }
 };
 
 struct Hang {
@@ -103,6 +116,12 @@ struct Hang {
     return MakeStringSpan("BHR-detected hang");
   }
   static void StreamJSONMarkerData(JSONWriter& aWriter) {}
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineOverview};
+    return schema;
+  }
 };
 
 struct LongTask {
@@ -111,6 +130,12 @@ struct LongTask {
   }
   static void StreamJSONMarkerData(JSONWriter& aWriter) {
     aWriter.StringProperty("category", "LongTask");
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.AddKeyLabelFormat("category", "Type", MS::Format::string);
+    return schema;
   }
 };
 
@@ -124,6 +149,14 @@ struct Log {
     aWriter.StringProperty("module", aModule);
     aWriter.StringProperty("name", aText);
   }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerTable};
+    schema.SetTableLabel("({marker.data.module}) {marker.data.name}");
+    schema.AddKeyLabelFormat("module", "Module", MS::Format::string);
+    schema.AddKeyLabelFormat("name", "Name", MS::Format::string);
+    return schema;
+  }
 };
 
 struct MediaSample {
@@ -135,6 +168,15 @@ struct MediaSample {
                                    int64_t aSampleEndTimeUs) {
     aWriter.IntProperty("sampleStartTimeUs", aSampleStartTimeUs);
     aWriter.IntProperty("sampleEndTimeUs", aSampleEndTimeUs);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.AddKeyLabelFormat("sampleStartTimeUs", "Sample start time",
+                             MS::Format::microseconds);
+    schema.AddKeyLabelFormat("sampleEndTimeUs", "Sample end time",
+                             MS::Format::microseconds);
+    return schema;
   }
 };
 

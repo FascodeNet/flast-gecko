@@ -119,21 +119,6 @@ let JSWINDOWACTORS = {
 
     child: {
       moduleURI: "resource://gre/actors/AutoCompleteChild.jsm",
-      events: {
-        DOMContentLoaded: {},
-        pageshow: { capture: true },
-        pagehide: { capture: true },
-        unload: { capture: true },
-        focus: { capture: true },
-        blur: { capture: true },
-        mousedown: { capture: true },
-        input: { capture: true },
-        keydown: { capture: true },
-        keypress: { capture: true, mozSystemGroup: true },
-        compositionstart: { capture: true },
-        compositionend: { capture: true },
-        contextmenu: { capture: true },
-      },
     },
 
     allFrames: true,
@@ -347,9 +332,6 @@ let JSWINDOWACTORS = {
     },
     child: {
       moduleURI: "resource://gre/actors/PictureInPictureChild.jsm",
-      events: {
-        MozStopPictureInPicture: { capture: true },
-      },
     },
 
     allFrames: true,
@@ -381,6 +363,19 @@ let JSWINDOWACTORS = {
       },
     },
     allFrames: true,
+  },
+
+  Printing: {
+    parent: {
+      moduleURI: "resource://gre/actors/PrintingParent.jsm",
+    },
+    child: {
+      moduleURI: "resource://gre/actors/PrintingChild.jsm",
+      events: {
+        PrintingError: { capture: true },
+        printPreviewUpdate: { capture: true },
+      },
+    },
   },
 
   PurgeSessionHistory: {
@@ -572,23 +567,7 @@ let JSWINDOWACTORS = {
  * If Fission is being simulated, and an actor needs to receive events from
  * sub-frames, it must use "allFrames".
  */
-let LEGACY_ACTORS = {
-  Printing: {
-    child: {
-      module: "resource://gre/actors/PrintingChild.jsm",
-      events: {
-        PrintingError: { capture: true },
-        printPreviewUpdate: { capture: true },
-      },
-      messages: [
-        "Printing:Preview:Enter",
-        "Printing:Preview:Exit",
-        "Printing:Preview:Navigate",
-        "Printing:Preview:ParseDocument",
-      ],
-    },
-  },
-};
+let LEGACY_ACTORS = {};
 
 class ActorSet {
   constructor(group, actorSide) {

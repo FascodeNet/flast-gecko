@@ -14,6 +14,7 @@
 #include "jit/BaselineIC.h"
 #include "jit/CacheIRCompiler.h"
 #include "jit/IonIC.h"
+#include "jit/JitFrames.h"
 #include "jit/JitZone.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/Linker.h"
@@ -1122,14 +1123,15 @@ bool IonCacheIRCompiler::emitProxyGetResult(ObjOperandId objId,
   masm.enterFakeExitFrame(argJSContext, scratch, ExitFrameType::IonOOLProxy);
 
   // Make the call.
+  using Fn = bool (*)(JSContext * cx, HandleObject proxy, HandleId id,
+                      MutableHandleValue vp);
   masm.setupUnalignedABICall(scratch);
   masm.passABIArg(argJSContext);
   masm.passABIArg(argProxy);
   masm.passABIArg(argId);
   masm.passABIArg(argVp);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ProxyGetProperty),
-                   MoveOp::GENERAL,
-                   CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+  masm.callWithABI<Fn, ProxyGetProperty>(
+      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
   // Test for failure.
   masm.branchIfFalseBool(ReturnReg, masm.exceptionLabel());
@@ -1267,21 +1269,6 @@ bool IonCacheIRCompiler::emitCompareStringResult(JSOp op, StringOperandId lhsId,
   return true;
 }
 
-static bool GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v) {
-  AutoUnsafeCallWithABI unsafe;
-  if (group->unknownPropertiesDontCheckGeneration()) {
-    return true;
-  }
-  HeapTypeSet* propTypes = group->maybeGetPropertyDontCheckGeneration(*id);
-  if (!propTypes) {
-    return true;
-  }
-  if (!propTypes->nonConstantProperty()) {
-    return false;
-  }
-  return propTypes->hasType(TypeSet::GetValueType(*v));
-}
-
 static void EmitCheckPropertyTypes(MacroAssembler& masm,
                                    const PropertyTypeCheckInfo* typeCheckInfo,
                                    Register obj, const ConstantOrRegister& val,
@@ -1395,12 +1382,13 @@ static void EmitCheckPropertyTypes(MacroAssembler& masm,
     masm.Push(id, scratch3);
     masm.moveStackPtrTo(scratch3);
 
+    using Fn = bool (*)(ObjectGroup * group, jsid * id, Value * v);
     masm.setupUnalignedABICall(scratch1);
     masm.movePtr(ImmGCPtr(group), scratch1);
     masm.passABIArg(scratch1);
     masm.passABIArg(scratch3);
     masm.passABIArg(scratch2);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, GroupHasPropertyTypes));
+    masm.callWithABI<Fn, GroupHasPropertyTypes>();
     masm.mov(ReturnReg, scratch1);
 
     masm.adjustStack(sizeof(Value) + sizeof(jsid));
@@ -1523,13 +1511,14 @@ bool IonCacheIRCompiler::emitAddAndStoreSlotShared(
                          liveVolatileFloatRegs());
     masm.PushRegsInMask(save);
 
+    using Fn = bool (*)(JSContext * cx, NativeObject * obj, uint32_t newCount);
     masm.setupUnalignedABICall(scratch1);
     masm.loadJSContext(scratch1);
     masm.passABIArg(scratch1);
     masm.passABIArg(obj);
     masm.move32(Imm32(numNewSlots), scratch2.ref());
     masm.passABIArg(scratch2.ref());
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, NativeObject::growSlotsPure));
+    masm.callWithABI<Fn, NativeObject::growSlotsPure>();
     masm.mov(ReturnReg, scratch1);
 
     LiveRegisterSet ignore;
@@ -1610,41 +1599,6 @@ bool IonCacheIRCompiler::emitAllocateAndStoreDynamicSlot(
                                    offsetOffset, rhsId, changeGroup,
                                    newGroupOffset, newShapeOffset,
                                    mozilla::Some(numNewSlotsOffset));
-}
-
-bool IonCacheIRCompiler::emitStoreTypedObjectReferenceProperty(
-    ObjOperandId objId, uint32_t offsetOffset, TypedThingLayout layout,
-    ReferenceType type, ValOperandId rhsId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-  int32_t offset = int32StubField(offsetOffset);
-
-  ValueOperand val = allocator.useValueRegister(masm, rhsId);
-
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-
-  // We don't need to check property types if the property is always a
-  // string.
-  if (type != ReferenceType::TYPE_STRING) {
-    FailurePath* failure;
-    if (!addFailurePath(&failure)) {
-      return false;
-    }
-    EmitCheckPropertyTypes(masm, typeCheckInfo_, obj, TypedOrValueRegister(val),
-                           *liveRegs_, failure->label());
-  }
-
-  // Compute the address being written to.
-  LoadTypedThingData(masm, layout, obj, scratch1);
-  Address dest(scratch1, offset);
-
-  emitStoreTypedObjectReferenceProp(val, type, dest, scratch2);
-
-  if (needsPostBarrier()) {
-    emitPostBarrierSlot(obj, val, scratch1);
-  }
-  return true;
 }
 
 static void EmitStoreDenseElement(MacroAssembler& masm,
@@ -1851,12 +1805,12 @@ bool IonCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
   save.takeUnchecked(scratch1);
   masm.PushRegsInMask(save);
 
+  using Fn = bool (*)(JSContext * cx, NativeObject * obj);
   masm.setupUnalignedABICall(scratch1);
   masm.loadJSContext(scratch1);
   masm.passABIArg(scratch1);
   masm.passABIArg(obj);
-  masm.callWithABI(
-      JS_FUNC_TO_DATA_PTR(void*, NativeObject::addDenseElementPure));
+  masm.callWithABI<Fn, NativeObject::addDenseElementPure>();
   masm.mov(ReturnReg, scratch1);
 
   masm.PopRegsInMask(save);
@@ -1936,11 +1890,12 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
     volatileRegs.takeUnchecked(output);
     masm.PushRegsInMask(volatileRegs);
 
+    using Fn = JSLinearString* (*)(JSContext * cx, int32_t code);
     masm.setupUnalignedABICall(scratch2);
     masm.loadJSContext(scratch2);
     masm.passABIArg(scratch2);
     masm.passABIArg(scratch1);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::StringFromCharCodeNoGC));
+    masm.callWithABI<Fn, jit::StringFromCharCodeNoGC>();
     masm.storeCallPointerResult(scratch2);
 
     masm.PopRegsInMask(volatileRegs);
@@ -2319,7 +2274,6 @@ bool IonCacheIRCompiler::emitLoadDOMExpandoValueGuardGeneration(
       rawPointerStubField<ExpandoAndGeneration*>(expandoAndGenerationOffset);
   uint64_t generation = rawInt64StubField<uint64_t>(generationOffset);
 
-  AutoScratchRegister scratch(allocator, masm);
   ValueOperand output = allocator.defineValueRegister(masm, resultId);
 
   FailurePath* failure;
@@ -2327,26 +2281,8 @@ bool IonCacheIRCompiler::emitLoadDOMExpandoValueGuardGeneration(
     return false;
   }
 
-  masm.loadPtr(Address(obj, ProxyObject::offsetOfReservedSlots()), scratch);
-  Address expandoAddr(scratch,
-                      js::detail::ProxyReservedSlots::offsetOfPrivateSlot());
-
-  // Guard the ExpandoAndGeneration* matches the proxy's ExpandoAndGeneration.
-  masm.loadValue(expandoAddr, output);
-  masm.branchTestValue(Assembler::NotEqual, output,
-                       PrivateValue(expandoAndGeneration), failure->label());
-
-  // Guard expandoAndGeneration->generation matches the expected generation.
-  masm.movePtr(ImmPtr(expandoAndGeneration), output.scratchReg());
-  masm.branch64(
-      Assembler::NotEqual,
-      Address(output.scratchReg(), ExpandoAndGeneration::offsetOfGeneration()),
-      Imm64(generation), failure->label());
-
-  // Load expandoAndGeneration->expando into the output Value register.
-  masm.loadValue(
-      Address(output.scratchReg(), ExpandoAndGeneration::offsetOfExpando()),
-      output);
+  masm.loadDOMExpandoValueGuardGeneration(obj, output, expandoAndGeneration,
+                                          generation, failure->label());
   return true;
 }
 
@@ -2483,6 +2419,14 @@ bool IonCacheIRCompiler::emitGuardFunctionScript(ObjOperandId funId,
 bool IonCacheIRCompiler::emitCallScriptedFunction(ObjOperandId calleeId,
                                                   Int32OperandId argcId,
                                                   CallFlags flags) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitCallWasmFunction(ObjOperandId calleeId,
+                                              Int32OperandId argcId,
+                                              CallFlags flags,
+                                              uint32_t funcExportOffset,
+                                              uint32_t instanceOffset) {
   MOZ_CRASH("Call ICs not used in ion");
 }
 

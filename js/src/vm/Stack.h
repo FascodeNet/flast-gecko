@@ -11,13 +11,13 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/Span.h"  // for Span
 #include "mozilla/Variant.h"
 
 #include <algorithm>
 #include <type_traits>
 
 #include "gc/Rooting.h"
-#include "jit/JSJitFrameIter.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
@@ -213,6 +213,9 @@ class AbstractFramePtr {
 
   inline bool isFunctionFrame() const;
   inline bool isGeneratorFrame() const;
+
+  inline bool saveGeneratorSlots(JSContext* cx, unsigned nslots,
+                                 ArrayObject* dest) const;
 
   inline unsigned numActualArgs() const;
   inline unsigned numFormalArgs() const;
@@ -641,6 +644,14 @@ class InterpreterFrame {
     rval_ = v;
     markReturnValue();
   }
+
+  // Copy values from this frame into a private Array, owned by the
+  // GeneratorObject, for suspending.
+  MOZ_MUST_USE inline bool saveGeneratorSlots(JSContext* cx, unsigned nslots,
+                                              ArrayObject* dest) const;
+
+  // Copy values from the Array into this stack frame, for resuming.
+  inline void restoreGeneratorSlots(ArrayObject* src);
 
   void resumeGeneratorFrame(JSObject* envChain) {
     MOZ_ASSERT(script()->isGenerator() || script()->isAsync());

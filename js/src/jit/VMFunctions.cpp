@@ -6,10 +6,10 @@
 
 #include "jit/VMFunctions.h"
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/FloatingPoint.h"
 
 #include "builtin/String.h"
-#include "builtin/TypedObject.h"
 #include "frontend/BytecodeCompiler.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/AtomicOperations.h"
@@ -30,10 +30,10 @@
 #include "vm/SelfHosting.h"
 #include "vm/TraceLogging.h"
 #include "vm/TypedArrayObject.h"
+#include "wasm/TypedObject.h"
 
 #include "debugger/DebugAPI-inl.h"
 #include "jit/BaselineFrame-inl.h"
-#include "jit/JitFrames-inl.h"
 #include "jit/VMFunctionList-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/JSScript-inl.h"
@@ -1437,33 +1437,13 @@ JSObject* CreateGenerator(JSContext* cx, BaselineFrame* frame) {
 
 bool NormalSuspend(JSContext* cx, HandleObject obj, BaselineFrame* frame,
                    uint32_t frameSize, jsbytecode* pc) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::Yield || JSOp(*pc) == JSOp::Await);
+  MOZ_ASSERT(JSOp(*pc) == JSOp::InitialYield || JSOp(*pc) == JSOp::Yield ||
+             JSOp(*pc) == JSOp::Await);
 
-  uint32_t numValueSlots = frame->numValueSlots(frameSize);
-
-  MOZ_ASSERT(numValueSlots > frame->script()->nfixed());
-  uint32_t stackDepth = numValueSlots - frame->script()->nfixed();
-
-  // Return value is still on the stack.
-  MOZ_ASSERT(stackDepth >= 1);
-
-  // The expression stack slots are stored on the stack in reverse order, so
-  // we copy them to a Vector and pass a pointer to that instead. We use
-  // stackDepth - 1 because we don't want to include the return value.
-  RootedValueVector exprStack(cx);
-  if (!exprStack.reserve(stackDepth - 1)) {
-    return false;
-  }
-
-  size_t firstSlot = numValueSlots - stackDepth;
-  for (size_t i = 0; i < stackDepth - 1; i++) {
-    exprStack.infallibleAppend(*frame->valueSlot(firstSlot + i));
-  }
-
-  MOZ_ASSERT(exprStack.length() == stackDepth - 1);
-
-  return AbstractGeneratorObject::normalSuspend(
-      cx, obj, frame, pc, exprStack.begin(), stackDepth - 1);
+  // Minus one because we don't want to include the return value.
+  uint32_t numSlots = frame->numValueSlots(frameSize) - 1;
+  MOZ_ASSERT(numSlots >= frame->script()->nfixed());
+  return AbstractGeneratorObject::suspend(cx, obj, frame, pc, numSlots);
 }
 
 bool FinalSuspend(JSContext* cx, HandleObject obj, jsbytecode* pc) {
@@ -2496,6 +2476,16 @@ bool IsPossiblyWrappedTypedArray(JSContext* cx, JSObject* obj, bool* result) {
   return true;
 }
 
+void* AllocateString(JSContext* cx) {
+  AutoUnsafeCallWithABI unsafe;
+  return js::AllocateString<JSString, NoGC>(cx, js::gc::TenuredHeap);
+}
+
+void* AllocateFatInlineString(JSContext* cx) {
+  AutoUnsafeCallWithABI unsafe;
+  return js::AllocateString<JSFatInlineString, NoGC>(cx, js::gc::TenuredHeap);
+}
+
 void* AllocateBigIntNoGC(JSContext* cx, bool requestMinorGC) {
   AutoUnsafeCallWithABI unsafe;
 
@@ -2505,6 +2495,49 @@ void* AllocateBigIntNoGC(JSContext* cx, bool requestMinorGC) {
 
   return js::AllocateBigInt<NoGC>(cx, gc::TenuredHeap);
 }
+
+void AllocateAndInitTypedArrayBuffer(JSContext* cx, TypedArrayObject* obj,
+                                     int32_t count) {
+  AutoUnsafeCallWithABI unsafe;
+  using mozilla::CheckedUint32;
+
+  obj->initPrivate(nullptr);
+
+  // Negative numbers or zero will bail out to the slow path, which in turn will
+  // raise an invalid argument exception or create a correct object with zero
+  // elements.
+  if (count <= 0 || uint32_t(count) >= INT32_MAX / obj->bytesPerElement()) {
+    obj->setFixedSlot(TypedArrayObject::LENGTH_SLOT, PrivateValue(size_t(0)));
+    return;
+  }
+
+  obj->setFixedSlot(TypedArrayObject::LENGTH_SLOT, PrivateValue(count));
+
+  size_t nbytes = count * obj->bytesPerElement();
+  MOZ_ASSERT((CheckedUint32(nbytes) + sizeof(Value)).isValid(),
+             "RoundUp must not overflow");
+
+  nbytes = RoundUp(nbytes, sizeof(Value));
+  void* buf = cx->nursery().allocateZeroedBuffer(obj, nbytes,
+                                                 js::ArrayBufferContentsArena);
+  if (buf) {
+    InitObjectPrivate(obj, buf, nbytes, MemoryUse::TypedArrayElements);
+  }
+}
+
+void* CreateMatchResultFallbackFunc(JSContext* cx, gc::AllocKind kind,
+                                    size_t nDynamicSlots) {
+  AutoUnsafeCallWithABI unsafe;
+  return js::AllocateObject<NoGC>(cx, kind, nDynamicSlots, gc::DefaultHeap,
+                                  &ArrayObject::class_);
+}
+
+#ifdef JS_GC_PROBES
+void TraceCreateObject(JSObject* obj) {
+  AutoUnsafeCallWithABI unsafe;
+  js::gc::gcprobes::CreateObject(obj);
+}
+#endif
 
 #if JS_BITS_PER_WORD == 32
 BigInt* CreateBigIntFromInt64(JSContext* cx, uint32_t low, uint32_t high) {
@@ -2889,6 +2922,21 @@ AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType) {
     default:
       MOZ_CRASH("Unexpected TypedArray type");
   }
+}
+
+bool GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v) {
+  AutoUnsafeCallWithABI unsafe;
+  if (group->unknownPropertiesDontCheckGeneration()) {
+    return true;
+  }
+  HeapTypeSet* propTypes = group->maybeGetPropertyDontCheckGeneration(*id);
+  if (!propTypes) {
+    return true;
+  }
+  if (!propTypes->nonConstantProperty()) {
+    return false;
+  }
+  return propTypes->hasType(TypeSet::GetValueType(*v));
 }
 
 void AssumeUnreachable(const char* output) {

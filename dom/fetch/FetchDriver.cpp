@@ -9,6 +9,7 @@
 
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "mozilla/dom/Document.h"
+#include "nsICookieJarSettings.h"
 #include "nsIInputStream.h"
 #include "nsIOutputStream.h"
 #include "nsIFileChannel.h"
@@ -459,7 +460,7 @@ nsresult FetchDriver::Fetch(AbortSignalImpl* aSignalImpl,
   // the operation.
   if (aSignalImpl) {
     if (aSignalImpl->Aborted()) {
-      Abort();
+      RunAbortAlgorithm();
       return NS_OK;
     }
 
@@ -1578,7 +1579,7 @@ void FetchDriver::SetRequestHeaders(nsIHttpChannel* aChannel,
   }
 }
 
-void FetchDriver::Abort() {
+void FetchDriver::RunAbortAlgorithm() {
   MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
 
   if (mObserver) {

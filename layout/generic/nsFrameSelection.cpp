@@ -77,12 +77,14 @@ static NS_DEFINE_CID(kFrameTraversalCID, NS_FRAMETRAVERSAL_CID);
 #include "mozilla/dom/SelectionBinding.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/layers/ScrollInputMethods.h"
 
 #include "nsFocusManager.h"
 #include "nsPIDOMWindow.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using mozilla::layers::ScrollInputMethod;
 
 //#define DEBUG_TABLE 1
 
@@ -778,7 +780,7 @@ nsresult nsFrameSelection::MoveCaret(nsDirection aDirection,
   if (doCollapse) {
     const nsRange* anchorFocusRange = sel->GetAnchorFocusRange();
     if (anchorFocusRange) {
-      nsINode* node;
+      RefPtr<nsINode> node;
       int32_t offset;
       if (visualMovement && nsBidiPresUtils::IsReversedDirectionFrame(frame)) {
         direction = nsDirection(1 - direction);
@@ -874,7 +876,8 @@ nsresult nsFrameSelection::MoveCaret(nsDirection aDirection,
     //  1. bumped into the BRFrame, bug 207623
     //  2. had select-all in a text input (DIV range), bug 352759.
     bool isBRFrame = frame->IsBrFrame();
-    sel->CollapseInLimiter(sel->GetFocusNode(), sel->FocusOffset());
+    RefPtr<nsINode> node = sel->GetFocusNode();
+    sel->CollapseInLimiter(node, sel->FocusOffset());
     // Note: 'frame' might be dead here.
     if (!isBRFrame) {
       mCaret.mHint = CARET_ASSOCIATE_BEFORE;  // We're now at the end of the
@@ -1420,7 +1423,8 @@ nsresult nsFrameSelection::TakeFocus(nsIContent* const aNewFocus,
         bool oldDesiredPosSet =
             mDesiredCaretPos.mIsSet;  // need to keep old desired
                                       // position if it was set.
-        mDomSelections[index]->CollapseInLimiter(aNewFocus, aContentOffset);
+        RefPtr<Selection> selection = mDomSelections[index];
+        selection->CollapseInLimiter(aNewFocus, aContentOffset);
         mDesiredCaretPos.mIsSet =
             oldDesiredPosSet;  // now reset desired pos back.
         mBatching = saveBatching;
@@ -1921,6 +1925,10 @@ nsresult nsFrameSelection::PageMove(bool aForward, bool aExtend,
 
   // Then, scroll the given frame one page.
   if (scrollableFrame) {
+    mozilla::Telemetry::Accumulate(
+        mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t)ScrollInputMethod::MainThreadScrollPage);
+
     // If we'll call ScrollSelectionIntoView later and selection wasn't
     // changed and we scroll outside of selection limiter, we shouldn't use
     // smooth scroll here because nsIScrollableFrame uses normal runnable,

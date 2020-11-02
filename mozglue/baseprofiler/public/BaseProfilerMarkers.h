@@ -33,9 +33,6 @@
 
 #include "mozilla/BaseProfilerMarkersDetail.h"
 
-// TODO: Move common stuff to shared header instead.
-#include "BaseProfiler.h"
-
 #ifndef MOZ_GECKO_PROFILER
 
 #  define BASE_PROFILER_MARKER_UNTYPED(markerName, categoryName, ...)
@@ -153,6 +150,15 @@ struct Text {
   static void StreamJSONMarkerData(JSONWriter& aWriter,
                                    const ProfilerString8View& aText) {
     aWriter.StringProperty("name", aText);
+  }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.SetChartLabel("{marker.name} - {marker.data.name}");
+    schema.SetTableLabel("{marker.name} - {marker.data.name}");
+    schema.AddKeyLabelFormat("name", "Details",
+                             mozilla::MarkerSchema::Format::string);
+    return schema;
   }
 };
 }  // namespace mozilla::baseprofiler::markers

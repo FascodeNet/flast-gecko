@@ -230,6 +230,9 @@ enum class BailoutKind : uint8_t {
   // Bailout triggered by MGuardFunctionFlags.
   FunctionFlagsGuard,
 
+  // Bailout triggered by MGuardFunctionIsNonBuiltinCtor.
+  FunctionIsNonBuiltinCtorGuard,
+
   // Bailout triggered by MGuardFunctionKind.
   FunctionKindGuard,
 
@@ -241,6 +244,12 @@ enum class BailoutKind : uint8_t {
 
   // Bailout triggered by MGuardHasGetterSetter
   HasGetterSetterGuard,
+
+  // Bailout triggered by MLoadDOMExpandoValueGuardGeneration
+  DOMExpandoValueGenerationGuard,
+
+  // Bailout triggered by MGuardDOMExpandoMissingOrGuardShape
+  DOMExpandoMissingOrShapeGuard,
 
   // When we're trying to use an uninitialized lexical.
   UninitializedLexical,
@@ -362,6 +371,8 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "TagNotEqualGuard";
     case BailoutKind::FunctionFlagsGuard:
       return "FunctionFlagsGuard";
+    case BailoutKind::FunctionIsNonBuiltinCtorGuard:
+      return "FunctionIsNonBuiltinCtorGuard";
     case BailoutKind::FunctionKindGuard:
       return "FunctionKindGuard";
     case BailoutKind::FunctionScriptGuard:
@@ -370,6 +381,10 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "PackedArrayGuard";
     case BailoutKind::HasGetterSetterGuard:
       return "HasGetterSetterGuard";
+    case BailoutKind::DOMExpandoValueGenerationGuard:
+      return "DOMExpandoValueGenerationGuard";
+    case BailoutKind::DOMExpandoMissingOrShapeGuard:
+      return "DOMExpandoMissingOrShapeGuard";
     case BailoutKind::UninitializedLexical:
       return "UninitializedLexical";
     case BailoutKind::IonExceptionDebugMode:
@@ -537,6 +552,16 @@ class SimdConstant {
     return type_;
   }
 
+  bool isFloatingType() const {
+    MOZ_ASSERT(defined());
+    return type_ >= Float32x4;
+  }
+
+  bool isIntegerType() const {
+    MOZ_ASSERT(defined());
+    return type_ <= Int64x2;
+  }
+
   // Get the raw bytes of the constant.
   const void* bytes() const { return u.i8x16; }
 
@@ -570,28 +595,32 @@ class SimdConstant {
     return u.f64x2;
   }
 
-  bool operator==(const SimdConstant& rhs) const {
+  bool bitwiseEqual(const SimdConstant& rhs) const {
     MOZ_ASSERT(defined() && rhs.defined());
-    if (type() != rhs.type()) {
-      return false;
-    }
-    // Takes negative zero into account, as it's a bit comparison.
     return memcmp(&u, &rhs.u, sizeof(u)) == 0;
   }
-  bool operator!=(const SimdConstant& rhs) const { return !operator==(rhs); }
 
-  bool isIntegerZero() const {
-    return type_ <= Int64x2 && u.i64x2[0] == 0 && u.i64x2[1] == 0;
+  bool isZeroBits() const {
+    MOZ_ASSERT(defined());
+    return u.i64x2[0] == 0 && u.i64x2[1] == 0;
   }
 
-  // SimdConstant is a HashPolicy
+  bool isOneBits() const {
+    MOZ_ASSERT(defined());
+    return ~u.i64x2[0] == 0 && ~u.i64x2[1] == 0;
+  }
+
+  // SimdConstant is a HashPolicy.  Currently we discriminate by type, but it
+  // may be that we should only be discriminating by int vs float.
   using Lookup = SimdConstant;
+
   static HashNumber hash(const SimdConstant& val) {
     uint32_t hash = mozilla::HashBytes(&val.u, sizeof(val.u));
     return mozilla::AddToHash(hash, val.type_);
   }
+
   static bool match(const SimdConstant& lhs, const SimdConstant& rhs) {
-    return lhs == rhs;
+    return lhs.type() == rhs.type() && lhs.bitwiseEqual(rhs);
   }
 };
 
@@ -1051,9 +1080,8 @@ enum ABIFunctionType : uint32_t {
       ArgType_General, {ArgType_General, ArgType_Int32}),
   Args_General_GeneralInt32Int32 = detail::MakeABIFunctionType(
       ArgType_General, {ArgType_General, ArgType_Int32, ArgType_Int32}),
-  Args_General_GeneralInt32Int32General = detail::MakeABIFunctionType(
-      ArgType_General,
-      {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General}),
+  Args_General_GeneralInt32General = detail::MakeABIFunctionType(
+      ArgType_General, {ArgType_General, ArgType_Int32, ArgType_General}),
 };
 
 static constexpr ABIFunctionType MakeABIFunctionType(

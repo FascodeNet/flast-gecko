@@ -12,7 +12,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
-#include "builtin/TypedObject.h"
 #include "gc/Allocator.h"
 #include "gc/GCProbes.h"
 #include "gc/MaybeRooted.h"
@@ -21,6 +20,7 @@
 #include "vm/JSContext.h"
 #include "vm/ProxyObject.h"
 #include "vm/TypedArrayObject.h"
+#include "wasm/TypedObject.h"
 
 #include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
@@ -227,6 +227,47 @@ inline void NativeObject::initDenseElements(const Value* src, uint32_t count) {
 
   memcpy(reinterpret_cast<Value*>(elements_), src, count * sizeof(Value));
   elementsRangePostWriteBarrier(0, count);
+}
+
+template <typename Iter>
+inline bool NativeObject::initDenseElementsFromRange(JSContext* cx, Iter begin,
+                                                     Iter end) {
+  // This method populates the elements of a particular Array that's an
+  // internal implementation detail of GeneratorObject. Failing any of the
+  // following means the Array has escaped and/or been mistreated.
+  MOZ_ASSERT(isExtensible());
+  MOZ_ASSERT(!isIndexed());
+  MOZ_ASSERT(is<ArrayObject>());
+  MOZ_ASSERT(as<ArrayObject>().lengthIsWritable());
+  MOZ_ASSERT(!denseElementsAreCopyOnWrite());
+  MOZ_ASSERT(!denseElementsAreFrozen());
+  MOZ_ASSERT(getElementsHeader()->numShiftedElements() == 0);
+
+  MOZ_ASSERT(getDenseInitializedLength() == 0);
+
+  auto size = end - begin;
+  uint32_t count = uint32_t(size);
+  MOZ_ASSERT(count <= uint32_t(INT32_MAX));
+  if (count > getDenseCapacity()) {
+    if (!growElements(cx, count)) {
+      return false;
+    }
+  }
+
+  HeapSlot* sp = elements_;
+  size_t slot = 0;
+  for (; begin != end; sp++, begin++) {
+    Value v = *begin;
+#ifdef DEBUG
+    checkStoredValue(v);
+#endif
+    sp->init(this, HeapSlot::Element, slot++, v);
+  }
+  MOZ_ASSERT(slot == count);
+
+  getElementsHeader()->initializedLength = count;
+  as<ArrayObject>().setLengthInt32(count);
+  return true;
 }
 
 inline bool NativeObject::tryShiftDenseElements(uint32_t count) {
@@ -562,12 +603,12 @@ MOZ_ALWAYS_INLINE bool NativeObject::updateSlotsForSpan(JSContext* cx,
     if (newSpan == oldSpan + 1) {
       initSlotUnchecked(oldSpan, UndefinedValue());
     } else {
-      initializeSlotRange(oldSpan, newSpan - oldSpan);
+      initializeSlotRange(oldSpan, newSpan);
     }
   } else {
     /* Trigger write barriers on the old slots before reallocating. */
     prepareSlotRangeForOverwrite(newSpan, oldSpan);
-    invalidateSlotRange(newSpan, oldSpan - newSpan);
+    invalidateSlotRange(newSpan, oldSpan);
 
     if (oldCapacity > newCapacity) {
       shrinkSlots(cx, oldCapacity, newCapacity);

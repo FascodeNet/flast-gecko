@@ -444,8 +444,10 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       }
     }
 
-    // Add the remaining form history results.
+    // Add the remaining form history results.  maxHistoricalSearchSuggestions
+    // == 0 is an opt-out mechanism, so do this only if it's non-zero.
     while (
+      maxInitialFormHistory &&
       results.length < queryContext.maxResults + 1 &&
       fetchData.local.length
     ) {
@@ -490,7 +492,10 @@ class ProviderSearchSuggestions extends UrlbarProvider {
 
     // Match an alias only when it has a space after it.  If there's no trailing
     // space, then continue to treat it as part of the search string.
-    if (UrlbarPrefs.get("update2") && !query.startsWith(" ")) {
+    if (
+      UrlbarPrefs.get("update2") &&
+      !UrlbarTokenizer.REGEXP_SPACES_START.test(query)
+    ) {
       return null;
     }
 

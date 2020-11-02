@@ -8,12 +8,6 @@ checksum = "5d2e7343e7fc9de883d1b0341e0b13970f764c14101234857d2ddafa1cb1cac2"
 
 [[package]]
 name = "ahash"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0989268a37e128d4d7a8028f1c60099430113fdbc70419010601ce51a228e4fe"
-
-[[package]]
-name = "ahash"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0adac150c2dd5a9c864d054e07bda5e6bc010cd10036ea5f17e82a2f5867f735"
@@ -215,12 +209,6 @@ name = "autocfg"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b671c8fb71b457dd4ae18c4ba1e59aa81793daacc361d82fcd410cef0d491875"
-
-[[package]]
-name = "autocfg"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8aac770f1885fd7e387acedd76065302551364496e46b3dd00860b2f8359b9d"
 
 [[package]]
 name = "baldrdash"
@@ -688,9 +676,9 @@ dependencies = [
 
 [[package]]
 name = "core-foundation-sys"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a21fa21941700a3cd8fcb4091f361a6a712fac632f85d9f487cc892045d55c6"
+checksum = "ea221b5284a47e40033bf9b66f35f984ec0ea2931eb03505246cd27a963f981b"
 
 [[package]]
 name = "core-graphics"
@@ -741,7 +729,7 @@ dependencies = [
 [[package]]
 name = "coreaudio-sys-utils"
 version = "0.1.0"
-source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=08a2b75285732a2e1a389bc4ab02518c74a8a9c5#08a2b75285732a2e1a389bc4ab02518c74a8a9c5"
+source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=d5af7ad7631440e1c4b0a548481c6740fade9d65#d5af7ad7631440e1c4b0a548481c6740fade9d65"
 dependencies = [
  "core-foundation-sys",
  "coreaudio-sys",
@@ -874,7 +862,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5064ebdbf05ce3cb95e45c8b086f72263f4166b29b97f6baff7ef7fe047b55ac"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg",
  "cfg-if",
  "crossbeam-utils 0.7.0",
  "lazy_static",
@@ -907,7 +895,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce446db02cdc3165b94ae73111e570793400d0794e46125cc4056c81cbb039f4"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg",
  "cfg-if",
  "lazy_static",
 ]
@@ -961,27 +949,27 @@ dependencies = [
 
 [[package]]
 name = "cubeb"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1116606d6045c9199f6a1e082f3cf63383ba6f9961339701faa6370dcf73135f"
+checksum = "289952682b57343f3d852161d60f2a34a07c5fc39c113f155ab8aa3f471c917b"
 dependencies = [
  "cubeb-core",
 ]
 
 [[package]]
 name = "cubeb-backend"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc644425cb33d45994a5df4351958369c00e3f7bbf785b8cab270c7840b75774"
+checksum = "2052099fa6e07b444a43aa167874fb0350ed9be840f399e639f9e50cf37ec05c"
 dependencies = [
  "cubeb-core",
 ]
 
 [[package]]
 name = "cubeb-core"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7c55529b8f47926e4242e1fc01d31b08a5a4847967c5c250644e33fe237cfe5"
+checksum = "c6197f805b94171473c3fa3059f688f00a2df1ee76259f9ea641401b58917df3"
 dependencies = [
  "bitflags",
  "cubeb-sys",
@@ -990,7 +978,7 @@ dependencies = [
 [[package]]
 name = "cubeb-coreaudio"
 version = "0.1.0"
-source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=08a2b75285732a2e1a389bc4ab02518c74a8a9c5#08a2b75285732a2e1a389bc4ab02518c74a8a9c5"
+source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=d5af7ad7631440e1c4b0a548481c6740fade9d65#d5af7ad7631440e1c4b0a548481c6740fade9d65"
 dependencies = [
  "atomic",
  "audio-mixer",
@@ -1008,7 +996,7 @@ dependencies = [
 [[package]]
 name = "cubeb-pulse"
 version = "0.3.0"
-source = "git+https://github.com/djg/cubeb-pulse-rs?rev=3224e2dee65c0726c448484d4c3c43956b9330ec#3224e2dee65c0726c448484d4c3c43956b9330ec"
+source = "git+https://github.com/djg/cubeb-pulse-rs?rev=bf31534d08b2c16fb5e4c5834944ae3271efbd63#bf31534d08b2c16fb5e4c5834944ae3271efbd63"
 dependencies = [
  "cubeb-backend",
  "pulse",
@@ -1019,9 +1007,9 @@ dependencies = [
 
 [[package]]
 name = "cubeb-sys"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbc562eb6ccf62abacf9e3eebce992e5c36b230ca313ebd7c2d7d0e99deae90"
+checksum = "5b0f751f2aee031f589bcfd812b99cfbf923aa1612d34c9757608cf540f74ad9"
 dependencies = [
  "cmake",
  "pkg-config",
@@ -1386,11 +1374,11 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fallible_collections"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba3301bcde54d3fc19c626ff4bf962630fe1f94cb6cdc3f18a26727a2d1f4a67"
+checksum = "3bda4d04bca84e2331f0ff2ee8300064df3f467e37743d87788c1487a6dd903b"
 dependencies = [
- "hashbrown 0.7.2",
+ "hashbrown",
 ]
 
 [[package]]
@@ -1838,9 +1826,9 @@ dependencies = [
 
 [[package]]
 name = "gfx-backend-dx12"
-version = "0.5.3"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37365e2927d55cefac0d3f78dfd1d3119fbb13a8bd7afe2409d729961fee22fc"
+checksum = "cfd506627f3a7003e80f4344123184ce60ed06822c8b8ad2ae4ec674a512ca86"
 dependencies = [
  "bitflags",
  "d3d12",
@@ -1962,6 +1950,8 @@ dependencies = [
  "fog-gtest",
  "gecko-fuzz-targets",
  "gkrust-shared",
+ "l10nregistry-ffi-gtest",
+ "moz_task-gtest",
  "mozglue-static",
  "mp4parse-gtest",
  "nsstring-gtest",
@@ -2000,6 +1990,7 @@ dependencies = [
  "http_sfv",
  "jsrust_shared",
  "kvstore",
+ "l10nregistry-ffi",
  "lmdb-rkv-sys",
  "log",
  "mapped_hyph",
@@ -2170,21 +2161,11 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96282e96bfcd3da0d3aa9938bedf1e50df3269b6db08b4876d2da0bb1a0841cf"
-dependencies = [
- "ahash 0.3.2",
- "autocfg 1.0.0",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7afe4a420e3fe79967a00898cc1f4db7c8a49a9333a29f8a4bd76a253d5cd04"
 dependencies = [
- "ahash 0.4.5",
+ "ahash",
 ]
 
 [[package]]
@@ -2200,7 +2181,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d99cf782f0dc4372d26846bec3de7804ceb5df083c2d4462c0b8d2330e894fa8"
 dependencies = [
- "hashbrown 0.9.1",
+ "hashbrown",
 ]
 
 [[package]]
@@ -2628,6 +2609,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "l10nregistry-ffi"
+version = "0.1.0"
+dependencies = [
+ "futures-channel",
+ "libc",
+ "nserror",
+ "nsstring",
+]
+
+[[package]]
+name = "l10nregistry-ffi-gtest"
+version = "0.1.0"
+dependencies = [
+ "l10nregistry-ffi",
+ "moz_task",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2890,10 +2889,12 @@ dependencies = [
 
 [[package]]
 name = "mapped_hyph"
-version = "0.4.0"
-source = "git+https://github.com/jfkthame/mapped_hyph.git?tag=v0.4.0#c7737af5ebe9b404c6b7eed6006785ea41337ca1"
+version = "0.4.2"
+source = "git+https://github.com/jfkthame/mapped_hyph.git?tag=v0.4.2#d0d2e862cea33c262d8173a2dddbe0b50fdd6775"
 dependencies = [
  "arrayref",
+ "env_logger 0.7.1",
+ "log",
  "memmap",
 ]
 
@@ -3078,10 +3079,20 @@ checksum = "20c82a57087fd5990d7122dbff1607c3b20c3d2958e9d9ad9765aab415e2c91c"
 name = "moz_task"
 version = "0.1.0"
 dependencies = [
+ "cstr",
+ "futures-task",
  "libc",
  "nserror",
  "nsstring",
+ "thiserror",
  "xpcom",
+]
+
+[[package]]
+name = "moz_task-gtest"
+version = "0.1.0"
+dependencies = [
+ "moz_task",
 ]
 
 [[package]]
@@ -3089,8 +3100,10 @@ name = "mozdevice"
 version = "0.2.0"
 dependencies = [
  "log",
+ "once_cell",
  "regex",
  "tempfile",
+ "uuid",
  "walkdir",
 ]
 
@@ -3167,12 +3180,12 @@ dependencies = [
 [[package]]
 name = "mp4parse"
 version = "0.11.4"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=fe9028570e44f3a725dd78bbb58428909c4618bf#fe9028570e44f3a725dd78bbb58428909c4618bf"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=f7c35a30ff25521bebe64c19d3f306569ecb5385#f7c35a30ff25521bebe64c19d3f306569ecb5385"
 dependencies = [
  "bitreader",
  "byteorder",
  "fallible_collections",
- "hashbrown 0.7.2",
+ "hashbrown",
  "log",
  "num-traits",
  "static_assertions",
@@ -3185,7 +3198,7 @@ version = "0.1.0"
 [[package]]
 name = "mp4parse_capi"
 version = "0.11.4"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=fe9028570e44f3a725dd78bbb58428909c4618bf#fe9028570e44f3a725dd78bbb58428909c4618bf"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=f7c35a30ff25521bebe64c19d3f306569ecb5385#f7c35a30ff25521bebe64c19d3f306569ecb5385"
 dependencies = [
  "byteorder",
  "fallible_collections",
@@ -3224,8 +3237,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-common"
-version = "0.4.12"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.12#8959e815811c8f8ec21972d4663c90aae5b7033f"
+version = "0.4.13"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.13#5cc310cc6d86260e6125770a2a7592e6a6bffa79"
 dependencies = [
  "chrono",
  "env_logger 0.6.2",
@@ -3236,8 +3249,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-crypto"
-version = "0.4.12"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.12#8959e815811c8f8ec21972d4663c90aae5b7033f"
+version = "0.4.13"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.13#5cc310cc6d86260e6125770a2a7592e6a6bffa79"
 dependencies = [
  "bindgen",
  "log",
@@ -3249,8 +3262,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-http3"
-version = "0.4.12"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.12#8959e815811c8f8ec21972d4663c90aae5b7033f"
+version = "0.4.13"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.13#5cc310cc6d86260e6125770a2a7592e6a6bffa79"
 dependencies = [
  "log",
  "neqo-common",
@@ -3263,8 +3276,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-qpack"
-version = "0.4.12"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.12#8959e815811c8f8ec21972d4663c90aae5b7033f"
+version = "0.4.13"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.13#5cc310cc6d86260e6125770a2a7592e6a6bffa79"
 dependencies = [
  "lazy_static",
  "log",
@@ -3277,8 +3290,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-transport"
-version = "0.4.12"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.12#8959e815811c8f8ec21972d4663c90aae5b7033f"
+version = "0.4.13"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.13#5cc310cc6d86260e6125770a2a7592e6a6bffa79"
 dependencies = [
  "indexmap",
  "lazy_static",
@@ -3418,7 +3431,7 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9c3f34cdd24f334cb265d9bf8bfa8a241920d026916785747a92f0e55541a1a"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg",
  "num-integer",
  "num-traits",
 ]
@@ -3440,7 +3453,7 @@ version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b85e541ef8255f6cf42bbfe4ef361305c6c135d10919ecc26126c4e5ae94bc09"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg",
  "num-traits",
 ]
 
@@ -3450,7 +3463,7 @@ version = "0.1.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76bd5272412d173d6bf9afdf98db8612bbabc9a7a830b7bfc9c188911716132e"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg",
  "num-integer",
  "num-traits",
 ]
@@ -3471,7 +3484,7 @@ version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4c81ffc11c212fa327657cb19dd85eb7419e163b5b076bede2bdb5c974c07e4"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg",
 ]
 
 [[package]]
@@ -3918,7 +3931,7 @@ dependencies = [
 [[package]]
 name = "pulse"
 version = "0.3.0"
-source = "git+https://github.com/djg/cubeb-pulse-rs?rev=3224e2dee65c0726c448484d4c3c43956b9330ec#3224e2dee65c0726c448484d4c3c43956b9330ec"
+source = "git+https://github.com/djg/cubeb-pulse-rs?rev=bf31534d08b2c16fb5e4c5834944ae3271efbd63#bf31534d08b2c16fb5e4c5834944ae3271efbd63"
 dependencies = [
  "bitflags",
  "pulse-ffi",
@@ -3927,7 +3940,7 @@ dependencies = [
 [[package]]
 name = "pulse-ffi"
 version = "0.1.0"
-source = "git+https://github.com/djg/cubeb-pulse-rs?rev=3224e2dee65c0726c448484d4c3c43956b9330ec#3224e2dee65c0726c448484d4c3c43956b9330ec"
+source = "git+https://github.com/djg/cubeb-pulse-rs?rev=bf31534d08b2c16fb5e4c5834944ae3271efbd63#bf31534d08b2c16fb5e4c5834944ae3271efbd63"
 dependencies = [
  "libc",
 ]
@@ -4019,9 +4032,9 @@ dependencies = [
 
 [[package]]
 name = "range-alloc"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5927936723a9e8b715d37d7e4b390455087c4bdf25b9f702309460577b14f9"
+checksum = "a871f1e45a3a3f0c73fb60343c811238bb5143a81642e27c2ac7aac27ff01a63"
 
 [[package]]
 name = "raw-cpuid"
@@ -4759,7 +4772,7 @@ dependencies = [
  "euclid",
  "fallible",
  "fxhash",
- "hashbrown 0.7.2",
+ "hashbrown",
  "hashglobe",
  "indexmap",
  "itertools 0.8.0",
@@ -5474,6 +5487,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fde2f6a4bea1d6e007c4ad38c6839fa71cbb63b6dbf5b595aa38dc9b1093c11"
 dependencies = [
  "rand",
+ "serde",
 ]
 
 [[package]]
@@ -5581,18 +5595,18 @@ checksum = "57da5d7300428d75d8b3cdfb736e41ee6af8926d69c1de2f201a1a22f234b7b5"
 
 [[package]]
 name = "wast"
-version = "25.0.1"
+version = "26.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94c7c4b9eeb5c233b89385147dd3ea5bb89988a3a8d256f116cf1db40e5ff43e"
+checksum = "b3f174eed73e885ede6c8fcc3fbea8c3757afa521840676496cde56bb742ddab"
 dependencies = [
  "leb128",
 ]
 
 [[package]]
 name = "wat"
-version = "1.0.26"
+version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4766d466249e23279e92c52033429eb91141c5efea1c4478138fa6f6ef4efe3e"
+checksum = "26b2dccbce4d0e14875091846e110a2369267b18ddd0d6423479b88dad914d71"
 dependencies = [
  "wast",
 ]

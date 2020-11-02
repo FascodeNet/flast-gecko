@@ -146,6 +146,12 @@ const char nsXPLookAndFeel::sColorPrefs[][41] = {
     "ui.IMESelectedConvertedTextForeground",
     "ui.IMESelectedConvertedTextUnderline",
     "ui.SpellCheckerUnderline",
+    "ui.themedScrollbar",
+    "ui.themedScrollbarInactive",
+    "ui.themedScrollbarThumb",
+    "ui.themedScrollbarThumbHover",
+    "ui.themedScrollbarThumbActive",
+    "ui.themedScrollbarThumbInactive",
     "ui.activeborder",
     "ui.activecaption",
     "ui.appworkspace",
@@ -288,7 +294,8 @@ void nsXPLookAndFeel::IntPrefChanged(nsLookAndFeelIntPref* data) {
 #endif
   }
 
-  NotifyChangedAllWindows();
+  // Int prefs can't change our system colors or fonts.
+  NotifyChangedAllWindows(widget::ThemeChangeKind::MediaQueriesOnly);
 }
 
 // static
@@ -314,7 +321,8 @@ void nsXPLookAndFeel::FloatPrefChanged(nsLookAndFeelFloatPref* data) {
 #endif
   }
 
-  NotifyChangedAllWindows();
+  // Float prefs can't change our system colors or fonts.
+  NotifyChangedAllWindows(widget::ThemeChangeKind::MediaQueriesOnly);
 }
 
 // static
@@ -348,7 +356,8 @@ void nsXPLookAndFeel::ColorPrefChanged(unsigned int index,
 #endif
   }
 
-  NotifyChangedAllWindows();
+  // Color prefs affect style, because they by definition change system colors.
+  NotifyChangedAllWindows(widget::ThemeChangeKind::Style);
 }
 
 void nsXPLookAndFeel::InitFromPref(nsLookAndFeelIntPref* aPref) {
@@ -1004,6 +1013,10 @@ LookAndFeelCache nsXPLookAndFeel::GetCacheImpl() { return LookAndFeelCache{}; }
 static bool sRecordedLookAndFeelTelemetry = false;
 
 void nsXPLookAndFeel::RecordTelemetry() {
+  if (!XRE_IsParentProcess()) {
+    return;
+  }
+
   if (sRecordedLookAndFeelTelemetry) {
     return;
   }
@@ -1014,14 +1027,17 @@ void nsXPLookAndFeel::RecordTelemetry() {
   Telemetry::ScalarSet(
       Telemetry::ScalarID::WIDGET_DARK_MODE,
       NS_SUCCEEDED(GetIntImpl(IntID::SystemUsesDarkTheme, i)) && i != 0);
+
+  RecordLookAndFeelSpecificTelemetry();
 }
 
 namespace mozilla {
 
 // static
-void LookAndFeel::NotifyChangedAllWindows() {
+void LookAndFeel::NotifyChangedAllWindows(widget::ThemeChangeKind aKind) {
   if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
-    obs->NotifyObservers(nullptr, "look-and-feel-changed", nullptr);
+    obs->NotifyObservers(nullptr, "look-and-feel-changed",
+                         reinterpret_cast<char16_t*>(uintptr_t(aKind)));
   }
 }
 

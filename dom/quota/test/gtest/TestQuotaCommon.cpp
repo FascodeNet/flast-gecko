@@ -4,14 +4,41 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "gtest/gtest.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
+
+#include "gtest/gtest.h"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <new>
+#include <ostream>
+#include <type_traits>
+#include <utility>
+#include <vector>
+#include "ErrorList.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/Result.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/Unused.h"
+#include "mozilla/fallible.h"
 #include "nsCOMPtr.h"
-#include "nsISupports.h"
+#include "nsLiteralString.h"
+#include "nsString.h"
+#include "nsStringFwd.h"
+#include "nsTLiteralString.h"
+
+class nsISupports;
 
 using namespace mozilla;
 using namespace mozilla::dom::quota;
+
+#ifdef __clang__
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wunreachable-code"
+#endif
 
 TEST(QuotaCommon_Try, Success)
 {
@@ -28,6 +55,77 @@ TEST(QuotaCommon_Try, Success)
   EXPECT_TRUE(tryDidNotReturn);
   EXPECT_EQ(rv, NS_OK);
 }
+
+#ifdef DEBUG
+TEST(QuotaCommon_Try, Success_CustomErr_AssertUnreachable)
+{
+  bool tryDidNotReturn = false;
+
+  nsresult rv = [&tryDidNotReturn]() -> nsresult {
+    QM_TRY(NS_OK, QM_ASSERT_UNREACHABLE);
+
+    tryDidNotReturn = true;
+
+    return NS_OK;
+  }();
+
+  EXPECT_TRUE(tryDidNotReturn);
+  EXPECT_EQ(rv, NS_OK);
+}
+
+TEST(QuotaCommon_Try, Success_NoErr_AssertUnreachable)
+{
+  bool tryDidNotReturn = false;
+
+  [&tryDidNotReturn]() -> void {
+    QM_TRY(NS_OK, QM_ASSERT_UNREACHABLE_VOID);
+
+    tryDidNotReturn = true;
+  }();
+
+  EXPECT_TRUE(tryDidNotReturn);
+}
+#else
+#  if defined(QM_ASSERT_UNREACHABLE) || defined(QM_ASSERT_UNREACHABLE_VOID)
+#error QM_ASSERT_UNREACHABLE and QM_ASSERT_UNREACHABLE_VOID should not be defined.
+#  endif
+#endif
+
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+TEST(QuotaCommon_Try, Success_CustomErr_DiagnosticAssertUnreachable)
+{
+  bool tryDidNotReturn = false;
+
+  nsresult rv = [&tryDidNotReturn]() -> nsresult {
+    QM_TRY(NS_OK, QM_DIAGNOSTIC_ASSERT_UNREACHABLE);
+
+    tryDidNotReturn = true;
+
+    return NS_OK;
+  }();
+
+  EXPECT_TRUE(tryDidNotReturn);
+  EXPECT_EQ(rv, NS_OK);
+}
+
+TEST(QuotaCommon_Try, Success_NoErr_DiagnosticAssertUnreachable)
+{
+  bool tryDidNotReturn = false;
+
+  [&tryDidNotReturn]() -> void {
+    QM_TRY(NS_OK, QM_DIAGNOSTIC_ASSERT_UNREACHABLE_VOID);
+
+    tryDidNotReturn = true;
+  }();
+
+  EXPECT_TRUE(tryDidNotReturn);
+}
+#else
+#  if defined(QM_DIAGNOSTIC_ASSERT_UNREACHABLE) || \
+      defined(QM_DIAGNOSTIC_ASSERT_UNREACHABLE_VOID)
+#error QM_DIAGNOSTIC_ASSERT_UNREACHABLE and QM_DIAGNOSTIC_ASSERT_UNREACHABLE_VOID should not be defined.
+#  endif
+#endif
 
 TEST(QuotaCommon_Try, Success_WithCleanup)
 {
@@ -293,72 +391,6 @@ TEST(QuotaCommon_Try, NestingMadness_Multiple_Failure2)
   EXPECT_EQ(rv, NS_ERROR_FAILURE);
 }
 
-TEST(QuotaCommon_DebugTry, Success)
-{
-  bool debugTryBodyRan = false;
-  bool debugTryDidNotReturn = false;
-
-  nsresult rv = [
-#ifdef DEBUG
-                    &debugTryBodyRan, &debugTryDidNotReturn
-#else
-                    &debugTryDidNotReturn
-#endif
-  ]() -> nsresult {
-    QM_DEBUG_TRY(([&debugTryBodyRan]() -> Result<Ok, nsresult> {
-      debugTryBodyRan = true;
-
-      return Ok();
-    }()));
-
-    debugTryDidNotReturn = true;
-
-    return NS_OK;
-  }();
-
-#ifdef DEBUG
-  EXPECT_TRUE(debugTryBodyRan);
-#else
-  EXPECT_FALSE(debugTryBodyRan);
-#endif
-  EXPECT_TRUE(debugTryDidNotReturn);
-  EXPECT_EQ(rv, NS_OK);
-}
-
-TEST(QuotaCommon_DebugTry, Failure)
-{
-  bool debugTryBodyRan = false;
-  bool debugTryDidNotReturn = false;
-
-  nsresult rv = [
-#ifdef DEBUG
-                    &debugTryBodyRan, &debugTryDidNotReturn
-#else
-                    &debugTryDidNotReturn
-#endif
-  ]() -> nsresult {
-    QM_DEBUG_TRY(([&debugTryBodyRan]() -> Result<Ok, nsresult> {
-      debugTryBodyRan = true;
-
-      return Err(NS_ERROR_FAILURE);
-    }()));
-
-    debugTryDidNotReturn = true;
-
-    return NS_OK;
-  }();
-
-#ifdef DEBUG
-  EXPECT_TRUE(debugTryBodyRan);
-  EXPECT_FALSE(debugTryDidNotReturn);
-  EXPECT_EQ(rv, NS_ERROR_FAILURE);
-#else
-  EXPECT_FALSE(debugTryBodyRan);
-  EXPECT_TRUE(debugTryDidNotReturn);
-  EXPECT_EQ(rv, NS_OK);
-#endif
-}
-
 TEST(QuotaCommon_TryInspect, Success)
 {
   bool tryInspectDidNotReturn = false;
@@ -375,6 +407,41 @@ TEST(QuotaCommon_TryInspect, Success)
   EXPECT_TRUE(tryInspectDidNotReturn);
   EXPECT_EQ(rv, NS_OK);
 }
+
+#ifdef DEBUG
+TEST(QuotaCommon_TryInspect, Success_CustomErr_AssertUnreachable)
+{
+  bool tryInspectDidNotReturn = false;
+
+  nsresult rv = [&tryInspectDidNotReturn]() -> nsresult {
+    QM_TRY_INSPECT(const auto& x, (Result<int32_t, nsresult>{42}),
+                   QM_ASSERT_UNREACHABLE);
+    EXPECT_EQ(x, 42);
+
+    tryInspectDidNotReturn = true;
+
+    return NS_OK;
+  }();
+
+  EXPECT_TRUE(tryInspectDidNotReturn);
+  EXPECT_EQ(rv, NS_OK);
+}
+
+TEST(QuotaCommon_TryInspect, Success_NoErr_AssertUnreachable)
+{
+  bool tryInspectDidNotReturn = false;
+
+  [&tryInspectDidNotReturn]() -> void {
+    QM_TRY_INSPECT(const auto& x, (Result<int32_t, nsresult>{42}),
+                   QM_ASSERT_UNREACHABLE_VOID);
+    EXPECT_EQ(x, 42);
+
+    tryInspectDidNotReturn = true;
+  }();
+
+  EXPECT_TRUE(tryInspectDidNotReturn);
+}
+#endif
 
 TEST(QuotaCommon_TryInspect, Success_WithCleanup)
 {
@@ -731,80 +798,6 @@ TEST(QuotaCommon_TryUnwrap, ParenDecl)
   EXPECT_EQ(y, true);
 }
 
-TEST(QuotaCommon_DebugTryUnwrap, Success)
-{
-  bool debugTryUnwrapBodyRan = false;
-  bool debugTryUnwrapDidNotReturn = false;
-
-  nsresult rv = [
-#ifdef DEBUG
-                    &debugTryUnwrapBodyRan, &debugTryUnwrapDidNotReturn
-#else
-                    &debugTryUnwrapDidNotReturn
-#endif
-  ]() -> nsresult {
-    QM_DEBUG_TRY_UNWRAP(
-        const auto x, ([&debugTryUnwrapBodyRan]() -> Result<int32_t, nsresult> {
-          debugTryUnwrapBodyRan = true;
-
-          return 42;
-        }()));
-#ifdef DEBUG
-    EXPECT_EQ(x, 42);
-#endif
-
-    debugTryUnwrapDidNotReturn = true;
-
-    return NS_OK;
-  }();
-
-#ifdef DEBUG
-  EXPECT_TRUE(debugTryUnwrapBodyRan);
-#else
-  EXPECT_FALSE(debugTryUnwrapBodyRan);
-#endif
-  EXPECT_TRUE(debugTryUnwrapDidNotReturn);
-  EXPECT_EQ(rv, NS_OK);
-}
-
-TEST(QuotaCommon_DebugTryUnwrap, Failure)
-{
-  bool debugTryUnwrapBodyRan = false;
-  bool debugTryUnwrapDidNotReturn = false;
-
-  nsresult rv = [
-#ifdef DEBUG
-                    &debugTryUnwrapBodyRan, &debugTryUnwrapDidNotReturn
-#else
-                    &debugTryUnwrapDidNotReturn
-#endif
-  ]() -> nsresult {
-    QM_DEBUG_TRY_UNWRAP(
-        const auto x, ([&debugTryUnwrapBodyRan]() -> Result<int32_t, nsresult> {
-          debugTryUnwrapBodyRan = true;
-
-          return Err(NS_ERROR_FAILURE);
-        }()));
-#ifdef DEBUG
-    Unused << x;
-#endif
-
-    debugTryUnwrapDidNotReturn = true;
-
-    return NS_OK;
-  }();
-
-#ifdef DEBUG
-  EXPECT_TRUE(debugTryUnwrapBodyRan);
-  EXPECT_FALSE(debugTryUnwrapDidNotReturn);
-  EXPECT_EQ(rv, NS_ERROR_FAILURE);
-#else
-  EXPECT_FALSE(debugTryUnwrapBodyRan);
-  EXPECT_TRUE(debugTryUnwrapDidNotReturn);
-  EXPECT_EQ(rv, NS_OK);
-#endif
-}
-
 TEST(QuotaCommon_TryReturn, Success)
 {
   bool tryReturnDidNotReturn = false;
@@ -819,6 +812,23 @@ TEST(QuotaCommon_TryReturn, Success)
   EXPECT_TRUE(res.isOk());
   EXPECT_EQ(res.unwrap(), 42);
 }
+
+#ifdef DEBUG
+TEST(QuotaCommon_TryReturn, Success_CustomErr_AssertUnreachable)
+{
+  bool tryReturnDidNotReturn = false;
+
+  auto res = [&tryReturnDidNotReturn]() -> Result<int32_t, nsresult> {
+    QM_TRY_RETURN((Result<int32_t, nsresult>{42}), QM_ASSERT_UNREACHABLE);
+
+    tryReturnDidNotReturn = true;
+  }();
+
+  EXPECT_FALSE(tryReturnDidNotReturn);
+  EXPECT_TRUE(res.isOk());
+  EXPECT_EQ(res.unwrap(), 42);
+}
+#endif
 
 TEST(QuotaCommon_TryReturn, Success_WithCleanup)
 {
@@ -948,78 +958,6 @@ TEST(QuotaCommon_TryReturn, NestingMadness_Failure)
   EXPECT_EQ(res.unwrapErr(), NS_ERROR_FAILURE);
 }
 
-TEST(QuotaCommon_DebugTryReturn, Success)
-{
-  bool debugTryReturnBodyRan = false;
-  bool debugTryReturnDidNotReturn = false;
-
-  auto res = [
-#ifdef DEBUG
-                 &debugTryReturnBodyRan, &debugTryReturnDidNotReturn
-#else
-                 &debugTryReturnDidNotReturn
-#endif
-  ]() -> Result<int32_t, nsresult> {
-    QM_DEBUG_TRY_RETURN(
-        ([&debugTryReturnBodyRan]() -> Result<int32_t, nsresult> {
-          debugTryReturnBodyRan = true;
-
-          return 42;
-        }()));
-
-    debugTryReturnDidNotReturn = true;
-
-    return 42;
-  }();
-
-#ifdef DEBUG
-  EXPECT_TRUE(debugTryReturnBodyRan);
-  EXPECT_FALSE(debugTryReturnDidNotReturn);
-#else
-  EXPECT_FALSE(debugTryReturnBodyRan);
-  EXPECT_TRUE(debugTryReturnDidNotReturn);
-#endif
-  EXPECT_TRUE(res.isOk());
-  EXPECT_EQ(res.unwrap(), 42);
-}
-
-TEST(QuotaCommon_DebugTryReturn, Failure)
-{
-  bool debugTryReturnBodyRan = false;
-  bool debugTryReturnDidNotReturn = false;
-
-  auto res = [
-#ifdef DEBUG
-                 &debugTryReturnBodyRan, &debugTryReturnDidNotReturn
-#else
-                 &debugTryReturnDidNotReturn
-#endif
-  ]() -> Result<int32_t, nsresult> {
-    QM_DEBUG_TRY_RETURN(
-        ([&debugTryReturnBodyRan]() -> Result<int32_t, nsresult> {
-          debugTryReturnBodyRan = true;
-
-          return Err(NS_ERROR_FAILURE);
-        }()));
-
-    debugTryReturnDidNotReturn = true;
-
-    return 42;
-  }();
-
-#ifdef DEBUG
-  EXPECT_TRUE(debugTryReturnBodyRan);
-  EXPECT_FALSE(debugTryReturnDidNotReturn);
-  EXPECT_TRUE(res.isErr());
-  EXPECT_EQ(res.unwrapErr(), NS_ERROR_FAILURE);
-#else
-  EXPECT_FALSE(debugTryReturnBodyRan);
-  EXPECT_TRUE(debugTryReturnDidNotReturn);
-  EXPECT_TRUE(res.isOk());
-  EXPECT_EQ(res.unwrap(), 42);
-#endif
-}
-
 TEST(QuotaCommon_Fail, ReturnValue)
 {
   bool failDidNotReturn = false;
@@ -1052,27 +990,6 @@ TEST(QuotaCommon_Fail, ReturnValue_WithCleanup)
   EXPECT_TRUE(failCleanupRan);
   EXPECT_FALSE(failDidNotReturn);
   EXPECT_EQ(rv, NS_ERROR_FAILURE);
-}
-
-TEST(QuotaCommon_DebugFail, ReturnValue)
-{
-  bool debugFailDidNotReturn = false;
-
-  nsresult rv = [&debugFailDidNotReturn]() -> nsresult {
-    QM_DEBUG_FAIL(NS_ERROR_FAILURE);
-
-    debugFailDidNotReturn = true;
-
-    return NS_OK;
-  }();
-
-#ifdef DEBUG
-  EXPECT_FALSE(debugFailDidNotReturn);
-  EXPECT_EQ(rv, NS_ERROR_FAILURE);
-#else
-  EXPECT_TRUE(debugFailDidNotReturn);
-  EXPECT_EQ(rv, NS_OK);
-#endif
 }
 
 TEST(QuotaCommon_OkIf, True)
@@ -1385,6 +1302,35 @@ TEST(QuotaCommon_CollectWhileTest, ConditionFailsOnSecondExecution)
   MOZ_RELEASE_ASSERT(2 == conditionExecutions);
 }
 
+TEST(QuotaCommon_CollectEachInRange, Success)
+{
+  size_t bodyExecutions = 0;
+  const auto result = CollectEachInRange(
+      std::array<int, 5>{{1, 2, 3, 4, 5}},
+      [&bodyExecutions](const int val) -> Result<Ok, nsresult> {
+        ++bodyExecutions;
+        return Ok{};
+      });
+
+  MOZ_RELEASE_ASSERT(result.isOk());
+  MOZ_RELEASE_ASSERT(5 == bodyExecutions);
+}
+
+TEST(QuotaCommon_CollectEachInRange, FailureShortCircuit)
+{
+  size_t bodyExecutions = 0;
+  const auto result = CollectEachInRange(
+      std::array<int, 5>{{1, 2, 3, 4, 5}},
+      [&bodyExecutions](const int val) -> Result<Ok, nsresult> {
+        ++bodyExecutions;
+        return val == 3 ? Err(NS_ERROR_FAILURE) : Result<Ok, nsresult>{Ok{}};
+      });
+
+  MOZ_RELEASE_ASSERT(result.isErr());
+  MOZ_RELEASE_ASSERT(NS_ERROR_FAILURE == result.inspectErr());
+  MOZ_RELEASE_ASSERT(3 == bodyExecutions);
+}
+
 TEST(QuotaCommon_ScopedLogExtraInfo, AddAndRemove)
 {
   static constexpr auto text = "foo"_ns;
@@ -1438,3 +1384,7 @@ TEST(QuotaCommon_ScopedLogExtraInfo, Nested)
   EXPECT_EQ(0u, extraInfoMap.count(ScopedLogExtraInfo::kTagQuery));
 #endif
 }
+
+#ifdef __clang__
+#  pragma clang diagnostic pop
+#endif

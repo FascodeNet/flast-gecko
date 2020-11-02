@@ -12,6 +12,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/widget/MediaKeysEventSourceFactory.h"
+#include "nsContentUtils.h"
 
 #undef LOG
 #define LOG(msg, ...)                        \
@@ -36,7 +37,13 @@ bool MediaControlKeyManager::Open() {
   if (IsOpened()) {
     return true;
   }
-  return StartMonitoringControlKeys();
+  const bool isEnabledMediaControl = StartMonitoringControlKeys();
+  if (isEnabledMediaControl) {
+    RefPtr<MediaControlService> service = MediaControlService::GetService();
+    MOZ_ASSERT(service);
+    service->NotifyMediaControlHasEverBeenEnabled();
+  }
+  return isEnabledMediaControl;
 }
 
 void MediaControlKeyManager::Close() {

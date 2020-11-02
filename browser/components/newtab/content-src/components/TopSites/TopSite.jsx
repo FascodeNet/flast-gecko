@@ -8,6 +8,7 @@ import {
   MIN_RICH_FAVICON_SIZE,
   TOP_SITES_CONTEXT_MENU_OPTIONS,
   TOP_SITES_SPOC_CONTEXT_MENU_OPTIONS,
+  TOP_SITES_SPONSORED_POSITION_CONTEXT_MENU_OPTIONS,
   TOP_SITES_SEARCH_SHORTCUTS_CONTEXT_MENU_OPTIONS,
   TOP_SITES_SOURCE,
 } from "./TopSitesConstants";
@@ -260,13 +261,20 @@ export class TopSiteLink extends React.PureComponent {
                 />
               )}
             </div>
-            <div className={`title ${link.isPinned ? "pinned" : ""}`}>
+            <div className={`title${link.isPinned ? " has-icon pinned" : ""}`}>
               {link.isPinned && <div className="icon icon-pin-small" />}
-              <span dir="auto">{title}</span>
+              <span dir="auto">{title || <br />}</span>
+              {link.type === SPOC_TYPE || link.sponsored_position ? (
+                <span
+                  className="sponsored-label"
+                  data-l10n-id="newtab-topsite-sponsored"
+                />
+              ) : (
+                <span className="sponsored-label">
+                  <br />
+                </span>
+              )}
             </div>
-            {link.type === SPOC_TYPE ? (
-              <span className="top-site-spoc-label">Sponsored</span>
-            ) : null}
           </a>
           {children}
           {link.type === SPOC_TYPE ? (
@@ -316,7 +324,10 @@ export class TopSite extends React.PureComponent {
       value.card_type = "search";
       value.search_vendor = this.props.link.hostname;
     }
-    if (this.props.link.type === SPOC_TYPE) {
+    if (
+      this.props.link.type === SPOC_TYPE ||
+      this.props.link.sponsored_position
+    ) {
       value.card_type = "spoc";
     }
     return { value };
@@ -404,10 +415,16 @@ export class TopSite extends React.PureComponent {
     const { link } = props;
     const isContextMenuOpen = props.activeIndex === props.index;
     const title = link.label || link.hostname;
-    const menuOptions =
-      link.type !== SPOC_TYPE
-        ? TOP_SITES_CONTEXT_MENU_OPTIONS
-        : TOP_SITES_SPOC_CONTEXT_MENU_OPTIONS;
+    let menuOptions;
+    if (link.sponsored_position) {
+      menuOptions = TOP_SITES_SPONSORED_POSITION_CONTEXT_MENU_OPTIONS;
+    } else if (link.searchTopSite) {
+      menuOptions = TOP_SITES_SEARCH_SHORTCUTS_CONTEXT_MENU_OPTIONS;
+    } else if (link.type === SPOC_TYPE) {
+      menuOptions = TOP_SITES_SPOC_CONTEXT_MENU_OPTIONS;
+    } else {
+      menuOptions = TOP_SITES_CONTEXT_MENU_OPTIONS;
+    }
 
     return (
       <TopSiteLink
@@ -429,11 +446,7 @@ export class TopSite extends React.PureComponent {
               dispatch={props.dispatch}
               index={props.index}
               onUpdate={this.onMenuUpdate}
-              options={
-                link.searchTopSite
-                  ? TOP_SITES_SEARCH_SHORTCUTS_CONTEXT_MENU_OPTIONS
-                  : menuOptions
-              }
+              options={menuOptions}
               site={link}
               shouldSendImpressionStats={link.type === SPOC_TYPE}
               siteInfo={this._getTelemetryInfo()}

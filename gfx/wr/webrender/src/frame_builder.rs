@@ -13,13 +13,13 @@ use crate::gpu_cache::{GpuCache, GpuCacheHandle};
 use crate::gpu_types::{PrimitiveHeaders, TransformPalette, UvRectKind, ZBufferIdGenerator};
 use crate::gpu_types::TransformData;
 use crate::internal_types::{FastHashMap, PlaneSplitter, SavedTargetIndex};
-use crate::picture::{DirtyRegion, RecordedDirtyRegion, PictureUpdateState, SliceId, TileCacheInstance};
+use crate::picture::{DirtyRegion, PictureUpdateState, SliceId, TileCacheInstance};
 use crate::picture::{SurfaceRenderTasks, SurfaceInfo, SurfaceIndex, ROOT_SURFACE_INDEX};
 use crate::picture::{BackdropKind, SubpixelMode, TileCacheLogger, RasterConfig, PictureCompositeMode};
 use crate::prepare::prepare_primitives;
 use crate::prim_store::{PictureIndex, PrimitiveDebugId};
 use crate::prim_store::{DeferredResolve};
-use crate::profiler::{FrameProfileCounters, TextureCacheProfileCounters, ResourceProfileCounters};
+use crate::profiler::{self, TransactionProfile};
 use crate::render_backend::{DataStores, FrameStamp, FrameId, ScratchBuffer};
 use crate::render_target::{RenderTarget, PictureCacheTarget, TextureCacheRenderTarget};
 use crate::render_target::{RenderTargetContext, RenderTargetKind};
@@ -59,8 +59,6 @@ pub struct FrameBuilderConfig {
     pub dual_source_blending_is_supported: bool,
     pub dual_source_blending_is_enabled: bool,
     pub chase_primitive: ChasePrimitive,
-    /// The immutable global picture caching enable from `RendererOptions`
-    pub global_enable_picture_caching: bool,
     /// True if we're running tests (i.e. via wrench).
     pub testing: bool,
     pub gpu_supports_fast_clears: bool,
@@ -178,7 +176,6 @@ pub struct FrameBuildingContext<'a> {
 
 pub struct FrameBuildingState<'a> {
     pub render_tasks: &'a mut RenderTaskGraph,
-    pub profile_counters: &'a mut FrameProfileCounters,
     pub clip_store: &'a mut ClipStore,
     pub resource_cache: &'a mut ResourceCache,
     pub gpu_cache: &'a mut GpuCache,
@@ -187,6 +184,7 @@ pub struct FrameBuildingState<'a> {
     pub surfaces: &'a mut Vec<SurfaceInfo>,
     pub dirty_region_stack: Vec<DirtyRegion>,
     pub composite_state: &'a mut CompositeState,
+    pub num_visible_primitives: u32,
 }
 
 impl<'a> FrameBuildingState<'a> {
@@ -250,17 +248,16 @@ impl FrameBuilder {
         resource_cache: &mut ResourceCache,
         gpu_cache: &mut GpuCache,
         render_tasks: &mut RenderTaskGraph,
-        profile_counters: &mut FrameProfileCounters,
         global_device_pixel_scale: DevicePixelScale,
         scene_properties: &SceneProperties,
         transform_palette: &mut TransformPalette,
         data_stores: &mut DataStores,
         scratch: &mut ScratchBuffer,
         debug_flags: DebugFlags,
-        texture_cache_profile: &mut TextureCacheProfileCounters,
         composite_state: &mut CompositeState,
         tile_cache_logger: &mut TileCacheLogger,
         tile_caches: &mut FastHashMap<SliceId, Box<TileCacheInstance>>,
+        profile: &mut TransactionProfile,
     ) -> Option<RenderTaskId> {
         profile_scope!("build_layer_screen_rects_and_cull_layers");
 
@@ -332,12 +329,12 @@ impl FrameBuilder {
             gpu_cache,
             &scene.clip_store,
             data_stores,
-            composite_state,
         );
 
         {
             profile_scope!("UpdateVisibility");
             profile_marker!("UpdateVisibility");
+            profile.start_time(profiler::FRAME_VISIBILITY_TIME);
 
             let visibility_context = FrameVisibilityContext {
                 global_device_pixel_scale,
@@ -374,11 +371,14 @@ impl FrameBuilder {
 
             visibility_state.scratch.frame.clip_chain_stack = visibility_state.clip_chain_stack.take();
             visibility_state.scratch.frame.surface_stack = visibility_state.surface_stack.take();
+
+            profile.end_time(profiler::FRAME_VISIBILITY_TIME);
         }
+
+        profile.start_time(profiler::FRAME_PREPARE_TIME);
 
         let mut frame_state = FrameBuildingState {
             render_tasks,
-            profile_counters,
             clip_store: &mut scene.clip_store,
             resource_cache,
             gpu_cache,
@@ -387,6 +387,7 @@ impl FrameBuilder {
             surfaces: &mut surfaces,
             dirty_region_stack: scratch.frame.dirty_region_stack.take(),
             composite_state,
+            num_visible_primitives: 0,
         };
 
         frame_state
@@ -401,9 +402,12 @@ impl FrameBuilder {
         // Push a default dirty region which culls primitives
         // against the screen world rect, in absence of any
         // other dirty regions.
-        let mut default_dirty_region = DirtyRegion::new();
+        let mut default_dirty_region = DirtyRegion::new(
+            ROOT_SPATIAL_NODE_INDEX,
+        );
         default_dirty_region.add_dirty_region(
-            frame_context.global_screen_world_rect,
+            frame_context.global_screen_world_rect.cast_unit(),
+            frame_context.spatial_tree,
         );
         frame_state.push_dirty_region(default_dirty_region);
 
@@ -453,6 +457,8 @@ impl FrameBuilder {
         );
 
         frame_state.pop_dirty_region();
+        profile.end_time(profiler::FRAME_PREPARE_TIME);
+        profile.set(profiler::VISIBLE_PRIMITIVES, frame_state.num_visible_primitives);
 
         scratch.frame.dirty_region_stack = frame_state.dirty_region_stack.take();
         scratch.frame.surfaces = surfaces.take();
@@ -460,9 +466,11 @@ impl FrameBuilder {
         {
             profile_marker!("BlockOnResources");
 
-            resource_cache.block_until_all_resources_added(gpu_cache,
-                                                           render_tasks,
-                                                           texture_cache_profile);
+            resource_cache.block_until_all_resources_added(
+                gpu_cache,
+                render_tasks,
+                profile,
+            );
         }
 
         Some(root_render_task_id)
@@ -478,7 +486,6 @@ impl FrameBuilder {
         layer: DocumentLayer,
         device_origin: DeviceIntPoint,
         pan: WorldPoint,
-        resource_profile: &mut ResourceProfileCounters,
         scene_properties: &SceneProperties,
         data_stores: &mut DataStores,
         scratch: &mut ScratchBuffer,
@@ -487,15 +494,13 @@ impl FrameBuilder {
         tile_cache_logger: &mut TileCacheLogger,
         tile_caches: &mut FastHashMap<SliceId, Box<TileCacheInstance>>,
         dirty_rects_are_valid: bool,
+        profile: &mut TransactionProfile,
     ) -> Frame {
         profile_scope!("build");
         profile_marker!("BuildFrame");
 
-        let mut profile_counters = FrameProfileCounters::new();
-        profile_counters
-            .total_primitives
-            .set(scene.prim_store.prim_count());
-        resource_profile.picture_cache_slices.set(scene.tile_cache_config.picture_cache_slice_count);
+        profile.set(profiler::PRIMITIVES, scene.prim_store.prim_count());
+        profile.set(profiler::PICTURE_CACHE_SLICES, scene.tile_cache_config.picture_cache_slice_count);
         resource_cache.begin_frame(stamp);
         gpu_cache.begin_frame(stamp);
 
@@ -517,24 +522,8 @@ impl FrameBuilder {
         let output_size = scene.output_rect.size.to_i32();
         let screen_world_rect = (scene.output_rect.to_f32() / global_device_pixel_scale).round_out();
 
-        // Determine if we will draw this frame with picture caching enabled. This depends on:
-        // (1) If globally enabled when WR was initialized
-        // (2) If current debug flags allow picture caching
-        // (3) Whether we are currently pinch zooming
-        // (4) If any picture cache spatial nodes are not in the root coordinate system
-        let picture_caching_is_enabled =
-            scene.config.global_enable_picture_caching &&
-            !debug_flags.contains(DebugFlags::DISABLE_PICTURE_CACHING) &&
-            !scene.tile_cache_config.picture_cache_spatial_nodes.iter().any(|spatial_node_index| {
-                let spatial_node = &scene
-                    .spatial_tree
-                    .spatial_nodes[spatial_node_index.0 as usize];
-                spatial_node.is_ancestor_or_self_zooming
-            });
-
         let mut composite_state = CompositeState::new(
             scene.config.compositor_kind,
-            picture_caching_is_enabled,
             global_device_pixel_scale,
             scene.config.max_depth_ids,
             dirty_rects_are_valid,
@@ -548,18 +537,19 @@ impl FrameBuilder {
             resource_cache,
             gpu_cache,
             &mut render_tasks,
-            &mut profile_counters,
             global_device_pixel_scale,
             scene_properties,
             &mut transform_palette,
             data_stores,
             scratch,
             debug_flags,
-            &mut resource_profile.texture_cache,
             &mut composite_state,
             tile_cache_logger,
             tile_caches,
+            profile,
         );
+
+        profile.start_time(profiler::FRAME_BATCHING_TIME);
 
         let mut passes;
         let mut deferred_resolves = vec![];
@@ -627,11 +617,13 @@ impl FrameBuilder {
             }
         }
 
-        let gpu_cache_frame_id = gpu_cache.end_frame(&mut resource_profile.gpu_cache).frame_id();
+        profile.end_time(profiler::FRAME_BATCHING_TIME);
+
+        let gpu_cache_frame_id = gpu_cache.end_frame(profile).frame_id();
 
         render_tasks.write_task_data();
         *render_task_counters = render_tasks.counters();
-        resource_cache.end_frame(&mut resource_profile.texture_cache);
+        resource_cache.end_frame(profile);
 
         self.prim_headers_prealloc.record_vec(&mut prim_headers.headers_int);
         self.composite_state_prealloc.record(&composite_state);
@@ -643,7 +635,6 @@ impl FrameBuilder {
                 scene.output_rect.size,
             ),
             layer,
-            profile_counters,
             passes,
             transform_palette: transform_palette.finish(),
             render_tasks,
@@ -652,7 +643,6 @@ impl FrameBuilder {
             has_been_rendered: false,
             has_texture_cache_tasks,
             prim_headers,
-            recorded_dirty_regions: mem::replace(&mut scratch.primitive.recorded_dirty_regions, Vec::new()),
             debug_items: mem::replace(&mut scratch.primitive.debug_items, Vec::new()),
             composite_state,
         }
@@ -1004,8 +994,6 @@ pub struct Frame {
     pub device_rect: DeviceIntRect,
     pub layer: DocumentLayer,
     pub passes: Vec<RenderPass>,
-    #[cfg_attr(any(feature = "capture", feature = "replay"), serde(default = "FrameProfileCounters::new", skip))]
-    pub profile_counters: FrameProfileCounters,
 
     pub transform_palette: Vec<TransformData>,
     pub render_tasks: RenderTaskGraph,
@@ -1028,11 +1016,6 @@ pub struct Frame {
     /// renderer.
     pub has_been_rendered: bool,
 
-    /// Dirty regions recorded when generating this frame. Empty when not in
-    /// testing.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub recorded_dirty_regions: Vec<RecordedDirtyRegion>,
-
     /// Debugging information to overlay for this frame.
     pub debug_items: Vec<DebugItem>,
 
@@ -1051,12 +1034,6 @@ impl Frame {
 
     // Returns true if this frame doesn't alter what is on screen currently.
     pub fn is_nop(&self) -> bool {
-        // If picture caching is disabled, we don't have enough information
-        // to know if this frame is a nop, so it gets drawn unconditionally.
-        if !self.composite_state.picture_caching_is_enabled {
-            return false;
-        }
-
         // When picture caching is enabled, the first (main framebuffer) pass
         // consists of compositing tiles only (whether via the simple compositor
         // or the native OS compositor). If there are no other passes, that

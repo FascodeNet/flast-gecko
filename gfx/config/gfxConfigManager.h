@@ -7,6 +7,7 @@
 #define mozilla_gfx_config_gfxConfigManager_h
 
 #include "gfxFeature.h"
+#include "gfxTypes.h"
 
 namespace mozilla {
 namespace gfx {
@@ -31,13 +32,11 @@ class gfxConfigManager {
         mWrForceAngleNoGPUProcess(false),
         mWrDCompWinEnabled(false),
         mWrCompositorDCompRequired(false),
-        mWrPictureCaching(false),
         mWrPartialPresent(false),
         mGPUProcessAllowSoftware(false),
         mXRenderEnabled(false),
         mWrEnvForceEnabled(false),
         mWrEnvForceDisabled(false),
-        mHwStretchingSupport(false),
         mScaledResolution(false),
         mDisableHwCompositingNoWr(false),
         mIsNightly(false),
@@ -79,7 +78,6 @@ class gfxConfigManager {
   bool mWrForceAngleNoGPUProcess;
   bool mWrDCompWinEnabled;
   bool mWrCompositorDCompRequired;
-  bool mWrPictureCaching;
   bool mWrPartialPresent;
   bool mGPUProcessAllowSoftware;
   bool mXRenderEnabled;
@@ -93,7 +91,7 @@ class gfxConfigManager {
   /**
    * System support
    */
-  bool mHwStretchingSupport;
+  HwStretchingSupport mHwStretchingSupport;
   bool mScaledResolution;
   bool mDisableHwCompositingNoWr;
   bool mIsNightly;

@@ -10,6 +10,7 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/BrowsingContextWebProgress.h"
+#include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/MozPromise.h"
 #include "nsCycleCollectionParticipant.h"
@@ -108,6 +109,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
       nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
+
+  UniquePtr<LoadingSessionHistoryInfo> ReplaceLoadingSessionHistoryEntryForLoad(
+      LoadingSessionHistoryInfo* aInfo, nsIChannel* aChannel);
+
   void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
                             uint32_t aLoadType);
 
@@ -134,7 +139,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void RemoveFromSessionHistory();
 
-  void HistoryGo(int32_t aIndex, std::function<void(int32_t&&)>&& aResolver);
+  void HistoryGo(int32_t aIndex, uint64_t aHistoryEpoch,
+                 Maybe<ContentParentId> aContentId,
+                 std::function<void(int32_t&&)>&& aResolver);
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -192,6 +199,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // control all media belonging to this browsing context tree. Return nullptr
   // if the top-level browsing context has been discarded.
   MediaController* GetMediaController();
+  bool HasCreatedMediaController() const;
 
   // Attempts to start loading the given load state in this BrowsingContext,
   // without requiring any communication from a docshell. This will handle
@@ -237,6 +245,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
       int32_t* aLength);
 
   void HistoryCommitIndexAndLength();
+
+  void ResetScalingZoom();
 
  protected:
   // Called when the browsing context is being discarded.

@@ -10,9 +10,6 @@ const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
 
 ChromeUtils.defineModuleGetter(
   this,
@@ -379,10 +376,7 @@ var E10SUtils = {
 
     let uri;
     try {
-      uri = Services.uriFixup.createFixupURI(
-        aURL,
-        Ci.nsIURIFixup.FIXUP_FLAG_NONE
-      );
+      uri = Services.uriFixup.getFixupURIInfo(aURL).preferredURI;
     } catch (e) {
       // If we have an invalid URI, it's still possible that it might get
       // fixed-up into a valid URI later on. However, we don't want to return
@@ -455,11 +449,12 @@ var E10SUtils = {
             flags & Ci.nsIAboutModule.URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS &&
             (useSeparatePrivilegedAboutContentProcess ||
               aURI.filePath == "logins" ||
-              // Force about:welcome into the privileged content process to
+              // Force about:welcome and about:home into the privileged content process to
               // workaround code coverage test failures which result from the
               // workaround in bug 161269. Once that bug is fixed for real,
-              // the about:welcome case below can be removed.
-              aURI.filePath == "welcome")
+              // the about:welcome and about:home case below can be removed.
+              aURI.filePath == "welcome" ||
+              aURI.filePath == "home")
           ) {
             return PRIVILEGEDABOUT_REMOTE_TYPE;
           }
@@ -886,7 +881,9 @@ var E10SUtils = {
       if (PrivateBrowsingUtils.isBrowserPrivate(browser)) {
         fixupFlags |= Ci.nsIURIFixup.FIXUP_FLAG_PRIVATE_CONTEXT;
       }
-      uriObject = Services.uriFixup.createFixupURI(uri, fixupFlags);
+
+      uriObject = Services.uriFixup.getFixupURIInfo(uri, fixupFlags)
+        .preferredURI;
       // Note that I had thought that we could set uri = uriObject.spec here, to
       // save on fixup later on, but that changes behavior and breaks tests.
       requiredRemoteType = this.getRemoteTypeForURIObject(
@@ -974,12 +971,7 @@ var E10SUtils = {
     // If we are using DocumentChannel or remote subframes (fission), we
     // can start the load in the current process, and then perform the
     // switch later-on using the DocumentLoadListener mechanism.
-    // This mechanism isn't available on Android/GeckoView at present (see bug
-    // 1640019).
-    if (
-      AppConstants.MOZ_WIDGET_TOOLKIT != "android" &&
-      documentChannelPermittedForURI(aURI)
-    ) {
+    if (documentChannelPermittedForURI(aURI)) {
       return true;
     }
 

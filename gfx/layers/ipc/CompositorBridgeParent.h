@@ -202,8 +202,8 @@ class CompositorBridgeParentBase : public PCompositorBridgeParent,
 
   virtual bool IsRemote() const { return false; }
 
-  virtual UniquePtr<SurfaceDescriptor>
-  LookupSurfaceDescriptorForClientDrawTarget(const uintptr_t aDrawTarget) {
+  virtual UniquePtr<SurfaceDescriptor> LookupSurfaceDescriptorForClientTexture(
+      const int64_t aTextureId) {
     MOZ_CRASH("Should only be called on ContentCompositorBridgeParent.");
   }
 
@@ -734,6 +734,11 @@ class CompositorBridgeParent final : public CompositorBridgeParentBase,
    * Notify the compositor webrender batching parameters have been updated.
    */
   static void UpdateWebRenderBatchingParameters();
+
+  /**
+   * Notify the compositor webrender profiler UI string has been updated.
+   */
+  static void UpdateWebRenderProfilerUI();
 
   /**
    * Wrap the data structure to be sent over IPC.

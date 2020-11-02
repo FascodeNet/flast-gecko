@@ -143,7 +143,7 @@ namespace js {
 class JSONPrinter;
 
 namespace frontend {
-struct CompilationInfo;
+struct CompilationAtomCache;
 class StencilXDR;
 }  // namespace frontend
 
@@ -566,16 +566,16 @@ typedef Vector<const frontend::ParserAtom*, 4, js::SystemAllocPolicy>
     ObjLiteralAtomVector;
 
 JSObject* InterpretObjLiteral(JSContext* cx,
-                              frontend::CompilationInfo& compilationInfo,
+                              frontend::CompilationAtomCache& atomCache,
                               const ObjLiteralAtomVector& atoms,
                               const mozilla::Span<const uint8_t> insns,
                               ObjLiteralFlags flags);
 
 inline JSObject* InterpretObjLiteral(JSContext* cx,
-                                     frontend::CompilationInfo& compilationInfo,
+                                     frontend::CompilationAtomCache& atomCache,
                                      const ObjLiteralAtomVector& atoms,
                                      const ObjLiteralWriter& writer) {
-  return InterpretObjLiteral(cx, compilationInfo, atoms, writer.getCode(),
+  return InterpretObjLiteral(cx, atomCache, atoms, writer.getCode(),
                              writer.getFlags());
 }
 
@@ -593,6 +593,7 @@ class ObjLiteralStencil {
   bool addAtom(JSContext* cx, const frontend::ParserAtom* atom,
                uint32_t* index) {
     *index = atoms_.length();
+    atom->markUsedByStencil();
     if (!atoms_.append(atom)) {
       js::ReportOutOfMemory(cx);
       return false;
@@ -600,7 +601,8 @@ class ObjLiteralStencil {
     return true;
   }
 
-  JSObject* create(JSContext* cx, frontend::CompilationInfo& info) const;
+  JSObject* create(JSContext* cx,
+                   frontend::CompilationAtomCache& atomCache) const;
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump();

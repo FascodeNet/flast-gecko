@@ -39,6 +39,7 @@
 #include <cmath>
 #include <thread>
 #include "AudioThreadRegistry.h"
+#include "mozilla/StaticPrefs_media.h"
 
 #define AUDIOIPC_POOL_SIZE_DEFAULT 1
 #define AUDIOIPC_STACK_SIZE_DEFAULT (64 * 4096)
@@ -125,8 +126,9 @@ int sInCommunicationCount = 0;
 const char kBrandBundleURL[] = "chrome://branding/locale/brand.properties";
 
 const char* AUDIOSTREAM_BACKEND_ID_STR[] = {
-    "jack",  "pulse",       "alsa",  "audiounit", "audioqueue", "wasapi",
-    "winmm", "directsound", "sndio", "opensl",    "audiotrack", "kai"};
+    "jack",   "pulse",      "alsa",        "audiounit", "audioqueue",
+    "wasapi", "winmm",      "directsound", "sndio",     "opensl",
+    "oss",    "audiotrack", "kai"};
 /* Index for failures to create an audio stream the first time. */
 const int CUBEB_BACKEND_INIT_FAILURE_FIRST =
     ArrayLength(AUDIOSTREAM_BACKEND_ID_STR);
@@ -694,16 +696,20 @@ char* GetForcedOutputDevice() {
   return sCubebOutputDeviceName;
 }
 
-cubeb_stream_prefs GetDefaultStreamPrefs() {
+cubeb_stream_prefs GetDefaultStreamPrefs(cubeb_device_type aType) {
+  cubeb_stream_prefs prefs = CUBEB_STREAM_PREF_NONE;
 #ifdef XP_WIN
   // Investigation for bug 1427011 - if we're in E10S mode, rely on the
   // AudioNotification IPC to detect device changes.
   if (sCubebDisableDeviceSwitching &&
       (XRE_IsE10sParentProcess() || XRE_IsContentProcess())) {
-    return CUBEB_STREAM_PREF_DISABLE_DEVICE_SWITCHING;
+    prefs |= CUBEB_STREAM_PREF_DISABLE_DEVICE_SWITCHING;
+  }
+  if (StaticPrefs::media_cubeb_wasapi_raw() & static_cast<uint32_t>(aType)) {
+    prefs |= CUBEB_STREAM_PREF_RAW;
   }
 #endif
-  return CUBEB_STREAM_PREF_NONE;
+  return prefs;
 }
 
 bool RouteOutputAsVoice() { return sRouteOutputAsVoice; }
@@ -734,7 +740,7 @@ bool EstimatedRoundTripLatencyDefaultDevices(double* aMean, double* aStdDev) {
   output_params.rate = rate;
   output_params.channels = 2;
   output_params.layout = CUBEB_LAYOUT_UNDEFINED;
-  output_params.prefs = GetDefaultStreamPrefs();
+  output_params.prefs = GetDefaultStreamPrefs(CUBEB_DEVICE_TYPE_OUTPUT);
 
   latencyFrames = GetCubebMTGLatencyInFrames(&output_params);
 
@@ -743,7 +749,7 @@ bool EstimatedRoundTripLatencyDefaultDevices(double* aMean, double* aStdDev) {
   input_params.rate = rate;
   input_params.channels = 1;
   input_params.layout = CUBEB_LAYOUT_UNDEFINED;
-  input_params.prefs = GetDefaultStreamPrefs();
+  input_params.prefs = GetDefaultStreamPrefs(CUBEB_DEVICE_TYPE_INPUT);
 
   cubeb_stream* stm;
   rv = cubeb_stream_init(GetCubebContext(), &stm,

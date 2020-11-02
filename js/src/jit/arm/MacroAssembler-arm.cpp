@@ -12,6 +12,8 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 
+#include "jsmath.h"
+
 #include "jit/arm/Simulator-arm.h"
 #include "jit/AtomicOp.h"
 #include "jit/AtomicOperations.h"
@@ -24,6 +26,7 @@
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/Memory.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
+#include "vm/JSContext.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -4679,8 +4682,9 @@ CodeOffset MacroAssembler::wasmTrapInstruction() {
   return CodeOffset(as_illegal_trap().getOffset());
 }
 
-void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
-                                     Register boundsCheckLimit, Label* label) {
+void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
+                                       Register boundsCheckLimit,
+                                       Label* label) {
   as_cmp(index, O2Reg(boundsCheckLimit));
   as_b(label, cond);
   if (JitOptions.spectreIndexMasking) {
@@ -4688,11 +4692,11 @@ void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
   }
 }
 
-void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
-                                     Address boundsCheckLimit, Label* label) {
+void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
+                                       Address boundsCheckLimit, Label* label) {
   ScratchRegisterScope scratch(*this);
   MOZ_ASSERT(boundsCheckLimit.offset ==
-             offsetof(wasm::TlsData, boundsCheckLimit));
+             offsetof(wasm::TlsData, boundsCheckLimit32));
   ma_ldr(DTRAddr(boundsCheckLimit.base, DtrOffImm(boundsCheckLimit.offset)),
          scratch);
   as_cmp(index, O2Reg(scratch));
@@ -5678,16 +5682,16 @@ extern MOZ_EXPORT int64_t __aeabi_uidivmod(int, int);
 
 inline void EmitRemainderOrQuotient(bool isRemainder, MacroAssembler& masm,
                                     Register rhs, Register lhsOutput,
-                                    bool isSigned,
+                                    bool isUnsigned,
                                     const LiveRegisterSet& volatileLiveRegs) {
   // Currently this helper can't handle this situation.
   MOZ_ASSERT(lhsOutput != rhs);
 
   if (HasIDIV()) {
     if (isRemainder) {
-      masm.remainder32(rhs, lhsOutput, isSigned);
+      masm.remainder32(rhs, lhsOutput, isUnsigned);
     } else {
-      masm.quotient32(rhs, lhsOutput, isSigned);
+      masm.quotient32(rhs, lhsOutput, isUnsigned);
     }
   } else {
     // Ensure that the output registers are saved and restored properly,
@@ -5695,15 +5699,20 @@ inline void EmitRemainderOrQuotient(bool isRemainder, MacroAssembler& masm,
     MOZ_ASSERT(volatileLiveRegs.has(ReturnRegVal1));
 
     masm.PushRegsInMask(volatileLiveRegs);
+    using Fn = int64_t (*)(int, int);
     {
       ScratchRegisterScope scratch(masm);
       masm.setupUnalignedABICall(scratch);
     }
     masm.passABIArg(lhsOutput);
     masm.passABIArg(rhs);
-    masm.callWithABI(isSigned ? JS_FUNC_TO_DATA_PTR(void*, __aeabi_uidivmod)
-                              : JS_FUNC_TO_DATA_PTR(void*, __aeabi_idivmod),
-                     MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    if (isUnsigned) {
+      masm.callWithABI<Fn, __aeabi_uidivmod>(
+          MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    } else {
+      masm.callWithABI<Fn, __aeabi_idivmod>(
+          MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    }
     if (isRemainder) {
       masm.mov(ReturnRegVal1, lhsOutput);
     } else {
@@ -5746,15 +5755,20 @@ void MacroAssembler::flexibleDivMod32(Register rhs, Register lhsOutput,
     MOZ_ASSERT(volatileLiveRegs.has(ReturnRegVal1));
     PushRegsInMask(volatileLiveRegs);
 
+    using Fn = int64_t (*)(int, int);
     {
       ScratchRegisterScope scratch(*this);
       setupUnalignedABICall(scratch);
     }
     passABIArg(lhsOutput);
     passABIArg(rhs);
-    callWithABI(isUnsigned ? JS_FUNC_TO_DATA_PTR(void*, __aeabi_uidivmod)
-                           : JS_FUNC_TO_DATA_PTR(void*, __aeabi_idivmod),
-                MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    if (isUnsigned) {
+      callWithABI<Fn, __aeabi_uidivmod>(MoveOp::GENERAL,
+                                        CheckUnsafeCallWithABI::DontCheckOther);
+    } else {
+      callWithABI<Fn, __aeabi_idivmod>(MoveOp::GENERAL,
+                                       CheckUnsafeCallWithABI::DontCheckOther);
+    }
     moveRegPair(ReturnRegVal0, ReturnRegVal1, lhsOutput, remOutput);
 
     LiveRegisterSet ignore;
@@ -5995,6 +6009,9 @@ void MacroAssemblerARM::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
                                      Register ptrScratch, AnyRegister output,
                                      Register64 out64) {
   MOZ_ASSERT(ptr == ptrScratch);
+  MOZ_ASSERT(!access.isZeroExtendSimd128Load());
+  MOZ_ASSERT(!access.isSplatSimd128Load());
+  MOZ_ASSERT(!access.isWidenSimd128Load());
 
   uint32_t offset = access.offset();
   MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
@@ -6041,7 +6058,6 @@ void MacroAssemblerARM::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
       }
     }
   } else {
-    MOZ_ASSERT(!access.isZeroExtendSimd128Load());
     bool isFloat = output.isFloat();
     if (isFloat) {
       MOZ_ASSERT((byteSize == 4) == output.fpu().isSingle());
@@ -6138,6 +6154,9 @@ void MacroAssemblerARM::wasmUnalignedLoadImpl(
   MOZ_ASSERT(ptr == ptrScratch);
   MOZ_ASSERT(tmp != ptr);
   MOZ_ASSERT(!Assembler::SupportsFastUnalignedAccesses());
+  MOZ_ASSERT(!access.isZeroExtendSimd128Load());
+  MOZ_ASSERT(!access.isSplatSimd128Load());
+  MOZ_ASSERT(!access.isWidenSimd128Load());
 
   uint32_t offset = access.offset();
   MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);

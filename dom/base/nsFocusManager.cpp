@@ -748,11 +748,6 @@ void nsFocusManager::WindowRaised(mozIDOMWindowProxy* aWindow) {
     // ATOK, so we need to do it here.
     BrowserParent::UnsetTopLevelWebFocusAll();
     ActivateOrDeactivate(window, true);
-
-    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    if (obs) {
-      obs->NotifyObservers(aWindow, "window-raised", nullptr);
-    }
   }
 
   // retrieve the last focused element within the window that was raised
@@ -835,11 +830,6 @@ void nsFocusManager::WindowLowered(mozIDOMWindowProxy* aWindow) {
   // is called.
   if (XRE_IsParentProcess()) {
     ActivateOrDeactivate(window, false);
-
-    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    if (obs) {
-      obs->NotifyObservers(aWindow, "window-lowered", nullptr);
-    }
   }
 
   // keep track of the window being lowered, so that attempts to raise the
@@ -2092,6 +2082,10 @@ bool nsFocusManager::Blur(BrowsingContext* aBrowsingContextToClear,
     ancestorWindowToFocus->SetFocusedElement(nullptr, 0, true);
     ancestorWindowToFocusHandled = true;
   }
+  // The expectation is that the blurring would eventually result in an IPC
+  // message doing this anyway, but this doesn't happen if the focus is in OOP
+  // iframe which won't try to bounce an IPC message to its parent frame.
+  SetFocusedWindowInternal(nullptr);
   contentChild->SendBlurToParent(
       focusedBrowsingContext, aBrowsingContextToClear,
       aAncestorBrowsingContextToFocus, aIsLeavingDocument, aAdjustWidget,
@@ -4857,6 +4851,26 @@ void nsFocusManager::SetFocusedWindowInternal(nsPIDOMWindowOuter* aWindow) {
 
   mFocusedWindow = aWindow;
   SetFocusedBrowsingContext(aWindow ? aWindow->GetBrowsingContext() : nullptr);
+}
+
+void nsFocusManager::NotifyOfReFocus(nsIContent& aContent) {
+  nsPIDOMWindowOuter* window = GetCurrentWindow(&aContent);
+  if (!window || window != mFocusedWindow) {
+    return;
+  }
+  nsIDocShell* docShell = window->GetDocShell();
+  if (!docShell) {
+    return;
+  }
+  RefPtr<PresShell> presShell = docShell->GetPresShell();
+  if (!presShell) {
+    return;
+  }
+  nsPresContext* presContext = presShell->GetPresContext();
+  if (!presContext) {
+    return;
+  }
+  IMEStateManager::OnReFocus(presContext, aContent);
 }
 
 void nsFocusManager::MarkUncollectableForCCGeneration(uint32_t aGeneration) {

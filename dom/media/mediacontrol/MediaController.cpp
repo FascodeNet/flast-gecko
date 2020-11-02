@@ -10,6 +10,7 @@
 #include "MediaControlUtils.h"
 #include "MediaControlKeySource.h"
 #include "mozilla/AsyncEventDispatcher.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/MediaSession.h"
@@ -214,6 +215,9 @@ void MediaController::UpdateMediaControlActionToContentMediaIfNeeded(
   } else {
     context->Canonical()->UpdateMediaControlAction(aAction);
   }
+  RefPtr<MediaControlService> service = MediaControlService::GetService();
+  MOZ_ASSERT(service);
+  service->NotifyMediaControlHasEverBeenUsed();
 }
 
 void MediaController::Shutdown() {
@@ -532,6 +536,18 @@ void MediaController::DispatchAsyncEvent(Event* aEvent) {
 
 CopyableTArray<MediaControlKey> MediaController::GetSupportedMediaKeys() const {
   return mSupportedKeys;
+}
+
+void MediaController::Select() const {
+  if (RefPtr<BrowsingContext> bc = BrowsingContext::Get(Id())) {
+    Unused << bc->SetHasMainMediaController(true);
+  }
+}
+
+void MediaController::Unselect() const {
+  if (RefPtr<BrowsingContext> bc = BrowsingContext::Get(Id())) {
+    Unused << bc->SetHasMainMediaController(false);
+  }
 }
 
 }  // namespace dom

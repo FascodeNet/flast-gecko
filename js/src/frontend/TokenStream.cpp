@@ -36,6 +36,7 @@
 #include "frontend/ParserAtom.h"
 #include "frontend/ReservedWords.h"
 #include "js/CharacterEncoding.h"
+#include "js/Printf.h"       // JS_smprintf
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
 #include "js/UniquePtr.h"
 #include "util/StringBuffer.h"
@@ -542,10 +543,12 @@ TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx,
 }
 
 template <typename Unit>
-TokenStreamCharsBase<Unit>::TokenStreamCharsBase(
-    JSContext* cx, CompilationInfo* compilationInfo, const Unit* units,
-    size_t length, size_t startOffset)
-    : TokenStreamCharsShared(cx, compilationInfo),
+TokenStreamCharsBase<Unit>::TokenStreamCharsBase(JSContext* cx,
+                                                 ParserAtomsTable* pasrerAtoms,
+                                                 const Unit* units,
+                                                 size_t length,
+                                                 size_t startOffset)
+    : TokenStreamCharsShared(cx, pasrerAtoms),
       sourceUnits(units, length, startOffset) {}
 
 template <>
@@ -611,15 +614,14 @@ MOZ_MUST_USE bool TokenStreamCharsBase<Utf8Unit>::
 
 template <typename Unit, class AnyCharsAccess>
 TokenStreamSpecific<Unit, AnyCharsAccess>::TokenStreamSpecific(
-    JSContext* cx, CompilationInfo* compilationInfo,
+    JSContext* cx, ParserAtomsTable* pasrerAtoms,
     const ReadOnlyCompileOptions& options, const Unit* units, size_t length)
-    : TokenStreamChars<Unit, AnyCharsAccess>(cx, compilationInfo, units, length,
+    : TokenStreamChars<Unit, AnyCharsAccess>(cx, pasrerAtoms, units, length,
                                              options.scriptSourceOffset) {}
 
 bool TokenStreamAnyChars::checkOptions() {
-  // Constrain starting columns to half of the range of a signed 32-bit value,
-  // to avoid overflow.
-  if (options().column >= std::numeric_limits<int32_t>::max() / 2 + 1) {
+  // Constrain starting columns to where they will saturate.
+  if (options().column > ColumnLimit) {
     reportErrorNoOffset(JSMSG_BAD_COLUMN_NUMBER);
     return false;
   }
@@ -658,6 +660,13 @@ TokenStreamAnyChars::internalUpdateLineInfoForEOL(uint32_t lineStartOffset) {
   prevLinebase = linebase;
   linebase = lineStartOffset;
   lineno++;
+
+  // On overflow, report error.
+  if (MOZ_UNLIKELY(!lineno)) {
+    reportErrorNoOffset(JSMSG_BAD_LINE_NUMBER);
+    return false;
+  }
+
   return srcCoords.add(lineno, linebase);
 }
 
@@ -981,10 +990,26 @@ uint32_t GeneralTokenStreamChars<Unit, AnyCharsAccess>::computeColumn(
 
   const TokenStreamAnyChars& anyChars = anyCharsAccess();
 
-  uint32_t partialCols =
+  uint32_t column =
       anyChars.computePartialColumn(lineToken, offset, this->sourceUnits);
 
-  return (lineToken.isFirstLine() ? anyChars.options_.column : 0) + partialCols;
+  if (lineToken.isFirstLine()) {
+    if (column > ColumnLimit) {
+      return ColumnLimit;
+    }
+
+    static_assert(uint32_t(ColumnLimit + ColumnLimit) > ColumnLimit,
+                  "Adding ColumnLimit should not overflow");
+
+    uint32_t firstLineOffset = anyChars.options_.column;
+    column += firstLineOffset;
+  }
+
+  if (column > ColumnLimit) {
+    return ColumnLimit;
+  }
+
+  return column;
 }
 
 template <typename Unit, class AnyCharsAccess>
@@ -1803,6 +1828,17 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::computeErrorMetadata(
 
   // We can't fill in any more here.
   return true;
+}
+
+template <typename Unit, class AnyCharsAccess>
+void TokenStreamSpecific<Unit, AnyCharsAccess>::reportIllegalCharacter(
+    int32_t cp) {
+  UniqueChars display = JS_smprintf("U+%04X", cp);
+  if (!display) {
+    ReportOutOfMemory(anyCharsAccess().cx);
+    return;
+  }
+  error(JSMSG_ILLEGAL_CHARACTER, display.get());
 }
 
 // We have encountered a '\': check for a Unicode escape sequence after it.
@@ -2811,7 +2847,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
                               modifier, NameVisibility::Public, ttp);
       }
 
-      error(JSMSG_ILLEGAL_CHARACTER);
+      reportIllegalCharacter(cp);
       return badToken();
     }  // !isAsciiCodePoint(unit)
 
@@ -3323,7 +3359,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
         // We consumed a bad ASCII code point/unit.  Put it back so the
         // error location is the bad code point.
         ungetCodeUnit(unit);
-        error(JSMSG_ILLEGAL_CHARACTER);
+        reportIllegalCharacter(unit);
         return badToken();
     }  // switch (AssertedCast<uint8_t>(CodeUnitValue(toUnit(unit))))
 

@@ -5,8 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "PDMFactory.h"
+
 #include "AgnosticDecoderModule.h"
 #include "AudioTrimmer.h"
+#include "BlankDecoderModule.h"
 #include "DecoderDoctorDiagnostics.h"
 #include "EMEDecoderModule.h"
 #include "GMPDecoderModule.h"
@@ -15,10 +17,9 @@
 #include "MediaChangeMonitor.h"
 #include "MediaInfo.h"
 #include "VPXDecoder.h"
-#include "nsIXULRuntime.h"  // for BrowserTabsRemoteAutostart
 #include "mozilla/CDMProxy.h"
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/GpuDecoderModule.h"
+#include "mozilla/RemoteDecoderManagerChild.h"
 #include "mozilla/RemoteDecoderModule.h"
 #include "mozilla/SharedThreadPool.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -26,6 +27,7 @@
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/TaskQueue.h"
 #include "mozilla/gfx/gfxVars.h"
+#include "nsIXULRuntime.h"  // for BrowserTabsRemoteAutostart
 
 #ifdef XP_WIN
 #  include "WMFDecoderModule.h"
@@ -51,14 +53,53 @@
 
 namespace mozilla {
 
-extern already_AddRefed<PlatformDecoderModule> CreateBlankDecoderModule();
 extern already_AddRefed<PlatformDecoderModule> CreateNullDecoderModule();
 
 class PDMFactoryImpl final {
  public:
   PDMFactoryImpl() {
+    if (XRE_IsGPUProcess()) {
+      InitGpuPDMs();
+    } else if (XRE_IsRDDProcess()) {
+      InitRddPDMs();
+    } else {
+      InitDefaultPDMs();
+    }
+  }
+
+ private:
+  void InitGpuPDMs() {
 #ifdef XP_WIN
-    WMFDecoderModule::Init();
+    if (!IsWin7AndPre2000Compatible()) {
+      WMFDecoderModule::Init();
+    }
+#endif
+  }
+
+  void InitRddPDMs() {
+#ifdef XP_WIN
+    if (!IsWin7AndPre2000Compatible()) {
+      WMFDecoderModule::Init();
+    }
+#endif
+#ifdef MOZ_APPLEMEDIA
+    AppleDecoderModule::Init();
+#endif
+#ifdef MOZ_FFVPX
+    FFVPXRuntimeLinker::Init();
+#endif
+#ifdef MOZ_FFMPEG
+    if (StaticPrefs::media_rdd_ffmpeg_enabled()) {
+      FFmpegRuntimeLinker::Init();
+    }
+#endif
+  }
+
+  void InitDefaultPDMs() {
+#ifdef XP_WIN
+    if (!IsWin7AndPre2000Compatible()) {
+      WMFDecoderModule::Init();
+    }
 #endif
 #ifdef MOZ_APPLEMEDIA
     AppleDecoderModule::Init();
@@ -72,7 +113,9 @@ class PDMFactoryImpl final {
 #ifdef MOZ_FFMPEG
     FFmpegRuntimeLinker::Init();
 #endif
-    RemoteDecoderModule::Init();
+    if (XRE_IsContentProcess()) {
+      RemoteDecoderManagerChild::Init();
+    }
   }
 };
 
@@ -156,8 +199,6 @@ PDMFactory::PDMFactory() {
   CreateNullPDM();
 }
 
-PDMFactory::~PDMFactory() = default;
-
 /* static */
 void PDMFactory::EnsureInit() {
   {
@@ -174,6 +215,8 @@ void PDMFactory::EnsureInit() {
     if (!sInstance) {
       // Ensure that all system variables are initialized.
       gfx::gfxVars::Initialize();
+      // Prime the preferences system from the main thread.
+      Unused << BrowserTabsRemoteAutostart();
       // On the main thread and holding the lock -> Create instance.
       sInstance = new PDMFactoryImpl();
       ClearOnShutdown(&sInstance);
@@ -208,19 +251,11 @@ already_AddRefed<MediaDataDecoder> PDMFactory::CreateDecoder(
       if (diagnostics) {
         // If libraries failed to load, the following loop over mCurrentPDMs
         // will not even try to use them. So we record failures now.
-        if (mWMFFailedToLoad) {
-          diagnostics->SetWMFFailedToLoad();
-        }
-        if (mFFmpegFailedToLoad) {
-          diagnostics->SetFFmpegFailedToLoad();
-        }
-        if (mGMPPDMFailedToStartup) {
-          diagnostics->SetGMPPDMFailedToStartup();
-        }
+        diagnostics->SetFailureFlags(mFailureFlags);
       }
 
       for (auto& current : mCurrentPDMs) {
-        if (!current->Supports(config, diagnostics)) {
+        if (!current->Supports(SupportDecoderParams(aParams), diagnostics)) {
           continue;
         }
         decoder = CreateDecoderWithPDM(current, aParams);
@@ -233,9 +268,6 @@ already_AddRefed<MediaDataDecoder> PDMFactory::CreateDecoder(
   if (!decoder) {
     NS_WARNING("Unable to create a decoder, no platform found.");
     return nullptr;
-  }
-  if (config.IsAudio()) {
-    decoder = new AudioTrimmer(decoder.forget(), aParams);
   }
   return decoder.forget();
 }
@@ -275,6 +307,9 @@ already_AddRefed<MediaDataDecoder> PDMFactory::CreateDecoderWithPDM(
 
   if (config.IsAudio()) {
     m = aPDM->CreateAudioDecoder(aParams);
+    if (m && !aParams.mNoWrapper.mDontUseWrapper) {
+      m = new AudioTrimmer(m.forget(), aParams);
+    }
     return m.forget();
   }
 
@@ -312,94 +347,140 @@ bool PDMFactory::SupportsMimeType(
   if (!trackInfo) {
     return false;
   }
-  return Supports(*trackInfo, aDiagnostics);
+  return Supports(SupportDecoderParams(*trackInfo), aDiagnostics);
 }
 
-bool PDMFactory::Supports(const TrackInfo& aTrackInfo,
+bool PDMFactory::Supports(const SupportDecoderParams& aParams,
                           DecoderDoctorDiagnostics* aDiagnostics) const {
   if (mEMEPDM) {
-    return mEMEPDM->Supports(aTrackInfo, aDiagnostics);
+    return mEMEPDM->Supports(aParams, aDiagnostics);
   }
-  if (VPXDecoder::IsVPX(aTrackInfo.mMimeType,
-                        VPXDecoder::VP8 | VPXDecoder::VP9)) {
+  if (VPXDecoder::IsVPX(aParams.MimeType(),
+                        VPXDecoder::VP8 | VPXDecoder::VP9) &&
+      !aParams.mConfig.GetAsVideoInfo()->HasAlpha()) {
     // Work around bug 1521370, where trying to instantiate an external decoder
     // could cause a crash.
     // We always ship a VP8/VP9 decoder (libvpx) and optionally we have ffvpx.
     // So we can speed up the test by assuming that this codec is supported.
     return true;
   }
-  RefPtr<PlatformDecoderModule> current = GetDecoder(aTrackInfo, aDiagnostics);
+
+  RefPtr<PlatformDecoderModule> current =
+      GetDecoderModule(aParams, aDiagnostics);
   return !!current;
 }
 
 void PDMFactory::CreatePDMs() {
-  RefPtr<PlatformDecoderModule> m;
-
   if (StaticPrefs::media_use_blank_decoder()) {
-    m = CreateBlankDecoderModule();
-    StartupPDM(m);
+    CreateAndStartupPDM<BlankDecoderModule>();
     // The Blank PDM SupportsMimeType reports true for all codecs; the creation
     // of its decoder is infallible. As such it will be used for all media, we
     // can stop creating more PDM from this point.
     return;
   }
 
+  if (XRE_IsGPUProcess()) {
+    CreateGpuPDMs();
+  } else if (XRE_IsRDDProcess()) {
+    CreateRddPDMs();
+  } else {
+    CreateDefaultPDMs();
+  }
+}
+
+void PDMFactory::CreateGpuPDMs() {
+  MOZ_ASSERT(XRE_IsGPUProcess());
+#ifdef XP_WIN
+  if (StaticPrefs::media_wmf_enabled() && !IsWin7AndPre2000Compatible()) {
+    CreateAndStartupPDM<WMFDecoderModule>();
+  }
+#endif
+}
+
+void PDMFactory::CreateRddPDMs() {
+  MOZ_ASSERT(XRE_IsRDDProcess());
+#ifdef XP_WIN
+  if (StaticPrefs::media_wmf_enabled() &&
+      StaticPrefs::media_rdd_wmf_enabled()) {
+    CreateAndStartupPDM<WMFDecoderModule>();
+  }
+#endif
+#ifdef MOZ_APPLEMEDIA
+  if (StaticPrefs::media_rdd_applemedia_enabled()) {
+    CreateAndStartupPDM<AppleDecoderModule>();
+  }
+#endif
+#ifdef MOZ_FFVPX
+  if (StaticPrefs::media_ffvpx_enabled() &&
+      StaticPrefs::media_rdd_ffvpx_enabled()) {
+    CreateAndStartupPDM<FFVPXRuntimeLinker>();
+  }
+#endif
+#ifdef MOZ_FFMPEG
+  if (StaticPrefs::media_ffmpeg_enabled() &&
+      StaticPrefs::media_rdd_ffmpeg_enabled() &&
+      !CreateAndStartupPDM<FFmpegRuntimeLinker>()) {
+    mFailureFlags += DecoderDoctorDiagnostics::Flags::FFmpegFailedToLoad;
+  } else {
+    mFailureFlags -= DecoderDoctorDiagnostics::Flags::FFmpegFailedToLoad;
+  }
+#endif
+  CreateAndStartupPDM<AgnosticDecoderModule>();
+}
+
+void PDMFactory::CreateDefaultPDMs() {
+  MOZ_ASSERT(!XRE_IsGPUProcess() && !XRE_IsRDDProcess());
+  if (StaticPrefs::media_gpu_process_decoder()) {
+    CreateAndStartupPDM<RemoteDecoderModule>(RemoteDecodeIn::GpuProcess);
+  }
+
   if (StaticPrefs::media_rdd_process_enabled() &&
       BrowserTabsRemoteAutostart()) {
-    m = new RemoteDecoderModule;
-    StartupPDM(m);
+    CreateAndStartupPDM<RemoteDecoderModule>(RemoteDecodeIn::RddProcess);
   }
 
 #ifdef XP_WIN
   if (StaticPrefs::media_wmf_enabled() && !IsWin7AndPre2000Compatible()) {
-    m = new WMFDecoderModule();
-    RefPtr<PlatformDecoderModule> remote = new GpuDecoderModule(m);
-    StartupPDM(remote);
-    mWMFFailedToLoad = !StartupPDM(m);
-  } else {
-    mWMFFailedToLoad =
-        StaticPrefs::media_decoder_doctor_wmf_disabled_is_failure();
+    RefPtr<WMFDecoderModule> m = MakeAndAddRef<WMFDecoderModule>();
+    if (!StartupPDM(m.forget())) {
+      mFailureFlags += DecoderDoctorDiagnostics::Flags::WMFFailedToLoad;
+    }
+  } else if (StaticPrefs::media_decoder_doctor_wmf_disabled_is_failure()) {
+    mFailureFlags += DecoderDoctorDiagnostics::Flags::WMFFailedToLoad;
   }
 #endif
+
 #ifdef MOZ_APPLEMEDIA
-  m = new AppleDecoderModule();
-  StartupPDM(m);
+  CreateAndStartupPDM<AppleDecoderModule>();
 #endif
 #ifdef MOZ_OMX
   if (StaticPrefs::media_omx_enabled()) {
-    m = OmxDecoderModule::Create();
-    StartupPDM(m);
+    CreateAndStartupPDM<OmxDecoderModule>();
   }
 #endif
 #ifdef MOZ_FFVPX
   if (StaticPrefs::media_ffvpx_enabled()) {
-    m = FFVPXRuntimeLinker::CreateDecoderModule();
-    StartupPDM(m);
+    CreateAndStartupPDM<FFVPXRuntimeLinker>();
   }
 #endif
 #ifdef MOZ_FFMPEG
-  if (StaticPrefs::media_ffmpeg_enabled()) {
-    m = FFmpegRuntimeLinker::CreateDecoderModule();
-    mFFmpegFailedToLoad = !StartupPDM(m);
-  } else {
-    mFFmpegFailedToLoad = false;
+  if (StaticPrefs::media_ffmpeg_enabled() &&
+      !CreateAndStartupPDM<FFmpegRuntimeLinker>()) {
+    mFailureFlags += DecoderDoctorDiagnostics::Flags::FFmpegFailedToLoad;
   }
 #endif
 #ifdef MOZ_WIDGET_ANDROID
   if (StaticPrefs::media_android_media_codec_enabled()) {
-    m = new AndroidDecoderModule();
-    StartupPDM(m, StaticPrefs::media_android_media_codec_preferred());
+    StartupPDM(AndroidDecoderModule::Create(),
+               StaticPrefs::media_android_media_codec_preferred());
   }
 #endif
 
-  m = new AgnosticDecoderModule();
-  StartupPDM(m);
+  CreateAndStartupPDM<AgnosticDecoderModule>();
 
-  if (StaticPrefs::media_gmp_decoder_enabled()) {
-    m = new GMPDecoderModule();
-    mGMPPDMFailedToStartup = !StartupPDM(m);
-  } else {
-    mGMPPDMFailedToStartup = false;
+  if (StaticPrefs::media_gmp_decoder_enabled() &&
+      !CreateAndStartupPDM<GMPDecoderModule>()) {
+    mFailureFlags += DecoderDoctorDiagnostics::Flags::GMPPDMFailedToStartup;
   }
 }
 
@@ -408,38 +489,32 @@ void PDMFactory::CreateNullPDM() {
   MOZ_ASSERT(mNullPDM && NS_SUCCEEDED(mNullPDM->Startup()));
 }
 
-bool PDMFactory::StartupPDM(PlatformDecoderModule* aPDM,
+bool PDMFactory::StartupPDM(already_AddRefed<PlatformDecoderModule> aPDM,
                             bool aInsertAtBeginning) {
-  if (aPDM && NS_SUCCEEDED(aPDM->Startup())) {
+  RefPtr<PlatformDecoderModule> pdm = aPDM;
+  if (pdm && NS_SUCCEEDED(pdm->Startup())) {
     if (aInsertAtBeginning) {
-      mCurrentPDMs.InsertElementAt(0, aPDM);
+      mCurrentPDMs.InsertElementAt(0, pdm);
     } else {
-      mCurrentPDMs.AppendElement(aPDM);
+      mCurrentPDMs.AppendElement(pdm);
     }
     return true;
   }
   return false;
 }
 
-already_AddRefed<PlatformDecoderModule> PDMFactory::GetDecoder(
-    const TrackInfo& aTrackInfo, DecoderDoctorDiagnostics* aDiagnostics) const {
+already_AddRefed<PlatformDecoderModule> PDMFactory::GetDecoderModule(
+    const SupportDecoderParams& aParams,
+    DecoderDoctorDiagnostics* aDiagnostics) const {
   if (aDiagnostics) {
     // If libraries failed to load, the following loop over mCurrentPDMs
     // will not even try to use them. So we record failures now.
-    if (mWMFFailedToLoad) {
-      aDiagnostics->SetWMFFailedToLoad();
-    }
-    if (mFFmpegFailedToLoad) {
-      aDiagnostics->SetFFmpegFailedToLoad();
-    }
-    if (mGMPPDMFailedToStartup) {
-      aDiagnostics->SetGMPPDMFailedToStartup();
-    }
+    aDiagnostics->SetFailureFlags(mFailureFlags);
   }
 
   RefPtr<PlatformDecoderModule> pdm;
   for (auto& current : mCurrentPDMs) {
-    if (current->Supports(aTrackInfo, aDiagnostics)) {
+    if (current->Supports(aParams, aDiagnostics)) {
       pdm = current;
       break;
     }
@@ -452,12 +527,12 @@ void PDMFactory::SetCDMProxy(CDMProxy* aProxy) {
 
 #ifdef MOZ_WIDGET_ANDROID
   if (IsWidevineKeySystem(aProxy->KeySystem())) {
-    mEMEPDM = new AndroidDecoderModule(aProxy);
+    mEMEPDM = AndroidDecoderModule::Create(aProxy);
     return;
   }
 #endif
-  RefPtr<PDMFactory> m = new PDMFactory();
-  mEMEPDM = new EMEDecoderModule(aProxy, m);
+  auto m = MakeRefPtr<PDMFactory>();
+  mEMEPDM = MakeRefPtr<EMEDecoderModule>(aProxy, m);
 }
 
 }  // namespace mozilla

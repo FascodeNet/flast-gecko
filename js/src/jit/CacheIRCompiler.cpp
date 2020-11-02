@@ -23,6 +23,7 @@
 #include "jit/BaselineCacheIRCompiler.h"
 #include "jit/IonCacheIRCompiler.h"
 #include "jit/IonIC.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitZone.h"
 #include "jit/SharedICHelpers.h"
@@ -40,6 +41,7 @@
 #include "vm/BigIntType.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/GeneratorObject.h"
+#include "vm/Uint8Clamped.h"
 
 #include "builtin/Boolean-inl.h"
 #include "jit/MacroAssembler-inl.h"
@@ -2249,9 +2251,10 @@ bool CacheIRCompiler::emitGuardStringToIndex(StringOperandId strId,
                          liveVolatileFloatRegs());
     masm.PushRegsInMask(save);
 
+    using Fn = int32_t (*)(JSString * str);
     masm.setupUnalignedABICall(output);
     masm.passABIArg(str);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, GetIndexFromString));
+    masm.callWithABI<Fn, GetIndexFromString>();
     masm.storeCallInt32Result(output);
 
     LiveRegisterSet ignore;
@@ -3158,6 +3161,19 @@ bool CacheIRCompiler::emitLoadArgumentsObjectLengthResult(ObjOperandId objId) {
   return true;
 }
 
+bool CacheIRCompiler::emitLoadArrayBufferByteLengthInt32Result(
+    ObjOperandId objId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoOutputRegister output(*this);
+  Register obj = allocator.useRegister(masm, objId);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  masm.loadArrayBufferByteLengthInt32(obj, scratch);
+
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
+  return true;
+}
+
 bool CacheIRCompiler::emitLoadTypedArrayLengthResult(ObjOperandId objId,
                                                      uint32_t getterOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -3165,7 +3181,7 @@ bool CacheIRCompiler::emitLoadTypedArrayLengthResult(ObjOperandId objId,
   Register obj = allocator.useRegister(masm, objId);
   AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
-  masm.unboxInt32(Address(obj, ArrayBufferViewObject::lengthOffset()), scratch);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
   return true;
 }
@@ -3600,18 +3616,7 @@ bool CacheIRCompiler::emitGuardFunctionIsNonBuiltinCtor(ObjOperandId funId) {
     return false;
   }
 
-  // Guard the function has the BASESCRIPT and CONSTRUCTOR flags and does NOT
-  // have the SELF_HOSTED flag.
-  // This is equivalent to JSFunction::isNonBuiltinConstructor.
-  constexpr uint32_t mask = FunctionFlags::BASESCRIPT |
-                            FunctionFlags::SELF_HOSTED |
-                            FunctionFlags::CONSTRUCTOR;
-  constexpr uint32_t expected =
-      FunctionFlags::BASESCRIPT | FunctionFlags::CONSTRUCTOR;
-  masm.load16ZeroExtend(Address(fun, JSFunction::offsetOfFlags()), scratch);
-  masm.and32(Imm32(mask), scratch);
-  masm.branch32(Assembler::NotEqual, scratch, Imm32(expected),
-                failure->label());
+  masm.branchIfNotFunctionIsNonBuiltinCtor(fun, scratch, failure->label());
   return true;
 }
 
@@ -3721,8 +3726,9 @@ bool CacheIRCompiler::emitLoadDenseElementHoleResult(ObjOperandId objId,
   return true;
 }
 
-bool CacheIRCompiler::emitLoadTypedElementExistsResult(
-    ObjOperandId objId, Int32OperandId indexId, TypedThingLayout layout) {
+bool CacheIRCompiler::emitLoadTypedArrayElementExistsResult(
+    ObjOperandId objId, Int32OperandId indexId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
   Register obj = allocator.useRegister(masm, objId);
   Register index = allocator.useRegister(masm, indexId);
@@ -3730,8 +3736,8 @@ bool CacheIRCompiler::emitLoadTypedElementExistsResult(
 
   Label outOfBounds, done;
 
-  // Bound check.
-  LoadTypedThingLength(masm, layout, obj, scratch);
+  // Bounds check.
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   masm.branch32(Assembler::BelowOrEqual, scratch, index, &outOfBounds);
   EmitStoreBoolean(masm, true, output);
   masm.jump(&done);
@@ -3741,19 +3747,6 @@ bool CacheIRCompiler::emitLoadTypedElementExistsResult(
 
   masm.bind(&done);
   return true;
-}
-
-bool CacheIRCompiler::emitLoadTypedArrayElementExistsResult(
-    ObjOperandId objId, Int32OperandId indexId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  return emitLoadTypedElementExistsResult(objId, indexId,
-                                          TypedThingLayout::TypedArray);
-}
-
-bool CacheIRCompiler::emitLoadTypedObjectElementExistsResult(
-    ObjOperandId objId, Int32OperandId indexId, TypedThingLayout layout) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  return emitLoadTypedElementExistsResult(objId, indexId, layout);
 }
 
 bool CacheIRCompiler::emitLoadDenseElementExistsResult(ObjOperandId objId,
@@ -3916,9 +3909,10 @@ bool CacheIRCompiler::emitIsCallableResult(ValOperandId inputId) {
                                  liveVolatileFloatRegs());
     masm.PushRegsInMask(volatileRegs);
 
+    using Fn = bool (*)(JSObject * obj);
     masm.setupUnalignedABICall(scratch2);
     masm.passABIArg(scratch1);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ObjectIsCallable));
+    masm.callWithABI<Fn, ObjectIsCallable>();
     masm.storeCallBoolResult(scratch2);
 
     LiveRegisterSet ignore;
@@ -3949,9 +3943,10 @@ bool CacheIRCompiler::emitIsConstructorResult(ObjOperandId objId) {
                                  liveVolatileFloatRegs());
     masm.PushRegsInMask(volatileRegs);
 
+    using Fn = bool (*)(JSObject * obj);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(obj);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ObjectIsConstructor));
+    masm.callWithABI<Fn, ObjectIsConstructor>();
     masm.storeCallBoolResult(scratch);
 
     LiveRegisterSet ignore;
@@ -3984,8 +3979,7 @@ bool CacheIRCompiler::emitTypedArrayByteOffsetResult(ObjOperandId objId) {
   AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
   Register obj = allocator.useRegister(masm, objId);
 
-  masm.unboxInt32(Address(obj, ArrayBufferViewObject::byteOffsetOffset()),
-                  scratch);
+  masm.loadArrayBufferViewByteOffsetInt32(obj, scratch);
   masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
   return true;
 }
@@ -4704,11 +4698,12 @@ bool CacheIRCompiler::emitMathFunctionNumberResult(NumberOperandId inputId,
   return emitMathFunctionNumberResultShared(fun, scratch, output.valueReg());
 }
 
-bool CacheIRCompiler::emitStoreTypedElement(ObjOperandId objId,
-                                            TypedThingLayout layout,
-                                            Scalar::Type elementType,
-                                            Int32OperandId indexId,
-                                            uint32_t rhsId, bool handleOOB) {
+bool CacheIRCompiler::emitStoreTypedArrayElement(ObjOperandId objId,
+                                                 Scalar::Type elementType,
+                                                 Int32OperandId indexId,
+                                                 uint32_t rhsId,
+                                                 bool handleOOB) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Register obj = allocator.useRegister(masm, objId);
   Register index = allocator.useRegister(masm, indexId);
 
@@ -4761,12 +4756,12 @@ bool CacheIRCompiler::emitStoreTypedElement(ObjOperandId objId,
   // Bounds check.
   Label done;
   Register spectreTemp = scratch2 ? scratch2->get() : spectreScratch->get();
-  LoadTypedThingLength(masm, layout, obj, scratch1);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch1);
   masm.spectreBoundsCheck32(index, scratch1, spectreTemp,
                             handleOOB ? &done : failure->label());
 
   // Load the elements vector.
-  LoadTypedThingData(masm, layout, obj, scratch1);
+  masm.loadPtr(Address(obj, ArrayBufferViewObject::dataOffset()), scratch1);
 
   BaseIndex dest(scratch1, index,
                  ScaleFromElemWidth(Scalar::byteSize(elementType)));
@@ -4800,26 +4795,6 @@ bool CacheIRCompiler::emitStoreTypedElement(ObjOperandId objId,
   return true;
 }
 
-bool CacheIRCompiler::emitStoreTypedArrayElement(ObjOperandId objId,
-                                                 Scalar::Type elementType,
-                                                 Int32OperandId indexId,
-                                                 uint32_t rhsId,
-                                                 bool handleOOB) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  return emitStoreTypedElement(objId, TypedThingLayout::TypedArray, elementType,
-                               indexId, rhsId, handleOOB);
-}
-
-bool CacheIRCompiler::emitStoreTypedObjectElement(ObjOperandId objId,
-                                                  TypedThingLayout layout,
-                                                  Scalar::Type elementType,
-                                                  Int32OperandId indexId,
-                                                  uint32_t rhsId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  return emitStoreTypedElement(objId, layout, elementType, indexId, rhsId,
-                               false);
-}
-
 static bool CanNurseryAllocateBigInt(JSContext* cx) {
   JS::Zone* zone = cx->zone();
   return zone->runtimeFromAnyThread()->gc.nursery().canAllocateBigInts() &&
@@ -4836,12 +4811,13 @@ static void EmitAllocateBigInt(MacroAssembler& masm, Register result,
     masm.bind(&fallback);
     masm.PushRegsInMask(liveSet);
 
+    using Fn = void* (*)(JSContext * cx, bool requestMinorGC);
     masm.setupUnalignedABICall(temp);
     masm.loadJSContext(temp);
     masm.passABIArg(temp);
     masm.move32(Imm32(attemptNursery), result);
     masm.passABIArg(result);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::AllocateBigIntNoGC));
+    masm.callWithABI<Fn, jit::AllocateBigIntNoGC>();
     masm.storeCallPointerResult(result);
 
     masm.PopRegsInMask(liveSet);
@@ -4850,9 +4826,10 @@ static void EmitAllocateBigInt(MacroAssembler& masm, Register result,
   masm.bind(&done);
 }
 
-bool CacheIRCompiler::emitLoadTypedElementResult(
-    ObjOperandId objId, Int32OperandId indexId, TypedThingLayout layout,
-    Scalar::Type elementType, bool handleOOB, bool allowDoubleForUint32) {
+bool CacheIRCompiler::emitLoadTypedArrayElementResult(
+    ObjOperandId objId, Int32OperandId indexId, Scalar::Type elementType,
+    bool handleOOB, bool allowDoubleForUint32) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
   Register obj = allocator.useRegister(masm, objId);
   Register index = allocator.useRegister(masm, indexId);
@@ -4893,7 +4870,7 @@ bool CacheIRCompiler::emitLoadTypedElementResult(
 
   // Bounds check.
   Label outOfBounds;
-  LoadTypedThingLength(masm, layout, obj, scratch1);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch1);
   masm.spectreBoundsCheck32(index, scratch1, scratch2,
                             handleOOB ? &outOfBounds : failure->label());
 
@@ -4914,7 +4891,7 @@ bool CacheIRCompiler::emitLoadTypedElementResult(
   }
 
   // Load the elements vector.
-  LoadTypedThingData(masm, layout, obj, scratch1);
+  masm.loadPtr(Address(obj, ArrayBufferViewObject::dataOffset()), scratch1);
 
   // Load the value.
   BaseIndex source(scratch1, index,
@@ -4977,31 +4954,13 @@ bool CacheIRCompiler::emitLoadTypedElementResult(
   return true;
 }
 
-bool CacheIRCompiler::emitLoadTypedArrayElementResult(
-    ObjOperandId objId, Int32OperandId indexId, Scalar::Type elementType,
-    bool handleOOB, bool allowDoubleForUint32) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  return emitLoadTypedElementResult(objId, indexId,
-                                    TypedThingLayout::TypedArray, elementType,
-                                    handleOOB, allowDoubleForUint32);
-}
-
-bool CacheIRCompiler::emitLoadTypedObjectElementResult(
-    ObjOperandId objId, Int32OperandId indexId, TypedThingLayout layout,
-    Scalar::Type elementType) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  return emitLoadTypedElementResult(objId, indexId, layout, elementType,
-                                    /* handleOOB = */ false,
-                                    /* allowDoubleForUint32 = */ true);
-}
-
 static void EmitDataViewBoundsCheck(MacroAssembler& masm, size_t byteSize,
                                     Register obj, Register offset,
                                     Register scratch, Label* fail) {
   // Ensure both offset < length and offset + (byteSize - 1) < length.
   static_assert(ArrayBufferObject::MaxBufferByteLength <= INT32_MAX,
                 "Code assumes DataView length fits in int32");
-  masm.unboxInt32(Address(obj, DataViewObject::lengthOffset()), scratch);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   if (byteSize == 1) {
     masm.spectreBoundsCheck32(offset, scratch, InvalidReg, fail);
   } else {
@@ -5384,182 +5343,6 @@ bool CacheIRCompiler::emitStoreDataViewValueResult(
   return true;
 }
 
-bool CacheIRCompiler::emitStoreTypedObjectScalarProperty(
-    ObjOperandId objId, uint32_t offsetOffset, TypedThingLayout layout,
-    Scalar::Type type, uint32_t rhsId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-  StubFieldOffset offset(offsetOffset, StubField::Type::RawInt32);
-
-  AutoAvailableFloatRegister floatScratch0(*this, FloatReg0);
-
-  Maybe<Register> valInt32;
-  Maybe<Register> valBigInt;
-  switch (type) {
-    case Scalar::Int8:
-    case Scalar::Uint8:
-    case Scalar::Int16:
-    case Scalar::Uint16:
-    case Scalar::Int32:
-    case Scalar::Uint32:
-    case Scalar::Uint8Clamped:
-      valInt32.emplace(allocator.useRegister(masm, Int32OperandId(rhsId)));
-      break;
-
-    case Scalar::Float32:
-    case Scalar::Float64:
-      allocator.ensureDoubleRegister(masm, NumberOperandId(rhsId),
-                                     floatScratch0);
-      break;
-
-    case Scalar::BigInt64:
-    case Scalar::BigUint64:
-      valBigInt.emplace(allocator.useRegister(masm, BigIntOperandId(rhsId)));
-      break;
-
-    case Scalar::MaxTypedArrayViewType:
-    case Scalar::Int64:
-    case Scalar::Simd128:
-      MOZ_CRASH("Unsupported TypedArray type");
-  }
-
-  AutoScratchRegister scratch(allocator, masm);
-  Maybe<AutoScratchRegister> bigIntScratch;
-  if (Scalar::isBigIntType(type)) {
-    bigIntScratch.emplace(allocator, masm);
-  }
-
-  // Compute the address being written to.
-  LoadTypedThingData(masm, layout, obj, scratch);
-  Address dest = emitAddressFromStubField(offset, scratch);
-
-  if (Scalar::isBigIntType(type)) {
-#ifdef JS_PUNBOX64
-    Register64 temp(bigIntScratch->get());
-#else
-    // We don't have more registers available on x86, so spill |obj|.
-    masm.push(obj);
-    Register64 temp(bigIntScratch->get(), obj);
-#endif
-
-    masm.loadBigInt64(*valBigInt, temp);
-    masm.storeToTypedBigIntArray(type, temp, dest);
-
-#ifndef JS_PUNBOX64
-    masm.pop(obj);
-#endif
-  } else if (type == Scalar::Float32) {
-    ScratchFloat32Scope fpscratch(masm);
-    masm.convertDoubleToFloat32(floatScratch0, fpscratch);
-    masm.storeToTypedFloatArray(type, fpscratch, dest);
-  } else if (type == Scalar::Float64) {
-    masm.storeToTypedFloatArray(type, floatScratch0, dest);
-  } else {
-    masm.storeToTypedIntArray(type, *valInt32, dest);
-  }
-  return true;
-}
-
-bool CacheIRCompiler::emitLoadTypedObjectResult(ObjOperandId objId,
-                                                TypedThingLayout layout,
-                                                uint8_t typeDescr,
-                                                uint32_t offsetOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoOutputRegister output(*this);
-  MOZ_ASSERT(output.hasValue());
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-
-  StubFieldOffset offset(offsetOffset, StubField::Type::RawInt32);
-
-  // Allocate BigInt if needed. The code after this should be infallible.
-  Maybe<Register> bigInt;
-  if (SimpleTypeDescrKeyIsScalar(typeDescr)) {
-    Scalar::Type type = ScalarTypeFromSimpleTypeDescrKey(typeDescr);
-    if (Scalar::isBigIntType(type)) {
-      FailurePath* failure;
-      if (!addFailurePath(&failure)) {
-        return false;
-      }
-
-      bigInt.emplace(output.valueReg().scratchReg());
-
-      LiveRegisterSet save(GeneralRegisterSet::Volatile(),
-                           liveVolatileFloatRegs());
-      save.takeUnchecked(scratch1);
-      save.takeUnchecked(scratch2);
-      save.takeUnchecked(output);
-
-      bool attemptNursery = CanNurseryAllocateBigInt(cx_);
-      EmitAllocateBigInt(masm, *bigInt, scratch1, save, failure->label(),
-                         attemptNursery);
-    }
-  }
-
-  // Get the object's data pointer.
-  LoadTypedThingData(masm, layout, obj, scratch1);
-
-  // Get the address being written to.
-  Address fieldAddr = emitAddressFromStubField(offset, scratch1);
-
-  if (SimpleTypeDescrKeyIsScalar(typeDescr)) {
-    Scalar::Type type = ScalarTypeFromSimpleTypeDescrKey(typeDescr);
-
-    if (Scalar::isBigIntType(type)) {
-#ifdef JS_PUNBOX64
-      Register64 temp(scratch2);
-#else
-      // We don't have more registers available on x86, so spill |obj|.
-      masm.push(obj);
-      Register64 temp(scratch2, obj);
-#endif
-
-      masm.loadFromTypedBigIntArray(type, fieldAddr, *bigInt, temp);
-
-#ifndef JS_PUNBOX64
-      masm.pop(obj);
-#endif
-
-      masm.tagValue(JSVAL_TYPE_BIGINT, *bigInt, output.valueReg());
-    } else {
-      masm.loadFromTypedArray(type, fieldAddr, output.valueReg(),
-                              /* allowDouble = */ true, scratch2, nullptr);
-    }
-  } else {
-    ReferenceType type = ReferenceTypeFromSimpleTypeDescrKey(typeDescr);
-    switch (type) {
-      case ReferenceType::TYPE_ANY:
-        masm.loadValue(fieldAddr, output.valueReg());
-        break;
-
-      case ReferenceType::TYPE_WASM_ANYREF:
-        // TODO/AnyRef-boxing: With boxed immediates and strings this may be
-        // more complicated.
-      case ReferenceType::TYPE_OBJECT: {
-        Label notNull, done;
-        masm.loadPtr(fieldAddr, scratch2);
-        masm.branchTestPtr(Assembler::NonZero, scratch2, scratch2, &notNull);
-        masm.moveValue(NullValue(), output.valueReg());
-        masm.jump(&done);
-        masm.bind(&notNull);
-        masm.tagValue(JSVAL_TYPE_OBJECT, scratch2, output.valueReg());
-        masm.bind(&done);
-        break;
-      }
-
-      case ReferenceType::TYPE_STRING:
-        masm.loadPtr(fieldAddr, scratch2);
-        masm.tagValue(JSVAL_TYPE_STRING, scratch2, output.valueReg());
-        break;
-
-      default:
-        MOZ_CRASH("Invalid ReferenceTypeDescr");
-    }
-  }
-  return true;
-}
-
 bool CacheIRCompiler::emitStoreFixedSlotUndefinedResult(ObjOperandId objId,
                                                         uint32_t offsetOffset,
                                                         ValOperandId rhsId) {
@@ -5699,11 +5482,12 @@ bool CacheIRCompiler::emitLoadTypeOfObjectResult(ObjOperandId objId) {
                          liveVolatileFloatRegs());
     masm.PushRegsInMask(save);
 
+    using Fn = JSString* (*)(JSObject * obj, JSRuntime * rt);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(obj);
     masm.movePtr(ImmPtr(cx_->runtime()), scratch);
     masm.passABIArg(scratch);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, TypeOfObject));
+    masm.callWithABI<Fn, TypeOfObject>();
     masm.mov(ReturnReg, scratch);
 
     LiveRegisterSet ignore;
@@ -5797,9 +5581,10 @@ bool CacheIRCompiler::emitLoadObjectTruthyResult(ObjOperandId objId) {
     volatileRegs.takeUnchecked(output);
     masm.PushRegsInMask(volatileRegs);
 
+    using Fn = bool (*)(JSObject * obj);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(obj);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, js::EmulatesUndefined));
+    masm.callWithABI<Fn, js::EmulatesUndefined>();
     masm.convertBoolToInt32(ReturnReg, scratch);
     masm.xor32(Imm32(1), scratch);
 
@@ -5887,9 +5672,10 @@ bool CacheIRCompiler::emitLoadValueTruthyResult(ValOperandId inputId) {
         volatileRegs.takeUnchecked(output);
         masm.PushRegsInMask(volatileRegs);
 
+        using Fn = bool (*)(JSObject * obj);
         masm.setupUnalignedABICall(scratch2);
         masm.passABIArg(obj);
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, js::EmulatesUndefined));
+        masm.callWithABI<Fn, js::EmulatesUndefined>();
         masm.storeCallBoolResult(scratch2);
 
         masm.PopRegsInMask(volatileRegs);
@@ -6091,7 +5877,7 @@ bool CacheIRCompiler::emitCompareBigIntResult(JSOp op, BigIntOperandId lhsId,
     fn = jit::BigIntCompare<ComparisonKind::GreaterThanOrEqual>;
   }
 
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, fn));
+  masm.callWithABI(DynamicFunction<Fn>(fn));
   masm.storeCallBoolResult(scratch);
 
   LiveRegisterSet ignore;
@@ -6277,45 +6063,43 @@ bool CacheIRCompiler::emitCompareBigIntNumberResult(JSOp op,
 
   using FnBigIntNumber = bool (*)(BigInt*, double);
   using FnNumberBigInt = bool (*)(double, BigInt*);
-  void* fun;
   switch (op) {
     case JSOp::Eq: {
-      FnBigIntNumber fn = jit::BigIntNumberEqual<EqualityKind::Equal>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnBigIntNumber,
+                       jit::BigIntNumberEqual<EqualityKind::Equal>>();
       break;
     }
     case JSOp::Ne: {
-      FnBigIntNumber fn = jit::BigIntNumberEqual<EqualityKind::NotEqual>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnBigIntNumber,
+                       jit::BigIntNumberEqual<EqualityKind::NotEqual>>();
       break;
     }
     case JSOp::Lt: {
-      FnBigIntNumber fn = jit::BigIntNumberCompare<ComparisonKind::LessThan>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnBigIntNumber,
+                       jit::BigIntNumberCompare<ComparisonKind::LessThan>>();
       break;
     }
     case JSOp::Gt: {
-      FnNumberBigInt fn = jit::NumberBigIntCompare<ComparisonKind::LessThan>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnNumberBigInt,
+                       jit::NumberBigIntCompare<ComparisonKind::LessThan>>();
       break;
     }
     case JSOp::Le: {
-      FnNumberBigInt fn =
-          jit::NumberBigIntCompare<ComparisonKind::GreaterThanOrEqual>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<
+          FnNumberBigInt,
+          jit::NumberBigIntCompare<ComparisonKind::GreaterThanOrEqual>>();
       break;
     }
     case JSOp::Ge: {
-      FnBigIntNumber fn =
-          jit::BigIntNumberCompare<ComparisonKind::GreaterThanOrEqual>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<
+          FnBigIntNumber,
+          jit::BigIntNumberCompare<ComparisonKind::GreaterThanOrEqual>>();
       break;
     }
     default:
       MOZ_CRASH("unhandled op");
   }
 
-  masm.callWithABI(fun);
   masm.storeCallBoolResult(scratch);
 
   LiveRegisterSet ignore;
@@ -6360,45 +6144,43 @@ bool CacheIRCompiler::emitCompareNumberBigIntResult(JSOp op,
 
   using FnBigIntNumber = bool (*)(BigInt*, double);
   using FnNumberBigInt = bool (*)(double, BigInt*);
-  void* fun;
   switch (op) {
     case JSOp::Eq: {
-      FnBigIntNumber fn = jit::BigIntNumberEqual<EqualityKind::Equal>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnBigIntNumber,
+                       jit::BigIntNumberEqual<EqualityKind::Equal>>();
       break;
     }
     case JSOp::Ne: {
-      FnBigIntNumber fn = jit::BigIntNumberEqual<EqualityKind::NotEqual>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnBigIntNumber,
+                       jit::BigIntNumberEqual<EqualityKind::NotEqual>>();
       break;
     }
     case JSOp::Lt: {
-      FnNumberBigInt fn = jit::NumberBigIntCompare<ComparisonKind::LessThan>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnNumberBigInt,
+                       jit::NumberBigIntCompare<ComparisonKind::LessThan>>();
       break;
     }
     case JSOp::Gt: {
-      FnBigIntNumber fn = jit::BigIntNumberCompare<ComparisonKind::LessThan>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<FnBigIntNumber,
+                       jit::BigIntNumberCompare<ComparisonKind::LessThan>>();
       break;
     }
     case JSOp::Le: {
-      FnBigIntNumber fn =
-          jit::BigIntNumberCompare<ComparisonKind::GreaterThanOrEqual>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<
+          FnBigIntNumber,
+          jit::BigIntNumberCompare<ComparisonKind::GreaterThanOrEqual>>();
       break;
     }
     case JSOp::Ge: {
-      FnNumberBigInt fn =
-          jit::NumberBigIntCompare<ComparisonKind::GreaterThanOrEqual>;
-      fun = JS_FUNC_TO_DATA_PTR(void*, fn);
+      masm.callWithABI<
+          FnNumberBigInt,
+          jit::NumberBigIntCompare<ComparisonKind::GreaterThanOrEqual>>();
       break;
     }
     default:
       MOZ_CRASH("unhandled op");
   }
 
-  masm.callWithABI(fun);
   masm.storeCallBoolResult(scratch);
 
   LiveRegisterSet ignore;
@@ -6628,42 +6410,6 @@ bool CacheIRCompiler::emitBreakpoint() {
   return true;
 }
 
-void CacheIRCompiler::emitStoreTypedObjectReferenceProp(ValueOperand val,
-                                                        ReferenceType type,
-                                                        const Address& dest,
-                                                        Register scratch) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  // Callers will post-barrier this store.
-
-  switch (type) {
-    case ReferenceType::TYPE_ANY:
-      EmitPreBarrier(masm, dest, MIRType::Value);
-      masm.storeValue(val, dest);
-      break;
-
-    case ReferenceType::TYPE_WASM_ANYREF:
-      // TODO/AnyRef-boxing: With boxed immediates and strings this may be
-      // more complicated.
-    case ReferenceType::TYPE_OBJECT: {
-      EmitPreBarrier(masm, dest, MIRType::Object);
-      Label isNull, done;
-      masm.fallibleUnboxObject(val, scratch, &isNull);
-      masm.storePtr(scratch, dest);
-      masm.jump(&done);
-      masm.bind(&isNull);
-      masm.storePtr(ImmWord(0), dest);
-      masm.bind(&done);
-      break;
-    }
-
-    case ReferenceType::TYPE_STRING:
-      EmitPreBarrier(masm, dest, MIRType::String);
-      masm.unboxString(val, scratch);
-      masm.storePtr(scratch, dest);
-      break;
-  }
-}
-
 void CacheIRCompiler::emitRegisterEnumerator(Register enumeratorsList,
                                              Register iter, Register scratch) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -6722,10 +6468,11 @@ void CacheIRCompiler::emitPostBarrierShared(Register obj,
   masm.passABIArg(obj);
   if (maybeIndex != InvalidReg) {
     masm.passABIArg(maybeIndex);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(
-        void*, (PostWriteElementBarrier<IndexInBounds::Yes>)));
+    using Fn = void (*)(JSRuntime * rt, JSObject * obj, int32_t index);
+    masm.callWithABI<Fn, PostWriteElementBarrier<IndexInBounds::Yes>>();
   } else {
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, PostWriteBarrier));
+    using Fn = void (*)(JSRuntime * rt, js::gc::Cell * cell);
+    masm.callWithABI<Fn, PostWriteBarrier>();
   }
   masm.PopRegsInMask(save);
 
@@ -6752,11 +6499,12 @@ bool CacheIRCompiler::emitWrapResult() {
   LiveRegisterSet save(GeneralRegisterSet::Volatile(), liveVolatileFloatRegs());
   masm.PushRegsInMask(save);
 
+  using Fn = JSObject* (*)(JSContext * cx, JSObject * obj);
   masm.setupUnalignedABICall(scratch);
   masm.loadJSContext(scratch);
   masm.passABIArg(scratch);
   masm.passABIArg(obj);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, WrapObjectPure));
+  masm.callWithABI<Fn, WrapObjectPure>();
   masm.mov(ReturnReg, obj);
 
   LiveRegisterSet ignore;
@@ -6803,17 +6551,16 @@ bool CacheIRCompiler::emitMegamorphicLoadSlotByValueResult(ObjOperandId objId,
   volatileRegs.takeUnchecked(idVal);
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, Value * vp);
   masm.setupUnalignedABICall(scratch);
   masm.loadJSContext(scratch);
   masm.passABIArg(scratch);
   masm.passABIArg(obj);
   masm.passABIArg(idVal.scratchReg());
   if (handleMissing) {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, (GetNativeDataPropertyByValuePure<true>)));
+    masm.callWithABI<Fn, GetNativeDataPropertyByValuePure<true>>();
   } else {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, (GetNativeDataPropertyByValuePure<false>)));
+    masm.callWithABI<Fn, GetNativeDataPropertyByValuePure<false>>();
   }
   masm.mov(ReturnReg, scratch);
   masm.PopRegsInMask(volatileRegs);
@@ -6863,17 +6610,16 @@ bool CacheIRCompiler::emitMegamorphicHasPropResult(ObjOperandId objId,
   volatileRegs.takeUnchecked(idVal);
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, Value * vp);
   masm.setupUnalignedABICall(scratch);
   masm.loadJSContext(scratch);
   masm.passABIArg(scratch);
   masm.passABIArg(obj);
   masm.passABIArg(idVal.scratchReg());
   if (hasOwn) {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, HasNativeDataPropertyPure<true>));
+    masm.callWithABI<Fn, HasNativeDataPropertyPure<true>>();
   } else {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, HasNativeDataPropertyPure<false>));
+    masm.callWithABI<Fn, HasNativeDataPropertyPure<false>>();
   }
   masm.mov(ReturnReg, scratch);
   masm.PopRegsInMask(volatileRegs);
@@ -6918,13 +6664,15 @@ bool CacheIRCompiler::emitCallObjectHasSparseElementResult(
   volatileRegs.takeUnchecked(index);
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn =
+      bool (*)(JSContext * cx, NativeObject * obj, int32_t index, Value * vp);
   masm.setupUnalignedABICall(scratch1);
   masm.loadJSContext(scratch1);
   masm.passABIArg(scratch1);
   masm.passABIArg(obj);
   masm.passABIArg(index);
   masm.passABIArg(scratch2);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, HasNativeElementPure));
+  masm.callWithABI<Fn, HasNativeElementPure>();
   masm.mov(ReturnReg, scratch1);
   masm.PopRegsInMask(volatileRegs);
 
@@ -7098,6 +6846,8 @@ bool CacheIRCompiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
   volatileRegs.takeUnchecked(scratch3);
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn =
+      bool (*)(JSContext * cx, JSObject * obj, PropertyName * name, Value * vp);
   masm.setupUnalignedABICall(scratch1);
   masm.loadJSContext(scratch1);
   masm.passABIArg(scratch1);
@@ -7106,11 +6856,9 @@ bool CacheIRCompiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
   masm.passABIArg(scratch2);
   masm.passABIArg(scratch3);
   if (handleMissing) {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, (GetNativeDataPropertyPure<true>)));
+    masm.callWithABI<Fn, GetNativeDataPropertyPure<true>>();
   } else {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, (GetNativeDataPropertyPure<false>)));
+    masm.callWithABI<Fn, GetNativeDataPropertyPure<false>>();
   }
   masm.mov(ReturnReg, scratch2);
   masm.PopRegsInMask(volatileRegs);
@@ -7153,6 +6901,8 @@ bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
   volatileRegs.takeUnchecked(val);
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, PropertyName * name,
+                      Value * val);
   masm.setupUnalignedABICall(scratch1);
   masm.loadJSContext(scratch1);
   masm.passABIArg(scratch1);
@@ -7161,11 +6911,9 @@ bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
   masm.passABIArg(scratch2);
   masm.passABIArg(val.scratchReg());
   if (needsTypeBarrier) {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, (SetNativeDataPropertyPure<true>)));
+    masm.callWithABI<Fn, SetNativeDataPropertyPure<true>>();
   } else {
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, (SetNativeDataPropertyPure<false>)));
+    masm.callWithABI<Fn, SetNativeDataPropertyPure<false>>();
   }
   masm.mov(ReturnReg, scratch1);
   masm.PopRegsInMask(volatileRegs);
@@ -7197,13 +6945,14 @@ bool CacheIRCompiler::emitGuardHasGetterSetter(ObjOperandId objId,
   volatileRegs.takeUnchecked(scratch2);
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, Shape * propShape);
   masm.setupUnalignedABICall(scratch1);
   masm.loadJSContext(scratch1);
   masm.passABIArg(scratch1);
   masm.passABIArg(obj);
   emitLoadStubField(shape, scratch2);
   masm.passABIArg(scratch2);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ObjectHasGetterSetterPure));
+  masm.callWithABI<Fn, ObjectHasGetterSetterPure>();
   masm.mov(ReturnReg, scratch1);
   masm.PopRegsInMask(volatileRegs);
 
@@ -7292,7 +7041,7 @@ bool CacheIRCompiler::emitCallInt32ToString(Int32OperandId inputId,
   masm.loadJSContext(result);
   masm.passABIArg(result);
   masm.passABIArg(input);
-  masm.callWithABI<Fn, js::Int32ToStringHelperPure>();
+  masm.callWithABI<Fn, js::Int32ToStringPure>();
 
   masm.mov(ReturnReg, result);
   masm.PopRegsInMask(volatileRegs);
@@ -7329,7 +7078,7 @@ bool CacheIRCompiler::emitCallNumberToString(NumberOperandId inputId,
   masm.loadJSContext(result);
   masm.passABIArg(result);
   masm.passABIArg(floatScratch0, MoveOp::DOUBLE);
-  masm.callWithABI<Fn, js::NumberToStringHelperPure>();
+  masm.callWithABI<Fn, js::NumberToStringPure>();
 
   masm.mov(ReturnReg, result);
   masm.PopRegsInMask(volatileRegs);
@@ -7358,41 +7107,6 @@ bool CacheIRCompiler::emitBooleanToString(BooleanOperandId inputId,
   masm.bind(&done);
 
   return true;
-}
-
-void js::jit::LoadTypedThingData(MacroAssembler& masm, TypedThingLayout layout,
-                                 Register obj, Register result) {
-  switch (layout) {
-    case TypedThingLayout::TypedArray:
-      masm.loadPtr(Address(obj, ArrayBufferViewObject::dataOffset()), result);
-      break;
-    case TypedThingLayout::OutlineTypedObject:
-      masm.loadPtr(Address(obj, OutlineTypedObject::offsetOfData()), result);
-      break;
-    case TypedThingLayout::InlineTypedObject:
-      masm.computeEffectiveAddress(
-          Address(obj, InlineTypedObject::offsetOfDataStart()), result);
-      break;
-    default:
-      MOZ_CRASH();
-  }
-}
-
-void js::jit::LoadTypedThingLength(MacroAssembler& masm,
-                                   TypedThingLayout layout, Register obj,
-                                   Register result) {
-  switch (layout) {
-    case TypedThingLayout::TypedArray:
-      masm.unboxInt32(Address(obj, ArrayBufferViewObject::lengthOffset()),
-                      result);
-      break;
-    case TypedThingLayout::OutlineTypedObject:
-    case TypedThingLayout::InlineTypedObject:
-      masm.loadTypedObjectLength(obj, result);
-      break;
-    default:
-      MOZ_CRASH();
-  }
 }
 
 bool CacheIRCompiler::emitCallStringConcatResult(StringOperandId lhsId,
@@ -7794,7 +7508,7 @@ bool CacheIRCompiler::emitAtomicsCompareExchangeResult(
   }
 
   // Bounds check.
-  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
 
   // Atomic operations are highly platform-dependent, for example x86/x64 has
@@ -7849,7 +7563,7 @@ bool CacheIRCompiler::emitAtomicsReadModifyWriteResult(
   }
 
   // Bounds check.
-  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
 
   // See comment in emitAtomicsCompareExchange for why we use an ABI call.
@@ -7959,11 +7673,11 @@ bool CacheIRCompiler::emitAtomicsLoadResult(ObjOperandId objId,
   }
 
   // Bounds check.
-  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
 
   // Load the elements vector.
-  LoadTypedThingData(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.loadPtr(Address(obj, ArrayBufferViewObject::dataOffset()), scratch);
 
   // Load the value.
   BaseIndex source(scratch, index,
@@ -8012,11 +7726,11 @@ bool CacheIRCompiler::emitAtomicsStoreResult(ObjOperandId objId,
   }
 
   // Bounds check.
-  LoadTypedThingLength(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.loadArrayBufferViewLengthInt32(obj, scratch);
   masm.spectreBoundsCheck32(index, scratch, spectreTemp, failure->label());
 
   // Load the elements vector.
-  LoadTypedThingData(masm, TypedThingLayout::TypedArray, obj, scratch);
+  masm.loadPtr(Address(obj, ArrayBufferViewObject::dataOffset()), scratch);
 
   // Store the value.
   BaseIndex dest(scratch, index,

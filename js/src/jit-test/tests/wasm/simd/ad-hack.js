@@ -271,6 +271,7 @@ BigInt64Array.rectify = (x) => BigInt(x);
 
 Float32Array.inputs = [[1, -1, 1e10, -1e10],
                        [-1, -2, -1e10, 1e10],
+                       [5.1, -1.1, -4.3, -0],
                        ...permute([1, -10, NaN, Infinity])];
 Float32Array.rectify = (x) => Math.fround(x);
 
@@ -587,6 +588,9 @@ function min_u(bits) {
     }
 }
 
+function pmin(x, y) { return y < x ? y : x }
+function pmax(x, y) { return x < y ? y : x }
+
 assertEq(max_s(8)(1, 2), 2);
 assertEq(max_s(8)(1, 128), 1);
 assertEq(min_s(8)(1, 2), 1);
@@ -688,6 +692,10 @@ for ( let [op, memtype, rop, resultmemtype] of
        ['f64x2.gt', Float64Array, gt(-1), BigInt64Array],
        ['f64x2.le', Float64Array, le(-1), BigInt64Array],
        ['f64x2.ge', Float64Array, ge(-1), BigInt64Array],
+       ['f32x4.pmin', Float32Array, pmin],
+       ['f32x4.pmax', Float32Array, pmax],
+       ['f64x2.pmin', Float64Array, pmin],
+       ['f64x2.pmax', Float64Array, pmax],
       ])
 {
     let [ins, mem, resultmem] = insAndMemBinop(op, memtype, resultmemtype);
@@ -722,6 +730,29 @@ for ( let [op, memtype, rop, resultmemtype] of
         testIt(a,b);
 }
 
+// Widening integer dot product
+
+var ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "run")
+      (v128.store (i32.const 0)
+        (i32x4.dot_i16x8_s (v128.load (i32.const 16)) (v128.load (i32.const 32))))))`);
+
+var xs = [5, 1, -4, 2, 20, -15, 12, 3];
+var ys = [6, 0, -7, 3, 8, -1, -3, 7];
+var ans = [xs[0]*ys[0] + xs[1]*ys[1],
+           xs[2]*ys[2] + xs[3]*ys[3],
+           xs[4]*ys[4] + xs[5]*ys[5],
+           xs[6]*ys[6] + xs[7]*ys[7]];
+
+var mem16 = new Int16Array(ins.exports.mem.buffer);
+var mem32 = new Int32Array(ins.exports.mem.buffer);
+set(mem16, 8, xs);
+set(mem16, 16, ys);
+ins.exports.run();
+var result = get(mem32, 0, 4);
+assertSame(result, ans);
 
 // Splat, with and without constants (different code paths in ion)
 
@@ -812,8 +843,16 @@ function iabs(bits) { return (a) => zero_extend(a < 0 ? -a : a, bits) }
 function fneg(a) { return -a }
 function fabs(a) { return Math.abs(a) }
 function fsqrt(a) { return Math.fround(Math.sqrt(Math.fround(a))) }
-function sqrt(a) { return Math.sqrt(Math.fround(a)) }
+function dsqrt(a) { return Math.sqrt(a) }
 function bitnot(a) { return (~a) & 255 }
+function ffloor(x) { return Math.fround(Math.floor(x)) }
+function fceil(x) { return Math.fround(Math.ceil(x)) }
+function ftrunc(x) { return Math.fround(Math.sign(x)*Math.floor(Math.abs(x))) }
+function fnearest(x) { return Math.fround(Math.round(x)) }
+function dfloor(x) { return Math.floor(x) }
+function dceil(x) { return Math.ceil(x) }
+function dtrunc(x) { return Math.sign(x)*Math.floor(Math.abs(x)) }
+function dnearest(x) { return Math.round(x) }
 
 for ( let [op, memtype, rop, resultmemtype] of
       [['i8x16.neg', Int8Array, ineg(8)],
@@ -828,7 +867,15 @@ for ( let [op, memtype, rop, resultmemtype] of
        ['f32x4.abs', Float32Array, fabs],
        ['f64x2.abs', Float64Array, fabs],
        ['f32x4.sqrt', Float32Array, fsqrt],
-       ['f64x2.sqrt', Float64Array, sqrt],
+       ['f64x2.sqrt', Float64Array, dsqrt],
+       ['f32x4.ceil', Float32Array, fceil],
+       ['f32x4.floor', Float32Array, ffloor],
+       ['f32x4.trunc', Float32Array, ftrunc],
+       ['f32x4.nearest', Float32Array, fnearest],
+       ['f64x2.ceil', Float64Array, dceil],
+       ['f64x2.floor', Float64Array, dfloor],
+       ['f64x2.trunc', Float64Array, dtrunc],
+       ['f64x2.nearest', Float64Array, dnearest],
        ['v128.not', Uint8Array, bitnot],
       ])
 {
@@ -1542,6 +1589,7 @@ assertEq(ins.exports.const_extract_i64x2_1(), -2n);
 // operand 1 is v128 in memory
 // operand 2 is immediate scalar
 // lane index is immediate so we're testing something randomish but not zero
+// (note though that fp operations have special cases for zero)
 // result is v128 in memory
 
 var ins = wasmEvalText(`
@@ -1559,6 +1607,9 @@ var ins = wasmEvalText(`
     (func (export "replace_i64x2_1") (param $value i64)
       (v128.store (i32.const 0)
         (i64x2.replace_lane 1 (v128.load (i32.const 16)) (local.get $value))))
+    (func (export "replace_f32x4_0") (param $value f32)
+      (v128.store (i32.const 0)
+        (f32x4.replace_lane 0 (v128.load (i32.const 16)) (local.get $value))))
     (func (export "replace_f32x4_3") (param $value f32)
       (v128.store (i32.const 0)
         (f32x4.replace_lane 3 (v128.load (i32.const 16)) (local.get $value))))
@@ -1600,6 +1651,10 @@ assertSame(get(mem64, 0, 2), upd(as, 1, 42));
 
 var mem32 = new Float32Array(ins.exports.mem.buffer);
 var as = [1.5, 2.5, 3.5, 4.5];
+
+set(mem32, 4, as)
+ins.exports.replace_f32x4_0(42.5);
+assertSame(get(mem32, 0, 4), upd(as, 0, 42.5));
 
 set(mem32, 4, as)
 ins.exports.replace_f32x4_3(42.5);
@@ -1652,6 +1707,33 @@ var mem64 = new BigInt64Array(ins.exports.mem.buffer);
 mem64[37] = 83n;
 ins.exports.load_splat_v64x2(37*8);
 assertSame(get(mem64, 0, 2), [83, 83]);
+
+// Load and zero
+//
+// Operand is memory address of scalar
+// Result is v128 in memory
+
+var ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "load32_zero") (param $addr i32)
+      (v128.store (i32.const 0) (v128.load32_zero (local.get $addr))))
+    (func (export "load64_zero") (param $addr i32)
+      (v128.store (i32.const 0) (v128.load64_zero (local.get $addr)))))`);
+
+var mem32 = new Int32Array(ins.exports.mem.buffer);
+mem32[37] = 0x12345678;
+mem32[38] = 0xffffffff;
+mem32[39] = 0xfffffffe;
+mem32[40] = 0xfffffffd;
+ins.exports.load32_zero(37*4);
+assertSame(get(mem32, 0, 4), [0x12345678, 0, 0, 0]);
+
+var mem64 = new BigInt64Array(ins.exports.mem.buffer);
+mem64[37] = 0x12345678abcdef01n;
+mem64[38] = 0xffffffffffffffffn;
+ins.exports.load64_zero(37*8);
+assertSame(get(mem64, 0, 2), [0x12345678abcdef01n, 0n]);
 
 // Load and extend
 //
@@ -1767,7 +1849,7 @@ assertSame(get(mem8, 0, 16), iota(32).map((x) => ((x & 1) ? ys : xs)[x >>> 1]).s
 
 // Vector swizzle (variable permute).
 //
-// Operands and results are all in memory
+// Case 1: Operands and results are all in memory
 
 var ins = wasmEvalText(`
   (module
@@ -1788,6 +1870,28 @@ assertSame(get(mem8, 0, 16), [101,100,103,102,105,104,107,106,109,108,111,110,11
 set(mem8, 32, [9,8,11,10,13,12,16,14,1,0,3,2,5,192,7,6]);
 ins.exports.swizzle();
 assertSame(get(mem8, 0, 16), [109,108,111,110,113,112,0,114,101,100,103,102,105,0,107,106]);
+
+// Case 2: The mask operand is a constant; the swizzle gets optimized into a
+// shuffle (also see ion-analysis.js).
+
+for ( let [mask, expected] of [[[1,0,3,2,5,4,7,6,9,8,11,10,13,12,15,14],
+                                [101,100,103,102,105,104,107,106,109,108,111,110,113,112,115,114]],
+                               [[9,8,11,10,13,12,16,14,1,0,3,2,5,192,7,6],
+                                [109,108,111,110,113,112,0,114,101,100,103,102,105,0,107,106]]] ) {
+
+    let ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "swizzle")
+      (v128.store (i32.const 0)
+        (i8x16.swizzle (v128.load (i32.const 16)) (v128.const i8x16 ${mask.join(' ')})))))
+`);
+
+    let mem8 = new Uint8Array(ins.exports.mem.buffer);
+    set(mem8, 16, [100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115]);
+    ins.exports.swizzle();
+    assertSame(get(mem8, 0, 16), expected);
+}
 
 // Convert integer to floating point
 

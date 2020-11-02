@@ -292,21 +292,20 @@ AddrHostRecord::AddrHostRecord(const nsHostKey& key)
       mResolveAgain(false),
       mTrrAUsed(INIT),
       mTrrAAAAUsed(INIT),
-      mTrrLock("AddrHostRecord.mTrrLock"),
-      mBlacklistedCount(0) {}
+      mTrrLock("AddrHostRecord.mTrrLock") {}
 
 AddrHostRecord::~AddrHostRecord() {
   mCallbacks.clear();
-  Telemetry::Accumulate(Telemetry::DNS_BLACKLIST_COUNT, mBlacklistedCount);
+  Telemetry::Accumulate(Telemetry::DNS_BLACKLIST_COUNT, mUnusableCount);
 }
 
-bool AddrHostRecord::Blacklisted(const NetAddr* aQuery) {
-  // must call locked
-  LOG(("Checking blacklist for host [%s], host record [%p].\n", host.get(),
+bool AddrHostRecord::Blocklisted(const NetAddr* aQuery) {
+  addr_info_lock.AssertCurrentThreadOwns();
+  LOG(("Checking unusable list for host [%s], host record [%p].\n", host.get(),
        this));
 
-  // skip the string conversion for the common case of no blacklist
-  if (!mBlacklistedItems.Length()) {
+  // skip the string conversion for the common case of no blocklist
+  if (!mUnusableItems.Length()) {
     return false;
   }
 
@@ -316,9 +315,9 @@ bool AddrHostRecord::Blacklisted(const NetAddr* aQuery) {
   }
   nsDependentCString strQuery(buf);
 
-  for (uint32_t i = 0; i < mBlacklistedItems.Length(); i++) {
-    if (mBlacklistedItems.ElementAt(i).Equals(strQuery)) {
-      LOG(("Address [%s] is blacklisted for host [%s].\n", buf, host.get()));
+  for (uint32_t i = 0; i < mUnusableItems.Length(); i++) {
+    if (mUnusableItems.ElementAt(i).Equals(strQuery)) {
+      LOG(("Address [%s] is blocklisted for host [%s].\n", buf, host.get()));
       return true;
     }
   }
@@ -327,29 +326,29 @@ bool AddrHostRecord::Blacklisted(const NetAddr* aQuery) {
 }
 
 void AddrHostRecord::ReportUnusable(const NetAddr* aAddress) {
-  // must call locked
+  addr_info_lock.AssertCurrentThreadOwns();
   LOG(
-      ("Adding address to blacklist for host [%s], host record [%p]."
+      ("Adding address to blocklist for host [%s], host record [%p]."
        "used trr=%d\n",
        host.get(), this, mTRRSuccess));
 
-  ++mBlacklistedCount;
+  ++mUnusableCount;
 
   char buf[kIPv6CStrBufSize];
   if (aAddress->ToStringBuffer(buf, sizeof(buf))) {
     LOG(
-        ("Successfully adding address [%s] to blacklist for host "
+        ("Successfully adding address [%s] to blocklist for host "
          "[%s].\n",
          buf, host.get()));
-    mBlacklistedItems.AppendElement(nsCString(buf));
+    mUnusableItems.AppendElement(nsCString(buf));
   }
 }
 
-void AddrHostRecord::ResetBlacklist() {
-  // must call locked
-  LOG(("Resetting blacklist for host [%s], host record [%p].\n", host.get(),
+void AddrHostRecord::ResetBlocklist() {
+  addr_info_lock.AssertCurrentThreadOwns();
+  LOG(("Resetting blocklist for host [%s], host record [%p].\n", host.get(),
        this));
-  mBlacklistedItems.Clear();
+  mUnusableItems.Clear();
 }
 
 size_t AddrHostRecord::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
@@ -361,9 +360,9 @@ size_t AddrHostRecord::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
   n += addr_info ? addr_info->SizeOfIncludingThis(mallocSizeOf) : 0;
   n += mallocSizeOf(addr.get());
 
-  n += mBlacklistedItems.ShallowSizeOfExcludingThis(mallocSizeOf);
-  for (size_t i = 0; i < mBlacklistedItems.Length(); i++) {
-    n += mBlacklistedItems[i].SizeOfExcludingThisIfUnshared(mallocSizeOf);
+  n += mUnusableItems.ShallowSizeOfExcludingThis(mallocSizeOf);
+  for (size_t i = 0; i < mUnusableItems.Length(); i++) {
+    n += mUnusableItems[i].SizeOfExcludingThisIfUnshared(mallocSizeOf);
   }
   return n;
 }
@@ -917,11 +916,7 @@ nsresult nsHostResolver::GetHostRecord(const nsACString& host,
 
   RefPtr<nsHostRecord>& entry = mRecordDB.GetOrInsert(key);
   if (!entry) {
-    if (IS_ADDR_TYPE(type)) {
-      entry = new AddrHostRecord(key);
-    } else {
-      entry = new TypeHostRecord(key);
-    }
+    entry = InitRecord(key);
   }
 
   RefPtr<nsHostRecord> rec = entry;
@@ -938,6 +933,45 @@ nsresult nsHostResolver::GetHostRecord(const nsACString& host,
 
   *result = rec.forget().take();
   return NS_OK;
+}
+
+nsHostRecord* nsHostResolver::InitRecord(const nsHostKey& key) {
+  if (IS_ADDR_TYPE(key.type)) {
+    return new AddrHostRecord(key);
+  }
+  return new TypeHostRecord(key);
+}
+
+already_AddRefed<nsHostRecord> nsHostResolver::InitLoopbackRecord(
+    const nsHostKey& key, nsresult* aRv) {
+  MOZ_ASSERT(aRv);
+  MOZ_ASSERT(IS_ADDR_TYPE(key.type));
+
+  *aRv = NS_ERROR_FAILURE;
+  RefPtr<nsHostRecord> rec = InitRecord(key);
+
+  nsTArray<NetAddr> addresses;
+  PRNetAddr prAddr;
+  if (key.af == PR_AF_INET || key.af == PR_AF_UNSPEC) {
+    MOZ_RELEASE_ASSERT(PR_StringToNetAddr("127.0.0.1", &prAddr) == PR_SUCCESS);
+    addresses.AppendElement(NetAddr(&prAddr));
+  }
+  if (key.af == PR_AF_INET6 || key.af == PR_AF_UNSPEC) {
+    MOZ_RELEASE_ASSERT(PR_StringToNetAddr("::1", &prAddr) == PR_SUCCESS);
+    addresses.AppendElement(NetAddr(&prAddr));
+  }
+
+  RefPtr<AddrInfo> ai = new AddrInfo(rec->host, 0, std::move(addresses));
+
+  RefPtr<AddrHostRecord> addrRec = do_QueryObject(rec);
+  MutexAutoLock lock(addrRec->addr_info_lock);
+  addrRec->addr_info = ai;
+  addrRec->SetExpiration(TimeStamp::NowLoRes(), mDefaultCacheLifetime,
+                         mDefaultGracePeriod);
+  addrRec->negative = false;
+
+  *aRv = NS_OK;
+  return rec.forget();
 }
 
 nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
@@ -989,156 +1023,169 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
     MutexAutoLock lock(mLock);
 
     if (mShutdown) {
-      rv = NS_ERROR_NOT_INITIALIZED;
-    } else {
-      // check to see if there is already an entry for this |host|
-      // in the hash table.  if so, then check to see if we can't
-      // just reuse the lookup result.  otherwise, if there are
-      // any pending callbacks, then add to pending callbacks queue,
-      // and return.  otherwise, add ourselves as first pending
-      // callback, and proceed to do the lookup.
+      return NS_ERROR_NOT_INITIALIZED;
+    }
 
-      bool excludedFromTRR = false;
-      if (gTRRService && gTRRService->IsExcludedFromTRR(host)) {
-        flags |= RES_DISABLE_TRR;
-        excludedFromTRR = true;
+    // check to see if there is already an entry for this |host|
+    // in the hash table.  if so, then check to see if we can't
+    // just reuse the lookup result.  otherwise, if there are
+    // any pending callbacks, then add to pending callbacks queue,
+    // and return.  otherwise, add ourselves as first pending
+    // callback, and proceed to do the lookup.
 
-        if (!aTrrServer.IsEmpty()) {
-          return NS_ERROR_UNKNOWN_HOST;
-        }
+    bool excludedFromTRR = false;
+
+    if (gTRRService && gTRRService->IsExcludedFromTRR(host)) {
+      flags |= RES_DISABLE_TRR;
+      excludedFromTRR = true;
+
+      if (!aTrrServer.IsEmpty()) {
+        return NS_ERROR_UNKNOWN_HOST;
+      }
+    }
+
+    nsHostKey key(host, aTrrServer, type, flags, af,
+                  (aOriginAttributes.mPrivateBrowsingId > 0), originSuffix);
+
+    // Check if we have a localhost domain, if so hardcode to loopback
+    if (IS_ADDR_TYPE(type) && IsLoopbackHostname(host)) {
+      nsresult rv;
+      RefPtr<nsHostRecord> result = InitLoopbackRecord(key, &rv);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
+      MOZ_ASSERT(result);
+      aCallback->OnResolveHostComplete(this, result, NS_OK);
+      return NS_OK;
+    }
+
+    RefPtr<nsHostRecord>& entry = mRecordDB.GetOrInsert(key);
+    if (!entry) {
+      entry = InitRecord(key);
+    }
+
+    RefPtr<nsHostRecord> rec = entry;
+    RefPtr<AddrHostRecord> addrRec = do_QueryObject(rec);
+    MOZ_ASSERT(rec, "Record should not be null");
+    MOZ_ASSERT((IS_ADDR_TYPE(type) && rec->IsAddrRecord() && addrRec) ||
+               (IS_OTHER_TYPE(type) && !rec->IsAddrRecord()));
+
+    if (excludedFromTRR) {
+      rec->RecordReason(nsHostRecord::TRR_EXCLUDED);
+    }
+
+    if (!(flags & RES_BYPASS_CACHE) &&
+        rec->HasUsableResult(TimeStamp::NowLoRes(), flags)) {
+      LOG(("  Using cached record for host [%s].\n", host.get()));
+      // put reference to host record on stack...
+      result = rec;
+      if (IS_ADDR_TYPE(type)) {
+        Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
       }
 
-      nsHostKey key(host, aTrrServer, type, flags, af,
-                    (aOriginAttributes.mPrivateBrowsingId > 0), originSuffix);
-      RefPtr<nsHostRecord>& entry = mRecordDB.GetOrInsert(key);
-      if (!entry) {
+      // For entries that are in the grace period
+      // or all cached negative entries, use the cache but start a new
+      // lookup in the background
+      ConditionallyRefreshRecord(rec, host);
+
+      if (rec->negative) {
+        LOG(("  Negative cache entry for host [%s].\n", host.get()));
         if (IS_ADDR_TYPE(type)) {
-          entry = new AddrHostRecord(key);
-        } else {
-          entry = new TypeHostRecord(key);
+          Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
+                                METHOD_NEGATIVE_HIT);
         }
+        status = NS_ERROR_UNKNOWN_HOST;
       }
 
-      RefPtr<nsHostRecord> rec = entry;
-      RefPtr<AddrHostRecord> addrRec = do_QueryObject(rec);
-      MOZ_ASSERT(rec, "Record should not be null");
-      MOZ_ASSERT((IS_ADDR_TYPE(type) && rec->IsAddrRecord() && addrRec) ||
-                 (IS_OTHER_TYPE(type) && !rec->IsAddrRecord()));
+      // Check whether host is a IP address for A/AAAA queries.
+      // For by-type records we have already checked at the beginning of
+      // this function.
+    } else if (addrRec && addrRec->addr) {
+      // if the host name is an IP address literal and has been
+      // parsed, go ahead and use it.
+      LOG(("  Using cached address for IP Literal [%s].\n", host.get()));
+      Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
+      result = rec;
+    } else if (addrRec &&
+               PR_StringToNetAddr(host.get(), &tempAddr) == PR_SUCCESS) {
+      // try parsing the host name as an IP address literal to short
+      // circuit full host resolution.  (this is necessary on some
+      // platforms like Win9x.  see bug 219376 for more details.)
+      LOG(("  Host is IP Literal [%s].\n", host.get()));
 
-      if (excludedFromTRR) {
-        rec->RecordReason(nsHostRecord::TRR_EXCLUDED);
+      // ok, just copy the result into the host record, and be
+      // done with it! ;-)
+      addrRec->addr = MakeUnique<NetAddr>();
+      PRNetAddrToNetAddr(&tempAddr, addrRec->addr.get());
+      // put reference to host record on stack...
+      Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
+      result = rec;
+
+      // Check if we have received too many requests.
+    } else if (mPendingCount >= MAX_NON_PRIORITY_REQUESTS &&
+               !IsHighPriority(flags) && !rec->mResolving) {
+      LOG(
+          ("  Lookup queue full: dropping %s priority request for "
+           "host [%s].\n",
+           IsMediumPriority(flags) ? "medium" : "low", host.get()));
+      if (IS_ADDR_TYPE(type)) {
+        Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_OVERFLOW);
       }
+      // This is a lower priority request and we are swamped, so refuse it.
+      rv = NS_ERROR_DNS_LOOKUP_QUEUE_FULL;
 
-      // Check if the entry is vaild.
-      if (!(flags & RES_BYPASS_CACHE) &&
-          rec->HasUsableResult(TimeStamp::NowLoRes(), flags)) {
-        LOG(("  Using cached record for host [%s].\n", host.get()));
-        // put reference to host record on stack...
-        result = rec;
-        if (IS_ADDR_TYPE(type)) {
-          Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
-        }
+      // Check if the offline flag is set.
+    } else if (flags & RES_OFFLINE) {
+      LOG(("  Offline request for host [%s]; ignoring.\n", host.get()));
+      rv = NS_ERROR_OFFLINE;
 
-        // For entries that are in the grace period
-        // or all cached negative entries, use the cache but start a new
-        // lookup in the background
-        ConditionallyRefreshRecord(rec, host);
+      // We do not have a valid result till here.
+      // A/AAAA request can check for an alternative entry like AF_UNSPEC.
+      // Otherwise we need to start a new query.
+    } else if (!rec->mResolving) {
+      // If this is an IPV4 or IPV6 specific request, check if there is
+      // an AF_UNSPEC entry we can use. Otherwise, hit the resolver...
+      if (addrRec && !(flags & RES_BYPASS_CACHE) &&
+          ((af == PR_AF_INET) || (af == PR_AF_INET6))) {
+        // Check for an AF_UNSPEC entry.
 
-        if (rec->negative) {
-          LOG(("  Negative cache entry for host [%s].\n", host.get()));
-          if (IS_ADDR_TYPE(type)) {
-            Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
-                                  METHOD_NEGATIVE_HIT);
-          }
-          status = NS_ERROR_UNKNOWN_HOST;
-        }
+        const nsHostKey unspecKey(
+            host, aTrrServer, nsIDNSService::RESOLVE_TYPE_DEFAULT, flags,
+            PR_AF_UNSPEC, (aOriginAttributes.mPrivateBrowsingId > 0),
+            originSuffix);
+        RefPtr<nsHostRecord> unspecRec = mRecordDB.Get(unspecKey);
 
-        // Check whether host is a IP address for A/AAAA queries.
-        // For by-type records we have already checked at the beginning of
-        // this function.
-      } else if (addrRec && addrRec->addr) {
-        // if the host name is an IP address literal and has been
-        // parsed, go ahead and use it.
-        LOG(("  Using cached address for IP Literal [%s].\n", host.get()));
-        Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
-        result = rec;
-      } else if (addrRec &&
-                 PR_StringToNetAddr(host.get(), &tempAddr) == PR_SUCCESS) {
-        // try parsing the host name as an IP address literal to short
-        // circuit full host resolution.  (this is necessary on some
-        // platforms like Win9x.  see bug 219376 for more details.)
-        LOG(("  Host is IP Literal [%s].\n", host.get()));
+        TimeStamp now = TimeStamp::NowLoRes();
+        if (unspecRec && unspecRec->HasUsableResult(now, flags)) {
+          MOZ_ASSERT(unspecRec->IsAddrRecord());
 
-        // ok, just copy the result into the host record, and be
-        // done with it! ;-)
-        addrRec->addr = MakeUnique<NetAddr>(&tempAddr);
-        // put reference to host record on stack...
-        Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
-        result = rec;
+          RefPtr<AddrHostRecord> addrUnspecRec = do_QueryObject(unspecRec);
+          MOZ_ASSERT(addrUnspecRec);
+          MOZ_ASSERT(addrUnspecRec->addr_info || addrUnspecRec->negative,
+                     "Entry should be resolved or negative.");
 
-        // Check if we have received too many requests.
-      } else if (mPendingCount >= MAX_NON_PRIORITY_REQUESTS &&
-                 !IsHighPriority(flags) && !rec->mResolving) {
-        LOG(
-            ("  Lookup queue full: dropping %s priority request for "
-             "host [%s].\n",
-             IsMediumPriority(flags) ? "medium" : "low", host.get()));
-        if (IS_ADDR_TYPE(type)) {
-          Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_OVERFLOW);
-        }
-        // This is a lower priority request and we are swamped, so refuse it.
-        rv = NS_ERROR_DNS_LOOKUP_QUEUE_FULL;
+          LOG(("  Trying AF_UNSPEC entry for host [%s] af: %s.\n", host.get(),
+               (af == PR_AF_INET) ? "AF_INET" : "AF_INET6"));
 
-        // Check if the offline flag is set.
-      } else if (flags & RES_OFFLINE) {
-        LOG(("  Offline request for host [%s]; ignoring.\n", host.get()));
-        rv = NS_ERROR_OFFLINE;
+          // We need to lock in case any other thread is reading
+          // addr_info.
+          MutexAutoLock lock(addrRec->addr_info_lock);
 
-        // We do not have a valid result till here.
-        // A/AAAA request can check for an alternative entry like AF_UNSPEC.
-        // Otherwise we need to start a new query.
-      } else if (!rec->mResolving) {
-        // If this is an IPV4 or IPV6 specific request, check if there is
-        // an AF_UNSPEC entry we can use. Otherwise, hit the resolver...
-        if (addrRec && !(flags & RES_BYPASS_CACHE) &&
-            ((af == PR_AF_INET) || (af == PR_AF_INET6))) {
-          // Check for an AF_UNSPEC entry.
-
-          const nsHostKey unspecKey(
-              host, aTrrServer, nsIDNSService::RESOLVE_TYPE_DEFAULT, flags,
-              PR_AF_UNSPEC, (aOriginAttributes.mPrivateBrowsingId > 0),
-              originSuffix);
-          RefPtr<nsHostRecord> unspecRec = mRecordDB.Get(unspecKey);
-
-          TimeStamp now = TimeStamp::NowLoRes();
-          if (unspecRec && unspecRec->HasUsableResult(now, flags)) {
-            MOZ_ASSERT(unspecRec->IsAddrRecord());
-
-            RefPtr<AddrHostRecord> addrUnspecRec = do_QueryObject(unspecRec);
-            MOZ_ASSERT(addrUnspecRec);
-            MOZ_ASSERT(addrUnspecRec->addr_info || addrUnspecRec->negative,
-                       "Entry should be resolved or negative.");
-
-            LOG(("  Trying AF_UNSPEC entry for host [%s] af: %s.\n", host.get(),
-                 (af == PR_AF_INET) ? "AF_INET" : "AF_INET6"));
-
-            // We need to lock in case any other thread is reading
-            // addr_info.
-            MutexAutoLock lock(addrRec->addr_info_lock);
-
-            addrRec->addr_info = nullptr;
-            addrRec->addr_info_gencnt++;
-            if (unspecRec->negative) {
-              rec->negative = unspecRec->negative;
-              rec->CopyExpirationTimesAndFlagsFrom(unspecRec);
-            } else if (addrUnspecRec->addr_info) {
+          addrRec->addr_info = nullptr;
+          addrRec->addr_info_gencnt++;
+          if (unspecRec->negative) {
+            rec->negative = unspecRec->negative;
+            rec->CopyExpirationTimesAndFlagsFrom(unspecRec);
+          } else if (addrUnspecRec->addr_info) {
+            MutexAutoLock lock(addrUnspecRec->addr_info_lock);
+            if (addrUnspecRec->addr_info) {
               // Search for any valid address in the AF_UNSPEC entry
-              // in the cache (not blacklisted and from the right
+              // in the cache (not blocklisted and from the right
               // family).
               nsTArray<NetAddr> addresses;
               for (const auto& addr : addrUnspecRec->addr_info->Addresses()) {
                 if ((af == addr.inet.family) &&
-                    !addrUnspecRec->Blacklisted(&addr)) {
+                    !addrUnspecRec->Blocklisted(&addr)) {
                   addresses.AppendElement(addr);
                 }
               }
@@ -1151,107 +1198,107 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
                 rec->CopyExpirationTimesAndFlagsFrom(unspecRec);
               }
             }
-            // Now check if we have a new record.
-            if (rec->HasUsableResult(now, flags)) {
-              result = rec;
-              if (rec->negative) {
-                status = NS_ERROR_UNKNOWN_HOST;
-              }
-              Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
-              ConditionallyRefreshRecord(rec, host);
-            } else if (af == PR_AF_INET6) {
-              // For AF_INET6, a new lookup means another AF_UNSPEC
-              // lookup. We have already iterated through the
-              // AF_UNSPEC addresses, so we mark this record as
-              // negative.
-              LOG(
-                  ("  No AF_INET6 in AF_UNSPEC entry: "
-                   "host [%s] unknown host.",
-                   host.get()));
-              result = rec;
-              rec->negative = true;
+          }
+          // Now check if we have a new record.
+          if (rec->HasUsableResult(now, flags)) {
+            result = rec;
+            if (rec->negative) {
               status = NS_ERROR_UNKNOWN_HOST;
-              Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
-                                    METHOD_NEGATIVE_HIT);
             }
-          }
-        }
-
-        // If this is a by-type request or if no valid record was found
-        // in the cache or this is an AF_UNSPEC request, then start a
-        // new lookup.
-        if (!result) {
-          LOG(("  No usable record in cache for host [%s] type %d.", host.get(),
-               type));
-
-          if (flags & RES_REFRESH_CACHE) {
-            rec->Invalidate();
-          }
-
-          // Add callback to the list of pending callbacks.
-          rec->mCallbacks.insertBack(callback);
-          rec->flags = flags;
-          rv = NameLookup(rec);
-          if (IS_ADDR_TYPE(type)) {
-            Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
-                                  METHOD_NETWORK_FIRST);
-          }
-          if (NS_FAILED(rv) && callback->isInList()) {
-            callback->remove();
-          } else {
+            Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
+            ConditionallyRefreshRecord(rec, host);
+          } else if (af == PR_AF_INET6) {
+            // For AF_INET6, a new lookup means another AF_UNSPEC
+            // lookup. We have already iterated through the
+            // AF_UNSPEC addresses, so we mark this record as
+            // negative.
             LOG(
-                ("  DNS lookup for host [%s] blocking "
-                 "pending 'getaddrinfo' or trr query: "
-                 "callback [%p]",
-                 host.get(), callback.get()));
+                ("  No AF_INET6 in AF_UNSPEC entry: "
+                 "host [%s] unknown host.",
+                 host.get()));
+            result = rec;
+            rec->negative = true;
+            status = NS_ERROR_UNKNOWN_HOST;
+            Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
+                                  METHOD_NEGATIVE_HIT);
           }
         }
+      }
 
-      } else if (addrRec && addrRec->mDidCallbacks) {
-        // This is only for A/AAAA query.
-        // record is still pending more (TRR) data; make the callback
-        // at once
-        result = rec;
-        // make it count as a hit
-        Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
+      // If this is a by-type request or if no valid record was found
+      // in the cache or this is an AF_UNSPEC request, then start a
+      // new lookup.
+      if (!result) {
+        LOG(("  No usable record in cache for host [%s] type %d.", host.get(),
+             type));
 
-        LOG(("  Host [%s] re-using early TRR resolve data\n", host.get()));
-      } else {
-        LOG(
-            ("  Host [%s] is being resolved. Appending callback "
-             "[%p].",
-             host.get(), callback.get()));
+        if (flags & RES_REFRESH_CACHE) {
+          rec->Invalidate();
+        }
 
+        // Add callback to the list of pending callbacks.
         rec->mCallbacks.insertBack(callback);
-
-        // Only A/AAAA records are place in a queue. The queues are for
-        // the native resolver, therefore by-type request are never put
-        // into a queue.
-        if (addrRec && addrRec->onQueue) {
+        rec->flags = flags;
+        rv = NameLookup(rec);
+        if (IS_ADDR_TYPE(type)) {
           Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
-                                METHOD_NETWORK_SHARED);
+                                METHOD_NETWORK_FIRST);
+        }
+        if (NS_FAILED(rv) && callback->isInList()) {
+          callback->remove();
+        } else {
+          LOG(
+              ("  DNS lookup for host [%s] blocking "
+               "pending 'getaddrinfo' or trr query: "
+               "callback [%p]",
+               host.get(), callback.get()));
+        }
+      }
 
-          // Consider the case where we are on a pending queue of
-          // lower priority than the request is being made at.
-          // In that case we should upgrade to the higher queue.
+    } else if (addrRec && addrRec->mDidCallbacks) {
+      // This is only for A/AAAA query.
+      // record is still pending more (TRR) data; make the callback
+      // at once
+      result = rec;
+      // make it count as a hit
+      Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
 
-          if (IsHighPriority(flags) && !IsHighPriority(rec->flags)) {
-            // Move from (low|med) to high.
-            NS_ASSERTION(addrRec->onQueue,
-                         "Moving Host Record Not Currently Queued");
-            rec->remove();
-            mHighQ.insertBack(rec);
-            rec->flags = flags;
-            ConditionallyCreateThread(rec);
-          } else if (IsMediumPriority(flags) && IsLowPriority(rec->flags)) {
-            // Move from low to med.
-            NS_ASSERTION(addrRec->onQueue,
-                         "Moving Host Record Not Currently Queued");
-            rec->remove();
-            mMediumQ.insertBack(rec);
-            rec->flags = flags;
-            mIdleTaskCV.Notify();
-          }
+      LOG(("  Host [%s] re-using early TRR resolve data\n", host.get()));
+    } else {
+      LOG(
+          ("  Host [%s] is being resolved. Appending callback "
+           "[%p].",
+           host.get(), callback.get()));
+
+      rec->mCallbacks.insertBack(callback);
+
+      // Only A/AAAA records are place in a queue. The queues are for
+      // the native resolver, therefore by-type request are never put
+      // into a queue.
+      if (addrRec && addrRec->onQueue) {
+        Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
+                              METHOD_NETWORK_SHARED);
+
+        // Consider the case where we are on a pending queue of
+        // lower priority than the request is being made at.
+        // In that case we should upgrade to the higher queue.
+
+        if (IsHighPriority(flags) && !IsHighPriority(rec->flags)) {
+          // Move from (low|med) to high.
+          NS_ASSERTION(addrRec->onQueue,
+                       "Moving Host Record Not Currently Queued");
+          rec->remove();
+          mHighQ.insertBack(rec);
+          rec->flags = flags;
+          ConditionallyCreateThread(rec);
+        } else if (IsMediumPriority(flags) && IsLowPriority(rec->flags)) {
+          // Move from low to med.
+          NS_ASSERTION(addrRec->onQueue,
+                       "Moving Host Record Not Currently Queued");
+          rec->remove();
+          mMediumQ.insertBack(rec);
+          rec->flags = flags;
+          mIdleTaskCV.Notify();
         }
       }
     }

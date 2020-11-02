@@ -37,7 +37,6 @@ namespace geckoprofiler::markers {
 
 // Import some common markers from mozilla::baseprofiler::markers.
 using Tracing = mozilla::baseprofiler::markers::Tracing;
-using FileIO = mozilla::baseprofiler::markers::FileIO;
 using UserTimingMark = mozilla::baseprofiler::markers::UserTimingMark;
 using UserTimingMeasure = mozilla::baseprofiler::markers::UserTimingMeasure;
 using Hang = mozilla::baseprofiler::markers::Hang;
@@ -50,6 +49,12 @@ struct Budget {
     return mozilla::MakeStringSpan("Budget");
   }
   static void StreamJSONMarkerData(mozilla::JSONWriter& aWriter) {}
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    // Nothing outside the defaults.
+    return schema;
+  }
 };
 
 struct Pref {
@@ -71,6 +76,15 @@ struct Pref {
     aWriter.StringProperty("prefKind", PrefValueKindToString(aPrefKind));
     aWriter.StringProperty("prefType", PrefTypeToString(aPrefType));
     aWriter.StringProperty("prefValue", aPrefValue);
+  }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.AddKeyLabelFormat("prefName", "Name", MS::Format::string);
+    schema.AddKeyLabelFormat("prefKind", "Kind", MS::Format::string);
+    schema.AddKeyLabelFormat("prefType", "Type", MS::Format::string);
+    schema.AddKeyLabelFormat("prefValue", "Value", MS::Format::string);
+    return schema;
   }
 
  private:
@@ -121,6 +135,14 @@ struct LayerTranslation {
     aWriter.IntProperty("x", aPoint.x);
     aWriter.IntProperty("y", aPoint.y);
   }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.AddKeyLabelFormat("layer", "Layer", MS::Format::string);
+    schema.AddKeyLabelFormat("x", "X", MS::Format::integer);
+    schema.AddKeyLabelFormat("y", "Y", MS::Format::integer);
+    return schema;
+  }
 };
 
 // Tracks when a vsync occurs according to the HardwareComposer.
@@ -129,6 +151,12 @@ struct Vsync {
     return mozilla::MakeStringSpan("VsyncTimestamp");
   }
   static void StreamJSONMarkerData(mozilla::JSONWriter& aWriter) {}
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    // Nothing outside the defaults.
+    return schema;
+  }
 };
 
 struct Network {
@@ -196,6 +224,9 @@ struct Network {
                                                aTimings.responseEnd);
     }
   }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    return mozilla::MarkerSchema::SpecialFrontendLocation{};
+  }
 
  private:
   static mozilla::Span<const char> GetNetworkState(NetworkLoadType aType) {
@@ -249,6 +280,9 @@ struct ScreenshotPayload {
     aWriter.DoubleProperty("windowWidth", aWindowSize.width);
     aWriter.DoubleProperty("windowHeight", aWindowSize.height);
   }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    return mozilla::MarkerSchema::SpecialFrontendLocation{};
+  }
 };
 
 struct GCSlice {
@@ -265,6 +299,13 @@ struct GCSlice {
     } else {
       aWriter.NullProperty("timings");
     }
+  }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineMemory};
+    // No display instructions here, there is special handling in the front-end.
+    return schema;
   }
 };
 
@@ -283,6 +324,13 @@ struct GCMajor {
       aWriter.NullProperty("timings");
     }
   }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineMemory};
+    // No display instructions here, there is special handling in the front-end.
+    return schema;
+  }
 };
 
 struct GCMinor {
@@ -300,6 +348,13 @@ struct GCMinor {
       aWriter.NullProperty("nursery");
     }
   }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineMemory};
+    // No display instructions here, there is special handling in the front-end.
+    return schema;
+  }
 };
 
 struct StyleMarkerPayload {
@@ -309,12 +364,27 @@ struct StyleMarkerPayload {
   static void StreamJSONMarkerData(
       mozilla::JSONWriter& aWriter,
       const mozilla::ServoTraversalStatistics& aStats) {
-    aWriter.StringProperty("category", "Paint");
     aWriter.IntProperty("elementsTraversed", aStats.mElementsTraversed);
     aWriter.IntProperty("elementsStyled", aStats.mElementsStyled);
     aWriter.IntProperty("elementsMatched", aStats.mElementsMatched);
     aWriter.IntProperty("stylesShared", aStats.mStylesShared);
     aWriter.IntProperty("stylesReused", aStats.mStylesReused);
+  }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    using MS = mozilla::MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineOverview};
+    schema.AddKeyLabelFormat("elementsTraversed", "Elements traversed",
+                             MS::Format::integer);
+    schema.AddKeyLabelFormat("elementsStyled", "Elements styled",
+                             MS::Format::integer);
+    schema.AddKeyLabelFormat("elementsMatched", "Elements matched",
+                             MS::Format::integer);
+    schema.AddKeyLabelFormat("stylesShared", "Styles shared",
+                             MS::Format::integer);
+    schema.AddKeyLabelFormat("stylesReused", "Styles reused",
+                             MS::Format::integer);
+    return schema;
   }
 };
 
@@ -347,6 +417,9 @@ class JsAllocationMarkerPayload {
     aWriter.IntProperty("size", aSize);
     aWriter.BoolProperty("inNursery", aInNursery);
   }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    return mozilla::MarkerSchema::SpecialFrontendLocation{};
+  }
 };
 
 // This payload is for collecting information about native allocations. There is
@@ -361,6 +434,9 @@ struct NativeAllocationMarkerPayload {
     aWriter.IntProperty("size", aSize);
     aWriter.IntProperty("memoryAddress", static_cast<int64_t>(aMemoryAddress));
     aWriter.IntProperty("threadId", aThreadId);
+  }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    return mozilla::MarkerSchema::SpecialFrontendLocation{};
   }
 };
 
@@ -393,6 +469,9 @@ struct IPCMarkerPayload {
                                : mozilla::MakeStringSpan("receiving"));
     aWriter.StringProperty("phase", IPCPhaseToString(aPhase));
     aWriter.BoolProperty("sync", aSync);
+  }
+  static mozilla::MarkerSchema MarkerTypeDisplay() {
+    return mozilla::MarkerSchema::SpecialFrontendLocation{};
   }
 
  private:

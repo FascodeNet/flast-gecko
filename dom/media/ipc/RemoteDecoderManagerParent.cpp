@@ -10,6 +10,7 @@
 #endif
 
 #include "ImageContainer.h"
+#include "PDMFactory.h"
 #include "RemoteAudioDecoder.h"
 #include "RemoteVideoDecoder.h"
 #include "VideoUtils.h"  // for MediaThreadType
@@ -73,7 +74,7 @@ bool RemoteDecoderManagerParent::StartupThreads() {
   }
 
   sRemoteDecoderManagerParentThread = new TaskQueue(
-      GetMediaThreadPool(MediaThreadType::CONTROLLER), "RemVidParent");
+      GetMediaThreadPool(MediaThreadType::SUPERVISOR), "RemVidParent");
   if (XRE_IsGPUProcess()) {
     MOZ_ALWAYS_SUCCEEDS(
         sRemoteDecoderManagerParentThread->Dispatch(NS_NewRunnableFunction(
@@ -104,6 +105,14 @@ void RemoteDecoderManagerParent::ShutdownVideoBridge() {
 
 bool RemoteDecoderManagerParent::OnManagerThread() {
   return sRemoteDecoderManagerParentThread->IsOnCurrentThread();
+}
+
+PDMFactory& RemoteDecoderManagerParent::EnsurePDMFactory() {
+  MOZ_ASSERT(OnManagerThread());
+  if (!mPDMFactory) {
+    mPDMFactory = MakeRefPtr<PDMFactory>();
+  }
+  return *mPDMFactory;
 }
 
 bool RemoteDecoderManagerParent::CreateForContent(
@@ -187,7 +196,9 @@ PRemoteDecoderParent* RemoteDecoderManagerParent::AllocPRemoteDecoderParent(
         this, decoderInfo.videoInfo(), decoderInfo.framerate(), aOptions,
         aIdentifier, sRemoteDecoderManagerParentThread, decodeTaskQueue,
         aSuccess, aErrorDescription);
-  } else if (aRemoteDecoderInfo.type() == RemoteDecoderInfoIPDL::TAudioInfo) {
+  }
+
+  if (aRemoteDecoderInfo.type() == RemoteDecoderInfoIPDL::TAudioInfo) {
     return new RemoteAudioDecoderParent(
         this, aRemoteDecoderInfo.get_AudioInfo(), aOptions,
         sRemoteDecoderManagerParentThread, decodeTaskQueue, aSuccess,
@@ -215,6 +226,40 @@ void RemoteDecoderManagerParent::Open(
 }
 
 void RemoteDecoderManagerParent::ActorDealloc() { Release(); }
+
+mozilla::ipc::IPCResult RemoteDecoderManagerParent::RecvSupports(
+    const RemoteDecoderInfoIPDL& aInfo,
+    const Maybe<layers::TextureFactoryIdentifier>& aIdentifier, bool* aSuccess,
+    DecoderDoctorDiagnostics* aDiagnostics) {
+  auto& factory = EnsurePDMFactory();
+  MediaResult error(NS_OK);
+
+  // It's important to initialize aSuccess because it is passed uninitialized
+  // which will cause an assert on the receiving side.
+  *aSuccess = false;
+  if (aInfo.type() == RemoteDecoderInfoIPDL::TAudioInfo) {
+    SupportDecoderParams params(aInfo.get_AudioInfo(), &error);
+    *aSuccess = factory.Supports(params, aDiagnostics);
+  } else if (aInfo.type() == RemoteDecoderInfoIPDL::TVideoDecoderInfoIPDL) {
+    RefPtr<KnowsCompositorVideo> knowsCompositor;
+    if (aIdentifier) {
+      // Check to see if we have a direct PVideoBridge connection to the
+      // destination process specified in aIdentifier, and create a
+      // KnowsCompositor representing that connection if so. If this fails, then
+      // we fall back to returning the decoded frames directly via Output().
+      knowsCompositor =
+          KnowsCompositorVideo::TryCreateForIdentifier(*aIdentifier);
+    }
+
+    const VideoDecoderInfoIPDL& info = aInfo.get_VideoDecoderInfoIPDL();
+    SupportDecoderParams params(info.videoInfo(), knowsCompositor,
+                                media::VideoFrameRate(info.framerate()),
+                                &error);
+    *aSuccess = factory.Supports(params, aDiagnostics);
+  }
+
+  return IPC_OK();
+}
 
 mozilla::ipc::IPCResult RemoteDecoderManagerParent::RecvReadback(
     const SurfaceDescriptorGPUVideo& aSD, SurfaceDescriptor* aResult) {

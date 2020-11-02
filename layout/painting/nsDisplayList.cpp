@@ -90,7 +90,6 @@
 #include "nsPrintfCString.h"
 #include "UnitTransforms.h"
 #include "LayerAnimationInfo.h"
-#include "LayersLogging.h"
 #include "FrameLayerBuilder.h"
 #include "mozilla/EventStateManager.h"
 #include "nsCaret.h"
@@ -1108,7 +1107,8 @@ static bool DisplayListIsNonBlank(nsDisplayList* aList) {
 // non-white canvas or SVG. This excludes any content of iframes, but
 // includes text with pending webfonts. This is the first time users
 // could start consuming page content."
-static bool DisplayListIsContentful(nsDisplayList* aList) {
+static bool DisplayListIsContentful(nsDisplayListBuilder* aBuilder,
+                                    nsDisplayList* aList) {
   for (nsDisplayItem* i : *aList) {
     DisplayItemType type = i->GetType();
     nsDisplayList* children = i->GetChildren();
@@ -1120,10 +1120,14 @@ static bool DisplayListIsContentful(nsDisplayList* aList) {
       // actually tracking all modifications)
       default:
         if (i->IsContentful()) {
-          return true;
+          bool dummy;
+          nsRect bound = i->GetBounds(aBuilder, &dummy);
+          if (!bound.IsEmpty()) {
+            return true;
+          }
         }
         if (children) {
-          if (DisplayListIsContentful(children)) {
+          if (DisplayListIsContentful(aBuilder, children)) {
             return true;
           }
         }
@@ -1147,10 +1151,14 @@ void nsDisplayListBuilder::LeavePresShell(const nsIFrame* aReferenceFrame,
         pc->NotifyNonBlankPaint();
       }
     }
-    if (!pc->HadContentfulPaint()) {
-      if (!CurrentPresShellState()->mIsBackgroundOnly &&
-          DisplayListIsContentful(aPaintedContents)) {
-        pc->NotifyContentfulPaint();
+    nsRootPresContext* rootPresContext = pc->GetRootPresContext();
+    if (!pc->HadContentfulPaint() && rootPresContext &&
+        rootPresContext->RefreshDriver()->IsInRefresh()) {
+      if (!CurrentPresShellState()->mIsBackgroundOnly) {
+        if (pc->HasEverBuiltInvisibleText() ||
+            DisplayListIsContentful(this, aPaintedContents)) {
+          pc->NotifyContentfulPaint();
+        }
       }
     }
   }
@@ -1462,24 +1470,38 @@ const DisplayItemClipChain* nsDisplayListBuilder::FuseClipChainUpTo(
 
 const nsIFrame* nsDisplayListBuilder::FindReferenceFrameFor(
     const nsIFrame* aFrame, nsPoint* aOffset) const {
+  auto MaybeApplyAdditionalOffset = [&]() {
+    if (AdditionalOffset()) {
+      // The additional reference frame offset should only affect descendants
+      // of |mAdditionalOffsetFrame|.
+      MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDoc(mAdditionalOffsetFrame,
+                                                        aFrame));
+      *aOffset += *AdditionalOffset();
+    }
+  };
+
   if (aFrame == mCurrentFrame) {
     if (aOffset) {
       *aOffset = mCurrentOffsetToReferenceFrame;
     }
     return mCurrentReferenceFrame;
   }
+
   for (const nsIFrame* f = aFrame; f;
        f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
     if (f == mReferenceFrame || f->IsTransformed()) {
       if (aOffset) {
         *aOffset = aFrame->GetOffsetToCrossDoc(f);
+        MaybeApplyAdditionalOffset();
       }
       return f;
     }
   }
+
   if (aOffset) {
     *aOffset = aFrame->GetOffsetToCrossDoc(mReferenceFrame);
   }
+
   return mReferenceFrame;
 }
 
@@ -3552,7 +3574,11 @@ bool nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
   }
 
   bool drawBackgroundColor = false;
-  bool drawBackgroundImage = false;
+  // XUL root frames need special handling for now even though they return true
+  // from nsCSSRendering::IsCanvasFrame they rely on us painting the background
+  // image from here, see bug 1665476.
+  bool drawBackgroundImage =
+      aFrame->IsXULRootFrame() && aFrame->ComputeShouldPaintBackground().mImage;
   nscolor color = NS_RGBA(0, 0, 0, 0);
   if (!nsCSSRendering::IsCanvasFrame(aFrame) && bg) {
     color = nsCSSRendering::DetermineBackgroundColor(
@@ -5569,12 +5595,13 @@ void nsDisplayWrapList::Paint(nsDisplayListBuilder* aBuilder,
 static LayerState RequiredLayerStateForChildren(
     nsDisplayListBuilder* aBuilder, LayerManager* aManager,
     const ContainerLayerParameters& aParameters, const nsDisplayList& aList,
-    AnimatedGeometryRoot* aExpectedAnimatedGeometryRootForChildren) {
+    const AnimatedGeometryRoot* aExpectedAGRForChildren,
+    const ActiveScrolledRoot* aExpectedASRForChildren) {
   LayerState result = LayerState::LAYER_INACTIVE;
   for (nsDisplayItem* i : aList) {
     if (result == LayerState::LAYER_INACTIVE &&
-        i->GetAnimatedGeometryRoot() !=
-            aExpectedAnimatedGeometryRootForChildren) {
+        (i->GetAnimatedGeometryRoot() != aExpectedAGRForChildren ||
+         i->GetActiveScrolledRoot() != aExpectedASRForChildren)) {
       result = LayerState::LAYER_ACTIVE;
     }
 
@@ -5589,7 +5616,8 @@ static LayerState RequiredLayerStateForChildren(
       // So we ignore its layer state and look at its children instead.
       state = RequiredLayerStateForChildren(
           aBuilder, aManager, aParameters,
-          *i->GetSameCoordinateSystemChildren(), i->GetAnimatedGeometryRoot());
+          *i->GetSameCoordinateSystemChildren(), i->GetAnimatedGeometryRoot(),
+          i->GetActiveScrolledRoot());
     }
     if ((state == LayerState::LAYER_ACTIVE ||
          state == LayerState::LAYER_ACTIVE_FORCE) &&
@@ -5603,8 +5631,8 @@ static LayerState RequiredLayerStateForChildren(
       nsDisplayList* list = i->GetSameCoordinateSystemChildren();
       if (list) {
         LayerState childState = RequiredLayerStateForChildren(
-            aBuilder, aManager, aParameters, *list,
-            aExpectedAnimatedGeometryRootForChildren);
+            aBuilder, aManager, aParameters, *list, aExpectedAGRForChildren,
+            aExpectedASRForChildren);
         if (childState > result) {
           result = childState;
         }
@@ -5617,11 +5645,6 @@ static LayerState RequiredLayerStateForChildren(
 nsRect nsDisplayWrapList::GetComponentAlphaBounds(
     nsDisplayListBuilder* aBuilder) const {
   return mListPtr->GetComponentAlphaBounds(aBuilder);
-}
-
-void nsDisplayWrapList::SetReferenceFrame(const nsIFrame* aFrame) {
-  mReferenceFrame = aFrame;
-  mToReferenceFrame = mFrame->GetOffsetToCrossDoc(mReferenceFrame);
 }
 
 bool nsDisplayWrapList::CreateWebRenderCommands(
@@ -5991,7 +6014,8 @@ nsDisplayItem::LayerState nsDisplayOpacity::GetLayerState(
   }
 
   return RequiredLayerStateForChildren(aBuilder, aManager, aParameters, mList,
-                                       GetAnimatedGeometryRoot());
+                                       GetAnimatedGeometryRoot(),
+                                       GetActiveScrolledRoot());
 }
 
 bool nsDisplayOpacity::ComputeVisibility(nsDisplayListBuilder* aBuilder,
@@ -6217,7 +6241,8 @@ LayerState nsDisplayBlendContainer::GetLayerState(
     nsDisplayListBuilder* aBuilder, LayerManager* aManager,
     const ContainerLayerParameters& aParameters) {
   return RequiredLayerStateForChildren(aBuilder, aManager, aParameters, mList,
-                                       GetAnimatedGeometryRoot());
+                                       GetAnimatedGeometryRoot(),
+                                       GetActiveScrolledRoot());
 }
 
 bool nsDisplayBlendContainer::CreateWebRenderCommands(
@@ -6267,7 +6292,8 @@ LayerState nsDisplayOwnLayer::GetLayerState(
   }
 
   return RequiredLayerStateForChildren(aBuilder, aManager, aParameters, mList,
-                                       mAnimatedGeometryRoot);
+                                       GetAnimatedGeometryRoot(),
+                                       GetActiveScrolledRoot());
 }
 
 bool nsDisplayOwnLayer::IsScrollThumbLayer() const {
@@ -8184,9 +8210,9 @@ nsDisplayItem::LayerState nsDisplayTransform::GetLayerState(
   // geometry root (since it will be their reference frame). If they have a
   // different animated geometry root, we'll make this an active layer so the
   // animation can be accelerated.
-  return RequiredLayerStateForChildren(aBuilder, aManager, aParameters,
-                                       *GetChildren(),
-                                       mAnimatedGeometryRootForChildren);
+  return RequiredLayerStateForChildren(
+      aBuilder, aManager, aParameters, *GetChildren(),
+      mAnimatedGeometryRootForChildren, GetActiveScrolledRoot());
 }
 
 bool nsDisplayTransform::ComputeVisibility(nsDisplayListBuilder* aBuilder,
@@ -9292,7 +9318,8 @@ LayerState nsDisplayMasksAndClipPaths::GetLayerState(
     const ContainerLayerParameters& aParameters) {
   if (CanPaintOnMaskLayer(aManager)) {
     LayerState result = RequiredLayerStateForChildren(
-        aBuilder, aManager, aParameters, mList, GetAnimatedGeometryRoot());
+        aBuilder, aManager, aParameters, mList, GetAnimatedGeometryRoot(),
+        GetActiveScrolledRoot());
     // When we're not active, FrameLayerBuilder will call PaintAsLayer()
     // on us during painting. In that case we don't want a mask layer to
     // be created, because PaintAsLayer() takes care of applying the mask.
@@ -9656,7 +9683,8 @@ LayerState nsDisplayBackdropRootContainer::GetLayerState(
     nsDisplayListBuilder* aBuilder, LayerManager* aManager,
     const ContainerLayerParameters& aParameters) {
   return RequiredLayerStateForChildren(aBuilder, aManager, aParameters, mList,
-                                       GetAnimatedGeometryRoot());
+                                       GetAnimatedGeometryRoot(),
+                                       GetActiveScrolledRoot());
 }
 
 bool nsDisplayBackdropRootContainer::CreateWebRenderCommands(
@@ -10169,6 +10197,7 @@ nsDisplayListBuilder::AutoBuildingDisplayList::AutoBuildingDisplayList(
       mPrevHitTestArea(aBuilder->mHitTestArea),
       mPrevHitTestInfo(aBuilder->mHitTestInfo),
       mPrevOffset(aBuilder->mCurrentOffsetToReferenceFrame),
+      mPrevAdditionalOffset(aBuilder->mAdditionalOffset),
       mPrevVisibleRect(aBuilder->mVisibleRect),
       mPrevDirtyRect(aBuilder->mDirtyRect),
       mPrevAGR(aBuilder->mCurrentAGR),
@@ -10177,7 +10206,8 @@ nsDisplayListBuilder::AutoBuildingDisplayList::AutoBuildingDisplayList(
       mPrevBuildingInvisibleItems(aBuilder->mBuildingInvisibleItems),
       mPrevInInvalidSubtree(aBuilder->mInInvalidSubtree) {
   if (aIsTransformed) {
-    aBuilder->mCurrentOffsetToReferenceFrame = nsPoint();
+    aBuilder->mCurrentOffsetToReferenceFrame =
+        aBuilder->AdditionalOffset().refOr(nsPoint());
     aBuilder->mCurrentReferenceFrame = aForChild;
   } else if (aBuilder->mCurrentFrame == aForChild->GetParent()) {
     aBuilder->mCurrentOffsetToReferenceFrame += aForChild->GetPosition();

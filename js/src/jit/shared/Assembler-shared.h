@@ -11,14 +11,17 @@
 
 #include <limits.h>
 
+#include "gc/Barrier.h"
 #include "jit/AtomicOp.h"
 #include "jit/JitAllocPolicy.h"
+#include "jit/JitCode.h"
 #include "jit/JitContext.h"
 #include "jit/Label.h"
 #include "jit/Registers.h"
 #include "jit/RegisterSets.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/HelperThreads.h"
+#include "vm/NativeObject.h"
 #include "wasm/WasmTypes.h"
 
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
@@ -33,8 +36,6 @@
 // describing how Bind() should patch them.
 #  define JS_CODELABEL_LINKMODE
 #endif
-
-using mozilla::CheckedInt;
 
 namespace js {
 namespace jit {
@@ -270,6 +271,8 @@ struct Address {
 #if JS_BITS_PER_WORD == 32
 
 static inline Address LowWord(const Address& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64LOW_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -277,6 +280,8 @@ static inline Address LowWord(const Address& address) {
 }
 
 static inline Address HighWord(const Address& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64HIGH_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -307,6 +312,8 @@ struct BaseIndex {
 #if JS_BITS_PER_WORD == 32
 
 static inline BaseIndex LowWord(const BaseIndex& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64LOW_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -314,6 +321,8 @@ static inline BaseIndex LowWord(const BaseIndex& address) {
 }
 
 static inline BaseIndex HighWord(const BaseIndex& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64HIGH_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -495,7 +504,8 @@ class MemoryAccessDesc {
   Scalar::Type type_;
   jit::Synchronization sync_;
   wasm::BytecodeOffset trapOffset_;
-  bool zeroExtendSimd128Load_;
+  wasm::SimdOp widenOp_;
+  enum { Plain, ZeroExtend, Splat, Widen } loadOp_;
 
  public:
   explicit MemoryAccessDesc(
@@ -507,7 +517,8 @@ class MemoryAccessDesc {
         type_(type),
         sync_(sync),
         trapOffset_(trapOffset),
-        zeroExtendSimd128Load_(false) {
+        widenOp_(wasm::SimdOp::Limit),
+        loadOp_(Plain) {
     MOZ_ASSERT(mozilla::IsPowerOfTwo(align));
   }
 
@@ -517,13 +528,35 @@ class MemoryAccessDesc {
   unsigned byteSize() const { return Scalar::byteSize(type()); }
   const jit::Synchronization& sync() const { return sync_; }
   BytecodeOffset trapOffset() const { return trapOffset_; }
+  wasm::SimdOp widenSimdOp() const {
+    MOZ_ASSERT(isWidenSimd128Load());
+    return widenOp_;
+  }
   bool isAtomic() const { return !sync_.isNone(); }
-  bool isZeroExtendSimd128Load() const { return zeroExtendSimd128Load_; }
+  bool isZeroExtendSimd128Load() const { return loadOp_ == ZeroExtend; }
+  bool isSplatSimd128Load() const { return loadOp_ == Splat; }
+  bool isWidenSimd128Load() const { return loadOp_ == Widen; }
 
   void setZeroExtendSimd128Load() {
     MOZ_ASSERT(type() == Scalar::Float32 || type() == Scalar::Float64);
     MOZ_ASSERT(!isAtomic());
-    zeroExtendSimd128Load_ = true;
+    MOZ_ASSERT(loadOp_ == Plain);
+    loadOp_ = ZeroExtend;
+  }
+
+  void setSplatSimd128Load() {
+    MOZ_ASSERT(type() == Scalar::Float64);
+    MOZ_ASSERT(!isAtomic());
+    MOZ_ASSERT(loadOp_ == Plain);
+    loadOp_ = Splat;
+  }
+
+  void setWidenSimd128Load(wasm::SimdOp op) {
+    MOZ_ASSERT(type() == Scalar::Float64);
+    MOZ_ASSERT(!isAtomic());
+    MOZ_ASSERT(loadOp_ == Plain);
+    widenOp_ = op;
+    loadOp_ = Widen;
   }
 
   void clearOffset() { offset_ = 0; }

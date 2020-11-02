@@ -10,7 +10,9 @@
 #include "mozilla/intl/Localization.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/Telemetry.h"
 #include "nsIObserverService.h"
 #include "nsXULAppAPI.h"
 
@@ -134,6 +136,46 @@ void MediaControlService::Init() {
 MediaControlService::~MediaControlService() {
   LOG("destroy media control service");
   Shutdown();
+  UpdateTelemetryUsageProbe();
+}
+
+void MediaControlService::UpdateTelemetryUsageProbe() {
+  if (!mHasEverEnabledMediaControl) {
+    return;
+  }
+#ifdef XP_WIN
+  if (mHasEverUsedMediaControl) {
+    AccumulateCategorical(
+        mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::UsedOnWin);
+  }
+  AccumulateCategorical(
+      mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::EnabledOnWin);
+#endif
+#ifdef XP_MACOSX
+  if (mHasEverUsedMediaControl) {
+    AccumulateCategorical(
+        mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::UsedOnMac);
+  }
+  AccumulateCategorical(
+      mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::EnabledOnMac);
+#endif
+#ifdef MOZ_WIDGET_GTK
+  if (mHasEverUsedMediaControl) {
+    AccumulateCategorical(
+        mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::UsedOnLinux);
+  }
+  AccumulateCategorical(
+      mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::EnabledOnLinux);
+#endif
+#ifdef MOZ_WIDGET_ANDROID
+  if (mHasEverUsedMediaControl) {
+    AccumulateCategorical(
+        mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::UsedOnAndroid);
+  }
+  AccumulateCategorical(
+      mozilla::Telemetry::LABELS_MEDIA_CONTROL_PLATFORM_USAGE::
+          EnabledOnAndroid);
+#endif
 }
 
 NS_IMETHODIMP
@@ -399,6 +441,12 @@ void MediaControlService::ControllerManager::MainControllerMetadataChanged(
 void MediaControlService::ControllerManager::UpdateMainControllerInternal(
     MediaController* aController) {
   MOZ_ASSERT(NS_IsMainThread());
+  if (aController) {
+    aController->Select();
+  }
+  if (mMainController) {
+    mMainController->Unselect();
+  }
   mMainController = aController;
 
   if (!mMainController) {

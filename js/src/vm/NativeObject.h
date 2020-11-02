@@ -693,39 +693,38 @@ class NativeObject : public JSObject {
   friend class TenuringTracer;
 
   /*
-   * Get internal pointers to the range of values starting at start and
-   * running for length.
+   * Get internal pointers to the range of values from |start| to |end|
+   * exclusive.
    */
-  void getSlotRangeUnchecked(uint32_t start, uint32_t length,
+  void getSlotRangeUnchecked(uint32_t start, uint32_t end,
                              HeapSlot** fixedStart, HeapSlot** fixedEnd,
                              HeapSlot** slotsStart, HeapSlot** slotsEnd) {
-    MOZ_ASSERT(start + length >= start);
+    MOZ_ASSERT(end >= start);
 
     uint32_t fixed = numFixedSlots();
     if (start < fixed) {
-      if (start + length < fixed) {
+      if (end <= fixed) {
         *fixedStart = &fixedSlots()[start];
-        *fixedEnd = &fixedSlots()[start + length];
+        *fixedEnd = &fixedSlots()[end];
         *slotsStart = *slotsEnd = nullptr;
       } else {
-        uint32_t localCopy = fixed - start;
         *fixedStart = &fixedSlots()[start];
-        *fixedEnd = &fixedSlots()[start + localCopy];
+        *fixedEnd = &fixedSlots()[fixed];
         *slotsStart = &slots_[0];
-        *slotsEnd = &slots_[length - localCopy];
+        *slotsEnd = &slots_[end - fixed];
       }
     } else {
       *fixedStart = *fixedEnd = nullptr;
       *slotsStart = &slots_[start - fixed];
-      *slotsEnd = &slots_[start - fixed + length];
+      *slotsEnd = &slots_[end - fixed];
     }
   }
 
-  void getSlotRange(uint32_t start, uint32_t length, HeapSlot** fixedStart,
+  void getSlotRange(uint32_t start, uint32_t end, HeapSlot** fixedStart,
                     HeapSlot** fixedEnd, HeapSlot** slotsStart,
                     HeapSlot** slotsEnd) {
-    MOZ_ASSERT(slotInRange(start + length, SENTINEL_ALLOWED));
-    getSlotRangeUnchecked(start, length, fixedStart, fixedEnd, slotsStart,
+    MOZ_ASSERT(slotInRange(end, SENTINEL_ALLOWED));
+    getSlotRangeUnchecked(start, end, fixedStart, fixedEnd, slotsStart,
                           slotsEnd);
   }
 
@@ -734,25 +733,25 @@ class NativeObject : public JSObject {
   friend class Shape;
   friend class NewObjectCache;
 
-  void invalidateSlotRange(uint32_t start, uint32_t length) {
+  void invalidateSlotRange(uint32_t start, uint32_t end) {
 #ifdef DEBUG
     HeapSlot* fixedStart;
     HeapSlot* fixedEnd;
     HeapSlot* slotsStart;
     HeapSlot* slotsEnd;
-    getSlotRange(start, length, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
+    getSlotRange(start, end, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
     Debug_SetSlotRangeToCrashOnTouch(fixedStart, fixedEnd);
     Debug_SetSlotRangeToCrashOnTouch(slotsStart, slotsEnd);
 #endif /* DEBUG */
   }
 
-  void initializeSlotRange(uint32_t start, uint32_t count);
+  void initializeSlotRange(uint32_t start, uint32_t end);
 
   /*
-   * Initialize a flat array of slots to this object at a start slot.  The
-   * caller must ensure that are enough slots.
+   * Initialize the object's slots from a flat array. The caller must ensure
+   * that there are enough slots. This is used during brain transplants.
    */
-  void initSlotRange(uint32_t start, const Value* vector, uint32_t length);
+  void initSlots(const Value* vector, uint32_t length);
 
 #ifdef DEBUG
   enum SentinelAllowed{SENTINEL_NOT_ALLOWED, SENTINEL_ALLOWED};
@@ -1408,9 +1407,24 @@ class NativeObject : public JSObject {
 
   inline void copyDenseElements(uint32_t dstStart, const Value* src,
                                 uint32_t count);
+
   inline void initDenseElements(const Value* src, uint32_t count);
   inline void initDenseElements(JSContext* cx, NativeObject* src,
                                 uint32_t srcStart, uint32_t count);
+
+  // Store the Values in the range [begin, end) as elements of this array.
+  //
+  // Preconditions: This must be a boring ArrayObject with dense initialized
+  // length 0: no shifted elements, no frozen elements, no fixed "length", not
+  // indexed, not inextensible, not copy-on-write. Existing capacity is
+  // optional.
+  //
+  // This runs write barriers but does not update types. `end - begin` must
+  // return the size of the range, which must be >= 0 and fit in an int32_t.
+  template <typename Iter>
+  inline MOZ_MUST_USE bool initDenseElementsFromRange(JSContext* cx, Iter begin,
+                                                      Iter end);
+
   inline void moveDenseElements(uint32_t dstStart, uint32_t srcStart,
                                 uint32_t count);
   inline void reverseDenseElementsNoPreBarrier(uint32_t length);

@@ -1832,6 +1832,25 @@ class nsContentUtils {
                                      uint32_t aWrapCol);
 
   /**
+   * Creates a 'loaded-as-data' HTML document that takes that principal,
+   * script global, and URL from the argument, which may be null.
+   */
+  static already_AddRefed<Document> CreateInertHTMLDocument(
+      const Document* aTemplate);
+
+  /**
+   * Creates a 'loaded-as-data' XML document that takes that principal,
+   * script global, and URL from the argument, which may be null.
+   */
+  static already_AddRefed<Document> CreateInertXMLDocument(
+      const Document* aTemplate);
+
+ private:
+  static already_AddRefed<Document> CreateInertDocument(
+      const Document* aTemplate, DocumentFlavor aFlavor);
+
+ public:
+  /**
    * Sets the text contents of a node by replacing all existing children
    * with a single text child.
    *
@@ -3275,6 +3294,13 @@ class nsContentUtils {
   static uint32_t SecondsFromPRTime(PRTime aTime) {
     return uint32_t(int64_t(aTime) / int64_t(PR_USEC_PER_SEC));
   }
+
+  /**
+   * Converts the given URL to a string and truncates it to the given length.
+   *
+   * Returns an empty string if aURL is null.
+   */
+  static nsCString TruncatedURLForDisplay(nsIURI* aURL, uint32_t aMaxLen = 128);
 
  private:
   static bool InitializeEventTable();

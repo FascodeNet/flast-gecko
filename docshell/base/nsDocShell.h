@@ -644,8 +644,8 @@ class nsDocShell final : public nsDocLoader,
       bool aReplace, const mozilla::Maybe<nsPoint>& aPreviousScrollPos,
       nsIURI* aURI, nsIURI* aOriginalURI, nsIPrincipal* aTriggeringPrincipal,
       nsIContentSecurityPolicy* aCsp, const nsAString& aTitle,
-      const mozilla::Maybe<bool>& aScrollRestorationIsManual,
-      nsIStructuredCloneContainer* aData, bool aURIWasModified);
+      bool aScrollRestorationIsManual, nsIStructuredCloneContainer* aData,
+      bool aURIWasModified);
 
   nsresult AddChildSHEntry(nsISHEntry* aCloneRef, nsISHEntry* aNewEntry,
                            int32_t aChildOffset, uint32_t aLoadType,
@@ -820,8 +820,7 @@ class nsDocShell final : public nsDocLoader,
       nsIWidget* aWidget, uint32_t aLoadType);
 
   static already_AddRefed<nsIURIFixupInfo> KeywordToURI(
-      const nsACString& aKeyword, bool aIsPrivateContext,
-      nsIInputStream** aPostData);
+      const nsACString& aKeyword, bool aIsPrivateContext);
 
   // Sets the current document's current state object to the given SHEntry's
   // state object. The current state object is eventually given to the page
@@ -1104,7 +1103,7 @@ class nsDocShell final : public nsDocLoader,
   // Sets the active entry to the current loading entry. If aCommit is true then
   // SessionHistoryCommit will be called on the CanonicalBrowsingContext
   // (directly or over IPC).
-  void MoveLoadingToActiveEntry(bool aCommit);
+  void MoveLoadingToActiveEntry();
 
  private:  // data members
   nsString mTitle;

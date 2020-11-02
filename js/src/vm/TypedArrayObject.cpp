@@ -25,7 +25,7 @@
 
 #include "builtin/Array.h"
 #include "builtin/DataViewObject.h"
-#include "builtin/TypedObjectConstants.h"
+#include "builtin/TypedArrayConstants.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
 #include "gc/MaybeRooted.h"
@@ -47,6 +47,7 @@
 #include "vm/PIC.h"
 #include "vm/SelfHosting.h"
 #include "vm/SharedMem.h"
+#include "vm/Uint8Clamped.h"
 #include "vm/WrapperObject.h"
 
 #include "gc/Nursery-inl.h"
@@ -518,8 +519,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   static void initTypedArraySlots(TypedArrayObject* tarray, int32_t len) {
     MOZ_ASSERT(len >= 0);
     tarray->initFixedSlot(TypedArrayObject::BUFFER_SLOT, NullValue());
-    tarray->initFixedSlot(TypedArrayObject::LENGTH_SLOT, Int32Value(len));
-    tarray->initFixedSlot(TypedArrayObject::BYTEOFFSET_SLOT, Int32Value(0));
+    tarray->initFixedSlot(TypedArrayObject::LENGTH_SLOT, PrivateValue(len));
+    tarray->initFixedSlot(TypedArrayObject::BYTEOFFSET_SLOT,
+                          PrivateValue(size_t(0)));
 
     // Verify that the private slot is at the expected place.
     MOZ_ASSERT(tarray->numFixedSlots() == TypedArrayObject::DATA_SLOT);
@@ -1603,24 +1605,51 @@ static bool GetTemplateObjectForNative(JSContext* cx,
   return true;
 }
 
+static bool LengthGetterImpl(JSContext* cx, const CallArgs& args) {
+  auto* tarr = &args.thisv().toObject().as<TypedArrayObject>();
+  args.rval().set(tarr->lengthValue());
+  return true;
+}
+
 static bool TypedArray_lengthGetter(JSContext* cx, unsigned argc, Value* vp) {
-  return TypedArrayObject::Getter<TypedArrayObject::lengthValue>(cx, argc, vp);
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<TypedArrayObject::is, LengthGetterImpl>(cx, args);
+}
+
+static bool ByteOffsetGetterImpl(JSContext* cx, const CallArgs& args) {
+  auto* tarr = &args.thisv().toObject().as<TypedArrayObject>();
+  args.rval().set(tarr->byteOffsetValue());
+  return true;
 }
 
 static bool TypedArray_byteOffsetGetter(JSContext* cx, unsigned argc,
                                         Value* vp) {
-  return TypedArrayObject::Getter<TypedArrayObject::byteOffsetValue>(cx, argc,
-                                                                     vp);
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<TypedArrayObject::is, ByteOffsetGetterImpl>(cx,
+                                                                          args);
 }
 
-bool BufferGetterImpl(JSContext* cx, const CallArgs& args) {
+static bool ByteLengthGetterImpl(JSContext* cx, const CallArgs& args) {
+  auto* tarr = &args.thisv().toObject().as<TypedArrayObject>();
+  args.rval().set(tarr->byteLengthValue());
+  return true;
+}
+
+static bool TypedArray_byteLengthGetter(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<TypedArrayObject::is, ByteLengthGetterImpl>(cx,
+                                                                          args);
+}
+
+static bool BufferGetterImpl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(TypedArrayObject::is(args.thisv()));
   Rooted<TypedArrayObject*> tarray(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
   if (!TypedArrayObject::ensureHasBuffer(cx, tarray)) {
     return false;
   }
-  args.rval().set(TypedArrayObject::bufferValue(tarray));
+  args.rval().set(tarray->bufferValue());
   return true;
 }
 
@@ -1665,8 +1694,7 @@ static bool TypedArray_toStringTagGetter(JSContext* cx, unsigned argc,
 /* static */ const JSPropertySpec TypedArrayObject::protoAccessors[] = {
     JS_PSG("length", TypedArray_lengthGetter, 0),
     JS_PSG("buffer", TypedArray_bufferGetter, 0),
-    JS_PSG("byteLength",
-           TypedArrayObject::Getter<TypedArrayObject::byteLengthValue>, 0),
+    JS_PSG("byteLength", TypedArray_byteLengthGetter, 0),
     JS_PSG("byteOffset", TypedArray_byteOffsetGetter, 0),
     JS_SYM_GET(toStringTag, TypedArray_toStringTagGetter, 0),
     JS_PS_END};

@@ -413,8 +413,16 @@ public class ContentBlockingController {
         /**
          * Indicates that content that would have been blocked has instead been
          * replaced with a shim.
+         * @deprecated use {@link #REPLACED_TRACKING_CONTENT} instead.
          */
+        @Deprecated
         public static final int REPLACED_UNSAFE_CONTENT        = 0x00000010;
+
+        /**
+         * Indicates that content that would have been blocked has instead been
+         * replaced with a shim.
+         */
+        public static final int REPLACED_TRACKING_CONTENT       = 0x00000010;
 
         protected Event() {}
     }
@@ -438,7 +446,7 @@ public class ContentBlockingController {
                       Event.COOKIES_BLOCKED_TRACKER, Event.COOKIES_BLOCKED_SOCIALTRACKER,
                       Event.COOKIES_BLOCKED_ALL, Event.COOKIES_PARTITIONED_FOREIGN,
                       Event.COOKIES_BLOCKED_FOREIGN, Event.BLOCKED_SOCIALTRACKING_CONTENT,
-                      Event.LOADED_SOCIALTRACKING_CONTENT })
+                      Event.LOADED_SOCIALTRACKING_CONTENT, Event.REPLACED_UNSAFE_CONTENT })
             /* package */ @interface LogEvent {}
 
             /**

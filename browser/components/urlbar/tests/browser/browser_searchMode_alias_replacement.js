@@ -10,6 +10,12 @@
 const ALIAS = "testalias";
 const TEST_ENGINE_BASENAME = "searchSuggestionEngine.xml";
 
+// We make sure that aliases and search terms are correctly recognized when they
+// are separated by each of these different types of spaces and combinations of
+// spaces.  U+3000 is the ideographic space in CJK and is commonly used by CJK
+// speakers.
+const TEST_SPACES = [" ", "\u3000", " \u3000", "\u3000 "];
+
 let defaultEngine, aliasEngine;
 
 add_task(async function setup() {
@@ -103,57 +109,75 @@ add_task(async function noTrailingSpace_typed() {
 
 // A complete alias with a trailing space should be replaced.
 add_task(async function trailingSpace() {
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: ALIAS + " ",
-  });
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: aliasEngine.name,
-    entry: "typed",
-  });
-  Assert.ok(!gURLBar.value, "The urlbar value should be cleared.");
-  await UrlbarTestUtils.exitSearchMode(window);
-  await UrlbarTestUtils.promisePopupClose(window);
+  for (let spaces of TEST_SPACES) {
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: ALIAS + spaces,
+    });
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: aliasEngine.name,
+      entry: "typed",
+    });
+    Assert.ok(!gURLBar.value, "The urlbar value should be cleared.");
+    await UrlbarTestUtils.exitSearchMode(window);
+    await UrlbarTestUtils.promisePopupClose(window);
+  }
 });
 
 // A complete alias should be replaced after typing a space.
 add_task(async function trailingSpace_typed() {
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: ALIAS,
-  });
-  await UrlbarTestUtils.assertSearchMode(window, null);
+  for (let spaces of TEST_SPACES) {
+    if (spaces.length != 1) {
+      continue;
+    }
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
 
-  // We need to wait for two searches: The first enters search mode, the second
-  // does the search in search mode.
-  let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
-  EventUtils.synthesizeKey(" ");
-  await searchPromise;
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: ALIAS,
+    });
+    await UrlbarTestUtils.assertSearchMode(window, null);
 
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: aliasEngine.name,
-    entry: "typed",
-  });
-  Assert.ok(!gURLBar.value, "The urlbar value should be cleared.");
-  await UrlbarTestUtils.exitSearchMode(window);
-  await UrlbarTestUtils.promisePopupClose(window);
+    // We need to wait for two searches: The first enters search mode, the second
+    // does the search in search mode.
+    let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+    EventUtils.synthesizeKey(spaces);
+    await searchPromise;
+
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: aliasEngine.name,
+      entry: "typed",
+    });
+    Assert.ok(!gURLBar.value, "The urlbar value should be cleared.");
+    await UrlbarTestUtils.exitSearchMode(window);
+    await UrlbarTestUtils.promisePopupClose(window);
+  }
 });
 
 // A complete alias with a trailing space should be replaced, and the query
 // after the trailing space should be the new value of the input.
 add_task(async function trailingSpace_query() {
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: ALIAS + " query",
-  });
+  for (let spaces of TEST_SPACES) {
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
 
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: aliasEngine.name,
-    entry: "typed",
-  });
-  Assert.equal(gURLBar.value, "query", "The urlbar value should be the query.");
-  await UrlbarTestUtils.exitSearchMode(window);
-  await UrlbarTestUtils.promisePopupClose(window);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: ALIAS + spaces + "query",
+    });
+
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: aliasEngine.name,
+      entry: "typed",
+    });
+    Assert.equal(
+      gURLBar.value,
+      "query",
+      "The urlbar value should be the query."
+    );
+    await UrlbarTestUtils.exitSearchMode(window);
+    await UrlbarTestUtils.promisePopupClose(window);
+  }
 });
 
 add_task(async function() {
@@ -199,4 +223,65 @@ add_task(async function() {
   // When starting typing, as the search mode is promoted from preview,
   // the one-off selection is removed.
   ok(!oneOffs.selectedButton, "There is no any selected one-off button");
+
+  // Clean up
+  gURLBar.value = "";
+  await UrlbarTestUtils.exitSearchMode(window);
+  await UrlbarTestUtils.promisePopupClose(window);
 });
+
+add_task(async function() {
+  info(
+    "Test search mode after removing current search mode when multiple aliases are written"
+  );
+
+  info("Open the result popup with multiple aliases");
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "@default testalias @default",
+  });
+
+  await UrlbarTestUtils.assertSearchMode(window, {
+    engineName: defaultEngine.name,
+    entry: "typed",
+  });
+  Assert.equal(
+    gURLBar.value,
+    "testalias @default",
+    "The value on the urlbar is correct"
+  );
+
+  info("Exit search mode by clicking");
+  const indicator = gURLBar.querySelector("#urlbar-search-mode-indicator");
+  EventUtils.synthesizeMouseAtCenter(indicator, { type: "mouseover" }, window);
+  const closeButton = gURLBar.querySelector(
+    "#urlbar-search-mode-indicator-close"
+  );
+  const searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+  EventUtils.synthesizeMouseAtCenter(closeButton, {}, window);
+  await searchPromise;
+
+  await UrlbarTestUtils.assertSearchMode(window, {
+    engineName: aliasEngine.name,
+    entry: "typed",
+  });
+  Assert.equal(gURLBar.value, "@default", "The value on the urlbar is correct");
+
+  // Clean up
+  gURLBar.value = "";
+  await UrlbarTestUtils.exitSearchMode(window);
+  await UrlbarTestUtils.promisePopupClose(window);
+});
+
+/**
+ * Returns an array of code points in the given string.  Each code point is
+ * returned as a hexidecimal string.
+ *
+ * @param {string} str
+ *   The code points of this string will be returned.
+ * @returns {array}
+ *   Array of code points in the string, where each is a hexidecimal string.
+ */
+function codePoints(str) {
+  return str.split("").map(s => s.charCodeAt(0).toString(16));
+}

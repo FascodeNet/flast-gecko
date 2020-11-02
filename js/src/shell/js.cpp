@@ -1218,6 +1218,67 @@ static bool SetPromiseRejectionTrackerCallback(JSContext* cx, unsigned argc,
   return true;
 }
 
+// clang-format off
+#define LIT(NAME) #NAME,
+static const char* telemetryNames[JS_TELEMETRY_END + 1] = {
+  MAP_JS_TELEMETRY(LIT)
+  "JS_TELEMETRY_END"
+};
+#undef LIT
+// clang-format on
+
+// Telemetry can be executed from multiple threads, and the callback is
+// responsible to avoid contention on the recorded telemetry data.
+static Mutex* telemetryLock = nullptr;
+class MOZ_RAII AutoLockTelemetry : public LockGuard<Mutex> {
+  using Base = LockGuard<Mutex>;
+
+ public:
+  AutoLockTelemetry() : Base(*telemetryLock) { MOZ_ASSERT(telemetryLock); }
+};
+
+using TelemetryData = uint32_t;
+using TelemetryVec = Vector<TelemetryData, 0, SystemAllocPolicy>;
+static mozilla::Array<TelemetryVec, JS_TELEMETRY_END> telemetryResults;
+static void AccumulateTelemetryDataCallback(int id, uint32_t sample,
+                                            const char* key) {
+  AutoLockTelemetry alt;
+  // We ignore OOMs while writting teleemtry data.
+  if (telemetryResults[id].append(sample)) {
+    return;
+  }
+}
+
+static void WriteTelemetryDataToDisk(const char* dir) {
+  const int pathLen = 260;
+  char fileName[pathLen];
+  Fprinter output;
+  auto initOutput = [&](const char* name) -> bool {
+    if (SprintfLiteral(fileName, "%s%s.csv", dir, name) >= pathLen) {
+      return false;
+    }
+    FILE* file = fopen(fileName, "a");
+    if (!file) {
+      return false;
+    }
+    output.init(file);
+    return true;
+  };
+
+  for (size_t id = 0; id < JS_TELEMETRY_END; id++) {
+    auto clear = MakeScopeExit([&] { telemetryResults[id].clearAndFree(); });
+    if (!initOutput(telemetryNames[id])) {
+      continue;
+    }
+    for (uint32_t data : telemetryResults[id]) {
+      output.printf("%u\n", data);
+    }
+    output.finish();
+  }
+}
+
+#undef MAP_TELEMETRY
+
 static bool BoundToAsyncStack(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1846,6 +1907,9 @@ static bool ParseCompileOptions(JSContext* cx, CompileOptions& options,
   }
   if (v.isObject()) {
     RootedObject infoObject(cx, CreateScriptPrivate(cx));
+    if (!infoObject) {
+      return false;
+    }
     RootedValue elementValue(cx, v);
     if (!JS_WrapValue(cx, &elementValue)) {
       return false;
@@ -3025,15 +3089,15 @@ static bool PCToLine(JSContext* cx, unsigned argc, Value* vp) {
 static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
                                   Sprinter* sp) {
   if (!sp->put("\nSource notes:\n") ||
-      !sp->jsprintf("%4s %4s %5s %6s %-8s %s\n", "ofs", "line", "pc", "delta",
-                    "desc", "args") ||
-      !sp->put("---- ---- ----- ------ -------- ------\n")) {
+      !sp->jsprintf("%4s %4s %6s %5s %6s %-10s %s\n", "ofs", "line", "column",
+                    "pc", "delta", "desc", "args") ||
+      !sp->put("---- ---- ------ ----- ------ ---------- ------\n")) {
     return false;
   }
 
   unsigned offset = 0;
-  unsigned colspan = 0;
   unsigned lineno = script->lineno();
+  unsigned column = script->column();
   SrcNote* notes = script->notes();
   for (SrcNoteIterator iter(notes); !iter.atEnd(); ++iter) {
     auto sn = *iter;
@@ -3042,8 +3106,8 @@ static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
     offset += delta;
     SrcNoteType type = sn->type();
     const char* name = sn->name();
-    if (!sp->jsprintf("%3u: %4u %5u [%4u] %-8s", unsigned(sn - notes), lineno,
-                      offset, delta, name)) {
+    if (!sp->jsprintf("%3u: %4u %6u %5u [%4u] %-10s", unsigned(sn - notes),
+                      lineno, column, offset, delta, name)) {
       return false;
     }
 
@@ -3055,22 +3119,26 @@ static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
       case SrcNoteType::XDelta:
         break;
 
-      case SrcNoteType::ColSpan:
-        colspan = SrcNote::ColSpan::getSpan(sn);
-        if (!sp->jsprintf("%u", colspan)) {
+      case SrcNoteType::ColSpan: {
+        uint32_t colspan = SrcNote::ColSpan::getSpan(sn);
+        if (!sp->jsprintf(" colspan %u", colspan)) {
           return false;
         }
+        column += colspan;
         break;
+      }
 
       case SrcNoteType::SetLine:
-        lineno = SrcNote::SetLine::getLine(sn);
+        lineno = SrcNote::SetLine::getLine(sn, script->lineno());
         if (!sp->jsprintf(" lineno %u", lineno)) {
           return false;
         }
+        column = 0;
         break;
 
       case SrcNoteType::NewLine:
         ++lineno;
+        column = 0;
         break;
 
       default:
@@ -3379,11 +3447,9 @@ static MOZ_MUST_USE bool DisassembleScript(JSContext* cx, HandleScript script,
         RootedFunction fun(cx, &obj->as<JSFunction>());
         if (fun->isInterpreted()) {
           RootedScript script(cx, JSFunction::getOrCreateScript(cx, fun));
-          if (script) {
-            if (!DisassembleScript(cx, script, fun, lines, recursive,
-                                   sourceNotes, gcThings, sp)) {
-              return false;
-            }
+          if (!script || !DisassembleScript(cx, script, fun, lines, recursive,
+                                            sourceNotes, gcThings, sp)) {
+            return false;
           }
         } else {
           if (!sp->put("[native code]\n")) {
@@ -3708,6 +3774,12 @@ static bool RateMyCacheIR(JSContext* cx, unsigned argc, Value* vp) {
 
   js::jit::CacheIRHealth cih;
   RootedScript script(cx);
+
+  // In the case that we are calling this function from the shell and
+  // the environment variable is not set, AutoSpewChannel automatically
+  // sets and unsets the proper channel for the duration of spewing
+  // a health report.
+  AutoSpewChannel channel(cx, SpewChannel::RateMyCacheIR, script);
   if (!argc) {
     // Calling RateMyCacheIR without any arguments will create health
     // reports for all scripts in the zone.
@@ -8415,6 +8487,11 @@ static bool TransplantObject(JSContext* cx, unsigned argc, Value* vp) {
   JS::SetReservedSlot(target, DOM_OBJECT_SLOT,
                       JS::GetReservedSlot(source, DOM_OBJECT_SLOT));
   JS::SetReservedSlot(source, DOM_OBJECT_SLOT, JS::PrivateValue(nullptr));
+  if (JS::GetClass(source) == GetDomClass()) {
+    JS::SetReservedSlot(target, DOM_OBJECT_SLOT2,
+                        JS::GetReservedSlot(source, DOM_OBJECT_SLOT2));
+    JS::SetReservedSlot(source, DOM_OBJECT_SLOT2, UndefinedValue());
+  }
 
   source = JS_TransplantObject(cx, source, target);
   if (!source) {
@@ -11494,7 +11571,9 @@ int main(int argc, char** argv, char** envp) {
 #endif
       !op.addBoolOption('\0', "wasm-compile-and-serialize",
                         "Compile the wasm bytecode from stdin and serialize "
-                        "the results to stdout")) {
+                        "the results to stdout") ||
+      !op.addStringOption('\0', "telemetry-dir", "[directory]",
+                          "Output telemetry results in a directory")) {
     return EXIT_FAILURE;
   }
 
@@ -11516,6 +11595,25 @@ int main(int argc, char** argv, char** envp) {
   if (op.getHelpOption()) {
     return EXIT_SUCCESS;
   }
+
+  // Record aggregated telemetry data on disk. Do this as early as possible such
+  // that the telemetry is recording both before starting the context and after
+  // closing it.
+  if (op.getStringOption("telemetry-dir")) {
+    if (!telemetryLock) {
+      telemetryLock = js_new<Mutex>(mutexid::ShellTelemetry);
+      if (!telemetryLock) {
+        return EXIT_FAILURE;
+      }
+    }
+  }
+  auto writeTelemetryResults = MakeScopeExit([&op] {
+    if (const char* dir = op.getStringOption("telemetry-dir")) {
+      WriteTelemetryDataToDisk(dir);
+      js_free(telemetryLock);
+      telemetryLock = nullptr;
+    }
+  });
 
   /*
    * Allow dumping on Linux with the fuzzing flag set, even when running with
@@ -11620,6 +11718,11 @@ int main(int argc, char** argv, char** envp) {
   JSContext* const cx = JS_NewContext(JS::DefaultHeapMaxBytes);
   if (!cx) {
     return 1;
+  }
+
+  // Register telemetry callbacks, if needed.
+  if (telemetryLock) {
+    JS_SetAccumulateTelemetryCallback(cx, AccumulateTelemetryDataCallback);
   }
 
   size_t nurseryBytes = op.getIntOption("nursery-size") * 1024L * 1024L;

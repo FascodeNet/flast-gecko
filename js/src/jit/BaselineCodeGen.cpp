@@ -8,12 +8,14 @@
 
 #include "mozilla/Casting.h"
 
+#include "jit/ABIFunctions.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
 #include "jit/CalleeToken.h"
 #include "jit/FixedList.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitcodeMap.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/Linker.h"
@@ -37,6 +39,7 @@
 #endif
 
 #include "debugger/DebugAPI-inl.h"
+#include "jit/ABIFunctionList-inl.h"
 #include "jit/BaselineFrameInfo-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SharedICHelpers-inl.h"
@@ -523,11 +526,12 @@ bool BaselineCodeGen<Handler>::emitOutOfLinePostBarrierSlot() {
 #endif
   masm.pushValue(R0);
 
+  using Fn = void (*)(JSRuntime * rt, js::gc::Cell * cell);
   masm.setupUnalignedABICall(scratch);
   masm.movePtr(ImmPtr(cx->runtime()), scratch);
   masm.passABIArg(scratch);
   masm.passABIArg(objReg);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, PostWriteBarrier));
+  masm.callWithABI<Fn, PostWriteBarrier>();
 
   restoreInterpreterPCReg();
 
@@ -759,10 +763,11 @@ bool BaselineCodeGen<Handler>::emitStackCheck() {
 }
 
 static void EmitCallFrameIsDebuggeeCheck(MacroAssembler& masm) {
+  using Fn = void (*)(BaselineFrame * frame);
   masm.setupUnalignedABICall(R0.scratchReg());
   masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
   masm.passABIArg(R0.scratchReg());
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::FrameIsDebuggeeCheck));
+  masm.callWithABI<Fn, FrameIsDebuggeeCheck>();
 }
 
 template <>
@@ -5758,71 +5763,46 @@ bool BaselineCodeGen<Handler>::emit_Generator() {
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_InitialYield() {
-  frame.syncStack(0);
-  frame.assertStackDepth(1);
+bool BaselineCodeGen<Handler>::emitSuspend(JSOp op) {
+  MOZ_ASSERT(op == JSOp::InitialYield || op == JSOp::Yield ||
+             op == JSOp::Await);
 
+  // Load the generator object in R2, but leave the return value on the
+  // expression stack.
   Register genObj = R2.scratchReg();
-  masm.unboxObject(frame.addressOfStackValue(-1), genObj);
-
-  MOZ_ASSERT_IF(handler.maybePC(), GET_RESUMEINDEX(handler.maybePC()) == 0);
-  masm.storeValue(
-      Int32Value(0),
-      Address(genObj, AbstractGeneratorObject::offsetOfResumeIndexSlot()));
-
-  Register envObj = R0.scratchReg();
-  Register temp = R1.scratchReg();
-  Address envChainSlot(genObj,
-                       AbstractGeneratorObject::offsetOfEnvironmentChainSlot());
-  masm.loadPtr(frame.addressOfEnvironmentChain(), envObj);
-  masm.guardedCallPreBarrierAnyZone(envChainSlot, MIRType::Value, temp);
-  masm.storeValue(JSVAL_TYPE_OBJECT, envObj, envChainSlot);
-
-  Label skipBarrier;
-  masm.branchPtrInNurseryChunk(Assembler::Equal, genObj, temp, &skipBarrier);
-  masm.branchPtrInNurseryChunk(Assembler::NotEqual, envObj, temp, &skipBarrier);
-  masm.push(genObj);
-  MOZ_ASSERT(genObj == R2.scratchReg());
-  masm.call(&postBarrierSlot_);
-  masm.pop(genObj);
-  masm.bind(&skipBarrier);
-
-  masm.tagValue(JSVAL_TYPE_OBJECT, genObj, JSReturnOperand);
-  if (!emitReturn()) {
-    return false;
+  if (op == JSOp::InitialYield) {
+    // Generator and return value are one and the same.
+    frame.syncStack(0);
+    frame.assertStackDepth(1);
+    masm.unboxObject(frame.addressOfStackValue(-1), genObj);
+  } else {
+    frame.popRegsAndSync(1);
+    masm.unboxObject(R0, genObj);
   }
 
-  // Two extra stack values will be pushed when resuming the generator.
-  frame.incStackDepth(2);
-  return true;
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_Yield() {
-  // Store generator in R0.
-  frame.popRegsAndSync(1);
-
-  Register genObj = R2.scratchReg();
-  masm.unboxObject(R0, genObj);
-
-  if (frame.hasKnownStackDepth(1)) {
+  if (frame.hasKnownStackDepth(1) && !handler.canHaveFixedSlots()) {
     // If the expression stack is empty, we can inline the Yield. Note that this
     // branch is never taken for the interpreter because it doesn't know static
     // stack depths.
-
-    Register temp = R1.scratchReg();
+    MOZ_ASSERT_IF(op == JSOp::InitialYield && handler.maybePC(),
+                  GET_RESUMEINDEX(handler.maybePC()) == 0);
     Address resumeIndexSlot(genObj,
                             AbstractGeneratorObject::offsetOfResumeIndexSlot());
-    jsbytecode* pc = handler.maybePC();
-    MOZ_ASSERT(pc, "compiler-only code never has a null pc");
-    masm.move32(Imm32(GET_RESUMEINDEX(pc)), temp);
-    masm.storeValue(JSVAL_TYPE_INT32, temp, resumeIndexSlot);
+    Register temp = R1.scratchReg();
+    if (op == JSOp::InitialYield) {
+      masm.storeValue(Int32Value(0), resumeIndexSlot);
+    } else {
+      jsbytecode* pc = handler.maybePC();
+      MOZ_ASSERT(pc, "compiler-only code never has a null pc");
+      masm.move32(Imm32(GET_RESUMEINDEX(pc)), temp);
+      masm.storeValue(JSVAL_TYPE_INT32, temp, resumeIndexSlot);
+    }
 
     Register envObj = R0.scratchReg();
     Address envChainSlot(
         genObj, AbstractGeneratorObject::offsetOfEnvironmentChainSlot());
     masm.loadPtr(frame.addressOfEnvironmentChain(), envObj);
-    masm.guardedCallPreBarrier(envChainSlot, MIRType::Value);
+    masm.guardedCallPreBarrierAnyZone(envChainSlot, MIRType::Value, temp);
     masm.storeValue(JSVAL_TYPE_OBJECT, envObj, envChainSlot);
 
     Label skipBarrier;
@@ -5854,14 +5834,25 @@ bool BaselineCodeGen<Handler>::emit_Yield() {
     return false;
   }
 
-  // Two extra stack values will be pushed when resuming the generator.
+  // Three values are pushed onto the stack when resuming the generator,
+  // replacing the one slot that holds the return value.
   frame.incStackDepth(2);
   return true;
 }
 
 template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_InitialYield() {
+  return emitSuspend(JSOp::InitialYield);
+}
+
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_Yield() {
+  return emitSuspend(JSOp::Yield);
+}
+
+template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_Await() {
-  return emit_Yield();
+  return emitSuspend(JSOp::Await);
 }
 
 template <>
@@ -6143,11 +6134,11 @@ bool BaselineCodeGen<Handler>::emit_Resume() {
   }
   masm.bind(&noArgsObj);
 
-  // Push expression slots if needed.
-  Label noExprStack;
-  Address exprStackSlot(genObj,
-                        AbstractGeneratorObject::offsetOfExpressionStackSlot());
-  masm.fallibleUnboxObject(exprStackSlot, scratch2, &noExprStack);
+  // Push locals and expression slots if needed.
+  Label noStackStorage;
+  Address stackStorageSlot(genObj,
+                           AbstractGeneratorObject::offsetOfStackStorageSlot());
+  masm.fallibleUnboxObject(stackStorageSlot, scratch2, &noStackStorage);
   {
     Register initLength = regs.takeAny();
     masm.loadPtr(Address(scratch2, NativeObject::offsetOfElements()), scratch2);
@@ -6171,7 +6162,7 @@ bool BaselineCodeGen<Handler>::emit_Resume() {
     regs.add(initLength);
   }
 
-  masm.bind(&noExprStack);
+  masm.bind(&noStackStorage);
 
   // Push arg, generator, resumeKind stack Values, in that order.
   masm.pushValue(Address(callerStackPtr, sizeof(Value)));
@@ -7005,11 +6996,11 @@ void BaselineInterpreterGenerator::emitOutOfLineCodeCoverageInstrumentation() {
 
   saveInterpreterPCReg();
 
+  using Fn1 = void (*)(BaselineFrame * frame);
   masm.setupUnalignedABICall(R0.scratchReg());
   masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
   masm.passABIArg(R0.scratchReg());
-  masm.callWithABI(
-      JS_FUNC_TO_DATA_PTR(void*, jit::HandleCodeCoverageAtPrologue));
+  masm.callWithABI<Fn1, HandleCodeCoverageAtPrologue>();
 
   restoreInterpreterPCReg();
   masm.ret();
@@ -7021,12 +7012,13 @@ void BaselineInterpreterGenerator::emitOutOfLineCodeCoverageInstrumentation() {
 
   saveInterpreterPCReg();
 
+  using Fn2 = void (*)(BaselineFrame * frame, jsbytecode * pc);
   masm.setupUnalignedABICall(R0.scratchReg());
   masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
   masm.passABIArg(R0.scratchReg());
   Register pcReg = LoadBytecodePC(masm, R2.scratchReg());
   masm.passABIArg(pcReg);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::HandleCodeCoverageAtPC));
+  masm.callWithABI<Fn2, HandleCodeCoverageAtPC>();
 
   restoreInterpreterPCReg();
   masm.ret();

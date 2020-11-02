@@ -214,6 +214,7 @@
 #include "builtin/FinalizationRegistryObject.h"
 #include "builtin/WeakRefObject.h"
 #include "debugger/DebugAPI.h"
+#include "gc/ClearEdgesTracer.h"
 #include "gc/FindSCCs.h"
 #include "gc/FreeOp.h"
 #include "gc/GCInternals.h"
@@ -1526,6 +1527,8 @@ uint32_t GCRuntime::getParameter(JSGCParamKey key, const AutoLockGC& lock) {
       return uint32_t(tunables.pretenureThreshold() * 100);
     case JSGC_PRETENURE_GROUP_THRESHOLD:
       return tunables.pretenureGroupThreshold();
+    case JSGC_PRETENURE_STRING_THRESHOLD:
+      return uint32_t(tunables.pretenureStringThreshold() * 100);
     case JSGC_MIN_LAST_DITCH_GC_PERIOD:
       return tunables.minLastDitchGCPeriod().ToSeconds();
     case JSGC_ZONE_ALLOC_DELAY_KB:
@@ -2177,41 +2180,40 @@ bool GCRuntime::relocateArenas(Zone* zone, JS::GCReason reason,
 }
 
 template <typename T>
-inline bool MovingTracer::updateEdge(T** thingp) {
-  auto thing = *thingp;
+inline T* MovingTracer::onEdge(T* thing) {
   if (thing->runtimeFromAnyThread() == runtime() && IsForwarded(thing)) {
-    *thingp = Forwarded(thing);
+    thing = Forwarded(thing);
   }
 
-  return true;
+  return thing;
 }
 
-bool MovingTracer::onObjectEdge(JSObject** objp) { return updateEdge(objp); }
-bool MovingTracer::onShapeEdge(Shape** shapep) { return updateEdge(shapep); }
-bool MovingTracer::onStringEdge(JSString** stringp) {
-  return updateEdge(stringp);
+JSObject* MovingTracer::onObjectEdge(JSObject* obj) { return onEdge(obj); }
+Shape* MovingTracer::onShapeEdge(Shape* shape) { return onEdge(shape); }
+JSString* MovingTracer::onStringEdge(JSString* string) {
+  return onEdge(string);
 }
-bool MovingTracer::onScriptEdge(js::BaseScript** scriptp) {
-  return updateEdge(scriptp);
+js::BaseScript* MovingTracer::onScriptEdge(js::BaseScript* script) {
+  return onEdge(script);
 }
-bool MovingTracer::onBaseShapeEdge(BaseShape** basep) {
-  return updateEdge(basep);
+BaseShape* MovingTracer::onBaseShapeEdge(BaseShape* base) {
+  return onEdge(base);
 }
-bool MovingTracer::onScopeEdge(Scope** scopep) { return updateEdge(scopep); }
-bool MovingTracer::onRegExpSharedEdge(RegExpShared** sharedp) {
-  return updateEdge(sharedp);
+Scope* MovingTracer::onScopeEdge(Scope* scope) { return onEdge(scope); }
+RegExpShared* MovingTracer::onRegExpSharedEdge(RegExpShared* shared) {
+  return onEdge(shared);
 }
-bool MovingTracer::onBigIntEdge(BigInt** bip) { return updateEdge(bip); }
-bool MovingTracer::onObjectGroupEdge(ObjectGroup** groupp) {
-  return updateEdge(groupp);
+BigInt* MovingTracer::onBigIntEdge(BigInt* bi) { return onEdge(bi); }
+ObjectGroup* MovingTracer::onObjectGroupEdge(ObjectGroup* group) {
+  return onEdge(group);
 }
-bool MovingTracer::onSymbolEdge(JS::Symbol** symp) {
-  MOZ_ASSERT(!(*symp)->isForwarded());
-  return true;
+JS::Symbol* MovingTracer::onSymbolEdge(JS::Symbol* sym) {
+  MOZ_ASSERT(!sym->isForwarded());
+  return sym;
 }
-bool MovingTracer::onJitCodeEdge(jit::JitCode** jitp) {
-  MOZ_ASSERT(!(*jitp)->isForwarded());
-  return true;
+jit::JitCode* MovingTracer::onJitCodeEdge(jit::JitCode* jit) {
+  MOZ_ASSERT(!jit->isForwarded());
+  return jit;
 }
 
 void Zone::prepareForCompacting() {
@@ -2452,8 +2454,8 @@ void GCRuntime::updateTypeDescrObjects(MovingTracer* trc, Zone* zone) {
     NativeObject* obj = static_cast<NativeObject*>(r.front());
     UpdateCellPointers(trc, obj);
     MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(MaybeForwardedObjectClass(obj)) ==
-               JS_DESCR_SLOTS);
-    for (size_t i = 0; i < JS_DESCR_SLOTS; i++) {
+               TypeDescr::SlotCount);
+    for (size_t i = 0; i < TypeDescr::SlotCount; i++) {
       Value value = obj->getSlot(i);
       if (value.isObject()) {
         UpdateCellPointers(trc, &value.toObject());
@@ -2889,10 +2891,10 @@ void ArenaLists::backgroundFinalize(JSFreeOp* fop, Arena* listHead,
   lists->concurrentUse(thingKind) = ConcurrentUse::None;
 }
 
-void ArenaLists::releaseForegroundSweptEmptyArenas() {
-  AutoLockGC lock(runtime());
-  ReleaseArenaList(runtime(), savedEmptyArenas, lock);
+Arena* ArenaLists::takeSweptEmptyArenas() {
+  Arena* arenas = savedEmptyArenas;
   savedEmptyArenas = nullptr;
+  return arenas;
 }
 
 void ArenaLists::queueForegroundThingsForSweep() {
@@ -3394,7 +3396,7 @@ void GCRuntime::sweepBackgroundThings(ZoneList& zones) {
     Zone* zone = zones.removeFront();
     MOZ_ASSERT(zone->isGCFinished());
 
-    Arena* emptyArenas = nullptr;
+    Arena* emptyArenas = zone->arenas.takeSweptEmptyArenas();
 
     AutoSetThreadIsSweeping threadIsSweeping(zone);
 
@@ -3412,11 +3414,14 @@ void GCRuntime::sweepBackgroundThings(ZoneList& zones) {
 
     // Release any arenas that are now empty.
     //
+    // Empty arenas are only released after everything has been finalized so
+    // that it's still possible to get a thing's zone after the thing has been
+    // finalized. The HeapPtr destructor depends on this, and this allows
+    // HeapPtrs between things of different alloc kind regardless of
+    // finalization order.
+    //
     // Periodically drop and reaquire the GC lock every so often to avoid
     // blocking the main thread from allocating chunks.
-    //
-    // Also use this opportunity to periodically recalculate the GC thresholds
-    // as we free more memory.
     static const size_t LockReleasePeriod = 32;
 
     while (emptyArenas) {
@@ -4334,6 +4339,20 @@ IncrementalProgress GCRuntime::markWeakReferences(
 
   // We may have already entered weak marking mode.
   if (!marker.isWeakMarking() && marker.enterWeakMarkingMode()) {
+    // Do not rely on the information about not-yet-marked weak keys that have
+    // been collected by barriers. Clear out the gcWeakKeys entries and rebuild
+    // the full table. Note that this a cross-zone operation; delegate zone
+    // entries will be populated by map zone traversals, so everything needs to
+    // be cleared first, then populated.
+    if (!marker.incrementalWeakMapMarkingEnabled) {
+      for (ZoneIterT zone(this); !zone.done(); zone.next()) {
+        AutoEnterOOMUnsafeRegion oomUnsafe;
+        if (!zone->gcWeakKeys().clear()) {
+          oomUnsafe.crash("clearing weak keys when entering weak marking mode");
+        }
+      }
+    }
+
     for (ZoneIterT zone(this); !zone.done(); zone.next()) {
       if (zone->enterWeakMarkingMode(&marker, budget) == NotFinished) {
         MOZ_ASSERT(marker.incrementalWeakMapMarkingEnabled);
@@ -5735,18 +5754,6 @@ IncrementalProgress GCRuntime::sweepTypeInformation(JSFreeOp* fop,
   return Finished;
 }
 
-IncrementalProgress GCRuntime::releaseSweptEmptyArenas(JSFreeOp* fop,
-                                                       SliceBudget& budget) {
-  // Foreground finalized GC things have already been finalized, and now their
-  // arenas can be reclaimed by freeing empty ones and making non-empty ones
-  // available for allocation.
-
-  for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
-    zone->arenas.releaseForegroundSweptEmptyArenas();
-  }
-  return Finished;
-}
-
 void GCRuntime::startSweepingAtomsTable() {
   auto& maybeAtoms = maybeAtomsToSweep.ref();
   MOZ_ASSERT(maybeAtoms.isNothing());
@@ -6210,7 +6217,6 @@ bool GCRuntime::initSweepActions() {
                                         Call(&GCRuntime::finalizeAllocKind)),
                        MaybeYield(ZealMode::YieldBeforeSweepingShapeTrees),
                        Call(&GCRuntime::sweepShapeTree))),
-          Call(&GCRuntime::releaseSweptEmptyArenas),
           Call(&GCRuntime::endSweepingSweepGroup)));
 
   return sweepActions != nullptr;
@@ -6458,7 +6464,6 @@ void GCRuntime::updateAllGCStartThresholds(const AutoLockGC& lock) {
     zone->updateGCStartThresholds(*this, GC_NORMAL, lock);
   }
 }
-
 
 static const char* GCHeapStateToLabel(JS::HeapState heapState) {
   switch (heapState) {
@@ -7781,8 +7786,21 @@ void js::gc::FinishGC(JSContext* cx, JS::GCReason reason) {
     JS::PrepareForIncrementalGC(cx);
     JS::FinishIncrementalGC(cx, reason);
   }
+}
 
-  cx->runtime()->gc.waitBackgroundFreeEnd();
+void js::gc::WaitForBackgroundTasks(JSContext* cx) {
+  cx->runtime()->gc.waitForBackgroundTasks();
+}
+
+void GCRuntime::waitForBackgroundTasks() {
+  MOZ_ASSERT(!isIncrementalGCInProgress());
+  MOZ_ASSERT(sweepTask.isIdle());
+  MOZ_ASSERT(decommitTask.isIdle());
+  MOZ_ASSERT(sweepMarkTask.isIdle());
+
+  allocTask.join();
+  freeTask.join();
+  nursery().joinDecommitTask();
 }
 
 Realm* js::NewRealm(JSContext* cx, JSPrincipals* principals,
@@ -8899,45 +8917,53 @@ js::gc::ClearEdgesTracer::ClearEdgesTracer()
     : ClearEdgesTracer(TlsContext.get()->runtime()) {}
 
 template <typename S>
-inline bool js::gc::ClearEdgesTracer::clearEdge(S** thingp) {
-  InternalBarrierMethods<S*>::preBarrier(*thingp);
-  InternalBarrierMethods<S*>::postBarrier(thingp, *thingp, nullptr);
-  *thingp = nullptr;
-  return false;
+inline S* js::gc::ClearEdgesTracer::onEdge(S* thing) {
+  // We don't handle removing pointers to nursery edges from the store buffer
+  // with this tracer. Check that this doesn't happen.
+  MOZ_ASSERT(!IsInsideNursery(thing));
+
+  // Fire the pre-barrier since we're removing an edge from the graph.
+  InternalBarrierMethods<S*>::preBarrier(thing);
+
+  // Return nullptr to clear the edge.
+  return nullptr;
 }
 
-bool js::gc::ClearEdgesTracer::onObjectEdge(JSObject** objp) {
-  return clearEdge(objp);
+JSObject* js::gc::ClearEdgesTracer::onObjectEdge(JSObject* obj) {
+  return onEdge(obj);
 }
-bool js::gc::ClearEdgesTracer::onStringEdge(JSString** strp) {
-  return clearEdge(strp);
+JSString* js::gc::ClearEdgesTracer::onStringEdge(JSString* str) {
+  return onEdge(str);
 }
-bool js::gc::ClearEdgesTracer::onSymbolEdge(JS::Symbol** symp) {
-  return clearEdge(symp);
+JS::Symbol* js::gc::ClearEdgesTracer::onSymbolEdge(JS::Symbol* sym) {
+  return onEdge(sym);
 }
-bool js::gc::ClearEdgesTracer::onBigIntEdge(JS::BigInt** bip) {
-  return clearEdge(bip);
+JS::BigInt* js::gc::ClearEdgesTracer::onBigIntEdge(JS::BigInt* bi) {
+  return onEdge(bi);
 }
-bool js::gc::ClearEdgesTracer::onScriptEdge(js::BaseScript** scriptp) {
-  return clearEdge(scriptp);
+js::BaseScript* js::gc::ClearEdgesTracer::onScriptEdge(js::BaseScript* script) {
+  return onEdge(script);
 }
-bool js::gc::ClearEdgesTracer::onShapeEdge(js::Shape** shapep) {
-  return clearEdge(shapep);
+js::Shape* js::gc::ClearEdgesTracer::onShapeEdge(js::Shape* shape) {
+  return onEdge(shape);
 }
-bool js::gc::ClearEdgesTracer::onObjectGroupEdge(js::ObjectGroup** groupp) {
-  return clearEdge(groupp);
+js::ObjectGroup* js::gc::ClearEdgesTracer::onObjectGroupEdge(
+    js::ObjectGroup* group) {
+  return onEdge(group);
 }
-bool js::gc::ClearEdgesTracer::onBaseShapeEdge(js::BaseShape** basep) {
-  return clearEdge(basep);
+js::BaseShape* js::gc::ClearEdgesTracer::onBaseShapeEdge(js::BaseShape* base) {
+  return onEdge(base);
 }
-bool js::gc::ClearEdgesTracer::onJitCodeEdge(js::jit::JitCode** codep) {
-  return clearEdge(codep);
+js::jit::JitCode* js::gc::ClearEdgesTracer::onJitCodeEdge(
+    js::jit::JitCode* code) {
+  return onEdge(code);
 }
-bool js::gc::ClearEdgesTracer::onScopeEdge(js::Scope** scopep) {
-  return clearEdge(scopep);
+js::Scope* js::gc::ClearEdgesTracer::onScopeEdge(js::Scope* scope) {
+  return onEdge(scope);
 }
-bool js::gc::ClearEdgesTracer::onRegExpSharedEdge(js::RegExpShared** sharedp) {
-  return clearEdge(sharedp);
+js::RegExpShared* js::gc::ClearEdgesTracer::onRegExpSharedEdge(
+    js::RegExpShared* shared) {
+  return onEdge(shared);
 }
 
 JS_PUBLIC_API void js::gc::FinalizeDeadNurseryObject(JSContext* cx,

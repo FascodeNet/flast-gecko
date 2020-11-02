@@ -52,3 +52,35 @@ add_task(async function test_disable_commands() {
     );
   }
 });
+
+/**
+ * When buttons are connected to a command, they should not get
+ * disabled just because we move them.
+ */
+add_task(async function test_dont_disable_when_moving() {
+  let button = gNavToolbox.palette.querySelector("#print-button");
+  ok(button.hasAttribute("command"), "Button should have a command attribute.");
+  await startCustomizing();
+  CustomizableUI.addWidgetToArea("print-button", "nav-bar");
+  await endCustomizing();
+  ok(
+    !button.hasAttribute("disabled"),
+    "Should not have disabled attribute after adding the button."
+  );
+  ok(
+    button.hasAttribute("command"),
+    "Button should still have a command attribute."
+  );
+
+  await startCustomizing();
+  await gCustomizeMode.reset();
+  await endCustomizing();
+  ok(
+    !button.hasAttribute("disabled"),
+    "Should not have disabled attribute when resetting in customize mode"
+  );
+  ok(
+    button.hasAttribute("command"),
+    "Button should still have a command attribute."
+  );
+});

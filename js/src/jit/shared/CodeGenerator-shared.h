@@ -11,14 +11,16 @@
 
 #include <utility>
 
+#include "jit/InlineScriptTree.h"
 #include "jit/JitcodeMap.h"
-#include "jit/JitFrames.h"
 #include "jit/LIR.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
+#include "jit/SafepointIndex.h"
 #include "jit/Safepoints.h"
 #include "jit/Snapshots.h"
+#include "vm/TraceLoggingTypes.h"
 
 namespace js {
 namespace jit {

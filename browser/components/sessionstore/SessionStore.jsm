@@ -205,7 +205,6 @@ ChromeUtils.import("resource://gre/modules/Services.jsm", this);
 ChromeUtils.import("resource://gre/modules/TelemetryTimestamps.jsm", this);
 ChromeUtils.import("resource://gre/modules/Timer.jsm", this);
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm", this);
-ChromeUtils.import("resource://gre/modules/osfile.jsm", this);
 
 ChromeUtils.defineModuleGetter(
   this,
@@ -1469,14 +1468,41 @@ var SessionStoreInternal = {
           );
         }
         break;
-      case "SessionStore:restoreTabContentStarted":
-        if (TAB_STATE_FOR_BROWSER.get(browser) == TAB_STATE_NEEDS_RESTORE) {
+      case "SessionStore:restoreTabContentStarted": {
+        let initiatedBySessionStore =
+          TAB_STATE_FOR_BROWSER.get(browser) != TAB_STATE_NEEDS_RESTORE;
+        let isNavigateAndRestore =
+          data.reason == RESTORE_TAB_CONTENT_REASON.NAVIGATE_AND_RESTORE;
+
+        // We need to be careful when restoring the urlbar's search mode because
+        // we race a call to gURLBar.setURI due to the location change.  setURI
+        // will exit search mode and set gURLBar.value to the restored URL,
+        // clobbering any search mode and userTypedValue we restore here.  If
+        // this is a typical restore -- restoring on startup or restoring a
+        // closed tab for example -- then we need to restore search mode after
+        // that setURI call, and so we wait until restoreTabContentComplete, at
+        // which point setURI will have been called.  If this is not a typical
+        // restore -- it was not initiated by session store or it's due to a
+        // remoteness change -- then we do not want to restore search mode at
+        // all, and so we remove it from the tab state cache.  In particular, if
+        // the restore is due to a remoteness change, then the user is loading a
+        // new URL and the current search mode should not be carried over to it.
+        let cacheState = TabStateCache.get(browser);
+        if (cacheState.searchMode) {
+          if (!initiatedBySessionStore || isNavigateAndRestore) {
+            TabStateCache.update(browser, {
+              searchMode: null,
+              userTypedValue: null,
+            });
+          }
+          break;
+        }
+
+        if (!initiatedBySessionStore) {
           // If a load not initiated by sessionstore was started in a
           // previously pending tab. Mark the tab as no longer pending.
           this.markTabAsRestoring(tab);
-        } else if (
-          data.reason != RESTORE_TAB_CONTENT_REASON.NAVIGATE_AND_RESTORE
-        ) {
+        } else if (!isNavigateAndRestore) {
           // If the user was typing into the URL bar when we crashed, but hadn't hit
           // enter yet, then we just need to write that value to the URL bar without
           // loading anything. This must happen after the load, as the load will clear
@@ -1504,7 +1530,23 @@ var SessionStoreInternal = {
           });
         }
         break;
-      case "SessionStore:restoreTabContentComplete":
+      }
+      case "SessionStore:restoreTabContentComplete": {
+        // Restore search mode and its search string in userTypedValue, if
+        // appropriate.
+        let cacheState = TabStateCache.get(browser);
+        if (cacheState.searchMode) {
+          win.gURLBar.setSearchMode(cacheState.searchMode, browser);
+          browser.userTypedValue = cacheState.userTypedValue;
+          if (tab.selected) {
+            win.gURLBar.setURI();
+          }
+          TabStateCache.update(browser, {
+            searchMode: null,
+            userTypedValue: null,
+          });
+        }
+
         // This callback is used exclusively by tests that want to
         // monitor the progress of network loads.
         if (gDebuggingEnabled) {
@@ -1521,6 +1563,7 @@ var SessionStoreInternal = {
           "sessionstore-one-or-no-tab-restored"
         );
         break;
+      }
       case "SessionStore:crashedTabRevived":
         // The browser was revived by navigating to a different page
         // manually, so we remove it from the ignored browser set.
@@ -4789,6 +4832,7 @@ var SessionStoreInternal = {
       // collect it in TabState._collectBaseTabData().
       image: tabData.image || "",
       iconLoadingPrincipal: tabData.iconLoadingPrincipal || null,
+      searchMode: tabData.searchMode || null,
       userTypedValue: tabData.userTypedValue || "",
       userTypedClear: tabData.userTypedClear || 0,
     });

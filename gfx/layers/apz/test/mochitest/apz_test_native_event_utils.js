@@ -494,10 +494,8 @@ function synthesizeNativeTouch(
 //   where advancing the row counter moves forward in time, and each column
 //   represents a single "finger" (or touch input). Each row must have exactly
 //   the same number of columns, and the number of columns must match the length
-//   of the aTouchIds parameter. However, rows are allowed to be null, this
-//   represents a yield point, where the function yields back to the caller for
-//   additional processing at that point in the touch sequence.
-//   For each non-null row, each entry is either an object with x and y fields,
+//   of the aTouchIds parameter.
+//   For each row, each entry is either an object with x and y fields,
 //   or a null. A null value indicates that the "finger" should be "lifted"
 //   (i.e. send a touchend for that touch input). A non-null value therefore
 //   indicates the position of the touch input.
@@ -506,7 +504,7 @@ function synthesizeNativeTouch(
 // aObserver is the observer that will get registered on the very last
 //   synthesizeNativeTouch call this function makes.
 // aTouchIds is an array holding the touch ID values of each "finger".
-function* synthesizeNativeTouchSequences(
+function synthesizeNativeTouchSequences(
   aTarget,
   aPositions,
   aObserver = null,
@@ -515,11 +513,9 @@ function* synthesizeNativeTouchSequences(
   // We use lastNonNullValue to figure out which synthesizeNativeTouch call
   // will be the last one we make, so that we can register aObserver on it.
   var lastNonNullValue = -1;
-  var yields = 0;
   for (let i = 0; i < aPositions.length; i++) {
     if (aPositions[i] == null) {
-      yields++;
-      continue;
+      throw new Error(`aPositions[${i}] was unexpectedly null`);
     }
     if (aPositions[i].length != aTouchIds.length) {
       throw new Error(
@@ -529,7 +525,15 @@ function* synthesizeNativeTouchSequences(
     }
     for (let j = 0; j < aTouchIds.length; j++) {
       if (aPositions[i][j] != null) {
-        lastNonNullValue = (i - yields) * aTouchIds.length + j;
+        lastNonNullValue = i * aTouchIds.length + j;
+        // Do the conversion to screen space before actually synthesizing
+        // the events, otherwise the screen space may change as a result of
+        // the touch inputs and the conversion may not work as intended.
+        aPositions[i][j] = coordinatesRelativeToScreen(
+          aPositions[i][j].x,
+          aPositions[i][j].y,
+          aTarget
+        );
       }
     }
   }
@@ -544,7 +548,7 @@ function* synthesizeNativeTouchSequences(
   allNullRow.fill(null);
   aPositions.push(allNullRow);
 
-  // The last synthesizeNativeTouch call will be the TOUCH_REMOVE which happens
+  // The last sendNativeTouchPoint call will be the TOUCH_REMOVE which happens
   // one iteration of aPosition after the last non-null value.
   var lastSynthesizeCall = lastNonNullValue + aTouchIds.length;
 
@@ -552,14 +556,9 @@ function* synthesizeNativeTouchSequences(
   var currentPositions = new Array(aTouchIds.length);
   currentPositions.fill(null);
 
+  var utils = utilsForTarget(aTarget);
   // Iterate over the position data now, and generate the touches requested
-  yields = 0;
   for (let i = 0; i < aPositions.length; i++) {
-    if (aPositions[i] == null) {
-      yields++;
-      yield i;
-      continue;
-    }
     for (let j = 0; j < aTouchIds.length; j++) {
       if (aPositions[i][j] == null) {
         // null means lift the finger
@@ -568,26 +567,28 @@ function* synthesizeNativeTouchSequences(
         } else {
           // synthesize the touch-up. If this is the last call we're going to
           // make, pass the observer as well
-          var thisIndex = (i - yields) * aTouchIds.length + j;
+          var thisIndex = i * aTouchIds.length + j;
           var observer = lastSynthesizeCall == thisIndex ? aObserver : null;
-          synthesizeNativeTouch(
-            aTarget,
+          utils.sendNativeTouchPoint(
+            aTouchIds[j],
+            SpecialPowers.DOMWindowUtils.TOUCH_REMOVE,
             currentPositions[j].x,
             currentPositions[j].y,
-            SpecialPowers.DOMWindowUtils.TOUCH_REMOVE,
-            observer,
-            aTouchIds[j]
+            1,
+            90,
+            observer
           );
           currentPositions[j] = null;
         }
       } else {
-        synthesizeNativeTouch(
-          aTarget,
+        utils.sendNativeTouchPoint(
+          aTouchIds[j],
+          SpecialPowers.DOMWindowUtils.TOUCH_CONTACT,
           aPositions[i][j].x,
           aPositions[i][j].y,
-          SpecialPowers.DOMWindowUtils.TOUCH_CONTACT,
-          null,
-          aTouchIds[j]
+          1,
+          90,
+          null
         );
         currentPositions[j] = aPositions[i][j];
       }
@@ -617,17 +618,9 @@ function synthesizeNativeTouchDrag(
     positions.push([pos]);
   }
   positions.push([{ x: aX + aDeltaX, y: aY + aDeltaY }]);
-  var continuation = synthesizeNativeTouchSequences(
-    aTarget,
-    positions,
-    aObserver,
-    [aTouchId]
-  );
-  var yielded = continuation.next();
-  while (!yielded.done) {
-    yielded = continuation.next();
-  }
-  return yielded.value;
+  return synthesizeNativeTouchSequences(aTarget, positions, aObserver, [
+    aTouchId,
+  ]);
 }
 
 function synthesizeNativeTap(aElement, aX, aY, aObserver = null) {
@@ -908,8 +901,9 @@ async function promiseNativeMouseDrag(
 }
 
 // Synthesizes a native touch sequence of events corresponding to a pinch-zoom-in
-// at the given focus point.
-function* pinchZoomInTouchSequence(focusX, focusY) {
+// at the given focus point. The focus point must be specified in CSS coordinates
+// relative to the document body.
+function pinchZoomInTouchSequence(focusX, focusY) {
   // prettier-ignore
   var zoom_in = [
       [ { x: focusX - 25, y: focusY - 50 }, { x: focusX + 25, y: focusY + 50 } ],
@@ -921,43 +915,7 @@ function* pinchZoomInTouchSequence(focusX, focusY) {
   ];
 
   var touchIds = [0, 1];
-  yield* synthesizeNativeTouchSequences(document.body, zoom_in, null, touchIds);
-}
-
-// Synthesizes a native touch sequence of events corresponding to a
-// pinch-zoom-out at the center of the window.
-function* pinchZoomOutTouchSequenceAtCenter() {
-  // Divide the half of visual viewport size by 8, then cause touch events
-  // starting from the 7th furthest away from the center towards the center.
-  const deltaX = window.visualViewport.width / 16;
-  const deltaY = window.visualViewport.height / 16;
-  const centerX =
-    window.visualViewport.pageLeft + window.visualViewport.width / 2;
-  const centerY =
-    window.visualViewport.pageTop + window.visualViewport.height / 2;
-  // prettier-ignore
-  var zoom_out = [
-      [ { x: centerX - (deltaX * 6), y: centerY - (deltaY * 6) },
-        { x: centerX + (deltaX * 6), y: centerY + (deltaY * 6) } ],
-      [ { x: centerX - (deltaX * 5), y: centerY - (deltaY * 5) },
-        { x: centerX + (deltaX * 5), y: centerY + (deltaY * 5) } ],
-      [ { x: centerX - (deltaX * 4), y: centerY - (deltaY * 4) },
-        { x: centerX + (deltaX * 4), y: centerY + (deltaY * 4) } ],
-      [ { x: centerX - (deltaX * 3), y: centerY - (deltaY * 3) },
-        { x: centerX + (deltaX * 3), y: centerY + (deltaY * 3) } ],
-      [ { x: centerX - (deltaX * 2), y: centerY - (deltaY * 2) },
-        { x: centerX + (deltaX * 2), y: centerY + (deltaY * 2) } ],
-      [ { x: centerX - (deltaX * 1), y: centerY - (deltaY * 1) },
-        { x: centerX + (deltaX * 1), y: centerY + (deltaY * 1) } ],
-  ];
-
-  var touchIds = [0, 1];
-  yield* synthesizeNativeTouchSequences(
-    document.body,
-    zoom_out,
-    null,
-    touchIds
-  );
+  return synthesizeNativeTouchSequences(document.body, zoom_in, null, touchIds);
 }
 
 // Returns a promise that is resolved when the observer service dispatches a
@@ -988,40 +946,74 @@ function promiseTransformEnd() {
 
 // This generates a touch-based pinch zoom-in gesture that is expected
 // to succeed. It returns after APZ has completed the zoom and reaches the end
-// of the transform.
+// of the transform. The focus point is expected to be in CSS coordinates
+// relative to the document body.
 async function pinchZoomInWithTouch(focusX, focusY) {
   // Register the listener for the TransformEnd observer topic
   let transformEndPromise = promiseTopic("APZ:TransformEnd");
 
   // Dispatch all the touch events
-  let generator = pinchZoomInTouchSequence(focusX, focusY);
-  while (true) {
-    let yieldResult = generator.next();
-    if (yieldResult.done) {
-      break;
-    }
-  }
+  pinchZoomInTouchSequence(focusX, focusY);
 
   // Wait for TransformEnd to fire.
   await transformEndPromise;
 }
 
-// This generates a touch-based pinch zoom-out gesture that is expected
-// to succeed. It returns after APZ has completed the zoom and reaches the end
-// of the transform.
-async function pinchZoomOutWithTouchAtCenter() {
+// This generates a touch-based pinch gesture that is expected to succeed
+// and trigger an APZ:TransformEnd observer notification.
+// It returns after that notification has been dispatched.
+// The coordinates of touch events in `touchSequence` are expected to be
+// in CSS coordinates relative to the document body.
+async function synthesizeNativeTouchAndWaitForTransformEnd(
+  touchSequence,
+  touchIds
+) {
   // Register the listener for the TransformEnd observer topic
   let transformEndPromise = promiseTopic("APZ:TransformEnd");
 
   // Dispatch all the touch events
-  let generator = pinchZoomOutTouchSequenceAtCenter();
-  while (true) {
-    let yieldResult = generator.next();
-    if (yieldResult.done) {
-      break;
-    }
-  }
+  synthesizeNativeTouchSequences(document.body, touchSequence, null, touchIds);
 
   // Wait for TransformEnd to fire.
   await transformEndPromise;
+}
+
+// Returns a touch sequence for a pinch-zoom-out operation in the center
+// of the visual viewport. The touch sequence returned is in CSS coordinates
+// relative to the document body.
+function pinchZoomOutTouchSequenceAtCenter() {
+  // Divide the half of visual viewport size by 8, then cause touch events
+  // starting from the 7th furthest away from the center towards the center.
+  const deltaX = window.visualViewport.width / 16;
+  const deltaY = window.visualViewport.height / 16;
+  const centerX =
+    window.visualViewport.pageLeft + window.visualViewport.width / 2;
+  const centerY =
+    window.visualViewport.pageTop + window.visualViewport.height / 2;
+  // prettier-ignore
+  var zoom_out = [
+      [ { x: centerX - (deltaX * 6), y: centerY - (deltaY * 6) },
+        { x: centerX + (deltaX * 6), y: centerY + (deltaY * 6) } ],
+      [ { x: centerX - (deltaX * 5), y: centerY - (deltaY * 5) },
+        { x: centerX + (deltaX * 5), y: centerY + (deltaY * 5) } ],
+      [ { x: centerX - (deltaX * 4), y: centerY - (deltaY * 4) },
+        { x: centerX + (deltaX * 4), y: centerY + (deltaY * 4) } ],
+      [ { x: centerX - (deltaX * 3), y: centerY - (deltaY * 3) },
+        { x: centerX + (deltaX * 3), y: centerY + (deltaY * 3) } ],
+      [ { x: centerX - (deltaX * 2), y: centerY - (deltaY * 2) },
+        { x: centerX + (deltaX * 2), y: centerY + (deltaY * 2) } ],
+      [ { x: centerX - (deltaX * 1), y: centerY - (deltaY * 1) },
+        { x: centerX + (deltaX * 1), y: centerY + (deltaY * 1) } ],
+  ];
+  return zoom_out;
+}
+
+// This generates a touch-based pinch zoom-out gesture that is expected
+// to succeed. It returns after APZ has completed the zoom and reaches the end
+// of the transform. The touch inputs are directed to the center of the
+// current visual viewport.
+async function pinchZoomOutWithTouchAtCenter() {
+  var zoom_out = pinchZoomOutTouchSequenceAtCenter();
+  var touchIds = [0, 1];
+  await synthesizeNativeTouchAndWaitForTransformEnd(zoom_out, touchIds);
 }

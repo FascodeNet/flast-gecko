@@ -18,10 +18,12 @@
 
 #include "wasm/WasmCraneliftCompile.h"
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/ScopeExit.h"
 
 #include "jit/Disassemble.h"
 #include "js/Printf.h"
+#include "vm/JSContext.h"
 
 #include "wasm/cranelift/baldrapi.h"
 #include "wasm/cranelift/clifapi.h"
@@ -35,6 +37,8 @@
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
+
+using mozilla::CheckedInt;
 
 bool wasm::CraneliftPlatformSupport() { return cranelift_supports_platform(); }
 
@@ -303,7 +307,7 @@ class CraneliftContext {
       staticEnv_.memory_guard_size = OffsetGuardLimit;
     }
 #endif
-    // Otherwise, heap bounds are stored in the `boundsCheckLimit` field
+    // Otherwise, heap bounds are stored in the `boundsCheckLimit32` field
     // of TlsData.
   }
   bool init() {
@@ -325,7 +329,7 @@ CraneliftFuncCompileInput::CraneliftFuncCompileInput(
       index(func.index),
       offset_in_module(func.lineOrBytecode) {}
 
-static_assert(offsetof(TlsData, boundsCheckLimit) == sizeof(size_t),
+static_assert(offsetof(TlsData, boundsCheckLimit32) == sizeof(void*),
               "fix make_heap() in wasm2clif.rs");
 
 CraneliftStaticEnvironment::CraneliftStaticEnvironment()

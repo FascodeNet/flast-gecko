@@ -29,6 +29,7 @@
 #include "vm/BigIntType.h"
 #include "vm/JSContext.h"
 #include "vm/NativeObject.h"
+#include "vm/Uint8Clamped.h"
 
 #include "gc/ObjectKind-inl.h"
 #include "vm/ObjectOperations-inl.h"
@@ -450,7 +451,7 @@ class ElementSpecific {
         return false;
       }
 
-      len = std::min(len, target->length());
+      len = std::min<size_t>(len, target->length());
       if (i >= len) {
         break;
       }

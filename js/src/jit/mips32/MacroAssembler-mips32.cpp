@@ -20,6 +20,7 @@
 #include "jit/SharedICRegisters.h"
 #include "util/Memory.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
+#include "vm/JSContext.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -2278,13 +2279,14 @@ template void MacroAssembler::storeUnboxedValue(
 
 void MacroAssembler::PushBoxed(FloatRegister reg) { Push(reg); }
 
-void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
-                                     Register boundsCheckLimit, Label* label) {
+void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
+                                       Register boundsCheckLimit,
+                                       Label* label) {
   ma_b(index, boundsCheckLimit, label, cond);
 }
 
-void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
-                                     Address boundsCheckLimit, Label* label) {
+void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
+                                       Address boundsCheckLimit, Label* label) {
   SecondScratchRegisterScope scratch2(*this);
   load32(boundsCheckLimit, SecondScratchReg);
   ma_b(index, SecondScratchReg, label, cond);
@@ -2378,6 +2380,10 @@ void MacroAssemblerMIPSCompat::wasmLoadI64Impl(
     Register ptrScratch, Register64 output, Register tmp) {
   uint32_t offset = access.offset();
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
+
+  MOZ_ASSERT(!access.isZeroExtendSimd128Load());
+  MOZ_ASSERT(!access.isSplatSimd128Load());
+  MOZ_ASSERT(!access.isWidenSimd128Load());
 
   // Maybe add the offset.
   if (offset) {

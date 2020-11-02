@@ -18,7 +18,9 @@
 
 #include "wasm/WasmFrameIter.h"
 
+#include "jit/JitFrames.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
+#include "vm/JSContext.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmStubs.h"
 

@@ -210,41 +210,55 @@ bool DeviceManagerDx::GetOutputFromMonitor(HMONITOR monitor,
   return false;
 }
 
-bool DeviceManagerDx::CheckHardwareStretchingSupport() {
+void DeviceManagerDx::CheckHardwareStretchingSupport(HwStretchingSupport& aRv) {
   RefPtr<IDXGIAdapter> adapter = GetDXGIAdapter();
 
   if (!adapter) {
     NS_WARNING(
         "Failed to acquire a DXGI adapter for checking hardware stretching "
         "support.");
-    return false;
+    ++aRv.mError;
+    return;
   }
 
-  nsTArray<DXGI_OUTPUT_DESC1> outputs;
   for (UINT i = 0;; ++i) {
     RefPtr<IDXGIOutput> output = nullptr;
-    if (FAILED(adapter->EnumOutputs(i, getter_AddRefs(output)))) {
+    HRESULT result = adapter->EnumOutputs(i, getter_AddRefs(output));
+    if (result == DXGI_ERROR_NOT_FOUND) {
+      // No more outputs to check.
+      break;
+    }
+
+    if (FAILED(result)) {
+      ++aRv.mError;
       break;
     }
 
     RefPtr<IDXGIOutput6> output6 = nullptr;
     if (FAILED(output->QueryInterface(__uuidof(IDXGIOutput6),
                                       getter_AddRefs(output6)))) {
-      break;
+      ++aRv.mError;
+      continue;
     }
 
     UINT flags = 0;
     if (FAILED(output6->CheckHardwareCompositionSupport(&flags))) {
-      break;
+      ++aRv.mError;
+      continue;
     }
 
-    // XXX Do we need add a check about which flags are supported?
-    if (flags) {
-      return true;
+    bool fullScreen = flags & DXGI_HARDWARE_COMPOSITION_SUPPORT_FLAG_FULLSCREEN;
+    bool window = flags & DXGI_HARDWARE_COMPOSITION_SUPPORT_FLAG_WINDOWED;
+    if (fullScreen && window) {
+      ++aRv.mBoth;
+    } else if (fullScreen) {
+      ++aRv.mFullScreenOnly;
+    } else if (window) {
+      ++aRv.mWindowOnly;
+    } else {
+      ++aRv.mNone;
     }
   }
-
-  return false;
 }
 
 #ifdef DEBUG
@@ -427,7 +441,6 @@ void DeviceManagerDx::CreateDirectCompositionDevice() {
 
 /* static */
 HANDLE DeviceManagerDx::CreateDCompSurfaceHandle() {
-#if !defined(__MINGW32__)
   if (!sDcompCreateSurfaceHandleFn) {
     return 0;
   }
@@ -440,9 +453,6 @@ HANDLE DeviceManagerDx::CreateDCompSurfaceHandle() {
   }
 
   return handle;
-#else
-  return 0;
-#endif
 }
 
 void DeviceManagerDx::ImportDeviceInfo(const D3D11DeviceStatus& aDeviceStatus) {
@@ -509,8 +519,9 @@ IDXGIAdapter1* DeviceManagerDx::GetDXGIAdapter() {
     // should never reach here. Furthermore, the UI process does not create
     // devices when using a GPU process.
     //
-    // So, this should only ever get called on the content process.
-    MOZ_ASSERT(XRE_IsContentProcess());
+    // So, this should only ever get called on the content process or RDD
+    // process
+    MOZ_ASSERT(XRE_IsContentProcess() || XRE_IsRDDProcess());
 
     // In the child process, we search for the adapter that matches the parent
     // process. The first adapter can be mismatched on dual-GPU systems.

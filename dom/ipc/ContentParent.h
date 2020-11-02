@@ -339,9 +339,6 @@ class ContentParent final
       const uint32_t& aPluginId, nsresult* aRv,
       Endpoint<PPluginModuleParent>* aEndpoint);
 
-  mozilla::ipc::IPCResult RecvLaunchRDDProcess(
-      nsresult* aRv, Endpoint<PRemoteDecoderManagerChild>* aEndpoint);
-
   mozilla::ipc::IPCResult RecvUngrabPointer(const uint32_t& aTime);
 
   mozilla::ipc::IPCResult RecvRemovePermission(const IPC::Principal& aPrincipal,
@@ -1204,7 +1201,7 @@ class ContentParent final
       const mozilla::fontlist::Pointer& aFamilyPtr);
 
   mozilla::ipc::IPCResult RecvGetHyphDict(
-      nsIURI* aURIParams, mozilla::ipc::SharedMemoryBasic::Handle* aOutHandle,
+      nsIURI* aURIParams, base::SharedMemoryHandle* aOutHandle,
       uint32_t* aOutSize);
 
   mozilla::ipc::IPCResult RecvNotifyBenchmarkResult(const nsString& aCodecName,
@@ -1321,18 +1318,13 @@ class ContentParent final
       ModulePaths&& aModPaths, bool aRunAtNormalPriority,
       GetModulesTrustResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvSessionStorageData(
-      uint64_t aTopContextId, const nsACString& aOriginAttrs,
-      const nsACString& aOriginKey, const nsTArray<KeyValuePair>& aDefaultData,
-      const nsTArray<KeyValuePair>& aSessionData);
-
   mozilla::ipc::IPCResult RecvReportServiceWorkerShutdownProgress(
       uint32_t aShutdownStateId,
       ServiceWorkerShutdownState::Progress aProgress);
 
-  mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                         const ClonedMessageData& aData,
-                                         const ClonedMessageData& aStack);
+  mozilla::ipc::IPCResult RecvRawMessage(
+      const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
+      const Maybe<ClonedMessageData>& aStack);
 
   mozilla::ipc::IPCResult RecvAbortOtherOrientationPendingPromises(
       const MaybeDiscarded<BrowsingContext>& aContext);
@@ -1347,7 +1339,7 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
-      HistoryGoResolver&& aResolveRequestedIndex);
+      uint64_t aHistoryEpoch, HistoryGoResolver&& aResolveRequestedIndex);
 
   mozilla::ipc::IPCResult RecvSessionHistoryUpdate(
       const MaybeDiscarded<BrowsingContext>& aContext, const int32_t& aIndex,

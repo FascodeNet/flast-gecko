@@ -11,6 +11,7 @@
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 #include "js/HeapAPI.h"
 #include "vm/BigIntType.h"  // JS::BigInt
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -929,6 +930,8 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
   void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
   void vpandSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpxorSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpshufbSimd128(const SimdConstant& v, FloatRegister srcDest);
 
   void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
     loadPtr(Address(WasmTlsReg,

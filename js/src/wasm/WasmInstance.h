@@ -19,10 +19,10 @@
 #ifndef wasm_instance_h
 #define wasm_instance_h
 
-#include "builtin/TypedObject.h"
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
 #include "vm/SharedMem.h"
+#include "wasm/TypedObject.h"
 #include "wasm/WasmCode.h"
 #include "wasm/WasmDebug.h"
 #include "wasm/WasmFrameIter.h"  // js::wasm::WasmFrameIter
@@ -226,8 +226,8 @@ class Instance {
   static void postBarrier(Instance* instance, gc::Cell** location);
   static void postBarrierFiltering(Instance* instance, gc::Cell** location);
   static void* structNew(Instance* instance, uint32_t typeIndex);
-  static void* structNarrow(Instance* instance, uint32_t mustUnboxAnyref,
-                            uint32_t outputTypeIndex, void* maybeNullPtr);
+  static void* structNarrow(Instance* instance, uint32_t outputTypeIndex,
+                            void* maybeNullPtr);
 };
 
 using UniqueInstance = UniquePtr<Instance>;

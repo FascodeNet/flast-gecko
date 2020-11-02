@@ -19,6 +19,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
+  MigrationUtils: "resource:///modules/MigrationUtils.jsm",
   OpenInTabsUtils: "resource:///modules/OpenInTabsUtils.jsm",
   PlacesTransactions: "resource://gre/modules/PlacesTransactions.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
@@ -233,19 +234,6 @@ let InternalFaviconLoader = {
 
 var PlacesUIUtils = {
   LAST_USED_FOLDERS_META_KEY: "bookmarks/lastusedfolders",
-
-  /**
-   * Makes a URI from a spec, and do fixup
-   * @param   aSpec
-   *          The string spec of the URI
-   * @return A URI object for the spec.
-   */
-  createFixedURI: function PUIU_createFixedURI(aSpec) {
-    return Services.uriFixup.createFixupURI(
-      aSpec,
-      Ci.nsIURIFixup.FIXUP_FLAG_NONE
-    );
-  },
 
   getFormattedString: function PUIU_getFormattedString(key, params) {
     return bundle.formatStringFromName(key, params);
@@ -525,7 +513,9 @@ var PlacesUIUtils = {
    * TRANSITION_LINK.
    */
   markPageAsTyped: function PUIU_markPageAsTyped(aURL) {
-    PlacesUtils.history.markPageAsTyped(this.createFixedURI(aURL));
+    PlacesUtils.history.markPageAsTyped(
+      Services.uriFixup.getFixupURIInfo(aURL).preferredURI
+    );
   },
 
   /**
@@ -536,7 +526,9 @@ var PlacesUIUtils = {
    * If this is not called visits will be marked as TRANSITION_LINK.
    */
   markPageAsFollowedBookmark: function PUIU_markPageAsFollowedBookmark(aURL) {
-    PlacesUtils.history.markPageAsFollowedBookmark(this.createFixedURI(aURL));
+    PlacesUtils.history.markPageAsFollowedBookmark(
+      Services.uriFixup.getFixupURIInfo(aURL).preferredURI
+    );
   },
 
   /**
@@ -546,7 +538,9 @@ var PlacesUIUtils = {
    * so automatic visits can be correctly ignored.
    */
   markPageAsFollowedLink: function PUIU_markPageAsFollowedLink(aURL) {
-    PlacesUtils.history.markPageAsFollowedLink(this.createFixedURI(aURL));
+    PlacesUtils.history.markPageAsFollowedLink(
+      Services.uriFixup.getFixupURIInfo(aURL).preferredURI
+    );
   },
 
   /**
@@ -1406,6 +1400,57 @@ var PlacesUIUtils = {
         }
       }
     },
+  },
+
+  async maybeAddImportButton() {
+    let numberOfBookmarks = await PlacesUtils.withConnectionWrapper(
+      "PlacesUIUtils: maybeAddImportButton",
+      async db => {
+        let rows = await db.execute(
+          `SELECT COUNT(*) as n FROM moz_bookmarks b
+           WHERE b.parent = :parentId`,
+          { parentId: PlacesUtils.toolbarFolderId }
+        );
+        return rows[0].getResultByName("n");
+      }
+    ).catch(e => {
+      // We want to report errors, but we still want to add the button then:
+      Cu.reportError(e);
+      return 0;
+    });
+
+    if (numberOfBookmarks < 3) {
+      CustomizableUI.addWidgetToArea(
+        "import-button",
+        CustomizableUI.AREA_BOOKMARKS,
+        0
+      );
+      Services.prefs.setBoolPref("browser.bookmarks.addedImportButton", true);
+    }
+  },
+
+  removeImportButtonWhenImportSucceeds() {
+    // If the user (re)moved the button, clear the pref and stop worrying about
+    // moving the item.
+    let placement = CustomizableUI.getPlacementOfWidget("import-button");
+    if (placement?.area != CustomizableUI.AREA_BOOKMARKS) {
+      Services.prefs.clearUserPref("browser.bookmarks.addedImportButton");
+      return;
+    }
+    // Otherwise, wait for a successful migration:
+    let obs = (subject, topic, data) => {
+      if (
+        data == Ci.nsIBrowserProfileMigrator.BOOKMARKS &&
+        MigrationUtils.getImportedCount("bookmarks") > 0
+      ) {
+        CustomizableUI.removeWidgetFromArea("import-button");
+        Services.prefs.clearUserPref("browser.bookmarks.addedImportButton");
+        Services.obs.removeObserver(obs, "Migration:ItemAfterMigrate");
+        Services.obs.removeObserver(obs, "Migration:ItemError");
+      }
+    };
+    Services.obs.addObserver(obs, "Migration:ItemAfterMigrate");
+    Services.obs.addObserver(obs, "Migration:ItemError");
   },
 };
 

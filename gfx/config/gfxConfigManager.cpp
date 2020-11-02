@@ -38,7 +38,6 @@ void gfxConfigManager::Init() {
       StaticPrefs::gfx_webrender_compositor_force_enabled_AtStartup();
   mGPUProcessAllowSoftware =
       StaticPrefs::layers_gpu_process_allow_software_AtStartup();
-  mWrPictureCaching = StaticPrefs::gfx_webrender_picture_caching();
   mWrPartialPresent =
       StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup() > 0;
 #ifdef XP_WIN
@@ -55,13 +54,12 @@ void gfxConfigManager::Init() {
   mWrEnvForceDisabled = gfxPlatform::WebRenderEnvvarDisabled();
 
 #ifdef XP_WIN
-  mHwStretchingSupport =
-      DeviceManagerDx::Get()->CheckHardwareStretchingSupport();
+  DeviceManagerDx::Get()->CheckHardwareStretchingSupport(mHwStretchingSupport);
   mScaledResolution = HasScaledResolution();
   mIsWin10OrLater = IsWin10OrLater();
   mWrCompositorDCompRequired = true;
 #else
-  mHwStretchingSupport = true;
+  ++mHwStretchingSupport.mBoth;
 #endif
 
 #ifdef MOZ_WIDGET_GTK
@@ -178,14 +176,22 @@ bool gfxConfigManager::ConfigureWebRenderQualified() {
                                      "INTEL_BATTERY_REQUIRES_DCOMP"_ns);
       }
 
-      int32_t maxRefreshRate = mGfxInfo->GetMaxRefreshRate();
+      bool mixed;
+      int32_t maxRefreshRate = mGfxInfo->GetMaxRefreshRate(&mixed);
       if (maxRefreshRate > 60) {
         mFeatureWrQualified->Disable(FeatureStatus::Blocked,
-                                   "Monitor refresh rate too high",
-                                   "REFRESH_RATE_TOO_HIGH"_ns);
+                                     "Monitor refresh rate too high",
+                                     "REFRESH_RATE_TOO_HIGH"_ns);
+      }
+    } else if (adapterVendorID == u"0x10de") {
+      bool mixed = false;
+      int32_t maxRefreshRate = mGfxInfo->GetMaxRefreshRate(&mixed);
+      if (maxRefreshRate > 60 && mixed) {
+        mFeatureWrQualified->Disable(FeatureStatus::Blocked,
+                                     "Monitor refresh rate too high/mixed",
+                                     "NVIDIA_REFRESH_RATE_MIXED"_ns);
       }
     }
-
   }
 
   return guarded;
@@ -216,10 +222,14 @@ void gfxConfigManager::ConfigureWebRender() {
   // Disable native compositor when hardware stretching is not supported. It is
   // for avoiding a problem like Bug 1618370.
   // XXX Is there a better check for Bug 1618370?
-  if (!mHwStretchingSupport && mScaledResolution) {
+  if (!mHwStretchingSupport.IsFullySupported() && mScaledResolution) {
+    nsPrintfCString failureId(
+        "FEATURE_FAILURE_NO_HARDWARE_STRETCHING_B%uW%uF%uN%uE%u",
+        mHwStretchingSupport.mBoth, mHwStretchingSupport.mWindowOnly,
+        mHwStretchingSupport.mFullScreenOnly, mHwStretchingSupport.mNone,
+        mHwStretchingSupport.mError);
     mFeatureWrCompositor->Disable(FeatureStatus::Unavailable,
-                                  "No hardware stretching support",
-                                  "FEATURE_FAILURE_NO_HARDWARE_STRETCHING"_ns);
+                                  "No hardware stretching support", failureId);
   }
 
   bool guardedByQualifiedPref = ConfigureWebRenderQualified();
@@ -257,7 +267,7 @@ void gfxConfigManager::ConfigureWebRender() {
 
   // HW_COMPOSITING being disabled implies interfacing with the GPU might break
   if (!mFeatureHwCompositing->IsEnabled() &&
-      !Preferences::GetBool("gfx.webrender.software", false)) {
+      !StaticPrefs::gfx_webrender_software_AtStartup()) {
     mFeatureWr->ForceDisable(FeatureStatus::UnavailableNoHwCompositing,
                              "Hardware compositing is disabled",
                              "FEATURE_FAILURE_WEBRENDER_NEED_HWCOMP"_ns);
@@ -351,12 +361,6 @@ void gfxConfigManager::ConfigureWebRender() {
                                   FeatureStatus::Unavailable, "Requires ANGLE",
                                   "FEATURE_FAILURE_DCOMP_NOT_ANGLE"_ns);
 
-  if (!mWrPictureCaching) {
-    mFeatureWrCompositor->ForceDisable(
-        FeatureStatus::Unavailable, "Picture caching is disabled",
-        "FEATURE_FAILURE_PICTURE_CACHING_DISABLED"_ns);
-  }
-
   if (!mFeatureWrDComp->IsEnabled() && mWrCompositorDCompRequired) {
     mFeatureWrCompositor->ForceDisable(FeatureStatus::Unavailable,
                                        "No DirectComposition usage",
@@ -368,11 +372,6 @@ void gfxConfigManager::ConfigureWebRender() {
   if (mWrPartialPresent) {
     if (mFeatureWr->IsEnabled()) {
       mFeatureWrPartial->EnableByDefault();
-      if (!mWrPictureCaching) {
-        mFeatureWrPartial->ForceDisable(
-            FeatureStatus::Unavailable, "Picture caching is disabled",
-            "FEATURE_FAILURE_PICTURE_CACHING_DISABLED"_ns);
-      }
     }
   }
 }

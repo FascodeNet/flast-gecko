@@ -9,22 +9,27 @@
 
 #include "mozilla/Maybe.h"
 
-#include "jsmath.h"
-
 #include "NamespaceImports.h"
 
-#include "builtin/TypedObject.h"
 #include "gc/Rooting.h"
 #include "jit/CacheIROpsGenerated.h"
 #include "jit/CompactBuffer.h"
 #include "jit/ICState.h"
 #include "jit/Simulator.h"
+#include "js/experimental/JitInfo.h"
 #include "js/friend/XrayJitInfo.h"  // JS::XrayJitInfo
 #include "js/ScalarType.h"          // js::Scalar::Type
-#include "vm/Iteration.h"
+#include "vm/JSFunction.h"
 #include "vm/Shape.h"
+#include "wasm/TypedObject.h"
+
+enum class JSOp : uint8_t;
 
 namespace js {
+
+enum class ReferenceType;
+enum class UnaryMathFunction : uint8_t;
+
 namespace jit {
 
 enum class BaselineCacheIRStubKind;
@@ -34,6 +39,7 @@ class ICStub;
 class ICScript;
 class Label;
 class MacroAssembler;
+struct Register;
 
 // [SMDOC] CacheIR
 //
@@ -482,13 +488,6 @@ enum class GuardClassKind : uint8_t {
 // zone, which refer to the actual shape via a reserved slot.
 JSObject* NewWrapperWithObjectShape(JSContext* cx, HandleNativeObject obj);
 
-// Enum for stubs handling a combination of typed arrays and typed objects.
-enum class TypedThingLayout : uint8_t {
-  TypedArray,
-  OutlineTypedObject,
-  InlineTypedObject
-};
-
 void LoadShapeWrapperContents(MacroAssembler& masm, Register obj, Register dst,
                               Label* failure);
 
@@ -655,15 +654,6 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     static_assert(JS_WHY_MAGIC_COUNT <= UINT8_MAX,
                   "JSWhyMagic must fit in uint8_t");
     buffer_.writeByte(uint8_t(whyMagic));
-  }
-  void writeTypedThingLayoutImm(TypedThingLayout layout) {
-    static_assert(sizeof(TypedThingLayout) == sizeof(uint8_t),
-                  "TypedThingLayout must fit in a byte");
-    buffer_.writeByte(uint8_t(layout));
-  }
-  void writeReferenceTypeImm(ReferenceType type) {
-    MOZ_ASSERT(size_t(type) <= UINT8_MAX);
-    buffer_.writeByte(uint8_t(type));
   }
   void writeScalarTypeImm(Scalar::Type type) {
     MOZ_ASSERT(size_t(type) <= UINT8_MAX);
@@ -1108,10 +1098,6 @@ class MOZ_RAII CacheIRReader {
   JSValueType jsValueType() { return JSValueType(buffer_.readByte()); }
   ValueType valueType() { return ValueType(buffer_.readByte()); }
 
-  TypedThingLayout typedThingLayout() {
-    return TypedThingLayout(buffer_.readByte());
-  }
-
   Scalar::Type scalarType() { return Scalar::Type(buffer_.readByte()); }
   uint32_t typeDescrKey() { return buffer_.readByte(); }
   JSWhyMagic whyMagic() { return JSWhyMagic(buffer_.readByte()); }
@@ -1123,10 +1109,6 @@ class MOZ_RAII CacheIRReader {
   template <typename MetaKind>
   MetaKind metaKind() {
     return MetaKind(buffer_.readByte());
-  }
-
-  ReferenceType referenceTypeDescrType() {
-    return ReferenceType(buffer_.readByte());
   }
 
   UnaryMathFunction unaryMathFunction() {
@@ -1312,8 +1294,6 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                   HandleId id);
   AttachDecision tryAttachUnboxedExpando(HandleObject obj, ObjOperandId objId,
                                          HandleId id);
-  AttachDecision tryAttachTypedObject(HandleObject obj, ObjOperandId objId,
-                                      HandleId id);
   AttachDecision tryAttachObjectLength(HandleObject obj, ObjOperandId objId,
                                        HandleId id);
   AttachDecision tryAttachTypedArrayLength(HandleObject obj, ObjOperandId objId,
@@ -1365,8 +1345,9 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                            Int32OperandId indexId);
   AttachDecision tryAttachSparseElement(HandleObject obj, ObjOperandId objId,
                                         uint32_t index, Int32OperandId indexId);
-  AttachDecision tryAttachTypedElement(HandleObject obj, ObjOperandId objId,
-                                       uint32_t index, Int32OperandId indexId);
+  AttachDecision tryAttachTypedArrayElement(HandleObject obj,
+                                            ObjOperandId objId, uint32_t index,
+                                            Int32OperandId indexId);
   AttachDecision tryAttachTypedArrayNonInt32Index(HandleObject obj,
                                                   ObjOperandId objId);
 
@@ -1547,9 +1528,6 @@ class MOZ_RAII SetPropIRGenerator : public IRGenerator {
                                                 ValOperandId rhsId);
   AttachDecision tryAttachUnboxedProperty(HandleObject obj, ObjOperandId objId,
                                           HandleId id, ValOperandId rhsId);
-  AttachDecision tryAttachTypedObjectProperty(HandleObject obj,
-                                              ObjOperandId objId, HandleId id,
-                                              ValOperandId rhsId);
   AttachDecision tryAttachSetter(HandleObject obj, ObjOperandId objId,
                                  HandleId id, ValOperandId rhsId);
   AttachDecision tryAttachSetArrayLength(HandleObject obj, ObjOperandId objId,
@@ -1561,10 +1539,11 @@ class MOZ_RAII SetPropIRGenerator : public IRGenerator {
                                           uint32_t index,
                                           Int32OperandId indexId,
                                           ValOperandId rhsId);
-  AttachDecision tryAttachSetTypedElement(HandleObject obj, ObjOperandId objId,
-                                          uint32_t index,
-                                          Int32OperandId indexId,
-                                          ValOperandId rhsId);
+  AttachDecision tryAttachSetTypedArrayElement(HandleObject obj,
+                                               ObjOperandId objId,
+                                               uint32_t index,
+                                               Int32OperandId indexId,
+                                               ValOperandId rhsId);
   AttachDecision tryAttachSetTypedArrayElementNonInt32Index(HandleObject obj,
                                                             ObjOperandId objId,
                                                             ValOperandId rhsId);
@@ -1655,8 +1634,6 @@ class MOZ_RAII HasPropIRGenerator : public IRGenerator {
                                   ValOperandId keyId);
   AttachDecision tryAttachUnboxedExpando(JSObject* obj, ObjOperandId objId,
                                          jsid key, ValOperandId keyId);
-  AttachDecision tryAttachTypedObject(JSObject* obj, ObjOperandId objId,
-                                      jsid key, ValOperandId keyId);
   AttachDecision tryAttachSlotDoesNotExist(JSObject* obj, ObjOperandId objId,
                                            jsid key, ValOperandId keyId);
   AttachDecision tryAttachDoesNotExist(HandleObject obj, ObjOperandId objId,
@@ -1893,6 +1870,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);
   AttachDecision tryAttachCallScripted(HandleFunction calleeFunc);
   AttachDecision tryAttachInlinableNative(HandleFunction calleeFunc);
+  AttachDecision tryAttachWasmCall(HandleFunction calleeFunc);
   AttachDecision tryAttachCallNative(HandleFunction calleeFunc);
   AttachDecision tryAttachCallHook(HandleObject calleeObj);
 
@@ -2061,25 +2039,6 @@ class MOZ_RAII NewObjectIRGenerator : public IRGenerator {
 
   AttachDecision tryAttachStub();
 };
-
-static inline uint32_t SimpleTypeDescrKey(SimpleTypeDescr* descr) {
-  if (descr->is<ScalarTypeDescr>()) {
-    return uint32_t(descr->as<ScalarTypeDescr>().type()) << 1;
-  }
-  return (uint32_t(descr->as<ReferenceTypeDescr>().type()) << 1) | 1;
-}
-
-inline bool SimpleTypeDescrKeyIsScalar(uint32_t key) { return !(key & 1); }
-
-inline ScalarTypeDescr::Type ScalarTypeFromSimpleTypeDescrKey(uint32_t key) {
-  MOZ_ASSERT(SimpleTypeDescrKeyIsScalar(key));
-  return ScalarTypeDescr::Type(key >> 1);
-}
-
-inline ReferenceType ReferenceTypeFromSimpleTypeDescrKey(uint32_t key) {
-  MOZ_ASSERT(!SimpleTypeDescrKeyIsScalar(key));
-  return ReferenceType(key >> 1);
-}
 
 // Returns whether obj is a WindowProxy wrapping the script's global.
 extern bool IsWindowProxyForScriptGlobal(JSScript* script, JSObject* obj);

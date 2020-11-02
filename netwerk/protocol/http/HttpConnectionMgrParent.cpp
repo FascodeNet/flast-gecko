@@ -10,7 +10,6 @@
 #include "HttpConnectionMgrParent.h"
 #include "AltSvcTransactionParent.h"
 #include "mozilla/net/HttpTransactionParent.h"
-#include "mozilla/net/WebSocketConnectionParent.h"
 #include "nsHttpConnectionInfo.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsISpeculativeConnect.h"
@@ -201,7 +200,7 @@ nsresult HttpConnectionMgrParent::GetSocketThreadTarget(nsIEventTarget**) {
 
 nsresult HttpConnectionMgrParent::SpeculativeConnect(
     nsHttpConnectionInfo* aConnInfo, nsIInterfaceRequestor* aCallbacks,
-    uint32_t aCaps, NullHttpTransaction* aTransaction) {
+    uint32_t aCaps, SpeculativeTransaction* aTransaction, bool aFetchHTTPSRR) {
   NS_ENSURE_ARG_POINTER(aConnInfo);
 
   nsCOMPtr<nsISpeculativeConnectionOverrider> overrider =
@@ -222,13 +221,13 @@ nsresult HttpConnectionMgrParent::SpeculativeConnect(
   RefPtr<HttpConnectionMgrParent> self = this;
   auto task = [self, connInfo{std::move(connInfo)},
                overriderArgs{std::move(overriderArgs)}, aCaps,
-               trans{std::move(trans)}]() {
+               trans{std::move(trans)}, aFetchHTTPSRR]() {
     Maybe<AltSvcTransactionParent*> maybeTrans;
     if (trans) {
       maybeTrans.emplace(trans.get());
     }
     Unused << self->SendSpeculativeConnect(connInfo, overriderArgs, aCaps,
-                                           maybeTrans);
+                                           maybeTrans, aFetchHTTPSRR);
   };
 
   gIOService->CallOrWaitForSocketProcess(std::move(task));
@@ -257,13 +256,8 @@ nsresult HttpConnectionMgrParent::ClearConnectionHistory() {
 
 nsresult HttpConnectionMgrParent::CompleteUpgrade(
     HttpTransactionShell* aTrans, nsIHttpUpgradeListener* aUpgradeListener) {
-  MOZ_ASSERT(aTrans->AsHttpTransactionParent());
-
-  RefPtr<WebSocketConnectionParent> wsConnParent =
-      new WebSocketConnectionParent(aUpgradeListener);
-  Unused << SendPWebSocketConnectionConstructor(
-      wsConnParent, aTrans->AsHttpTransactionParent());
-  return NS_OK;
+  // TODO: fix this in bug 1497249
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsHttpConnectionMgr* HttpConnectionMgrParent::AsHttpConnectionMgr() {

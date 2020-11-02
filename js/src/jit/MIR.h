@@ -20,26 +20,37 @@
 #include <algorithm>
 #include <initializer_list>
 
-#include "builtin/ModuleObject.h"
+#include "NamespaceImports.h"
+
+#include "gc/Allocator.h"
 #include "jit/AtomicOp.h"
-#include "jit/BaselineIC.h"
-#include "jit/CompileInfo.h"
 #include "jit/FixedList.h"
 #include "jit/InlineList.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/JitAllocPolicy.h"
+#include "jit/MacroAssembler.h"
 #include "jit/MOpcodesGenerated.h"
-#include "jit/TIOracle.h"
 #include "jit/TypePolicy.h"
 #include "js/experimental/JitInfo.h"  // JSJit{Getter,Setter}Op, JSJitInfo
 #include "js/HeapAPI.h"
+#include "js/Id.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/Value.h"
+#include "js/Vector.h"
 #include "vm/ArrayObject.h"
 #include "vm/BuiltinObjectKind.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
+#include "vm/JSContext.h"
+#include "vm/ReceiverGuard.h"
 #include "vm/RegExpObject.h"
 #include "vm/SharedMem.h"
 #include "vm/TypedArrayObject.h"
+#include "vm/TypeSet.h"
+
+namespace JS {
+struct ExpandoAndGeneration;
+}
 
 namespace js {
 
@@ -47,9 +58,12 @@ namespace wasm {
 class FuncExport;
 }
 
+class GenericPrinter;
 class StringObject;
 
 enum class UnaryMathFunction : uint8_t;
+
+bool CurrentThreadIsIonCompiling();
 
 namespace jit {
 
@@ -67,7 +81,8 @@ class MDefinitionVisitorDefaultNoop {
 #undef VISIT_INS
 };
 
-class BaselineInspector;
+class CompactBufferWriter;
+class IonBuilder;
 class Range;
 
 template <typename T>
@@ -378,10 +393,14 @@ class AliasSet {
     // frame during exception bailouts.)
     ExceptionState = 1 << 13,
 
-    Last = ExceptionState,
+    // Used for instructions that load the privateSlot of DOM proxies and
+    // the ExpandoAndGeneration.
+    DOMProxyExpando = 1 << 14,
+
+    Last = DOMProxyExpando,
     Any = Last | (Last - 1),
 
-    NumCategories = 14,
+    NumCategories = 15,
 
     // Indicates load or store.
     Store_ = 1 << 31
@@ -4738,7 +4757,8 @@ class MBitNot : public MUnaryInstruction, public BitwisePolicy::Data {
   ALLOW_CLONE(MBitNot)
 };
 
-class MTypeOf : public MUnaryInstruction, public BoxInputsPolicy::Data {
+class MTypeOf : public MUnaryInstruction,
+                public BoxExceptPolicy<0, MIRType::Object>::Data {
   bool inputMaybeCallableOrEmulatesUndefined_;
 
   explicit MTypeOf(MDefinition* def)
@@ -7004,7 +7024,6 @@ class MRegExpMatcher : public MTernaryInstruction,
   MRegExpMatcher(MDefinition* regexp, MDefinition* string,
                  MDefinition* lastIndex)
       : MTernaryInstruction(classOpcode, regexp, string, lastIndex) {
-    setMovable();
     // May be object or null.
     setResultType(MIRType::Value);
   }
@@ -7029,7 +7048,6 @@ class MRegExpSearcher : public MTernaryInstruction,
   MRegExpSearcher(MDefinition* regexp, MDefinition* string,
                   MDefinition* lastIndex)
       : MTernaryInstruction(classOpcode, regexp, string, lastIndex) {
-    setMovable();
     setResultType(MIRType::Int32);
   }
 
@@ -7053,7 +7071,6 @@ class MRegExpTester : public MTernaryInstruction,
   MRegExpTester(MDefinition* regexp, MDefinition* string,
                 MDefinition* lastIndex)
       : MTernaryInstruction(classOpcode, regexp, string, lastIndex) {
-    setMovable();
     setResultType(MIRType::Int32);
   }
 
@@ -7757,6 +7774,28 @@ class MGetNextEntryForIterator
   NAMED_OPERANDS((0, iter), (1, result))
 
   Mode mode() const { return mode_; }
+};
+
+// Read the byte length of an array buffer as int32.
+class MArrayBufferByteLengthInt32 : public MUnaryInstruction,
+                                    public SingleObjectPolicy::Data {
+  explicit MArrayBufferByteLengthInt32(MDefinition* obj)
+      : MUnaryInstruction(classOpcode, obj) {
+    setResultType(MIRType::Int32);
+    setMovable();
+  }
+
+ public:
+  INSTRUCTION_HEADER(ArrayBufferByteLengthInt32)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, object))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::FixedSlot);
+  }
 };
 
 // Read the length of an array buffer view.
@@ -8721,8 +8760,6 @@ class MStoreUnboxedScalar : public MTernaryInstruction,
         requiresBarrier_(requiresBarrier == DoesRequireMemoryBarrier) {
     if (requiresBarrier_) {
       setGuard();  // Not removable or movable
-    } else {
-      setMovable();
     }
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(index->type() == MIRType::Int32);
@@ -8757,7 +8794,6 @@ class MStoreDataViewElement : public MQuaternaryInstruction,
       : MQuaternaryInstruction(classOpcode, elements, index, value,
                                littleEndian),
         StoreUnboxedScalarBase(storageType) {
-    setMovable();
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(index->type() == MIRType::Int32);
     MOZ_ASSERT(storageType >= 0 && storageType < Scalar::MaxTypedArrayViewType);
@@ -8789,7 +8825,6 @@ class MStoreTypedArrayElementHole : public MQuaternaryInstruction,
                               Scalar::Type arrayType)
       : MQuaternaryInstruction(classOpcode, elements, length, index, value),
         StoreUnboxedScalarBase(arrayType) {
-    setMovable();
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(length->type() == MIRType::Int32);
     MOZ_ASSERT(index->type() == MIRType::Int32);
@@ -10101,7 +10136,11 @@ class MGuardNullOrUndefined : public MUnaryInstruction,
 // Guard on function flags
 class MGuardFunctionFlags : public MUnaryInstruction,
                             public SingleObjectPolicy::Data {
+  // At least one of the expected flags must be set, but not necessarily all
+  // expected flags.
   uint16_t expectedFlags_;
+
+  // None of the unexpected flags must be set.
   uint16_t unexpectedFlags_;
 
   explicit MGuardFunctionFlags(MDefinition* fun, uint16_t expectedFlags,
@@ -10137,6 +10176,30 @@ class MGuardFunctionFlags : public MUnaryInstruction,
     if (unexpectedFlags() != ins->toGuardFunctionFlags()->unexpectedFlags()) {
       return false;
     }
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
+};
+
+// Guard the function is a non-builtin constructor.
+class MGuardFunctionIsNonBuiltinCtor : public MUnaryInstruction,
+                                       public SingleObjectPolicy::Data {
+  explicit MGuardFunctionIsNonBuiltinCtor(MDefinition* fun)
+      : MUnaryInstruction(classOpcode, fun) {
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Object);
+    setResultTypeSet(fun->resultTypeSet());
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardFunctionIsNonBuiltinCtor)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, function))
+
+  bool congruentTo(const MDefinition* ins) const override {
     return congruentIfOperandsEqual(ins);
   }
   AliasSet getAliasSet() const override {
@@ -11257,6 +11320,132 @@ class MGetDOMMember : public MGetDOMPropertyBase {
     }
 
     return baseCongruentTo(ins->toGetDOMMember());
+  }
+};
+
+// Load the private value expando from a DOM proxy. The target is stored in the
+// proxy object's private slot.
+// This is either an UndefinedValue (no expando), ObjectValue (the expando
+// object), or PrivateValue(ExpandoAndGeneration*).
+class MLoadDOMExpandoValue : public MUnaryInstruction,
+                             public SingleObjectPolicy::Data {
+  explicit MLoadDOMExpandoValue(MDefinition* proxy)
+      : MUnaryInstruction(classOpcode, proxy) {
+    setMovable();
+    setResultType(MIRType::Value);
+  }
+
+ public:
+  INSTRUCTION_HEADER(LoadDOMExpandoValue)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, proxy))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::DOMProxyExpando);
+  }
+};
+
+class MLoadDOMExpandoValueGuardGeneration : public MUnaryInstruction,
+                                            public SingleObjectPolicy::Data {
+  JS::ExpandoAndGeneration* expandoAndGeneration_;
+  uint64_t generation_;
+
+  MLoadDOMExpandoValueGuardGeneration(
+      MDefinition* proxy, JS::ExpandoAndGeneration* expandoAndGeneration,
+      uint64_t generation)
+      : MUnaryInstruction(classOpcode, proxy),
+        expandoAndGeneration_(expandoAndGeneration),
+        generation_(generation) {
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Value);
+  }
+
+ public:
+  INSTRUCTION_HEADER(LoadDOMExpandoValueGuardGeneration)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, proxy))
+
+  JS::ExpandoAndGeneration* expandoAndGeneration() const {
+    return expandoAndGeneration_;
+  }
+  uint64_t generation() const { return generation_; }
+
+  bool congruentTo(const MDefinition* ins) const override {
+    if (!ins->isLoadDOMExpandoValueGuardGeneration()) {
+      return false;
+    }
+    const auto* other = ins->toLoadDOMExpandoValueGuardGeneration();
+    if (expandoAndGeneration() != other->expandoAndGeneration() ||
+        generation() != other->generation()) {
+      return false;
+    }
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::DOMProxyExpando);
+  }
+};
+
+class MLoadDOMExpandoValueIgnoreGeneration : public MUnaryInstruction,
+                                             public SingleObjectPolicy::Data {
+  explicit MLoadDOMExpandoValueIgnoreGeneration(MDefinition* proxy)
+      : MUnaryInstruction(classOpcode, proxy) {
+    setMovable();
+    setResultType(MIRType::Value);
+  }
+
+ public:
+  INSTRUCTION_HEADER(LoadDOMExpandoValueIgnoreGeneration)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, proxy))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::DOMProxyExpando);
+  }
+};
+
+// Takes an expando Value as input, then guards it's either UndefinedValue or
+// an object with the expected shape.
+class MGuardDOMExpandoMissingOrGuardShape : public MUnaryInstruction,
+                                            public BoxInputsPolicy::Data {
+  CompilerShape shape_;
+
+  MGuardDOMExpandoMissingOrGuardShape(MDefinition* obj, Shape* shape)
+      : MUnaryInstruction(classOpcode, obj), shape_(shape) {
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Value);
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardDOMExpandoMissingOrGuardShape)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, expando))
+
+  const Shape* shape() const { return shape_; }
+
+  bool congruentTo(const MDefinition* ins) const override {
+    if (!ins->isGuardDOMExpandoMissingOrGuardShape()) {
+      return false;
+    }
+    if (shape() != ins->toGuardDOMExpandoMissingOrGuardShape()->shape()) {
+      return false;
+    }
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
+
+  bool appendRoots(MRootList& roots) const override {
+    return roots.append(shape_);
   }
 };
 
@@ -14115,6 +14304,9 @@ class MWasmBinarySimd128 : public MBinaryInstruction,
     return ins->toWasmBinarySimd128()->simdOp() == simdOp_ &&
            congruentIfOperandsEqual(ins);
   }
+#ifdef ENABLE_WASM_SIMD
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+#endif
 
   wasm::SimdOp simdOp() const { return simdOp_; }
 
@@ -14171,7 +14363,7 @@ class MWasmShuffleSimd128 : public MBinaryInstruction,
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
   bool congruentTo(const MDefinition* ins) const override {
-    return ins->toWasmShuffleSimd128()->control() == control_ &&
+    return ins->toWasmShuffleSimd128()->control().bitwiseEqual(control_) &&
            congruentIfOperandsEqual(ins);
   }
 

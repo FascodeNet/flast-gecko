@@ -32,7 +32,7 @@ add_task(async function test_popuphiding() {
       browser,
       true /* camera */,
       true /* microphone */,
-      true /* screen */
+      SHARE_SCREEN
     );
 
     let indicator = await indicatorPromise;

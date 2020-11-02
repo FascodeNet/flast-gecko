@@ -7,24 +7,28 @@
 #include "GamepadTestChannelParent.h"
 
 #include "mozilla/dom/GamepadPlatformService.h"
+#include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/Unused.h"
 
 namespace mozilla {
 namespace dom {
 
-bool GamepadTestChannelParent::Init() {
-  AssertIsOnBackgroundThread();
+already_AddRefed<GamepadTestChannelParent> GamepadTestChannelParent::Create() {
+  return RefPtr<GamepadTestChannelParent>(new GamepadTestChannelParent())
+      .forget();
+}
+
+GamepadTestChannelParent::GamepadTestChannelParent() {
+  ::mozilla::ipc::AssertIsOnBackgroundThread();
   RefPtr<GamepadPlatformService> service =
       GamepadPlatformService::GetParentService();
   MOZ_ASSERT(service);
 
   service->GetMonitoringState().AddObserver(this);
-
-  return true;
 }
 
-void GamepadTestChannelParent::ActorDestroy(ActorDestroyReason aWhy) {
-  AssertIsOnBackgroundThread();
+GamepadTestChannelParent::~GamepadTestChannelParent() {
+  ::mozilla::ipc::AssertIsOnBackgroundThread();
   RefPtr<GamepadPlatformService> service =
       GamepadPlatformService::GetParentService();
   MOZ_ASSERT(service);
@@ -47,9 +51,8 @@ void GamepadTestChannelParent::AddGamepadToPlatformService(
       gamepadID.get(), static_cast<GamepadMappingType>(a.mapping()), a.hand(),
       a.num_buttons(), a.num_axes(), a.num_haptics(), a.num_lights(),
       a.num_touches());
-  if (!mShuttingdown) {
-    Unused << SendReplyGamepadIndex(aPromiseId, index);
-  }
+
+  Unused << SendReplyGamepadIndex(aPromiseId, index);
 }
 
 void GamepadTestChannelParent::OnMonitoringStateChanged(bool aNewState) {
@@ -121,12 +124,6 @@ mozilla::ipc::IPCResult GamepadTestChannelParent::RecvGamepadTestEvent(
 
   NS_WARNING("Unknown event type.");
   return IPC_FAIL_NO_REASON(this);
-}
-
-mozilla::ipc::IPCResult GamepadTestChannelParent::RecvShutdownChannel() {
-  mShuttingdown = true;
-  Unused << Send__delete__(this);
-  return IPC_OK();
 }
 
 }  // namespace dom

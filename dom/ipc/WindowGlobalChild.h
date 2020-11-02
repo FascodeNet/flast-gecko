@@ -48,8 +48,8 @@ class WindowGlobalChild final : public WindowGlobalActor,
   }
 
   dom::BrowsingContext* BrowsingContext() override;
-  dom::WindowContext* WindowContext() { return mWindowContext; }
-  nsGlobalWindowInner* GetWindowGlobal() { return mWindowGlobal; }
+  dom::WindowContext* WindowContext() const { return mWindowContext; }
+  nsGlobalWindowInner* GetWindowGlobal() const { return mWindowGlobal; }
 
   // Has this actor been shut down
   bool IsClosed() { return !CanSend(); }
@@ -107,6 +107,14 @@ class WindowGlobalChild final : public WindowGlobalActor,
   // Called when a new document is loaded in this WindowGlobalChild.
   void OnNewDocument(Document* aNewDocument);
 
+  // Returns true if this WindowGlobal is same-origin with the given
+  // WindowContext. Out-of-process WindowContexts are supported, and are assumed
+  // to be cross-origin.
+  //
+  // The given WindowContext must be in the same BrowsingContextGroup as this
+  // window global.
+  bool IsSameOriginWith(const dom::WindowContext* aOther) const;
+
   bool SameOriginWithTop();
 
   nsISupports* GetParentObject();
@@ -124,9 +132,9 @@ class WindowGlobalChild final : public WindowGlobalActor,
   mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
 
   // IPC messages
-  mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                         const ClonedMessageData& aData,
-                                         const ClonedMessageData& aStack);
+  mozilla::ipc::IPCResult RecvRawMessage(
+      const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
+      const Maybe<ClonedMessageData>& aStack);
 
   mozilla::ipc::IPCResult RecvMakeFrameLocal(
       const MaybeDiscarded<dom::BrowsingContext>& aFrameContext,
@@ -153,6 +161,8 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
   mozilla::ipc::IPCResult RecvAddBlockedFrameNodeByClassifier(
       const MaybeDiscardedBrowsingContext& aNode);
+
+  mozilla::ipc::IPCResult RecvResetScalingZoom();
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 

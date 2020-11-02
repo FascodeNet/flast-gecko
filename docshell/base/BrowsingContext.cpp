@@ -2152,29 +2152,34 @@ void BrowsingContext::DidSet(FieldIndex<IDX_GVInaudibleAutoplayRequestStatus>) {
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_IsActive>, bool aOldValue) {
-  if (!IsTop() || aOldValue == GetIsActive() ||
-      !StaticPrefs::dom_suspend_inactive_enabled()) {
+  if (!IsTop() || aOldValue == GetIsActive()) {
     return;
   }
+  Group()->UpdateToplevelsSuspendedIfNeeded();
+}
 
-  if (!GetIsActive() && !Group()->GetToplevelsSuspended()) {
-    // If all toplevels in our group are inactive, suspend the group.
-    bool allInactive = true;
-    nsTArray<RefPtr<BrowsingContext>>& toplevels = Group()->Toplevels();
-    for (const auto& context : toplevels) {
-      if (context->GetIsActive()) {
-        allInactive = false;
-        break;
-      }
-    }
+bool BrowsingContext::CanSet(FieldIndex<IDX_HasMainMediaController>,
+                             bool aNewValue, ContentParent* aSource) {
+  return IsTop() && CheckOnlyOwningProcessCanSet(aSource);
+}
 
-    if (allInactive) {
-      Group()->SetToplevelsSuspended(true);
-    }
-  } else if (GetIsActive() && Group()->GetToplevelsSuspended()) {
-    // Unsuspend the group since we now have an active toplevel
-    Group()->SetToplevelsSuspended(false);
+void BrowsingContext::DidSet(FieldIndex<IDX_HasMainMediaController>,
+                             bool aOldValue) {
+  if (!IsTop() || aOldValue == GetHasMainMediaController()) {
+    return;
   }
+  Group()->UpdateToplevelsSuspendedIfNeeded();
+}
+
+bool BrowsingContext::InactiveForSuspend() const {
+  if (!StaticPrefs::dom_suspend_inactive_enabled()) {
+    return false;
+  }
+  // We should suspend a page only when it's inactive and doesn't have a main
+  // media controller. Having a main controller in context means it might be
+  // playing media, or waiting media keys to control media (could be not playing
+  // anything currently)
+  return !GetIsActive() && !GetHasMainMediaController();
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_DisplayMode>,
@@ -2194,18 +2199,21 @@ void BrowsingContext::DidSet(FieldIndex<IDX_DisplayMode>,
   PreOrderWalk([&](BrowsingContext* aContext) {
     if (nsIDocShell* shell = aContext->GetDocShell()) {
       if (nsPresContext* pc = shell->GetPresContext()) {
-        pc->MediaFeatureValuesChangedAllDocuments(
+        pc->MediaFeatureValuesChanged(
             {MediaFeatureChangeReason::DisplayModeChange},
-            // We're already iterating through sub documents
-            // so no need to do it again.
-            nsPresContext::RecurseIntoInProcessSubDocuments::No);
+            // We're already iterating through sub documents, so we don't need
+            // to propagate the change again.
+            //
+            // Images and other resources don't change their display-mode
+            // evaluation, display-mode is a property of the browsing context.
+            MediaFeatureChangePropagation::JustThisDocument);
       }
     }
   });
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_Muted>) {
-  MOZ_ASSERT(!GetParent(), "Set muted flag on non top-level context!");
+  MOZ_ASSERT(IsTop(), "Set muted flag on non top-level context!");
   USER_ACTIVATION_LOG("Set audio muted %d for %s browsing context 0x%08" PRIx64,
                       GetMuted(), XRE_IsParentProcess() ? "Parent" : "Child",
                       Id());
@@ -2619,6 +2627,14 @@ void BrowsingContext::AddDeprioritizedLoadRunner(nsIRunnable* aRunner) {
       EventQueuePriority::Idle);
 }
 
+void BrowsingContext::GetHistoryID(JSContext* aCx,
+                                   JS::MutableHandle<JS::Value> aVal,
+                                   ErrorResult& aError) {
+  if (!xpc::ID2JSValue(aCx, GetHistoryID(), aVal)) {
+    aError.Throw(NS_ERROR_OUT_OF_MEMORY);
+  }
+}
+
 void BrowsingContext::InitSessionHistory() {
   MOZ_ASSERT(!IsDiscarded());
   MOZ_ASSERT(IsTop());
@@ -2777,15 +2793,20 @@ void BrowsingContext::RemoveFromSessionHistory() {
   }
 }
 
-void BrowsingContext::HistoryGo(int32_t aOffset,
+void BrowsingContext::HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
                                 std::function<void(int32_t&&)>&& aResolver) {
   if (XRE_IsContentProcess()) {
     ContentChild::GetSingleton()->SendHistoryGo(
-        this, aOffset, std::move(aResolver),
+        this, aOffset, aHistoryEpoch, std::move(aResolver),
         [](mozilla::ipc::
                ResponseRejectReason) { /* FIXME Is ignoring this fine? */ });
   } else {
-    Canonical()->HistoryGo(aOffset, std::move(aResolver));
+    Canonical()->HistoryGo(
+        aOffset, aHistoryEpoch,
+        Canonical()->GetContentParent()
+            ? Some(Canonical()->GetContentParent()->ChildID())
+            : Nothing(),
+        std::move(aResolver));
   }
 }
 

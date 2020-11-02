@@ -7,6 +7,7 @@
 #include "jit/BaselineJIT.h"
 
 #include "mozilla/BinarySearch.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
 
@@ -19,7 +20,6 @@
 #include "jit/BaselineCodeGen.h"
 #include "jit/BaselineIC.h"
 #include "jit/CalleeToken.h"
-#include "jit/CompileInfo.h"
 #include "jit/JitCommon.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
@@ -31,7 +31,6 @@
 
 #include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
-#include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "vm/BytecodeUtil-inl.h"
 #include "vm/GeckoProfiler-inl.h"
@@ -40,6 +39,7 @@
 #include "vm/Stack-inl.h"
 
 using mozilla::BinarySearchIf;
+using mozilla::CheckedInt;
 using mozilla::DebugOnly;
 
 using namespace js;

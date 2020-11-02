@@ -30,21 +30,40 @@ class NetworkEventWatcher {
    *          This will be called for each resource.
    *        - onUpdated: optional function
    *          This would be called multiple times for each resource.
-   *        - onDestroyed: optional function
-   *          This would be called multiple times for each resource.
    */
-  async watch(watcherActor, { onAvailable, onUpdated, onDestroyed }) {
+  async watch(watcherActor, { onAvailable, onUpdated }) {
     this.networkEvents = new Map();
     this.watcherActor = watcherActor;
     this.onNetworkEventAvailable = onAvailable;
     this.onNetworkEventUpdated = onUpdated;
-    this.onNeworkEventDestroyed = onDestroyed;
 
     this.listener = new NetworkObserver(
       { browserId: watcherActor.browserId },
       { onNetworkEvent: this.onNetworkEvent.bind(this) }
     );
     this.listener.init();
+  }
+
+  /**
+   * Calls the listener to set blocked urls
+   *
+   * @param {Array} urls
+   *        The urls to block
+   */
+
+  setBlockedUrls(urls) {
+    this.listener.setBlockedUrls(urls);
+  }
+
+  /**
+   * Calls the listener to get the blocked urls
+   *
+   * @return {Array} urls
+   *          The blocked urls
+   */
+
+  getBlockedUrls() {
+    return this.listener.getBlockedUrls();
   }
 
   onNetworkEvent(event) {
@@ -58,7 +77,7 @@ class NetworkEventWatcher {
       this,
       {
         onNetworkEventUpdate: this.onNetworkEventUpdate.bind(this),
-        onNetworkEventDestroy: this.onNeworkEventDestroyed,
+        onNetworkEventDestroy: this.onNetworkEventDestroy.bind(this),
       },
       event
     );
@@ -77,7 +96,6 @@ class NetworkEventWatcher {
     }
     const resourceUpdates = {
       updates: [...currentResource.updates, updateResource.updateType],
-      updateType: updateResource.updateType,
     };
 
     switch (updateResource.updateType) {
@@ -137,8 +155,15 @@ class NetworkEventWatcher {
         resourceType: currentResource.resourceType,
         resourceId: updateResource.resourceId,
         resourceUpdates,
+        updateType: updateResource.updateType,
       },
     ]);
+  }
+
+  onNetworkEventDestroy(channelId) {
+    if (this.networkEvents.has(channelId)) {
+      this.networkEvents.delete(channelId);
+    }
   }
 
   /**

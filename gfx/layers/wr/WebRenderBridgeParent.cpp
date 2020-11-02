@@ -362,9 +362,9 @@ WebRenderBridgeParent::WebRenderBridgeParent(
     MOZ_ASSERT(!mCompositorScheduler);
     mCompositorScheduler = new CompositorVsyncScheduler(this, mWidget);
   }
-
   UpdateDebugFlags();
   UpdateQualitySettings();
+  UpdateProfilerUI();
 }
 
 WebRenderBridgeParent::WebRenderBridgeParent(const wr::PipelineId& aPipelineId,
@@ -810,10 +810,14 @@ bool WebRenderBridgeParent::UpdateSharedExternalImage(
     // We already have a mapping for this image key, so ensure we release the
     // previous external image ID. This can happen when an image is animated,
     // and it is changing the external image that the animation points to.
-    if (!aScheduleRelease) {
-      aScheduleRelease = MakeUnique<ScheduleSharedSurfaceRelease>(this);
+    if (gfx::gfxVars::UseSoftwareWebRender()) {
+      mAsyncImageManager->HoldExternalImage(mPipelineId, mWrEpoch, it->second);
+    } else {
+      if (!aScheduleRelease) {
+        aScheduleRelease = MakeUnique<ScheduleSharedSurfaceRelease>(this);
+      }
+      aScheduleRelease->Add(aKey, it->second);
     }
-    aScheduleRelease->Add(aKey, it->second);
     it->second = aExtId;
   }
 
@@ -1496,6 +1500,11 @@ void WebRenderBridgeParent::UpdateDebugFlags() {
   mApi->UpdateDebugFlags(gfxVars::WebRenderDebugFlags());
 }
 
+void WebRenderBridgeParent::UpdateProfilerUI() {
+  nsCString uiString = gfxVars::GetWebRenderProfilerUIOrDefault();
+  mApi->SetProfilerUI(uiString);
+}
+
 void WebRenderBridgeParent::UpdateMultithreading() {
   mApi->EnableMultithreading(gfxVars::UseWebRenderMultithreading());
 }
@@ -1800,6 +1809,16 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvScheduleComposite() {
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult WebRenderBridgeParent::RecvForceComposite() {
+  MOZ_ASSERT(IsRootWebRenderBridgeParent());
+  if (mDestroyed) {
+    return IPC_OK();
+  }
+
+  ScheduleForcedGenerateFrame();
+  return IPC_OK();
+}
+
 void WebRenderBridgeParent::InvalidateRenderedFrame() {
   if (mDestroyed) {
     return;
@@ -1971,7 +1990,9 @@ void WebRenderBridgeParent::SetOMTASampleTime() {
 void WebRenderBridgeParent::CompositeIfNeeded() {
   if (mSkippedComposite) {
     mSkippedComposite = false;
-    mCompositorScheduler->ScheduleComposition();
+    if (mCompositorScheduler) {
+      mCompositorScheduler->ScheduleComposition();
+    }
   }
 }
 

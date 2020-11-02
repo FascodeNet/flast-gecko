@@ -13,7 +13,6 @@
 #include "builtin/MapObject.h"
 #include "builtin/String.h"
 #include "builtin/TestingFunctions.h"
-#include "builtin/TypedObject.h"
 #include "jit/BaselineInspector.h"
 #include "jit/InlinableNatives.h"
 #include "jit/IonBuilder.h"
@@ -3960,10 +3959,9 @@ IonBuilder::InliningResult IonBuilder::inlineWasmCall(CallInfo& callInfo,
 
   // If there are too many arguments, don't inline (we won't be able to store
   // the arguments in the LIR node).
-  static constexpr size_t MaxNumInlinedArgs = 8;
-  static_assert(MaxNumInlinedArgs <= MaxNumLInstructionOperands,
+  static_assert(wasm::MaxArgsForJitInlineCall <= MaxNumLInstructionOperands,
                 "inlined arguments can all be LIR operands");
-  if (sig.args().length() > MaxNumInlinedArgs) {
+  if (sig.args().length() > wasm::MaxArgsForJitInlineCall) {
     return InliningStatus_NotInlined;
   }
 

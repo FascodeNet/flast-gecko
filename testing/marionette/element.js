@@ -201,8 +201,8 @@ element.Store = class {
    *     Web element reference to find the associated {@link Element}
    *     of.
    * @param {WindowProxy} win
-   *     Current browsing context, which may differ from the associated
-   *     browsing context of <var>el</var>.
+   *     Current window global, which may differ from the associated
+   *     window global of <var>el</var>.
    *
    * @returns {(Element|XULElement)}
    *     Element associated with reference.
@@ -789,6 +789,11 @@ element.getElementId = function(el) {
  * @param {ElementIdentifier} id
  *     The identifier generated via ContentDOMReference.get for a DOM element.
  *
+ * @param {WindowProxy=} win
+ *     Current window global, which may differ from the associated
+ *     window global of <var>el</var>.  When retrieving XUL
+ *     elements, this is optional.
+ *
  * @return {Element} The DOM element that the identifier was generated for, or
  *     null if the element does not still exist.
  *
@@ -797,13 +802,13 @@ element.getElementId = function(el) {
  *     attached to the DOM, or its node document is no longer the
  *     active document.
  */
-element.resolveElement = function(id) {
+element.resolveElement = function(id, win = undefined) {
   let webEl;
   if (id.webElRef) {
     webEl = WebElement.fromJSON(id.webElRef);
   }
   const el = ContentDOMReference.resolve(id);
-  if (element.isStale(el, this.content)) {
+  if (element.isStale(el, win)) {
     throw new error.StaleElementReferenceError(
       pprint`The element reference of ${el || webEl?.uuid} is stale; ` +
         "either the element is no longer attached to the DOM, " +
@@ -848,7 +853,7 @@ element.isCollection = function(seq) {
  * context.
  *
  * The currently selected browsing context, specified through
- * <var>window<var>, is a WebDriver concept defining the target
+ * <var>win<var>, is a WebDriver concept defining the target
  * against which commands will run.  As the current browsing context
  * may differ from <var>el</var>'s associated context, an element is
  * considered stale even if it is connected to a living (not discarded)
@@ -859,8 +864,8 @@ element.isCollection = function(seq) {
  *     the case if the element has been unwrapped from a weak
  *     reference, it is always considered stale.
  * @param {WindowProxy=} win
- *     Current browsing context, which may differ from the associate
- *     browsing context of <var>el</var>.  When retrieving XUL
+ *     Current window global, which may differ from the associated
+ *     window global of <var>el</var>.  When retrieving XUL
  *     elements, this is optional.
  *
  * @return {boolean}

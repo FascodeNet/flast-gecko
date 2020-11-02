@@ -40,6 +40,7 @@ class GPUVideoTextureHost : public TextureHost {
   }
 
   gfx::YUVColorSpace GetYUVColorSpace() const override;
+  gfx::ColorDepth GetColorDepth() const override;
   gfx::ColorRange GetColorRange() const override;
 
   gfx::IntSize GetSize() const override;
@@ -68,7 +69,7 @@ class GPUVideoTextureHost : public TextureHost {
                         const wr::LayoutRect& aBounds,
                         const wr::LayoutRect& aClip, wr::ImageRendering aFilter,
                         const Range<wr::ImageKey>& aImageKeys,
-                        const bool aPreferCompositorSurface) override;
+                        PushDisplayItemFlagSet aFlags) override;
 
   void UnbindTextureSource() override;
   void NotifyNotUsed() override;

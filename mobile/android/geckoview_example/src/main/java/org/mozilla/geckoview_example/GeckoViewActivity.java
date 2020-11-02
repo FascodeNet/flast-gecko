@@ -37,6 +37,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.content.IntentSender;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
@@ -372,7 +373,6 @@ public class GeckoViewActivity
             WebExtensionDelegate,
             SharedPreferences.OnSharedPreferenceChangeListener {
     private static final String LOGTAG = "GeckoViewActivity";
-    private static final String USE_MULTIPROCESS_EXTRA = "use_multiprocess";
     private static final String FULL_ACCESSIBILITY_TREE_EXTRA = "full_accessibility_tree";
     private static final String SEARCH_URI_BASE = "https://www.google.com/search?q=";
     private static final String ACTION_SHUTDOWN = "org.mozilla.geckoview_example.SHUTDOWN";
@@ -412,6 +412,9 @@ public class GeckoViewActivity
     private ProgressBar mProgressView;
 
     private LinkedList<WebResponse> mPendingDownloads = new LinkedList<>();
+
+    private int mNextActivityResultCode = 10;
+    private HashMap<Integer, GeckoResult<Intent>> mPendingActivityResult = new HashMap<>();
 
     private LocationView.CommitListener mCommitListener = new LocationView.CommitListener() {
         @Override
@@ -702,8 +705,6 @@ public class GeckoViewActivity
                         ActionBar.LayoutParams.WRAP_CONTENT));
         getSupportActionBar().setDisplayOptions(ActionBar.DISPLAY_SHOW_CUSTOM);
 
-        final boolean useMultiprocess =
-                getIntent().getBooleanExtra(USE_MULTIPROCESS_EXTRA, true);
         mFullAccessibilityTree = getIntent().getBooleanExtra(FULL_ACCESSIBILITY_TREE_EXTRA, false);
         mProgressView = findViewById(R.id.page_progress);
 
@@ -722,7 +723,6 @@ public class GeckoViewActivity
                 runtimeSettingsBuilder.extras(extras);
             }
             runtimeSettingsBuilder
-                    .useMultiprocess(useMultiprocess)
                     .remoteDebuggingEnabled(mRemoteDebugging.value())
                     .consoleOutput(true)
                     .contentBlocking(new ContentBlocking.Settings.Builder()
@@ -801,6 +801,18 @@ public class GeckoViewActivity
                 mKillProcessOnDestroy = true;
                 finish();
             });
+
+            sGeckoRuntime.setActivityDelegate(pendingIntent -> {
+                final GeckoResult<Intent> result = new GeckoResult<>();
+                try {
+                    final int code = mNextActivityResultCode++;
+                    mPendingActivityResult.put(code, result);
+                    GeckoViewActivity.this.startIntentSenderForResult(pendingIntent.getIntentSender(), code, null, 0, 0, 0);
+                } catch (IntentSender.SendIntentException e) {
+                    result.completeExceptionally(e);
+                }
+                return result;
+            });
         }
 
         sExtensionManager.setExtensionDelegate(this);
@@ -828,6 +840,8 @@ public class GeckoViewActivity
             }
             loadFromIntent(getIntent());
         }
+
+        mGeckoView.setDynamicToolbarMaxHeight(findViewById(R.id.toolbar).getLayoutParams().height);
 
         mToolbarView.getLocationView().setCommitListener(mCommitListener);
         mToolbarView.updateTabCount();
@@ -1313,6 +1327,14 @@ public class GeckoViewActivity
             final BasicGeckoViewPrompt prompt = (BasicGeckoViewPrompt)
                     mTabSessionManager.getCurrentSession().getPromptDelegate();
             prompt.onFileCallbackResult(resultCode, data);
+        } else if (mPendingActivityResult.containsKey(requestCode)) {
+            final GeckoResult<Intent> result = mPendingActivityResult.remove(requestCode);
+
+            if (resultCode == Activity.RESULT_OK) {
+                result.complete(data);
+            } else {
+                result.completeExceptionally(new RuntimeException("Unknown error"));
+            }
         } else {
             super.onActivityResult(requestCode, resultCode, data);
         }

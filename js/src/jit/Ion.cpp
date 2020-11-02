@@ -25,9 +25,12 @@
 #include "jit/BaselineJIT.h"
 #include "jit/CacheIRSpewer.h"
 #include "jit/CodeGenerator.h"
+#include "jit/CompileInfo.h"
 #include "jit/EdgeCaseAnalysis.h"
 #include "jit/EffectiveAddressAnalysis.h"
+#include "jit/ExecutableAllocator.h"
 #include "jit/FoldLinearArithConstants.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/InstructionReordering.h"
 #include "jit/IonAnalysis.h"
 #include "jit/IonBuilder.h"
@@ -37,6 +40,7 @@
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitCommon.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRealm.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
@@ -48,6 +52,7 @@
 #include "jit/PerfSpewer.h"
 #include "jit/RangeAnalysis.h"
 #include "jit/ScalarReplacement.h"
+#include "jit/ScriptFromCalleeToken.h"
 #include "jit/Sink.h"
 #include "jit/ValueNumbering.h"
 #include "jit/WarpBuilder.h"
@@ -66,8 +71,8 @@
 
 #include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
-#include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
+#include "jit/SafepointIndex-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
@@ -80,6 +85,7 @@
 #  include <sys/system_properties.h>
 #endif
 
+using mozilla::CheckedInt;
 using mozilla::DebugOnly;
 
 using namespace js;

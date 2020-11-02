@@ -2,6 +2,29 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// Load a partial span > 0 and < 4 pixels.
+template <typename V, typename P>
+static ALWAYS_INLINE V partial_load_span(P* src, int span) {
+  return bit_cast<V>(
+      (span >= 2 ? combine(unaligned_load<V2<P>>(src),
+                           V2<P>{span > 2 ? unaligned_load<P>(src + 2) : 0, 0})
+                 : V4<P>{unaligned_load<P>(src), 0, 0, 0}));
+}
+
+// Store a partial span > 0 and < 4 pixels.
+template <typename V, typename P>
+static ALWAYS_INLINE void partial_store_span(P* dst, V src, int span) {
+  auto pixels = bit_cast<V4<P>>(src);
+  if (span >= 2) {
+    unaligned_store(dst, lowHalf(pixels));
+    if (span > 2) {
+      unaligned_store(dst + 2, pixels.z);
+    }
+  } else {
+    unaligned_store(dst, pixels.x);
+  }
+}
+
 template <typename P>
 static inline void scale_row(P* dst, int dstWidth, const P* src, int srcWidth,
                              int span) {
@@ -96,9 +119,7 @@ static void linear_row_blit(uint32_t* dest, int span, const vec2_scalar& srcUV,
   }
   if (span > 0) {
     auto srcpx = textureLinearPackedRGBA8(sampler, ivec2(uv), srcZOffset);
-    auto mask = span_mask_RGBA8(span);
-    auto dstpx = unaligned_load<PackedRGBA8>(dest);
-    unaligned_store(dest, (mask & dstpx) | (~mask & srcpx));
+    partial_store_span(dest, srcpx, span);
   }
 }
 
@@ -114,9 +135,7 @@ static void linear_row_blit(uint8_t* dest, int span, const vec2_scalar& srcUV,
   }
   if (span > 0) {
     auto srcpx = textureLinearPackedR8(sampler, ivec2(uv), srcZOffset);
-    auto mask = span_mask_R8(span);
-    auto dstpx = unpack(unaligned_load<PackedR8>(dest));
-    unaligned_store(dest, pack((mask & dstpx) | (~mask & srcpx)));
+    partial_store_span(dest, pack(srcpx), span);
   }
 }
 
@@ -132,9 +151,7 @@ static void linear_row_blit(uint16_t* dest, int span, const vec2_scalar& srcUV,
   }
   if (span > 0) {
     auto srcpx = textureLinearPackedRG8(sampler, ivec2(uv), srcZOffset);
-    auto mask = span_mask_RG8(span);
-    auto dstpx = unaligned_load<PackedRG8>(dest);
-    unaligned_store(dest, (mask & dstpx) | (~mask & srcpx));
+    partial_store_span(dest, srcpx, span);
   }
 }
 
@@ -215,12 +232,9 @@ static void linear_row_composite(uint32_t* dest, int span,
   }
   if (span > 0) {
     WideRGBA8 srcpx = textureLinearUnpackedRGBA8(sampler, ivec2(uv), 0);
-    PackedRGBA8 dstpx = unaligned_load<PackedRGBA8>(dest);
-    WideRGBA8 dstpxu = unpack(dstpx);
-    PackedRGBA8 r = pack(srcpx + dstpxu - muldiv255(dstpxu, alphas(srcpx)));
-
-    auto mask = span_mask_RGBA8(span);
-    unaligned_store(dest, (mask & dstpx) | (~mask & r));
+    WideRGBA8 dstpx = unpack(partial_load_span<PackedRGBA8>(dest, span));
+    PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    partial_store_span(dest, r, span);
   }
 }
 
@@ -367,11 +381,29 @@ void* GetResourceBuffer(LockedTexture* resource, int32_t* width,
   return resource->buf;
 }
 
+static void unscaled_row_composite(uint32_t* dest, const uint32_t* src,
+                                   int span) {
+  const uint32_t* end = src + span;
+  while (src + 4 <= end) {
+    WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
+    WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dest));
+    PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    unaligned_store(dest, r);
+    src += 4;
+    dest += 4;
+  }
+  if (src < end) {
+    WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
+    WideRGBA8 dstpx = unpack(partial_load_span<PackedRGBA8>(dest, end - src));
+    auto r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    partial_store_span(dest, r, end - src);
+  }
+}
+
 static NO_INLINE void unscaled_composite(Texture& srctex, const IntRect& srcReq,
                                          Texture& dsttex, const IntRect& dstReq,
                                          bool invertY, int bandOffset,
                                          int bandHeight) {
-  const int bpp = 4;
   IntRect bounds = dsttex.sample_bounds(dstReq, invertY);
   bounds.intersect(srctex.sample_bounds(srcReq));
   char* dest = dsttex.sample_ptr(dstReq, bounds, 0, invertY);
@@ -385,32 +417,10 @@ static NO_INLINE void unscaled_composite(Texture& srctex, const IntRect& srcReq,
   src += srcStride * bandOffset;
   for (int rows = min(bounds.height() - bandOffset, bandHeight); rows > 0;
        rows--) {
-    char* end = src + bounds.width() * bpp;
-    while (src + 4 * bpp <= end) {
-      WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
-      WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dest));
-      PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
-      unaligned_store(dest, r);
-      src += 4 * bpp;
-      dest += 4 * bpp;
-    }
-    if (src < end) {
-      WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
-      WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dest));
-      U32 r =
-          bit_cast<U32>(pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx))));
-      unaligned_store(dest, r.x);
-      if (src + bpp < end) {
-        unaligned_store(dest + bpp, r.y);
-        if (src + 2 * bpp < end) {
-          unaligned_store(dest + 2 * bpp, r.z);
-        }
-      }
-      dest += end - src;
-      src = end;
-    }
-    dest += destStride - bounds.width() * bpp;
-    src += srcStride - bounds.width() * bpp;
+    unscaled_row_composite((uint32_t*)dest, (const uint32_t*)src,
+                           bounds.width());
+    dest += destStride;
+    src += srcStride;
   }
 }
 
@@ -681,54 +691,115 @@ static inline V8<int16_t> textureLinearRowPairedR8(S sampler, S sampler2,
 template <YUVColorSpace COLOR_SPACE>
 static void linear_row_yuv(uint32_t* dest, int span, const vec2_scalar& srcUV,
                            float srcDU, const vec2_scalar& chromaUV,
-                           float chromaDU, sampler2D_impl sampler[3]) {
+                           float chromaDU, sampler2D_impl sampler[3],
+                           int colorDepth) {
+  // Casting to int loses some precision while stepping that can offset the
+  // image, so shift the values by some extra bits of precision to minimize
+  // this. We support up to 16 bits of image size, 7 bits of quantization,
+  // and 1 bit for sign, which leaves 8 bits left for extra precision.
+  const int STEP_BITS = 8;
+
   // Calculate varying and constant interp data for Y plane.
-  I32 yU = cast(init_interp(srcUV.x, srcDU));
+  I32 yU = cast(init_interp(srcUV.x, srcDU) * (1 << STEP_BITS));
   int32_t yV = int32_t(srcUV.y);
-  int16_t yFracV = yV & 0x7F;
-  yV >>= 7;
-  int32_t yOffsetV = clampCoord(yV, sampler[0].height) * sampler[0].stride;
-  int32_t yStrideV =
-      yV >= 0 && yV < int32_t(sampler[0].height) - 1 ? sampler[0].stride : 0;
 
   // Calculate varying and constant interp data for chroma planes.
-  I32 cU = cast(init_interp(chromaUV.x, chromaDU));
+  I32 cU = cast(init_interp(chromaUV.x, chromaDU) * (1 << STEP_BITS));
   int32_t cV = int32_t(chromaUV.y);
-  int16_t cFracV = cV & 0x7F;
-  cV >>= 7;
-  int32_t cOffsetV = clampCoord(cV, sampler[1].height) * sampler[1].stride;
-  int32_t cStrideV =
-      cV >= 0 && cV < int32_t(sampler[1].height) - 1 ? sampler[1].stride : 0;
 
-  int32_t yDU = int32_t(4 * srcDU);
-  int32_t cDU = int32_t(4 * chromaDU);
-  for (; span >= 4; span -= 4) {
-    // Sample each YUV plane and then transform them by the appropriate color
-    // space.
-    auto yPx = textureLinearRowR8(&sampler[0], yU, yOffsetV, yStrideV, yFracV);
-    auto uvPx = textureLinearRowPairedR8(&sampler[1], &sampler[2], cU, cOffsetV,
-                                         cStrideV, cFracV);
-    unaligned_store(dest, YUVConverter<COLOR_SPACE>::convert(yPx, uvPx));
-    dest += 4;
-    yU += yDU;
-    cU += cDU;
-  }
-  if (span > 0) {
-    // Handle any remaining pixels...
-    auto yPx = textureLinearRowR8(&sampler[0], yU, yOffsetV, yStrideV, yFracV);
-    auto uvPx = textureLinearRowPairedR8(&sampler[1], &sampler[2], cU, cOffsetV,
-                                         cStrideV, cFracV);
-    auto srcpx = YUVConverter<COLOR_SPACE>::convert(yPx, uvPx);
-    auto mask = span_mask_RGBA8(span);
-    auto dstpx = unaligned_load<PackedRGBA8>(dest);
-    unaligned_store(dest, (mask & dstpx) | (~mask & srcpx));
+  // We need to skip 4 pixels per chunk.
+  int32_t yDU = int32_t((4 << STEP_BITS) * srcDU);
+  int32_t cDU = int32_t((4 << STEP_BITS) * chromaDU);
+
+  if (sampler[0].format == TextureFormat::R16) {
+    // Sample each YUV plane, rescale it to fit in low 8 bits of word, and then
+    // transform them by the appropriate color space.
+    assert(colorDepth > 8);
+    // Need to right shift the sample by the amount of bits over 8 it occupies.
+    // On output from textureLinearPackedR16, we have lost 1 bit of precision
+    // at the low end already, hence 1 is subtracted from the color depth.
+    int rescaleBits = (colorDepth - 1) - 8;
+    for (; span >= 4; span -= 4) {
+      auto yPx =
+          textureLinearPackedR16(&sampler[0], ivec2(yU >> STEP_BITS, yV)) >>
+          rescaleBits;
+      auto uPx =
+          textureLinearPackedR16(&sampler[1], ivec2(cU >> STEP_BITS, cV)) >>
+          rescaleBits;
+      auto vPx =
+          textureLinearPackedR16(&sampler[2], ivec2(cU >> STEP_BITS, cV)) >>
+          rescaleBits;
+      unaligned_store(dest, YUVConverter<COLOR_SPACE>::convert(zip(yPx, yPx),
+                                                               zip(uPx, vPx)));
+      dest += 4;
+      yU += yDU;
+      cU += cDU;
+    }
+    if (span > 0) {
+      // Handle any remaining pixels...
+      auto yPx =
+          textureLinearPackedR16(&sampler[0], ivec2(yU >> STEP_BITS, yV)) >>
+          rescaleBits;
+      auto uPx =
+          textureLinearPackedR16(&sampler[1], ivec2(cU >> STEP_BITS, cV)) >>
+          rescaleBits;
+      auto vPx =
+          textureLinearPackedR16(&sampler[2], ivec2(cU >> STEP_BITS, cV)) >>
+          rescaleBits;
+      partial_store_span(
+          dest,
+          YUVConverter<COLOR_SPACE>::convert(zip(yPx, yPx), zip(uPx, vPx)),
+          span);
+    }
+  } else {
+    assert(sampler[0].format == TextureFormat::R8);
+    assert(colorDepth == 8);
+
+    // Calculate varying and constant interp data for Y plane.
+    int16_t yFracV = yV & 0x7F;
+    yV >>= 7;
+    int32_t yOffsetV = clampCoord(yV, sampler[0].height) * sampler[0].stride;
+    int32_t yStrideV =
+        yV >= 0 && yV < int32_t(sampler[0].height) - 1 ? sampler[0].stride : 0;
+
+    // Calculate varying and constant interp data for chroma planes.
+    int16_t cFracV = cV & 0x7F;
+    cV >>= 7;
+    int32_t cOffsetV = clampCoord(cV, sampler[1].height) * sampler[1].stride;
+    int32_t cStrideV =
+        cV >= 0 && cV < int32_t(sampler[1].height) - 1 ? sampler[1].stride : 0;
+
+    for (; span >= 4; span -= 4) {
+      // Sample each YUV plane and then transform them by the appropriate color
+      // space.
+      auto yPx = textureLinearRowR8(&sampler[0], yU >> STEP_BITS, yOffsetV,
+                                    yStrideV, yFracV);
+      auto uvPx =
+          textureLinearRowPairedR8(&sampler[1], &sampler[2], cU >> STEP_BITS,
+                                   cOffsetV, cStrideV, cFracV);
+      unaligned_store(dest, YUVConverter<COLOR_SPACE>::convert(yPx, uvPx));
+      dest += 4;
+      yU += yDU;
+      cU += cDU;
+    }
+    if (span > 0) {
+      // Handle any remaining pixels...
+      auto yPx = textureLinearRowR8(&sampler[0], yU >> STEP_BITS, yOffsetV,
+                                    yStrideV, yFracV);
+      auto uvPx =
+          textureLinearRowPairedR8(&sampler[1], &sampler[2], cU >> STEP_BITS,
+                                   cOffsetV, cStrideV, cFracV);
+      partial_store_span(dest, YUVConverter<COLOR_SPACE>::convert(yPx, uvPx),
+                         span);
+    }
   }
 }
 
 static void linear_convert_yuv(Texture& ytex, Texture& utex, Texture& vtex,
-                               YUVColorSpace colorSpace, const IntRect& srcReq,
-                               Texture& dsttex, const IntRect& dstReq,
-                               bool invertY, int bandOffset, int bandHeight) {
+                               YUVColorSpace colorSpace, int colorDepth,
+                               const IntRect& srcReq, Texture& dsttex,
+                               const IntRect& dstReq, bool invertY,
+                               int bandOffset, int bandHeight) {
   // Compute valid dest bounds
   IntRect dstBounds = dsttex.sample_bounds(dstReq, invertY);
   // Check if sampling bounds are empty
@@ -773,19 +844,19 @@ static void linear_convert_yuv(Texture& ytex, Texture& utex, Texture& vtex,
     switch (colorSpace) {
       case REC_601:
         linear_row_yuv<REC_601>((uint32_t*)dest, span, srcUV, srcDUV.x,
-                                chromaUV, chromaDUV.x, sampler);
+                                chromaUV, chromaDUV.x, sampler, colorDepth);
         break;
       case REC_709:
         linear_row_yuv<REC_709>((uint32_t*)dest, span, srcUV, srcDUV.x,
-                                chromaUV, chromaDUV.x, sampler);
+                                chromaUV, chromaDUV.x, sampler, colorDepth);
         break;
       case REC_2020:
         linear_row_yuv<REC_2020>((uint32_t*)dest, span, srcUV, srcDUV.x,
-                                 chromaUV, chromaDUV.x, sampler);
+                                 chromaUV, chromaDUV.x, sampler, colorDepth);
         break;
       case IDENTITY:
         linear_row_yuv<IDENTITY>((uint32_t*)dest, span, srcUV, srcDUV.x,
-                                 chromaUV, chromaDUV.x, sampler);
+                                 chromaUV, chromaDUV.x, sampler, colorDepth);
         break;
       default:
         debugf("unknown YUV color space %d\n", colorSpace);
@@ -805,10 +876,10 @@ extern "C" {
 // transform from YUV to BGRA after sampling.
 void CompositeYUV(LockedTexture* lockedDst, LockedTexture* lockedY,
                   LockedTexture* lockedU, LockedTexture* lockedV,
-                  YUVColorSpace colorSpace, GLint srcX, GLint srcY,
-                  GLsizei srcWidth, GLsizei srcHeight, GLint dstX, GLint dstY,
-                  GLsizei dstWidth, GLsizei dstHeight, GLboolean flip,
-                  GLint bandOffset, GLsizei bandHeight) {
+                  YUVColorSpace colorSpace, GLuint colorDepth, GLint srcX,
+                  GLint srcY, GLsizei srcWidth, GLsizei srcHeight, GLint dstX,
+                  GLint dstY, GLsizei dstWidth, GLsizei dstHeight,
+                  GLboolean flip, GLint bandOffset, GLsizei bandHeight) {
   if (!lockedDst || !lockedY || !lockedU || !lockedV) {
     return;
   }
@@ -816,9 +887,11 @@ void CompositeYUV(LockedTexture* lockedDst, LockedTexture* lockedY,
   Texture& utex = *lockedU;
   Texture& vtex = *lockedV;
   Texture& dsttex = *lockedDst;
-  // All YUV planes must currently be represented by R8 textures.
+  // All YUV planes must currently be represented by R8 or R16 textures.
   // The chroma (U/V) planes must have matching dimensions.
-  assert(ytex.bpp() == 1 && utex.bpp() == 1 && vtex.bpp() == 1);
+  assert(ytex.bpp() == utex.bpp() && ytex.bpp() == vtex.bpp());
+  assert((ytex.bpp() == 1 && colorDepth == 8) ||
+         (ytex.bpp() == 2 && colorDepth > 8));
   // assert(ytex.width == utex.width && ytex.height == utex.height);
   assert(utex.width == vtex.width && utex.height == vtex.height);
   assert(dsttex.bpp() == 4);
@@ -828,8 +901,8 @@ void CompositeYUV(LockedTexture* lockedDst, LockedTexture* lockedY,
   // For now, always use a linear filter path that would be required for
   // scaling. Further fast-paths for non-scaled video might be desirable in the
   // future.
-  linear_convert_yuv(ytex, utex, vtex, colorSpace, srcReq, dsttex, dstReq, flip,
-                     bandOffset, bandHeight);
+  linear_convert_yuv(ytex, utex, vtex, colorSpace, colorDepth, srcReq, dsttex,
+                     dstReq, flip, bandOffset, bandHeight);
 }
 
 }  // extern "C"

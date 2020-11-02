@@ -16,14 +16,18 @@ add_task(async function init() {
   // Enable tab-to-search.
   Services.prefs.setBoolPref("browser.urlbar.update2", true);
   Services.prefs.setBoolPref("browser.urlbar.update2.tabToComplete", true);
+  // Disable tab-to-search onboarding results. Those are covered in
+  // browser/components/urlbar/tests/browser/browser_tabToSearch.js.
+  Services.prefs.setIntPref("browser.urlbar.tabToSearch.onboard.maxShown", 0);
   testEngine = await Services.search.addEngineWithDetails("Test", {
     template: "https://example.com/?search={searchTerms}",
   });
 
   registerCleanupFunction(async () => {
     await Services.search.removeEngine(testEngine);
-    Services.prefs.clearUserPref("browser.urlbar.update2");
+    Services.prefs.clearUserPref("browser.urlbar.tabToSearch.onboard.maxShown");
     Services.prefs.clearUserPref("browser.urlbar.update2.tabToComplete");
+    Services.prefs.clearUserPref("browser.urlbar.update2");
     Services.prefs.clearUserPref("browser.search.suggest.enabled");
   });
 });
@@ -46,7 +50,10 @@ add_task(async function basic() {
       }),
       makeSearchResult(context, {
         engineName: testEngine.name,
-        uri: testEngine.getResultDomain(),
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          testEngine.getResultDomain()
+        ),
         keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
         query: "",
         providerName: "TabToSearch",
@@ -77,16 +84,16 @@ add_task(async function noAutofill() {
 // Tests that tab-to-search results are not shown when the typed string matches
 // an engine domain, but something else is being autofilled.
 add_task(async function autofillDoesNotMatchEngine() {
-  await PlacesTestUtils.addVisits(["https://example.ca/"]);
-  let context = createContext("example.c", { isPrivate: false });
+  await PlacesTestUtils.addVisits(["https://example.test.ca/"]);
+  let context = createContext("example", { isPrivate: false });
   await check_results({
     context,
-    autofilled: "example.ca/",
-    completed: "https://example.ca/",
+    autofilled: "example.test.ca/",
+    completed: "https://example.test.ca/",
     matches: [
       makeVisitResult(context, {
-        uri: "https://example.ca/",
-        title: "https://example.ca",
+        uri: "https://example.test.ca/",
+        title: "https://example.test.ca",
         heuristic: true,
         providerName: "Autofill",
       }),
@@ -115,7 +122,10 @@ add_task(async function ignoreWww() {
       }),
       makeSearchResult(context, {
         engineName: testEngine.name,
-        uri: testEngine.getResultDomain(),
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          testEngine.getResultDomain()
+        ),
         keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
         query: "",
         providerName: "TabToSearch",
@@ -143,7 +153,10 @@ add_task(async function ignoreWww() {
       }),
       makeSearchResult(context, {
         engineName: wwwTestEngine.name,
-        uri: wwwTestEngine.getResultDomain(),
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          wwwTestEngine.getResultDomain()
+        ),
         keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
         query: "",
         providerName: "TabToSearch",
@@ -168,7 +181,10 @@ add_task(async function ignoreWww() {
       }),
       makeSearchResult(context, {
         engineName: wwwTestEngine.name,
-        uri: wwwTestEngine.getResultDomain(),
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          wwwTestEngine.getResultDomain()
+        ),
         keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
         query: "",
         providerName: "TabToSearch",
@@ -215,7 +231,10 @@ add_task(async function conflictingEngines() {
       }),
       makeSearchResult(context, {
         engineName: fooTestEngine.name,
-        uri: fooTestEngine.getResultDomain(),
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          fooTestEngine.getResultDomain()
+        ),
         keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
         query: "",
         providerName: "TabToSearch",
@@ -244,7 +263,10 @@ add_task(async function conflictingEngines() {
       }),
       makeSearchResult(context, {
         engineName: fooBarTestEngine.name,
-        uri: fooBarTestEngine.getResultDomain(),
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          fooBarTestEngine.getResultDomain()
+        ),
         keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
         query: "",
         providerName: "TabToSearch",
@@ -255,4 +277,130 @@ add_task(async function conflictingEngines() {
   await cleanupPlaces();
   await Services.search.removeEngine(fooTestEngine);
   await Services.search.removeEngine(fooBarTestEngine);
+});
+
+add_task(async function multipleEnginesForHostname() {
+  info(
+    "In case of multiple engines only one tab-to-search result should be returned"
+  );
+  let mapsEngine = await Services.search.addEngineWithDetails("TestMaps", {
+    template: "https://example.com/maps/?search={searchTerms}",
+  });
+  await PlacesTestUtils.addVisits(["https://example.com/"]);
+  let context = createContext("examp", { isPrivate: false });
+  await check_results({
+    context,
+    autofilled: "example.com/",
+    completed: "https://example.com/",
+    matches: [
+      makeVisitResult(context, {
+        uri: "https://example.com/",
+        title: "https://example.com",
+        heuristic: true,
+        providerName: "Autofill",
+      }),
+      makeSearchResult(context, {
+        engineName: testEngine.name,
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          testEngine.getResultDomain()
+        ),
+        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        query: "",
+        providerName: "TabToSearch",
+      }),
+    ],
+  });
+  await cleanupPlaces();
+  await Services.search.removeEngine(mapsEngine);
+});
+
+add_task(async function test_casing() {
+  info("Tab-to-search results appear also in case of different casing.");
+  await PlacesTestUtils.addVisits(["https://example.com/"]);
+  let context = createContext("eXAm", { isPrivate: false });
+  await check_results({
+    context,
+    autofilled: "eXAmple.com/",
+    completed: "https://example.com/",
+    matches: [
+      makeVisitResult(context, {
+        uri: "https://example.com/",
+        title: "https://example.com",
+        heuristic: true,
+        providerName: "Autofill",
+      }),
+      makeSearchResult(context, {
+        engineName: testEngine.name,
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(
+          testEngine.getResultDomain()
+        ),
+        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        query: "",
+        providerName: "TabToSearch",
+      }),
+    ],
+  });
+  await cleanupPlaces();
+});
+
+add_task(async function test_publicSuffix() {
+  info(
+    "Tab-to-search results appear also in case of different subdomain and suffix."
+  );
+  let engine = await Services.search.addEngineWithDetails("MyTest", {
+    template: "https://test.mytest.it/?search={searchTerms}",
+  });
+  // The top level domain will be autofilled, not the full domain.
+  await PlacesTestUtils.addVisits(["https://mytest.com/"]);
+  let context = createContext("my", { isPrivate: false });
+  await check_results({
+    context,
+    autofilled: "mytest.com/",
+    completed: "https://mytest.com/",
+    matches: [
+      makeVisitResult(context, {
+        uri: "https://mytest.com/",
+        title: "https://mytest.com",
+        heuristic: true,
+        providerName: "Autofill",
+      }),
+      makeSearchResult(context, {
+        engineName: engine.name,
+        engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
+        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.getResultDomain()),
+        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        query: "",
+        providerName: "TabToSearch",
+      }),
+    ],
+  });
+  await cleanupPlaces();
+  await Services.search.removeEngine(engine);
+});
+
+add_task(async function test_publicSuffixIsHost() {
+  info("Tab-to-search results does not appear in case we autofill a suffix.");
+  let suffixEngine = await Services.search.addEngineWithDetails("SuffixTest", {
+    template: "https://somesuffix.com.mx/?search={searchTerms}",
+  });
+  // The top level domain will be autofilled, not the full domain.
+  await PlacesTestUtils.addVisits(["https://com.mx/"]);
+  let context = createContext("co", { isPrivate: false });
+  await check_results({
+    context,
+    autofilled: "com.mx/",
+    completed: "https://com.mx/",
+    matches: [
+      makeVisitResult(context, {
+        uri: "https://com.mx/",
+        title: "https://com.mx",
+        heuristic: true,
+        providerName: "Autofill",
+      }),
+    ],
+  });
+  await cleanupPlaces();
+  await Services.search.removeEngine(suffixEngine);
 });

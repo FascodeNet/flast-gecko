@@ -18,6 +18,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UrlbarProvider: "resource:///modules/UrlbarUtils.jsm",
   UrlbarResult: "resource:///modules/UrlbarResult.jsm",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
+  UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
 
@@ -112,8 +113,23 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
       return;
     }
 
-    if (queryContext.trimmedSearchString == "@") {
-      for (let { engine, tokenAliases } of this._engines) {
+    if (
+      this._autofillData &&
+      this._autofillData.instance == this.queryInstance
+    ) {
+      addCallback(this, this._autofillData.result);
+      if (!UrlbarPrefs.get("update2")) {
+        return;
+      }
+    }
+
+    for (let { engine, tokenAliases } of this._engines) {
+      if (
+        (!UrlbarPrefs.get("update2") &&
+          queryContext.trimmedSearchString == "@") ||
+        (tokenAliases[0].startsWith(queryContext.trimmedSearchString) &&
+          engine.name != this._autofillData?.result.payload.engine)
+      ) {
         let result = new UrlbarResult(
           UrlbarUtils.RESULT_TYPE.SEARCH,
           UrlbarUtils.RESULT_SOURCE.SEARCH,
@@ -127,13 +143,9 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
         );
         addCallback(this, result);
       }
-    } else if (
-      this._autofillData &&
-      this._autofillData.instance == this.queryInstance
-    ) {
-      addCallback(this, this._autofillData.result);
-      this._autofillData = null;
     }
+
+    this._autofillData = null;
   }
 
   /**
@@ -169,7 +181,10 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
           // over at this point.
           if (
             UrlbarPrefs.get("update2") &&
-            lowerCaseSearchString.startsWith(alias + " ")
+            lowerCaseSearchString.startsWith(alias) &&
+            UrlbarTokenizer.REGEXP_SPACES_START.test(
+              lowerCaseSearchString.substring(alias.length)
+            )
           ) {
             return null;
           }
@@ -188,10 +203,22 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
               keyword: [aliasPreservingUserCase, UrlbarUtils.HIGHLIGHT.TYPED],
               query: ["", UrlbarUtils.HIGHLIGHT.TYPED],
               icon: engine.iconURI?.spec,
-              keywordOffer: UrlbarUtils.KEYWORD_OFFER.HIDE,
+              // With update2 enabled, we only deal with KEYWORD_OFFER.SHOW.
+              // See bug 1665066 for work to turn this into a boolean property.
+              keywordOffer: UrlbarPrefs.get("update2")
+                ? UrlbarUtils.KEYWORD_OFFER.SHOW
+                : UrlbarUtils.KEYWORD_OFFER.HIDE,
             })
           );
-          result.heuristic = true;
+          if (UrlbarPrefs.get("update2")) {
+            // We set suggestedIndex = 0 instead of the heuristic because we
+            // don't want this result to be automatically selected. That way,
+            // users can press Tab to select the result, building on their
+            // muscle memory from tab-to-search.
+            result.suggestedIndex = 0;
+          } else {
+            result.heuristic = true;
+          }
           result.autofill = {
             value,
             selectionStart: queryContext.searchString.length,

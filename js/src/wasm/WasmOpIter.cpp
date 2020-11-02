@@ -430,11 +430,11 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I16x8NarrowSI32x4:
         case SimdOp::I16x8NarrowUI32x4:
         case SimdOp::V8x16Swizzle:
-        case SimdOp::F32x4PMinExperimental:
-        case SimdOp::F32x4PMaxExperimental:
-        case SimdOp::F64x2PMinExperimental:
-        case SimdOp::F64x2PMaxExperimental:
-        case SimdOp::I32x4DotSI16x8Experimental:
+        case SimdOp::F32x4PMin:
+        case SimdOp::F32x4PMax:
+        case SimdOp::F64x2PMin:
+        case SimdOp::F64x2PMax:
+        case SimdOp::I32x4DotSI16x8:
           WASM_SIMD_OP(OpKind::Binary);
         case SimdOp::I8x16Neg:
         case SimdOp::I16x8Neg:
@@ -462,14 +462,14 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I8x16Abs:
         case SimdOp::I16x8Abs:
         case SimdOp::I32x4Abs:
-        case SimdOp::F32x4CeilExperimental:
-        case SimdOp::F32x4FloorExperimental:
-        case SimdOp::F32x4TruncExperimental:
-        case SimdOp::F32x4NearestExperimental:
-        case SimdOp::F64x2CeilExperimental:
-        case SimdOp::F64x2FloorExperimental:
-        case SimdOp::F64x2TruncExperimental:
-        case SimdOp::F64x2NearestExperimental:
+        case SimdOp::F32x4Ceil:
+        case SimdOp::F32x4Floor:
+        case SimdOp::F32x4Trunc:
+        case SimdOp::F32x4Nearest:
+        case SimdOp::F64x2Ceil:
+        case SimdOp::F64x2Floor:
+        case SimdOp::F64x2Trunc:
+        case SimdOp::F64x2Nearest:
           WASM_SIMD_OP(OpKind::Unary);
         case SimdOp::I8x16Shl:
         case SimdOp::I8x16ShrS:
@@ -501,8 +501,8 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4LoadU16x4:
         case SimdOp::I64x2LoadS32x2:
         case SimdOp::I64x2LoadU32x2:
-        case SimdOp::V128Load32ZeroExperimental:
-        case SimdOp::V128Load64ZeroExperimental:
+        case SimdOp::V128Load32Zero:
+        case SimdOp::V128Load64Zero:
           WASM_SIMD_OP(OpKind::Load);
         case SimdOp::V128Store:
           WASM_SIMD_OP(OpKind::Store);

@@ -172,6 +172,12 @@ class DateTimeTestHelper {
     this.tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, pageUrl);
     let bc = gBrowser.selectedBrowser;
     if (inFrame) {
+      await SpecialPowers.spawn(bc, [], async function() {
+        const iframe = content.document.querySelector("iframe");
+        // Ensure the iframe's position is correct before doing any
+        // other operations
+        iframe.getBoundingClientRect();
+      });
       bc = bc.browsingContext.children[0];
     }
     await BrowserTestUtils.synthesizeMouseAtCenter("input", {}, bc);
@@ -351,5 +357,59 @@ function checkVideoDidPlay(browser, args) {
     );
     video.src = "";
     content.document.body.remove(video);
+  });
+}
+
+/**
+ * check if current wakelock is equal to expected state, if not, then wait until
+ * the wakelock changes its state to expected state.
+ * @param needLock
+ *        the wakolock should be locked or not
+ * @param isForegroundLock
+ *        when the lock is on, the wakelock should be in the foreground or not
+ */
+async function waitForExpectedWakeLockState(
+  topic,
+  { needLock, isForegroundLock }
+) {
+  const powerManagerService = Cc["@mozilla.org/power/powermanagerservice;1"];
+  const powerManager = powerManagerService.getService(
+    Ci.nsIPowerManagerService
+  );
+  const wakelockState = powerManager.getWakeLockState(topic);
+  let expectedLockState = "unlocked";
+  if (needLock) {
+    expectedLockState = isForegroundLock
+      ? "locked-foreground"
+      : "locked-background";
+  }
+  if (wakelockState != expectedLockState) {
+    info(`wait until wakelock becomes ${expectedLockState}`);
+    await wakeLockObserved(
+      powerManager,
+      topic,
+      state => state == expectedLockState
+    );
+  }
+  is(
+    powerManager.getWakeLockState(topic),
+    expectedLockState,
+    `the wakelock state for '${topic}' is equal to '${expectedLockState}'`
+  );
+}
+
+function wakeLockObserved(powerManager, observeTopic, checkFn) {
+  return new Promise(resolve => {
+    function wakeLockListener() {}
+    wakeLockListener.prototype = {
+      QueryInterface: ChromeUtils.generateQI(["nsIDOMMozWakeLockListener"]),
+      callback(topic, state) {
+        if (topic == observeTopic && checkFn(state)) {
+          powerManager.removeWakeLockListener(wakeLockListener.prototype);
+          resolve();
+        }
+      },
+    };
+    powerManager.addWakeLockListener(wakeLockListener.prototype);
   });
 }

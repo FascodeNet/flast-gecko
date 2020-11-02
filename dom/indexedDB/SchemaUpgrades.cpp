@@ -2860,8 +2860,8 @@ nsresult UpgradeFileIdsFunction::Init(nsIFile* aFMDirectory,
                                       mozIStorageConnection& aConnection) {
   // This file manager doesn't need real origin info, etc. The only purpose is
   // to store file ids without adding more complexity or code duplication.
-  auto fileManager = MakeSafeRefPtr<FileManager>(PERSISTENCE_TYPE_INVALID,
-                                                 ""_ns, ""_ns, u""_ns, false);
+  auto fileManager = MakeSafeRefPtr<FileManager>(
+      PERSISTENCE_TYPE_INVALID, quota::GroupAndOrigin{}, u""_ns, false);
 
   nsresult rv = fileManager->Init(aFMDirectory, aConnection);
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -2894,8 +2894,9 @@ UpgradeFileIdsFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
     return NS_ERROR_UNEXPECTED;
   }
 
-  IDB_TRY_UNWRAP(auto cloneInfo, GetStructuredCloneReadInfoFromValueArray(
-                                     aArguments, 1, 0, *mFileManager));
+  IDB_TRY_UNWRAP(auto cloneInfo,
+                 GetStructuredCloneReadInfoFromValueArray(
+                     aArguments, 1, 0, *mFileManager, Nothing{}));
 
   nsAutoString fileIds;
   // XXX does this really need non-const cloneInfo?

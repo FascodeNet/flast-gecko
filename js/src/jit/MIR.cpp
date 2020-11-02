@@ -15,10 +15,12 @@
 
 #include "jslibmath.h"
 #include "jsmath.h"
+#include "jsnum.h"
 
 #include "builtin/RegExp.h"
 #include "jit/AtomicOperations.h"
 #include "jit/BaselineInspector.h"
+#include "jit/CompileInfo.h"
 #include "jit/IonBuilder.h"
 #include "jit/JitSpewer.h"
 #include "jit/KnownClass.h"
@@ -31,6 +33,7 @@
 #include "util/Text.h"
 #include "util/Unicode.h"
 #include "vm/PlainObject.h"  // js::PlainObject
+#include "vm/Uint8Clamped.h"
 #include "wasm/WasmCode.h"
 
 #include "builtin/Boolean-inl.h"
@@ -3624,11 +3627,11 @@ MDefinition* MReturnFromCtor::foldsTo(TempAllocator& alloc) {
 }
 
 MDefinition* MTypeOf::foldsTo(TempAllocator& alloc) {
-  if (!input()->isBox()) {
-    return this;
+  MDefinition* unboxed = input();
+  if (unboxed->isBox()) {
+    unboxed = unboxed->toBox()->input();
   }
 
-  MDefinition* unboxed = input()->toBox()->input();
   JSType type;
   switch (unboxed->type()) {
     case MIRType::Double:
@@ -5127,6 +5130,32 @@ bool MWasmLoadGlobalCell::congruentTo(const MDefinition* ins) const {
 }
 
 #ifdef ENABLE_WASM_SIMD
+MDefinition* MWasmBinarySimd128::foldsTo(TempAllocator& alloc) {
+  if (simdOp() == wasm::SimdOp::V8x16Swizzle && rhs()->isWasmFloatConstant()) {
+    // Specialize swizzle(v, constant) as shuffle(mask, v, zero) to trigger all
+    // our shuffle optimizations.  We don't report this rewriting as the report
+    // will be overwritten by the subsequent shuffle analysis.
+    int8_t shuffleMask[16];
+    memcpy(shuffleMask, rhs()->toWasmFloatConstant()->toSimd128().bytes(), 16);
+    for (int i = 0; i < 16; i++) {
+      // Out-of-bounds lanes reference the zero vector; in many cases, the zero
+      // vector is removed by subsequent optimizations.
+      if (shuffleMask[i] < 0 || shuffleMask[i] > 15) {
+        shuffleMask[i] = 16;
+      }
+    }
+    MWasmFloatConstant* zero =
+        MWasmFloatConstant::NewSimd128(alloc, SimdConstant::SplatX4(0));
+    if (!zero) {
+      return nullptr;
+    }
+    block()->insertBefore(this, zero);
+    return MWasmShuffleSimd128::New(alloc, lhs(), zero,
+                                    SimdConstant::CreateX16(shuffleMask));
+  }
+  return this;
+}
+
 MDefinition* MWasmScalarToSimd128::foldsTo(TempAllocator& alloc) {
 #  ifdef DEBUG
   auto logging = mozilla::MakeScopeExit([&] {
@@ -5213,7 +5242,7 @@ MDefinition* MWasmReduceSimd128::foldsTo(TempAllocator& alloc) {
       case wasm::SimdOp::I8x16AnyTrue:
       case wasm::SimdOp::I16x8AnyTrue:
       case wasm::SimdOp::I32x4AnyTrue:
-        i32Result = !c.isIntegerZero();
+        i32Result = !c.isZeroBits();
         break;
       case wasm::SimdOp::I8x16AllTrue:
         i32Result = AllTrue(
@@ -6223,13 +6252,17 @@ MDefinition* MGuardStringToInt32::foldsTo(TempAllocator& alloc) {
   }
 
   JSAtom* atom = &string()->toConstant()->toString()->asAtom();
-  if (!atom->hasIndexValue()) {
+  double number;
+  if (!js::MaybeStringToNumber(atom, &number)) {
     return this;
   }
 
-  uint32_t index = atom->getIndexValue();
-  MOZ_ASSERT(index <= INT32_MAX);
-  return MConstant::New(alloc, Int32Value(index));
+  int32_t n;
+  if (!mozilla::NumberIsInt32(number, &n)) {
+    return this;
+  }
+
+  return MConstant::New(alloc, Int32Value(n));
 }
 
 MDefinition* MGuardStringToDouble::foldsTo(TempAllocator& alloc) {
@@ -6238,13 +6271,12 @@ MDefinition* MGuardStringToDouble::foldsTo(TempAllocator& alloc) {
   }
 
   JSAtom* atom = &string()->toConstant()->toString()->asAtom();
-  if (!atom->hasIndexValue()) {
+  double number;
+  if (!js::MaybeStringToNumber(atom, &number)) {
     return this;
   }
 
-  uint32_t index = atom->getIndexValue();
-  MOZ_ASSERT(index <= INT32_MAX);
-  return MConstant::New(alloc, DoubleValue(index));
+  return MConstant::New(alloc, DoubleValue(number));
 }
 
 MDefinition* MGuardToClass::foldsTo(TempAllocator& alloc) {

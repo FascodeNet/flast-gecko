@@ -22,6 +22,23 @@ loader.lazyRequireGetter(
   Targets.TYPES.FRAME,
   "devtools/server/actors/watcher/target-helpers/frame-helper"
 );
+loader.lazyRequireGetter(
+  TARGET_HELPERS,
+  Targets.TYPES.PROCESS,
+  "devtools/server/actors/watcher/target-helpers/process-helper"
+);
+loader.lazyRequireGetter(
+  TARGET_HELPERS,
+  Targets.TYPES.WORKER,
+  "devtools/server/actors/watcher/target-helpers/worker-helper"
+);
+
+loader.lazyRequireGetter(
+  this,
+  "NetworkActor",
+  "devtools/server/actors/network-monitor/network",
+  true
+);
 
 exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   /**
@@ -93,7 +110,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       actor: this.actorID,
       traits: {
         // FF77+ supports frames in Watcher actor
-        frame: true,
+        [Targets.TYPES.FRAME]: true,
+        // FF84+ supports processes
+        [Targets.TYPES.PROCESS]: true,
+        // FF84+ supports workers in Watcher actor for content toolbox.
+        [Targets.TYPES.WORKER]: hasBrowserElement,
         resources: {
           // FF81+ (bug 1642295) added support for:
           // - CONSOLE_MESSAGE
@@ -114,8 +135,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           [Resources.TYPES.CSS_MESSAGE]: hasBrowserElement,
           [Resources.TYPES.DOCUMENT_EVENT]: hasBrowserElement,
           [Resources.TYPES.ERROR_MESSAGE]: hasBrowserElement,
+          [Resources.TYPES.LOCAL_STORAGE]: hasBrowserElement,
           [Resources.TYPES.PLATFORM_MESSAGE]: true,
           [Resources.TYPES.NETWORK_EVENT]:
+            enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.NETWORK_EVENT_STACKTRACE]:
             enableServerWatcher && hasBrowserElement,
           [Resources.TYPES.STYLESHEET]:
             enableServerWatcher && hasBrowserElement,
@@ -275,6 +299,9 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
         resourceTypes,
         targetType
       );
+      if (targetResourceTypes.length == 0) {
+        continue;
+      }
       const targetHelperModule = TARGET_HELPERS[targetType];
       await targetHelperModule.addWatcherDataEntry({
         watcher: this,
@@ -306,11 +333,13 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       resourceTypes,
       Targets.TYPES.FRAME
     );
-    const targetActor = this.browserElement
-      ? TargetActorRegistry.getTargetActor(this.browserId)
-      : TargetActorRegistry.getParentProcessTargetActor();
-    if (targetActor) {
-      await targetActor.addWatcherDataEntry("resources", frameResourceTypes);
+    if (frameResourceTypes.length > 0) {
+      const targetActor = this.browserElement
+        ? TargetActorRegistry.getTargetActor(this.browserId)
+        : TargetActorRegistry.getParentProcessTargetActor();
+      if (targetActor) {
+        await targetActor.addWatcherDataEntry("resources", frameResourceTypes);
+      }
     }
   },
 
@@ -359,6 +388,9 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           resourceTypes,
           targetType
         );
+        if (targetResourceTypes.length == 0) {
+          continue;
+        }
         const targetHelperModule = TARGET_HELPERS[targetType];
         targetHelperModule.removeWatcherDataEntry({
           watcher: this,
@@ -373,14 +405,26 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       resourceTypes,
       Targets.TYPES.FRAME
     );
-    const targetActor = this.browserElement
-      ? TargetActorRegistry.getTargetActor(this.browserId)
-      : TargetActorRegistry.getParentProcessTargetActor();
-    if (targetActor) {
-      targetActor.removeWatcherDataEntry("resources", frameResourceTypes);
+    if (frameResourceTypes.length > 0) {
+      const targetActor = this.browserElement
+        ? TargetActorRegistry.getTargetActor(this.browserId)
+        : TargetActorRegistry.getParentProcessTargetActor();
+      if (targetActor) {
+        targetActor.removeWatcherDataEntry("resources", frameResourceTypes);
+      }
     }
 
     // Unregister the JS Window Actor if there is no more DevTools code observing any target/resource
     WatcherRegistry.maybeUnregisteringJSWindowActor();
+  },
+
+  /**
+   * Returns the network actor.
+   *
+   * @return {Object} actor
+   *        The network actor.
+   */
+  getNetworkActor() {
+    return new NetworkActor(this);
   },
 });

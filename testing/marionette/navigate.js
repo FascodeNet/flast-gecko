@@ -167,8 +167,7 @@ navigate.refresh = async function(browsingContext) {
  *     Callback to execute that might trigger a navigation.
  * @param {Object} options
  * @param {BrowsingContext=} browsingContext
- *     Browsing context to observe. Defaults to the current top-level
- *     browsing context.
+ *     Browsing context to observe. Defaults to the current browsing context.
  * @param {boolean=} loadEventExpected
  *     If false, return immediately and don't wait for
  *     the navigation to be completed. Defaults to true.
@@ -182,13 +181,13 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
   options = {}
 ) {
   const {
-    browsingContext = driver.getBrowsingContext({ top: true }),
+    browsingContext = driver.getBrowsingContext(),
     loadEventExpected = true,
     requireBeforeUnload = true,
   } = options;
 
-  const pageLoadStrategy = driver.capabilities.get("pageLoadStrategy");
   const chromeWindow = browsingContext.topChromeWindow;
+  const pageLoadStrategy = driver.capabilities.get("pageLoadStrategy");
 
   // Return immediately if no load event is expected
   if (!loadEventExpected || pageLoadStrategy === PageLoadStrategy.None) {
@@ -198,7 +197,6 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
 
   return new TimedPromise(
     async (resolve, reject) => {
-      const frameRemovedMessage = "Marionette:FrameRemoved";
       const navigationMessage = "Marionette:NavigationEvent";
 
       let seenBeforeUnload = false;
@@ -208,14 +206,13 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
 
       const checkDone = ({ finished, error }) => {
         if (finished) {
+          Services.obs.removeObserver(
+            onBrowsingContextDiscarded,
+            "browsing-context-discarded"
+          );
           chromeWindow.removeEventListener("TabClose", onUnload);
           chromeWindow.removeEventListener("unload", onUnload);
           driver.dialogObserver.remove(onDialogOpened);
-          driver.mm.removeMessageListener(
-            frameRemovedMessage,
-            onFrameRemoved,
-            true
-          );
           driver.mm.removeMessageListener(
             navigationMessage,
             onNavigation,
@@ -308,15 +305,16 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
 
       // In the case when the currently selected frame is closed,
       // there will be no further load events. Stop listening immediately.
-      const onFrameRemoved = ({ json }) => {
-        if (json.browsingContextId != browsingContext.id) {
-          return;
+      const onBrowsingContextDiscarded = (subject, topic) => {
+        // With the currentWindowGlobal gone the browsing context hasn't been
+        // replaced due to a remoteness change but closed.
+        if (subject == browsingContext && !subject.currentWindowGlobal) {
+          logger.trace(
+            "Canceled page load listener " +
+              `because frame with id ${subject.id} has been removed`
+          );
+          checkDone({ finished: true });
         }
-
-        logger.trace(
-          "Canceled page load listener because current frame has been removed"
-        );
-        checkDone({ finished: true });
       };
 
       const onUnload = event => {
@@ -327,28 +325,35 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
         checkDone({ finished: true });
       };
 
-      // Certain commands like clickElement can cause a navigation. Setup a timer
-      // to check if a "beforeunload" event has been emitted within the given
-      // time frame. If not resolve the Promise.
-      if (!requireBeforeUnload) {
-        unloadTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-        unloadTimer.initWithCallback(
-          onTimer,
-          TIMEOUT_BEFOREUNLOAD_EVENT,
-          Ci.nsITimer.TYPE_ONE_SHOT
-        );
-      }
-
       chromeWindow.addEventListener("TabClose", onUnload);
       chromeWindow.addEventListener("unload", onUnload);
       driver.dialogObserver.add(onDialogOpened);
-      driver.mm.addMessageListener(frameRemovedMessage, onFrameRemoved, true);
+      Services.obs.addObserver(
+        onBrowsingContextDiscarded,
+        "browsing-context-discarded"
+      );
       driver.mm.addMessageListener(navigationMessage, onNavigation, true);
 
       try {
         await callback();
+
+        // Certain commands like clickElement can cause a navigation. Setup a timer
+        // to check if a "beforeunload" event has been emitted within the given
+        // time frame. If not resolve the Promise.
+        if (!requireBeforeUnload) {
+          unloadTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+          unloadTimer.initWithCallback(
+            onTimer,
+            TIMEOUT_BEFOREUNLOAD_EVENT,
+            Ci.nsITimer.TYPE_ONE_SHOT
+          );
+        }
       } catch (e) {
-        checkDone({ finished: true, error: e });
+        // Executing the callback above could destroy the actor pair before the
+        // command returns. Such an error has to be ignored.
+        if (e.name !== "AbortError") {
+          checkDone({ finished: true, error: e });
+        }
       }
     },
     {

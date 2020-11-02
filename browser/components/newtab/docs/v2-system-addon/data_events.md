@@ -723,6 +723,26 @@ This reports the user's interaction with those Pocket tiles.
 }
 ```
 
+## On Save Recs pings
+
+Right now the save to Pocket button, while technically outside of newtab, has some similarities with the newtab telemetry.
+
+These pings record user interaction with the recs we display in the doorhanger after you save a page using the Pocket button next to the address bar. This is not telemetry for the address bar save to Pocket button itself, just for the similar recs displayed in the doorhanger.
+
+### Click/impression ping
+
+```js
+{
+  "locale": "en-US",
+  "version": "83.0a1",
+  "release_channel": "default",
+  "model": "",
+  "events": [{"action":"click|impression","position":0}],
+  "impression_id": "{005deed0-e3e4-4c02-a041-17405fd703f6}",
+  "profile_creation_date": 18550
+}
+```
+
 ## Performance pings
 
 These pings are captured to record performance related events i.e. how long certain operations take to execute.
@@ -1396,6 +1416,18 @@ For message impressions we concatenate the ids of all messages in the panel.
   "message_id": "WHATS_NEW_70",
   "event": ["CLICK" | "IMPRESSION"],
   "value": { "view": ["application_menu" | "toolbar_dropdown"] }
+}
+```
+
+We also report when the panel checkbox (used to allow users to opt out of
+notifications) is checked or unchecked.
+
+```
+{
+  ...
+  "message_id": "n/a",
+  "event": "WNP_PREF_TOGGLE",
+  "value": { "prefValue": true }
 }
 ```
 

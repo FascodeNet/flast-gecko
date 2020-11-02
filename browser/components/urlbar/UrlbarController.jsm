@@ -331,14 +331,19 @@ class UrlbarController {
           (this.input.value &&
             this.input.getAttribute("pageproxystate") != "valid");
         if (
-          this.view.isOpen &&
+          // Even if the view is closed, we may be waiting results, and in
+          // such a case we don't want to tab out of the urlbar.
+          (this.view.isOpen || !executeAction) &&
           !event.ctrlKey &&
           !event.altKey &&
           allowTabbingThroughResults
         ) {
           if (executeAction) {
             this.userSelectionBehavior = "tab";
-            this.view.selectBy(1, { reverse: event.shiftKey });
+            this.view.selectBy(1, {
+              reverse: event.shiftKey,
+              userPressedTab: true,
+            });
           }
           event.preventDefault();
         }
@@ -396,7 +401,7 @@ class UrlbarController {
           this.input.selectionEnd == 0 &&
           !event.shiftKey
         ) {
-          this.input.setSearchMode({});
+          this.input.searchMode = null;
           this.input.view.oneOffSearchButtons.selectedButton = null;
           this.input.startQuery({
             allowAutofill: false,
@@ -794,6 +799,8 @@ class TelemetryEvent {
    *        for "blur". One of "none", "autofill", "visit", "bookmark",
    *        "history", "keyword", "search", "searchsuggestion", "switchtab",
    *         "remotetab", "extension", "oneoff".
+   * @param {string} details.provider The name of the provider for the selected
+   *        result.
    * @note event can be null, that usually happens for paste&go or drop&go.
    *       If there's no _startEventInfo this is a no-op.
    */
@@ -875,6 +882,7 @@ class TelemetryEvent {
     if (method == "engagement") {
       extra.selIndex = details.selIndex.toString();
       extra.selType = details.selType;
+      extra.provider = details.provider || "";
     }
 
     // We invoke recordEvent regardless, if recording is disabled this won't

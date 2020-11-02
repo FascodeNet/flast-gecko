@@ -3167,6 +3167,22 @@ telemetry:
       - 'main'
       - 'content'
 
+  environment_didnt_change:
+    bug_numbers:
+      - 1483477
+    description: >
+      The number of times the Telemetry Environment notified listeners of environment changes
+      despite the old and new environment contents being equal.
+    expires: "89"
+    kind: uint
+    notification_emails:
+      - chutten@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
 telemetry.discarded:
   accumulations:
     bug_numbers:
@@ -3619,6 +3635,22 @@ gfx:
       - 'firefox'
     record_in_processes:
       - 'main'
+    release_channel_collection: opt-out
+apz:
+  scrollwheel_overshoot:
+    bug_numbers:
+      - 1670003
+    description: >
+      Count of overshoot events, where the user reverses scrollwheel direction soon after the last scrollwheel input.
+    expires: "85"
+    kind: uint
+    notification_emails:
+      - kgupta@mozilla.com
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+      - 'gpu'
     release_channel_collection: opt-out
 
 # The following section contains the form autofill related scalars.
@@ -4111,6 +4143,15 @@ printing:
       - 'OUT_OF_MEMORY'
       - 'UNEXPECTED'
       - 'FAILURE'
+      - 'FALLBACK_PAPER_LIST'
+      - 'LAST_USED_PRINTER'
+      - 'PAPER_MARGINS'
+      - 'PRINT_DESTINATIONS'
+      - 'PRINT_PREVIEW'
+      - 'PRINTER_LIST'
+      - 'PRINTER_PROPERTIES'
+      - 'PRINTER_SETTINGS'
+      - 'UNWRITEABLE_MARGIN'
     expires: never
     kind: uint
     notification_emails:
@@ -4477,6 +4518,37 @@ widget:
     record_in_processes:
       - 'main'
 
+  gtk_theme_scrollbar_uses_images:
+    bug_numbers:
+      - 1670145
+    description: >
+      Whether the active Gtk theme uses background images for its scrollbar
+      parts.
+    kind: boolean
+    expires: "87"
+    notification_emails:
+      - layout-telemetry-alerts@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  gtk_version:
+    bug_numbers:
+      - 1670145
+    description: >
+      The version of Gtk 3 in use.
+    kind: string
+    expires: never
+    notification_emails:
+      - layout-telemetry-alerts@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 # The following section contains memory reporter counters.
 memoryreporter:
   max_ghost_windows:
@@ -4641,6 +4713,24 @@ browser.searchinit:
       - 'firefox'
     record_in_processes:
       - main
+  engine_invalid_webextension:
+    bug_numbers:
+      - 1665938
+    description: >
+      Records the WebExtension ID of a search engine where the WebExtension
+      is not installed (= 1), disabled (= 2) or where the submission URL
+      is different between the search engine and the WebExtension (= 3)
+    expires: "89"
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - mbanner@mozilla.com
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
 
 encoding:
   override_used:
@@ -5492,6 +5582,23 @@ urlbar.searchmode:
       - 'firefox'
     record_in_processes:
       - main
+  tabtosearch_onboard:
+    bug_numbers:
+      - 1665934
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a tab-to-search onboarding result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
   topsites_newtab:
     bug_numbers:
       - 1654680
@@ -5598,92 +5705,6 @@ migration:
     operating_systems:
       - windows
 
-fog.eval:
-  user_active:
-    bug_numbers:
-      - 1647876
-    description: >
-      Whether the user is presently actively interacting with Firefox.
-      For use in evaluating baseline engagement for Project FOG.
-    expires: '85'
-    kind: 'boolean'
-    notification_emails:
-      - 'chutten@mozilla.com'
-    release_channel_collection: 'opt-out'
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  window_raised:
-    bug_numbers:
-      - 1647876
-    description: >
-      Whether a Firefox window is presently raised.
-      For use in evaluating baseline engagement for Project FOG.
-    expires: '85'
-    kind: 'boolean'
-    notification_emails:
-      - 'chutten@mozilla.com'
-    release_channel_collection: 'opt-out'
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  user_active_error:
-    bug_numbers:
-      - 1647876
-    description: >
-      How many Telemetry stopwatch errors did we have while trying to measure user activity?
-      These could be attempts to start a started timer or finish an unstarted timer or so forth.
-      See Stopwatch::Start and Stopwatch::Finish for details.
-      For use in evaluating baseline engagement for Project FOG.
-    expires: '85'
-    kind: 'uint'
-    notification_emails:
-      - 'chutten@mozilla.com'
-    release_channel_collection: 'opt-out'
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  user_inactive_error:
-    bug_numbers:
-      - 1660887
-    description: >
-      How many Telemetry stopwatch errors did we have while trying to measure user inactivity?
-      These could be attempts to start a started timer or finish an unstarted timer or so forth.
-      See Stopwatch::Start and Stopwatch::Finish for details.
-      For use in evaluating baseline engagement for Project FOG.
-    expires: '85'
-    kind: 'uint'
-    notification_emails:
-      - 'chutten@mozilla.com'
-    release_channel_collection: 'opt-out'
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  window_raised_error:
-    bug_numbers:
-      - 1647876
-    description: >
-      How many Telemetry stopwatch errors did we have while trying to measure window raising?
-      These could be attempts to start a started timer or finish an unstarted timer or so forth.
-      See Stopwatch::Start and Stopwatch::Finish for details.
-      For use in evaluating baseline engagement for Project FOG.
-    expires: '85'
-    kind: 'uint'
-    notification_emails:
-      - 'chutten@mozilla.com'
-    release_channel_collection: 'opt-out'
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
 
 # The following section is for probes testing the Telemetry system. They will not be
 # submitted in pings and are only used for testing.

@@ -87,7 +87,6 @@ const PREFS_WHITELIST = [
   "places.",
   "plugin.",
   "plugins.",
-  "print.",
   "privacy.",
   "remote.enabled",
   "security.",
@@ -113,11 +112,6 @@ const PREFS_BLACKLIST = [
   /^media[.]webrtc[.]debug[.]aec_log_dir/,
   /^media[.]webrtc[.]debug[.]log_file/,
   /^network[.]proxy[.]/,
-  /[.]print_to_filename$/,
-  /^print[.]macosx[.]pagesetup/,
-  // Don't filter out the printing prefs for now while the project to overhaul
-  // the printing code is ongoing and causing some unintended disruption:
-  // /^print[.]printer/,
 ];
 
 // Table of getters for various preference types.
@@ -137,19 +131,18 @@ const PREFS_UNIMPORTANT_LOCKED = [
   "privacy.restrict3rdpartystorage.url_decorations",
 ];
 
-// Return the preferences filtered by PREFS_BLACKLIST and PREFS_WHITELIST lists
-// and also by the custom 'filter'-ing function.
-function getPrefList(filter) {
-  filter = filter || (name => true);
-  function getPref(name) {
-    let type = Services.prefs.getPrefType(name);
-    if (!(type in PREFS_GETTERS)) {
-      throw new Error("Unknown preference type " + type + " for " + name);
-    }
-    return PREFS_GETTERS[type](Services.prefs, name);
+function getPref(name) {
+  let type = Services.prefs.getPrefType(name);
+  if (!(type in PREFS_GETTERS)) {
+    throw new Error("Unknown preference type " + type + " for " + name);
   }
+  return PREFS_GETTERS[type](Services.prefs, name);
+}
 
-  return PREFS_WHITELIST.reduce(function(prefs, branch) {
+// Return the preferences filtered by PREFS_BLACKLIST and whitelist lists
+// and also by the custom 'filter'-ing function.
+function getPrefList(filter, whitelist = PREFS_WHITELIST) {
+  return whitelist.reduce(function(prefs, branch) {
     Services.prefs.getChildList(branch).forEach(function(name) {
       if (filter(name) && !PREFS_BLACKLIST.some(re => re.test(name))) {
         prefs[name] = getPref(name);
@@ -235,11 +228,15 @@ var dataProviders = {
     } catch (e) {}
 
     data.numTotalWindows = 0;
+    data.numFissionWindows = 0;
     data.numRemoteWindows = 0;
     for (let { docShell } of Services.wm.getEnumerator("navigator:browser")) {
+      docShell.QueryInterface(Ci.nsILoadContext);
       data.numTotalWindows++;
-      let remote = docShell.QueryInterface(Ci.nsILoadContext).useRemoteTabs;
-      if (remote) {
+      if (docShell.useRemoteSubframes) {
+        data.numFissionWindows++;
+      }
+      if (docShell.useRemoteTabs) {
         data.numRemoteWindows++;
       }
     }
@@ -252,17 +249,6 @@ var dataProviders = {
     data.fissionDecisionStatus = Services.appinfo.fissionDecisionStatusString;
 
     data.remoteAutoStart = Services.appinfo.browserTabsRemoteAutostart;
-
-    try {
-      let e10sStatus = Cc["@mozilla.org/supports-PRUint64;1"].createInstance(
-        Ci.nsISupportsPRUint64
-      );
-      let appinfo = Services.appinfo.QueryInterface(Ci.nsIObserver);
-      appinfo.observe(e10sStatus, "getE10SBlocked", "");
-      data.autoStartStatus = e10sStatus.data;
-    } catch (e) {
-      data.autoStartStatus = -1;
-    }
 
     if (Services.policies) {
       data.policiesStatus = Services.policies.status;
@@ -477,6 +463,20 @@ var dataProviders = {
           Services.prefs.prefIsLocked(name)
       )
     );
+  },
+
+  printingPreferences: function printingPreferences(done) {
+    let filter = name => Services.prefs.prefHasUserValue(name);
+    let prefs = getPrefList(filter, ["print."]);
+
+    // print_printer is special and is the only pref that is outside of the
+    // "print." branch... Maybe we should change it to print.printer or
+    // something...
+    if (filter("print_printer")) {
+      prefs.print_printer = getPref("print_printer");
+    }
+
+    done(prefs);
   },
 
   graphics: function graphics(done) {

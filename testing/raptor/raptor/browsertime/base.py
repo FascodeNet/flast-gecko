@@ -24,7 +24,9 @@ LOG = RaptorLogger(component="raptor-browsertime")
 
 DEFAULT_CHROMEVERSION = "77"
 BROWSERTIME_PAGELOAD_OUTPUT_TIMEOUT = 120  # 2 minutes
-BROWSERTIME_BENCHMARK_OUTPUT_TIMEOUT = None  # Disable output timeout for benchmark tests
+BROWSERTIME_BENCHMARK_OUTPUT_TIMEOUT = (
+    None  # Disable output timeout for benchmark tests
+)
 
 
 class Browsertime(Perftest):
@@ -93,7 +95,8 @@ class Browsertime(Perftest):
             with open(userjspath) as userjsfile:
                 lines = userjsfile.readlines()
             lines = [
-                line for line in lines
+                line
+                for line in lines
                 if not line.startswith("#MozRunner") and line.strip()
             ]
             with open(userjspath, "w") as userjsfile:
@@ -125,7 +128,11 @@ class Browsertime(Perftest):
             self.driver_paths.extend(
                 ["--firefox.geckodriverPath", self.browsertime_geckodriver]
             )
-        if self.browsertime_chromedriver and self.config["app"] in ["chrome", "chrome-m"]:
+        if self.browsertime_chromedriver and self.config["app"] in (
+            "chrome",
+            "chrome-m",
+            "chromium",
+        ):
             if (
                 not self.config.get("run_local", None)
                 or "{}" in self.browsertime_chromedriver
@@ -176,8 +183,10 @@ class Browsertime(Perftest):
                     "browsertime",
                     "browsertime_scenario.js",
                 ),
-                "--browsertime.scenario_time", test.get("scenario_time", 60000),
-                "--browsertime.background_app", test.get("background_app", "false")
+                "--browsertime.scenario_time",
+                test.get("scenario_time", 60000),
+                "--browsertime.background_app",
+                test.get("background_app", "false"),
             ]
         else:
             browsertime_script = [
@@ -191,7 +200,7 @@ class Browsertime(Perftest):
             ]
 
         btime_args = self.browsertime_args
-        if self.config["app"] in ("chrome", "chromium", 'chrome-m'):
+        if self.config["app"] in ("chrome", "chromium", "chrome-m"):
             btime_args.extend(self.setup_chrome_args(test))
 
         browsertime_script.extend(btime_args)
@@ -212,47 +221,64 @@ class Browsertime(Perftest):
         )
 
         browsertime_options = [
-            "--firefox.profileTemplate", str(self.profile.profile),
+            "--firefox.profileTemplate",
+            str(self.profile.profile),
             "--skipHar",
-            "--viewPort", "1366x695",
-            "--pageLoadStrategy", "none",
-            "--firefox.disableBrowsertimeExtension", "true",
-            "--pageCompleteCheckStartWait", "5000",
-            "--pageCompleteCheckPollTimeout", "1000",
+            "--pageLoadStrategy",
+            "none",
+            "--firefox.disableBrowsertimeExtension",
+            "true",
+            "--pageCompleteCheckStartWait",
+            "5000",
+            "--pageCompleteCheckPollTimeout",
+            "1000",
             # url load timeout (milliseconds)
-            "--timeouts.pageLoad", str(timeout),
+            "--timeouts.pageLoad",
+            str(timeout),
             # running browser scripts timeout (milliseconds)
-            "--timeouts.script", str(timeout * int(test.get("page_cycles", 1))),
-            "--resultDir", self.results_handler.result_dir_for_test(test),
+            "--timeouts.script",
+            str(timeout * int(test.get("page_cycles", 1))),
+            "--resultDir",
+            self.results_handler.result_dir_for_test(test),
         ]
 
         if self.verbose:
             browsertime_options.append("-vvv")
 
         if self.browsertime_video:
-            # For now, capturing video with Firefox always uses the window recorder/composition
-            # recorder.  In the future we'd like to be able to selectively use Android's `adb
-            # screenrecord` as well.  (There's no harm setting Firefox options for other browsers.)
-            browsertime_options.extend([
-                "--video", "true",
-                "--visualMetrics", "true" if self.browsertime_visualmetrics else "false",
-            ])
+            browsertime_options.extend(
+                [
+                    "--video",
+                    "true",
+                    "--visualMetrics",
+                    "true" if self.browsertime_visualmetrics else "false",
+                ]
+            )
 
-            if self.browsertime_no_ffwindowrecorder:
-                browsertime_options.extend([
-                    "--firefox.windowRecorder", "false",
-                ])
-                LOG.info("Using adb screenrecord for mobile, or ffmpeg on desktop for videos")
+            if self.browsertime_no_ffwindowrecorder or self.config["app"] in (
+                "chromium",
+                "chrome-m",
+                "chrome",
+            ):
+                browsertime_options.extend(
+                    [
+                        "--firefox.windowRecorder",
+                        "false",
+                    ]
+                )
+                LOG.info(
+                    "Using adb screenrecord for mobile, or ffmpeg on desktop for videos"
+                )
             else:
-                browsertime_options.extend([
-                    "--firefox.windowRecorder", "true",
-                ])
+                browsertime_options.extend(
+                    [
+                        "--firefox.windowRecorder",
+                        "true",
+                    ]
+                )
                 LOG.info("Using Firefox Window Recorder for videos")
         else:
-            browsertime_options.extend([
-                "--video", "false",
-                "--visualMetrics", "false"
-            ])
+            browsertime_options.extend(["--video", "false", "--visualMetrics", "false"])
 
         # have browsertime use our newly-created conditioned-profile path
         if self.using_condprof:
@@ -398,7 +424,7 @@ class Browsertime(Perftest):
                 proc = self.process_handler(
                     [sys.executable, self.browsertime_vismet_script, "--check"],
                     processOutputLine=_vismet_line_handler,
-                    env=env
+                    env=env,
                 )
                 proc.run()
                 proc.wait()

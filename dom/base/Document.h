@@ -25,6 +25,7 @@
 #include "nsIChannelEventSink.h"
 #include "nsIProgressEventSink.h"
 #include "nsIRadioGroupContainer.h"
+#include "nsIScriptGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIURI.h"                 // for use in inline functions
 #include "nsIWeakReferenceUtils.h"  // for nsWeakPtr
@@ -106,7 +107,6 @@ class nsILayoutHistoryState;
 class nsIObjectLoadingContent;
 class nsIRequest;
 class nsIRunnable;
-class nsIScriptGlobalObject;
 class nsISecurityConsoleMessage;
 class nsIStructuredCloneContainer;
 class nsIVariant;
@@ -3558,7 +3558,22 @@ class Document : public nsINode,
 
   bool IsSynthesized();
 
-  void ReportUseCounters();
+  // Records whether we will track use counters for this document, and if so,
+  // which top-level document that page counters will be accumulated to.
+  //
+  // Informs the parent process that page use counters will be sent once the
+  // document goes away.
+  void InitUseCounters();
+
+  // Reports document use counters via telemetry.  This method only has an
+  // effect once per document, and so is called during document destruction.
+  void ReportDocumentUseCounters();
+
+  // Sends page use counters to the parent process to accumulate against the
+  // top-level document.  Must be called while we still have access to our
+  // WindowContext.  This method has an effect each time it is called, and we
+  // call it just before the document loses its window.
+  void SendPageUseCounters();
 
   void SetUseCounter(UseCounter aUseCounter) {
     mUseCounters[aUseCounter] = true;
@@ -3568,8 +3583,13 @@ class Document : public nsINode,
     return mStyleUseCounters.get();
   }
 
-  void PropagateUseCountersToPage();
-  void PropagateUseCounters(Document* aParentDocument);
+  // Propagate our use counters explicitly into the specified referencing
+  // document.
+  //
+  // This is used for SVG image documents, which cannot be enumerated in the
+  // referencing document's ReportUseCounters() like external resource documents
+  // can.
+  void PropagateImageUseCounters(Document* aReferencingDocument);
 
   // Called to track whether this document has had any interaction.
   // This is used to track whether we should permit "beforeunload".
@@ -3947,6 +3967,10 @@ class Document : public nsINode,
   bool ShouldAvoidNativeTheme() const;
 
  protected:
+  // Returns the WindowContext for the document that we will contribute
+  // page use counters to.
+  WindowContext* GetWindowContextForPageUseCounters() const;
+
   void DoUpdateSVGUseElementShadowTrees();
 
   already_AddRefed<nsIPrincipal> MaybeDowngradePrincipal(
@@ -3984,20 +4008,6 @@ class Document : public nsINode,
   // events. It returns false if the fullscreen element ready check
   // fails and nothing gets changed.
   bool ApplyFullscreen(UniquePtr<FullscreenRequest>);
-
-  bool GetUseCounter(UseCounter aUseCounter) {
-    return mUseCounters[aUseCounter];
-  }
-
-  void SetChildDocumentUseCounter(UseCounter aUseCounter) {
-    if (!mChildDocumentUseCounters[aUseCounter]) {
-      mChildDocumentUseCounters[aUseCounter] = true;
-    }
-  }
-
-  bool GetChildDocumentUseCounter(UseCounter aUseCounter) {
-    return mChildDocumentUseCounters[aUseCounter];
-  }
 
   void RemoveDocStyleSheetsFromStyleSets();
   void ResetStylesheetsToURI(nsIURI* aURI);
@@ -4571,13 +4581,13 @@ class Document : public nsINode,
   // terminated instead of letting it finish at its own pace.
   bool mParserAborted : 1;
 
-  // Whether we have reported use counters for this document with Telemetry yet.
-  // Normally this is only done at document destruction time, but for image
-  // documents (SVG documents) that are not guaranteed to be destroyed, we
-  // report use counters when the image cache no longer has any imgRequestProxys
-  // pointing to them.  We track whether we ever reported use counters so
-  // that we only report them once for the document.
-  bool mReportedUseCounters : 1;
+  // Whether we have reported document use counters for this document with
+  // Telemetry yet.  Normally this is only done at document destruction time,
+  // but for image documents (SVG documents) that are not guaranteed to be
+  // destroyed, we report use counters when the image cache no longer has any
+  // imgRequestProxys pointing to them.  We track whether we ever reported use
+  // counters so that we only report them once for the document.
+  bool mReportedDocumentUseCounters : 1;
 
   bool mHasReportedShadowDOMUsage : 1;
 
@@ -4839,12 +4849,27 @@ class Document : public nsINode,
   nsTObserverArray<nsIDocumentObserver*> mObservers;
 
   // Flags for use counters used directly by this document.
-  std::bitset<eUseCounter_Count> mUseCounters;
-  // Flags for use counters used by any child documents of this document.
-  std::bitset<eUseCounter_Count> mChildDocumentUseCounters;
+  UseCounters mUseCounters;
+  // Flags for use counters from resource documents, static clones,
+  // and SVG images referenced by this document.  Those documents propagate
+  // their use counters up to here, which then count towards the top-level
+  // document's page use counters.
+  UseCounters mChildDocumentUseCounters;
 
   // The CSS property use counters.
   UniquePtr<StyleUseCounters> mStyleUseCounters;
+
+  // Whether we have initialized mShouldReportUseCounters and
+  // mShouldSendPageUseCounters, and sent any needed message to the parent
+  // process to indicate that use counter data will be sent at some later point.
+  bool mUseCountersInitialized : 1;
+
+  // Whether this document should report use counters.
+  bool mShouldReportUseCounters : 1;
+
+  // Whether this document should send page use counters.  Set to true after
+  // we've called SendExpectPageUseCounters on the top-level WindowGlobal.
+  bool mShouldSendPageUseCounters : 1;
 
   // Whether the user has interacted with the document or not:
   bool mUserHasInteracted;
@@ -5091,6 +5116,9 @@ class Document : public nsINode,
 
   // Accumulate JS telemetry collected
   void AccumulateJSTelemetry();
+
+  // Accumulate page load metrics
+  void AccumulatePageLoadTelemetry();
 
  public:
   // Needs to be public because the bindings code pokes at it.

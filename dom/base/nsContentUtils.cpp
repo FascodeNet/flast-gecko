@@ -4159,6 +4159,7 @@ nsresult nsContentUtils::DispatchInputEvent(
   if (!useInputEvent) {
     MOZ_ASSERT(aEventMessage == eEditorInput);
     MOZ_ASSERT(aEditorInputType == EditorInputType::eUnknown);
+    MOZ_ASSERT(!aOptions.mNeverCancelable);
     // Dispatch "input" event with Event instance.
     WidgetEvent widgetEvent(true, eUnidentifiedEvent);
     widgetEvent.mSpecifiedEventType = nsGkAtoms::oninput;
@@ -4171,6 +4172,12 @@ nsresult nsContentUtils::DispatchInputEvent(
         ->RunDOMEventWhenSafe();
     return NS_OK;
   }
+
+  MOZ_ASSERT_IF(aEventMessage != eEditorBeforeInput,
+                !aOptions.mNeverCancelable);
+  MOZ_ASSERT_IF(
+      aEventMessage == eEditorBeforeInput && aOptions.mNeverCancelable,
+      aEditorInputType == EditorInputType::eInsertReplacementText);
 
   nsCOMPtr<nsIWidget> widget;
   if (aTextEditor) {
@@ -4202,7 +4209,7 @@ nsresult nsContentUtils::DispatchInputEvent(
   InternalEditorInputEvent inputEvent(true, aEventMessage, widget);
 
   inputEvent.mFlags.mCancelable =
-      aEventMessage == eEditorBeforeInput &&
+      !aOptions.mNeverCancelable && aEventMessage == eEditorBeforeInput &&
       IsCancelableBeforeInputEvent(aEditorInputType);
   MOZ_ASSERT(!inputEvent.mFlags.mCancelable || aEventStatus);
 
@@ -4838,6 +4845,7 @@ nsresult nsContentUtils::ParseFragmentHTML(
 
   nsIContent* target = aTargetNode;
 
+  RefPtr<Document> inert;
   RefPtr<DocumentFragment> fragment;
   // We sanitize if the fragment occurs in a system privileged
   // context, an about: page, or if there are explicit sanitization flags.
@@ -4848,8 +4856,12 @@ nsresult nsContentUtils::ParseFragmentHTML(
                         nodePrincipal->SchemeIs("about") || aFlags >= 0;
   if (shouldSanitize) {
     if (!AllowsUnsanitizedContentForAboutNewTab(nodePrincipal)) {
-      fragment = new (aTargetNode->OwnerDoc()->NodeInfoManager())
-          DocumentFragment(aTargetNode->OwnerDoc()->NodeInfoManager());
+      inert = nsContentUtils::CreateInertHTMLDocument(aTargetNode->OwnerDoc());
+      if (!inert) {
+        return NS_ERROR_FAILURE;
+      }
+      fragment = new (inert->NodeInfoManager())
+          DocumentFragment(inert->NodeInfoManager());
       target = fragment;
     }
   }
@@ -4924,22 +4936,7 @@ nsresult nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
   MOZ_ASSERT(contentsink, "Sink doesn't QI to nsIContentSink!");
   sXMLFragmentParser->SetContentSink(contentsink);
 
-  sXMLFragmentSink->SetTargetDocument(aDocument);
-  sXMLFragmentSink->SetPreventScriptExecution(aPreventScriptExecution);
-
-  nsresult rv = sXMLFragmentParser->ParseFragment(aSourceBuffer, aTagStack);
-  if (NS_FAILED(rv)) {
-    // Drop the fragment parser and sink that might be in an inconsistent state
-    NS_IF_RELEASE(sXMLFragmentParser);
-    NS_IF_RELEASE(sXMLFragmentSink);
-    return rv;
-  }
-
-  rv = sXMLFragmentSink->FinishFragmentParsing(aReturn);
-
-  sXMLFragmentParser->Reset();
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  RefPtr<Document> doc;
   nsCOMPtr<nsIPrincipal> nodePrincipal = aDocument->NodePrincipal();
 
 #ifdef DEBUG
@@ -4960,6 +4957,27 @@ nsresult nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
   // an about: scheme principal.
   bool shouldSanitize = nodePrincipal->IsSystemPrincipal() ||
                         nodePrincipal->SchemeIs("about") || aFlags >= 0;
+  if (shouldSanitize) {
+    doc = nsContentUtils::CreateInertXMLDocument(aDocument);
+  } else {
+    doc = aDocument;
+  }
+
+  sXMLFragmentSink->SetTargetDocument(doc);
+  sXMLFragmentSink->SetPreventScriptExecution(aPreventScriptExecution);
+
+  nsresult rv = sXMLFragmentParser->ParseFragment(aSourceBuffer, aTagStack);
+  if (NS_FAILED(rv)) {
+    // Drop the fragment parser and sink that might be in an inconsistent state
+    NS_IF_RELEASE(sXMLFragmentParser);
+    NS_IF_RELEASE(sXMLFragmentSink);
+    return rv;
+  }
+
+  rv = sXMLFragmentSink->FinishFragmentParsing(aReturn);
+
+  sXMLFragmentParser->Reset();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   if (shouldSanitize) {
     uint32_t sanitizationFlags =
@@ -4978,17 +4996,12 @@ nsresult nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
                                             nsAString& aResultBuffer,
                                             uint32_t aFlags,
                                             uint32_t aWrapCol) {
-  nsCOMPtr<nsIURI> uri;
-  NS_NewURI(getter_AddRefs(uri), "about:blank");
-  nsCOMPtr<nsIPrincipal> principal =
-      NullPrincipal::CreateWithoutOriginAttributes();
-  RefPtr<Document> document;
-  nsresult rv =
-      NS_NewDOMDocument(getter_AddRefs(document), u""_ns, u""_ns, nullptr, uri,
-                        uri, principal, true, nullptr, DocumentFlavorHTML);
-  NS_ENSURE_SUCCESS(rv, rv);
+  RefPtr<Document> document = nsContentUtils::CreateInertHTMLDocument(nullptr);
+  if (!document) {
+    return NS_ERROR_FAILURE;
+  }
 
-  rv = nsContentUtils::ParseDocumentHTML(
+  nsresult rv = nsContentUtils::ParseDocumentHTML(
       aSourceBuffer, document,
       !(aFlags & nsIDocumentEncoder::OutputNoScriptContent));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -5001,6 +5014,58 @@ nsresult nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
   encoder->SetWrapColumn(aWrapCol);
 
   return encoder->EncodeToString(aResultBuffer);
+}
+
+/* static */
+already_AddRefed<Document> nsContentUtils::CreateInertXMLDocument(
+    const Document* aTemplate) {
+  return nsContentUtils::CreateInertDocument(aTemplate, DocumentFlavorXML);
+}
+
+/* static */
+already_AddRefed<Document> nsContentUtils::CreateInertHTMLDocument(
+    const Document* aTemplate) {
+  return nsContentUtils::CreateInertDocument(aTemplate, DocumentFlavorHTML);
+}
+
+/* static */
+already_AddRefed<Document> nsContentUtils::CreateInertDocument(
+    const Document* aTemplate, DocumentFlavor aFlavor) {
+  if (aTemplate) {
+    bool hasHad = true;
+    nsIScriptGlobalObject* sgo = aTemplate->GetScriptHandlingObject(hasHad);
+    NS_ENSURE_TRUE(sgo || !hasHad, nullptr);
+
+    nsCOMPtr<Document> doc;
+    nsresult rv = NS_NewDOMDocument(
+        getter_AddRefs(doc), u""_ns, u""_ns, nullptr,
+        aTemplate->GetDocumentURI(), aTemplate->GetDocBaseURI(),
+        aTemplate->NodePrincipal(), true, sgo, aFlavor);
+    if (NS_FAILED(rv)) {
+      return nullptr;
+    }
+    return doc.forget();
+  }
+  nsCOMPtr<nsIURI> uri;
+  NS_NewURI(getter_AddRefs(uri), "about:blank"_ns);
+  if (!uri) {
+    return nullptr;
+  }
+
+  RefPtr<NullPrincipal> nullPrincipal =
+      NullPrincipal::CreateWithoutOriginAttributes();
+  if (!nullPrincipal) {
+    return nullptr;
+  }
+
+  nsCOMPtr<Document> doc;
+  nsresult rv =
+      NS_NewDOMDocument(getter_AddRefs(doc), u""_ns, u""_ns, nullptr, uri, uri,
+                        nullPrincipal, true, nullptr, aFlavor);
+  if (NS_FAILED(rv)) {
+    return nullptr;
+  }
+  return doc.forget();
 }
 
 /* static */
@@ -10272,4 +10337,14 @@ nsContentUtils::GetSubresourceCacheValidationInfo(nsIRequest* aRequest) {
   }
 
   return info;
+}
+
+nsCString nsContentUtils::TruncatedURLForDisplay(nsIURI* aURL,
+                                                 uint32_t aMaxLen) {
+  nsCString spec;
+  if (aURL) {
+    aURL->GetSpec(spec);
+    spec.Truncate(std::min(aMaxLen, spec.Length()));
+  }
+  return spec;
 }

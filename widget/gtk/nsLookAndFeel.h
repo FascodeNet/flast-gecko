@@ -13,6 +13,7 @@
 #include "nsCOMPtr.h"
 #include "gfxFont.h"
 
+enum WidgetNodeType : int;
 struct _GtkStyle;
 
 class nsLookAndFeel final : public nsXPLookAndFeel {
@@ -40,6 +41,9 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   static const nscolor kWhite = NS_RGB(255, 255, 255);
 
  protected:
+  bool WidgetUsesImage(WidgetNodeType aNodeType);
+  void RecordLookAndFeelSpecificTelemetry() override;
+
   // Cached fonts
   nsString mDefaultFontName;
   nsString mButtonFontName;
@@ -86,6 +90,12 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nscolor mInfoBarText = kBlack;
   nscolor mMozColHeaderText = kBlack;
   nscolor mMozColHeaderHoverText = kBlack;
+  nscolor mThemedScrollbar = kWhite;
+  nscolor mThemedScrollbarInactive = kWhite;
+  nscolor mThemedScrollbarThumb = kBlack;
+  nscolor mThemedScrollbarThumbHover = kBlack;
+  nscolor mThemedScrollbarThumbActive = kBlack;
+  nscolor mThemedScrollbarThumbInactive = kBlack;
   char16_t mInvisibleCharacter = 0;
   float mCaretRatio = 0.0f;
   int32_t mCaretBlinkTime = 0;

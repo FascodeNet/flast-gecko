@@ -563,7 +563,7 @@ nsresult TextComposition::RequestToCommit(nsIWidget* aWidget, bool aDiscard) {
   RefPtr<TextComposition> kungFuDeathGrip(this);
   const nsAutoString lastData(mLastData);
 
-  {
+  if (IMEStateManager::CanSendNotificationToWidget()) {
     AutoRestore<bool> saveRequestingCancel(mIsRequestingCancel);
     AutoRestore<bool> saveRequestingCommit(mIsRequestingCommit);
     if (aDiscard) {
@@ -682,7 +682,7 @@ RawRangeBoundary TextComposition::GetStartRef() const {
       SelectionType::eIMERawClause, SelectionType::eIMESelectedRawClause,
       SelectionType::eIMEConvertedClause, SelectionType::eIMESelectedClause};
   for (auto selectionType : kIMESelectionTypes) {
-    Selection* selection =
+    dom::Selection* selection =
         selectionController->GetSelection(ToRawSelectionType(selectionType));
     if (!selection) {
       continue;
@@ -739,7 +739,7 @@ RawRangeBoundary TextComposition::GetEndRef() const {
       SelectionType::eIMERawClause, SelectionType::eIMESelectedRawClause,
       SelectionType::eIMEConvertedClause, SelectionType::eIMESelectedClause};
   for (auto selectionType : kIMESelectionTypes) {
-    Selection* selection =
+    dom::Selection* selection =
         selectionController->GetSelection(ToRawSelectionType(selectionType));
     if (!selection) {
       continue;

@@ -12,7 +12,6 @@
 #include "IPDLActor.h"
 #include "ImageContainer.h"  // for PlanarYCbCrData, etc
 #include "Layers.h"          // for Layer, etc
-#include "LayersLogging.h"   // for AppendToString
 #include "MainThreadUtils.h"
 #include "gfx2DGlue.h"
 #include "gfxPlatform.h"  // for gfxPlatform
@@ -275,8 +274,7 @@ static TextureType GetTextureType(gfx::SurfaceFormat aFormat,
   int32_t maxTextureSize = aKnowsCompositor->GetMaxTextureSize();
   if ((layersBackend == LayersBackend::LAYERS_D3D11 ||
        (layersBackend == LayersBackend::LAYERS_WR &&
-        !aKnowsCompositor->GetTextureFactoryIdentifier()
-             .mUsingSoftwareWebRender)) &&
+        !aKnowsCompositor->UsingSoftwareWebRender())) &&
       (moz2DBackend == gfx::BackendType::DIRECT2D ||
        moz2DBackend == gfx::BackendType::DIRECT2D1_1 ||
        (!!(aAllocFlags & ALLOC_FOR_OUT_OF_BAND_CONTENT))) &&
@@ -294,7 +292,8 @@ static TextureType GetTextureType(gfx::SurfaceFormat aFormat,
 
 #ifdef MOZ_WAYLAND
   if ((layersBackend == LayersBackend::LAYERS_OPENGL ||
-       layersBackend == LayersBackend::LAYERS_WR) &&
+       (layersBackend == LayersBackend::LAYERS_WR &&
+        !aKnowsCompositor->UsingSoftwareWebRender())) &&
       gfxPlatformGtk::GetPlatform()->UseDMABufTextures() &&
       aFormat != SurfaceFormat::A8) {
     return TextureType::DMABUF;
@@ -1378,8 +1377,9 @@ already_AddRefed<TextureClient> TextureClient::CreateForRawBufferAccess(
 
 // static
 already_AddRefed<TextureClient> TextureClient::CreateForYCbCr(
-    KnowsCompositor* aAllocator, gfx::IntSize aYSize, uint32_t aYStride,
-    gfx::IntSize aCbCrSize, uint32_t aCbCrStride, StereoMode aStereoMode,
+    KnowsCompositor* aAllocator, const gfx::IntRect& aDisplay,
+    const gfx::IntSize& aYSize, uint32_t aYStride,
+    const gfx::IntSize& aCbCrSize, uint32_t aCbCrStride, StereoMode aStereoMode,
     gfx::ColorDepth aColorDepth, gfx::YUVColorSpace aYUVColorSpace,
     gfx::ColorRange aColorRange, TextureFlags aTextureFlags) {
   if (!aAllocator || !aAllocator->GetLayersIPCActor()->IPCOpen()) {
@@ -1391,8 +1391,8 @@ already_AddRefed<TextureClient> TextureClient::CreateForYCbCr(
   }
 
   TextureData* data = BufferTextureData::CreateForYCbCr(
-      aAllocator, aYSize, aYStride, aCbCrSize, aCbCrStride, aStereoMode,
-      aColorDepth, aYUVColorSpace, aColorRange, aTextureFlags);
+      aAllocator, aDisplay, aYSize, aYStride, aCbCrSize, aCbCrStride,
+      aStereoMode, aColorDepth, aYUVColorSpace, aColorRange, aTextureFlags);
   if (!data) {
     return nullptr;
   }
@@ -1491,9 +1491,9 @@ already_AddRefed<gfx::DataSourceSurface> TextureClient::GetAsSurface() {
 void TextureClient::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
   aStream << aPrefix;
   aStream << nsPrintfCString("TextureClient (0x%p)", this).get()
-          << " [size=" << GetSize() << "]";
-  AppendToString(aStream, GetFormat(), " [format=", "]");
-  AppendToString(aStream, mFlags, " [flags=", "]");
+          << " [size=" << GetSize() << "]"
+          << " [format=" << GetFormat() << "]"
+          << " [flags=" << mFlags << "]";
 
 #ifdef MOZ_DUMP_PAINTING
   if (StaticPrefs::layers_dump_texture()) {

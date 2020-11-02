@@ -10,12 +10,12 @@ replace-with = "vendored-sources"
 [source."https://github.com/mozilla/neqo"]
 git = "https://github.com/mozilla/neqo"
 replace-with = "vendored-sources"
-tag = "v0.4.12"
+tag = "v0.4.13"
 
 [source."https://github.com/mozilla/mp4parse-rust"]
 git = "https://github.com/mozilla/mp4parse-rust"
 replace-with = "vendored-sources"
-rev = "fe9028570e44f3a725dd78bbb58428909c4618bf"
+rev = "f7c35a30ff25521bebe64c19d3f306569ecb5385"
 
 [source."https://github.com/mozilla/application-services"]
 git = "https://github.com/mozilla/application-services"
@@ -40,7 +40,7 @@ rev = "21c26326f5f45f415c49eac4ba5bc41a2f961321"
 [source."https://github.com/jfkthame/mapped_hyph.git"]
 git = "https://github.com/jfkthame/mapped_hyph.git"
 replace-with = "vendored-sources"
-tag = "v0.4.0"
+tag = "v0.4.2"
 
 [source."https://github.com/hsivonen/packed_simd"]
 git = "https://github.com/hsivonen/packed_simd"
@@ -55,7 +55,7 @@ rev = "bce6358eb1026c13d2f1c6d365af37afe8869a86"
 [source."https://github.com/djg/cubeb-pulse-rs"]
 git = "https://github.com/djg/cubeb-pulse-rs"
 replace-with = "vendored-sources"
-rev = "3224e2dee65c0726c448484d4c3c43956b9330ec"
+rev = "bf31534d08b2c16fb5e4c5834944ae3271efbd63"
 
 [source."https://github.com/bytecodealliance/wasmtime"]
 git = "https://github.com/bytecodealliance/wasmtime"
@@ -80,7 +80,7 @@ rev = "477d8fc53a64705a9d3fbcce9de92f4988558525"
 [source."https://github.com/ChunMinChang/cubeb-coreaudio-rs"]
 git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs"
 replace-with = "vendored-sources"
-rev = "08a2b75285732a2e1a389bc4ab02518c74a8a9c5"
+rev = "d5af7ad7631440e1c4b0a548481c6740fade9d65"
 
 [source.crates-io]
 replace-with = "vendored-sources"

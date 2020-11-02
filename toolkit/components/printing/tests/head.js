@@ -55,12 +55,31 @@ class PrintHelper {
     );
   }
 
+  // This is used only for the old print preview. For tests
+  // involving the newer UI, use waitForPreview instead.
+  static waitForOldPrintPreview(expectedBrowser) {
+    const { PrintingParent } = ChromeUtils.import(
+      "resource://gre/actors/PrintingParent.jsm"
+    );
+
+    return new Promise(resolve => {
+      PrintingParent.setTestListener(browser => {
+        if (browser == expectedBrowser) {
+          PrintingParent.setTestListener(null);
+          resolve();
+        }
+      });
+    });
+  }
+
   constructor(sourceBrowser) {
     this.sourceBrowser = sourceBrowser;
   }
 
   async startPrint() {
-    document.getElementById("cmd_print").doCommand();
+    this.sourceBrowser.ownerGlobal.document
+      .getElementById("cmd_print")
+      .doCommand();
     let dialog = await TestUtils.waitForCondition(
       () => this.dialog,
       "Wait for dialog"
@@ -175,7 +194,7 @@ class PrintHelper {
       supportsColor: Promise.resolve(true),
       supportsMonochrome: Promise.resolve(true),
       paperList: Promise.resolve([]),
-      createDefaultSettings: name => {
+      createDefaultSettings: () => {
         let settings = PSSVC.newPrintSettings;
         for (let [key, value] of Object.entries(defaultSettings)) {
           settings[key] = value;
@@ -257,8 +276,11 @@ class PrintHelper {
     EventUtils.sendString(text, this.win);
   }
 
-  async openMoreSettings() {
-    this.click(this.get("more-settings").firstElementChild);
+  async openMoreSettings(options) {
+    let details = this.get("more-settings");
+    if (!details.open) {
+      this.click(details.firstElementChild, options);
+    }
     await this.awaitAnimationFrame();
   }
 
@@ -317,6 +339,15 @@ class PrintHelper {
 
   awaitAnimationFrame() {
     return new Promise(resolve => this.win.requestAnimationFrame(resolve));
+  }
+
+  mockFilePickerCancel() {
+    if (!pickerMocked) {
+      pickerMocked = true;
+      MockFilePicker.init(window);
+      registerCleanupFunction(() => MockFilePicker.cleanup());
+    }
+    MockFilePicker.returnValue = MockFilePicker.returnCancel;
   }
 
   mockFilePicker(filename) {

@@ -19,7 +19,7 @@ use crate::glyph_rasterizer::GlyphKey;
 use crate::gpu_cache::{GpuCacheAddress, GpuCacheHandle, GpuDataRequest};
 use crate::gpu_types::{BrushFlags};
 use crate::intern;
-use crate::picture::{PicturePrimitive, RecordedDirtyRegion};
+use crate::picture::PicturePrimitive;
 use crate::prim_store::backdrop::BackdropDataHandle;
 use crate::prim_store::borders::{ImageBorderDataHandle, NormalBorderDataHandle};
 use crate::prim_store::gradient::{LinearGradientPrimitive, LinearGradientDataHandle, RadialGradientDataHandle, ConicGradientDataHandle};
@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::storage;
 use crate::util::Recycler;
 use crate::internal_types::LayoutPrimitiveInfo;
-use crate::visibility::{PrimitiveVisibility, PrimitiveVisibilityMask};
+use crate::visibility::PrimitiveVisibility;
 
 pub mod backdrop;
 pub mod borders;
@@ -577,6 +577,7 @@ impl intern::Internable for PrimitiveKeyKind {
     type Key = PrimitiveKey;
     type StoreData = PrimitiveTemplate;
     type InternData = ();
+    const PROFILE_COUNTER: usize = crate::profiler::INTERNED_PRIMITIVES;
 }
 
 impl InternablePrimitive for PrimitiveKeyKind {
@@ -1056,19 +1057,11 @@ impl PrimitiveInstance {
 
     // Reset any pre-frame state for this primitive.
     pub fn reset(&mut self) {
-        self.clear_visibility();
-    }
-
-    pub fn is_visible(&self) -> bool {
-        !self.vis.visibility_mask.is_empty()
+        self.vis.reset();
     }
 
     pub fn clear_visibility(&mut self) {
-        self.set_visibility(PrimitiveVisibilityMask::empty());
-    }
-
-    pub fn set_visibility(&mut self, mask: PrimitiveVisibilityMask) {
-        self.vis.visibility_mask = mask;
+        self.vis.reset();
     }
 
     #[cfg(debug_assertions)]
@@ -1178,10 +1171,6 @@ pub struct PrimitiveScratchBuffer {
     /// per-tile information.
     pub gradient_tiles: GradientTileStorage,
 
-    /// List of dirty regions for the cached pictures in this document, used to
-    /// verify invalidation in wrench reftests. Only collected in testing.
-    pub recorded_dirty_regions: Vec<RecordedDirtyRegion>,
-
     /// List of debug display items for rendering.
     pub debug_items: Vec<DebugItem>,
 }
@@ -1195,7 +1184,6 @@ impl Default for PrimitiveScratchBuffer {
             segments: SegmentStorage::new(0),
             segment_instances: SegmentInstanceStorage::new(0),
             gradient_tiles: GradientTileStorage::new(0),
-            recorded_dirty_regions: Vec::new(),
             debug_items: Vec::new(),
         }
     }
@@ -1228,8 +1216,6 @@ impl PrimitiveScratchBuffer {
         self.gradient_tiles.clear();
 
         self.debug_items.clear();
-
-        assert!(self.recorded_dirty_regions.is_empty(), "Should have sent to Renderer");
     }
 
     #[allow(dead_code)]

@@ -7,6 +7,7 @@
 #include "jit/BaselineCacheIRCompiler.h"
 
 #include "jit/CacheIR.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitZone.h"
 #include "jit/Linker.h"
@@ -416,11 +417,12 @@ bool BaselineCacheIRCompiler::emitGuardSpecificAtom(StringOperandId strId,
                                liveVolatileFloatRegs());
   masm.PushRegsInMask(volatileRegs);
 
+  using Fn = bool (*)(JSString * str1, JSString * str2);
   masm.setupUnalignedABICall(scratch);
   masm.loadPtr(atomAddr, scratch);
   masm.passABIArg(scratch);
   masm.passABIArg(str);
-  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, EqualStringsHelperPure));
+  masm.callWithABI<Fn, EqualStringsHelperPure>();
   masm.mov(ReturnReg, scratch);
 
   LiveRegisterSet ignore;
@@ -1010,13 +1012,14 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
                          liveVolatileFloatRegs());
     masm.PushRegsInMask(save);
 
+    using Fn = bool (*)(JSContext * cx, NativeObject * obj, uint32_t newCount);
     masm.setupUnalignedABICall(scratch1);
     masm.loadJSContext(scratch1);
     masm.passABIArg(scratch1);
     masm.passABIArg(obj);
     masm.load32(numNewSlotsAddr, scratch2);
     masm.passABIArg(scratch2);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, NativeObject::growSlotsPure));
+    masm.callWithABI<Fn, NativeObject::growSlotsPure>();
     masm.mov(ReturnReg, scratch1);
 
     LiveRegisterSet ignore;
@@ -1104,41 +1107,6 @@ bool BaselineCacheIRCompiler::emitAllocateAndStoreDynamicSlot(
                                    offsetOffset, rhsId, changeGroup,
                                    newGroupOffset, newShapeOffset,
                                    mozilla::Some(numNewSlotsOffset));
-}
-
-bool BaselineCacheIRCompiler::emitStoreTypedObjectReferenceProperty(
-    ObjOperandId objId, uint32_t offsetOffset, TypedThingLayout layout,
-    ReferenceType type, ValOperandId rhsId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Address offsetAddr = stubAddress(offsetOffset);
-
-  // Allocate the fixed registers first. These need to be fixed for
-  // callTypeUpdateIC.
-  AutoScratchRegister scratch1(allocator, masm, R1.scratchReg());
-  ValueOperand val = allocator.useFixedValueRegister(masm, rhsId, R0);
-
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch2(allocator, masm);
-
-  // We don't need a type update IC if the property is always a string.
-  if (type != ReferenceType::TYPE_STRING) {
-    LiveGeneralRegisterSet saveRegs;
-    saveRegs.add(obj);
-    saveRegs.add(val);
-    if (!callTypeUpdateIC(obj, val, scratch1, saveRegs)) {
-      return false;
-    }
-  }
-
-  // Compute the address being written to.
-  LoadTypedThingData(masm, layout, obj, scratch1);
-  masm.addPtr(offsetAddr, scratch1);
-  Address dest(scratch1, 0);
-
-  emitStoreTypedObjectReferenceProp(val, type, dest, scratch2);
-  emitPostBarrierSlot(obj, val, scratch1);
-
-  return true;
 }
 
 bool BaselineCacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
@@ -1309,12 +1277,12 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
     save.takeUnchecked(scratch);
     masm.PushRegsInMask(save);
 
+    using Fn = bool (*)(JSContext * cx, NativeObject * obj);
     masm.setupUnalignedABICall(scratch);
     masm.loadJSContext(scratch);
     masm.passABIArg(scratch);
     masm.passABIArg(obj);
-    masm.callWithABI(
-        JS_FUNC_TO_DATA_PTR(void*, NativeObject::addDenseElementPure));
+    masm.callWithABI<Fn, NativeObject::addDenseElementPure>();
     masm.mov(ReturnReg, scratch);
 
     masm.PopRegsInMask(save);
@@ -1446,12 +1414,12 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
   save.takeUnchecked(scratch);
   masm.PushRegsInMask(save);
 
+  using Fn = bool (*)(JSContext * cx, NativeObject * obj);
   masm.setupUnalignedABICall(scratch);
   masm.loadJSContext(scratch);
   masm.passABIArg(scratch);
   masm.passABIArg(obj);
-  masm.callWithABI(
-      JS_FUNC_TO_DATA_PTR(void*, NativeObject::addDenseElementPure));
+  masm.callWithABI<Fn, NativeObject::addDenseElementPure>();
   masm.mov(ReturnReg, scratch);
 
   masm.PopRegsInMask(save);
@@ -3410,6 +3378,14 @@ bool BaselineCacheIRCompiler::emitCallScriptedFunction(ObjOperandId calleeId,
   }
 
   return true;
+}
+
+bool BaselineCacheIRCompiler::emitCallWasmFunction(ObjOperandId calleeId,
+                                                   Int32OperandId argcId,
+                                                   CallFlags flags,
+                                                   uint32_t funcExportOffset,
+                                                   uint32_t instanceOffset) {
+  return emitCallScriptedFunction(calleeId, argcId, flags);
 }
 
 bool BaselineCacheIRCompiler::emitCallInlinedFunction(ObjOperandId calleeId,

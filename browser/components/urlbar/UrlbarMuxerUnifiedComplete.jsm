@@ -17,6 +17,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarMuxer: "resource:///modules/UrlbarUtils.jsm",
+  UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
 
@@ -90,6 +91,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       canShowPrivateSearch: context.results.length > 1,
       canShowTailSuggestions: true,
       formHistorySuggestions: new Set(),
+      canAddTabToSearch: true,
     };
 
     let resultsWithSuggestedIndex = [];
@@ -166,11 +168,9 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     resultsWithSuggestedIndex.sort(
       (a, b) => a.suggestedIndex - b.suggestedIndex
     );
-    // Do a first pass to update sort state for each result.  We'll do both a
-    // pre- and post-add update because each of these results will be added.
+    // Do a first pass to update sort state for each result.
     for (let result of resultsWithSuggestedIndex) {
       this._updateStatePreAdd(result, state);
-      this._updateStatePostAdd(result, state);
     }
     // Now insert them.
     for (let result of resultsWithSuggestedIndex) {
@@ -180,6 +180,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
             ? result.suggestedIndex
             : sortedResults.length;
         sortedResults.splice(index, 0, result);
+        this._updateStatePostAdd(result, state);
       }
     }
 
@@ -292,10 +293,12 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     }
 
     if (result.providerName == "TabToSearch") {
-      // Discard tab-to-search results if we're not autofilling a URL.
+      // Discard tab-to-search results if we're not autofilling a URL or
+      // a tab-to-search result was added already.
       if (
         state.context.heuristicResult.type != UrlbarUtils.RESULT_TYPE.URL ||
-        !state.context.heuristicResult.autofill
+        !state.context.heuristicResult.autofill ||
+        !state.canAddTabToSearch
       ) {
         return false;
       }
@@ -305,17 +308,20 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       let [autofillDomain] = UrlbarUtils.stripPrefixAndTrim(autofillHostname, {
         stripWww: true,
       });
-      // For tab-to-search results, result.payload.url is the engine's result
-      // domain. This is already stripped down to the hostname in most cases; we
-      // run stripPrefixAndTrim here just to be sure.
+      // Strip the public suffix because we want to allow matching "domain.it"
+      // with "domain.com".
+      autofillDomain = UrlbarUtils.stripPublicSuffixFromHost(autofillDomain);
+      if (!autofillDomain) {
+        return false;
+      }
+
+      // For tab-to-search results, result.payload.url is the engine's domain
+      // with the public suffix already stripped, for example "www.mozilla.".
       let [engineDomain] = UrlbarUtils.stripPrefixAndTrim(result.payload.url, {
-        stripHttp: true,
-        stripHttps: true,
         stripWww: true,
       });
-      // Discard if the tab-to-search domain does not equal the autofilled
-      // domain.
-      if (autofillDomain != engineDomain) {
+      // Discard if the engine domain does not end with the autofilled one.
+      if (!engineDomain.endsWith(autofillDomain)) {
         return false;
       }
     }
@@ -379,7 +385,9 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
             submission.engine,
             resultQuery
           );
-          if (this._serpURLsHaveSameParams(newSerpURL, result.payload.url)) {
+          if (
+            UrlbarSearchUtils.serpsAreEquivalent(result.payload.url, newSerpURL)
+          ) {
             return false;
           }
         }
@@ -492,40 +500,12 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     ) {
       state.formHistorySuggestions.add(result.payload.lowerCaseSuggestion);
     }
-  }
 
-  /**
-   * This is a helper for determining whether two SERP URLs are the same for the
-   * purpose of deduping them.  This method checks only URL params, not domains.
-   *
-   * @param {string} url1
-   *   The first URL.
-   * @param {string} url2
-   *   The second URL.
-   * @returns {boolean}
-   *   True if the two URLs have the same URL params for the purpose of deduping
-   *   them.
-   */
-  _serpURLsHaveSameParams(url1, url2) {
-    let params1 = new URL(url1).searchParams;
-    let params2 = new URL(url2).searchParams;
-    // Currently we are conservative, and the two URLs must have exactly the
-    // same params except for "client" for us to consider them the same.
-    for (let params of [params1, params2]) {
-      params.delete("client");
+    // Avoid multiple tab-to-search results.
+    // TODO (Bug 1670185): figure out better strategies to manage this case.
+    if (result.providerName == "TabToSearch") {
+      state.canAddTabToSearch = false;
     }
-    // Check that each remaining url1 param is in url2, and vice versa.
-    for (let [p1, p2] of [
-      [params1, params2],
-      [params2, params1],
-    ]) {
-      for (let [key, value] of p1) {
-        if (!p2.getAll(key).includes(value)) {
-          return false;
-        }
-      }
-    }
-    return true;
   }
 }
 

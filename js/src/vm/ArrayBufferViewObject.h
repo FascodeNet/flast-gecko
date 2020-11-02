@@ -7,7 +7,7 @@
 #ifndef vm_ArrayBufferViewObject_h
 #define vm_ArrayBufferViewObject_h
 
-#include "builtin/TypedObjectConstants.h"
+#include "builtin/TypedArrayConstants.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/NativeObject.h"
 #include "vm/SharedArrayObject.h"
@@ -32,15 +32,9 @@ class ArrayBufferViewObject : public NativeObject {
 
   // Slot containing length of the view in number of typed elements.
   static constexpr size_t LENGTH_SLOT = 1;
-  static_assert(LENGTH_SLOT == JS_TYPEDARRAYLAYOUT_LENGTH_SLOT,
-                "self-hosted code with burned-in constants must get the "
-                "right length slot");
 
   // Offset of view within underlying (Shared)ArrayBufferObject.
   static constexpr size_t BYTEOFFSET_SLOT = 2;
-  static_assert(BYTEOFFSET_SLOT == JS_TYPEDARRAYLAYOUT_BYTEOFFSET_SLOT,
-                "self-hosted code with burned-in constants must get the "
-                "right byteOffset slot");
 
   static constexpr size_t RESERVED_SLOTS = 3;
 
@@ -106,10 +100,8 @@ class ArrayBufferViewObject : public NativeObject {
     return dataPointerEither_();
   }
 
-  static Value bufferValue(const ArrayBufferViewObject* view) {
-    return view->getFixedSlot(BUFFER_SLOT);
-  }
-  bool hasBuffer() const { return bufferValue(this).isObject(); }
+  Value bufferValue() const { return getFixedSlot(BUFFER_SLOT); }
+  bool hasBuffer() const { return bufferValue().isObject(); }
 
   ArrayBufferObject* bufferUnshared() const {
     MOZ_ASSERT(!isSharedMemory());
@@ -128,7 +120,7 @@ class ArrayBufferViewObject : public NativeObject {
     return &obj->as<SharedArrayBufferObject>();
   }
   ArrayBufferObjectMaybeShared* bufferEither() const {
-    JSObject* obj = bufferValue(this).toObjectOrNull();
+    JSObject* obj = bufferValue().toObjectOrNull();
     if (!obj) {
       return nullptr;
     }
@@ -151,6 +143,18 @@ class ArrayBufferViewObject : public NativeObject {
     }
 
     return buffer->isDetached();
+  }
+
+  size_t byteOffset() const {
+    size_t offset = size_t(getFixedSlot(BYTEOFFSET_SLOT).toPrivate());
+    MOZ_ASSERT(offset <= INT32_MAX);
+    return offset;
+  }
+
+  Value byteOffsetValue() const {
+    size_t offset = byteOffset();
+    MOZ_ASSERT(offset <= INT32_MAX);
+    return Int32Value(offset);
   }
 
   static void trace(JSTracer* trc, JSObject* obj);

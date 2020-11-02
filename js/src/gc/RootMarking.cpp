@@ -17,6 +17,7 @@
 #include "gc/ClearEdgesTracer.h"
 #include "gc/GCInternals.h"
 #include "gc/Marking.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "js/HashTable.h"
 #include "js/ValueArray.h"
@@ -495,37 +496,47 @@ class BufferGrayRootsTracer final : public GenericTracer {
   // Set to false if we OOM while buffering gray roots.
   bool bufferingGrayRootsFailed;
 
-  bool onObjectEdge(JSObject** objp) override { return bufferRoot(*objp); }
-  bool onStringEdge(JSString** stringp) override {
-    return bufferRoot(*stringp);
+  JSObject* onObjectEdge(JSObject* obj) override { return bufferRoot(obj); }
+  JSString* onStringEdge(JSString* string) override {
+    return bufferRoot(string);
   }
-  bool onScriptEdge(js::BaseScript** scriptp) override {
-    return bufferRoot(*scriptp);
+  js::BaseScript* onScriptEdge(js::BaseScript* script) override {
+    return bufferRoot(script);
   }
-  bool onSymbolEdge(JS::Symbol** symbolp) override {
-    return bufferRoot(*symbolp);
+  JS::Symbol* onSymbolEdge(JS::Symbol* symbol) override {
+    return bufferRoot(symbol);
   }
-  bool onBigIntEdge(JS::BigInt** bip) override { return bufferRoot(*bip); }
+  JS::BigInt* onBigIntEdge(JS::BigInt* bi) override { return bufferRoot(bi); }
 
-  bool onShapeEdge(js::Shape** shapep) override { return unsupportedEdge(); }
-  bool onObjectGroupEdge(js::ObjectGroup** groupp) override {
-    return unsupportedEdge();
+  js::Shape* onShapeEdge(js::Shape* shape) override {
+    unsupportedEdge();
+    return nullptr;
   }
-  bool onBaseShapeEdge(js::BaseShape** basep) override {
-    return unsupportedEdge();
+  js::ObjectGroup* onObjectGroupEdge(js::ObjectGroup* group) override {
+    unsupportedEdge();
+    return nullptr;
   }
-  bool onJitCodeEdge(js::jit::JitCode** codep) override {
-    return unsupportedEdge();
+  js::BaseShape* onBaseShapeEdge(js::BaseShape* base) override {
+    unsupportedEdge();
+    return nullptr;
   }
-  bool onScopeEdge(js::Scope** scopep) override { return unsupportedEdge(); }
-  bool onRegExpSharedEdge(js::RegExpShared** sharedp) override {
-    return unsupportedEdge();
+  js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) override {
+    unsupportedEdge();
+    return nullptr;
+  }
+  js::Scope* onScopeEdge(js::Scope* scope) override {
+    unsupportedEdge();
+    return nullptr;
+  }
+  js::RegExpShared* onRegExpSharedEdge(js::RegExpShared* shared) override {
+    unsupportedEdge();
+    return nullptr;
   }
 
-  bool unsupportedEdge() { MOZ_CRASH("Unsupported gray root edge kind"); }
+  void unsupportedEdge() { MOZ_CRASH("Unsupported gray root edge kind"); }
 
   template <typename T>
-  inline bool bufferRoot(T* thing);
+  inline T* bufferRoot(T* thing);
 
  public:
   explicit BufferGrayRootsTracer(JSRuntime* rt)
@@ -559,7 +570,7 @@ void js::gc::GCRuntime::bufferGrayRoots() {
 }
 
 template <typename T>
-inline bool BufferGrayRootsTracer::bufferRoot(T* thing) {
+inline T* BufferGrayRootsTracer::bufferRoot(T* thing) {
   MOZ_ASSERT(JS::RuntimeHeapIsBusy());
   MOZ_ASSERT(thing);
   // Check if |thing| is corrupt by calling a method that touches the heap.
@@ -582,7 +593,7 @@ inline bool BufferGrayRootsTracer::bufferRoot(T* thing) {
     }
   }
 
-  return true;
+  return thing;
 }
 
 void GCRuntime::markBufferedGrayRoots(JS::Zone* zone) {

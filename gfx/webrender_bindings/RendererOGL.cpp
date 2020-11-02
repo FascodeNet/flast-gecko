@@ -205,12 +205,8 @@ RenderedFrameId RendererOGL::UpdateAndRender(
                            aReadbackSize.ref().height, aReadbackFormat.ref(),
                            &aReadbackBuffer.ref()[0],
                            aReadbackBuffer.ref().length());
-
-      // SWGL and ANGLE both draw the right way up, otherwise we will need a
-      // flip.
       if (aNeedsYFlip) {
-        *aNeedsYFlip =
-            !gfx::gfxVars::UseSoftwareWebRender() && !mCompositor->UseANGLE();
+        *aNeedsYFlip = !mCompositor->SurfaceOriginIsTopLeft();
       }
     }
   }
@@ -434,6 +430,11 @@ void RendererOGL::AccumulateMemoryReport(MemoryReport* aReport) {
                             BytesPerPixel(gfx::SurfaceFormat::B8G8R8A8) *
                             (mCompositor->UseTripleBuffering() ? 3 : 2);
   aReport->swap_chain += swapChainSize;
+}
+
+void RendererOGL::SetProfilerUI(const nsCString& aUI) {
+  wr_renderer_set_profiler_ui(GetRenderer(), (const uint8_t*)aUI.get(),
+                              aUI.Length());
 }
 
 }  // namespace wr

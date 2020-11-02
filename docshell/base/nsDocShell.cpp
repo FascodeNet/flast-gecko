@@ -3227,7 +3227,8 @@ nsDocShell::SetDeviceSizeIsPageSize(bool aValue) {
     RefPtr<nsPresContext> presContext = GetPresContext();
     if (presContext) {
       presContext->MediaFeatureValuesChanged(
-          {MediaFeatureChangeReason::DeviceSizeIsPageSizeChange});
+          {MediaFeatureChangeReason::DeviceSizeIsPageSizeChange},
+          MediaFeatureChangePropagation::JustThisDocument);
     }
   }
   return NS_OK;
@@ -3987,13 +3988,6 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aErrorURI, nsIURI* aFailedURI,
     // identifier, the error page won't persist.
     mLSHE->AbandonBFCacheEntry();
   }
-  if (mozilla::SessionHistoryInParent()) {
-    // Commit the loading entry for the real load here, Embed will not commit
-    // the loading entry for the error page. History will then contain an entry
-    // for the real load, and the error page won't persist if we try loading
-    // that entry again.
-    MoveLoadingToActiveEntry(true);
-  }
 
   RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(aErrorURI);
   loadState->SetTriggeringPrincipal(nsContentUtils::GetSystemPrincipal());
@@ -4003,6 +3997,12 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aErrorURI, nsIURI* aFailedURI,
   loadState->SetLoadType(LOAD_ERROR_PAGE);
   loadState->SetFirstParty(true);
   loadState->SetSourceBrowsingContext(mBrowsingContext);
+  if (mozilla::SessionHistoryInParent() && mLoadingEntry) {
+    // We keep the loading entry for the load that failed here. If the user
+    // reloads we want to try to reload the original load, not the error page.
+    loadState->SetLoadingSessionHistoryInfo(
+        MakeUnique<LoadingSessionHistoryInfo>(*mLoadingEntry));
+  }
   return InternalLoad(loadState);
 }
 
@@ -4805,18 +4805,6 @@ nsDocShell::SetIsOffScreenBrowser(bool aIsOffScreen) {
 NS_IMETHODIMP
 nsDocShell::GetIsOffScreenBrowser(bool* aIsOffScreen) {
   *aIsOffScreen = mIsOffScreenBrowser;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::SetSuspendMediaWhenInactive(bool aSuspendMediaWhenInactive) {
-  mSuspendMediaWhenInactive = aSuspendMediaWhenInactive;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetSuspendMediaWhenInactive(bool* aSuspendMediaWhenInactive) {
-  *aSuspendMediaWhenInactive = mSuspendMediaWhenInactive;
   return NS_OK;
 }
 
@@ -5705,7 +5693,7 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
 
   if (!aIsTransientAboutBlank && mozilla::SessionHistoryInParent()) {
     MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Embed", this));
-    MoveLoadingToActiveEntry(mLoadType != LOAD_ERROR_PAGE);
+    MoveLoadingToActiveEntry();
   }
 
   bool updateHistory = true;
@@ -5950,14 +5938,12 @@ nsDocShell::OnContentBlockingEvent(nsIWebProgress* aWebProgress,
 }
 
 already_AddRefed<nsIURIFixupInfo> nsDocShell::KeywordToURI(
-    const nsACString& aKeyword, bool aIsPrivateContext,
-    nsIInputStream** aPostData) {
+    const nsACString& aKeyword, bool aIsPrivateContext) {
   nsCOMPtr<nsIURIFixupInfo> info;
   if (!XRE_IsContentProcess()) {
     nsCOMPtr<nsIURIFixup> uriFixup = components::URIFixup::Service();
     if (uriFixup) {
-      uriFixup->KeywordToURI(aKeyword, aIsPrivateContext, aPostData,
-                             getter_AddRefs(info));
+      uriFixup->KeywordToURI(aKeyword, aIsPrivateContext, getter_AddRefs(info));
     }
   }
   return info.forget();
@@ -6167,8 +6153,7 @@ already_AddRefed<nsIURI> nsDocShell::AttemptURIFixup(
         nsCOMPtr<nsIURIFixupInfo> info;
         // only send non-qualified hosts to the keyword server
         if (aOriginalURIString && !aOriginalURIString->IsEmpty()) {
-          info = KeywordToURI(*aOriginalURIString, aUsePrivateBrowsing,
-                              getter_AddRefs(newPostData));
+          info = KeywordToURI(*aOriginalURIString, aUsePrivateBrowsing);
         } else {
           //
           // If this string was passed through nsStandardURL by
@@ -6186,11 +6171,10 @@ already_AddRefed<nsIURI> nsDocShell::AttemptURIFixup(
               do_GetService(NS_IDNSERVICE_CONTRACTID);
           if (idnSrv && NS_SUCCEEDED(idnSrv->IsACE(host, &isACE)) && isACE &&
               NS_SUCCEEDED(idnSrv->ConvertACEtoUTF8(host, utf8Host))) {
-            info = KeywordToURI(utf8Host, aUsePrivateBrowsing,
-                                getter_AddRefs(newPostData));
+            info = KeywordToURI(utf8Host, aUsePrivateBrowsing);
+
           } else {
-            info = KeywordToURI(host, aUsePrivateBrowsing,
-                                getter_AddRefs(newPostData));
+            info = KeywordToURI(host, aUsePrivateBrowsing);
           }
         }
         if (info) {
@@ -6198,6 +6182,7 @@ already_AddRefed<nsIURI> nsDocShell::AttemptURIFixup(
           if (newURI) {
             info->GetKeywordAsSent(keywordAsSent);
             info->GetKeywordProviderName(keywordProviderName);
+            info->GetPostData(getter_AddRefs(newPostData));
           }
         }
       }
@@ -6245,9 +6230,13 @@ already_AddRefed<nsIURI> nsDocShell::AttemptURIFixup(
       keywordAsSent.Truncate();
       nsCOMPtr<nsIURIFixup> uriFixup = components::URIFixup::Service();
       if (uriFixup) {
-        uriFixup->CreateFixupURI(
-            oldSpec, nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI,
-            getter_AddRefs(newPostData), getter_AddRefs(newURI));
+        nsCOMPtr<nsIURIFixupInfo> fixupInfo;
+        uriFixup->GetFixupURIInfo(oldSpec,
+                                  nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI,
+                                  getter_AddRefs(fixupInfo));
+        if (fixupInfo) {
+          fixupInfo->GetPreferredURI(getter_AddRefs(newURI));
+        }
       }
     }
   } else if (aStatus == NS_ERROR_CONNECTION_REFUSED &&
@@ -7195,7 +7184,7 @@ nsresult nsDocShell::RestorePresentation(nsISHEntry* aSHEntry,
   // to the event loop.  This mimics the way it is called by nsIChannel
   // implementations.
 
-  // Revoke any pending restore (just in case)
+  // Revoke any pending restore (just in case).
   NS_ASSERTION(!mRestorePresentationEvent.IsPending(),
                "should only have one RestorePresentationEvent");
   mRestorePresentationEvent.Revoke();
@@ -9338,7 +9327,7 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
       nsID historyID = {};
       aLoadState->SHEntry()->GetDocshellID(historyID);
 
-      MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetHistoryID(historyID));
+      Unused << mBrowsingContext->SetHistoryID(historyID);
     }
   }
 
@@ -11089,7 +11078,17 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     // Step 2.
 
     // Step 2.2, "Remove any tasks queued by the history traversal task
-    // source..."
+    // source that are associated with any Document objects in the
+    // top-level browsing context's document family."  This is very hard in
+    // SessionHistoryInParent since we can't synchronously access the
+    // pending navigations that are already sent to the parent. We can
+    // abort any AsyncGo navigations that are waiting to be sent.  If we
+    // send a message to the parent, it would be processed after any
+    // navigations previously sent.  So long as we consider the "history
+    // traversal task source" to be the list in this process we match the
+    // spec.  If we move the entire list to the parent, we can handle the
+    // aborting of loads there, but we don't have a way to synchronously
+    // remove entries as we do here for non-SHIP.
     RefPtr<ChildSHistory> shistory = GetRootSessionHistory();
     if (shistory) {
       shistory->RemovePendingHistoryNavigations();
@@ -11118,7 +11117,7 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
                         /* aPreviousScrollPos = */ Some(scrollPos), aNewURI,
                         /* aOriginalURI = */ nullptr,
                         /* aTriggeringPrincipal = */ aDocument->NodePrincipal(),
-                        csp, title, Some(scrollRestorationIsManual), aData,
+                        csp, title, scrollRestorationIsManual, aData,
                         uriWasModified);
     } else {
       // Since we're not changing which page we have loaded, pass
@@ -11165,7 +11164,8 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     UpdateActiveEntry(
         true, /* aPreviousScrollPos = */ Nothing(), aNewURI, aNewURI,
         aDocument->NodePrincipal(), aDocument->GetCsp(), title,
-        /* aScrollRestorationIsManual = */ Nothing(), aData, uriWasModified);
+        mActiveEntry && mActiveEntry->GetScrollRestorationIsManual(), aData,
+        uriWasModified);
   } else {
     // Step 3.
     newSHEntry = mOSHE;
@@ -11584,8 +11584,8 @@ void nsDocShell::UpdateActiveEntry(
     bool aReplace, const Maybe<nsPoint>& aPreviousScrollPos, nsIURI* aURI,
     nsIURI* aOriginalURI, nsIPrincipal* aTriggeringPrincipal,
     nsIContentSecurityPolicy* aCsp, const nsAString& aTitle,
-    const Maybe<bool>& aScrollRestorationIsManual,
-    nsIStructuredCloneContainer* aData, bool aURIWasModified) {
+    bool aScrollRestorationIsManual, nsIStructuredCloneContainer* aData,
+    bool aURIWasModified) {
   MOZ_ASSERT(mozilla::SessionHistoryInParent());
   MOZ_ASSERT(aURI, "uri is null");
   MOZ_ASSERT(mLoadType == LOAD_PUSHSTATE,
@@ -11615,10 +11615,7 @@ void nsDocShell::UpdateActiveEntry(
   mActiveEntry->SetTitle(aTitle);
   mActiveEntry->SetStateData(static_cast<nsStructuredCloneContainer*>(aData));
   mActiveEntry->SetURIWasModified(aURIWasModified);
-  if (aScrollRestorationIsManual.isSome()) {
-    mActiveEntry->SetScrollRestorationIsManual(
-        aScrollRestorationIsManual.value());
-  }
+  mActiveEntry->SetScrollRestorationIsManual(aScrollRestorationIsManual);
 
   if (replace) {
     mBrowsingContext->ReplaceActiveSessionHistoryEntry(mActiveEntry.get());
@@ -13242,12 +13239,13 @@ void nsDocShell::SetLoadingSessionHistoryInfo(
   mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(aLoadingInfo);
 }
 
-void nsDocShell::MoveLoadingToActiveEntry(bool aCommit) {
+void nsDocShell::MoveLoadingToActiveEntry() {
   MOZ_ASSERT(mozilla::SessionHistoryInParent());
 
   MOZ_LOG(gSHLog, LogLevel::Debug,
           ("nsDocShell %p MoveLoadingToActiveEntry", this));
 
+  bool hadActiveEntry = !!mActiveEntry;
   mActiveEntry = nullptr;
   mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> loadingEntry;
   mActiveEntryIsLoadingFromSessionHistory =
@@ -13261,17 +13259,31 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aCommit) {
     mLoadingEntry.swap(loadingEntry);
   }
 
-  if (mActiveEntry && aCommit) {
+  if (mActiveEntry) {
     MOZ_ASSERT(loadingEntry);
     nsID changeID = {};
+    uint32_t loadType =
+        mLoadType == LOAD_ERROR_PAGE ? mFailedLoadType : mLoadType;
     if (XRE_IsParentProcess()) {
       mBrowsingContext->Canonical()->SessionHistoryCommit(loadingEntry->mLoadId,
-                                                          changeID, mLoadType);
+                                                          changeID, loadType);
     } else {
       RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
       if (rootSH) {
         if (!loadingEntry->mLoadIsFromSessionHistory) {
-          changeID = rootSH->AddPendingHistoryChange();
+          // We try to mimic as closely as possible what will happen in
+          // CanonicalBrowsingContext::SessionHistoryCommit. We'll be
+          // incrementing the session history length if we're not replacing,
+          // this is a top-level load or it's not the initial load in an iframe,
+          // and ShouldUpdateSessionHistory(loadType) returns true.
+          // It is possible that this leads to wrong length temporarily, but
+          // so would not having the check for replace.
+          if (!LOAD_TYPE_HAS_FLAGS(
+                  mLoadType, nsIWebNavigation::LOAD_FLAGS_REPLACE_HISTORY) &&
+              (mBrowsingContext->IsTop() || hadActiveEntry) &&
+              mBrowsingContext->ShouldUpdateSessionHistory(loadType)) {
+            changeID = rootSH->AddPendingHistoryChange();
+          }
         } else {
           // This is a load from session history, so we can update
           // index and length immediately.
@@ -13282,7 +13294,7 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aCommit) {
       }
       ContentChild* cc = ContentChild::GetSingleton();
       mozilla::Unused << cc->SendHistoryCommit(
-          mBrowsingContext, loadingEntry->mLoadId, changeID, mLoadType);
+          mBrowsingContext, loadingEntry->mLoadId, changeID, loadType);
     }
   }
 }

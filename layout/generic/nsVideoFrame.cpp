@@ -508,6 +508,13 @@ class nsDisplayVideo : public nsPaintedDisplayItem {
     return elem->IsPotentiallyPlaying() ? LayerState::LAYER_ACTIVE_FORCE
                                         : LayerState::LAYER_INACTIVE;
   }
+
+  // Only report FirstContentfulPaint when the video is set
+  bool IsContentful() const override {
+    nsVideoFrame* f = static_cast<nsVideoFrame*>(Frame());
+    HTMLVideoElement* video = HTMLVideoElement::FromNode(f->GetContent());
+    return video->VideoWidth() > 0;
+  }
 };
 
 void nsVideoFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
@@ -595,8 +602,8 @@ nscoord nsVideoFrame::GetMinISize(gfxContext* aRenderingContext) {
     // "controls" attribute is present.
     nsIFrame* kid = mFrames.LastChild();
     if (!StyleDisplay()->IsContainSize() && kid) {
-      result = nsLayoutUtils::IntrinsicForContainer(aRenderingContext, kid,
-                                                    nsLayoutUtils::MIN_ISIZE);
+      result = nsLayoutUtils::IntrinsicForContainer(
+          aRenderingContext, kid, IntrinsicISizeType::MinISize);
     } else {
       result = 0;
     }
@@ -617,8 +624,8 @@ nscoord nsVideoFrame::GetPrefISize(gfxContext* aRenderingContext) {
     // "controls" attribute is present.
     nsIFrame* kid = mFrames.LastChild();
     if (!StyleDisplay()->IsContainSize() && kid) {
-      result = nsLayoutUtils::IntrinsicForContainer(aRenderingContext, kid,
-                                                    nsLayoutUtils::PREF_ISIZE);
+      result = nsLayoutUtils::IntrinsicForContainer(
+          aRenderingContext, kid, IntrinsicISizeType::PrefISize);
     } else {
       result = 0;
     }

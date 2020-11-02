@@ -739,6 +739,19 @@ class LTypeOfV : public LInstructionHelper<1, BOX_PIECES, 1> {
   MTypeOf* mir() const { return mir_->toTypeOf(); }
 };
 
+class LTypeOfO : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(TypeOfO)
+
+  explicit LTypeOfO(const LAllocation& obj) : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+
+  MTypeOf* mir() const { return mir_->toTypeOf(); }
+};
+
 class LToAsyncIter : public LCallInstructionHelper<1, 1 + BOX_PIECES, 0> {
  public:
   LIR_HEADER(ToAsyncIter)
@@ -1238,6 +1251,73 @@ class LSetDOMProperty : public LDOMPropertyInstructionHelper<0, BOX_PIECES> {
   static const size_t Value = 1;
 
   MSetDOMProperty* mir() const { return mir_->toSetDOMProperty(); }
+};
+
+class LLoadDOMExpandoValue : public LInstructionHelper<BOX_PIECES, 1, 0> {
+ public:
+  LIR_HEADER(LoadDOMExpandoValue)
+
+  explicit LLoadDOMExpandoValue(const LAllocation& proxy)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+  }
+
+  const LAllocation* proxy() { return getOperand(0); }
+
+  const MLoadDOMExpandoValue* mir() const {
+    return mir_->toLoadDOMExpandoValue();
+  }
+};
+
+class LLoadDOMExpandoValueGuardGeneration
+    : public LInstructionHelper<BOX_PIECES, 1, 0> {
+ public:
+  LIR_HEADER(LoadDOMExpandoValueGuardGeneration)
+
+  explicit LLoadDOMExpandoValueGuardGeneration(const LAllocation& proxy)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+  }
+
+  const LAllocation* proxy() { return getOperand(0); }
+
+  const MLoadDOMExpandoValueGuardGeneration* mir() const {
+    return mir_->toLoadDOMExpandoValueGuardGeneration();
+  }
+};
+
+class LLoadDOMExpandoValueIgnoreGeneration
+    : public LInstructionHelper<BOX_PIECES, 1, 0> {
+ public:
+  LIR_HEADER(LoadDOMExpandoValueIgnoreGeneration)
+
+  explicit LLoadDOMExpandoValueIgnoreGeneration(const LAllocation& proxy)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, proxy);
+  }
+
+  const LAllocation* proxy() { return getOperand(0); }
+};
+
+class LGuardDOMExpandoMissingOrGuardShape
+    : public LInstructionHelper<0, BOX_PIECES, 1> {
+ public:
+  LIR_HEADER(GuardDOMExpandoMissingOrGuardShape)
+
+  explicit LGuardDOMExpandoMissingOrGuardShape(const LBoxAllocation& input,
+                                               const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setBoxOperand(Input, input);
+    setTemp(0, temp);
+  }
+
+  const LDefinition* temp() { return getTemp(0); }
+
+  static const size_t Input = 0;
+
+  MGuardDOMExpandoMissingOrGuardShape* mir() {
+    return mir_->toGuardDOMExpandoMissingOrGuardShape();
+  }
 };
 
 // Generates a polymorphic callsite, wherein the function being called is
@@ -3983,6 +4063,18 @@ class LGetNextEntryForIterator : public LInstructionHelper<1, 2, 3> {
   const LDefinition* temp0() { return getTemp(0); }
   const LDefinition* temp1() { return getTemp(1); }
   const LDefinition* temp2() { return getTemp(2); }
+};
+
+class LArrayBufferByteLengthInt32 : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(ArrayBufferByteLengthInt32)
+
+  explicit LArrayBufferByteLengthInt32(const LAllocation& obj)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
 };
 
 // Read the length of an array buffer view.
@@ -7968,6 +8060,21 @@ class LGuardFunctionFlags : public LInstructionHelper<0, 1, 0> {
   const LAllocation* function() { return getOperand(0); }
 
   MGuardFunctionFlags* mir() { return mir_->toGuardFunctionFlags(); }
+};
+
+class LGuardFunctionIsNonBuiltinCtor : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardFunctionIsNonBuiltinCtor)
+
+  LGuardFunctionIsNonBuiltinCtor(const LAllocation& fun,
+                                 const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, fun);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* function() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
 };
 
 class LGuardFunctionKind : public LInstructionHelper<0, 1, 1> {

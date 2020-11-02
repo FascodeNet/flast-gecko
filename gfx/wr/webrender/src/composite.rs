@@ -14,6 +14,7 @@ use crate::prim_store::DeferredResolve;
 use crate::renderer::ImageBufferKind;
 use crate::resource_cache::{ImageRequest, ResourceCache};
 use crate::util::Preallocator;
+use crate::tile_cache::PictureCacheDebugInfo;
 use std::{ops, u64};
 
 /*
@@ -454,14 +455,14 @@ pub struct CompositeState {
     pub dirty_rects_are_valid: bool,
     /// The kind of compositor for picture cache tiles (e.g. drawn by WR, or OS compositor)
     pub compositor_kind: CompositorKind,
-    /// Picture caching may be disabled dynamically, based on debug flags, pinch zoom etc.
-    pub picture_caching_is_enabled: bool,
     /// The overall device pixel scale, used for tile occlusion conversions.
     global_device_pixel_scale: DevicePixelScale,
     /// List of registered occluders
     pub occluders: Occluders,
     /// Description of the surfaces and properties that are being composited.
     pub descriptor: CompositeDescriptor,
+    /// Debugging information about the state of the pictures cached for regression testing.
+    pub picture_cache_debug: PictureCacheDebugInfo,
 }
 
 impl CompositeState {
@@ -469,20 +470,10 @@ impl CompositeState {
     /// during each frame construction and passed to the renderer.
     pub fn new(
         compositor_kind: CompositorKind,
-        mut picture_caching_is_enabled: bool,
         global_device_pixel_scale: DevicePixelScale,
         max_depth_ids: i32,
         dirty_rects_are_valid: bool,
     ) -> Self {
-        // The native compositor interface requires picture caching to work, so
-        // force it here and warn if it was disabled.
-        if let CompositorKind::Native { .. } = compositor_kind {
-            if !picture_caching_is_enabled {
-                warn!("Picture caching cannot be disabled in native compositor config");
-            }
-            picture_caching_is_enabled = true;
-        }
-
         CompositeState {
             opaque_tiles: Vec::new(),
             alpha_tiles: Vec::new(),
@@ -490,11 +481,11 @@ impl CompositeState {
             z_generator: ZBufferIdGenerator::new(max_depth_ids),
             dirty_rects_are_valid,
             compositor_kind,
-            picture_caching_is_enabled,
             global_device_pixel_scale,
             occluders: Occluders::new(),
             descriptor: CompositeDescriptor::empty(),
             external_surfaces: Vec::new(),
+            picture_cache_debug: PictureCacheDebugInfo::new(),
         }
     }
 

@@ -12,7 +12,7 @@
 
 namespace mozilla {
 
-class RemoteDecoderManagerThreadHolder;
+class PDMFactory;
 
 class RemoteDecoderManagerParent final
     : public PRemoteDecoderManagerParent,
@@ -50,6 +50,9 @@ class RemoteDecoderManagerParent final
 
   bool OnManagerThread();
 
+  // Can be called from manager thread only
+  PDMFactory& EnsurePDMFactory();
+
  protected:
   PRemoteDecoderParent* AllocPRemoteDecoderParent(
       const RemoteDecoderInfoIPDL& aRemoteDecoderInfo,
@@ -57,6 +60,11 @@ class RemoteDecoderManagerParent final
       const Maybe<layers::TextureFactoryIdentifier>& aIdentifier,
       bool* aSuccess, nsCString* aErrorDescription);
   bool DeallocPRemoteDecoderParent(PRemoteDecoderParent* actor);
+
+  mozilla::ipc::IPCResult RecvSupports(
+      const RemoteDecoderInfoIPDL& aInfo,
+      const Maybe<layers::TextureFactoryIdentifier>& aIdentifier,
+      bool* aSuccess, DecoderDoctorDiagnostics* aDiagnostics);
 
   mozilla::ipc::IPCResult RecvReadback(const SurfaceDescriptorGPUVideo& aSD,
                                        SurfaceDescriptor* aResult);
@@ -76,6 +84,7 @@ class RemoteDecoderManagerParent final
   std::map<uint64_t, RefPtr<layers::TextureClient>> mTextureMap;
 
   nsCOMPtr<nsISerialEventTarget> mThread;
+  RefPtr<PDMFactory> mPDMFactory;
 };
 
 }  // namespace mozilla

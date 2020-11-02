@@ -125,6 +125,7 @@ pub unsafe extern "C" fn fog_init() -> nsresult {
             }
 
             fog::metrics::fog::initialization.stop();
+            schedule_fog_validation_ping();
         });
     }
 
@@ -317,10 +318,11 @@ pub unsafe extern "C" fn fog_give_ipc_buf(buf: *mut u8, buf_len: usize) -> usize
 /// buf before and after this call.
 pub unsafe extern "C" fn fog_use_ipc_buf(buf: *const u8, buf_len: usize) {
     let slice = std::slice::from_raw_parts(buf, buf_len);
-    let _res = fog::ipc::replay_from_buf(slice);
-    /*if res.is_err() {
-        // TODO: Record the error.
-    }*/
+    let res = fog::ipc::replay_from_buf(slice);
+    if res.is_err() {
+        log::warn!("Unable to replay ipc buffer. This will result in data loss.");
+        fog::metrics::fog_ipc::replay_failures.add(1);
+    }
 }
 
 #[no_mangle]
@@ -357,4 +359,14 @@ pub unsafe extern "C" fn fog_set_log_pings(value: bool) -> nsresult {
     } else {
         return NS_ERROR_FAILURE;
     }
+}
+
+fn schedule_fog_validation_ping() {
+    std::thread::spawn(|| {
+        loop {
+            // Sleep for an hour before and between submissions.
+            std::thread::sleep(std::time::Duration::from_secs(60 * 60));
+            fog::pings::fog_validation.submit(None);
+        }
+    });
 }

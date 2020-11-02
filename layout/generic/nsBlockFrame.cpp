@@ -790,7 +790,7 @@ nscoord nsBlockFrame::GetMinISize(gfxContext* aRenderingContext) {
       if (line->IsBlock()) {
         data.ForceBreak();
         data.mCurrentLine = nsLayoutUtils::IntrinsicForContainer(
-            aRenderingContext, line->mFirstChild, nsLayoutUtils::MIN_ISIZE);
+            aRenderingContext, line->mFirstChild, IntrinsicISizeType::MinISize);
         data.ForceBreak();
       } else {
         if (!curFrame->GetPrevContinuation() &&
@@ -881,7 +881,8 @@ nscoord nsBlockFrame::GetPrefISize(gfxContext* aRenderingContext) {
         }
         data.ForceBreak(breakType);
         data.mCurrentLine = nsLayoutUtils::IntrinsicForContainer(
-            aRenderingContext, line->mFirstChild, nsLayoutUtils::PREF_ISIZE);
+            aRenderingContext, line->mFirstChild,
+            IntrinsicISizeType::PrefISize);
         data.ForceBreak();
       } else {
         if (!curFrame->GetPrevContinuation() &&
@@ -1335,8 +1336,9 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   nsOverflowAreas ocBounds;
   nsReflowStatus ocStatus;
   if (GetPrevInFlow()) {
-    ReflowOverflowContainerChildren(aPresContext, *reflowInput, ocBounds,
-                                    ReflowChildFlags::Default, ocStatus);
+    ReflowOverflowContainerChildren(
+        aPresContext, *reflowInput, ocBounds, ReflowChildFlags::Default,
+        ocStatus, DefaultChildFrameMerge, Some(state.ContainerSize()));
   }
 
   // Now that we're done cleaning up our overflow container lists, we can
@@ -1499,17 +1501,21 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
     nsSize containerSize = aMetrics.PhysicalSize();
     nscoord deltaX = containerSize.width - state.ContainerSize().width;
     if (deltaX != 0) {
+      const nsPoint physicalDelta(deltaX, 0);
       for (auto& line : Lines()) {
         UpdateLineContainerSize(&line, containerSize);
       }
       for (nsIFrame* f : mFloats) {
-        nsPoint physicalDelta(deltaX, 0);
         f->MovePositionBy(physicalDelta);
       }
       nsFrameList* markerList = GetOutsideMarkerList();
       if (markerList) {
-        nsPoint physicalDelta(deltaX, 0);
         for (nsIFrame* f : *markerList) {
+          f->MovePositionBy(physicalDelta);
+        }
+      }
+      if (nsFrameList* overflowContainers = GetOverflowContainers()) {
+        for (nsIFrame* f : *overflowContainers) {
           f->MovePositionBy(physicalDelta);
         }
       }
@@ -6525,31 +6531,15 @@ const nsStyleText* nsBlockFrame::StyleTextForLineLayout() {
 // Float support
 
 LogicalRect nsBlockFrame::AdjustFloatAvailableSpace(
-    BlockReflowInput& aState, const LogicalRect& aFloatAvailableSpace,
-    nsIFrame* aFloatFrame) {
-  // Compute the available inline size. By default, assume the inline
-  // size of the containing block.
-  nscoord availISize;
-  const nsStyleDisplay* floatDisplay = aFloatFrame->StyleDisplay();
+    BlockReflowInput& aState, const LogicalRect& aFloatAvailableSpace) {
   WritingMode wm = aState.mReflowInput.GetWritingMode();
-
-  if (mozilla::StyleDisplay::Table != floatDisplay->mDisplay ||
-      eCompatibility_NavQuirks != aState.mPresContext->CompatibilityMode()) {
-    availISize = aState.ContentISize();
-  } else {
-    // This quirk matches the one in BlockReflowInput::FlowAndPlaceFloat
-    // give tables only the available space
-    // if they can shrink we may not be constrained to place
-    // them in the next line
-    availISize = aFloatAvailableSpace.ISize(wm);
-  }
 
   nscoord availBSize = NS_UNCONSTRAINEDSIZE == aState.ContentBSize()
                            ? NS_UNCONSTRAINEDSIZE
                            : std::max(0, aState.ContentBEnd() - aState.mBCoord);
 
   return LogicalRect(wm, aState.ContentIStart(), aState.ContentBStart(),
-                     availISize, availBSize);
+                     aState.ContentISize(), availBSize);
 }
 
 nscoord nsBlockFrame::ComputeFloatISize(BlockReflowInput& aState,
@@ -6560,7 +6550,7 @@ nscoord nsBlockFrame::ComputeFloatISize(BlockReflowInput& aState,
 
   // Reflow the float.
   LogicalRect availSpace =
-      AdjustFloatAvailableSpace(aState, aFloatAvailableSpace, aFloat);
+      AdjustFloatAvailableSpace(aState, aFloatAvailableSpace);
 
   WritingMode blockWM = aState.mReflowInput.GetWritingMode();
   WritingMode floatWM = aFloat->GetWritingMode();
@@ -7544,7 +7534,7 @@ void nsBlockFrame::CheckFloats(BlockReflowInput& aState) {
 
   if ((!equal || lineFloats.Length() != storedFloats.Length()) &&
       !anyLineDirty) {
-    NS_WARNING(
+    NS_ERROR(
         "nsBlockFrame::CheckFloats: Explicit float list is out of sync with "
         "float cache");
 #  if defined(DEBUG_roc)

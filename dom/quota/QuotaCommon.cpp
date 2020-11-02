@@ -6,17 +6,23 @@
 
 #include "QuotaCommon.h"
 
-#include "mozilla/Logging.h"  // LazyLogModule
+#include "mozilla/Logging.h"
+#include "mozilla/TextUtils.h"
 #include "nsIConsoleService.h"
 #include "nsIFile.h"
+#include "nsServiceManagerUtils.h"
+#include "nsStringFlags.h"
+#include "nsTStringRepr.h"
+#include "nsUnicharUtils.h"
 #include "nsXPCOM.h"
 #include "nsXULAppAPI.h"
+
 #ifdef XP_WIN
+#  include "mozilla/Atomics.h"
 #  include "mozilla/ipc/BackgroundParent.h"
 #  include "mozilla/StaticPrefs_dom.h"
 #  include "nsILocalFileWin.h"
 #endif
-#include "nsXPCOM.h"
 
 namespace mozilla {
 namespace dom {
@@ -128,18 +134,6 @@ Result<nsCOMPtr<nsIFile>, nsresult> QM_NewLocalFile(const nsAString& aPath) {
   return file;
 }
 
-nsAutoString GetIntString(const int64_t aInteger) {
-  nsAutoString res;
-  res.AppendInt(aInteger);
-  return res;
-}
-
-nsAutoCString GetIntCString(const int64_t aInteger) {
-  nsAutoCString res;
-  res.AppendInt(aInteger);
-  return res;
-}
-
 nsDependentCSubstring GetLeafName(const nsACString& aPath) {
   nsACString::const_iterator start, end;
   aPath.BeginReading(start);
@@ -153,6 +147,16 @@ nsDependentCSubstring GetLeafName(const nsACString& aPath) {
   aPath.EndReading(end);
 
   return nsDependentCSubstring(start.get(), end.get());
+}
+
+Result<nsCOMPtr<nsIFile>, nsresult> CloneFileAndAppend(
+    nsIFile& aDirectory, const nsAString& aPathElement) {
+  QM_TRY_UNWRAP(auto resultFile, MOZ_TO_RESULT_INVOKE_TYPED(nsCOMPtr<nsIFile>,
+                                                            aDirectory, Clone));
+
+  QM_TRY(resultFile->Append(aPathElement));
+
+  return resultFile;
 }
 
 #ifdef QM_ENABLE_SCOPED_LOG_EXTRA_INFO
@@ -242,7 +246,7 @@ void LogError(const nsLiteralCString& aModule, const nsACString& aExpr,
   if (console) {
     NS_ConvertUTF8toUTF16 message(aModule + " failure: '"_ns + aExpr +
                                   "', file "_ns + GetLeafName(aSourceFile) +
-                                  ", line "_ns + GetIntCString(aSourceLine) +
+                                  ", line "_ns + IntToCString(aSourceLine) +
                                   extraInfosString);
 
     // The concatenation above results in a message like:

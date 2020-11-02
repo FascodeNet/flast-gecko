@@ -4,26 +4,21 @@
 
 package org.mozilla.geckoview.test
 
-import org.mozilla.geckoview.GeckoSession.NavigationDelegate.LoadRequest
-
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.NullDelegate
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.Setting
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.WithDisplay
-import org.mozilla.geckoview.test.util.Callbacks
-
-import androidx.test.filters.MediumTest
+import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.hamcrest.MatcherAssert
+import androidx.test.filters.MediumTest
 import org.hamcrest.Matchers.*
 import org.json.JSONObject
-import org.junit.Assert
 import org.junit.Assume.assumeThat
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.*
+import org.mozilla.geckoview.GeckoSession.*
+import org.mozilla.geckoview.GeckoSession.NavigationDelegate.LoadRequest
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule
+import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.*
+import org.mozilla.geckoview.test.util.Callbacks
 import org.mozilla.geckoview.test.util.UiThreadUtils
 
 @RunWith(AndroidJUnit4::class)
@@ -467,8 +462,9 @@ class NavigationDelegateTest : BaseSessionTest() {
 
         sessionRule.runtime.settings.contentBlocking.setSafeBrowsing(category)
 
-        sessionRule.session.loadUri(phishingUri + "?bypass=true",
-                                    GeckoSession.LOAD_FLAGS_BYPASS_CLASSIFIER)
+        sessionRule.session.load(Loader()
+            .uri(phishingUri + "?bypass=true")
+            .flags(GeckoSession.LOAD_FLAGS_BYPASS_CLASSIFIER))
         sessionRule.session.waitForPageStop()
 
         sessionRule.forCallbacksDuringWait(
@@ -863,7 +859,7 @@ class NavigationDelegateTest : BaseSessionTest() {
     @Test fun loadString() {
         val dataString = "<html><head><title>TheTitle</title></head><body>TheBody</body></html>"
         val mimeType = "text/html"
-        sessionRule.session.loadString(dataString, mimeType)
+        sessionRule.session.load(Loader().data(dataString, mimeType))
         sessionRule.waitForPageStop()
 
         sessionRule.forCallbacksDuringWait(object : Callbacks.NavigationDelegate, Callbacks.ProgressDelegate, Callbacks.ContentDelegate {
@@ -875,7 +871,7 @@ class NavigationDelegateTest : BaseSessionTest() {
             @AssertCalled(count = 1)
             override fun onLocationChange(session: GeckoSession, url: String?) {
                 assertThat("URL should be a data URL", url,
-                           equalTo(GeckoSession.createDataUri(dataString, mimeType)))
+                           equalTo(createDataUri(dataString, mimeType)))
             }
 
             @AssertCalled(count = 1)
@@ -886,7 +882,7 @@ class NavigationDelegateTest : BaseSessionTest() {
     }
 
     @Test fun loadString_noMimeType() {
-        sessionRule.session.loadString("Hello, World!", null)
+        sessionRule.session.load(Loader().data("Hello, World!", null))
         sessionRule.waitForPageStop()
 
         sessionRule.forCallbacksDuringWait(object : Callbacks.NavigationDelegate, Callbacks.ProgressDelegate {
@@ -906,7 +902,7 @@ class NavigationDelegateTest : BaseSessionTest() {
         val bytes = getTestBytes(HELLO_HTML_PATH)
         assertThat("test html should have data", bytes.size, greaterThan(0))
 
-        sessionRule.session.loadData(bytes, "text/html")
+        sessionRule.session.load(Loader().data(bytes, "text/html"))
         sessionRule.waitForPageStop()
 
         sessionRule.forCallbacksDuringWait(object : Callbacks.NavigationDelegate, Callbacks.ProgressDelegate, Callbacks.ContentDelegate {
@@ -917,7 +913,7 @@ class NavigationDelegateTest : BaseSessionTest() {
 
             @AssertCalled(count = 1)
             override fun onLocationChange(session: GeckoSession, url: String?) {
-                assertThat("URL should match", url, equalTo(GeckoSession.createDataUri(bytes, "text/html")))
+                assertThat("URL should match", url, equalTo(createDataUri(bytes, "text/html")))
             }
 
             @AssertCalled(count = 1)
@@ -927,17 +923,28 @@ class NavigationDelegateTest : BaseSessionTest() {
         })
     }
 
+    private fun createDataUri(data: String,
+                              mimeType: String?): String {
+        return String.format("data:%s,%s", mimeType ?: "", data)
+    }
+
+    private fun createDataUri(bytes: ByteArray,
+                              mimeType: String?): String {
+        return String.format("data:%s;base64,%s", mimeType ?: "",
+                Base64.encodeToString(bytes, Base64.NO_WRAP))
+    }
+
     fun loadDataHelper(assetPath: String, mimeType: String? = null) {
         val bytes = getTestBytes(assetPath)
         assertThat("test data should have bytes", bytes.size, greaterThan(0))
 
-        sessionRule.session.loadData(bytes, mimeType)
+        sessionRule.session.load(Loader().data(bytes, mimeType))
         sessionRule.waitForPageStop()
 
         sessionRule.forCallbacksDuringWait(object : Callbacks.NavigationDelegate, Callbacks.ProgressDelegate {
             @AssertCalled(count = 1)
             override fun onLocationChange(session: GeckoSession, url: String?) {
-                assertThat("URL should match", url, equalTo(GeckoSession.createDataUri(bytes, mimeType)))
+                assertThat("URL should match", url, equalTo(createDataUri(bytes, mimeType)))
             }
 
             @AssertCalled(count = 1)
@@ -1213,7 +1220,7 @@ class NavigationDelegateTest : BaseSessionTest() {
 
         val newSession = delegateNewSession()
         sessionRule.session.evaluateJS("document.querySelector('#targetBlankLink').click()")
-        // about:blank
+        // Initial about:blank
         newSession.waitForPageStop()
         // NEW_SESSION_CHILD_HTML_PATH
         newSession.waitForPageStop()
@@ -1314,7 +1321,10 @@ class NavigationDelegateTest : BaseSessionTest() {
         val uri = "https://example.com"
         val referrer = "https://foo.org/"
 
-        sessionRule.session.loadUri(uri, referrer, GeckoSession.LOAD_FLAGS_NONE)
+        sessionRule.session.load(Loader()
+            .uri(uri)
+            .referrer(referrer)
+            .flags(GeckoSession.LOAD_FLAGS_NONE))
         sessionRule.session.waitForPageStop()
 
         assertThat("Referrer should match",
@@ -1330,7 +1340,10 @@ class NavigationDelegateTest : BaseSessionTest() {
         sessionRule.session.waitForPageStop()
 
         val newSession = sessionRule.createOpenSession()
-        newSession.loadUri(uri, sessionRule.session, GeckoSession.LOAD_FLAGS_NONE)
+        newSession.load(Loader()
+            .uri(uri)
+            .referrer(sessionRule.session)
+            .flags(GeckoSession.LOAD_FLAGS_NONE))
         newSession.waitForPageStop()
 
         assertThat("Referrer should match",
@@ -1346,7 +1359,10 @@ class NavigationDelegateTest : BaseSessionTest() {
         sessionRule.session.waitForPageStop()
 
         val newSession = sessionRule.createOpenSession()
-        newSession.loadUri(uri, sessionRule.session, GeckoSession.LOAD_FLAGS_NONE)
+        newSession.load(Loader()
+            .uri(uri)
+            .referrer(sessionRule.session)
+            .flags(GeckoSession.LOAD_FLAGS_NONE))
         newSession.waitUntilCalled(object : Callbacks.NavigationDelegate {
             @AssertCalled
             override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
@@ -1356,7 +1372,8 @@ class NavigationDelegateTest : BaseSessionTest() {
     }
 
     private fun loadUriHeaderTest(headers: Map<String?,String?>,
-                                  additional: Map<String?, String?>) {
+                                  additional: Map<String?, String?>,
+                                  filter: Int = GeckoSession.HEADER_FILTER_CORS_SAFELISTED) {
         // First collect default headers with no override
         sessionRule.session.loadUri("$TEST_ENDPOINT/anything")
         sessionRule.session.waitForPageStop()
@@ -1365,24 +1382,91 @@ class NavigationDelegateTest : BaseSessionTest() {
         val defaultBody = JSONObject(defaultContent)
         val defaultHeaders = defaultBody.getJSONObject("headers").asMap<String>()
 
-        val expected = defaultHeaders.plus(additional)
+        val expected = HashMap(additional)
+        for (key in defaultHeaders.keys) {
+            expected[key] = defaultHeaders[key]
+            if (additional.containsKey(key)) {
+                // TODO: Bug 1671294, headers should be replaced, not appended
+                expected[key] += ", " + additional[key]
+            }
+        }
 
         // Now load the page with the header override
-        sessionRule.session.loadUri("$TEST_ENDPOINT/anything", headers)
+        sessionRule.session.load(Loader()
+            .uri("$TEST_ENDPOINT/anything")
+            .additionalHeaders(headers)
+            .headerFilter(filter))
         sessionRule.session.waitForPageStop()
 
         val content = sessionRule.session.evaluateJS("document.body.children[0].innerHTML") as String
         val body = JSONObject(content)
         val actualHeaders = body.getJSONObject("headers").asMap<String>()
 
-        assertThat("Headers should match", actualHeaders, equalTo(expected))
+        assertThat("Headers should match", expected as Map<String?, String?>,
+                equalTo(actualHeaders))
+    }
+
+    private fun testLoaderEquals(a: Loader, b: Loader, shouldBeEqual: Boolean) {
+        assertThat("Equal test", a == b, equalTo(shouldBeEqual))
+        assertThat("HashCode test", a.hashCode() == b.hashCode(),
+                equalTo(shouldBeEqual))
+    }
+
+    @Test fun loaderEquals() {
+        testLoaderEquals(
+                Loader().uri("http://test-uri-equals.com"),
+                Loader().uri("http://test-uri-equals.com"),
+                true)
+        testLoaderEquals(
+                Loader().uri("http://test-uri-equals.com"),
+                Loader().uri("http://test-uri-equalsx.com"),
+                false)
+
+        testLoaderEquals(
+                Loader().uri("http://test-uri-equals.com")
+                        .flags(LOAD_FLAGS_BYPASS_CLASSIFIER)
+                        .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                        .referrer("test-referrer"),
+                Loader().uri("http://test-uri-equals.com")
+                        .flags(LOAD_FLAGS_BYPASS_CLASSIFIER)
+                        .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                        .referrer("test-referrer"),
+                true)
+        testLoaderEquals(
+                Loader().uri("http://test-uri-equals.com")
+                        .flags(LOAD_FLAGS_BYPASS_CLASSIFIER)
+                        .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                        .referrer(sessionRule.session),
+                Loader().uri("http://test-uri-equals.com")
+                        .flags(LOAD_FLAGS_BYPASS_CLASSIFIER)
+                        .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                        .referrer("test-referrer"),
+                false)
+
+        testLoaderEquals(
+                Loader().referrer(sessionRule.session)
+                        .data("testtest", "text/plain"),
+                Loader().referrer(sessionRule.session)
+                        .data("testtest", "text/plain"),
+                true)
+        testLoaderEquals(
+                Loader().referrer(sessionRule.session)
+                        .data("testtest", "text/plain"),
+                Loader().referrer("test-referrer")
+                        .data("testtest", "text/plain"),
+                false)
     }
 
     @Test fun loadUriHeader() {
         // Basic test
         loadUriHeaderTest(
                 mapOf("Header1" to "Value", "Header2" to "Value1, Value2"),
-                mapOf("Header1" to "Value", "Header2" to "Value1, Value2")
+                mapOf()
+        )
+        loadUriHeaderTest(
+                mapOf("Header1" to "Value", "Header2" to "Value1, Value2"),
+                mapOf("Header1" to "Value", "Header2" to "Value1, Value2"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         // Empty value headers are ignored
@@ -1408,16 +1492,34 @@ class NavigationDelegateTest : BaseSessionTest() {
                       "what" to "what\r\nhost:amazon.com",
                       "Header3" to "Value1, Value2, Value3"
                 ),
+                mapOf()
+        )
+        loadUriHeaderTest(
                 mapOf("Header1" to "Value",
-                      "Header2" to "Value1, Value2",
-                      "Header3" to "Value1, Value2, Value3")
+                        "Header2" to "Value1, Value2",
+                        "this\r\nis invalid" to "test value",
+                        "test key" to "this\r\n is a no-no",
+                        "what" to "what\r\nhost:amazon.com",
+                        "Header3" to "Value1, Value2, Value3"
+                ),
+                mapOf("Header1" to "Value",
+                        "Header2" to "Value1, Value2",
+                        "Header3" to "Value1, Value2, Value3"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         loadUriHeaderTest(
                 mapOf("Header1" to "Value",
+                        "Header2" to "Value1, Value2",
+                        "what" to "what\r\nhost:amazon.com"),
+                mapOf()
+        )
+        loadUriHeaderTest(
+                mapOf("Header1" to "Value",
                       "Header2" to "Value1, Value2",
                       "what" to "what\r\nhost:amazon.com"),
-                mapOf("Header1" to "Value", "Header2" to "Value1, Value2")
+                mapOf("Header1" to "Value", "Header2" to "Value1, Value2"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         loadUriHeaderTest(
@@ -1433,22 +1535,42 @@ class NavigationDelegateTest : BaseSessionTest() {
         // Connection and Host cannot be overriden, no matter the case spelling
         loadUriHeaderTest(
                 mapOf("Header1" to "Value1", "ConnEction" to "test", "connection" to "test2"),
-                mapOf("Header1" to "Value1")
+                mapOf()
+        )
+        loadUriHeaderTest(
+                mapOf("Header1" to "Value1", "ConnEction" to "test", "connection" to "test2"),
+                mapOf("Header1" to "Value1"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         loadUriHeaderTest(
                 mapOf("Header1" to "Value1", "connection" to "test2"),
-                mapOf("Header1" to "Value1")
+                mapOf()
+        )
+        loadUriHeaderTest(
+                mapOf("Header1" to "Value1", "connection" to "test2"),
+                mapOf("Header1" to "Value1"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         loadUriHeaderTest(
                 mapOf("Header1   " to "Value1", "host" to "test2"),
-                mapOf("Header1" to "Value1")
+                mapOf()
+        )
+        loadUriHeaderTest(
+                mapOf("Header1   " to "Value1", "host" to "test2"),
+                mapOf("Header1" to "Value1"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         loadUriHeaderTest(
                 mapOf("Header1" to "Value1", "host" to "test2"),
-                mapOf("Header1" to "Value1")
+                mapOf()
+        )
+        loadUriHeaderTest(
+                mapOf("Header1" to "Value1", "host" to "test2"),
+                mapOf("Header1" to "Value1"),
+                GeckoSession.HEADER_FILTER_UNRESTRICTED_UNSAFE
         )
 
         // Adding white space at the end of a forbidden header still prevents override
@@ -1464,6 +1586,31 @@ class NavigationDelegateTest : BaseSessionTest() {
         loadUriHeaderTest(
                 mapOf("abc\ra\n" to "amazon.com"),
                 mapOf()
+        )
+
+        // CORS Safelist test
+        loadUriHeaderTest(
+                mapOf("Accept-Language" to "fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5",
+                      "Accept" to "text/html",
+                      "Content-Language" to "de-DE, en-CA",
+                      "Content-Type" to "multipart/form-data; boundary=something"),
+                mapOf("Accept-Language" to "fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5",
+                      "Accept" to "text/html",
+                      "Content-Language" to "de-DE, en-CA",
+                      "Content-Type" to "multipart/form-data; boundary=something"),
+                GeckoSession.HEADER_FILTER_CORS_SAFELISTED
+        )
+
+        // CORS safelist doesn't allow Content-type image/svg
+        loadUriHeaderTest(
+                mapOf("Accept-Language" to "fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5",
+                      "Accept" to "text/html",
+                      "Content-Language" to "de-DE, en-CA",
+                      "Content-Type" to "image/svg; boundary=something"),
+                mapOf("Accept-Language" to "fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5",
+                      "Accept" to "text/html",
+                      "Content-Language" to "de-DE, en-CA"),
+                GeckoSession.HEADER_FILTER_CORS_SAFELISTED
         )
     }
 
@@ -1517,8 +1664,7 @@ class NavigationDelegateTest : BaseSessionTest() {
                 extension.metaData.baseUrl, startsWith("moz-extension://"))
 
         val url = extension.metaData.baseUrl + "page.html"
-        val isRemote = sessionRule.getPrefs("extensions.webextensions.remote")[0] as Boolean
-        processSwitchingTest(url, isRemote)
+        processSwitchingTest(url)
 
         sessionRule.waitForResult(controller.uninstall(extension))
     }
@@ -1528,7 +1674,7 @@ class NavigationDelegateTest : BaseSessionTest() {
         processSwitchingTest("about:config")
     }
 
-    fun processSwitchingTest(url: String, isRemoteExtension: Boolean = false) {
+    private fun processSwitchingTest(url: String) {
         val settings = sessionRule.runtime.settings
         val aboutConfigEnabled = settings.aboutConfigEnabled
         settings.aboutConfigEnabled = true
@@ -1549,40 +1695,49 @@ class NavigationDelegateTest : BaseSessionTest() {
         mainSession.loadTestPath(HELLO2_HTML_PATH)
         sessionRule.waitForPageStop()
 
+        assertThat("docShell should start out active", mainSession.active,
+            equalTo(true))
+
         // This loads in the parent process
         mainSession.loadUri(url)
-        // Switching processes involves loading about:blank
-        sessionRule.waitForPageStops(2)
+        sessionRule.waitForPageStop()
 
         assertThat("URL should match", currentUrl!!, equalTo(url))
 
         // This will load a page in the child
         mainSession.loadTestPath(HELLO_HTML_PATH)
-        sessionRule.waitForPageStops(2)
+        sessionRule.waitForPageStop()
 
         assertThat("URL should match", currentUrl!!, endsWith(HELLO_HTML_PATH))
+        assertThat("docShell should be active after switching process",
+                mainSession.active,
+                equalTo(true))
 
         mainSession.loadUri(url)
-        sessionRule.waitForPageStops(2)
+        sessionRule.waitForPageStop()
 
         assertThat("URL should match", currentUrl!!, equalTo(url))
 
-        // History navigation to or from the extension process does not trigger
-        // an about:blank load
         sessionRule.session.goBack()
-        sessionRule.waitForPageStops(if (isRemoteExtension) 1 else 2)
+        sessionRule.waitForPageStop()
 
         assertThat("URL should match", currentUrl!!, endsWith(HELLO_HTML_PATH))
+        assertThat("docShell should be active after switching process",
+                mainSession.active,
+                equalTo(true))
 
         sessionRule.session.goBack()
-        sessionRule.waitForPageStops(if (isRemoteExtension) 1 else 2)
+        sessionRule.waitForPageStop()
 
         assertThat("URL should match", currentUrl!!, equalTo(url))
 
         sessionRule.session.goBack()
-        sessionRule.waitForPageStops(if (isRemoteExtension) 1 else 2)
+        sessionRule.waitForPageStop()
 
         assertThat("URL should match", currentUrl!!, endsWith(HELLO2_HTML_PATH))
+        assertThat("docShell should be active after switching process",
+                mainSession.active,
+                equalTo(true))
 
         settings.aboutConfigEnabled = aboutConfigEnabled
     }

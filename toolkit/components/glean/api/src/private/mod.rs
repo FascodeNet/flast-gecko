@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 // That way a user only needs to depend on this crate, not on glean_core (and there can't be a
 // version mismatch).
 pub use glean_core::{
-    metrics::DistributionData, metrics::MemoryUnit, metrics::TimeUnit, CommonMetricData, ErrorType,
-    Lifetime,
+    metrics::DistributionData, metrics::MemoryUnit, metrics::RecordedEvent, metrics::TimeUnit,
+    CommonMetricData, ErrorType, Lifetime,
 };
 
 mod boolean;

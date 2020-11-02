@@ -212,6 +212,7 @@
 #include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/KnowsCompositor.h"
+#include "mozilla/layers/ScrollInputMethods.h"
 #include "InputData.h"
 
 #include "mozilla/Telemetry.h"
@@ -5214,7 +5215,9 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       break;
 
     case WM_SYSCOLORCHANGE:
-      NotifyThemeChanged();
+      // No need to invalidate layout for system color changes, but we need to
+      // invalidate style.
+      NotifyThemeChanged(widget::ThemeChangeKind::Style);
       break;
 
     case WM_THEMECHANGED: {
@@ -5225,7 +5228,8 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       UpdateNonClientMargins();
       nsUXThemeData::UpdateNativeThemeInfo();
 
-      NotifyThemeChanged();
+      // We assume pretty much everything could've changed here.
+      NotifyThemeChanged(widget::ThemeChangeKind::StyleAndLayout);
 
       // Invalidate the window so that the repaint will
       // pick up the new theme.
@@ -5269,7 +5273,9 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       if (wParam == SPI_SETCLIENTAREAANIMATION ||
           // CaretBlinkTime is cached in nsLookAndFeel
           wParam == SPI_SETKEYBOARDDELAY) {
-        NotifyThemeChanged();
+        // This only affects reduced motion settings and and carent blink time,
+        // so no need to invalidate style / layout.
+        NotifyThemeChanged(widget::ThemeChangeKind::MediaQueriesOnly);
         break;
       }
       if (wParam == SPI_SETFONTSMOOTHING ||
@@ -5280,7 +5286,9 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       if (lParam) {
         auto lParamString = reinterpret_cast<const wchar_t*>(lParam);
         if (!wcscmp(lParamString, L"ImmersiveColorSet")) {
-          NotifyThemeChanged();
+          // This affects system colors (-moz-win-accentcolor), so gotta pass
+          // the style flag.
+          NotifyThemeChanged(widget::ThemeChangeKind::Style);
           break;
         }
         if (IsWin10OrLater() && mWindowType == eWindowType_invisible) {
@@ -5303,7 +5311,8 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         // DBT_DEVTYP_DEVICEINTERFACE in the filter for
         // RegisterDeviceNotification.
         if (hdr->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
-          NotifyThemeChanged();
+          // This can only change media queries (any-hover/any-pointer).
+          NotifyThemeChanged(widget::ThemeChangeKind::MediaQueriesOnly);
         }
       }
     } break;
@@ -6146,7 +6155,9 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
       UpdateNonClientMargins();
       BroadcastMsg(mWnd, WM_DWMCOMPOSITIONCHANGED);
-      NotifyThemeChanged();
+      // TODO: Why is NotifyThemeChanged needed, what does it affect? And can we
+      // make it more granular by tweaking the ChangeKind we pass?
+      NotifyThemeChanged(widget::ThemeChangeKind::StyleAndLayout);
       UpdateGlass();
       Invalidate(true, true, true);
       break;
@@ -7193,6 +7204,9 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam) {
     bool endFeedback = true;
 
     if (mGesture.PanDeltaToPixelScroll(wheelEvent)) {
+      mozilla::Telemetry::Accumulate(
+          mozilla::Telemetry::SCROLL_INPUT_METHODS,
+          (uint32_t)ScrollInputMethod::MainThreadTouch);
       DispatchEvent(&wheelEvent, status);
     }
 

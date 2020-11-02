@@ -22,12 +22,12 @@
 #include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
 
-#include "builtin/TypedObject.h"
 #include "jit/JitOptions.h"
 #include "js/Printf.h"
 #include "js/String.h"  // JS::MaxStringLength
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
+#include "wasm/TypedObject.h"
 #include "wasm/WasmOpIter.h"
 
 using namespace js;
@@ -1052,14 +1052,11 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::I16x8NarrowSI32x4):
           case uint32_t(SimdOp::I16x8NarrowUI32x4):
           case uint32_t(SimdOp::V8x16Swizzle):
-            CHECK(iter.readBinary(ValType::V128, &nothing, &nothing));
-
-          case uint32_t(SimdOp::F32x4PMaxExperimental):
-          case uint32_t(SimdOp::F32x4PMinExperimental):
-          case uint32_t(SimdOp::F64x2PMaxExperimental):
-          case uint32_t(SimdOp::F64x2PMinExperimental):
-          case uint32_t(SimdOp::I32x4DotSI16x8Experimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4PMax):
+          case uint32_t(SimdOp::F32x4PMin):
+          case uint32_t(SimdOp::F64x2PMax):
+          case uint32_t(SimdOp::F64x2PMin):
+          case uint32_t(SimdOp::I32x4DotSI16x8):
             CHECK(iter.readBinary(ValType::V128, &nothing, &nothing));
 
           case uint32_t(SimdOp::I8x16Neg):
@@ -1088,17 +1085,14 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::I8x16Abs):
           case uint32_t(SimdOp::I16x8Abs):
           case uint32_t(SimdOp::I32x4Abs):
-            CHECK(iter.readUnary(ValType::V128, &nothing));
-
-          case uint32_t(SimdOp::F32x4CeilExperimental):
-          case uint32_t(SimdOp::F32x4FloorExperimental):
-          case uint32_t(SimdOp::F32x4TruncExperimental):
-          case uint32_t(SimdOp::F32x4NearestExperimental):
-          case uint32_t(SimdOp::F64x2CeilExperimental):
-          case uint32_t(SimdOp::F64x2FloorExperimental):
-          case uint32_t(SimdOp::F64x2TruncExperimental):
-          case uint32_t(SimdOp::F64x2NearestExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4Ceil):
+          case uint32_t(SimdOp::F32x4Floor):
+          case uint32_t(SimdOp::F32x4Trunc):
+          case uint32_t(SimdOp::F32x4Nearest):
+          case uint32_t(SimdOp::F64x2Ceil):
+          case uint32_t(SimdOp::F64x2Floor):
+          case uint32_t(SimdOp::F64x2Trunc):
+          case uint32_t(SimdOp::F64x2Nearest):
             CHECK(iter.readUnary(ValType::V128, &nothing));
 
           case uint32_t(SimdOp::I8x16Shl):
@@ -1176,15 +1170,13 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
             CHECK(iter.readStore(ValType::V128, 16, &addr, &nothing));
           }
 
-          case uint32_t(SimdOp::V128Load32ZeroExperimental): {
+          case uint32_t(SimdOp::V128Load32Zero): {
             LinearMemoryAddress<Nothing> addr;
-            CHECK_SIMD_EXPERIMENTAL();
             CHECK(iter.readLoadSplat(4, &addr));
           }
 
-          case uint32_t(SimdOp::V128Load64ZeroExperimental): {
+          case uint32_t(SimdOp::V128Load64Zero): {
             LinearMemoryAddress<Nothing> addr;
-            CHECK_SIMD_EXPERIMENTAL();
             CHECK(iter.readLoadSplat(8, &addr));
           }
 
@@ -1297,7 +1289,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
         if (!env.gcTypesEnabled()) {
           return iter.unrecognizedOpcode(&op);
         }
-        CHECK(iter.readComparison(RefType::extern_(), &nothing, &nothing));
+        CHECK(iter.readComparison(RefType::eq(), &nothing, &nothing));
       }
 #endif
 #ifdef ENABLE_WASM_REFTYPES
@@ -1701,6 +1693,7 @@ static bool DecodeStructType(Decoder& d, ModuleEnvironment* env,
         break;
       case ValType::Ref:
         switch (fields[i].type.refTypeKind()) {
+          case RefType::Eq:
           case RefType::TypeIndex:
             offset = layout.addReference(ReferenceType::TYPE_OBJECT);
             break;
@@ -1954,6 +1947,7 @@ static bool GlobalIsJSCompatible(Decoder& d, ValType type) {
       switch (type.refTypeKind()) {
         case RefType::Func:
         case RefType::Extern:
+        case RefType::Eq:
           break;
         case RefType::TypeIndex:
 #ifdef WASM_PRIVATE_REFTYPES
@@ -2015,11 +2009,11 @@ static bool DecodeMemoryLimits(Decoder& d, ModuleEnvironment* env) {
     return false;
   }
 
-  if (memory.initial > MaxMemoryLimitField) {
+  if (memory.initial > MaxMemory32LimitField) {
     return d.fail("initial memory size too big");
   }
 
-  if (memory.maximum && *memory.maximum > MaxMemoryLimitField) {
+  if (memory.maximum && *memory.maximum > MaxMemory32LimitField) {
     return d.fail("maximum memory size too big");
   }
 

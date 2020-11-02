@@ -5,6 +5,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "GamepadEventChannelChild.h"
 #include "mozilla/dom/GamepadManager.h"
+#include "mozilla/dom/Promise.h"
 
 namespace mozilla {
 namespace dom {
@@ -28,6 +29,11 @@ class GamepadUpdateRunnable final : public Runnable {
 };
 
 }  // namespace
+
+already_AddRefed<GamepadEventChannelChild> GamepadEventChannelChild::Create() {
+  return RefPtr<GamepadEventChannelChild>(new GamepadEventChannelChild())
+      .forget();
+}
 
 mozilla::ipc::IPCResult GamepadEventChannelChild::RecvGamepadUpdate(
     const GamepadChangeEvent& aGamepadEvent) {

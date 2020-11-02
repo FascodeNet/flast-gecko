@@ -41,6 +41,7 @@ nsPrintSettings::nsPrintSettings()
       mResolution(0),
       mDuplex(0),
       mNumCopies(1),
+      mNumPagesPerSheet(1),
       mPrintToFile(false),
       mOutputFormat(kOutputFormatNative),
       mIsInitedFromPrinter(false),
@@ -212,8 +213,18 @@ NS_IMETHODIMP nsPrintSettings::SetNumCopies(int32_t aNumCopies) {
   return NS_OK;
 }
 
+NS_IMETHODIMP nsPrintSettings::GetNumPagesPerSheet(int32_t* aNumPagesPerSheet) {
+  NS_ENSURE_ARG_POINTER(aNumPagesPerSheet);
+  *aNumPagesPerSheet = mNumPagesPerSheet;
+  return NS_OK;
+}
+NS_IMETHODIMP nsPrintSettings::SetNumPagesPerSheet(int32_t aNumPagesPerSheet) {
+  mNumPagesPerSheet = aNumPagesPerSheet;
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsPrintSettings::GetPrintToFile(bool* aPrintToFile) {
-  // NS_ENSURE_ARG_POINTER(aPrintToFile);
+  NS_ENSURE_ARG_POINTER(aPrintToFile);
   *aPrintToFile = mPrintToFile;
   return NS_OK;
 }
@@ -253,24 +264,24 @@ NS_IMETHODIMP nsPrintSettings::SetPrintPageDelay(int32_t aPrintPageDelay) {
 NS_IMETHODIMP nsPrintSettings::GetIsInitializedFromPrinter(
     bool* aIsInitializedFromPrinter) {
   NS_ENSURE_ARG_POINTER(aIsInitializedFromPrinter);
-  *aIsInitializedFromPrinter = (bool)mIsInitedFromPrinter;
+  *aIsInitializedFromPrinter = mIsInitedFromPrinter;
   return NS_OK;
 }
 NS_IMETHODIMP nsPrintSettings::SetIsInitializedFromPrinter(
     bool aIsInitializedFromPrinter) {
-  mIsInitedFromPrinter = (bool)aIsInitializedFromPrinter;
+  mIsInitedFromPrinter = aIsInitializedFromPrinter;
   return NS_OK;
 }
 
 NS_IMETHODIMP nsPrintSettings::GetIsInitializedFromPrefs(
     bool* aInitializedFromPrefs) {
   NS_ENSURE_ARG_POINTER(aInitializedFromPrefs);
-  *aInitializedFromPrefs = (bool)mIsInitedFromPrefs;
+  *aInitializedFromPrefs = mIsInitedFromPrefs;
   return NS_OK;
 }
 NS_IMETHODIMP nsPrintSettings::SetIsInitializedFromPrefs(
     bool aInitializedFromPrefs) {
-  mIsInitedFromPrefs = (bool)aInitializedFromPrefs;
+  mIsInitedFromPrefs = aInitializedFromPrefs;
   return NS_OK;
 }
 
@@ -786,6 +797,7 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs) {
   mResolution = rhs.mResolution;
   mDuplex = rhs.mDuplex;
   mNumCopies = rhs.mNumCopies;
+  mNumPagesPerSheet = rhs.mNumPagesPerSheet;
   mPrinter = rhs.mPrinter;
   mPrintToFile = rhs.mPrintToFile;
   mToFileName = rhs.mToFileName;

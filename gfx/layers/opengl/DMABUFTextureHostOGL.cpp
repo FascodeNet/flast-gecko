@@ -6,7 +6,7 @@
 
 #include "DMABUFTextureHostOGL.h"
 #include "mozilla/widget/DMABufSurface.h"
-#include "mozilla/webrender/RenderDMABUFTextureHostOGL.h"
+#include "mozilla/webrender/RenderDMABUFTextureHost.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "GLContextEGL.h"
@@ -121,7 +121,7 @@ gl::GLContext* DMABUFTextureHostOGL::gl() const {
 void DMABUFTextureHostOGL::CreateRenderTexture(
     const wr::ExternalImageId& aExternalImageId) {
   RefPtr<wr::RenderTextureHost> texture =
-      new wr::RenderDMABUFTextureHostOGL(mSurface);
+      new wr::RenderDMABUFTextureHost(mSurface);
   wr::RenderThread::Get()->RegisterExternalImage(wr::AsUint64(aExternalImageId),
                                                  texture.forget());
 }
@@ -185,8 +185,9 @@ void DMABUFTextureHostOGL::PushResourceUpdates(
 void DMABUFTextureHostOGL::PushDisplayItems(
     wr::DisplayListBuilder& aBuilder, const wr::LayoutRect& aBounds,
     const wr::LayoutRect& aClip, wr::ImageRendering aFilter,
-    const Range<wr::ImageKey>& aImageKeys,
-    const bool aPreferCompositorSurface) {
+    const Range<wr::ImageKey>& aImageKeys, PushDisplayItemFlagSet aFlags) {
+  bool preferCompositorSurface =
+      aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
   switch (mSurface->GetFormat()) {
     case gfx::SurfaceFormat::R8G8B8X8:
     case gfx::SurfaceFormat::R8G8B8A8:
@@ -196,7 +197,7 @@ void DMABUFTextureHostOGL::PushDisplayItems(
       aBuilder.PushImage(aBounds, aClip, true, aFilter, aImageKeys[0],
                          !(mFlags & TextureFlags::NON_PREMULTIPLIED),
                          wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
-                         aPreferCompositorSurface);
+                         preferCompositorSurface);
       break;
     }
     case gfx::SurfaceFormat::NV12: {
@@ -208,7 +209,7 @@ void DMABUFTextureHostOGL::PushDisplayItems(
                              wr::ColorDepth::Color8,
                              wr::ToWrYuvColorSpace(GetYUVColorSpace()),
                              wr::ToWrColorRange(GetColorRange()), aFilter,
-                             aPreferCompositorSurface);
+                             preferCompositorSurface);
       break;
     }
     case gfx::SurfaceFormat::YUV: {
@@ -220,7 +221,7 @@ void DMABUFTextureHostOGL::PushDisplayItems(
           aBounds, aClip, true, aImageKeys[0], aImageKeys[1], aImageKeys[2],
           wr::ColorDepth::Color8, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
           wr::ToWrColorRange(GetColorRange()), aFilter,
-          aPreferCompositorSurface);
+          preferCompositorSurface);
       break;
     }
     default: {

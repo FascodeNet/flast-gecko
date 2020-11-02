@@ -14,7 +14,7 @@
 #include "jsnum.h"
 
 #include "jit/CodeGenerator.h"
-#include "jit/JitFrames.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/JitRuntime.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
@@ -585,17 +585,23 @@ void CodeGenerator::visitSoftDivI(LSoftDivI* ins) {
   divICommon(mir, lhs, rhs, output, ins->snapshot(), done);
 
   if (gen->compilingWasm()) {
+    masm.Push(WasmTlsReg);
+    int32_t framePushedAfterTls = masm.framePushed();
     masm.setupWasmABICall();
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
+    int32_t tlsOffset = masm.framePushed() - framePushedAfterTls;
     masm.callWithABI(mir->bytecodeOffset(),
-                     wasm::SymbolicAddress::aeabi_idivmod, mozilla::Nothing());
+                     wasm::SymbolicAddress::aeabi_idivmod,
+                     mozilla::Some(tlsOffset));
+    masm.Pop(WasmTlsReg);
   } else {
+    using Fn = int64_t (*)(int, int);
     masm.setupAlignedABICall();
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, __aeabi_idivmod),
-                     MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    masm.callWithABI<Fn, __aeabi_idivmod>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
   }
 
   // idivmod returns the quotient in r0, and the remainder in r1.
@@ -774,17 +780,23 @@ void CodeGenerator::visitSoftModI(LSoftModI* ins) {
   modICommon(mir, lhs, rhs, output, ins->snapshot(), done);
 
   if (gen->compilingWasm()) {
+    masm.Push(WasmTlsReg);
+    int32_t framePushedAfterTls = masm.framePushed();
     masm.setupWasmABICall();
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
+    int32_t tlsOffset = masm.framePushed() - framePushedAfterTls;
     masm.callWithABI(mir->bytecodeOffset(),
-                     wasm::SymbolicAddress::aeabi_idivmod, mozilla::Nothing());
+                     wasm::SymbolicAddress::aeabi_idivmod,
+                     mozilla::Some(tlsOffset));
+    masm.Pop(WasmTlsReg);
   } else {
+    using Fn = int64_t (*)(int, int);
     masm.setupAlignedABICall();
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, __aeabi_idivmod),
-                     MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    masm.callWithABI<Fn, __aeabi_idivmod>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
   }
 
   MOZ_ASSERT(r1 != output);
@@ -2256,19 +2268,24 @@ void CodeGenerator::visitSoftUDivOrMod(LSoftUDivOrMod* ins) {
   generateUDivModZeroCheck(rhs, output, &done, ins->snapshot(), mod);
 
   if (gen->compilingWasm()) {
+    masm.Push(WasmTlsReg);
+    int32_t framePushedAfterTls = masm.framePushed();
     masm.setupWasmABICall();
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
     wasm::BytecodeOffset bytecodeOffset =
         (div ? div->bytecodeOffset() : mod->bytecodeOffset());
+    int32_t tlsOffset = masm.framePushed() - framePushedAfterTls;
     masm.callWithABI(bytecodeOffset, wasm::SymbolicAddress::aeabi_uidivmod,
-                     mozilla::Nothing());
+                     mozilla::Some(tlsOffset));
+    masm.Pop(WasmTlsReg);
   } else {
+    using Fn = int64_t (*)(int, int);
     masm.setupAlignedABICall();
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, __aeabi_uidivmod),
-                     MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+    masm.callWithABI<Fn, __aeabi_uidivmod>(
+        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
   }
 
   if (mod) {

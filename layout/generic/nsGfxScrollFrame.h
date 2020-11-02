@@ -95,8 +95,8 @@ class ScrollFrameHelper : public nsIReflowCallback {
   // wrapped in the async zoom container, if we're building one.
   // It should not be called with an ASR setter on the stack, as the
   // top-layer items handle setting up their own ASRs.
-  void MaybeAddTopLayerItems(nsDisplayListBuilder* aBuilder,
-                             const nsDisplayListSet& aLists);
+  nsDisplayWrapList* MaybeCreateTopLayerItems(nsDisplayListBuilder* aBuilder,
+                                              bool* aIsOpaque);
 
   void AppendScrollPartsTo(nsDisplayListBuilder* aBuilder,
                            const nsDisplayListSet& aLists, bool aCreateLayer,
@@ -458,6 +458,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
   uint32_t CurrentScrollGeneration() const { return mScrollGeneration; }
   nsPoint LastScrollDestination() const { return mDestination; }
   nsTArray<ScrollPositionUpdate> GetScrollUpdates() const;
+  bool HasScrollUpdates() const { return !mScrollUpdates.IsEmpty(); }
 
   bool IsLastScrollUpdateAnimating() const;
   using IncludeApzAnimation = nsIScrollableFrame::IncludeApzAnimation;
@@ -524,6 +525,8 @@ class ScrollFrameHelper : public nsIReflowCallback {
   already_AddRefed<Element> MakeScrollbar(dom::NodeInfo* aNodeInfo,
                                           bool aVertical,
                                           AnonymousContentKey& aKey);
+
+  void AppendScrollUpdate(const ScrollPositionUpdate& aUpdate);
 
   // owning references to the nsIAnonymousContentCreator-built content
   nsCOMPtr<Element> mHScrollbarContent;
@@ -717,6 +720,9 @@ class ScrollFrameHelper : public nsIReflowCallback {
   // the most recent scroll request is a smooth scroll, and it is cleared when
   // mApzAnimationInProgress is updated.
   bool mApzAnimationRequested : 1;
+
+  // Whether we need to reclamp the visual viewport offset in ReflowFinished.
+  bool mReclampVVOffsetInReflowFinished : 1;
 
   mozilla::layout::ScrollVelocityQueue mVelocityQueue;
 
@@ -1058,6 +1064,7 @@ class nsHTMLScrollFrame : public nsContainerFrame,
   nsTArray<mozilla::ScrollPositionUpdate> GetScrollUpdates() const final {
     return mHelper.GetScrollUpdates();
   }
+  bool HasScrollUpdates() const final { return mHelper.HasScrollUpdates(); }
   void ResetScrollInfoIfNeeded(uint32_t aGeneration,
                                bool aApzAnimationInProgress) final {
     mHelper.ResetScrollInfoIfNeeded(aGeneration, aApzAnimationInProgress);
@@ -1533,6 +1540,7 @@ class nsXULScrollFrame final : public nsBoxFrame,
   nsTArray<mozilla::ScrollPositionUpdate> GetScrollUpdates() const final {
     return mHelper.GetScrollUpdates();
   }
+  bool HasScrollUpdates() const final { return mHelper.HasScrollUpdates(); }
   void ResetScrollInfoIfNeeded(uint32_t aGeneration,
                                bool aApzAnimationInProgress) final {
     mHelper.ResetScrollInfoIfNeeded(aGeneration, aApzAnimationInProgress);

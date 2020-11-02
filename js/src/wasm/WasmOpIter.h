@@ -80,6 +80,9 @@ class StackType {
       case ValType::F32:
       case ValType::I64:
       case ValType::F64:
+#ifdef ENABLE_WASM_SIMD
+      case ValType::V128:
+#endif
         return true;
       default:
         return false;
@@ -2522,8 +2525,8 @@ inline bool OpIter<Policy>::readStructNarrow(ValType* inputType,
     if (!outputStruct.hasPrefix(inputStruct)) {
       return fail("invalid narrowing operation");
     }
-  } else if (outputType->isExternRef()) {
-    if (!inputType->isExternRef()) {
+  } else if (outputType->isEqRef()) {
+    if (!inputType->isEqRef()) {
       return fail("invalid type combination in struct.narrow");
     }
   }

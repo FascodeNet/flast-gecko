@@ -13,6 +13,7 @@
 #include "imgFrame.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/MediaFeatureChange.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/SVGSVGElement.h"
 #include "mozilla/dom/SVGDocument.h"
@@ -355,6 +356,7 @@ VectorImage::VectorImage(nsIURI* aURI /* = nullptr */)
       mHasPendingInvalidation(false) {}
 
 VectorImage::~VectorImage() {
+  ReportDocumentUseCounters();
   CancelAllListeners();
   SurfaceCache::RemoveImage(ImageKey(this));
 }
@@ -1291,11 +1293,6 @@ VectorImage::RequestDiscard() {
     mProgressTracker->OnDiscard();
   }
 
-  if (Document* doc =
-          mSVGDocumentWrapper ? mSVGDocumentWrapper->GetDocument() : nullptr) {
-    doc->ReportUseCounters();
-  }
-
   return NS_OK;
 }
 
@@ -1358,6 +1355,11 @@ VectorImage::OnStartRequest(nsIRequest* aRequest) {
   mLoadEventListener = new SVGLoadEventListener(document, this);
   mParseCompleteListener = new SVGParseCompleteListener(document, this);
 
+  // Displayed documents will call InitUseCounters under SetScriptGlobalObject,
+  // but SVG image documents never get a script global object, so we initialize
+  // use counters here, right after the document has been created.
+  document->InitUseCounters();
+
   return NS_OK;
 }
 
@@ -1408,6 +1410,11 @@ void VectorImage::OnSVGDocumentLoaded() {
   // XXX Flushing is wasteful if embedding frame hasn't had initial reflow.
   mSVGDocumentWrapper->FlushLayout();
 
+  // This is the earliest point that we can get accurate use counter data
+  // for a valid SVG document.  Without the FlushLayout call, we would miss
+  // any CSS property usage that comes from SVG presentation attributes.
+  mSVGDocumentWrapper->GetDocument()->ReportDocumentUseCounters();
+
   mIsFullyLoaded = true;
   mHaveAnimations = mSVGDocumentWrapper->IsAnimated();
 
@@ -1443,6 +1450,10 @@ void VectorImage::OnSVGDocumentError() {
   CancelAllListeners();
 
   mError = true;
+
+  // We won't enter OnSVGDocumentLoaded, so report use counters now for this
+  // invalid document.
+  ReportDocumentUseCounters();
 
   if (mProgressTracker) {
     // Notify observers about the error and unblock page load.
@@ -1511,10 +1522,9 @@ void VectorImage::InvalidateObserversOnNextRefreshDriverTick() {
                         NS_DISPATCH_NORMAL);
 }
 
-void VectorImage::PropagateUseCounters(Document* aParentDocument) {
-  Document* doc = mSVGDocumentWrapper->GetDocument();
-  if (doc) {
-    doc->PropagateUseCounters(aParentDocument);
+void VectorImage::PropagateUseCounters(Document* aReferencingDocument) {
+  if (Document* doc = mSVGDocumentWrapper->GetDocument()) {
+    doc->PropagateImageUseCounters(aReferencingDocument);
   }
 }
 
@@ -1547,20 +1557,17 @@ void VectorImage::MediaFeatureValuesChangedAllDocuments(
   }
 
   if (Document* doc = mSVGDocumentWrapper->GetDocument()) {
-    if (nsPresContext* presContext = doc->GetPresContext()) {
-      presContext->MediaFeatureValuesChangedAllDocuments(aChange);
+    if (RefPtr<nsPresContext> presContext = doc->GetPresContext()) {
+      presContext->MediaFeatureValuesChanged(
+          aChange, MediaFeatureChangePropagation::All);
       // Media feature value changes don't happen in the middle of layout,
       // so we don't need to call InvalidateObserversOnNextRefreshDriverTick
       // to invalidate asynchronously.
-      //
-      // Ideally we would not invalidate images if the media feature value
-      // change did not cause any updates to the document, but since non-
-      // animated SVG images do not have their refresh driver ticked, it
-      // is the invalidation (and then the painting) which is what causes
-      // the document to be flushed. Theme and system metrics changes are
-      // rare, though, so it's not a big deal to invalidate even if it
-      // doesn't cause any change.
-      SendInvalidationNotifications();
+      if (presContext->FlushPendingMediaFeatureValuesChanged()) {
+        // NOTE(emilio): SendInvalidationNotifications flushes layout via
+        // VectorImage::CreateSurface -> FlushImageTransformInvalidation.
+        SendInvalidationNotifications();
+      }
     }
   }
 }
@@ -1571,6 +1578,16 @@ nsresult VectorImage::GetHotspotX(int32_t* aX) {
 
 nsresult VectorImage::GetHotspotY(int32_t* aY) {
   return Image::GetHotspotY(aY);
+}
+
+void VectorImage::ReportDocumentUseCounters() {
+  if (!mSVGDocumentWrapper) {
+    return;
+  }
+
+  if (Document* doc = mSVGDocumentWrapper->GetDocument()) {
+    doc->ReportDocumentUseCounters();
+  }
 }
 
 }  // namespace image

@@ -254,7 +254,12 @@ pref("browser.defaultbrowser.notificationbar.checklimit", 10000);
 // The behavior of option 3 is detailed at: http://wiki.mozilla.org/Session_Restore
 pref("browser.startup.page",                1);
 pref("browser.startup.homepage",            "about:home");
+#ifdef NIGHTLY_BUILD
+pref("browser.startup.homepage.abouthome_cache.enabled", true);
+#else
 pref("browser.startup.homepage.abouthome_cache.enabled", false);
+#endif
+pref("browser.startup.homepage.abouthome_cache.loglevel", "Warn");
 
 // Whether we should skip the homepage when opening the first-run page
 pref("browser.startup.firstrunSkipsHomepage", true);
@@ -287,6 +292,10 @@ pref("browser.overlink-delay", 80);
 // browser.fixup.alternate.suffix to the URL bar value prior to
 // navigating.
 pref("browser.urlbar.ctrlCanonizesURLs", true);
+
+// Whether we announce to screen readers when tab-to-search results are
+// inserted.
+pref("browser.urlbar.accessibility.tabToSearch.announceResults", true);
 
 // Control autoFill behavior
 pref("browser.urlbar.autoFill", true);
@@ -337,40 +346,36 @@ pref("browser.urlbar.openintab", false);
 // If true, we show tail suggestions when available.
 pref("browser.urlbar.richSuggestions.tail", true);
 
-#ifdef NIGHTLY_BUILD
 // Whether the Urlbar can enter search mode. Also controls the other
 // urlbar.update2 prefs.
 pref("browser.urlbar.update2", true);
+
 // Whether horizontal key navigation with left/right is disabled for urlbar's
 // one-off buttons.
 pref("browser.urlbar.update2.disableOneOffsHorizontalKeyNavigation", true);
-// Whether the urlbar displays one-offs to filter searches to history,
-// bookmarks, or tabs.
-pref("browser.urlbar.update2.localOneOffs", true);
-// Whether the urlbar one-offs act as search filters instead of executing a
-// search immediately.
-pref("browser.urlbar.update2.oneOffsRefresh", true);
-// Whether browsing history that is recognized as a previous search should
-// be restyled and deduped against form history. This only happens when
-// search mode is active.
-pref("browser.urlbar.update2.restyleBrowsingHistoryAsSearch", true);
-// Whether we display a tab-to-complete result when the user types an engine
-// name.
-pref("browser.urlbar.update2.tabToComplete", true);
-#else
-pref("browser.urlbar.update2", false);
-pref("browser.urlbar.update2.disableOneOffsHorizontalKeyNavigation", false);
-pref("browser.urlbar.update2.localOneOffs", false);
-pref("browser.urlbar.update2.oneOffsRefresh", false);
-pref("browser.urlbar.update2.restyleBrowsingHistoryAsSearch", false);
-pref("browser.urlbar.update2.tabToComplete", false);
-#endif
 
 // Controls the empty search behavior in Search Mode:
 //  0 - Show nothing
 //  1 - Show search history
 //  2 - Show search and browsing history
 pref("browser.urlbar.update2.emptySearchBehavior", 2);
+
+// Whether the urlbar displays one-offs to filter searches to history,
+// bookmarks, or tabs.
+pref("browser.urlbar.update2.localOneOffs", true);
+
+// Whether the urlbar one-offs act as search filters instead of executing a
+// search immediately.
+pref("browser.urlbar.update2.oneOffsRefresh", true);
+
+// Whether browsing history that is recognized as a previous search should
+// be restyled and deduped against form history. This only happens when
+// search mode is active.
+pref("browser.urlbar.update2.restyleBrowsingHistoryAsSearch", true);
+
+// Whether we display a tab-to-complete result when the user types an engine
+// name.
+pref("browser.urlbar.update2.tabToComplete", true);
 
 pref("browser.urlbar.eventTelemetry.enabled", false);
 
@@ -803,11 +808,7 @@ pref("browser.preferences.experimental", false);
 pref("browser.preferences.experimental.hidden", false);
 pref("browser.preferences.defaultPerformanceSettings.enabled", true);
 
-#if defined(NIGHTLY_BUILD)
 pref("browser.preferences.exposeHTTPSOnly", true);
-#else
-pref("browser.preferences.exposeHTTPSOnly", false);
-#endif
 
 pref("browser.download.show_plugins_in_list", true);
 pref("browser.download.hide_plugins_without_extensions", true);
@@ -1654,6 +1655,8 @@ pref("browser.contentblocking.fingerprinting.preferences.ui.enabled", true);
   // Enable cookieBehavior = BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN as an option in the custom category ui
   pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled", true);
 #endif
+// State Partitioning MVP UI. Disabled by default for now.
+pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", false);
 
 // Possible values for browser.contentblocking.features.strict pref:
 //   Tracking Protection:
@@ -1815,8 +1818,6 @@ pref("browser.tabs.crashReporting.includeURL", false);
 pref("browser.tabs.crashReporting.requestEmail", false);
 pref("browser.tabs.crashReporting.emailMe", false);
 pref("browser.tabs.crashReporting.email", "");
-
-pref("browser.navigation.requireUserInteraction", false);
 
 // If true, unprivileged extensions may use experimental APIs on
 // nightly and developer edition.
@@ -2042,10 +2043,15 @@ pref("browser.aboutConfig.showWarning", true);
 
 pref("browser.toolbars.keyboard_navigation", true);
 
+// The visibility of the bookmarks toolbar.
+// "newtab": Show on the New Tab Page
+// "always": Always show
+// "never": Never show
+pref("browser.toolbars.bookmarks.visibility", "newtab");
 // When true, this pref will always show the bookmarks bar on
 // the New Tab Page, allowing showing/hiding via keyboard shortcut,
 // and other functionality to improve the usage of the Bookmarks Toolbar.
-#ifdef EARLY_BETA_OR_EARLIER
+#ifdef NIGHTLY_BUILD
 pref("browser.toolbars.bookmarks.2h2020", true);
 #else
 pref("browser.toolbars.bookmarks.2h2020", false);

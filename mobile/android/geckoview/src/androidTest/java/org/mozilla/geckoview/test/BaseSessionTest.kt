@@ -41,6 +41,7 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
         const val FORMS3_HTML_PATH = "/assets/www/forms3.html"
         const val FORMS4_HTML_PATH = "/assets/www/forms4.html"
         const val FORMS_AUTOCOMPLETE_HTML_PATH = "/assets/www/forms_autocomplete.html"
+        const val FORMS_ID_VALUE_HTML_PATH = "/assets/www/forms_id_value.html"
         const val HELLO_HTML_PATH = "/assets/www/hello.html"
         const val HELLO2_HTML_PATH = "/assets/www/hello2.html"
         const val HELLO_IFRAME_HTML_PATH = "/assets/www/iframe_hello.html"
@@ -187,6 +188,12 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
                 keyCode, KeyEvent.changeAction(keyEvent, KeyEvent.ACTION_UP))
         promise.value
     }
+
+    fun GeckoSession.flushApzRepaints() = sessionRule.flushApzRepaints(this)
+
+    var GeckoSession.active: Boolean
+            get() = sessionRule.getActive(this)
+            set(value) = setActive(value)
 
     @Suppress("UNCHECKED_CAST")
     fun Any?.asJsonArray(): JSONArray = this as JSONArray

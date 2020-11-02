@@ -8,7 +8,6 @@
 
 #include "CompositableHost.h"  // for CompositableHost
 #include "LayerScope.h"
-#include "LayersLogging.h"   // for AppendToString
 #include "mozilla/gfx/2D.h"  // for DataSourceSurface, Factory
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/ipc/Shmem.h"  // for Shmem
@@ -249,7 +248,7 @@ already_AddRefed<TextureHost> TextureHost::Create(
           aDesc.get_SurfaceDescriptorRecorded();
       UniquePtr<SurfaceDescriptor> realDesc =
           aDeallocator->AsCompositorBridgeParentBase()
-              ->LookupSurfaceDescriptorForClientDrawTarget(desc.drawTarget());
+              ->LookupSurfaceDescriptorForClientTexture(desc.textureId());
       if (!realDesc) {
         gfxCriticalNote << "Failed to get descriptor for recorded texture.";
         // Create a dummy to prevent any crashes due to missing IPDL actors.
@@ -527,11 +526,11 @@ void TextureHost::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
   // Note: the TextureHost needs to be locked before it is safe to call
   //       GetSize() and GetFormat() on it.
   if (Lock()) {
-    aStream << " [size=" << GetSize() << "]";
-    AppendToString(aStream, GetFormat(), " [format=", "]");
+    aStream << " [size=" << GetSize() << "]"
+            << " [format=" << GetFormat() << "]";
     Unlock();
   }
-  AppendToString(aStream, mFlags, " [flags=", "]");
+  aStream << " [flags=" << mFlags << "]";
 #ifdef MOZ_DUMP_PAINTING
   if (StaticPrefs::layers_dump_texture()) {
     nsAutoCString pfx(aPrefix);
@@ -564,7 +563,7 @@ BufferTextureHost::BufferTextureHost(const BufferDescriptor& aDesc,
   switch (mDescriptor.type()) {
     case BufferDescriptor::TYCbCrDescriptor: {
       const YCbCrDescriptor& ycbcr = mDescriptor.get_YCbCrDescriptor();
-      mSize = ycbcr.ySize();
+      mSize = ycbcr.display().Size();
       mFormat = gfx::SurfaceFormat::YUV;
       mHasIntermediateBuffer = ycbcr.hasIntermediateBuffer();
       break;
@@ -742,15 +741,18 @@ void BufferTextureHost::PushDisplayItems(wr::DisplayListBuilder& aBuilder,
                                          const wr::LayoutRect& aClip,
                                          wr::ImageRendering aFilter,
                                          const Range<wr::ImageKey>& aImageKeys,
-                                         const bool aPreferCompositorSurface) {
+                                         PushDisplayItemFlagSet aFlags) {
   // SWGL should always try to bypass shaders and composite directly.
-  bool useExternalSurface = gfx::gfxVars::UseSoftwareWebRender();
+  bool preferCompositorSurface =
+      aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
+  bool useExternalSurface =
+      aFlags.contains(PushDisplayItemFlag::SUPPORTS_EXTERNAL_BUFFER_TEXTURES);
   if (GetFormat() != gfx::SurfaceFormat::YUV) {
     MOZ_ASSERT(aImageKeys.length() == 1);
     aBuilder.PushImage(aBounds, aClip, true, aFilter, aImageKeys[0],
                        !(mFlags & TextureFlags::NON_PREMULTIPLIED),
                        wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
-                       aPreferCompositorSurface, useExternalSurface);
+                       preferCompositorSurface, useExternalSurface);
   } else {
     MOZ_ASSERT(aImageKeys.length() == 3);
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
@@ -758,8 +760,8 @@ void BufferTextureHost::PushDisplayItems(wr::DisplayListBuilder& aBuilder,
         aBounds, aClip, true, aImageKeys[0], aImageKeys[1], aImageKeys[2],
         wr::ToWrColorDepth(desc.colorDepth()),
         wr::ToWrYuvColorSpace(desc.yUVColorSpace()),
-        wr::ToWrColorRange(desc.colorRange()), aFilter,
-        aPreferCompositorSurface, useExternalSurface);
+        wr::ToWrColorRange(desc.colorRange()), aFilter, preferCompositorSurface,
+        useExternalSurface);
   }
 }
 

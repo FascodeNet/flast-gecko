@@ -23,110 +23,87 @@ class nsPrintSettingsX : public nsPrintSettings {
 
   nsPrintSettingsX();
   explicit nsPrintSettingsX(const PrintSettingsInitializer& aSettings);
-  nsresult Init();
-  NSPrintInfo* GetCocoaPrintInfo() { return mPrintInfo; }
-  void SetCocoaPrintInfo(NSPrintInfo* aPrintInfo);
+
+  nsresult Init() { return NS_OK; }
   nsresult ReadPageFormatFromPrefs();
   nsresult WritePageFormatToPrefs();
-  nsresult GetEffectivePageSize(double* aWidth, double* aHeight) override;
-  void GetFilePageSize(double* aWidth, double* aHeight);
 
-  nsresult GetPaperWidth(double* aPaperWidth) override;
-  nsresult GetPaperHeight(double* aPaperWidth) override;
+  void SetDestination(uint16_t aDestination) { mDestination = aDestination; }
+  void GetDestination(uint16_t* aDestination) { *aDestination = mDestination; }
 
-  // In addition to setting the paper width and height, these
-  // overrides set the adjusted width and height returned from
-  // GetEffectivePageSize. This is needed when a paper size is
-  // set manually without using a print dialog a la reftest-paged.
-  nsresult SetPaperWidth(double aPaperWidth) override;
-  nsresult SetPaperHeight(double aPaperWidth) override;
+  void SetDisposition(const nsString& aDisposition) {
+    mDisposition = aDisposition;
+  }
+  void GetDisposition(nsString& aDisposition) { aDisposition = mDisposition; }
 
-  PMPrintSettings GetPMPrintSettings();
-  PMPrintSession GetPMPrintSession();
-  PMPageFormat GetPMPageFormat();
-  void SetPMPageFormat(PMPageFormat aPageFormat);
+  // Get a Cocoa NSPrintInfo that is configured with our current settings.
+  // This follows Create semantics, so the caller is responsible to release
+  // the returned object when no longer required.
+  //
+  // Pass true for aWithScaling to have the print scaling factor included in
+  // the returned printInfo. Normally we pass false, as scaling is handled
+  // by Gecko and we don't want the Cocoa print system to impose scaling again
+  // on the output, but if we're retrieving the info in order to populate the
+  // system print UI, then we do want to know about it.
+  NSPrintInfo* CreateOrCopyPrintInfo(bool aWithScaling = false);
 
-  // Re-initialize mUnwriteableMargin with values from mPageFormat.
-  // Should be called whenever mPageFormat is initialized or overwritten.
-  nsresult InitUnwriteableMargin();
-
-  // Re-initialize mAdjustedPaper{Width,Height} with values from mPageFormat.
-  // Should be called whenever mPageFormat is initialized or overwritten.
-  nsresult InitAdjustedPaperSize();
-
-  void SetInchesScale(float aWidthScale, float aHeightScale);
-  void GetInchesScale(float* aWidthScale, float* aHeightScale);
-
-  // GetPrintRange doesn't need overriding because SetPrintRange always calls
-  // nsPrintSettings::SetPrintRange.
-  NS_IMETHOD SetPrintRange(int16_t aPrintRange) final;
-
-  // Override SetPrinterName to update the macOS printInfo in the parent,
-  // in addition to storing the string in the base class, but we do *not*
-  // override GetPrinterName because the macOS printer objects cannot actually
-  // represent the pseudo-printer destination for Save to PDF.
-  NS_IMETHOD SetPrinterName(const nsAString& aName) override;
-
-  NS_IMETHOD GetStartPageRange(int32_t* aStartPageRange) final;
-  NS_IMETHOD SetStartPageRange(int32_t aStartPageRange) final;
-
-  NS_IMETHOD GetEndPageRange(int32_t* aEndPageRange) final;
-  NS_IMETHOD SetEndPageRange(int32_t aEndPageRange) final;
-
-  NS_IMETHOD SetScaling(double aScaling) override;
-  NS_IMETHOD GetScaling(double* aScaling) override;
-
-  NS_IMETHOD SetToFileName(const nsAString& aToFileName) override;
-
-  NS_IMETHOD GetOrientation(int32_t* aOrientation) override;
-  NS_IMETHOD SetOrientation(int32_t aOrientation) override;
-
-  NS_IMETHOD GetNumCopies(int32_t* aCopies) override;
-  NS_IMETHOD SetNumCopies(int32_t aCopies) override;
-
-  NS_IMETHOD GetDuplex(int32_t* aDuplex) override;
-  NS_IMETHOD SetDuplex(int32_t aDuplex) override;
-
-  NS_IMETHOD SetUnwriteableMarginTop(double aUnwriteableMarginTop) override;
-  NS_IMETHOD SetUnwriteableMarginLeft(double aUnwriteableMarginLeft) override;
-  NS_IMETHOD SetUnwriteableMarginBottom(
-      double aUnwriteableMarginBottom) override;
-  NS_IMETHOD SetUnwriteableMarginRight(double aUnwriteableMarginRight) override;
-
-  void SetAdjustedPaperSize(double aWidth, double aHeight);
-  void GetAdjustedPaperSize(double* aWidth, double* aHeight);
-  nsresult SetCocoaPaperSize(double aWidth, double aHeight);
-
-  // Set the printer name using the native PrintInfo data.
-  void SetPrinterNameFromPrintInfo();
-
-  void SetDispositionSaveToFile();
+  // Update our internal settings to reflect the properties of the given
+  // NSPrintInfo.
+  //
+  // If aAdoptPrintInfo is set, the given NSPrintInfo will be retained and
+  // returned by subsequent CreateOrCopyPrintInfo calls, which is required
+  // for custom settings from the OS print dialog to be passed through to
+  // print jobs. However, this means that subsequent changes to print settings
+  // via the generic nsPrintSettings methods will NOT be reflected in the
+  // resulting NSPrintInfo.
+  void SetFromPrintInfo(NSPrintInfo* aPrintInfo, bool aAdoptPrintInfo);
 
  protected:
-  virtual ~nsPrintSettingsX();
+  virtual ~nsPrintSettingsX() {
+    if (mSystemPrintInfo) {
+      [mSystemPrintInfo release];
+    }
+  };
 
   nsPrintSettingsX& operator=(const nsPrintSettingsX& rhs);
 
   nsresult _Clone(nsIPrintSettings** _retval) override;
   nsresult _Assign(nsIPrintSettings* aPS) override;
 
+  void SetPMPageFormat(PMPageFormat aPageFormat);
+
+  // Set the paper size and margins from the given NSPrintInfo.
+  void SetPageFormatFromPrintInfo(const NSPrintInfo* aPrintInfo);
+
   int GetCocoaUnit(int16_t aGeckoUnit);
 
-  // The out param has a ref count of 1 on return so caller needs to PMRelase()
-  // when done.
-  OSStatus CreateDefaultPageFormat(PMPrintSession aSession,
-                                   PMPageFormat& outFormat);
-  OSStatus CreateDefaultPrintSettings(PMPrintSession aSession,
-                                      PMPrintSettings& outSettings);
+  double PaperSizeFromCocoaPoints(double aPointsValue) {
+    return aPointsValue *
+           (mPaperSizeUnit == kPaperSizeInches ? 1.0 / 72.0 : 25.4 / 72.0);
+  }
 
-  NSPrintInfo* mPrintInfo;
+  double CocoaPointsFromPaperSize(double aSizeUnitValue) {
+    return aSizeUnitValue *
+           (mPaperSizeUnit == kPaperSizeInches ? 72.0 : 72.0 / 25.4);
+  }
 
-  // Scaling factors used to convert the NSPrintInfo
-  // paper size units to inches
-  float mWidthScale;
-  float mHeightScale;
-  double mAdjustedPaperWidth;
-  double mAdjustedPaperHeight;
+  // Needed to correctly track the various job dispositions (spool, preview,
+  // save to file) that the user can choose via the system print dialog.
+  // Unfortunately it seems to be necessary to set both the Cocoa "job
+  // disposition" and the PrintManager "destination type" in order for all the
+  // various workflows such as "Save to Web Receipts" to work.
+  nsString mDisposition;
+  uint16_t mDestination;
+
+  // If the user has used the system print UI, we retain a reference to its
+  // printInfo because it may contain settings that we don't know how to handle
+  // and that will be lost if we round-trip through nsPrintSettings fields.
+  // We'll use this printInfo if asked to run a print job.
+  //
+  // This "wrapped" printInfo is NOT serialized or copied when printSettings
+  // objects are passed around; it is used only by the settings object to which
+  // it was originally passed.
+  NSPrintInfo* mSystemPrintInfo = nullptr;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsPrintSettingsX, NS_PRINTSETTINGSX_IID)

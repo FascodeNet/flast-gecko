@@ -366,7 +366,7 @@ mingw-w64:
     fetch:
         type: git
         repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
-        revision: 1b373beec6d07478ffba33726bb3bb21f32e4411
+        revision: bd8ca6c303658659496d0c440cf9f2baa8f7a5f0
 
 libunwind:
     description: libunwind source code
@@ -429,7 +429,7 @@ clang-11:
     fetch:
         type: git
         repo: https://github.com/llvm/llvm-project
-        revision: 8aca41f39c207b6f9efe2e448986d109892072ad
+        revision: 176249bd6732a8044d457092ed932768724a6f06
 
 wasi-sdk:
     description: wasi-sdk source code

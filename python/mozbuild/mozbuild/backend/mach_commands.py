@@ -24,7 +24,9 @@ import mozpack.path as mozpath
 
 @CommandProvider
 class MachCommands(MachCommandBase):
-    @Command("ide", category="devenv", description="Generate a project and launch an IDE.")
+    @Command(
+        "ide", category="devenv", description="Generate a project and launch an IDE."
+    )
     @CommandArgument("ide", choices=["eclipse", "visualstudio", "vscode"])
     @CommandArgument("args", nargs=argparse.REMAINDER)
     def run(self, ide, args):
@@ -43,7 +45,10 @@ class MachCommands(MachCommandBase):
                 "Eclipse CDT 8.4 or later must be installed in your PATH.",
             )
             self.log(
-                logging.ERROR, "ide", {}, "Download: http://www.eclipse.org/cdt/downloads.php"
+                logging.ERROR,
+                "ide",
+                {},
+                "Download: http://www.eclipse.org/cdt/downloads.php",
             )
             return 1
 
@@ -70,7 +75,9 @@ class MachCommands(MachCommandBase):
             # Then build the rest of the build dependencies by running the full
             # export target, because we can't do anything better.
             for target in ("export", "pre-compile"):
-                rc = builder._run_make(directory=self.topobjdir, target=target, line_handler=None)
+                rc = builder._run_make(
+                    directory=self.topobjdir, target=target, line_handler=None
+                )
                 if rc != 0:
                     return rc
         else:
@@ -85,7 +92,9 @@ class MachCommands(MachCommandBase):
         python = self.virtualenv_manager.python_path
         config_status = os.path.join(self.topobjdir, "config.status")
         args = [python, config_status, "--backend=%s" % backend]
-        res = self._run_command_in_objdir(args=args, pass_thru=True, ensure_exit_code=False)
+        res = self._run_command_in_objdir(
+            args=args, pass_thru=True, ensure_exit_code=False
+        )
         if res != 0:
             return 1
 
@@ -109,7 +118,10 @@ class MachCommands(MachCommandBase):
     def found_vscode_path(self):
 
         if "linux" in self.platform[0]:
-            cmd_and_path = [{"path": "/usr/bin/code", "cmd": ["/usr/bin/code"]}]
+            cmd_and_path = [
+                {"path": "/usr/bin/code", "cmd": ["/usr/bin/code"]},
+                {"path": "/usr/bin/code-insiders", "cmd": ["/usr/bin/code-insiders"]},
+            ]
         elif "macos" in self.platform[0]:
             cmd_and_path = [
                 {"path": "/usr/local/bin/code", "cmd": ["/usr/local/bin/code"]},
@@ -117,15 +129,37 @@ class MachCommands(MachCommandBase):
                     "path": "/Applications/Visual Studio Code.app",
                     "cmd": ["open", "/Applications/Visual Studio Code.app", "--args"],
                 },
+                {
+                    "path": "/Applications/Visual Studio Code - Insiders.app",
+                    "cmd": [
+                        "open",
+                        "/Applications/Visual Studio Code - Insiders.app",
+                        "--args",
+                    ],
+                },
             ]
         elif "win64" in self.platform[0]:
             from pathlib import Path
 
             vscode_path = mozpath.join(
-                str(Path.home()), "AppData", "Local", "Programs", "Microsoft VS Code", "Code.exe",
+                str(Path.home()),
+                "AppData",
+                "Local",
+                "Programs",
+                "Microsoft VS Code",
+                "Code.exe",
+            )
+            vscode_insiders_path = mozpath.join(
+                str(Path.home()),
+                "AppData",
+                "Local",
+                "Programs",
+                "Microsoft VS Code Insiders",
+                "Code - Insiders.exe",
             )
             cmd_and_path = [
                 {"path": vscode_path, "cmd": [vscode_path]},
+                {"path": vscode_insiders_path, "cmd": [vscode_insiders_path]},
             ]
 
         # Did we guess the path?
@@ -155,12 +189,16 @@ class MachCommands(MachCommandBase):
         clang_tidy_bin = mozpath.join(clang_tools_path, "clang-tidy", "bin")
 
         clangd_path = mozpath.join(
-            clang_tidy_bin, "clangd" + self.config_environment.substs.get("BIN_SUFFIX", ""),
+            clang_tidy_bin,
+            "clangd" + self.config_environment.substs.get("BIN_SUFFIX", ""),
         )
 
         if not os.path.exists(clangd_path):
             self.log(
-                logging.ERROR, "ide", {}, "Unable to locate clangd in {}.".format(clang_tidy_bin)
+                logging.ERROR,
+                "ide",
+                {},
+                "Unable to locate clangd in {}.".format(clang_tidy_bin),
             )
             rc = self._get_clang_tools(clang_tools_path)
 

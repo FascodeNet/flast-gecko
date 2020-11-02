@@ -10,6 +10,7 @@
 #include "prdtoa.h"
 #include "AudioStream.h"
 #include "VideoUtils.h"
+#include "mozilla/dom/AudioDeviceInfo.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Sprintf.h"
@@ -286,7 +287,7 @@ nsresult AudioStream::Init(uint32_t aNumChannels,
   params.channels = mOutChannels;
   params.layout = static_cast<uint32_t>(aChannelMap);
   params.format = ToCubebFormat<AUDIO_OUTPUT_FORMAT>::value;
-  params.prefs = CubebUtils::GetDefaultStreamPrefs();
+  params.prefs = CubebUtils::GetDefaultStreamPrefs(CUBEB_DEVICE_TYPE_OUTPUT);
 
   // This is noop if MOZ_DUMP_AUDIO is not set.
   mDumpFile.Open("AudioStream", mOutChannels, aRate);

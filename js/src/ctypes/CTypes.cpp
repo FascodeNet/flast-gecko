@@ -6,6 +6,7 @@
 
 #include "ctypes/CTypes.h"
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Sprintf.h"
@@ -34,7 +35,6 @@
 #include "jsexn.h"
 #include "jsnum.h"
 
-#include "builtin/TypedObject.h"
 #include "ctypes/Library.h"
 #include "gc/FreeOp.h"
 #include "gc/Policy.h"
@@ -61,6 +61,7 @@
 
 using std::numeric_limits;
 
+using mozilla::CheckedInt;
 using mozilla::IsAsciiAlpha;
 using mozilla::IsAsciiDigit;
 

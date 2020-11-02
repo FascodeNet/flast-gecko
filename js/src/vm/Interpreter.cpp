@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include "jslibmath.h"
+#include "jsmath.h"
 #include "jsnum.h"
 
 #include "builtin/Array.h"
@@ -65,7 +66,6 @@
 
 #include "builtin/Boolean-inl.h"
 #include "debugger/DebugAPI-inl.h"
-#include "jit/JitFrames-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSAtom-inl.h"
@@ -451,13 +451,10 @@ bool js::RunScript(JSContext* cx, RunState& state) {
     if (measuringTime) {
       mozilla::TimeDuration delta = ReallyNow() - startTime;
       cx->realm()->timers.executionTime += delta;
-
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-      int64_t runtimeMicros = delta.ToMicroseconds();
-      cx->runtime()->addTelemetry(JS_TELEMETRY_RUN_TIME_US, runtimeMicros);
-#endif
-
       cx->setIsMeasuringExecutionTime(false);
+
+      // JS_TELEMETRY_RUN_TIME_US reporting was done here, but is temporarily
+      // disabled due to the crash in 1670348.
     }
   });
 
@@ -1277,7 +1274,8 @@ bool js::HandleClosingGeneratorReturn(JSContext* cx, AbstractFramePtr frame,
   if (cx->isClosingGenerator()) {
     cx->clearPendingException();
     ok = true;
-    SetGeneratorClosed(cx, frame);
+    auto* genObj = GetGeneratorObjectForFrame(cx, frame);
+    genObj->setClosed();
   }
   return ok;
 }
@@ -4268,8 +4266,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-1].toObject());
       POP_RETURN_VALUE();
       MOZ_ASSERT(REGS.stackDepth() == 0);
-      if (!AbstractGeneratorObject::initialSuspend(cx, obj, REGS.fp(),
-                                                   REGS.pc)) {
+      if (!AbstractGeneratorObject::suspend(cx, obj, REGS.fp(), REGS.pc,
+                                            script->nfixed())) {
         goto error;
       }
       goto successful_return_continuation;
@@ -4280,9 +4278,9 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       MOZ_ASSERT(!cx->isExceptionPending());
       MOZ_ASSERT(REGS.fp()->isFunctionFrame());
       ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-1].toObject());
-      if (!AbstractGeneratorObject::normalSuspend(cx, obj, REGS.fp(), REGS.pc,
-                                                  REGS.spForStackDepth(0),
-                                                  REGS.stackDepth() - 2)) {
+      if (!AbstractGeneratorObject::suspend(
+              cx, obj, REGS.fp(), REGS.pc,
+              script->nfixed() + REGS.stackDepth() - 2)) {
         goto error;
       }
 

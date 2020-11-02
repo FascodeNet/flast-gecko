@@ -6,6 +6,10 @@
 
 #include "LSWriteOptimizer.h"
 
+#include <new>
+#include "nsBaseHashtable.h"
+#include "nsTArray.h"
+
 namespace mozilla {
 namespace dom {
 
@@ -61,53 +65,6 @@ void LSWriteOptimizerBase::GetSortedWriteInfos(
 
     aWriteInfos.InsertElementSorted(writeInfo, WriteInfoComparator());
   }
-}
-
-template <typename T, typename U>
-void LSWriteOptimizer<T, U>::InsertItem(const nsAString& aKey, const T& aValue,
-                                        int64_t aDelta) {
-  AssertIsOnOwningThread();
-
-  WriteInfo* existingWriteInfo;
-  UniquePtr<WriteInfo> newWriteInfo;
-  if (mWriteInfos.Get(aKey, &existingWriteInfo) &&
-      existingWriteInfo->GetType() == WriteInfo::DeleteItem) {
-    // We could just simply replace the deletion with ordinary update, but that
-    // would preserve item's original position/index. Imagine a case when we
-    // have only one existing key k1. Now let's create a new optimizer and
-    // remove k1, add k2 and add k1 back. The final order should be k2, k1
-    // (ordinary update would produce k1, k2). So we need to differentiate
-    // between normal update and "optimized" update which resulted from a
-    // deletion followed by an insertion. We use the UpdateWithMove flag for
-    // this.
-
-    newWriteInfo = MakeUnique<UpdateItemInfo>(NextSerialNumber(), aKey, aValue,
-                                              /* aUpdateWithMove */ true);
-  } else {
-    newWriteInfo = MakeUnique<InsertItemInfo>(NextSerialNumber(), aKey, aValue);
-  }
-  mWriteInfos.Put(aKey, std::move(newWriteInfo));
-
-  mTotalDelta += aDelta;
-}
-
-template <typename T, typename U>
-void LSWriteOptimizer<T, U>::UpdateItem(const nsAString& aKey, const T& aValue,
-                                        int64_t aDelta) {
-  AssertIsOnOwningThread();
-
-  WriteInfo* existingWriteInfo;
-  UniquePtr<WriteInfo> newWriteInfo;
-  if (mWriteInfos.Get(aKey, &existingWriteInfo) &&
-      existingWriteInfo->GetType() == WriteInfo::InsertItem) {
-    newWriteInfo = MakeUnique<InsertItemInfo>(NextSerialNumber(), aKey, aValue);
-  } else {
-    newWriteInfo = MakeUnique<UpdateItemInfo>(NextSerialNumber(), aKey, aValue,
-                                              /* aUpdateWithMove */ false);
-  }
-  mWriteInfos.Put(aKey, std::move(newWriteInfo));
-
-  mTotalDelta += aDelta;
 }
 
 }  // namespace dom

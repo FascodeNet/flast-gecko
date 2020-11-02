@@ -91,6 +91,7 @@
 
 using namespace js;
 
+using mozilla::CheckedInt;
 using mozilla::Maybe;
 using mozilla::PodCopy;
 using mozilla::PointerRangeSize;
@@ -647,6 +648,7 @@ void js::BaseScript::finalize(JSFreeOp* fop) {
   }
 
   if (data_) {
+    // We don't need to triger any barriers here, just free the memory.
     size_t size = data_->allocationSize();
     AlwaysPoison(data_, JS_POISONED_JSSCRIPT_DATA_PATTERN, size,
                  MemCheckKind::MakeNoAccess);
@@ -3855,9 +3857,10 @@ JSScript* JSScript::fromStencil(JSContext* cx,
     functionOrGlobal = fun;
   }
 
+  Rooted<ScriptSourceObject*> sourceObject(cx, gcOutput.sourceObject);
   RootedScript script(
-      cx, Create(cx, functionOrGlobal, gcOutput.sourceObject,
-                 scriptStencil.extent, scriptStencil.immutableFlags));
+      cx, Create(cx, functionOrGlobal, sourceObject, scriptStencil.extent,
+                 scriptStencil.immutableFlags));
   if (!script) {
     return nullptr;
   }
@@ -4025,11 +4028,11 @@ const js::SrcNote* js::GetSrcNote(JSContext* cx, JSScript* script,
   return GetSrcNote(cx->caches().gsnCache, script, pc);
 }
 
-unsigned js::PCToLineNumber(unsigned startLine, SrcNote* notes,
-                            jsbytecode* code, jsbytecode* pc,
+unsigned js::PCToLineNumber(unsigned startLine, unsigned startCol,
+                            SrcNote* notes, jsbytecode* code, jsbytecode* pc,
                             unsigned* columnp) {
   unsigned lineno = startLine;
-  unsigned column = 0;
+  unsigned column = startCol;
 
   /*
    * Walk through source notes accumulating their deltas, keeping track of
@@ -4047,7 +4050,7 @@ unsigned js::PCToLineNumber(unsigned startLine, SrcNote* notes,
 
     SrcNoteType type = sn->type();
     if (type == SrcNoteType::SetLine) {
-      lineno = SrcNote::SetLine::getLine(sn);
+      lineno = SrcNote::SetLine::getLine(sn, startLine);
       column = 0;
     } else if (type == SrcNoteType::NewLine) {
       lineno++;
@@ -4073,8 +4076,8 @@ unsigned js::PCToLineNumber(JSScript* script, jsbytecode* pc,
     return 0;
   }
 
-  return PCToLineNumber(script->lineno(), script->notes(), script->code(), pc,
-                        columnp);
+  return PCToLineNumber(script->lineno(), script->column(), script->notes(),
+                        script->code(), pc, columnp);
 }
 
 jsbytecode* js::LineNumberToPC(JSScript* script, unsigned target) {
@@ -4101,7 +4104,7 @@ jsbytecode* js::LineNumberToPC(JSScript* script, unsigned target) {
     offset += sn->delta();
     SrcNoteType type = sn->type();
     if (type == SrcNoteType::SetLine) {
-      lineno = SrcNote::SetLine::getLine(sn);
+      lineno = SrcNote::SetLine::getLine(sn, script->lineno());
     } else if (type == SrcNoteType::NewLine) {
       lineno++;
     }
@@ -4120,7 +4123,7 @@ JS_FRIEND_API unsigned js::GetScriptLineExtent(JSScript* script) {
     auto sn = *iter;
     SrcNoteType type = sn->type();
     if (type == SrcNoteType::SetLine) {
-      lineno = SrcNote::SetLine::getLine(sn);
+      lineno = SrcNote::SetLine::getLine(sn, script->lineno());
     } else if (type == SrcNoteType::NewLine) {
       lineno++;
     }

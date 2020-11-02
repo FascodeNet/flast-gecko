@@ -14,6 +14,7 @@
 #include "nsColor.h"
 #include "nsString.h"
 #include "nsTArray.h"
+#include "mozilla/widget/ThemeChangeKind.h"
 
 struct gfxFontStyle;
 
@@ -547,7 +548,7 @@ class LookAndFeel {
    */
   static LookAndFeelCache GetCache();
   static void SetCache(const LookAndFeelCache& aCache);
-  static void NotifyChangedAllWindows();
+  static void NotifyChangedAllWindows(widget::ThemeChangeKind);
 };
 
 }  // namespace mozilla
@@ -565,13 +566,20 @@ struct LookAndFeelFont {
   bool bold;
 };
 
+struct LookAndFeelColor {
+  mozilla::LookAndFeel::ColorID id;
+  nscolor color;
+};
+
 struct LookAndFeelCache {
   void Clear() {
     mInts.Clear();
     mFonts.Clear();
+    mColors.Clear();
   }
   nsTArray<LookAndFeelInt> mInts;
   nsTArray<LookAndFeelFont> mFonts;
+  nsTArray<LookAndFeelColor> mColors;
 };
 
 // On the Mac, GetColor(ColorID::TextSelectForeground, color) returns this

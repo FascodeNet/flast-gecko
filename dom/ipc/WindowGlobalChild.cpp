@@ -551,13 +551,29 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvAddBlockedFrameNodeByClassifier(
   return IPC_OK();
 }
 
-IPCResult WindowGlobalChild::RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                            const ClonedMessageData& aData,
-                                            const ClonedMessageData& aStack) {
-  StructuredCloneData data;
-  data.BorrowFromClonedMessageDataForChild(aData);
-  StructuredCloneData stack;
-  stack.BorrowFromClonedMessageDataForChild(aStack);
+mozilla::ipc::IPCResult WindowGlobalChild::RecvResetScalingZoom() {
+  if (Document* doc = mWindowGlobal->GetExtantDoc()) {
+    if (PresShell* ps = doc->GetPresShell()) {
+      ps->SetResolutionAndScaleTo(1.0,
+                                  ResolutionChangeOrigin::MainThreadAdjustment);
+    }
+  }
+  return IPC_OK();
+}
+
+IPCResult WindowGlobalChild::RecvRawMessage(
+    const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
+    const Maybe<ClonedMessageData>& aStack) {
+  Maybe<StructuredCloneData> data;
+  if (aData) {
+    data.emplace();
+    data->BorrowFromClonedMessageDataForChild(*aData);
+  }
+  Maybe<StructuredCloneData> stack;
+  if (aStack) {
+    stack.emplace();
+    stack->BorrowFromClonedMessageDataForChild(*aStack);
+  }
   ReceiveRawMessage(aMeta, std::move(data), std::move(stack));
   return IPC_OK();
 }
@@ -633,14 +649,21 @@ void WindowGlobalChild::ActorDestroy(ActorDestroyReason aWhy) {
   JSActorDidDestroy();
 }
 
-bool WindowGlobalChild::SameOriginWithTop() {
-  nsGlobalWindowInner* topWindow =
-      WindowContext()->TopWindowContext()->GetInnerWindow();
-  if (!topWindow) {
-    return false;
+bool WindowGlobalChild::IsSameOriginWith(
+    const dom::WindowContext* aOther) const {
+  if (aOther == WindowContext()) {
+    return true;
   }
-  return mWindowGlobal == topWindow ||
-         mDocumentPrincipal->Equals(topWindow->GetPrincipal());
+
+  MOZ_DIAGNOSTIC_ASSERT(WindowContext()->Group() == aOther->Group());
+  if (nsGlobalWindowInner* otherWin = aOther->GetInnerWindow()) {
+    return mDocumentPrincipal->Equals(otherWin->GetPrincipal());
+  }
+  return false;
+}
+
+bool WindowGlobalChild::SameOriginWithTop() {
+  return IsSameOriginWith(WindowContext()->TopWindowContext());
 }
 
 WindowGlobalChild::~WindowGlobalChild() {

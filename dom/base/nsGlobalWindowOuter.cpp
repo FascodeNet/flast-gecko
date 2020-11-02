@@ -57,8 +57,6 @@
 #include "nsISizeOfEventTarget.h"
 #include "nsDOMJSUtils.h"
 #include "nsArrayUtils.h"
-#include "mozilla/dom/WakeLock.h"
-#include "mozilla/dom/power/PowerManagerService.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIPermissionManager.h"
@@ -2496,6 +2494,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
   mStorageAccessPermissionGranted = ContentBlocking::ShouldAllowAccessFor(
       newInnerWindow, aDocument->GetDocumentURI(), nullptr);
 
+  // Do this here rather than in say the Document constructor, since
+  // we need a WindowContext available.
+  mDoc->InitUseCounters();
+
   return NS_OK;
 }
 
@@ -4739,26 +4741,6 @@ void nsGlobalWindowOuter::FinishFullscreenChange(bool aIsFullscreen) {
       mChromeFields.mFullscreenPresShell = nullptr;
     }
   }
-
-  if (!mWakeLock && mFullscreen) {
-    RefPtr<power::PowerManagerService> pmService =
-        power::PowerManagerService::GetInstance();
-    if (!pmService) {
-      return;
-    }
-
-    // XXXkhuey using the inner here, do we need to do something if it changes?
-    ErrorResult rv;
-    mWakeLock = pmService->NewWakeLock(u"DOM_Fullscreen"_ns,
-                                       GetCurrentInnerWindow(), rv);
-    NS_WARNING_ASSERTION(!rv.Failed(), "Failed to lock the wakelock");
-    rv.SuppressException();
-  } else if (mWakeLock && !mFullscreen) {
-    ErrorResult rv;
-    mWakeLock->Unlock(rv);
-    mWakeLock = nullptr;
-    rv.SuppressException();
-  }
 }
 
 bool nsGlobalWindowOuter::Fullscreen() const {
@@ -5205,6 +5187,13 @@ void nsGlobalWindowOuter::BlurOuter() {
 }
 
 void nsGlobalWindowOuter::StopOuter(ErrorResult& aError) {
+  // IsNavigationAllowed checks are usually done in nsDocShell directly,
+  // however nsDocShell::Stop has a bunch of internal users that would fail
+  // the IsNavigationAllowed check.
+  if (!mDocShell || !nsDocShell::Cast(mDocShell)->IsNavigationAllowed()) {
+    return;
+  }
+
   nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
   if (webNav) {
     aError = webNav->Stop(nsIWebNavigation::STOP_ALL);
@@ -6382,44 +6371,12 @@ void nsGlobalWindowOuter::ReallyCloseWindow() {
   mHavePendingClose = true;
 
   nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = GetTreeOwnerWindow();
-
-  // If there's no treeOwnerAsWin, this window must already be closed.
-
-  if (treeOwnerAsWin) {
-    // but if we're a browser window we could be in some nasty
-    // self-destroying cascade that we should mostly ignore
-
-    if (mDocShell) {
-      nsCOMPtr<nsIBrowserDOMWindow> bwin;
-      nsCOMPtr<nsIDocShellTreeItem> rootItem;
-      mDocShell->GetInProcessRootTreeItem(getter_AddRefs(rootItem));
-      nsCOMPtr<nsPIDOMWindowOuter> rootWin =
-          rootItem ? rootItem->GetWindow() : nullptr;
-      nsCOMPtr<nsIDOMChromeWindow> chromeWin(do_QueryInterface(rootWin));
-      if (chromeWin) chromeWin->GetBrowserDOMWindow(getter_AddRefs(bwin));
-
-      if (rootWin) {
-        /* Normally we destroy the entire window, but not if
-           this DOM window belongs to a tabbed browser and doesn't
-           correspond to a tab. This allows a well-behaved tab
-           to destroy the container as it should but is a final measure
-           to prevent an errant tab from doing so when it shouldn't.
-           This works because we reach this code when we shouldn't only
-           in the particular circumstance that we belong to a tab
-           that has just been closed (and is therefore already missing
-           from the list of browsers) (and has an unload handler
-           that closes the window). */
-        // XXXbz now that we have mHavePendingClose, is this needed?
-        bool isTab;
-        if (rootWin == this || !bwin ||
-            (NS_SUCCEEDED(bwin->IsTabContentWindow(this, &isTab)) && isTab)) {
-          treeOwnerAsWin->Destroy();
-        }
-      }
-    }
-
-    CleanUp();
+  if (!treeOwnerAsWin) {
+    return;
   }
+
+  treeOwnerAsWin->Destroy();
+  CleanUp();
 }
 
 void nsGlobalWindowOuter::EnterModalState() {

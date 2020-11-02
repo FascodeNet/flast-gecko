@@ -114,7 +114,7 @@ const Types = (exports.__TypesForTests = [
     front: null,
   },
   {
-    types: ["highlighter", "customhighlighter"],
+    types: ["customhighlighter"],
     spec: "devtools/shared/specs/highlighters",
     front: "devtools/client/fronts/highlighters",
   },
@@ -137,6 +137,11 @@ const Types = (exports.__TypesForTests = [
     types: ["memory"],
     spec: "devtools/shared/specs/memory",
     front: "devtools/client/fronts/memory",
+  },
+  {
+    types: ["network"],
+    spec: "devtools/shared/specs/network",
+    front: "devtools/client/fronts/network",
   },
   {
     types: ["netEvent"],
@@ -208,6 +213,11 @@ const Types = (exports.__TypesForTests = [
     types: ["source"],
     spec: "devtools/shared/specs/source",
     front: "devtools/client/fronts/source",
+  },
+  {
+    types: ["stacktraces"],
+    spec: "devtools/shared/specs/stacktraces",
+    front: "devtools/client/fronts/stacktraces",
   },
   {
     types: [
@@ -285,7 +295,7 @@ const Types = (exports.__TypesForTests = [
   {
     types: ["workerTarget"],
     spec: "devtools/shared/specs/targets/worker",
-    front: null,
+    front: "devtools/client/fronts/targets/worker",
   },
   {
     types: ["thread"],

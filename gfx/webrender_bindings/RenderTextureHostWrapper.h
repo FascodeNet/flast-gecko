@@ -21,8 +21,8 @@ namespace wr {
  * longer than GPUVideoTextureHost and the wrapped TextureHost is used by
  * multiple GPUVideoTextureHosts. This class is used to reduce recreations of
  * the wrappded RenderTextureHost. Initializations of some
- * RenderTextureHosts(RenderDXGITextureHostOGL and
- * RenderDXGIYCbCrTextureHostOGL) have overhead.
+ * RenderTextureHosts(RenderDXGITextureHost and
+ * RenderDXGIYCbCrTextureHost) have overhead.
  */
 class RenderTextureHostWrapper final : public RenderTextureHostSWGL {
  public:
@@ -33,20 +33,22 @@ class RenderTextureHostWrapper final : public RenderTextureHostSWGL {
                            wr::ImageRendering aRendering) override;
   void Unlock() override;
   void ClearCachedResources() override;
-  RenderMacIOSurfaceTextureHostOGL* AsRenderMacIOSurfaceTextureHostOGL()
-      override;
-  RenderDXGITextureHostOGL* AsRenderDXGITextureHostOGL() override;
+  RenderMacIOSurfaceTextureHost* AsRenderMacIOSurfaceTextureHost() override;
+  RenderDXGITextureHost* AsRenderDXGITextureHost() override;
 
   // RenderTextureHostSWGL
-  size_t GetPlaneCount() override;
+  size_t GetPlaneCount() const override;
+  gfx::SurfaceFormat GetFormat() const override;
+  gfx::ColorDepth GetColorDepth() const override;
+  gfx::YUVColorSpace GetYUVColorSpace() const override;
   bool MapPlane(uint8_t aChannelIndex, PlaneInfo& aPlaneInfo) override;
   void UnmapPlanes() override;
-  gfx::YUVColorSpace GetYUVColorSpace() const override;
 
  private:
   ~RenderTextureHostWrapper() override;
 
   void EnsureTextureHost() const;
+  RenderTextureHostSWGL* EnsureRenderTextureHostSWGL() const;
 
   const ExternalImageId mExternalImageId;
   mutable RefPtr<RenderTextureHost> mTextureHost;

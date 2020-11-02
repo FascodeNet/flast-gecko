@@ -594,6 +594,7 @@ void ParseTask::trace(JSTracer* trc) {
   if (compilationInfos_) {
     compilationInfos_->trace(trc);
   }
+  gcOutput_.trace(trc);
 }
 
 size_t ParseTask::sizeOfExcludingThis(
@@ -687,6 +688,12 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
   compilationInfo_ =
       frontend::CompileGlobalScriptToStencil(cx, options, data, scopeKind);
 
+  if (compilationInfo_) {
+    if (!frontend::PrepareForInstantiate(cx, *compilationInfo_, gcOutput_)) {
+      compilationInfo_ = nullptr;
+    }
+  }
+
   if (options.useOffThreadParseGlobal) {
     Unused << instantiateStencils(cx);
   }
@@ -697,27 +704,26 @@ bool ParseTask::instantiateStencils(JSContext* cx) {
     return false;
   }
 
-  frontend::CompilationGCOutput gcOutput(cx);
   bool result;
   if (compilationInfo_) {
-    result = frontend::InstantiateStencils(cx, *compilationInfo_, gcOutput);
+    result = frontend::InstantiateStencils(cx, *compilationInfo_, gcOutput_);
   } else {
-    result = frontend::InstantiateStencils(cx, *compilationInfos_, gcOutput);
+    result = frontend::InstantiateStencils(cx, *compilationInfos_, gcOutput_);
   }
 
   // Whatever happens to the top-level script compilation (even if it fails),
   // we must finish initializing the SSO.  This is because there may be valid
   // inner scripts observable by the debugger which reference the partially-
   // initialized SSO.
-  if (gcOutput.sourceObject) {
-    sourceObjects.infallibleAppend(gcOutput.sourceObject);
+  if (gcOutput_.sourceObject) {
+    sourceObjects.infallibleAppend(gcOutput_.sourceObject);
   }
 
   if (result) {
-    MOZ_ASSERT(gcOutput.script);
-    MOZ_ASSERT_IF(gcOutput.module,
-                  gcOutput.module->script() == gcOutput.script);
-    scripts.infallibleAppend(gcOutput.script);
+    MOZ_ASSERT(gcOutput_.script);
+    MOZ_ASSERT_IF(gcOutput_.module,
+                  gcOutput_.module->script() == gcOutput_.script);
+    scripts.infallibleAppend(gcOutput_.script);
   }
 
   return result;
@@ -747,6 +753,12 @@ void ModuleParseTask<Unit>::parse(JSContext* cx) {
   options.setModule();
 
   compilationInfo_ = frontend::ParseModuleToStencil(cx, options, data);
+
+  if (compilationInfo_) {
+    if (!frontend::PrepareForInstantiate(cx, *compilationInfo_, gcOutput_)) {
+      compilationInfo_ = nullptr;
+    }
+  }
 
   if (options.useOffThreadParseGlobal) {
     Unused << instantiateStencils(cx);
@@ -788,6 +800,12 @@ void ScriptDecodeTask::parse(JSContext* cx) {
     }
 
     compilationInfos_ = std::move(compilationInfos.get());
+
+    if (compilationInfos_) {
+      if (!frontend::PrepareForInstantiate(cx, *compilationInfos_, gcOutput_)) {
+        compilationInfos_ = nullptr;
+      }
+    }
 
     return;
   }
@@ -861,24 +879,12 @@ void MultiScriptsDecodeTask::parse(JSContext* cx) {
   }
 }
 
-void js::CancelOffThreadParses(JSRuntime* rt) {
-  AutoLockHelperThreadState lock;
-
+static void WaitForOffThreadParses(JSRuntime* rt,
+                                   AutoLockHelperThreadState& lock) {
   if (HelperThreadState().threads(lock).empty()) {
     return;
   }
 
-#ifdef DEBUG
-  GlobalHelperThreadState::ParseTaskVector& waitingOnGC =
-      HelperThreadState().parseWaitingOnGC(lock);
-  for (size_t i = 0; i < waitingOnGC.length(); i++) {
-    MOZ_ASSERT(!waitingOnGC[i]->runtimeMatches(rt));
-  }
-#endif
-
-  // Instead of forcibly canceling pending parse tasks, just wait for all
-  // scheduled and in progress ones to complete. Otherwise the final GC may not
-  // collect everything due to zones being used off thread.
   while (true) {
     bool pending = false;
     GlobalHelperThreadState::ParseTaskVector& worklist =
@@ -905,6 +911,26 @@ void js::CancelOffThreadParses(JSRuntime* rt) {
     }
     HelperThreadState().wait(lock, GlobalHelperThreadState::CONSUMER);
   }
+}
+
+void js::WaitForOffThreadParses(JSRuntime* rt) {
+  AutoLockHelperThreadState lock;
+  WaitForOffThreadParses(rt, lock);
+}
+
+void js::CancelOffThreadParses(JSRuntime* rt) {
+  AutoLockHelperThreadState lock;
+
+#ifdef DEBUG
+  for (const auto& task : HelperThreadState().parseWaitingOnGC(lock)) {
+    MOZ_ASSERT(!task->runtimeMatches(rt));
+  }
+#endif
+
+  // Instead of forcibly canceling pending parse tasks, just wait for all
+  // scheduled and in progress ones to complete. Otherwise the final GC may not
+  // collect everything due to zones being used off thread.
+  WaitForOffThreadParses(rt, lock);
 
   // Clean up any parse tasks which haven't been finished by the main thread.
   auto& finished = HelperThreadState().parseFinishedList(lock);
@@ -927,9 +953,7 @@ void js::CancelOffThreadParses(JSRuntime* rt) {
   }
 
 #ifdef DEBUG
-  GlobalHelperThreadState::ParseTaskVector& worklist =
-      HelperThreadState().parseWorklist(lock);
-  for (const auto& task : worklist) {
+  for (const auto& task : HelperThreadState().parseWorklist(lock)) {
     MOZ_ASSERT(!task->runtimeMatches(rt));
   }
 #endif

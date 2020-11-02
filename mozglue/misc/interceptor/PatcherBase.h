@@ -122,13 +122,13 @@ class WindowsDllPatcherBase {
   }
 
 #if defined(NIGHTLY_BUILD)
-  const Maybe<DetourError>& GetLastError() const {
-    return mVMPolicy.GetLastError();
+  const Maybe<DetourError>& GetLastDetourError() const {
+    return mVMPolicy.GetLastDetourError();
   }
 #endif  // defined(NIGHTLY_BUILD)
   template <typename... Args>
-  void SetLastError(Args&&... aArgs) {
-    mVMPolicy.SetLastError(std::forward<Args>(aArgs)...);
+  void SetLastDetourError(Args&&... aArgs) {
+    mVMPolicy.SetLastDetourError(std::forward<Args>(aArgs)...);
   }
 
  protected:

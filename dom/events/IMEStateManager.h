@@ -79,6 +79,21 @@ class IMEStateManager {
   }
 
   /**
+   * If CanSendNotificationToWidget() returns false (it should occur
+   * only in a content process), we shouldn't notify the widget of
+   * any focused editor changes since the content process was blurred.
+   * Also, even if content process, widget has native text event dispatcher such
+   * as Android, it still notify it.
+   */
+  static bool CanSendNotificationToWidget() {
+#ifdef MOZ_WIDGET_ANDROID
+    return true;
+#else
+    return !sCleaningUpForStoppingIMEStateManagement;
+#endif
+  }
+
+  /**
    * Focus moved between browsers from aBlur to aFocus. (nullptr means the
    * chrome process.)
    */
@@ -205,6 +220,9 @@ class IMEStateManager {
   // This method is called when the editor is (might be temporarily) being
   // destroyed.
   static void OnEditorDestroying(EditorBase& aEditorBase);
+
+  // This method is called when focus is set to same content again.
+  static void OnReFocus(nsPresContext* aPresContext, nsIContent& aContent);
 
   /**
    * All composition events must be dispatched via DispatchCompositionEvent()
@@ -368,6 +386,10 @@ class IMEStateManager {
 
   static bool sIsGettingNewIMEState;
   static bool sCheckForIMEUnawareWebApps;
+
+  // Set to true only if this is an instance in a content process and
+  // only while `IMEStateManager::StopIMEStateManagement()`.
+  static bool sCleaningUpForStoppingIMEStateManagement;
 
   class MOZ_STACK_CLASS GettingNewIMEStateBlocker final {
    public:

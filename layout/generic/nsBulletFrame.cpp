@@ -430,13 +430,7 @@ ImgDrawResult BulletRenderer::CreateWebRenderCommandsForImage(
   MOZ_RELEASE_ASSERT(IsImageType());
   MOZ_RELEASE_ASSERT(mImage);
 
-  uint32_t flags = imgIContainer::FLAG_ASYNC_NOTIFY;
-  if (aDisplayListBuilder->UseHighQualityScaling()) {
-    flags |= imgIContainer::FLAG_HIGH_QUALITY_SCALING;
-  }
-  if (aDisplayListBuilder->ShouldSyncDecodeImages()) {
-    flags |= imgIContainer::FLAG_SYNC_DECODE;
-  }
+  uint32_t flags = aDisplayListBuilder->GetImageDecodeFlags();
 
   const int32_t appUnitsPerDevPixel =
       aItem->Frame()->PresContext()->AppUnitsPerDevPixel();
@@ -1027,7 +1021,7 @@ static inline bool IsIgnoreable(const nsIFrame* aFrame, nscoord aISize) {
 void nsBulletFrame::AddInlineMinISize(gfxContext* aRenderingContext,
                                       nsIFrame::InlineMinISizeData* aData) {
   nscoord isize = nsLayoutUtils::IntrinsicForContainer(
-      aRenderingContext, this, nsLayoutUtils::MIN_ISIZE);
+      aRenderingContext, this, IntrinsicISizeType::MinISize);
   if (MOZ_LIKELY(!::IsIgnoreable(this, isize))) {
     aData->DefaultAddInlineMinISize(this, isize);
   }
@@ -1037,7 +1031,7 @@ void nsBulletFrame::AddInlineMinISize(gfxContext* aRenderingContext,
 void nsBulletFrame::AddInlinePrefISize(gfxContext* aRenderingContext,
                                        nsIFrame::InlinePrefISizeData* aData) {
   nscoord isize = nsLayoutUtils::IntrinsicForContainer(
-      aRenderingContext, this, nsLayoutUtils::PREF_ISIZE);
+      aRenderingContext, this, IntrinsicISizeType::PrefISize);
   if (MOZ_LIKELY(!::IsIgnoreable(this, isize))) {
     aData->DefaultAddInlinePrefISize(isize);
   }

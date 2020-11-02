@@ -9,6 +9,9 @@
 %define urlbarViewIconMarginEnd (@identityBoxPaddingInline@ + @identityBoxMarginInlineEnd@)
 %define urlbarViewMarginInline 7px
 %define urlbarViewItemInlinePadding 6px
+%define urlbarViewFaviconWidth 16px
+
+%include ../shared/urlbar/dynamicResults.inc.css
 
 :root {
   --autocomplete-popup-background: var(--arrowpanel-background);
@@ -24,6 +27,7 @@
   --urlbarView-primary-button-background: #0060df;
   --urlbarView-primary-button-background-hover: #003eaa;
   --urlbarView-primary-button-background-active: #002275;
+  --urlbarView-action-slide-in-distance: 200px;
 }
 
 :root:-moz-lwtheme {
@@ -39,6 +43,10 @@
   --urlbarView-button-background: rgba(249, 249, 250, 0.24);
   --urlbarView-button-background-hover: rgba(249, 249, 250, 0.15);
   --urlbarView-button-background-active: rgba(249, 249, 250, 0.2);
+}
+
+:root:-moz-locale-dir(rtl) {
+  --urlbarView-action-slide-in-distance: -200px;
 }
 
 .urlbarView {
@@ -113,11 +121,11 @@
 
 .urlbarView[actionoverride] .urlbarView-row[has-url] > .urlbarView-row-inner > .urlbarView-no-wrap,
 .urlbarView-row[has-url]:not([type$=tab]) > .urlbarView-row-inner > .urlbarView-no-wrap,
-.urlbarView-row[has-url][type=remotetab]:is(:hover, [selected]) > .urlbarView-row-inner > .urlbarView-no-wrap {
+.urlbarView-row[has-url]:is([type=remotetab], [sponsored]):is(:hover, [selected]) > .urlbarView-row-inner > .urlbarView-no-wrap {
   /* We prioritize icons + title + action over the url, so they can grow freely,
      but the url should never disappear when it's visible */
   flex-shrink: 0;
-  max-width: calc(70% - 2 * (16px + (6px + 2px)));
+  max-width: calc(70% - 2 * (@urlbarViewFaviconWidth@ + (6px + 2px)));
 }
 
 /* Wrap the url to a second line when the window is narrow. Do not wrap when the
@@ -135,17 +143,25 @@
   }
   /* urlbarView-url is forced to be LTR for RTL locales, so set the padding based on the browser's directionality. */
   .urlbarView-results[wrap] > .urlbarView-row[has-url] > .urlbarView-row-inner > .urlbarView-url:-moz-locale-dir(ltr) {
-    padding-left: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInlineEnd@ + /* favicon */ 16px);
+    padding-left: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInlineEnd@ + @urlbarViewFaviconWidth@);
   }
   .urlbarView-results[wrap] > .urlbarView-row[has-url] > .urlbarView-row-inner > .urlbarView-url:-moz-locale-dir(rtl) {
-    padding-right: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInlineEnd@ + /* favicon */ 16px);
+    padding-right: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInlineEnd@ + @urlbarViewFaviconWidth@);
   }
   /* Note: switchtab entries show the url only in override mode,
-     remotetab only when selected or :hover */
+     remotetab and sponsored ones only when selected or :hover. */
   .urlbarView[actionoverride] .urlbarView-results[wrap] > .urlbarView-row[has-url] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title-separator,
   .urlbarView-results[wrap] > .urlbarView-row[has-url]:not([type$=tab]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title-separator,
-  .urlbarView-results[wrap] > .urlbarView-row[type=remotetab]:is(:hover, [selected]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title-separator {
+  .urlbarView-results[wrap] > .urlbarView-row:is([type=remotetab], [sponsored]):is(:hover, [selected]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title-separator,
+  .urlbarView-results[wrap] > .urlbarView-row[type=tabtosearch] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title-separator {
     display: none;
+  }
+  .urlbarView-results[wrap] > .urlbarView-row[type=tabtosearch] > .urlbarView-row-inner > .urlbarView-no-wrap {
+    flex-wrap: wrap;
+  }
+  .urlbarView-results[wrap] > .urlbarView-row[type=tabtosearch] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action {
+    flex-basis: 100%;
+    margin-inline-start: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInlineEnd@ + @urlbarViewFaviconWidth@);
   }
 }
 
@@ -183,8 +199,8 @@
 /* Favicon */
 
 .urlbarView-favicon {
-  min-width: 16px;
-  height: 16px;
+  min-width: @urlbarViewFaviconWidth@;
+  height: @urlbarViewFaviconWidth@;
   margin-inline-end: calc(@urlbarViewIconMarginEnd@);
   background-repeat: no-repeat;
   background-size: contain;
@@ -208,6 +224,25 @@
 
 .urlbarView-row[tail-suggestion] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon {
   visibility: hidden;
+}
+
+.urlbarView-row[type=tabtosearch] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon {
+  color: #0060df; /* Blue-60 */
+  stroke: #fff;
+  -moz-context-properties: fill, stroke;
+}
+
+.urlbarView-row[type=tabtosearch][selected] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon {
+  color: #fff;
+  stroke: #0060df;
+}
+
+:root[lwt-toolbar-field-brighttext] .urlbarView-row[type=tabtosearch]:not([selected]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon {
+  color: #0a84ff; /* Blue-50 */
+}
+
+:root[lwt-toolbar-field-brighttext] .urlbarView-row[type=tabtosearch][selected] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon {
+  stroke: #0a84ff;
 }
 
 /* Type icon */
@@ -422,10 +457,15 @@
   color: var(--urlbar-popup-action-color);
 }
 
+.urlbarView-row[sponsored] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action {
+  color: unset;
+  opacity: .6;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   @keyframes urlbarView-action-slide-in {
     0% {
-      transform: translateX(200px);
+      transform: translateX(var(--urlbarView-action-slide-in-distance));
       opacity: 0;
     }
     100% {
@@ -434,7 +474,7 @@
     }
   }
 
-  .urlbarView-results:not([wrap]) > .urlbarView-row > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title:not(:empty) ~ .urlbarView-action[slide-in] {
+  .urlbarView-results > .urlbarView-row > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title:not(:empty) ~ .urlbarView-action[slide-in] {
     animation-name: urlbarView-action-slide-in;
     animation-duration: 250ms;
     animation-timing-function: var(--animation-easing-function);
@@ -451,7 +491,7 @@
   color: inherit;
 }
 
-.urlbarView-row[type=remotetab]:not([selected]):not(:hover) > .urlbarView-row-inner > .urlbarView-url,
+.urlbarView-row:is([type=remotetab], [sponsored]):not([selected]):not(:hover) > .urlbarView-row-inner > .urlbarView-url,
 .urlbarView-row[type=search]:not([selected]):not(:hover):not([show-action-text]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-title-separator,
 .urlbarView:not([actionoverride]) .urlbarView-row[type=switchtab] > .urlbarView-row-inner > .urlbarView-url {
   /* Use visibility:collapse instead of display:none since the latter can
@@ -460,8 +500,7 @@
   visibility: collapse;
 }
 
-.urlbarView-row[type=remotetab][selected] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action,
-.urlbarView-row[type=remotetab]:hover > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action,
+.urlbarView-row:is([type=remotetab], [sponsored]):is([selected], :hover) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action,
 .urlbarView-row[type=search]:not([selected]):not(:hover):not([show-action-text]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action,
 .urlbarView[actionoverride] .urlbarView-row[type=switchtab] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action {
   display: none;

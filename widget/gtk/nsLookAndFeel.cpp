@@ -22,6 +22,7 @@
 #include "mozilla/RelativeLuminanceUtils.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_widget.h"
+#include "mozilla/Telemetry.h"
 #include "ScreenHelperGTK.h"
 
 #include "gtkdrawing.h"
@@ -269,12 +270,23 @@ void nsLookAndFeel::RefreshImpl() {
 LookAndFeelCache nsLookAndFeel::GetCacheImpl() {
   LookAndFeelCache cache = nsXPLookAndFeel::GetCacheImpl();
 
-  const IntID kIdsToCache[] = {IntID::SystemUsesDarkTheme,
-                               IntID::PrefersReducedMotion,
-                               IntID::UseAccessibilityTheme};
+  constexpr IntID kIntIdsToCache[] = {IntID::SystemUsesDarkTheme,
+                                      IntID::PrefersReducedMotion,
+                                      IntID::UseAccessibilityTheme};
+  constexpr ColorID kColorIdsToCache[] = {
+      ColorID::ThemedScrollbar,
+      ColorID::ThemedScrollbarInactive,
+      ColorID::ThemedScrollbarThumb,
+      ColorID::ThemedScrollbarThumbHover,
+      ColorID::ThemedScrollbarThumbActive,
+      ColorID::ThemedScrollbarThumbInactive};
 
-  for (IntID id : kIdsToCache) {
+  for (IntID id : kIntIdsToCache) {
     cache.mInts.AppendElement(LookAndFeelInt{.id = id, .value = GetInt(id)});
+  }
+  for (ColorID id : kColorIdsToCache) {
+    cache.mColors.AppendElement(
+        LookAndFeelColor{.id = id, .color = GetColor(id)});
   }
 
   return cache;
@@ -294,6 +306,31 @@ void nsLookAndFeel::SetCacheImpl(const LookAndFeelCache& aCache) {
         break;
       default:
         MOZ_ASSERT_UNREACHABLE("Bogus Int ID in cache");
+        break;
+    }
+  }
+  for (const auto& entry : aCache.mColors) {
+    switch (entry.id) {
+      case ColorID::ThemedScrollbar:
+        mThemedScrollbar = entry.color;
+        break;
+      case ColorID::ThemedScrollbarInactive:
+        mThemedScrollbarInactive = entry.color;
+        break;
+      case ColorID::ThemedScrollbarThumb:
+        mThemedScrollbarThumb = entry.color;
+        break;
+      case ColorID::ThemedScrollbarThumbHover:
+        mThemedScrollbarThumbHover = entry.color;
+        break;
+      case ColorID::ThemedScrollbarThumbActive:
+        mThemedScrollbarThumbActive = entry.color;
+        break;
+      case ColorID::ThemedScrollbarThumbInactive:
+        mThemedScrollbarThumbInactive = entry.color;
+        break;
+      default:
+        MOZ_ASSERT_UNREACHABLE("Bogus Color ID in cache");
         break;
     }
   }
@@ -376,6 +413,24 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
       break;
     case ColorID::SpellCheckerUnderline:
       aColor = NS_RGB(0xff, 0, 0);
+      break;
+    case ColorID::ThemedScrollbar:
+      aColor = mThemedScrollbar;
+      break;
+    case ColorID::ThemedScrollbarInactive:
+      aColor = mThemedScrollbarInactive;
+      break;
+    case ColorID::ThemedScrollbarThumb:
+      aColor = mThemedScrollbarThumb;
+      break;
+    case ColorID::ThemedScrollbarThumbHover:
+      aColor = mThemedScrollbarThumbHover;
+      break;
+    case ColorID::ThemedScrollbarThumbActive:
+      aColor = mThemedScrollbarThumbActive;
+      break;
+    case ColorID::ThemedScrollbarThumbInactive:
+      aColor = mThemedScrollbarThumbInactive;
       break;
 
       // css2  http://www.w3.org/TR/REC-CSS2/ui.html#system-colors
@@ -993,6 +1048,7 @@ void nsLookAndFeel::EnsureInit() {
   MOZ_ASSERT(NS_IsMainThread());
 
   GtkStyleContext* style;
+  GdkRGBA color;
 
   if (XRE_IsContentProcess()) {
     LOG(("nsLookAndFeel::EnsureInit() [%p] Content process\n", (void*)this));
@@ -1023,6 +1079,30 @@ void nsLookAndFeel::EnsureInit() {
     gboolean enableAnimations = false;
     g_object_get(settings, "gtk-enable-animations", &enableAnimations, nullptr);
     mPrefersReducedMotion = !enableAnimations;
+
+    // Colors that we pass to content processes through the LookAndFeelCache.
+    style = GetStyleContext(MOZ_GTK_SCROLLBAR_TROUGH_VERTICAL);
+    gtk_style_context_get_background_color(style, GTK_STATE_FLAG_NORMAL,
+                                           &color);
+    mMozScrollbar = mThemedScrollbar = GDK_RGBA_TO_NS_RGBA(color);
+    gtk_style_context_get_background_color(style, GTK_STATE_FLAG_BACKDROP,
+                                           &color);
+    mThemedScrollbarInactive = GDK_RGBA_TO_NS_RGBA(color);
+
+    style = GetStyleContext(MOZ_GTK_SCROLLBAR_THUMB_VERTICAL);
+    gtk_style_context_get_background_color(style, GTK_STATE_FLAG_NORMAL,
+                                           &color);
+    mThemedScrollbarThumb = GDK_RGBA_TO_NS_RGBA(color);
+    gtk_style_context_get_background_color(style, GTK_STATE_FLAG_PRELIGHT,
+                                           &color);
+    mThemedScrollbarThumbHover = GDK_RGBA_TO_NS_RGBA(color);
+    gtk_style_context_get_background_color(
+        style, GtkStateFlags(GTK_STATE_FLAG_PRELIGHT | GTK_STATE_FLAG_ACTIVE),
+        &color);
+    mThemedScrollbarThumbActive = GDK_RGBA_TO_NS_RGBA(color);
+    gtk_style_context_get_background_color(style, GTK_STATE_FLAG_BACKDROP,
+                                           &color);
+    mThemedScrollbarThumbInactive = GDK_RGBA_TO_NS_RGBA(color);
   }
 
   // The label is not added to a parent widget, but shared for constructing
@@ -1030,12 +1110,6 @@ void nsLookAndFeel::EnsureInit() {
   // the label style context.
   GtkWidget* labelWidget = gtk_label_new("M");
   g_object_ref_sink(labelWidget);
-
-  // Scrollbar colors
-  GdkRGBA color;
-  style = GetStyleContext(MOZ_GTK_SCROLLBAR_TROUGH_VERTICAL);
-  gtk_style_context_get_background_color(style, GTK_STATE_FLAG_NORMAL, &color);
-  mMozScrollbar = GDK_RGBA_TO_NS_RGBA(color);
 
   // Window colors
   style = GetStyleContext(MOZ_GTK_WINDOW);
@@ -1328,3 +1402,52 @@ char16_t nsLookAndFeel::GetPasswordCharacterImpl() {
 }
 
 bool nsLookAndFeel::GetEchoPasswordImpl() { return false; }
+
+bool nsLookAndFeel::WidgetUsesImage(WidgetNodeType aNodeType) {
+  static constexpr GtkStateFlags sFlagsToCheck[] {
+    GTK_STATE_FLAG_NORMAL,
+    GTK_STATE_FLAG_PRELIGHT,
+    GtkStateFlags(GTK_STATE_FLAG_PRELIGHT | GTK_STATE_FLAG_ACTIVE),
+    GTK_STATE_FLAG_BACKDROP,
+    GTK_STATE_FLAG_INSENSITIVE
+  };
+
+  GtkStyleContext* style = GetStyleContext(aNodeType);
+
+  GValue value = G_VALUE_INIT;
+  for (GtkStateFlags state : sFlagsToCheck) {
+    gtk_style_context_get_property(style, "background-image", state, &value);
+    bool hasPattern = G_VALUE_TYPE(&value) == CAIRO_GOBJECT_TYPE_PATTERN &&
+                      g_value_get_boxed(&value);
+    g_value_unset(&value);
+    if (hasPattern) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void nsLookAndFeel::RecordLookAndFeelSpecificTelemetry() {
+  // Gtk version we're on.
+  nsString version;
+  version.AppendPrintf("%d.%d", gtk_major_version, gtk_minor_version);
+  Telemetry::ScalarSet(Telemetry::ScalarID::WIDGET_GTK_VERSION, version);
+
+  // Whether the current Gtk theme has scrollbar buttons.
+  bool hasScrollbarButtons =
+      GetInt(LookAndFeel::IntID::ScrollArrowStyle) != eScrollArrow_None;
+  mozilla::Telemetry::ScalarSet(
+      mozilla::Telemetry::ScalarID::WIDGET_GTK_THEME_HAS_SCROLLBAR_BUTTONS,
+      hasScrollbarButtons);
+
+  // Whether the current Gtk theme uses something other than a solid color
+  // background for scrollbar parts.
+  bool scrollbarUsesImage =
+      WidgetUsesImage(MOZ_GTK_SCROLLBAR_VERTICAL) ||
+      WidgetUsesImage(MOZ_GTK_SCROLLBAR_CONTENTS_VERTICAL) ||
+      WidgetUsesImage(MOZ_GTK_SCROLLBAR_TROUGH_VERTICAL) ||
+      WidgetUsesImage(MOZ_GTK_SCROLLBAR_THUMB_VERTICAL);
+  mozilla::Telemetry::ScalarSet(
+      mozilla::Telemetry::ScalarID::WIDGET_GTK_THEME_SCROLLBAR_USES_IMAGES,
+      scrollbarUsesImage);
+}

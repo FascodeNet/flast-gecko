@@ -42,6 +42,7 @@ const NEWPROFILE_PING_DEFAULT_DELAY = 30 * 60 * 1000;
 // Ping types.
 const PING_TYPE_MAIN = "main";
 const PING_TYPE_DELETION_REQUEST = "deletion-request";
+const PING_TYPE_UNINSTALL = "uninstall";
 
 // Session ping reasons.
 const REASON_GATHER_PAYLOAD = "gather-payload";
@@ -79,6 +80,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TelemetryEventPing: "resource://gre/modules/EventPing.jsm",
   EcosystemTelemetry: "resource://gre/modules/EcosystemTelemetry.jsm",
   TelemetryPrioPing: "resource://gre/modules/PrioPing.jsm",
+  UninstallPing: "resource://gre/modules/UninstallPing.jsm",
   OS: "resource://gre/modules/osfile.jsm",
 });
 
@@ -254,6 +256,19 @@ var TelemetryController = Object.freeze({
   },
 
   /**
+   * Create an uninstall ping and write it to disk, replacing any already present.
+   * This is stored independently from other pings, and only read by
+   * the Windows uninstaller.
+   *
+   * WINDOWS ONLY, does nothing and resolves immediately on other platforms.
+   *
+   * @return {Promise} Resolved when the ping has been saved.
+   */
+  saveUninstallPing() {
+    return Impl.saveUninstallPing();
+  },
+
+  /**
    * Allows waiting for TelemetryControllers delayed initialization to complete.
    * The returned promise is guaranteed to resolve before TelemetryController is shutting down.
    * @return {Promise} Resolved when delayed TelemetryController initialization completed.
@@ -362,7 +377,8 @@ var Impl = {
    * @param {String}  [aOptions.schemaNamespace=null] the schema namespace to use if encryption is enabled.
    * @param {String}  [aOptions.schemaVersion=null] the schema version to use if encryption is enabled.
    * @param {Boolean} [aOptions.addPioneerId=false] true if the ping should contain the Pioneer id, false otherwise.
-   *
+   * @param {Boolean} [aOptions.overridePioneerId=undefined] if set, override the
+   *                  pioneer id to the provided value. Only works if aOptions.addPioneerId=true.
    * @returns {Object} An object that contains the assembled ping data.
    */
   assemblePing: function assemblePing(aType, aPayload, aOptions = {}) {
@@ -438,6 +454,8 @@ var Impl = {
    * @param {String}  [aOptions.schemaNamespace=null] the schema namespace to use if encryption is enabled.
    * @param {String}  [aOptions.schemaVersion=null] the schema version to use if encryption is enabled.
    * @param {Boolean} [aOptions.addPioneerId=false] true if the ping should contain the Pioneer id, false otherwise.
+   * @param {Boolean} [aOptions.overridePioneerId=undefined] if set, override the
+   *                  pioneer id to the provided value. Only works if aOptions.addPioneerId=true.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
    * @returns {Promise} Test-only - a promise that is resolved with the ping id once the ping is stored or sent.
@@ -490,10 +508,16 @@ var Impl = {
         payload.encryptionKeyId = aOptions.encryptionKeyId;
 
         if (aOptions.addPioneerId === true) {
-          // This will throw if there is no pioneer ID set.
-          payload.pioneerId = Services.prefs.getStringPref(
-            "toolkit.telemetry.pioneerId"
-          );
+          if (aOptions.overridePioneerId) {
+            // The caller provided a substitute id, let's use that
+            // instead of querying the pref.
+            payload.pioneerId = aOptions.overridePioneerId;
+          } else {
+            // This will throw if there is no pioneer ID set.
+            payload.pioneerId = Services.prefs.getStringPref(
+              "toolkit.telemetry.pioneerId"
+            );
+          }
           payload.studyName = aOptions.studyName;
         }
 
@@ -546,6 +570,8 @@ var Impl = {
    * @param {String}  [aOptions.schemaNamespace=null] the schema namespace to use if encryption is enabled.
    * @param {String}  [aOptions.schemaVersion=null] the schema version to use if encryption is enabled.
    * @param {Boolean} [aOptions.addPioneerId=false] true if the ping should contain the Pioneer id, false otherwise.
+   * @param {Boolean} [aOptions.overridePioneerId=undefined] if set, override the
+   *                  pioneer id to the provided value. Only works if aOptions.addPioneerId=true.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
    * @returns {Promise} Test-only - a promise that is resolved with the ping id once the ping is stored or sent.
@@ -687,6 +713,29 @@ var Impl = {
 
   removeAbortedSessionPing() {
     return TelemetryStorage.removeAbortedSessionPing();
+  },
+
+  async saveUninstallPing() {
+    if (AppConstants.platform != "win") {
+      return undefined;
+    }
+
+    this._log.trace("saveUninstallPing");
+
+    let payload = {};
+    try {
+      payload.otherInstalls = UninstallPing.getOtherInstallsCount();
+      this._log.info(
+        "saveUninstallPing - otherInstalls",
+        payload.otherInstalls
+      );
+    } catch (e) {
+      this._log.warn("saveUninstallPing - getOtherInstallCount failed", e);
+    }
+    const options = { addClientId: true, addEnvironment: true };
+    const pingData = this.assemblePing(PING_TYPE_UNINSTALL, payload, options);
+
+    return TelemetryStorage.saveUninstallPing(pingData);
   },
 
   /**
@@ -835,6 +884,16 @@ var Impl = {
           TelemetryEventPing.startup();
           EcosystemTelemetry.startup();
           TelemetryPrioPing.startup();
+
+          if (uploadEnabled) {
+            await this.saveUninstallPing().catch(e =>
+              this._log.warn("_delayedInitTask - saveUninstallPing failed", e)
+            );
+          } else {
+            await TelemetryStorage.removeUninstallPings().catch(e =>
+              this._log.warn("_delayedInitTask - saveUninstallPing", e)
+            );
+          }
 
           this._delayedInitTaskDeferred.resolve();
         } catch (e) {
@@ -1004,6 +1063,10 @@ var Impl = {
         let id = await ClientID.getClientID();
         this._clientID = id;
         Telemetry.scalarSet("telemetry.data_upload_optin", true);
+
+        await this.saveUninstallPing().catch(e =>
+          this._log.warn("_onUploadPrefChange - saveUninstallPing failed", e)
+        );
       })();
 
       this._shutdownBarrier.client.addBlocker(
@@ -1023,6 +1086,7 @@ var Impl = {
         // 3. Remove all pending pings
         await TelemetryStorage.removeAppDataPings();
         await TelemetryStorage.runRemovePendingPingsTask();
+        await TelemetryStorage.removeUninstallPings();
       } catch (e) {
         this._log.error(
           "_onUploadPrefChange - error clearing pending pings",

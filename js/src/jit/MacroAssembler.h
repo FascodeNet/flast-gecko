@@ -36,6 +36,11 @@
 #include "jit/VMFunctions.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/Memory.h"
+#include "vm/BytecodeUtil.h"
+#include "vm/FunctionFlags.h"
+#include "vm/JSObject.h"
+#include "vm/ObjectGroup.h"
+#include "vm/StringType.h"
 
 // [SMDOC] MacroAssembler multi-platform overview
 //
@@ -202,9 +207,26 @@
 #  define IMM32_16ADJ(X) (X)
 #endif
 
+namespace JS {
+struct ExpandoAndGeneration;
+}
+
 namespace js {
 
 class TypedArrayObject;
+class TypeSet;
+
+namespace wasm {
+class CalleeDesc;
+class CallSiteDesc;
+class BytecodeOffset;
+class MemoryAccessDesc;
+
+enum class FailureMode : uint8_t;
+enum class SimdOp;
+enum class SymbolicAddress;
+enum class Trap;
+}  // namespace wasm
 
 namespace jit {
 
@@ -625,9 +647,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void passABIArg(Register reg);
   inline void passABIArg(FloatRegister reg, MoveOp::Type type);
 
-  inline void callWithABI(
-      void* fun, MoveOp::Type result = MoveOp::GENERAL,
-      CheckUnsafeCallWithABI check = CheckUnsafeCallWithABI::Check);
   inline void callWithABI(
       DynFn fun, MoveOp::Type result = MoveOp::GENERAL,
       CheckUnsafeCallWithABI check = CheckUnsafeCallWithABI::Check);
@@ -1426,6 +1445,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void branchTestFunctionFlags(Register fun, uint32_t flags,
                                       Condition cond, Label* label);
 
+  inline void branchIfNotFunctionIsNonBuiltinCtor(Register fun,
+                                                  Register scratch,
+                                                  Label* label);
+
   inline void branchIfFunctionHasNoJitEntry(Register fun, bool isConstructing,
                                             Label* label);
   inline void branchIfFunctionHasJitEntry(Register fun, bool isConstructing,
@@ -1535,8 +1558,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void branchIfNonNativeObj(Register obj, Register scratch, Label* label);
 
-  void branchIfInlineTypedObject(Register obj, Register scratch, Label* label);
-
   inline void branchTestClassIsProxy(bool proxy, Register clasp, Label* label);
 
   inline void branchTestObjectIsProxy(bool proxy, Register object,
@@ -1548,9 +1569,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void copyObjGroupNoPreBarrier(Register sourceObj, Register destObj,
                                 Register scratch);
-
-  void loadTypedObjectDescr(Register obj, Register dest);
-  void loadTypedObjectLength(Register obj, Register dest);
 
   // Emit type case branch on tag matching if the type tag in the definition
   // might actually be that type.
@@ -2030,11 +2048,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   // lane values 0..31
   inline void shuffleInt8x16(const uint8_t lanes[16], FloatRegister rhs,
-                             FloatRegister lhsDest, FloatRegister temp)
-      DEFINED_ON(x86_shared);
-
-  inline void shuffleInt8x16(const uint8_t lanes[16], FloatRegister rhs,
-                             FloatRegister lhsDest) DEFINED_ON(arm64);
+                             FloatRegister lhsDest)
+      DEFINED_ON(x86_shared, arm64);
 
   // lane values 0 (select from lhs) or FF (select from rhs).
   inline void blendInt8x16(const uint8_t lanes[16], FloatRegister rhs,
@@ -2370,6 +2385,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void bitwiseXorSimd128(FloatRegister rhs, FloatRegister lhsDest)
       DEFINED_ON(x86_shared, arm64);
 
+  inline void bitwiseXorSimd128(const SimdConstant& rhs, FloatRegister lhsDest)
+      DEFINED_ON(x64, x86);
+
   inline void bitwiseNotSimd128(FloatRegister src, FloatRegister dest)
       DEFINED_ON(x86_shared, arm64);
 
@@ -2633,29 +2651,36 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void unsignedWidenLowInt32x4(FloatRegister src, FloatRegister dest)
       DEFINED_ON(x86_shared, arm64);
 
-  // Compare-based minimum/maximum (experimental as of August, 2020)
-  // https://github.com/WebAssembly/simd/pull/122
+  // Compare-based minimum/maximum
+  //
+  // On x86, the signature is (rhsDest, lhs); on arm64 it is (rhs, lhsDest).
+  //
+  // The masm preprocessor can't deal with multiple declarations with identical
+  // signatures even if they are on different platforms, hence the weird
+  // argument names.
 
-  inline void pseudoMinFloat32x4(FloatRegister rhs, FloatRegister lhsDest)
+  inline void pseudoMinFloat32x4(FloatRegister rhsOrRhsDest,
+                                 FloatRegister lhsOrLhsDest)
       DEFINED_ON(x86_shared, arm64);
 
-  inline void pseudoMinFloat64x2(FloatRegister rhs, FloatRegister lhsDest)
+  inline void pseudoMinFloat64x2(FloatRegister rhsOrRhsDest,
+                                 FloatRegister lhsOrLhsDest)
       DEFINED_ON(x86_shared, arm64);
 
-  inline void pseudoMaxFloat32x4(FloatRegister rhs, FloatRegister lhsDest)
+  inline void pseudoMaxFloat32x4(FloatRegister rhsOrRhsDest,
+                                 FloatRegister lhsOrLhsDest)
       DEFINED_ON(x86_shared, arm64);
 
-  inline void pseudoMaxFloat64x2(FloatRegister rhs, FloatRegister lhsDest)
+  inline void pseudoMaxFloat64x2(FloatRegister rhsOrRhsDest,
+                                 FloatRegister lhsOrLhsDest)
       DEFINED_ON(x86_shared, arm64);
 
-  // Widening/pairwise integer dot product (experimental as of August, 2020)
-  // https://github.com/WebAssembly/simd/pull/127
+  // Widening/pairwise integer dot product
 
   inline void widenDotInt16x8(FloatRegister rhs, FloatRegister lhsDest)
       DEFINED_ON(x86_shared, arm64);
 
-  // Floating point rounding (experimental as of August, 2020)
-  // https://github.com/WebAssembly/simd/pull/232
+  // Floating point rounding
 
   inline void ceilFloat32x4(FloatRegister src, FloatRegister dest)
       DEFINED_ON(x86_shared, arm64);
@@ -2732,15 +2757,15 @@ class MacroAssembler : public MacroAssemblerSpecific {
   std::pair<CodeOffset, uint32_t> wasmReserveStackChecked(
       uint32_t amount, wasm::BytecodeOffset trapOffset);
 
-  // Emit a bounds check against the wasm heap limit, jumping to 'label' if
-  // 'cond' holds. If JitOptions.spectreMaskIndex is true, in speculative
-  // executions 'index' is saturated in-place to 'boundsCheckLimit'.
-  void wasmBoundsCheck(Condition cond, Register index,
-                       Register boundsCheckLimit, Label* label)
+  // Emit a bounds check against the wasm heap limit for 32-bit memory, jumping
+  // to 'label' if 'cond' holds. If JitOptions.spectreMaskIndex is true, in
+  // speculative executions 'index' is saturated in-place to 'boundsCheckLimit'.
+  void wasmBoundsCheck32(Condition cond, Register index,
+                         Register boundsCheckLimit, Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
 
-  void wasmBoundsCheck(Condition cond, Register index, Address boundsCheckLimit,
-                       Label* label)
+  void wasmBoundsCheck32(Condition cond, Register index,
+                         Address boundsCheckLimit, Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
 
   // Each wasm load/store instruction appends its own wasm::Trap::OutOfBounds.
@@ -3748,26 +3773,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void iteratorClose(Register obj, Register temp1, Register temp2,
                      Register temp3);
 
-  using MacroAssemblerSpecific::extractTag;
-  MOZ_MUST_USE Register extractTag(const TypedOrValueRegister& reg,
-                                   Register scratch) {
-    if (reg.hasValue()) {
-      return extractTag(reg.valueReg(), scratch);
-    }
-    mov(ImmWord(MIRTypeToTag(reg.type())), scratch);
-    return scratch;
-  }
-
-  using MacroAssemblerSpecific::extractObject;
-  MOZ_MUST_USE Register extractObject(const TypedOrValueRegister& reg,
-                                      Register scratch) {
-    if (reg.hasValue()) {
-      return extractObject(reg.valueReg(), scratch);
-    }
-    MOZ_ASSERT(reg.type() == MIRType::Object);
-    return reg.typedReg().gpr();
-  }
-
   // Inline version of js_TypedArray_uint8_clamp_double.
   // This function clobbers the input register.
   void clampDoubleToUint8(FloatRegister input, Register output) PER_ARCH;
@@ -3873,6 +3878,15 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void setIsCrossRealmArrayConstructor(Register obj, Register output);
 
   void setIsDefinitelyTypedArrayConstructor(Register obj, Register output);
+
+  void loadDOMExpandoValueGuardGeneration(
+      Register obj, ValueOperand output,
+      JS::ExpandoAndGeneration* expandoAndGeneration, uint64_t generation,
+      Label* fail);
+
+  void loadArrayBufferByteLengthInt32(Register obj, Register output);
+  void loadArrayBufferViewByteOffsetInt32(Register obj, Register output);
+  void loadArrayBufferViewLengthInt32(Register obj, Register output);
 
  private:
   void isCallableOrConstructor(bool isCallable, Register obj, Register output,

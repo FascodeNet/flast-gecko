@@ -1007,6 +1007,13 @@ class EditorBase : public nsIEditor,
      */
     void AppendTargetRange(dom::StaticRange& aTargetRange);
 
+    /**
+     * Make dispatching `beforeinput` forcibly non-cancelable.
+     */
+    void MakeBeforeInputEventNonCancelable() {
+      mMakeBeforeInputEventNonCancelable = true;
+    }
+
     void Abort() { mAborted = true; }
     bool IsAborted() const { return mAborted; }
 
@@ -1149,7 +1156,6 @@ class EditorBase : public nsIEditor,
         // We don't need to let contents in chrome's editor to know the size
         // change.
         case EditAction::eSetWrapWidth:
-        case EditAction::eRewrap:
         // While resizing or moving element, we update only shadow, i.e.,
         // don't touch to the DOM in content.  Therefore, we don't need to
         // dispatch "beforeinput" event.
@@ -1219,6 +1225,9 @@ class EditorBase : public nsIEditor,
     bool mHasTriedToDispatchBeforeInputEvent;
     // Set to true if "beforeinput" event was dispatched and it's canceled.
     bool mBeforeInputEventCanceled;
+    // Set to true if `beforeinput` event must not be cancelable even if
+    // its inputType is defined as cancelable by the standards.
+    bool mMakeBeforeInputEventNonCancelable;
 
 #ifdef DEBUG
     mutable bool mHasCanHandleChecked = false;
@@ -1806,7 +1815,7 @@ class EditorBase : public nsIEditor,
   /**
    * CollapseSelectionToEnd() collapses the selection to the end of the editor.
    */
-  nsresult CollapseSelectionToEnd() const;
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult CollapseSelectionToEnd() const;
 
   /**
    * AllowsTransactionsToChangeSelection() returns true if editor allows any

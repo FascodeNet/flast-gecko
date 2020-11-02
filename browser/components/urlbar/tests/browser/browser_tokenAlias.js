@@ -8,7 +8,19 @@
 const ALIAS = "@test";
 const TEST_ENGINE_BASENAME = "searchSuggestionEngine.xml";
 
+// We make sure that aliases and search terms are correctly recognized when they
+// are separated by each of these different types of spaces and combinations of
+// spaces.  U+3000 is the ideographic space in CJK and is commonly used by CJK
+// speakers.
+const TEST_SPACES = [" ", "\u3000", " \u3000", "\u3000 "];
+
 let testEngine;
+
+// Allow more time for Mac machines so they don't time out in verify mode.  See
+// bug 1673062.
+if (AppConstants.platform == "macosx") {
+  requestLongerTimeout(5);
+}
 
 add_task(async function init() {
   // This test requires update2.  See also browser_tokenAlias_legacy.js.
@@ -94,60 +106,72 @@ async function doSimpleTest(revertBetweenSteps) {
   }
 
   // "@test " -- alias with trailing space, search mode
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: ALIAS + " ",
-  });
-  // Wait for the second new search that starts when search mode is entered.
-  await UrlbarTestUtils.promiseSearchComplete(window);
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: testEngine.name,
-    entry: "typed",
-  });
-  Assert.equal(gURLBar.value, "", "value should be empty");
-  await UrlbarTestUtils.exitSearchMode(window);
+  for (let spaces of TEST_SPACES) {
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
 
-  if (revertBetweenSteps) {
-    gURLBar.handleRevert();
-    gURLBar.blur();
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: ALIAS + spaces,
+    });
+    // Wait for the second new search that starts when search mode is entered.
+    await UrlbarTestUtils.promiseSearchComplete(window);
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: testEngine.name,
+      entry: "typed",
+    });
+    Assert.equal(gURLBar.value, "", "value should be empty");
+    await UrlbarTestUtils.exitSearchMode(window);
+
+    if (revertBetweenSteps) {
+      gURLBar.handleRevert();
+      gURLBar.blur();
+    }
   }
 
   // "@test foo" -- alias, search mode
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: ALIAS + " foo",
-  });
-  // Wait for the second new search that starts when search mode is entered.
-  await UrlbarTestUtils.promiseSearchComplete(window);
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: testEngine.name,
-    entry: "typed",
-  });
-  Assert.equal(gURLBar.value, "foo", "value should be query");
-  await UrlbarTestUtils.exitSearchMode(window);
+  for (let spaces of TEST_SPACES) {
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
 
-  if (revertBetweenSteps) {
-    gURLBar.handleRevert();
-    gURLBar.blur();
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: ALIAS + spaces + "foo",
+    });
+    // Wait for the second new search that starts when search mode is entered.
+    await UrlbarTestUtils.promiseSearchComplete(window);
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: testEngine.name,
+      entry: "typed",
+    });
+    Assert.equal(gURLBar.value, "foo", "value should be query");
+    await UrlbarTestUtils.exitSearchMode(window);
+
+    if (revertBetweenSteps) {
+      gURLBar.handleRevert();
+      gURLBar.blur();
+    }
   }
 
   // "@test " -- alias with trailing space, search mode
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: ALIAS + " ",
-  });
-  // Wait for the second new search that starts when search mode is entered.
-  await UrlbarTestUtils.promiseSearchComplete(window);
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: testEngine.name,
-    entry: "typed",
-  });
-  Assert.equal(gURLBar.value, "", "value should be empty");
-  await UrlbarTestUtils.exitSearchMode(window);
+  for (let spaces of TEST_SPACES) {
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
 
-  if (revertBetweenSteps) {
-    gURLBar.handleRevert();
-    gURLBar.blur();
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: ALIAS + spaces,
+    });
+    // Wait for the second new search that starts when search mode is entered.
+    await UrlbarTestUtils.promiseSearchComplete(window);
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: testEngine.name,
+      entry: "typed",
+    });
+    Assert.equal(gURLBar.value, "", "value should be empty");
+    await UrlbarTestUtils.exitSearchMode(window);
+
+    if (revertBetweenSteps) {
+      gURLBar.handleRevert();
+      gURLBar.blur();
+    }
   }
 
   // "@test" -- alias but no trailing space, no highlight
@@ -185,21 +209,25 @@ async function doSimpleTest(revertBetweenSteps) {
 // An alias should be recognized even when there are spaces before it, and
 // search mode should be entered.
 add_task(async function spacesBeforeAlias() {
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: "     " + ALIAS + " ",
-  });
-  // Wait for the second new search that starts when search mode is entered.
-  await UrlbarTestUtils.promiseSearchComplete(window);
-  await UrlbarTestUtils.assertSearchMode(window, {
-    engineName: testEngine.name,
-    entry: "typed",
-  });
-  Assert.equal(gURLBar.value, "", "value should be empty");
-  await UrlbarTestUtils.exitSearchMode(window);
-  await UrlbarTestUtils.promisePopupClose(window, () =>
-    EventUtils.synthesizeKey("KEY_Escape")
-  );
+  for (let spaces of TEST_SPACES) {
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
+
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: spaces + ALIAS + spaces,
+    });
+    // Wait for the second new search that starts when search mode is entered.
+    await UrlbarTestUtils.promiseSearchComplete(window);
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: testEngine.name,
+      entry: "typed",
+    });
+    Assert.equal(gURLBar.value, "", "value should be empty");
+    await UrlbarTestUtils.exitSearchMode(window);
+    await UrlbarTestUtils.promisePopupClose(window, () =>
+      EventUtils.synthesizeKey("KEY_Escape")
+    );
+  }
 });
 
 // An alias in the middle of a string should not be recognized and search mode
@@ -255,23 +283,34 @@ add_task(async function alreadyInSearchMode() {
 
 // Types a space while typing an alias to ensure we stop autofilling.
 add_task(async function spaceWhileTypingAlias() {
-  let value = ALIAS.substring(0, ALIAS.length - 1);
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value,
-    selectionStart: value.length,
-    selectionEnd: value.length,
-  });
-  Assert.equal(gURLBar.value, ALIAS + " ", "Alias should be autofilled");
+  for (let spaces of TEST_SPACES) {
+    if (spaces.length != 1) {
+      continue;
+    }
+    info("Testing: " + JSON.stringify({ spaces: codePoints(spaces) }));
 
-  let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
-  EventUtils.synthesizeKey(" ");
-  await searchPromise;
+    let value = ALIAS.substring(0, ALIAS.length - 1);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value,
+      selectionStart: value.length,
+      selectionEnd: value.length,
+    });
+    Assert.equal(gURLBar.value, ALIAS + " ", "Alias should be autofilled");
 
-  Assert.equal(gURLBar.value, value + " ", "Alias should not be autofilled");
-  await UrlbarTestUtils.assertSearchMode(window, null);
+    let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+    EventUtils.synthesizeKey(spaces);
+    await searchPromise;
 
-  await UrlbarTestUtils.promisePopupClose(window);
+    Assert.equal(
+      gURLBar.value,
+      value + spaces,
+      "Alias should not be autofilled"
+    );
+    await UrlbarTestUtils.assertSearchMode(window, null);
+
+    await UrlbarTestUtils.promisePopupClose(window);
+  }
 });
 
 // Aliases are case insensitive.  Make sure that searching with an alias using a
@@ -508,6 +547,53 @@ add_task(async function rightEntersSearchMode() {
   );
 });
 
+// Pressing Tab when an @ alias is autofilled should enter search mode preview.
+add_task(async function rightEntersSearchMode() {
+  for (let value of [ALIAS.substring(0, ALIAS.length - 1), ALIAS]) {
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value,
+      selectionStart: value.length,
+      selectionEnd: value.length,
+    });
+
+    Assert.equal(
+      UrlbarTestUtils.getSelectedRowIndex(window),
+      -1,
+      "There is no selected result."
+    );
+
+    EventUtils.synthesizeKey("KEY_Tab");
+    Assert.equal(
+      UrlbarTestUtils.getSelectedRowIndex(window),
+      0,
+      "The first result is selected."
+    );
+
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: testEngine.name,
+      entry: "keywordoffer",
+      isPreview: true,
+    });
+    Assert.equal(gURLBar.value, "", "value should be empty");
+
+    let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+    EventUtils.synthesizeKey("KEY_Enter");
+    await searchPromise;
+
+    await UrlbarTestUtils.assertSearchMode(window, {
+      engineName: testEngine.name,
+      entry: "keywordoffer",
+      isPreview: false,
+    });
+    await UrlbarTestUtils.exitSearchMode(window);
+  }
+
+  await UrlbarTestUtils.promisePopupClose(window, () =>
+    EventUtils.synthesizeKey("KEY_Escape")
+  );
+});
+
 /**
  * This test checks that if an engine is marked as hidden then
  * it should not appear in the popup when using the "@" token alias in the search bar.
@@ -614,6 +700,66 @@ add_task(async function nonPrefixedKeyword() {
   await Services.search.removeEngine(engine);
 });
 
+// Tests that we show all engines with a token alias that match the search
+// string.
+add_task(async function multipleMatchingEngines() {
+  let testEngineFoo = await Services.search.addEngineWithDetails("TestFoo", {
+    alias: `${ALIAS}foo`,
+    template: "http://example-2.com/?search={searchTerms}",
+  });
+
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "@te",
+    fireInputEvent: true,
+  });
+
+  Assert.equal(
+    UrlbarTestUtils.getResultCount(window),
+    2,
+    "Two results are shown."
+  );
+  Assert.equal(
+    UrlbarTestUtils.getSelectedRowIndex(window),
+    -1,
+    "Neither result is selected."
+  );
+  let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
+  Assert.ok(result.autofill, "The first result is autofilling.");
+  Assert.equal(
+    result.searchParams.keyword,
+    ALIAS,
+    "The autofilled engine is shown first."
+  );
+
+  result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
+  Assert.equal(
+    result.searchParams.keyword,
+    `${ALIAS}foo`,
+    "The other engine is shown second."
+  );
+
+  EventUtils.synthesizeKey("KEY_Tab");
+  Assert.equal(UrlbarTestUtils.getSelectedRowIndex(window), 0);
+  Assert.equal(gURLBar.value, "", "Urlbar should be empty.");
+  EventUtils.synthesizeKey("KEY_Tab");
+  Assert.equal(UrlbarTestUtils.getSelectedRowIndex(window), 1);
+  Assert.equal(gURLBar.value, "", "Urlbar should be empty.");
+  EventUtils.synthesizeKey("KEY_Tab");
+  Assert.equal(
+    UrlbarTestUtils.getSelectedRowIndex(window),
+    -1,
+    "Tabbing all the way through the matching engines should return to the input."
+  );
+  Assert.equal(
+    gURLBar.value,
+    "@te",
+    "Urlbar should contain the search string."
+  );
+
+  await Services.search.removeEngine(testEngineFoo);
+});
+
 async function assertFirstResultIsAlias(isAlias, expectedAlias) {
   let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
   Assert.equal(
@@ -656,4 +802,17 @@ function assertHighlighted(highlighted, expectedAlias) {
   Assert.ok(range);
   Assert.equal(range.startOffset, index);
   Assert.equal(range.endOffset, index + expectedAlias.length);
+}
+
+/**
+ * Returns an array of code points in the given string.  Each code point is
+ * returned as a hexidecimal string.
+ *
+ * @param {string} str
+ *   The code points of this string will be returned.
+ * @returns {array}
+ *   Array of code points in the string, where each is a hexidecimal string.
+ */
+function codePoints(str) {
+  return str.split("").map(s => s.charCodeAt(0).toString(16));
 }

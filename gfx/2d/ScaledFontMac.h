@@ -30,6 +30,9 @@ class ScaledFontMac : public ScaledFontBase {
                 bool aOwnsFont = false,
                 const DeviceColor& aFontSmoothingBackgroundColor = DeviceColor(),
                 bool aUseFontSmoothing = true, bool aApplySyntheticBold = false);
+  ScaledFontMac(CTFontRef aFont, const RefPtr<UnscaledFont>& aUnscaledFont,
+                const DeviceColor& aFontSmoothingBackgroundColor = DeviceColor(),
+                bool aUseFontSmoothing = true, bool aApplySyntheticBold = false);
   ~ScaledFontMac();
 
   FontType GetType() const override { return FontType::MAC; }
@@ -78,17 +81,6 @@ class ScaledFontMac : public ScaledFontBase {
     bool mUseFontSmoothing;
     bool mApplySyntheticBold;
   };
-
-  typedef void(CTFontDrawGlyphsFuncT)(CTFontRef, const CGGlyph[], const CGPoint[], size_t,
-                                      CGContextRef);
-
-  static bool sSymbolLookupDone;
-
- public:
-  // function pointer for CTFontDrawGlyphs, if available;
-  // initialized the first time a ScaledFontMac is created,
-  // so it will be valid by the time DrawTargetCG wants to use it
-  static CTFontDrawGlyphsFuncT* CTFontDrawGlyphsPtr;
 };
 
 }  // namespace gfx

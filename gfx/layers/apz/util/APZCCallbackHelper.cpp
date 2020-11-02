@@ -14,6 +14,7 @@
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/layers/LayerTransactionChild.h"
+#include "mozilla/layers/RepaintRequest.h"
 #include "mozilla/layers/ShadowLayers.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
@@ -163,14 +164,19 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
         if (sf->SetVisualViewportOffset(
                 CSSPoint::ToAppUnits(aRequest.GetVisualScrollOffset()),
                 /* aRepaint = */ false)) {
+          // sf can't be destroyed if SetVisualViewportOffset returned true.
           sf->MarkEverScrolled();
         }
       }
     }
   }
+  // sf might have been destroyed by the call to SetVisualViewportOffset, so
+  // re-get it.
+  sf = nsLayoutUtils::FindScrollableFrameFor(aRequest.GetScrollId());
   bool scrollUpdated = false;
-  auto displayPortMargins =
-      DisplayPortMargins::WithNoAdjustment(aRequest.GetDisplayPortMargins());
+  auto displayPortMargins = DisplayPortMargins::ForScrollFrame(
+      sf, aRequest.GetDisplayPortMargins(),
+      Some(aRequest.DisplayportPixelsPerCSSPixel()));
   CSSPoint apzScrollOffset = aRequest.GetVisualScrollOffset();
   CSSPoint actualScrollOffset = ScrollFrameTo(sf, aRequest, scrollUpdated);
   CSSPoint scrollDelta = apzScrollOffset - actualScrollOffset;
@@ -189,7 +195,7 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
     } else {
       // Correct the display port due to the difference between the requested
       // and actual scroll offsets.
-      displayPortMargins = DisplayPortMargins::WithAdjustment(
+      displayPortMargins = DisplayPortMargins::FromAPZ(
           aRequest.GetDisplayPortMargins(), apzScrollOffset, actualScrollOffset,
           aRequest.DisplayportPixelsPerCSSPixel());
     }
@@ -202,7 +208,7 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
     // account for a difference between the requested and actual scroll
     // offsets in repaints requested by
     // AsyncPanZoomController::NotifyLayersUpdated.
-    displayPortMargins = DisplayPortMargins::WithAdjustment(
+    displayPortMargins = DisplayPortMargins::FromAPZ(
         aRequest.GetDisplayPortMargins(), apzScrollOffset, actualScrollOffset,
         aRequest.DisplayportPixelsPerCSSPixel());
   } else {
@@ -212,8 +218,9 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
     // tile-align the recentered displayport because tile-alignment depends on
     // the scroll position, and the scroll position here is out of our control.
     // See bug 966507 comment 21 for a more detailed explanation.
-    displayPortMargins = DisplayPortMargins::WithNoAdjustment(
-        RecenterDisplayPort(aRequest.GetDisplayPortMargins()));
+    displayPortMargins = DisplayPortMargins::ForScrollFrame(
+        sf, RecenterDisplayPort(aRequest.GetDisplayPortMargins()),
+        Some(aRequest.DisplayportPixelsPerCSSPixel()));
   }
 
   // APZ transforms inputs assuming we applied the exact scroll offset it
@@ -296,7 +303,8 @@ void APZCCallbackHelper::UpdateRootFrame(const RepaintRequest& aRequest) {
   if (aRequest.GetScrollId() == ScrollableLayerGuid::NULL_SCROLL_ID) {
     return;
   }
-  nsIContent* content = nsLayoutUtils::FindContentFor(aRequest.GetScrollId());
+  RefPtr<nsIContent> content =
+      nsLayoutUtils::FindContentFor(aRequest.GetScrollId());
   if (!content) {
     return;
   }
@@ -306,19 +314,14 @@ void APZCCallbackHelper::UpdateRootFrame(const RepaintRequest& aRequest) {
     return;
   }
 
+  APZCCH_LOG("Handling request %s\n", ToString(aRequest).c_str());
   if (nsLayoutUtils::AllowZoomingForDocument(presShell->GetDocument()) &&
-      aRequest.GetScrollOffsetUpdated()) {
+      aRequest.GetAsyncZoom().scale != 1.0) {
     // If zooming is disabled then we don't really want to let APZ fiddle
     // with these things. In theory setting the resolution here should be a
     // no-op, but setting the visual viewport size is bad because it can cause a
     // stale value to be returned by window.innerWidth/innerHeight (see bug
     // 1187792).
-    //
-    // We also skip this codepath unless the metrics has a scroll offset update
-    // type other eNone, because eNone just means that this repaint request
-    // was triggered by APZ in response to a main-thread update. In this
-    // scenario we don't want to update the main-thread resolution because
-    // it can trigger unnecessary reflows.
 
     float presShellResolution = presShell->GetResolution();
 
@@ -337,6 +340,18 @@ void APZCCallbackHelper::UpdateRootFrame(const RepaintRequest& aRequest) {
         aRequest.GetPresShellResolution() * aRequest.GetAsyncZoom().scale;
     presShell->SetResolutionAndScaleTo(presShellResolution,
                                        ResolutionChangeOrigin::Apz);
+
+    // Changing the resolution will trigger a reflow which will cause the
+    // main-thread scroll position to be realigned in layer pixels. This
+    // (subpixel) scroll mutation can trigger a scroll update to APZ which
+    // is undesirable. Instead of having that happen as part of the post-reflow
+    // code, we force it to happen here with ScrollOrigin::Apz so that it
+    // doesn't trigger a scroll update to APZ.
+    nsIScrollableFrame* sf =
+        nsLayoutUtils::FindScrollableFrameFor(aRequest.GetScrollId());
+    CSSPoint currentScrollPosition =
+        CSSPoint::FromAppUnits(sf->GetScrollPosition());
+    sf->ScrollToCSSPixelsApproximate(currentScrollPosition, ScrollOrigin::Apz);
   }
 
   // Do this as late as possible since scrolling can flush layout. It also
@@ -352,7 +367,8 @@ void APZCCallbackHelper::UpdateSubFrame(const RepaintRequest& aRequest) {
   if (aRequest.GetScrollId() == ScrollableLayerGuid::NULL_SCROLL_ID) {
     return;
   }
-  nsIContent* content = nsLayoutUtils::FindContentFor(aRequest.GetScrollId());
+  RefPtr<nsIContent> content =
+      nsLayoutUtils::FindContentFor(aRequest.GetScrollId());
   if (!content) {
     return;
   }
@@ -424,8 +440,8 @@ void APZCCallbackHelper::InitializeRootDisplayport(PresShell* aPresShell) {
     DisplayPortUtils::SetDisplayPortBaseIfNotSet(content, baseRect);
     // Note that we also set the base rect that goes with these margins in
     // nsRootBoxFrame::BuildDisplayList.
-    DisplayPortUtils::SetDisplayPortMargins(content, aPresShell,
-                                            DisplayPortMargins::Empty(), 0);
+    DisplayPortUtils::SetDisplayPortMargins(
+        content, aPresShell, DisplayPortMargins::Empty(content), 0);
     DisplayPortUtils::SetZeroMarginDisplayPortOnAsyncScrollableAncestors(
         content->GetPrimaryFrame());
   }
@@ -635,7 +651,7 @@ static bool PrepareForSetTargetAPZCNotification(
 
 static void SendLayersDependentApzcTargetConfirmation(
     PresShell* aPresShell, uint64_t aInputBlockId,
-    const nsTArray<ScrollableLayerGuid>& aTargets) {
+    nsTArray<ScrollableLayerGuid>&& aTargets) {
   LayerManager* lm = aPresShell->GetLayerManager();
   if (!lm) {
     return;
@@ -665,11 +681,13 @@ static void SendLayersDependentApzcTargetConfirmation(
 
 DisplayportSetListener::DisplayportSetListener(
     nsIWidget* aWidget, PresShell* aPresShell, const uint64_t& aInputBlockId,
-    const nsTArray<ScrollableLayerGuid>& aTargets)
-    : mWidget(aWidget),
-      mPresShell(aPresShell),
+    nsTArray<ScrollableLayerGuid>&& aTargets)
+    : OneShotPostRefreshObserver(
+          aPresShell,
+          [this](PresShell* aPresShell) { OnPostRefresh(this, aPresShell); }),
+      mWidget(aWidget),
       mInputBlockId(aInputBlockId),
-      mTargets(aTargets.Clone()) {}
+      mTargets(std::move(aTargets)) {}
 
 DisplayportSetListener::~DisplayportSetListener() = default;
 
@@ -685,29 +703,13 @@ bool DisplayportSetListener::Register() {
   return false;
 }
 
-void DisplayportSetListener::DidRefresh() {
-  if (!mPresShell) {
-    MOZ_ASSERT_UNREACHABLE(
-        "Post-refresh observer fired again after failed attempt at "
-        "unregistering it");
-    return;
-  }
-
+/* static */
+void DisplayportSetListener::OnPostRefresh(DisplayportSetListener* aListener,
+                                           PresShell* aPresShell) {
   APZCCH_LOG("Got refresh, sending target APZCs for input block %" PRIu64 "\n",
-             mInputBlockId);
-  SendLayersDependentApzcTargetConfirmation(mPresShell, mInputBlockId,
-                                            std::move(mTargets));
-
-  if (!mPresShell->RemovePostRefreshObserver(this)) {
-    MOZ_ASSERT_UNREACHABLE(
-        "Unable to unregister post-refresh observer! Leaking it instead of "
-        "leaving garbage registered");
-    // Graceful handling, just in case...
-    mPresShell = nullptr;
-    return;
-  }
-
-  delete this;
+             aListener->mInputBlockId);
+  SendLayersDependentApzcTargetConfirmation(
+      aPresShell, aListener->mInputBlockId, std::move(aListener->mTargets));
 }
 
 UniquePtr<DisplayportSetListener>

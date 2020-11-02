@@ -8,6 +8,8 @@
 
 #include "mozilla/EndianUtils.h"
 
+#include "jsmath.h"
+
 #include "jit/MacroAssembler.h"
 
 using namespace js;
@@ -2106,6 +2108,9 @@ void MacroAssemblerMIPSShared::wasmLoadImpl(
   bool isSigned;
   bool isFloat = false;
 
+  MOZ_ASSERT(!access.isZeroExtendSimd128Load());
+  MOZ_ASSERT(!access.isSplatSimd128Load());
+  MOZ_ASSERT(!access.isWidenSimd128Load());
   switch (access.type()) {
     case Scalar::Int8:
       isSigned = true;
@@ -2126,11 +2131,9 @@ void MacroAssemblerMIPSShared::wasmLoadImpl(
       isSigned = false;
       break;
     case Scalar::Float64:
-      MOZ_ASSERT(!access.isZeroExtendSimd128Load());
       isFloat = true;
       break;
     case Scalar::Float32:
-      MOZ_ASSERT(!access.isZeroExtendSimd128Load());
       isFloat = true;
       break;
     default:

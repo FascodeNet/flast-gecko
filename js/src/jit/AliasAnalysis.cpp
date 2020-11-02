@@ -123,6 +123,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::Elements:
     case MDefinition::Opcode::MaybeCopyElementsForWrite:
     case MDefinition::Opcode::MaybeToDoubleElement:
+    case MDefinition::Opcode::ArrayBufferByteLengthInt32:
     case MDefinition::Opcode::ArrayBufferViewLength:
     case MDefinition::Opcode::ArrayBufferViewByteOffset:
     case MDefinition::Opcode::ArrayPopShift:
@@ -155,6 +156,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::GuardElementNotHole:
     case MDefinition::Opcode::GuardArrayIsPacked:
     case MDefinition::Opcode::GuardFunctionFlags:
+    case MDefinition::Opcode::GuardFunctionIsNonBuiltinCtor:
     case MDefinition::Opcode::GuardFunctionKind:
     case MDefinition::Opcode::ArgumentsObjectLength:
     case MDefinition::Opcode::FunctionLength:
@@ -166,6 +168,10 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::CallGetProperty:
     case MDefinition::Opcode::GetDOMProperty:
     case MDefinition::Opcode::GetDOMMember:
+    case MDefinition::Opcode::LoadDOMExpandoValue:
+    case MDefinition::Opcode::LoadDOMExpandoValueGuardGeneration:
+    case MDefinition::Opcode::LoadDOMExpandoValueIgnoreGeneration:
+    case MDefinition::Opcode::GuardDOMExpandoMissingOrGuardShape:
     case MDefinition::Opcode::Call:
     case MDefinition::Opcode::Throw:
     case MDefinition::Opcode::ThrowRuntimeLexicalError:

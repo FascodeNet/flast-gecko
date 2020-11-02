@@ -91,24 +91,31 @@ class TypedArrayObject : public ArrayBufferViewObject {
   inline Scalar::Type type() const;
   inline size_t bytesPerElement() const;
 
-  static Value byteOffsetValue(const TypedArrayObject* tarr) {
-    Value v = tarr->getFixedSlot(BYTEOFFSET_SLOT);
-    MOZ_ASSERT(v.toInt32() >= 0);
-    return v;
-  }
-  static Value byteLengthValue(const TypedArrayObject* tarr) {
-    return Int32Value(tarr->getFixedSlot(LENGTH_SLOT).toInt32() *
-                      tarr->bytesPerElement());
-  }
-  static Value lengthValue(const TypedArrayObject* tarr) {
-    return tarr->getFixedSlot(LENGTH_SLOT);
-  }
-
   static bool ensureHasBuffer(JSContext* cx, Handle<TypedArrayObject*> tarray);
 
-  uint32_t byteOffset() const { return byteOffsetValue(this).toInt32(); }
-  uint32_t byteLength() const { return byteLengthValue(this).toInt32(); }
-  uint32_t length() const { return lengthValue(this).toInt32(); }
+  size_t byteLength() const {
+    size_t len = length() * bytesPerElement();
+    MOZ_ASSERT(len <= INT32_MAX);
+    return len;
+  }
+
+  size_t length() const {
+    size_t len = size_t(getFixedSlot(LENGTH_SLOT).toPrivate());
+    MOZ_ASSERT(len <= INT32_MAX);
+    return len;
+  }
+
+  Value byteLengthValue() const {
+    size_t len = byteLength();
+    MOZ_ASSERT(len <= INT32_MAX);
+    return Int32Value(len);
+  }
+
+  Value lengthValue() const {
+    size_t len = length();
+    MOZ_ASSERT(len <= INT32_MAX);
+    return Int32Value(len);
+  }
 
   bool hasInlineElements() const;
   void setInlineElements();
@@ -162,23 +169,6 @@ class TypedArrayObject : public ArrayBufferViewObject {
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
   /* Initialization bits */
-
-  template <Value ValueGetter(const TypedArrayObject* tarr)>
-  static bool GetterImpl(JSContext* cx, const CallArgs& args) {
-    MOZ_ASSERT(is(args.thisv()));
-    args.rval().set(
-        ValueGetter(&args.thisv().toObject().as<TypedArrayObject>()));
-    return true;
-  }
-
-  // ValueGetter is a function that takes an unwrapped typed array object and
-  // returns a Value. Given such a function, Getter<> is a native that
-  // retrieves a given Value, probably from a slot on the object.
-  template <Value ValueGetter(const TypedArrayObject* tarr)>
-  static bool Getter(JSContext* cx, unsigned argc, Value* vp) {
-    CallArgs args = CallArgsFromVp(argc, vp);
-    return CallNonGenericMethod<is, GetterImpl<ValueGetter>>(cx, args);
-  }
 
   static const JSFunctionSpec protoFunctions[];
   static const JSPropertySpec protoAccessors[];

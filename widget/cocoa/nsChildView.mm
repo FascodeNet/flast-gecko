@@ -1844,10 +1844,6 @@ static void MakeRegionsNonOverlapping(Region& aFirst, Regions&... aRest) {
 }
 
 void nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries) {
-  if (!VibrancyManager::SystemSupportsVibrancy()) {
-    return;
-  }
-
   LayoutDeviceIntRegion sheetRegion = GatherVibrantRegion(aThemeGeometries, VibrancyType::SHEET);
   LayoutDeviceIntRegion vibrantLightRegion =
       GatherVibrantRegion(aThemeGeometries, VibrancyType::LIGHT);
@@ -2502,7 +2498,10 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
 }
 
 - (void)systemMetricsChanged {
-  if (mGeckoChild) mGeckoChild->NotifyThemeChanged();
+  // TODO(emilio): We could make this more fine-grained by only passing true
+  // here when system colors / fonts change, but right now we tunnel all the
+  // relevant notifications through here.
+  if (mGeckoChild) mGeckoChild->NotifyThemeChanged(widget::ThemeChangeKind::StyleAndLayout);
 }
 
 - (void)scrollbarSystemMetricChanged {

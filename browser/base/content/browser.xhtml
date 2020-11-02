@@ -1891,7 +1891,7 @@
                        hidden="true"
                        onclick="AboutReaderParent.buttonClick(event);"/>
                 <toolbarbutton id="urlbar-zoom-button"
-                       onclick="FullZoom.reset();"
+                       onclick="FullZoom.reset(); FullZoom.resetScalingZoom();"
                        tooltip="dynamic-shortcut-tooltip"
                        hidden="true"/>
                 <box id="pageActionSeparator" class="urlbar-page-action"/>
@@ -1999,6 +1999,7 @@
                        class="toolbarbutton-1"
                        hidden="true"
                        badged="true"
+                       tooltiptext="Ion"
                        onmousedown="switchToTabHavingURI('about:ion', true);"
                        onkeypress="switchToTabHavingURI('about:ion', true);"/>
         <toolbarbutton id="whats-new-menu-button"
@@ -2041,7 +2042,6 @@
              context="toolbar-context-menu"
              toolbarname="&personalbarCmd.label;" accesskey="&personalbarCmd.accesskey;"
              aria-label="&personalbar.accessibleLabel;"
-             collapsed="true"
              customizable="true">
       <toolbartabstop skipintoolbarset="true"/>
 
@@ -2092,6 +2092,10 @@
     </toolbar>
 
     <html:template id="BrowserToolbarPalette">
+      <toolbarbutton id="import-button"
+                     class="toolbarbutton-1 chromeclass-toolbar-additional"
+                     oncommand="MigrationUtils.showMigrationWizard(window, [MigrationUtils.MIGRATION_ENTRYPOINT_BOOKMARKS_TOOLBAR]);"
+                     data-l10n-id="browser-import-button"/>
 
       <toolbarbutton id="print-button" class="toolbarbutton-1 chromeclass-toolbar-additional"
 #ifdef XP_MACOSX
@@ -2100,6 +2104,7 @@
                      command="cmd_printPreview"
                      print-button-title="&printButton.tooltip;"
 #endif
+                     keepbroadcastattributeswhencustomizing="true"
                      tooltip="dynamic-shortcut-tooltip"
                      label="&printButton.label;"/>
 
@@ -2130,6 +2135,7 @@
                      ondrop="PlacesMenuDNDHandler.onDrop(event);"
                      oncommand="BookmarkingUI.onCommand(event);">
         <menupopup id="BMB_bookmarksPopup"
+                   type="arrow"
                    is="places-popup-arrow"
                    class="cui-widget-panel cui-widget-panelview cui-widget-panelWithFooter PanelUI-subView"
                    placespopup="true"

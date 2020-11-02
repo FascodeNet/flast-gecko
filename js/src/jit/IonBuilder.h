@@ -14,8 +14,9 @@
 
 #include "jsfriendapi.h"
 
-#include "builtin/TypedObject.h"
 #include "jit/BaselineInspector.h"
+#include "jit/CompileInfo.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/IonAnalysis.h"
 #include "jit/IonOptimizationLevels.h"
 #include "jit/MIR.h"
@@ -596,12 +597,12 @@ class MOZ_STACK_CLASS IonBuilder {
   AbortReasonOr<Ok> jsop_getelem();
   AbortReasonOr<Ok> jsop_getelem_dense(MDefinition* obj, MDefinition* index);
   AbortReasonOr<Ok> jsop_getelem_typed(MDefinition* obj, MDefinition* index,
-                                       ScalarTypeDescr::Type arrayType);
+                                       Scalar::Type arrayType);
   AbortReasonOr<Ok> jsop_setelem();
   AbortReasonOr<Ok> initOrSetElemDense(
       TemporaryTypeSet::DoubleConversion conversion, MDefinition* object,
       MDefinition* index, MDefinition* value, bool writeHole, bool* emitted);
-  AbortReasonOr<Ok> jsop_setelem_typed(ScalarTypeDescr::Type arrayType,
+  AbortReasonOr<Ok> jsop_setelem_typed(Scalar::Type arrayType,
                                        MDefinition* object, MDefinition* index,
                                        MDefinition* value);
   AbortReasonOr<Ok> jsop_length();

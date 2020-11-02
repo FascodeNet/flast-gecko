@@ -13,11 +13,12 @@
 
 #include "builtin/Eval.h"
 #include "builtin/ModuleObject.h"
-#include "builtin/TypedObject.h"
 #include "frontend/SourceNotes.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineInspector.h"
 #include "jit/CacheIR.h"
+#include "jit/CompileInfo.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/Ion.h"
 #include "jit/IonOptimizationLevels.h"
 #include "jit/JitSpewer.h"
@@ -38,9 +39,11 @@
 #include "vm/RegExpStatics.h"
 #include "vm/SelfHosting.h"
 #include "vm/TraceLogging.h"
+#include "wasm/TypedObject.h"
 
 #include "gc/Nursery-inl.h"
 #include "jit/CompileInfo-inl.h"
+#include "jit/InlineScriptTree-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
@@ -8862,10 +8865,8 @@ AbortReasonOr<Ok> IonBuilder::jsop_getelem_dense(MDefinition* obj,
 }
 
 MInstruction* IonBuilder::addArrayBufferByteLength(MDefinition* obj) {
-  MLoadFixedSlot* ins = MLoadFixedSlot::New(
-      alloc(), obj, size_t(ArrayBufferObject::BYTE_LENGTH_SLOT));
+  auto* ins = MArrayBufferByteLengthInt32::New(alloc(), obj);
   current->add(ins);
-  ins->setResultType(MIRType::Int32);
   return ins;
 }
 

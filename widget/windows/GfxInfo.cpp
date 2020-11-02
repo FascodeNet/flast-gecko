@@ -78,12 +78,20 @@ GfxInfo::GetHasBattery(bool* aHasBattery) {
   return NS_OK;
 }
 
-int32_t GfxInfo::GetMaxRefreshRate() {
-  int32_t refreshRate = -1;
-  for (auto displayInfo : mDisplayInfo) {
-    refreshRate = std::max(refreshRate, int32_t(displayInfo.mRefreshRate));
+int32_t GfxInfo::GetMaxRefreshRate(bool* aMixed) {
+  int32_t maxRefreshRate = -1;
+  if (aMixed) {
+    *aMixed = false;
   }
-  return refreshRate;
+
+  for (auto displayInfo : mDisplayInfo) {
+    int32_t refreshRate = int32_t(displayInfo.mRefreshRate);
+    if (aMixed && maxRefreshRate > 0 && maxRefreshRate != refreshRate) {
+      *aMixed = true;
+    }
+    maxRefreshRate = std::max(maxRefreshRate, refreshRate);
+  }
+  return maxRefreshRate;
 }
 
 NS_IMETHODIMP
@@ -1753,44 +1761,19 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
         "FEATURE_UNQUALIFIED_WEBRENDER_NVIDIA_BLOCKED");
 
-#ifndef EARLY_BETA_OR_EARLIER
-    // Block all Windows versions other than Windows 10.
-    APPEND_TO_DRIVER_BLOCKLIST2(
-        OperatingSystem::Windows7, DeviceFamily::All,
-        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-        DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
-        "FEATURE_UNQUALIFIED_WEBRENDER_WINDOWS_7");
-    APPEND_TO_DRIVER_BLOCKLIST2(
-        OperatingSystem::Windows8, DeviceFamily::All,
-        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-        DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
-        "FEATURE_UNQUALIFIED_WEBRENDER_WINDOWS_8");
-    APPEND_TO_DRIVER_BLOCKLIST2(
-        OperatingSystem::Windows8_1, DeviceFamily::All,
-        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-        DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
-        "FEATURE_UNQUALIFIED_WEBRENDER_WINDOWS_8_1");
-#endif
-
+#ifndef NIGHTLY_BUILD
     // Bug 1615421 / 1607860 - Playing videos appear to crash with WebRender
-    // with this particular driver.
+    // with this particular driver. Bug 1671253 enabled this on nightly only.
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_EQUAL,
         V(23, 20, 16, 4973),
         "FEATURE_FAILURE_WEBRENDER_VIDEO_CRASH_INTEL_23.20.16.4973");
+#endif
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER - ALLOWLIST
-
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::RecentWindows10, ScreenSizeStatus::All,
-        BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
-        DriverVendor::All, DeviceFamily::NvidiaRolloutWebRender,
-        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-        DRIVER_GREATER_THAN_OR_EQUAL, V(26, 21, 14, 3200),
-        "FEATURE_ROLLOUT_BATTERY_S_SCRN_NV_RECENT");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
@@ -1800,11 +1783,11 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_DESKTOP_AMD");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::None,
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::NvidiaRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_DESKTOP_NV");
+        V(0, 0, 0, 0), "FEATURE_ROLLOUT_NV");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
@@ -1812,15 +1795,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DeviceFamily::IntelRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_INTEL");
-
-#ifdef EARLY_BETA_OR_EARLIER
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
-        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
-        DeviceFamily::NvidiaRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_ALLOW_QUALIFIED, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_EARLY_BETA_OR_EARLIER_NVIDIA");
-#endif
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER_COMPOSITOR

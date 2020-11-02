@@ -91,6 +91,9 @@ dnl ========================================================
 
 if test "$COMPILE_ENVIRONMENT"; then
 
+# Run some logic to figure out exe extensions (mostly for mingw's sake)
+AC_EXEEXT
+
 if test "$target" != "$host"; then
     MOZ_CROSS_COMPILER
 else
@@ -541,7 +544,7 @@ case "$target" in
 
     if test -z "$CLANG_CC"; then
         MOZ_OPTIMIZE_FLAGS="-freorder-blocks -fno-reorder-functions -Os"
-    elif test -n "$RELEASE_OR_BETA"; then
+    else
         # From https://github.com/android-ndk/ndk/issues/133#issuecomment-308549264
         # -Oz is smaller than -Os on clang.
         MOZ_OPTIMIZE_FLAGS="-Oz"
@@ -560,8 +563,6 @@ case "$target" in
             AC_TRY_LINK(,,[MOZ_OPTIMIZE_LDFLAGS="$MOZ_OPTIMIZE_LDFLAGS $DISABLE_OUTLINER"])
             LDFLAGS="$_SAVE_LDFLAGS"
         fi
-    else
-        MOZ_OPTIMIZE_FLAGS="-O2"
     fi
     ;;
 
@@ -1494,13 +1495,6 @@ MOZ_SANDBOX=1
 MOZ_BINARY_EXTENSIONS=
 MOZ_DEVTOOLS=server
 
-case "$target_os" in
-    mingw*)
-        NS_ENABLE_TSF=1
-        AC_DEFINE(NS_ENABLE_TSF)
-        ;;
-esac
-
 dnl ========================================================
 dnl = Trademarked Branding
 dnl ========================================================
@@ -1797,7 +1791,7 @@ case $target in
 i?86-*-mingw*|x86_64-*-mingw*|aarch64-*-mingw*)
   MOZ_CRASHREPORTER=1
   ;;
-i?86-apple-darwin*|x86_64-apple-darwin*)
+i?86-apple-darwin*|x86_64-apple-darwin*|aarch64-apple-darwin*)
   MOZ_CRASHREPORTER=1
   ;;
 *-android*|*-linuxandroid*)
@@ -2729,7 +2723,6 @@ AC_SUBST_LIST(DSO_PIC_CFLAGS)
 AC_SUBST(DSO_LDOPTS)
 AC_SUBST(BIN_SUFFIX)
 AC_SUBST(USE_N32)
-AC_SUBST(NS_ENABLE_TSF)
 AC_SUBST(WIN32_CONSOLE_EXE_LDFLAGS)
 AC_SUBST(WIN32_GUI_EXE_LDFLAGS)
 

@@ -4,7 +4,8 @@
 "use strict";
 
 /**
- * Test that WS connection is established successfully and the truncated payload is correct.
+ * Test that WebSocket payloads containing a STOMP formatted message are parsed
+ * correctly and displayed in a user friendly way
  */
 
 add_task(async function() {
@@ -61,7 +62,8 @@ add_task(async function() {
   // Wait for next tick to do async stuff (The MessagePayload component uses the async function getMessagePayload)
   await waitForTick();
   const waitForData = waitForDOM(document, "#message-formattedData");
-  EventUtils.sendMouseEvent({ type: "mousedown" }, frames[0]);
+  const [requestFrame] = frames;
+  EventUtils.sendMouseEvent({ type: "mousedown" }, requestFrame);
 
   await waitForData;
 

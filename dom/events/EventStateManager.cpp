@@ -1375,6 +1375,10 @@ void EventStateManager::DispatchCrossProcessEvent(WidgetEvent* aEvent,
       if (BrowserParent* pointerLockedRemote =
               BrowserParent::GetPointerLockedRemoteTarget()) {
         remote = pointerLockedRemote;
+      } else if (BrowserParent* pointerCapturedRemote =
+                     PointerEventHandler::GetPointerCapturingRemoteTarget(
+                         mouseEvent->pointerId)) {
+        remote = pointerCapturedRemote;
       }
 
       // If a mouse is over a remote target A, and then moves to
@@ -2325,9 +2329,11 @@ void EventStateManager::DoScrollHistory(int32_t direction) {
       // This is doing user-initiated history traversal, hence we want
       // to require that history entries we navigate to have user interaction.
       if (direction > 0)
-        webNav->GoBack(/* aRequireUserInteraction = */ true);
+        webNav->GoBack(
+            StaticPrefs::browser_navigation_requireUserInteraction());
       else
-        webNav->GoForward(/* aRequireUserInteraction = */ true);
+        webNav->GoForward(
+            StaticPrefs::browser_navigation_requireUserInteraction());
     }
   }
 }
@@ -2692,6 +2698,7 @@ nsIFrame* EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
 
     // If the frame disregards the direction the user is trying to scroll, then
     // it should just bubbles the scroll event up to its parental scroll frame
+
     Maybe<layers::ScrollDirection> disregardedDirection =
         WheelHandlingUtils::GetDisregardedWheelScrollDirection(scrollFrame);
     if (disregardedDirection) {
@@ -3899,9 +3906,13 @@ static bool ShouldBlockCustomCursor(nsPresContext* aPresContext,
   nsPoint point = nsLayoutUtils::GetEventCoordinatesRelativeTo(
       aEvent, RelativeTo{topLevel->PresShell()->GetRootFrame()});
 
-  nsSize size(CSSPixel::ToAppUnits(width), CSSPixel::ToAppUnits(height));
-  nsPoint hotspot(CSSPixel::ToAppUnits(aCursor.mHotspot.x),
-                  CSSPixel::ToAppUnits(aCursor.mHotspot.y));
+  // The cursor size won't be affected by our full zoom in the parent process,
+  // so undo that before checking the rect.
+  float zoom = topLevel->GetFullZoom();
+  nsSize size(CSSPixel::ToAppUnits(width / zoom),
+              CSSPixel::ToAppUnits(height / zoom));
+  nsPoint hotspot(CSSPixel::ToAppUnits(aCursor.mHotspot.x / zoom),
+                  CSSPixel::ToAppUnits(aCursor.mHotspot.y / zoom));
 
   nsRect cursorRect(point - hotspot, size);
   return !topLevel->GetVisibleArea().Contains(cursorRect);
@@ -5427,6 +5438,14 @@ void EventStateManager::UpdateAncestorState(nsIContent* aStartNode,
   }
 }
 
+// static
+bool CanContentHaveActiveState(nsIContent& aContent) {
+  // Editable content can never become active since their default actions
+  // are disabled.  Watch out for editable content in native anonymous
+  // subtrees though, as they belong to text controls.
+  return !aContent.IsEditable() || aContent.IsInNativeAnonymousSubtree();
+}
+
 bool EventStateManager::SetContentState(nsIContent* aContent,
                                         EventStates aState) {
   MOZ_ASSERT(ManagesState(aState), "Unexpected state");
@@ -5449,11 +5468,7 @@ bool EventStateManager::SetContentState(nsIContent* aContent,
     }
 
     if (aState == NS_EVENT_STATE_ACTIVE) {
-      // Editable content can never become active since their default actions
-      // are disabled.  Watch out for editable content in native anonymous
-      // subtrees though, as they belong to text controls.
-      if (aContent && aContent->IsEditable() &&
-          !aContent->IsInNativeAnonymousSubtree()) {
+      if (aContent && !CanContentHaveActiveState(*aContent)) {
         aContent = nullptr;
       }
       if (aContent != mActiveContent) {
@@ -5593,7 +5608,8 @@ void EventStateManager::RemoveNodeFromChainIfNeeded(EventStates aState,
     // Also, NAC is not observable and NAC being removed will go away soon.
     leaf = newLeaf;
   }
-  MOZ_ASSERT(leaf == newLeaf);
+  MOZ_ASSERT(leaf == newLeaf || (aState == NS_EVENT_STATE_ACTIVE && !leaf &&
+                                 !CanContentHaveActiveState(*newLeaf)));
 }
 
 void EventStateManager::NativeAnonymousContentRemoved(nsIContent* aContent) {
@@ -5876,7 +5892,7 @@ nsresult EventStateManager::DoContentCommandScrollEvent(
   aEvent->mSucceeded = true;
 
   nsIScrollableFrame* sf =
-      presShell->GetScrollableFrameToScroll(ScrollableDirection::Either);
+      presShell->GetScrollableFrameToScroll(layers::EitherScrollDirection);
   aEvent->mIsEnabled =
       sf ? (aEvent->mScroll.mIsHorizontal ? WheelHandlingUtils::CanScrollOn(
                                                 sf, aEvent->mScroll.mAmount, 0)

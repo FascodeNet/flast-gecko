@@ -169,6 +169,9 @@ urlbar.searchmode.*
   - ``tabtosearch``
     Used when the user selects a tab-to-search result. These results suggest a
     search engine when the search engine's domain is autofilled.
+  - ``tabtosearch_onboard``
+    Used when the user selects a tab-to-search onboarding result. These are
+    shown the first few times the user encounters a tab-to-search result.
   - ``topsites_newtab``
     Used when the user selects a search shortcut Top Site from the New Tab Page.
   - ``topsites_urlbar``
@@ -283,6 +286,13 @@ Event Extra
     directly decide whether to search or visit the given string without having
     a fully built result.
     This is only present for ``engagement`` events.
+  - ``provider``
+    The name of the result provider for the selected result. Existing values
+    are: ``HeuristicFallback``, ``Autofill``, ``UnifiedComplete``,
+    ``TokenAliasEngines``, ``SearchSuggestions``, ``UrlbarProviderTopSites``.
+    Values can also be defined by `URLBar provider experiments`_.
+
+    .. _URLBar provider experiments: experiments.html#developing-address-bar-extensions
 
 Search probes relevant to the Address Bar
 -----------------------------------------

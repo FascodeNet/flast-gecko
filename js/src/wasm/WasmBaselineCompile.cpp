@@ -192,6 +192,7 @@ class BaseStackFrame;
 
 enum class UseABI { Wasm, Builtin, System };
 enum class InterModule { False = false, True = true };
+enum class RhsDestOp { True = true };
 
 #if defined(JS_CODEGEN_NONE)
 #  define RABALDR_SCRATCH_I32
@@ -6488,27 +6489,15 @@ class BaseCompiler final : public BaseCompilerInterface {
   }
 
   MOZ_MUST_USE bool supportsRoundInstruction(RoundingMode mode) {
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
     return Assembler::HasRoundInstruction(mode);
-#else
-    return false;
-#endif
   }
 
   void roundF32(RoundingMode roundingMode, RegF32 f0) {
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
     masm.nearbyIntFloat32(roundingMode, f0, f0);
-#else
-    MOZ_CRASH("NYI");
-#endif
   }
 
   void roundF64(RoundingMode roundingMode, RegF64 f0) {
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
     masm.nearbyIntDouble(roundingMode, f0, f0);
-#else
-    MOZ_CRASH("NYI");
-#endif
   }
 
   //////////////////////////////////////////////////////////////////////
@@ -6602,9 +6591,9 @@ class BaseCompiler final : public BaseCompilerInterface {
 
     if (!moduleEnv_.hugeMemoryEnabled() && !check->omitBoundsCheck) {
       Label ok;
-      masm.wasmBoundsCheck(Assembler::Below, ptr,
-                           Address(tls, offsetof(TlsData, boundsCheckLimit)),
-                           &ok);
+      masm.wasmBoundsCheck32(
+          Assembler::Below, ptr,
+          Address(tls, offsetof(TlsData, boundsCheckLimit32)), &ok);
       masm.wasmTrap(Trap::OutOfBounds, bytecodeOffset());
       masm.bind(&ok);
     }
@@ -8238,6 +8227,10 @@ class BaseCompiler final : public BaseCompilerInterface {
   template <typename RhsType, typename LhsDestType>
   void emitVectorBinop(void (*op)(MacroAssembler& masm, RhsType src,
                                   LhsDestType srcDest));
+
+  template <typename RhsDestType, typename LhsType>
+  void emitVectorBinop(void (*op)(MacroAssembler& masm, RhsDestType src,
+                                  LhsType srcDest, RhsDestOp));
 
   template <typename RhsType, typename LhsDestType, typename TempType>
   void emitVectorBinop(void (*)(MacroAssembler& masm, RhsType rs,
@@ -12803,27 +12796,22 @@ bool BaseCompiler::emitStructNarrow() {
 
   // struct.narrow validation ensures that these hold.
 
-  MOZ_ASSERT(inputType.isExternRef() || moduleEnv_.isStructType(inputType));
-  MOZ_ASSERT(outputType.isExternRef() || moduleEnv_.isStructType(outputType));
-  MOZ_ASSERT_IF(outputType.isExternRef(), inputType.isExternRef());
+  MOZ_ASSERT(inputType.isEqRef() || moduleEnv_.isStructType(inputType));
+  MOZ_ASSERT(outputType.isEqRef() || moduleEnv_.isStructType(outputType));
+  MOZ_ASSERT_IF(outputType.isEqRef(), inputType.isEqRef());
 
-  // AnyRef -> AnyRef is a no-op, just leave the value on the stack.
+  // EqRef -> EqRef is a no-op, just leave the value on the stack.
 
-  if (inputType.isExternRef() && outputType.isExternRef()) {
+  if (inputType.isEqRef() && outputType.isEqRef()) {
     return true;
   }
 
   RegPtr rp = popRef();
 
-  // AnyRef -> (optref T) must first unbox; leaves rp or null
-
-  bool mustUnboxAnyref = inputType.isExternRef();
-
-  // Dynamic downcast (optref T) -> (optref U), leaves rp or null
+  // Dynamic downcast eqref|(optref T) -> (optref U), leaves rp or null
   const StructType& outputStruct =
       moduleEnv_.types[outputType.refType().typeIndex()].structType();
 
-  pushI32(mustUnboxAnyref);
   pushI32(outputStruct.moduleIndex_);
   pushRef(rp);
   return emitInstanceCall(lineOrBytecode, SASigStructNarrow);
@@ -12978,6 +12966,25 @@ static void MaxF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd,
   masm.maxFloat64x2(rs, rsd, temp1, temp2);
 }
 
+static void PMinF32x4(MacroAssembler& masm, RegV128 rsd, RegV128 rs,
+                      RhsDestOp) {
+  masm.pseudoMinFloat32x4(rsd, rs);
+}
+
+static void PMinF64x2(MacroAssembler& masm, RegV128 rsd, RegV128 rs,
+                      RhsDestOp) {
+  masm.pseudoMinFloat64x2(rsd, rs);
+}
+
+static void PMaxF32x4(MacroAssembler& masm, RegV128 rsd, RegV128 rs,
+                      RhsDestOp) {
+  masm.pseudoMaxFloat32x4(rsd, rs);
+}
+
+static void PMaxF64x2(MacroAssembler& masm, RegV128 rsd, RegV128 rs,
+                      RhsDestOp) {
+  masm.pseudoMaxFloat64x2(rsd, rs);
+}
 #  elif defined(JS_CODEGEN_ARM64)
 static void MinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.minFloat32x4(rs, rsd);
@@ -12994,7 +13001,6 @@ static void MaxF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
 static void MaxF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.maxFloat64x2(rs, rsd);
 }
-#  endif
 
 static void PMinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.pseudoMinFloat32x4(rs, rsd);
@@ -13011,6 +13017,7 @@ static void PMaxF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
 static void PMaxF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.pseudoMaxFloat64x2(rs, rsd);
 }
+#  endif
 
 static void DotI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.widenDotInt16x8(rs, rsd);
@@ -13578,6 +13585,17 @@ void BaseCompiler::emitVectorBinop(void (*op)(MacroAssembler& masm, RhsType src,
   push(rsd);
 }
 
+template <typename RhsDestType, typename LhsType>
+void BaseCompiler::emitVectorBinop(void (*op)(MacroAssembler& masm,
+                                              RhsDestType src, LhsType srcDest,
+                                              RhsDestOp)) {
+  RhsDestType rsd = pop<RhsDestType>();
+  LhsType rs = pop<LhsType>();
+  op(masm, rsd, rs, RhsDestOp::True);
+  free(rs);
+  push(rsd);
+}
+
 template <typename RhsType, typename LhsDestType, typename TempType>
 void BaseCompiler::emitVectorBinop(void (*op)(MacroAssembler& masm, RhsType rs,
                                               LhsDestType rsd, TempType temp)) {
@@ -13808,15 +13826,7 @@ bool BaseCompiler::emitVectorShuffle() {
 
   RegV128 rd, rs;
   pop2xV128(&rd, &rs);
-#  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-  RegV128 temp = needV128();
-  masm.shuffleInt8x16(shuffleMask.bytes, rs, rd, temp);
-  freeV128(temp);
-#  elif defined(JS_CODEGEN_ARM64)
   masm.shuffleInt8x16(shuffleMask.bytes, rs, rd);
-#  else
-  MOZ_CRASH("NYI");
-#  endif
   freeV128(rs);
   pushV128(rd);
 
@@ -14655,7 +14665,7 @@ bool BaseCompiler::emitBody() {
         if (!moduleEnv_.gcTypesEnabled()) {
           return iter_.unrecognizedOpcode(&op);
         }
-        CHECK_NEXT(dispatchComparison(emitCompareRef, RefType::extern_(),
+        CHECK_NEXT(dispatchComparison(emitCompareRef, RefType::eq(),
                                       Assembler::Equal));
 #endif
 #ifdef ENABLE_WASM_REFTYPES
@@ -14970,20 +14980,15 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorBinary(NarrowUI32x4));
           case uint32_t(SimdOp::V8x16Swizzle):
             CHECK_NEXT(dispatchVectorBinary(Swizzle));
-          case uint32_t(SimdOp::F32x4PMaxExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4PMax):
             CHECK_NEXT(dispatchVectorBinary(PMaxF32x4));
-          case uint32_t(SimdOp::F32x4PMinExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4PMin):
             CHECK_NEXT(dispatchVectorBinary(PMinF32x4));
-          case uint32_t(SimdOp::F64x2PMaxExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F64x2PMax):
             CHECK_NEXT(dispatchVectorBinary(PMaxF64x2));
-          case uint32_t(SimdOp::F64x2PMinExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F64x2PMin):
             CHECK_NEXT(dispatchVectorBinary(PMinF64x2));
-          case uint32_t(SimdOp::I32x4DotSI16x8Experimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::I32x4DotSI16x8):
             CHECK_NEXT(dispatchVectorBinary(DotI16x8));
           case uint32_t(SimdOp::I8x16Neg):
             CHECK_NEXT(dispatchVectorUnary(NegI8x16));
@@ -15037,29 +15042,21 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorUnary(AbsI16x8));
           case uint32_t(SimdOp::I32x4Abs):
             CHECK_NEXT(dispatchVectorUnary(AbsI32x4));
-          case uint32_t(SimdOp::F32x4CeilExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4Ceil):
             CHECK_NEXT(dispatchVectorUnary(CeilF32x4));
-          case uint32_t(SimdOp::F32x4FloorExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4Floor):
             CHECK_NEXT(dispatchVectorUnary(FloorF32x4));
-          case uint32_t(SimdOp::F32x4TruncExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4Trunc):
             CHECK_NEXT(dispatchVectorUnary(TruncF32x4));
-          case uint32_t(SimdOp::F32x4NearestExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F32x4Nearest):
             CHECK_NEXT(dispatchVectorUnary(NearestF32x4));
-          case uint32_t(SimdOp::F64x2CeilExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F64x2Ceil):
             CHECK_NEXT(dispatchVectorUnary(CeilF64x2));
-          case uint32_t(SimdOp::F64x2FloorExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F64x2Floor):
             CHECK_NEXT(dispatchVectorUnary(FloorF64x2));
-          case uint32_t(SimdOp::F64x2TruncExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F64x2Trunc):
             CHECK_NEXT(dispatchVectorUnary(TruncF64x2));
-          case uint32_t(SimdOp::F64x2NearestExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::F64x2Nearest):
             CHECK_NEXT(dispatchVectorUnary(NearestF64x2));
           case uint32_t(SimdOp::I8x16Shl):
             CHECK_NEXT(dispatchVectorVariableShift(ShiftLeftI8x16));
@@ -15119,11 +15116,9 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(emitLoadExtend(Scalar::Int32));
           case uint32_t(SimdOp::I64x2LoadU32x2):
             CHECK_NEXT(emitLoadExtend(Scalar::Uint32));
-          case uint32_t(SimdOp::V128Load32ZeroExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::V128Load32Zero):
             CHECK_NEXT(emitLoadZero(Scalar::Float32));
-          case uint32_t(SimdOp::V128Load64ZeroExperimental):
-            CHECK_SIMD_EXPERIMENTAL();
+          case uint32_t(SimdOp::V128Load64Zero):
             CHECK_NEXT(emitLoadZero(Scalar::Float64));
           case uint32_t(SimdOp::V128Store):
             CHECK_NEXT(emitStore(ValType::V128, Scalar::Simd128));

@@ -85,7 +85,7 @@ FRAME_CLASSES = [
     Frame("nsProgressFrame", "Progress", LEAF),
     Frame("nsRangeFrame", "Range", LEAF),
     Frame("nsResizerFrame", "Box", NOT_LEAF),
-    Frame("nsRootBoxFrame", "Root", NOT_LEAF),
+    Frame("nsRootBoxFrame", "XULRoot", NOT_LEAF),
     Frame("nsRubyBaseContainerFrame", "RubyBaseContainer", NOT_LEAF),
     Frame("nsRubyBaseFrame", "RubyBase", NOT_LEAF),
     Frame("nsRubyFrame", "Ruby", NOT_LEAF),
@@ -149,7 +149,6 @@ FRAME_CLASSES = [
     Frame("nsXULScrollFrame", "Scroll", NOT_LEAF),
     Frame("ViewportFrame", "Viewport", NOT_LEAF),
     Frame("WBRFrame", "Wbr", LEAF),
-
     # Non-concrete classes (for FrameIID use)
     AbstractFrame("nsContainerFrame"),
     AbstractFrame("nsLeafFrame"),
@@ -159,7 +158,6 @@ FRAME_CLASSES = [
     AbstractFrame("SVGDisplayContainerFrame"),
     AbstractFrame("SVGGradientFrame"),
     AbstractFrame("SVGPaintServerFrame"),
-
     # Interfaces (for FrameIID use)
     AbstractFrame("nsIAnonymousContentCreator"),
     AbstractFrame("nsIComboboxControlFrame"),

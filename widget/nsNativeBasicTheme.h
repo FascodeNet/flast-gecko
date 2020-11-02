@@ -103,6 +103,8 @@ static const gfx::sRGBColor sScrollbarButtonHoverColor(gfx::sRGBColor(0.86f,
                                                                       0.86f));
 
 static const CSSIntCoord kMinimumWidgetSize = 14;
+static const CSSIntCoord kMinimumScrollbarSize = 14;
+static const CSSIntCoord kMinimumThinScrollbarSize = 6;
 static const CSSIntCoord kMinimumColorPickerHeight = 32;
 static const CSSIntCoord kMinimumRangeThumbSize = 20;
 static const CSSIntCoord kMinimumDropdownArrowButtonWidth = 18;
@@ -123,6 +125,7 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
   using sRGBColor = mozilla::gfx::sRGBColor;
   using CSSCoord = mozilla::CSSCoord;
   using CSSIntCoord = mozilla::CSSIntCoord;
+  using ComputedStyle = mozilla::ComputedStyle;
   using EventStates = mozilla::EventStates;
   using DrawTarget = mozilla::gfx::DrawTarget;
   using Path = mozilla::gfx::Path;
@@ -255,6 +258,12 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
       const EventStates& aState);
   static std::pair<sRGBColor, sRGBColor> ComputeRangeThumbColors(
       const EventStates& aState);
+  static sRGBColor ComputeScrollbarColor(const ComputedStyle& aStyle,
+                                         const EventStates& aDocumentState,
+                                         bool aIsRoot);
+  static sRGBColor ComputeScrollbarthumbColor(
+      const ComputedStyle& aStyle, const EventStates& aState,
+      const EventStates& aDocumentState);
   static void PaintListbox(DrawTarget* aDrawTarget, const Rect& aRect,
                            const EventStates& aState, uint32_t aDpiRatio);
   static void PaintMenulist(DrawTarget* aDrawTarget, const Rect& aRect,
@@ -274,13 +283,9 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
                                  const Rect& aRect, const EventStates& aState,
                                  StyleAppearance aAppearance,
                                  uint32_t aDpiRatio);
-  static void PaintRangeTrackBackground(nsIFrame* aFrame,
-                                        DrawTarget* aDrawTarget,
-                                        const Rect& aRect,
-                                        const EventStates& aState,
-                                        uint32_t aDpiRatio, bool aHorizontal);
-  static void PaintRangeThumb(DrawTarget* aDrawTarget, const Rect& aRect,
-                              const EventStates& aState, uint32_t aDpiRatio);
+  static void PaintRange(nsIFrame* aFrame, DrawTarget* aDrawTarget,
+                         const Rect& aRect, const EventStates& aState,
+                         uint32_t aDpiRatio, bool aHorizontal);
   static void PaintProgressBar(DrawTarget* aDrawTarget, const Rect& aRect,
                                const EventStates& aState, uint32_t aDpiRatio);
   static void PaintProgresschunk(nsIFrame* aFrame, DrawTarget* aDrawTarget,
@@ -295,23 +300,24 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
                           const Rect& aRect, const EventStates& aState,
                           uint32_t aDpiRatio);
 
-  virtual void PaintScrollbarthumbHorizontal(DrawTarget* aDrawTarget,
-                                             const Rect& aRect,
-                                             const EventStates& aState);
-  virtual void PaintScrollbarthumbVertical(DrawTarget* aDrawTarget,
-                                           const Rect& aRect,
-                                           const EventStates& aState);
-  virtual void PaintScrollbarHorizontal(DrawTarget* aDrawTarget,
-                                        const Rect& aRect, bool aIsRoot);
-  virtual void PaintScrollbarVerticalAndCorner(DrawTarget* aDrawTarget,
-                                               const Rect& aRect,
-                                               uint32_t aDpiRatio,
-                                               bool aIsRoot);
-  virtual void PaintScrollbarbutton(DrawTarget* aDrawTarget,
-                                    StyleAppearance aAppearance,
-                                    const Rect& aRect,
-                                    const EventStates& aState,
-                                    uint32_t aDpiRatio);
+  virtual void PaintScrollbarThumb(DrawTarget* aDrawTarget, const Rect& aRect,
+                                   bool aHorizontal,
+                                   const ComputedStyle& aStyle,
+                                   const EventStates& aElementState,
+                                   const EventStates& aDocumentState,
+                                   uint32_t aDpiRatio);
+  virtual void PaintScrollbar(DrawTarget* aDrawTarget, const Rect& aRect,
+                              bool aHorizontal, const ComputedStyle& aStyle,
+                              const EventStates& aDocumentState,
+                              uint32_t aDpiRatio, bool aIsRoot);
+  virtual void PaintScrollCorner(DrawTarget* aDrawTarget, const Rect& aRect,
+                                 const ComputedStyle& aStyle,
+                                 const EventStates& aDocumentState,
+                                 uint32_t aDpiRatio, bool aIsRoot);
+  virtual void PaintScrollbarbutton(
+      DrawTarget* aDrawTarget, StyleAppearance aAppearance, const Rect& aRect,
+      const ComputedStyle& aStyle, const EventStates& aElementState,
+      const EventStates& aDocumentState, uint32_t aDpiRatio);
 };
 
 #endif

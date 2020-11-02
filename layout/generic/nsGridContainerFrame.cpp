@@ -5299,7 +5299,7 @@ static nscoord MinContentContribution(const GridItemInfo& aGridItem,
   }
   nscoord s = ContentContribution(
       aGridItem, aState, aRC, aCBWM, aAxis, aCache->mPercentageBasis,
-      nsLayoutUtils::MIN_ISIZE, aCache->mMinSizeClamp);
+      IntrinsicISizeType::MinISize, aCache->mMinSizeClamp);
   aCache->mMinContentContribution.emplace(s);
   return s;
 }
@@ -5318,7 +5318,7 @@ static nscoord MaxContentContribution(const GridItemInfo& aGridItem,
   }
   nscoord s = ContentContribution(
       aGridItem, aState, aRC, aCBWM, aAxis, aCache->mPercentageBasis,
-      nsLayoutUtils::PREF_ISIZE, aCache->mMinSizeClamp);
+      IntrinsicISizeType::PrefISize, aCache->mMinSizeClamp);
   aCache->mMaxContentContribution.emplace(s);
   return s;
 }
@@ -5372,7 +5372,7 @@ static nscoord MinSize(const GridItemInfo& aGridItem,
              "baseline offset should be zero when not baseline-aligned");
   nscoord sz = aGridItem.mBaselineOffset[aAxis] +
                nsLayoutUtils::MinSizeContributionForAxis(
-                   axis, aRC, child, nsLayoutUtils::MIN_ISIZE,
+                   axis, aRC, child, IntrinsicISizeType::MinISize,
                    *aCache->mPercentageBasis);
   const StyleSize& style =
       axis == eAxisHorizontal ? stylePos->mMinWidth : stylePos->mMinHeight;
@@ -5387,11 +5387,11 @@ static nscoord MinSize(const GridItemInfo& aGridItem,
       (isAuto && child->StyleDisplay()->mOverflowX == StyleOverflow::Visible)) {
     // Now calculate the "content size" part and return whichever is smaller.
     MOZ_ASSERT(isAuto || sz == NS_UNCONSTRAINEDSIZE);
-    sz = std::min(
-        sz, ContentContribution(aGridItem, aState, aRC, aCBWM, aAxis,
-                                aCache->mPercentageBasis,
-                                nsLayoutUtils::MIN_ISIZE, aCache->mMinSizeClamp,
-                                nsLayoutUtils::MIN_INTRINSIC_ISIZE));
+    sz = std::min(sz, ContentContribution(aGridItem, aState, aRC, aCBWM, aAxis,
+                                          aCache->mPercentageBasis,
+                                          IntrinsicISizeType::MinISize,
+                                          aCache->mMinSizeClamp,
+                                          nsLayoutUtils::MIN_INTRINSIC_ISIZE));
   }
   aCache->mMinSize.emplace(sz);
   return sz;
@@ -6368,7 +6368,7 @@ float nsGridContainerFrame::Tracks::FindUsedFlexFraction(
       // XXX optimize: bug 1194446
       auto pb = Some(aState.PercentageBasisFor(mAxis, item));
       nscoord spaceToFill = ContentContribution(item, aState, rc, wm, mAxis, pb,
-                                                nsLayoutUtils::PREF_ISIZE);
+                                                IntrinsicISizeType::PrefISize);
       const LineRange& range =
           mAxis == eLogicalAxisInline ? item.mArea.mCols : item.mArea.mRows;
       MOZ_ASSERT(range.Extent() >= 1);
@@ -7360,7 +7360,7 @@ nscoord nsGridContainerFrame::ReflowInFragmentainer(
   // and put them in a separate array.
   nsTArray<const GridItemInfo*> sortedItems(aState.mGridItems.Length());
   nsTArray<nsIFrame*> placeholders(aState.mAbsPosItems.Length());
-  aState.mIter.Reset(CSSOrderAwareFrameIterator::eIncludeAll);
+  aState.mIter.Reset(CSSOrderAwareFrameIterator::ChildFilter::IncludeAll);
   for (; !aState.mIter.AtEnd(); aState.mIter.Next()) {
     nsIFrame* child = *aState.mIter;
     if (!child->IsPlaceholderFrame()) {
@@ -7860,7 +7860,7 @@ nscoord nsGridContainerFrame::MasonryLayout(GridReflowInput& aState,
 
   // Collect our grid items and sort them in grid order.
   nsTArray<GridItemInfo*> sortedItems(aState.mGridItems.Length());
-  aState.mIter.Reset(CSSOrderAwareFrameIterator::eIncludeAll);
+  aState.mIter.Reset(CSSOrderAwareFrameIterator::ChildFilter::IncludeAll);
   size_t absposIndex = 0;
   const LogicalAxis masonryAxis =
       IsMasonry(eLogicalAxisBlock) ? eLogicalAxisBlock : eLogicalAxisInline;
@@ -8251,8 +8251,8 @@ nscoord nsGridContainerFrame::MasonryLayout(GridReflowInput& aState,
         LogicalSize percentBasis(
             aState.PercentageBasisFor(eLogicalAxisInline, *item));
         IntrinsicISizeType type = aConstraint == SizingConstraint::MaxContent
-                                      ? nsLayoutUtils::PREF_ISIZE
-                                      : nsLayoutUtils::MIN_ISIZE;
+                                      ? IntrinsicISizeType::PrefISize
+                                      : IntrinsicISizeType::MinISize;
         auto sz =
             ::ContentContribution(*item, aState, &aState.mRenderingContext, wm,
                                   masonryAxis, Some(percentBasis), type);
@@ -8376,7 +8376,7 @@ nscoord nsGridContainerFrame::ReflowChildren(GridReflowInput& aState,
     bSize = ReflowInFragmentainer(aState, aContentArea, aDesiredSize, aStatus,
                                   *fragmentainer, aContainerSize);
   } else {
-    aState.mIter.Reset(CSSOrderAwareFrameIterator::eIncludeAll);
+    aState.mIter.Reset(CSSOrderAwareFrameIterator::ChildFilter::IncludeAll);
     for (; !aState.mIter.AtEnd(); aState.mIter.Next()) {
       nsIFrame* child = *aState.mIter;
       const GridItemInfo* info = nullptr;
@@ -8686,8 +8686,8 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
       using Filter = CSSOrderAwareFrameIterator::ChildFilter;
       using Order = CSSOrderAwareFrameIterator::OrderState;
       bool ordered = gridReflowInput.mIter.ItemsAreAlreadyInOrder();
-      auto orderState = ordered ? Order::eKnownOrdered : Order::eKnownUnordered;
-      iter.emplace(this, kPrincipalList, Filter::eSkipPlaceholders, orderState);
+      auto orderState = ordered ? Order::Ordered : Order::Unordered;
+      iter.emplace(this, kPrincipalList, Filter::SkipPlaceholders, orderState);
       gridItems.emplace();
       for (; !iter->AtEnd(); iter->Next()) {
         auto child = **iter;
@@ -9178,7 +9178,7 @@ nscoord nsGridContainerFrame::IntrinsicISize(gfxContext* aRenderingContext,
     grid.mGridRowEnd = subgrid->mGridRowEnd;
   }
 
-  auto constraint = aType == nsLayoutUtils::MIN_ISIZE
+  auto constraint = aType == IntrinsicISizeType::MinISize
                         ? SizingConstraint::MinContent
                         : SizingConstraint::MaxContent;
   if (IsMasonry(eLogicalAxisInline)) {
@@ -9221,7 +9221,7 @@ nscoord nsGridContainerFrame::GetMinISize(gfxContext* aRC) {
   if (mCachedMinISize == NS_INTRINSIC_ISIZE_UNKNOWN) {
     mCachedMinISize = StyleDisplay()->IsContainSize()
                           ? 0
-                          : IntrinsicISize(aRC, nsLayoutUtils::MIN_ISIZE);
+                          : IntrinsicISize(aRC, IntrinsicISizeType::MinISize);
   }
   return mCachedMinISize;
 }
@@ -9236,7 +9236,7 @@ nscoord nsGridContainerFrame::GetPrefISize(gfxContext* aRC) {
   if (mCachedPrefISize == NS_INTRINSIC_ISIZE_UNKNOWN) {
     mCachedPrefISize = StyleDisplay()->IsContainSize()
                            ? 0
-                           : IntrinsicISize(aRC, nsLayoutUtils::PREF_ISIZE);
+                           : IntrinsicISize(aRC, IntrinsicISizeType::PrefISize);
   }
   return mCachedPrefISize;
 }
@@ -9265,10 +9265,11 @@ void nsGridContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   typedef CSSOrderAwareFrameIterator::OrderState OrderState;
   OrderState order =
       HasAnyStateBits(NS_STATE_GRID_NORMAL_FLOW_CHILDREN_IN_CSS_ORDER)
-          ? OrderState::eKnownOrdered
-          : OrderState::eKnownUnordered;
+          ? OrderState::Ordered
+          : OrderState::Unordered;
   CSSOrderAwareFrameIterator iter(
-      this, kPrincipalList, CSSOrderAwareFrameIterator::eIncludeAll, order);
+      this, kPrincipalList, CSSOrderAwareFrameIterator::ChildFilter::IncludeAll,
+      order);
   for (; !iter.AtEnd(); iter.Next()) {
     nsIFrame* child = *iter;
     BuildDisplayListForChild(aBuilder, child, aLists,
@@ -9448,9 +9449,9 @@ void nsGridContainerFrame::CalculateBaselines(
     // iterator ('aIter' is the forward iterator from the GridReflowInput).
     using Iter = ReverseCSSOrderAwareFrameIterator;
     auto orderState = aIter->ItemsAreAlreadyInOrder()
-                          ? Iter::OrderState::eKnownOrdered
-                          : Iter::OrderState::eKnownUnordered;
-    Iter iter(this, kPrincipalList, Iter::ChildFilter::eSkipPlaceholders,
+                          ? Iter::OrderState::Ordered
+                          : Iter::OrderState::Unordered;
+    Iter iter(this, kPrincipalList, Iter::ChildFilter::SkipPlaceholders,
               orderState);
     iter.SetItemCount(aGridItems->Length());
     FindItemInGridOrderResult gridOrderLastItem = FindLastItemInGridOrder(

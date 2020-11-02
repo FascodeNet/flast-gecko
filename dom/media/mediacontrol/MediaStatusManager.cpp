@@ -4,10 +4,13 @@
 
 #include "MediaStatusManager.h"
 
+#include "MediaControlService.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/Element.h"
 #include "mozilla/dom/MediaControlUtils.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "nsContentUtils.h"
 #include "nsIChromeRegistry.h"
 #include "nsIObserverService.h"
 #include "nsIXULAppInfo.h"
@@ -453,6 +456,22 @@ bool MediaStatusManager::IsMediaPlaying() const {
 
 bool MediaStatusManager::IsAnyMediaBeingControlled() const {
   return mPlaybackStatusDelegate.IsAnyMediaBeingControlled();
+}
+
+void MediaStatusManager::NotifyPageTitleChanged() {
+  // If active media session has set non-empty metadata, then we would use that
+  // instead of using default metadata.
+  if (mActiveMediaSessionContextId &&
+      mMediaSessionInfoMap.GetValue(*mActiveMediaSessionContextId)->mMetadata) {
+    return;
+  }
+  // In private browsing mode, we won't show page title on default metadata so
+  // we don't need to update that.
+  if (IsInPrivateBrowsing()) {
+    return;
+  }
+  LOG("page title changed, update default metadata");
+  mMetadataChangedEvent.Notify(GetCurrentMediaMetadata());
 }
 
 }  // namespace dom

@@ -630,6 +630,8 @@ nsThreadManager::NewNamedThread(const nsACString& aName, uint32_t aStackSize,
     return NS_ERROR_NOT_INITIALIZED;
   }
 
+  TimeStamp startTime = TimeStamp::Now();
+
   RefPtr<ThreadEventQueue> queue =
       new ThreadEventQueue(MakeUnique<EventQueue>());
   RefPtr<nsThread> thr =
@@ -650,6 +652,19 @@ nsThreadManager::NewNamedThread(const nsACString& aName, uint32_t aStackSize,
       thr->Shutdown();  // ok if it happens multiple times
     }
     return NS_ERROR_NOT_INITIALIZED;
+  }
+
+  PROFILER_MARKER_TEXT(
+      "NewThread", OTHER,
+      MarkerOptions(MarkerStack::Capture(),
+                    MarkerTiming::IntervalUntilNowFrom(startTime)),
+      aName);
+  if (!NS_IsMainThread()) {
+    PROFILER_MARKER_TEXT(
+        "NewThread (non-main thread)", OTHER,
+        MarkerOptions(MarkerStack::Capture(), MarkerThreadId::MainThread(),
+                      MarkerTiming::IntervalUntilNowFrom(startTime)),
+        aName);
   }
 
   thr.forget(aResult);

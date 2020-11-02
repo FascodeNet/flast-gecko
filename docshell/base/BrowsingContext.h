@@ -90,6 +90,9 @@ class WindowProxyHolder;
   FIELD(Name, nsString)                                                      \
   FIELD(Closed, bool)                                                        \
   FIELD(IsActive, bool)                                                      \
+  /* Top()-only. If true, new-playing media will be suspended when in an     \
+   * inactive browsing context. */                                           \
+  FIELD(SuspendMediaWhenInactive, bool)                                      \
   /* If true, we're within the nested event loop in window.open, and this    \
    * context may not be used as the target of a load */                      \
   FIELD(PendingInitialization, bool)                                         \
@@ -174,7 +177,9 @@ class WindowProxyHolder;
    * browsing contexts created as a descendant of this one.  Valid only for  \
    * top BCs. */                                                             \
   FIELD(AuthorStyleDisabledDefault, bool)                                    \
-  FIELD(DisplayMode, mozilla::dom::DisplayMode)
+  FIELD(DisplayMode, mozilla::dom::DisplayMode)                              \
+  /* True if the top level browsing context owns a main media controller */  \
+  FIELD(HasMainMediaController, bool)
 
 // BrowsingContext, in this context, is the cross process replicated
 // environment in which information about documents is stored. In
@@ -340,6 +345,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // it is neither closed, cached, nor discarded).
   bool IsTargetable();
 
+  // True if this browsing context is inactive and is able to be suspended.
+  bool InactiveForSuspend() const;
+
   const nsString& Name() const { return GetName(); }
   void GetName(nsAString& aName) { aName = GetName(); }
   bool NameEquals(const nsAString& aName) { return GetName().Equals(aName); }
@@ -457,6 +465,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   float FullZoom() const { return GetFullZoom(); }
   float TextZoom() const { return GetTextZoom(); }
+
+  bool SuspendMediaWhenInactive() const {
+    return GetSuspendMediaWhenInactive();
+  }
 
   bool AuthorStyleDisabledDefault() const {
     return GetAuthorStyleDisabledDefault();
@@ -662,6 +674,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   const OriginAttributes& OriginAttributesRef() { return mOriginAttributes; }
   nsresult SetOriginAttributes(const OriginAttributes& aAttrs);
 
+  void GetHistoryID(JSContext* aCx, JS::MutableHandle<JS::Value> aVal,
+                    ErrorResult& aError);
+
   // This should only be called on the top browsing context.
   void InitSessionHistory();
 
@@ -709,7 +724,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   Tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
   GetTriggeringAndInheritPrincipalsForCurrentLoad();
 
-  void HistoryGo(int32_t aOffset, std::function<void(int32_t&&)>&& aResolver);
+  void HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
+                 std::function<void(int32_t&&)>&& aResolver);
 
   bool ShouldUpdateSessionHistory(uint32_t aLoadType);
 
@@ -813,6 +829,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return true;
   }
 
+  bool CanSet(FieldIndex<IDX_SuspendMediaWhenInactive>, bool, ContentParent*) {
+    return IsTop();
+  }
+
   bool CanSet(FieldIndex<IDX_DisplayMode>, const enum DisplayMode& aDisplayMode,
               ContentParent* aSource);
   void DidSet(FieldIndex<IDX_DisplayMode>, enum DisplayMode aOldValue);
@@ -890,6 +910,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   bool CanSet(FieldIndex<IDX_PendingInitialization>, bool aNewValue,
               ContentParent* aSource);
+
+  bool CanSet(FieldIndex<IDX_HasMainMediaController>, bool aNewValue,
+              ContentParent* aSource);
+  void DidSet(FieldIndex<IDX_HasMainMediaController>, bool aOldValue);
 
   template <size_t I, typename T>
   bool CanSet(FieldIndex<I>, const T&, ContentParent*) {

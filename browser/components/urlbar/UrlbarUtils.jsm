@@ -134,6 +134,7 @@ var UrlbarUtils = {
     EXTENSION: "chrome://browser/content/extension.svg",
     HISTORY: "chrome://browser/skin/history.svg",
     SEARCH_GLASS: "chrome://browser/skin/search-glass.svg",
+    SEARCH_GLASS_INVERTED: "chrome://browser/skin/search-glass-inverted.svg",
     TIP: "chrome://browser/skin/tip.svg",
   },
 
@@ -188,17 +189,19 @@ var UrlbarUtils = {
   // TODO (Bug 1658661): Don't hardcode this list; store search engine category
   // information someplace better.
   WEB_ENGINE_NAMES: new Set([
-    "Baidu",
+    "百度", // Baidu
+    "百度搜索", // "Baidu Search", the name of Baidu's OpenSearch engine.
     "Bing",
     "DuckDuckGo",
     "Ecosia",
     "Google",
     "Qwant",
     "Yandex",
+    "Яндекс", // Yandex, non-EN
   ]),
 
   // Valid entry points for search mode. If adding a value here, please update
-  // telemetry documentation.
+  // telemetry documentation and Scalars.yaml.
   SEARCH_MODE_ENTRY: new Set([
     "bookmarkmenu",
     "handoff",
@@ -208,6 +211,7 @@ var UrlbarUtils = {
     "shortcut",
     "tabmenu",
     "tabtosearch",
+    "tabtosearch_onboard",
     "topsites_newtab",
     "topsites_urlbar",
     "touchbar",
@@ -526,6 +530,9 @@ var UrlbarUtils = {
    *          dropdown.
    */
   getSpanForResult(result) {
+    if (result.resultSpan) {
+      return result.resultSpan;
+    }
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.URL:
       case UrlbarUtils.RESULT_TYPE.BOOKMARKS:
@@ -665,6 +672,21 @@ var UrlbarUtils = {
       suffix = "/" + suffix;
     }
     return [spec, prefix, suffix];
+  },
+
+  /**
+   * Strips a PSL verified public suffix from an hostname.
+   * @param {string} host A host name.
+   * @returns {string} Host name without the public suffix.
+   * @note Because stripping the full suffix requires to verify it against the
+   *   Public Suffix List, this call is not the cheapest, and thus it should
+   *   not be used in hot paths.
+   */
+  stripPublicSuffixFromHost(host) {
+    return host.substring(
+      0,
+      host.length - Services.eTLD.getKnownPublicSuffixFromHost(host).length
+    );
   },
 
   /**
@@ -994,6 +1016,9 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
       isPinned: {
         type: "boolean",
       },
+      isSponsored: {
+        type: "boolean",
+      },
       sendAttributionRequest: {
         type: "boolean",
       },
@@ -1227,7 +1252,10 @@ class UrlbarQueryContext {
     }
 
     this.lastResultCount = 0;
+    // Note that Set is not serializable through JSON, so these may not be
+    // easily shared with add-ons.
     this.pendingHeuristicProviders = new Set();
+    this.deferUserSelectionProviders = new Set();
     this.trimmedSearchString = this.searchString.trim();
     this.userContextId =
       options.userContextId ||
@@ -1504,6 +1532,20 @@ class UrlbarProvider {
    */
   getViewUpdate(result) {
     return null;
+  }
+
+  /**
+   * Defines whether the view should defer user selection events while waiting
+   * for the first result from this provider.
+   *
+   * @returns {boolean} Whether the provider wants to defer user selection
+   *          events.
+   * @see UrlbarEventBufferer
+   * @note UrlbarEventBufferer has a timeout after which user events will be
+   *       processed regardless.
+   */
+  get deferUserSelection() {
+    return false;
   }
 }
 

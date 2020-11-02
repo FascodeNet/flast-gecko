@@ -21,13 +21,13 @@
 #include <chrono>
 #include <thread>
 
-#include "builtin/TypedObject.h"
 #include "jit/JitOptions.h"
 #include "js/BuildId.h"                 // JS::BuildIdCharVector
 #include "js/experimental/TypedData.h"  // JS_NewUint8Array
 #include "threading/LockGuard.h"
 #include "vm/HelperThreadState.h"  // Tier2GeneratorTask
 #include "vm/PlainObject.h"        // js::PlainObject
+#include "wasm/TypedObject.h"
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCompile.h"
 #include "wasm/WasmInstance.h"
@@ -570,7 +570,7 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   }
 
   if (memoryObj) {
-    uint32_t memoryLength = memoryObj->volatileMemoryLength();
+    uint32_t memoryLength = memoryObj->volatileMemoryLength32();
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -720,7 +720,7 @@ bool Module::instantiateMemory(JSContext* cx,
     MOZ_ASSERT_IF(!metadata().isAsmJS(), memory->buffer().isWasm());
 
     if (!CheckLimits(cx, declaredMin, declaredMax,
-                     uint64_t(memory->volatileMemoryLength()),
+                     uint64_t(memory->volatileMemoryLength32()),
                      memory->buffer().wasmMaxSize(), metadata().isAsmJS(),
                      "Memory")) {
       return false;
@@ -732,7 +732,7 @@ bool Module::instantiateMemory(JSContext* cx,
   } else {
     MOZ_ASSERT(!metadata().isAsmJS());
 
-    if (declaredMin / PageSize > MaxMemoryPages) {
+    if (declaredMin / PageSize > MaxMemory32Pages) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_WASM_MEM_IMP_LIMIT);
       return false;
@@ -741,7 +741,7 @@ bool Module::instantiateMemory(JSContext* cx,
     RootedArrayBufferObjectMaybeShared buffer(cx);
     Limits l(declaredMin, declaredMax,
              declaredShared ? Shareable::True : Shareable::False);
-    if (!CreateWasmBuffer(cx, l, &buffer)) {
+    if (!CreateWasmBuffer(cx, MemoryKind::Memory32, l, &buffer)) {
       return false;
     }
 
@@ -1203,6 +1203,7 @@ static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
     case ValType::Ref:
       switch (v.refTypeKind()) {
         case RefType::TypeIndex:
+        case RefType::Eq:
           t = GlobalObject::getOrCreateReferenceTypeDescr(
               cx, cx->global(), ReferenceType::TYPE_OBJECT);
           break;
@@ -1244,29 +1245,23 @@ bool Module::makeStructTypeDescrs(
   MOZ_CRASH("Should not have seen any struct types");
 #else
 
-#  ifndef JS_HAS_TYPED_OBJECTS
-#    error "GC types require TypedObject"
-#  endif
-
   // Not just any prototype object will do, we must have the actual
   // StructTypePrototype.
-  RootedObject typedObjectModule(
-      cx, GlobalObject::getOrCreateTypedObjectModule(cx, cx->global()));
-  if (!typedObjectModule) {
+  RootedObject namespaceObject(
+      cx, GlobalObject::getOrCreateWebAssemblyNamespace(cx, cx->global()));
+  if (!namespaceObject) {
     return false;
   }
 
-  RootedNativeObject toModule(cx, &typedObjectModule->as<NativeObject>());
+  RootedNativeObject toModule(cx, &namespaceObject->as<NativeObject>());
   RootedObject prototype(
-      cx,
-      &toModule->getReservedSlot(TypedObjectModuleObject::StructTypePrototype)
-           .toObject());
+      cx, &toModule->getReservedSlot(WasmNamespaceObject::StructTypePrototype)
+               .toObject());
 
   for (const StructType& structType : structTypes()) {
     RootedIdVector ids(cx);
     RootedValueVector fieldTypeObjs(cx);
     Vector<StructFieldProps> fieldProps(cx);
-    bool allowConstruct = true;
 
     uint32_t k = 0;
     for (StructField sf : structType.fields_) {
@@ -1279,7 +1274,6 @@ bool Module::makeStructTypeDescrs(
         // from JS.  Wasm however sees one i64 field with appropriate
         // mutability.
         sf.isMutable = false;
-        allowConstruct = false;
 
         if (!MakeStructField(cx, ValType::I64, sf.isMutable, "_%d_low", k, &ids,
                              &fieldTypeObjs, &fieldProps)) {
@@ -1293,7 +1287,6 @@ bool Module::makeStructTypeDescrs(
         // Ditto v128 fields.  These turn into four adjacent i32 fields, using
         // the standard xyzw convention.
         sf.isMutable = false;
-        allowConstruct = false;
 
         if (!MakeStructField(cx, ValType::V128, sf.isMutable, "_%d_x", k, &ids,
                              &fieldTypeObjs, &fieldProps)) {
@@ -1321,7 +1314,6 @@ bool Module::makeStructTypeDescrs(
         if (v.isTypeIndex()) {
           // Validation ensures that v references a struct type here.
           sf.isMutable = false;
-          allowConstruct = false;
         }
 
         if (!MakeStructField(cx, v, sf.isMutable, "_%d", k++, &ids,
@@ -1336,9 +1328,7 @@ bool Module::makeStructTypeDescrs(
     // prevent JS from constructing instances of them.
 
     Rooted<StructTypeDescr*> structTypeDescr(
-        cx, StructMetaTypeDescr::createFromArrays(cx, prototype,
-                                                  /* opaque= */ true,
-                                                  allowConstruct, ids,
+        cx, StructMetaTypeDescr::createFromArrays(cx, prototype, ids,
                                                   fieldTypeObjs, fieldProps));
 
     if (!structTypeDescr || !structTypeDescrs.append(structTypeDescr)) {

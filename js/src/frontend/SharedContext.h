@@ -263,7 +263,7 @@ class SharedContext {
 
   ImmutableScriptFlags immutableFlags() { return immutableFlags_; }
 
-  inline bool allBindingsClosedOver();
+  bool allBindingsClosedOver() { return bindingsAccessedDynamically(); }
 
   // The ImmutableFlag tracks if the entire script is strict, while the
   // localStrict flag indicates the current region (such as class body) should
@@ -536,6 +536,7 @@ class FunctionBox : public SharedContext {
 
   bool needsFinalYield() const { return isGenerator() || isAsync(); }
   bool needsDotGeneratorName() const { return isGenerator() || isAsync(); }
+  bool needsClearSlotsOnExit() const { return isGenerator() || isAsync(); }
   bool needsIteratorResult() const { return isGenerator() && !isAsync(); }
   bool needsPromiseResult() const { return isAsync() && !isGenerator(); }
 
@@ -745,18 +746,6 @@ class FunctionBox : public SharedContext {
 inline FunctionBox* SharedContext::asFunctionBox() {
   MOZ_ASSERT(isFunctionBox());
   return static_cast<FunctionBox*>(this);
-}
-
-// In generators, we treat all bindings as closed so that they get stored on
-// the heap.  This way there is less information to copy off the stack when
-// suspending, and back on when resuming.  It also avoids the need to create
-// and invalidate DebugScope proxies for unaliased locals in a generator
-// frame, as the generator frame will be copied out to the heap and released
-// only by GC.
-inline bool SharedContext::allBindingsClosedOver() {
-  return bindingsAccessedDynamically() ||
-         (isFunctionBox() &&
-          (asFunctionBox()->isGenerator() || asFunctionBox()->isAsync()));
 }
 
 }  // namespace frontend

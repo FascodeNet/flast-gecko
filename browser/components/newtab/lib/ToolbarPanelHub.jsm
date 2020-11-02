@@ -59,9 +59,9 @@ class _ToolbarPanelHub {
     this.state = {};
   }
 
-  async init(waitForInitialized, { getMessages, dispatch }) {
+  async init(waitForInitialized, { getMessages, sendTelemetry }) {
     this._getMessages = getMessages;
-    this._dispatch = dispatch;
+    this._sendTelemetry = sendTelemetry;
     // Wait for ASRouter messages to become available in order to know
     // if we can show the What's New panel
     await waitForInitialized;
@@ -92,6 +92,14 @@ class _ToolbarPanelHub {
 
   toggleWhatsNewPref(event) {
     Preferences.set(WHATSNEW_ENABLED_PREF, event.target.checked);
+    this.sendUserEventTelemetry(
+      event.target.ownerGlobal,
+      "WNP_PREF_TOGGLE",
+      // Message id is not applicable in this case, the notification state
+      // is not related to a particular message
+      { id: "n/a" },
+      { value: { prefValue: event.target.checked } }
+    );
   }
 
   maybeInsertFTL(win) {
@@ -493,8 +501,8 @@ class _ToolbarPanelHub {
     }
   }
 
-  _sendTelemetry(ping) {
-    this._dispatch({
+  _sendPing(ping) {
+    this._sendTelemetry({
       type: "TOOLBAR_PANEL_TELEMETRY",
       data: { action: "whats-new-panel_user_event", ...ping },
     });
@@ -508,7 +516,7 @@ class _ToolbarPanelHub {
         win.ownerGlobal.gBrowser.selectedBrowser
       )
     ) {
-      this._sendTelemetry({
+      this._sendPing({
         message_id: message.id,
         bucket_id: message.id,
         event,
@@ -534,10 +542,12 @@ class _ToolbarPanelHub {
       const learnMoreLink = doc.querySelector(
         "#messaging-system-message-container .text-link"
       );
-      container.toggleAttribute("disabled");
-      infoButton.toggleAttribute("checked");
-      panelContainer.toggleAttribute("infoMessageShowing");
-      learnMoreLink.disabled = !learnMoreLink.disabled;
+      if (learnMoreLink) {
+        container.toggleAttribute("disabled");
+        infoButton.toggleAttribute("checked");
+        panelContainer.toggleAttribute("infoMessageShowing");
+        learnMoreLink.disabled = !learnMoreLink.disabled;
+      }
     };
     if (!container.childElementCount) {
       const message = await this._getMessages({
@@ -587,8 +597,8 @@ class _ToolbarPanelHub {
    * @param {object[]} messages Messages selected from devtools page
    */
   forceShowMessage(browser, messages) {
-    const win = browser.browser.ownerGlobal;
-    const doc = browser.browser.ownerDocument;
+    const win = browser.ownerGlobal;
+    const doc = browser.ownerDocument;
     this.removeMessages(win, WHATS_NEW_PANEL_SELECTOR);
     this.renderMessages(win, doc, WHATS_NEW_PANEL_SELECTOR, {
       force: true,

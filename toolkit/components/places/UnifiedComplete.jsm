@@ -1092,7 +1092,10 @@ Search.prototype = {
 
     // Match an alias only when it has a space after it.  If there's no trailing
     // space, then continue to treat it as part of the search string.
-    if (UrlbarPrefs.get("update2") && !query.startsWith(" ")) {
+    if (
+      UrlbarPrefs.get("update2") &&
+      !UrlbarTokenizer.REGEXP_SPACES_START.test(query)
+    ) {
       return false;
     }
 
@@ -1226,9 +1229,27 @@ Search.prototype = {
     }
   },
 
+  /**
+   * Maybe restyle a SERP in history as a search-type result. To do this,
+   * we extract the search term from the SERP in history then generate a search
+   * URL with that search term. We restyle the SERP in history if its query
+   * parameters are a subset of those of the generated SERP. We check for a
+   * subset instead of exact equivalence since the generated URL may contain
+   * attribution parameters while a SERP in history from an organic search would
+   * not. We don't allow extra params in the history URL since they might
+   * indicate the search is not a first-page web SERP (as opposed to a image or
+   * other non-web SERP).
+   *
+   * @note We will mistakenly dedupe SERPs for engines that have the same
+   *   hostname as another engine. One example is if the user installed a
+   *   Google Image Search engine. That engine's search URLs might only be
+   *   distinguished by query params from search URLs from the default Google
+   *   engine.
+   */
   _maybeRestyleSearchMatch(match) {
     // Return if the URL does not represent a search result.
-    let parseResult = Services.search.parseSubmissionURL(match.value);
+    let historyUrl = match.value;
+    let parseResult = Services.search.parseSubmissionURL(historyUrl);
     if (!parseResult?.engine) {
       return false;
     }
@@ -1244,29 +1265,19 @@ Search.prototype = {
     }
 
     // The URL for the search suggestion formed by the user's typed query.
-    let [typedSuggestionUrl] = UrlbarUtils.getSearchQueryUrl(
+    let [generatedSuggestionUrl] = UrlbarUtils.getSearchQueryUrl(
       parseResult.engine,
       this._searchTokens.map(t => t.value).join(" ")
     );
 
-    let historyParams = new URL(match.value).searchParams;
-    let typedParams = new URL(typedSuggestionUrl).searchParams;
-
-    // Checking the two URLs have the same query parameters with the same
-    // values, or a subset value in the case of the query parameter.
-    // Parameter order doesn't matter.
+    // We ignore termsParameterName when checking for a subset because we
+    // already checked that the typed query is a subset of the search history
+    // query above with this._searchTokens.every(...).
     if (
-      Array.from(historyParams).length != Array.from(typedParams).length ||
-      !Array.from(historyParams.entries()).every(
-        ([key, value]) =>
-          // We want to match all non-search-string GET parameters exactly, to avoid
-          // restyling non-first pages of search results, or image results as web
-          // results.
-          // We let termsParameterName through because we already checked that the
-          // typed query is a subset of the search history query above with
-          // this._searchTokens.every(...).
-          key == parseResult.termsParameterName ||
-          value === typedParams.get(key)
+      !UrlbarSearchUtils.serpsAreEquivalent(
+        historyUrl,
+        generatedSuggestionUrl,
+        [parseResult.termsParameterName]
       )
     ) {
       return false;

@@ -11,8 +11,12 @@
 #ifdef MOZ_WEBRTC
 #  include "CamerasParent.h"
 #endif
-#include "mozilla/media/MediaParent.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/RDDProcessManager.h"
+#include "mozilla/RefPtr.h"
+#include "mozilla/RemoteLazyInputStreamParent.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/ClientManagerActors.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/DOMTypes.h"
@@ -22,49 +26,50 @@
 #include "mozilla/dom/FileSystemRequestParent.h"
 #include "mozilla/dom/GamepadEventChannelParent.h"
 #include "mozilla/dom/GamepadTestChannelParent.h"
-#include "mozilla/dom/PGamepadEventChannelParent.h"
-#include "mozilla/dom/PGamepadTestChannelParent.h"
+#include "mozilla/dom/MIDIManagerParent.h"
+#include "mozilla/dom/MIDIPlatformService.h"
+#include "mozilla/dom/MIDIPortParent.h"
 #include "mozilla/dom/MediaTransportParent.h"
 #include "mozilla/dom/MessagePortParent.h"
+#include "mozilla/dom/PGamepadEventChannelParent.h"
+#include "mozilla/dom/PGamepadTestChannelParent.h"
+#include "mozilla/dom/RemoteWorkerControllerParent.h"
+#include "mozilla/dom/RemoteWorkerParent.h"
+#include "mozilla/dom/RemoteWorkerServiceParent.h"
+#include "mozilla/dom/ReportingHeader.h"
 #include "mozilla/dom/ServiceWorkerActors.h"
+#include "mozilla/dom/ServiceWorkerContainerParent.h"
 #include "mozilla/dom/ServiceWorkerManagerParent.h"
+#include "mozilla/dom/ServiceWorkerParent.h"
 #include "mozilla/dom/ServiceWorkerRegistrar.h"
+#include "mozilla/dom/ServiceWorkerRegistrationParent.h"
+#include "mozilla/dom/SessionStorageManager.h"
+#include "mozilla/dom/SharedWorkerParent.h"
 #include "mozilla/dom/StorageActivityService.h"
+#include "mozilla/dom/StorageIPC.h"
 #include "mozilla/dom/TemporaryIPCBlobParent.h"
+#include "mozilla/dom/WebAuthnTransactionParent.h"
 #include "mozilla/dom/cache/ActorUtils.h"
 #include "mozilla/dom/indexedDB/ActorsParent.h"
 #include "mozilla/dom/localstorage/ActorsParent.h"
+#include "mozilla/dom/network/UDPSocketParent.h"
 #include "mozilla/dom/quota/ActorsParent.h"
 #include "mozilla/dom/simpledb/ActorsParent.h"
-#include "mozilla/dom/RemoteWorkerParent.h"
-#include "mozilla/dom/RemoteWorkerControllerParent.h"
-#include "mozilla/dom/RemoteWorkerServiceParent.h"
-#include "mozilla/dom/ReportingHeader.h"
-#include "mozilla/dom/SharedWorkerParent.h"
-#include "mozilla/dom/StorageIPC.h"
-#include "mozilla/dom/MIDIManagerParent.h"
-#include "mozilla/dom/MIDIPortParent.h"
-#include "mozilla/dom/MIDIPlatformService.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/BackgroundUtils.h"
-#include "mozilla/ipc/IdleSchedulerParent.h"
 #include "mozilla/ipc/IPCStreamAlloc.h"
+#include "mozilla/ipc/IdleSchedulerParent.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/ipc/PBackgroundTestParent.h"
 #include "mozilla/ipc/PChildToParentStreamParent.h"
 #include "mozilla/ipc/PParentToChildStreamParent.h"
 #include "mozilla/layout/VsyncParent.h"
-#include "mozilla/net/HttpBackgroundChannelParent.h"
+#include "mozilla/media/MediaParent.h"
 #include "mozilla/net/BackgroundDataBridgeParent.h"
-#include "mozilla/dom/network/UDPSocketParent.h"
-#include "mozilla/dom/WebAuthnTransactionParent.h"
-#include "mozilla/Preferences.h"
+#include "mozilla/net/HttpBackgroundChannelParent.h"
 #include "mozilla/psm/VerifySSLServerCertParent.h"
-#include "mozilla/RemoteLazyInputStreamParent.h"
-#include "mozilla/StaticPrefs_dom.h"
 #include "nsNetUtil.h"
 #include "nsProxyRelease.h"
-#include "mozilla/RefPtr.h"
 #include "nsThreadUtils.h"
 #include "nsTraceRefcnt.h"
 #include "nsXULAppAPI.h"
@@ -89,6 +94,7 @@ using mozilla::dom::PMIDIPortParent;
 using mozilla::dom::PServiceWorkerContainerParent;
 using mozilla::dom::PServiceWorkerParent;
 using mozilla::dom::PServiceWorkerRegistrationParent;
+using mozilla::dom::ServiceWorkerParent;
 using mozilla::dom::UDPSocketParent;
 using mozilla::dom::WebAuthnTransactionParent;
 using mozilla::dom::cache::PCacheParent;
@@ -469,6 +475,15 @@ bool BackgroundParentImpl::DeallocPBackgroundStorageParent(
   MOZ_ASSERT(aActor);
 
   return mozilla::dom::DeallocPBackgroundStorageParent(aActor);
+}
+
+already_AddRefed<BackgroundParentImpl::PBackgroundSessionStorageManagerParent>
+BackgroundParentImpl::AllocPBackgroundSessionStorageManagerParent(
+    const uint64_t& aTopContextId) {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  return dom::AllocPBackgroundSessionStorageManagerParent(aTopContextId);
 }
 
 already_AddRefed<PIdleSchedulerParent>
@@ -1072,6 +1087,37 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvShutdownQuotaManager() {
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult
+BackgroundParentImpl::RecvShutdownBackgroundSessionStorageManagers() {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  if (BackgroundParent::IsOtherProcessActor(this)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+
+  if (!mozilla::dom::RecvShutdownBackgroundSessionStorageManagers()) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+BackgroundParentImpl::RecvRemoveBackgroundSessionStorageManager(
+    const uint64_t& aTopContextId) {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  if (BackgroundParent::IsOtherProcessActor(this)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+
+  if (!mozilla::dom::RecvRemoveBackgroundSessionStorageManager(aTopContextId)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  return IPC_OK();
+}
+
 already_AddRefed<dom::PFileSystemRequestParent>
 BackgroundParentImpl::AllocPFileSystemRequestParent(
     const FileSystemParams& aParams) {
@@ -1094,56 +1140,14 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPFileSystemRequestConstructor(
 }
 
 // Gamepad API Background IPC
-dom::PGamepadEventChannelParent*
+already_AddRefed<dom::PGamepadEventChannelParent>
 BackgroundParentImpl::AllocPGamepadEventChannelParent() {
-  RefPtr<dom::GamepadEventChannelParent> parent =
-      new dom::GamepadEventChannelParent();
-
-  return parent.forget().take();
+  return dom::GamepadEventChannelParent::Create();
 }
 
-bool BackgroundParentImpl::DeallocPGamepadEventChannelParent(
-    dom::PGamepadEventChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  RefPtr<dom::GamepadEventChannelParent> parent =
-      dont_AddRef(static_cast<dom::GamepadEventChannelParent*>(aActor));
-  return true;
-}
-
-mozilla::ipc::IPCResult
-BackgroundParentImpl::RecvPGamepadEventChannelConstructor(
-    PGamepadEventChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  if (!static_cast<dom::GamepadEventChannelParent*>(aActor)->Init()) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  return IPC_OK();
-}
-
-dom::PGamepadTestChannelParent*
+already_AddRefed<dom::PGamepadTestChannelParent>
 BackgroundParentImpl::AllocPGamepadTestChannelParent() {
-  RefPtr<dom::GamepadTestChannelParent> parent =
-      new dom::GamepadTestChannelParent();
-
-  return parent.forget().take();
-}
-
-mozilla::ipc::IPCResult
-BackgroundParentImpl::RecvPGamepadTestChannelConstructor(
-    PGamepadTestChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  if (!static_cast<dom::GamepadTestChannelParent*>(aActor)->Init()) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  return IPC_OK();
-}
-
-bool BackgroundParentImpl::DeallocPGamepadTestChannelParent(
-    dom::PGamepadTestChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  RefPtr<dom::GamepadTestChannelParent> parent =
-      dont_AddRef(static_cast<dom::GamepadTestChannelParent*>(aActor));
-  return true;
+  return dom::GamepadTestChannelParent::Create();
 }
 
 dom::PWebAuthnTransactionParent*
@@ -1249,14 +1253,10 @@ IPCResult BackgroundParentImpl::RecvStorageActivity(
   return IPC_OK();
 }
 
-PServiceWorkerParent* BackgroundParentImpl::AllocPServiceWorkerParent(
+already_AddRefed<PServiceWorkerParent>
+BackgroundParentImpl::AllocPServiceWorkerParent(
     const IPCServiceWorkerDescriptor&) {
-  return dom::AllocServiceWorkerParent();
-}
-
-bool BackgroundParentImpl::DeallocPServiceWorkerParent(
-    PServiceWorkerParent* aActor) {
-  return dom::DeallocServiceWorkerParent(aActor);
+  return MakeAndAddRef<ServiceWorkerParent>();
 }
 
 IPCResult BackgroundParentImpl::RecvPServiceWorkerConstructor(
@@ -1266,14 +1266,9 @@ IPCResult BackgroundParentImpl::RecvPServiceWorkerConstructor(
   return IPC_OK();
 }
 
-PServiceWorkerContainerParent*
+already_AddRefed<PServiceWorkerContainerParent>
 BackgroundParentImpl::AllocPServiceWorkerContainerParent() {
-  return dom::AllocServiceWorkerContainerParent();
-}
-
-bool BackgroundParentImpl::DeallocPServiceWorkerContainerParent(
-    PServiceWorkerContainerParent* aActor) {
-  return dom::DeallocServiceWorkerContainerParent(aActor);
+  return MakeAndAddRef<mozilla::dom::ServiceWorkerContainerParent>();
 }
 
 mozilla::ipc::IPCResult
@@ -1283,15 +1278,10 @@ BackgroundParentImpl::RecvPServiceWorkerContainerConstructor(
   return IPC_OK();
 }
 
-PServiceWorkerRegistrationParent*
+already_AddRefed<PServiceWorkerRegistrationParent>
 BackgroundParentImpl::AllocPServiceWorkerRegistrationParent(
     const IPCServiceWorkerRegistrationDescriptor&) {
-  return dom::AllocServiceWorkerRegistrationParent();
-}
-
-bool BackgroundParentImpl::DeallocPServiceWorkerRegistrationParent(
-    PServiceWorkerRegistrationParent* aActor) {
-  return dom::DeallocServiceWorkerRegistrationParent(aActor);
+  return MakeAndAddRef<mozilla::dom::ServiceWorkerRegistrationParent>();
 }
 
 mozilla::ipc::IPCResult
@@ -1315,6 +1305,19 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPEndpointForReportConstructor(
     const PrincipalInfo& aPrincipalInfo) {
   static_cast<dom::EndpointForReportParent*>(aActor)->Run(aGroupName,
                                                           aPrincipalInfo);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+BackgroundParentImpl::RecvEnsureRDDProcessAndCreateBridge(
+    nsresult* aRv, Endpoint<PRemoteDecoderManagerChild>* aEndpoint) {
+  RDDProcessManager* rdd = RDDProcessManager::Get();
+  if (rdd && rdd->EnsureRDDProcessAndCreateBridge(OtherPid(), aEndpoint)) {
+    *aRv = NS_OK;
+  } else {
+    *aRv = NS_ERROR_NOT_AVAILABLE;
+  }
+
   return IPC_OK();
 }
 

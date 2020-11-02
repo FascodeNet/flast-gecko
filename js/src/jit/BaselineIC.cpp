@@ -24,6 +24,7 @@
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineJIT.h"
 #include "jit/InlinableNatives.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRealm.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
@@ -51,7 +52,6 @@
 
 #include "builtin/Boolean-inl.h"
 
-#include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "jit/SharedICHelpers-inl.h"
@@ -1602,41 +1602,8 @@ bool DoTypeUpdateFallback(JSContext* cx, BaselineFrame* frame,
   MOZ_ASSERT(obj->group() == group);
 #endif
 
-  // If we're storing null/undefined to a typed object property, check if
-  // we want to include it in this property's type information.
-  bool addType = true;
-  if (MOZ_UNLIKELY(obj->is<TypedObject>()) && value.isNullOrUndefined()) {
-    StructTypeDescr* structDescr =
-        &obj->as<TypedObject>().typeDescr().as<StructTypeDescr>();
-    size_t fieldIndex;
-    MOZ_ALWAYS_TRUE(structDescr->fieldIndex(id, &fieldIndex));
-
-    TypeDescr* fieldDescr = &structDescr->fieldDescr(fieldIndex);
-    ReferenceType type = fieldDescr->as<ReferenceTypeDescr>().type();
-    if (type == ReferenceType::TYPE_ANY) {
-      // Ignore undefined values, which are included implicitly in type
-      // information for this property.
-      if (value.isUndefined()) {
-        addType = false;
-      }
-    } else {
-      MOZ_ASSERT(type == ReferenceType::TYPE_OBJECT ||
-                 type == ReferenceType::TYPE_WASM_ANYREF);
-
-      // Ignore null values being written here. Null is included
-      // implicitly in type information for this property. Note that
-      // non-object, non-null values are not possible here, these
-      // should have been filtered out by the IR emitter.
-      if (value.isNull()) {
-        addType = false;
-      }
-    }
-  }
-
-  if (MOZ_LIKELY(addType)) {
-    JSObject* maybeSingleton = obj->isSingleton() ? obj.get() : nullptr;
-    AddTypePropertyId(cx, group, maybeSingleton, id, value);
-  }
+  JSObject* maybeSingleton = obj->isSingleton() ? obj.get() : nullptr;
+  AddTypePropertyId(cx, group, maybeSingleton, id, value);
 
   if (MOZ_UNLIKELY(
           !stub->addUpdateStubForValue(cx, script, obj, group, id, value))) {

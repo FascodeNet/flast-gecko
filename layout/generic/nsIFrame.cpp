@@ -3663,16 +3663,17 @@ void nsIFrame::BuildDisplayListForStackingContext(
     // Revert to the dirtyrect coming in from the parent, without our transform
     // taken into account.
     aBuilder->SetVisibleRect(visibleRectOutsideTransform);
-    // Revert to the outer reference frame and offset because all display
-    // items we create from now on are outside the transform.
-    nsPoint toOuterReferenceFrame;
-    const nsIFrame* outerReferenceFrame = this;
+
     if (this != aBuilder->RootReferenceFrame()) {
-      outerReferenceFrame =
+      // Revert to the outer reference frame and offset because all display
+      // items we create from now on are outside the transform.
+      nsPoint toOuterReferenceFrame;
+      const nsIFrame* outerReferenceFrame =
           aBuilder->FindReferenceFrameFor(GetParent(), &toOuterReferenceFrame);
+
+      buildingDisplayList.SetReferenceFrameAndCurrentOffset(
+          outerReferenceFrame, toOuterReferenceFrame);
     }
-    buildingDisplayList.SetReferenceFrameAndCurrentOffset(
-        outerReferenceFrame, GetOffsetToCrossDoc(outerReferenceFrame));
 
     // We would like to block async animations for ancestors of ones not
     // prerendered in the preserve-3d tree. Now that we've finished processing
@@ -5721,7 +5722,7 @@ nscoord nsIFrame::GetPrefISize(gfxContext* aRenderingContext) {
 void nsIFrame::AddInlineMinISize(gfxContext* aRenderingContext,
                                  nsIFrame::InlineMinISizeData* aData) {
   nscoord isize = nsLayoutUtils::IntrinsicForContainer(
-      aRenderingContext, this, nsLayoutUtils::MIN_ISIZE);
+      aRenderingContext, this, IntrinsicISizeType::MinISize);
   aData->DefaultAddInlineMinISize(this, isize);
 }
 
@@ -5729,7 +5730,7 @@ void nsIFrame::AddInlineMinISize(gfxContext* aRenderingContext,
 void nsIFrame::AddInlinePrefISize(gfxContext* aRenderingContext,
                                   nsIFrame::InlinePrefISizeData* aData) {
   nscoord isize = nsLayoutUtils::IntrinsicForContainer(
-      aRenderingContext, this, nsLayoutUtils::PREF_ISIZE);
+      aRenderingContext, this, IntrinsicISizeType::PrefISize);
   aData->DefaultAddInlinePrefISize(isize);
 }
 
@@ -6123,16 +6124,6 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
         blockStyleCoord = imposedMainSizeStyleCoord.ptr();
       }
     } else {
-      // FIXME: Bug 1646100: We may have to revisit this and make sure this
-      // behavior matches the spec once we support intrinsic size keywords for
-      // 'aspect-ratio' property.
-      bool isCrossSizeDefinite =
-          (flexMainAxis == eLogicalAxisInline)
-              ? !nsLayoutUtils::IsAutoBSize(*blockStyleCoord,
-                                            aCBSize.BSize(aWM))
-              : !inlineStyleCoord->IsAuto() &&
-                    !inlineStyleCoord->IsExtremumLength();
-
       // NOTE: If we're a table-wrapper frame, we skip this clause and just
       // stick with 'main-size:auto' behavior (which -- unlike 'content' i.e.
       // 'max-content' -- will give us the ability to honor percent sizes on our
@@ -6143,26 +6134,9 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
       if (nsFlexContainerFrame::IsUsedFlexBasisContent(*flexBasis,
                                                        *mainAxisCoord) &&
           MOZ_LIKELY(!IsTableWrapperFrame())) {
-        // If the flex item has
-        // 1. an intrinsic aspect ratio (or the explicit 'aspect-ratio'
-        //    property),
-        // 2. a used flex-basis of 'content' (it does! we checked above), and
-        // 3. a definite cross size,
-        // we will calculate the main size by cross size and aspect-ratio via
-        // ComputeInlineSizeFromAspectRatio() or
-        // ComputeBlockSizeFromAspectRatio() in this function below. Therefore,
-        // we assign mainAxisCoord as 'auto', which makes sure that we will go
-        // into the correct if-branch for 'aspect-ratio'.
-        //
-        // https://drafts.csswg.org/css-flexbox-1/#algo-main-item
-        if (stylePos->mAspectRatio.HasFiniteRatio() && isCrossSizeDefinite) {
-          static const StyleSize autoStyleCoord(StyleSize::Auto());
-          mainAxisCoord = &autoStyleCoord;
-        } else {
-          static const StyleSize maxContStyleCoord(
-              StyleSize::ExtremumLength(StyleExtremumLength::MaxContent));
-          mainAxisCoord = &maxContStyleCoord;
-        }
+        static const StyleSize maxContStyleCoord(
+            StyleSize::ExtremumLength(StyleExtremumLength::MaxContent));
+        mainAxisCoord = &maxContStyleCoord;
         // (Note: if our main axis is the block axis, then this 'max-content'
         // value will be treated like 'auto', via the IsAutoBSize() call below.)
       } else if (!flexBasis->IsAuto()) {
@@ -8475,6 +8449,7 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
       }
       next.mJumpedLine |= current.mJumpedLine;
       next.mMovedOverNonSelectableText |= current.mMovedOverNonSelectableText;
+      next.mHasSelectableFrame |= current.mHasSelectableFrame;
       current = next;
     }
 
@@ -8482,7 +8457,7 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
     // the offset to be at the frame edge. Note that if we are extending the
     // selection, this doesn't matter.
     if (peekSearchState == FOUND && current.mMovedOverNonSelectableText &&
-        !aPos->mExtend) {
+        (!aPos->mExtend || current.mHasSelectableFrame)) {
       int32_t start, end;
       current.mFrame->GetOffsets(start, end);
       current.mOffset = aPos->mDirection == eDirNext ? 0 : end - start;
@@ -9044,6 +9019,9 @@ nsIFrame::SelectablePeekReport nsIFrame::GetFrameFromDirection(
 
     selectable = IsSelectable(traversedFrame);
     if (!selectable) {
+      if (traversedFrame->IsSelectable(nullptr)) {
+        result.mHasSelectableFrame = true;
+      }
       result.mMovedOverNonSelectableText = true;
     }
   }  // while (!selectable)
@@ -10362,14 +10340,6 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
                          nscoord aWidth, nscoord aHeight, bool aMoveFrame) {
   DO_GLOBAL_REFLOW_COUNT("nsBoxToBlockAdaptor");
 
-#ifdef DEBUG_REFLOW
-  nsAdaptorAddIndents();
-  printf("Reflowing: ");
-  mFrame->ListTag(stdout);
-  printf("\n");
-  gIndent2++;
-#endif
-
   nsBoxLayoutMetrics* metrics = BoxMetrics();
   if (MOZ_UNLIKELY(!metrics)) {
     // Can't proceed without BoxMetrics. This should only happen if something
@@ -10539,15 +10509,6 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
       reflowInput.SetVResize(true);
     }
 
-#ifdef DEBUG_REFLOW
-    nsAdaptorAddIndents();
-    printf("Size=(%d,%d)\n", reflowInput.ComputedWidth(),
-           reflowInput.ComputedHeight());
-    nsAdaptorAddIndents();
-    nsAdaptorPrintReason(reflowInput);
-    printf("\n");
-#endif
-
     // place the child and reflow
 
     Reflow(aPresContext, aDesiredSize, reflowInput, status);
@@ -10574,23 +10535,8 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
     aDesiredSize.SetBlockStartAscent(metrics->mBlockAscent);
   }
 
-#ifdef DEBUG_REFLOW
-  if (aHeight != NS_UNCONSTRAINEDSIZE && aDesiredSize.Height() != aHeight) {
-    nsAdaptorAddIndents();
-    printf("*****got taller!*****\n");
-  }
-  if (aWidth != NS_UNCONSTRAINEDSIZE && aDesiredSize.Width() != aWidth) {
-    nsAdaptorAddIndents();
-    printf("*****got wider!******\n");
-  }
-#endif
-
   metrics->mLastSize.width = aDesiredSize.Width();
   metrics->mLastSize.height = aDesiredSize.Height();
-
-#ifdef DEBUG_REFLOW
-  gIndent2--;
-#endif
 }
 
 nsBoxLayoutMetrics* nsIFrame::BoxMetrics() const {
@@ -11311,55 +11257,6 @@ nsIFrame::PhysicalAxes nsIFrame::ShouldApplyOverflowClipping(
   return clip ? PhysicalAxes::Both : PhysicalAxes::None;
 }
 
-// Box layout debugging
-#ifdef DEBUG_REFLOW
-int32_t gIndent2 = 0;
-
-void nsAdaptorAddIndents() {
-  for (int32_t i = 0; i < gIndent2; i++) {
-    printf(" ");
-  }
-}
-
-void nsAdaptorPrintReason(ReflowInput& aReflowInput) {
-  char* reflowReasonString;
-
-  switch (aReflowInput.reason) {
-    case eReflowReason_Initial:
-      reflowReasonString = "initial";
-      break;
-
-    case eReflowReason_Resize:
-      reflowReasonString = "resize";
-      break;
-    case eReflowReason_Dirty:
-      reflowReasonString = "dirty";
-      break;
-    case eReflowReason_StyleChange:
-      reflowReasonString = "stylechange";
-      break;
-    case eReflowReason_Incremental: {
-      switch (aReflowInput.reflowCommand->Type()) {
-        case eReflowType_StyleChanged:
-          reflowReasonString = "incremental (StyleChanged)";
-          break;
-        case eReflowType_ReflowDirty:
-          reflowReasonString = "incremental (ReflowDirty)";
-          break;
-        default:
-          reflowReasonString = "incremental (Unknown)";
-      }
-    } break;
-    default:
-      reflowReasonString = "unknown";
-      break;
-  }
-
-  printf("%s", reflowReasonString);
-}
-
-#endif
-
 #ifdef DEBUG
 static void GetTagName(nsIFrame* aFrame, nsIContent* aContent, int aResultSize,
                        char* aResult) {
@@ -11899,7 +11796,7 @@ void DR_State::InitFrameTypeTable() {
   AddFrameTypeInfo(LayoutFrameType::Page, "page", "page");
   AddFrameTypeInfo(LayoutFrameType::Placeholder, "place", "placeholder");
   AddFrameTypeInfo(LayoutFrameType::Canvas, "canvas", "canvas");
-  AddFrameTypeInfo(LayoutFrameType::Root, "root", "root");
+  AddFrameTypeInfo(LayoutFrameType::XULRoot, "xulroot", "xulroot");
   AddFrameTypeInfo(LayoutFrameType::Scroll, "scroll", "scroll");
   AddFrameTypeInfo(LayoutFrameType::TableCell, "cell", "tableCell");
   AddFrameTypeInfo(LayoutFrameType::TableCol, "col", "tableCol");

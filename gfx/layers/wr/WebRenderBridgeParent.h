@@ -130,6 +130,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   void UpdateDebugFlags();
   void UpdateMultithreading();
   void UpdateBatchingParameters();
+  void UpdateProfilerUI();
 
   mozilla::ipc::IPCResult RecvEnsureConnected(
       TextureFactoryIdentifier* aTextureFactoryIdentifier,
@@ -178,6 +179,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   mozilla::ipc::IPCResult RecvClearCachedResources() override;
   mozilla::ipc::IPCResult RecvInvalidateRenderedFrame() override;
   mozilla::ipc::IPCResult RecvScheduleComposite() override;
+  mozilla::ipc::IPCResult RecvForceComposite() override;
   mozilla::ipc::IPCResult RecvCapture() override;
   mozilla::ipc::IPCResult RecvToggleCaptureSequence() override;
   mozilla::ipc::IPCResult RecvSyncWithCompositor() override;

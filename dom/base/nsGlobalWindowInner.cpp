@@ -46,6 +46,9 @@
 #include "mozilla/dom/TimeoutManager.h"
 #include "mozilla/dom/VisualViewport.h"
 #include "mozilla/dom/WindowProxyHolder.h"
+#ifdef MOZ_GLEAN
+#  include "mozilla/glean/Glean.h"
+#endif
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Result.h"
 #if defined(MOZ_WIDGET_ANDROID)
@@ -1058,6 +1061,15 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   }
   StartDying();
 
+  if (mDoc && mDoc->GetWindowContext()) {
+    // The document is about to lose its window, so this is a good time to send
+    // our page use counters.
+    //
+    // (We also do this in Document::SetScriptGlobalObject(nullptr), which
+    // catches most cases of documents losing their window, but not all.)
+    mDoc->SendPageUseCounters();
+  }
+
   // Make sure that this is called before we null out the document and
   // other members that the window destroyed observers could
   // re-create.
@@ -1224,6 +1236,10 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   mSpeechSynthesis = nullptr;
 #endif
 
+#ifdef MOZ_GLEAN
+  mGlean = nullptr;
+#endif
+
   mParentTarget = nullptr;
 
   if (mCleanMessageManager) {
@@ -1312,6 +1328,10 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
 
 #ifdef MOZ_WEBSPEECH
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSpeechSynthesis)
+#endif
+
+#ifdef MOZ_GLEAN
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGlean)
 #endif
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOuterWindow)
@@ -1405,6 +1425,10 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
 
 #ifdef MOZ_WEBSPEECH
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSpeechSynthesis)
+#endif
+
+#ifdef MOZ_GLEAN
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlean)
 #endif
 
   if (tmp->mOuterWindow) {
@@ -2703,6 +2727,16 @@ bool nsGlobalWindowInner::HasActiveSpeechSynthesis() {
   return false;
 }
 
+#endif
+
+#ifdef MOZ_GLEAN
+mozilla::glean::Glean* nsGlobalWindowInner::Glean() {
+  if (!mGlean) {
+    mGlean = new mozilla::glean::Glean();
+  }
+
+  return mGlean;
+}
 #endif
 
 Nullable<WindowProxyHolder> nsGlobalWindowInner::GetParent(

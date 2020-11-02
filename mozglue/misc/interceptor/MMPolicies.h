@@ -19,44 +19,6 @@
 
 #include <windows.h>
 
-// MinGW does not have these definitions yet
-#if defined(__MINGW32__)
-typedef struct _MEM_ADDRESS_REQUIREMENTS {
-  PVOID LowestStartingAddress;
-  PVOID HighestEndingAddress;
-  SIZE_T Alignment;
-} MEM_ADDRESS_REQUIREMENTS, *PMEM_ADDRESS_REQUIREMENTS;
-
-typedef enum MEM_EXTENDED_PARAMETER_TYPE {
-  MemExtendedParameterInvalidType = 0,
-  MemExtendedParameterAddressRequirements,
-  MemExtendedParameterNumaNode,
-  MemExtendedParameterPartitionHandle,
-  MemExtendedParameterUserPhysicalHandle,
-  MemExtendedParameterAttributeFlags,
-  MemExtendedParameterMax
-} MEM_EXTENDED_PARAMETER_TYPE,
-    *PMEM_EXTENDED_PARAMETER_TYPE;
-
-#  define MEM_EXTENDED_PARAMETER_TYPE_BITS 8
-
-typedef struct DECLSPEC_ALIGN(8) MEM_EXTENDED_PARAMETER {
-  struct {
-    DWORD64 Type : MEM_EXTENDED_PARAMETER_TYPE_BITS;
-    DWORD64 Reserved : 64 - MEM_EXTENDED_PARAMETER_TYPE_BITS;
-  } DUMMYSTRUCTNAME;
-
-  union {
-    DWORD64 ULong64;
-    PVOID Pointer;
-    SIZE_T Size;
-    HANDLE Handle;
-    DWORD ULong;
-  } DUMMYUNIONNAME;
-
-} MEM_EXTENDED_PARAMETER, *PMEM_EXTENDED_PARAMETER;
-#endif  // defined(__MINGW32__)
-
 #if (NTDDI_VERSION < NTDDI_WIN10_RS4) || defined(__MINGW32__)
 PVOID WINAPI VirtualAlloc2(HANDLE Process, PVOID BaseAddress, SIZE_T Size,
                            ULONG AllocationType, ULONG PageProtection,
@@ -149,17 +111,31 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     return aUnaligned + ((-aUnaligned) & (aAlignTo - 1));
   }
 
+  static PVOID AlignUpToRegion(PVOID aUnaligned, uintptr_t aAlignTo,
+                               size_t aLen, size_t aDesiredLen) {
+    uintptr_t unaligned = reinterpret_cast<uintptr_t>(aUnaligned);
+    uintptr_t aligned = AlignUp(unaligned, aAlignTo);
+    MOZ_ASSERT(aligned >= unaligned);
+
+    if (aLen < aligned - unaligned) {
+      return nullptr;
+    }
+
+    aLen -= (aligned - unaligned);
+    return reinterpret_cast<PVOID>((aLen >= aDesiredLen) ? aligned : 0);
+  }
+
  public:
 #if defined(NIGHTLY_BUILD)
   Maybe<DetourError> mLastError;
-  const Maybe<DetourError>& GetLastError() const { return mLastError; }
+  const Maybe<DetourError>& GetLastDetourError() const { return mLastError; }
   template <typename... Args>
-  void SetLastError(Args&&... aArgs) {
+  void SetLastDetourError(Args&&... aArgs) {
     mLastError = Some(DetourError(std::forward<Args>(aArgs)...));
   }
 #else
   template <typename... Args>
-  void SetLastError(Args&&... aArgs) {}
+  void SetLastDetourError(Args&&... aArgs) {}
 #endif  // defined(NIGHTLY_BUILD)
 
   DWORD ComputeAllocationSize(const uint32_t aRequestedSize) const {
@@ -310,16 +286,20 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
    */
   PVOID FindRegion(HANDLE aProcess, const size_t aDesiredBytesLen,
                    const uint8_t* aRangeMin, const uint8_t* aRangeMax) {
+    // Convert the given pointers to uintptr_t because we should not
+    // compare two pointers unless they are from the same array or object.
+    uintptr_t rangeMin = reinterpret_cast<uintptr_t>(aRangeMin);
+    uintptr_t rangeMax = reinterpret_cast<uintptr_t>(aRangeMax);
+
     const DWORD kGranularity = GetAllocGranularity();
-    MOZ_ASSERT(aDesiredBytesLen >= kGranularity);
     if (!aDesiredBytesLen) {
-      SetLastError(MMPOLICY_RESERVE_FINDREGION_INVALIDLEN);
+      SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_INVALIDLEN);
       return nullptr;
     }
 
-    MOZ_ASSERT(aRangeMin < aRangeMax);
-    if (aRangeMin >= aRangeMax) {
-      SetLastError(MMPOLICY_RESERVE_FINDREGION_INVALIDRANGE);
+    MOZ_ASSERT(rangeMin < rangeMax);
+    if (rangeMin >= rangeMax) {
+      SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_INVALIDRANGE);
       return nullptr;
     }
 
@@ -330,33 +310,68 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
 
     // Reduce rnd to a value that falls within the acceptable range
     uintptr_t maxOffset =
-        (aRangeMax - aRangeMin - aDesiredBytesLen) / kGranularity;
-    uintptr_t offset = (uintptr_t(rnd) % maxOffset) * kGranularity;
+        (rangeMax - rangeMin - aDesiredBytesLen) / kGranularity;
+    // Divide by maxOffset + 1 because maxOffset * kGranularity is acceptable.
+    uintptr_t offset = (uintptr_t(rnd) % (maxOffset + 1)) * kGranularity;
 
     // Start searching at this address
-    const uint8_t* address = aRangeMin + offset;
+    const uintptr_t searchStart = rangeMin + offset;
     // The max address needs to incorporate the desired length
-    const uint8_t* const kMaxPtr = aRangeMax - aDesiredBytesLen;
+    const uintptr_t kMaxPtr = rangeMax - aDesiredBytesLen;
 
-    MOZ_DIAGNOSTIC_ASSERT(address <= kMaxPtr);
+    MOZ_DIAGNOSTIC_ASSERT(searchStart <= kMaxPtr);
 
     MEMORY_BASIC_INFORMATION mbi;
     SIZE_T len = sizeof(mbi);
 
     // Scan the range for a free chunk that is at least as large as
     // aDesiredBytesLen
-    while (address <= kMaxPtr &&
-           nt::VirtualQueryEx(aProcess, address, &mbi, len)) {
-      if (mbi.State == MEM_FREE && mbi.RegionSize >= aDesiredBytesLen) {
-        return mbi.BaseAddress;
+    // Scan [searchStart, kMaxPtr]
+    for (uintptr_t address = searchStart; address <= kMaxPtr;) {
+      if (nt::VirtualQueryEx(aProcess, reinterpret_cast<uint8_t*>(address),
+                             &mbi, len) != len) {
+        SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_VIRTUALQUERY_ERROR,
+                           ::GetLastError());
+        return nullptr;
       }
 
-      address =
-          reinterpret_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+      if (mbi.State == MEM_FREE) {
+        // |mbi.BaseAddress| is aligned with the page granularity, but may not
+        // be aligned with the allocation granularity.  VirtualAlloc does not
+        // accept such a non-aligned address unless the corresponding allocation
+        // region is free.  So we get the next boundary's start address.
+        PVOID regionStart = AlignUpToRegion(mbi.BaseAddress, kGranularity,
+                                            mbi.RegionSize, aDesiredBytesLen);
+        if (regionStart) {
+          return regionStart;
+        }
+      }
+
+      address = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
     }
 
-    SetLastError(MMPOLICY_RESERVE_FINDREGION_VIRTUALQUERY_ERROR,
-                 ::GetLastError());
+    // Scan [aRangeMin, searchStart)
+    for (uintptr_t address = rangeMin; address < searchStart;) {
+      if (nt::VirtualQueryEx(aProcess, reinterpret_cast<uint8_t*>(address),
+                             &mbi, len) != len) {
+        SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_VIRTUALQUERY_ERROR,
+                           ::GetLastError());
+        return nullptr;
+      }
+
+      if (mbi.State == MEM_FREE) {
+        PVOID regionStart = AlignUpToRegion(mbi.BaseAddress, kGranularity,
+                                            mbi.RegionSize, aDesiredBytesLen);
+        if (regionStart) {
+          return regionStart;
+        }
+      }
+
+      address = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+
+    SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_NO_FREE_REGION,
+                       ::GetLastError());
     return nullptr;
   }
 
@@ -384,7 +399,8 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
       // No restrictions, let the OS choose the base address
       PVOID ret = aReserveFn(aProcess, nullptr, aSize);
       if (!ret) {
-        SetLastError(MMPOLICY_RESERVE_NOBOUND_RESERVE_ERROR, ::GetLastError());
+        SetLastDetourError(MMPOLICY_RESERVE_NOBOUND_RESERVE_ERROR,
+                           ::GetLastError());
       }
       return ret;
     }
@@ -426,7 +442,8 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     // will be set on a best-effort basis.
     PVOID ret = aReserveFn(aProcess, nullptr, aSize);
     if (!ret) {
-      SetLastError(MMPOLICY_RESERVE_FINAL_RESERVE_ERROR, ::GetLastError());
+      SetLastDetourError(MMPOLICY_RESERVE_FINAL_RESERVE_ERROR,
+                         ::GetLastError());
     }
     return ret;
   }
@@ -825,13 +842,13 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
   uint32_t Reserve(const uint32_t aSize,
                    const Maybe<Span<const uint8_t>>& aBounds) {
     if (!aSize || !mProcess) {
-      SetLastError(MMPOLICY_RESERVE_INVALIDARG);
+      SetLastDetourError(MMPOLICY_RESERVE_INVALIDARG);
       return 0;
     }
 
     if (mRemoteView) {
       MOZ_ASSERT(mReservationSize >= aSize);
-      SetLastError(MMPOLICY_RESERVE_ZERO_RESERVATIONSIZE);
+      SetLastDetourError(MMPOLICY_RESERVE_ZERO_RESERVATIONSIZE);
       return mReservationSize;
     }
 
@@ -841,14 +858,14 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
                                    PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0,
                                    mReservationSize, nullptr);
     if (!mMapping) {
-      SetLastError(MMPOLICY_RESERVE_CREATEFILEMAPPING, ::GetLastError());
+      SetLastDetourError(MMPOLICY_RESERVE_CREATEFILEMAPPING, ::GetLastError());
       return 0;
     }
 
     mLocalView = static_cast<uint8_t*>(
         ::MapViewOfFile(mMapping, FILE_MAP_WRITE, 0, 0, 0));
     if (!mLocalView) {
-      SetLastError(MMPOLICY_RESERVE_MAPVIEWOFFILE, ::GetLastError());
+      SetLastDetourError(MMPOLICY_RESERVE_MAPVIEWOFFILE, ::GetLastError());
       return 0;
     }
 

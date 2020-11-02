@@ -58,6 +58,19 @@ class ResourceWatcher {
   }
 
   /**
+   * Return the specified resource cached in this watcher.
+   *
+   * @param {String} resourceType
+   * @param {String} resourceId
+   * @return {Object} resource cached in this watcher
+   */
+  getResourceById(resourceType, resourceId) {
+    return this._cache.find(
+      r => r.resourceType === resourceType && r.resourceId === resourceId
+    );
+  }
+
+  /**
    * Request to start retrieving all already existing instances of given
    * type of resources and also start watching for the one to be created after.
    *
@@ -280,7 +293,7 @@ class ResourceWatcher {
         // ...request existing resource and new one to come from this one target
         // *but* only do that for backward compat, where we don't have the watcher API
         // (See bug 1626647)
-        if (this._hasWatcherSupport(resourceType)) {
+        if (this.hasWatcherSupport(resourceType)) {
           continue;
         }
         await this._watchResourcesForTarget(targetFront, resourceType);
@@ -360,6 +373,7 @@ class ResourceWatcher {
           targetList: this.targetList,
           targetFront,
           isFissionEnabledOnContentToolbox: gDevTools.isFissionContentToolboxEnabled(),
+          watcher: this.watcher,
         });
       }
 
@@ -601,7 +615,7 @@ class ResourceWatcher {
     );
   }
 
-  _hasWatcherSupport(resourceType) {
+  hasWatcherSupport(resourceType) {
     return this.watcher?.traits?.resources?.[resourceType];
   }
 
@@ -632,7 +646,7 @@ class ResourceWatcher {
 
     // If the server supports the Watcher API and the Watcher supports
     // this resource type, use this API
-    if (this._hasWatcherSupport(resourceType)) {
+    if (this.hasWatcherSupport(resourceType)) {
       await this.watcher.watchResources([resourceType]);
       return;
     }
@@ -712,7 +726,7 @@ class ResourceWatcher {
 
     // If the server supports the Watcher API and the Watcher supports
     // this resource type, use this API
-    if (this._hasWatcherSupport(resourceType)) {
+    if (this.hasWatcherSupport(resourceType)) {
       this.watcher.unwatchResources([resourceType]);
       return;
     }
@@ -763,7 +777,7 @@ ResourceWatcher.TYPES = ResourceWatcher.prototype.TYPES = {
   NETWORK_EVENT_STACKTRACE: "network-event-stacktrace",
   SOURCE: "source",
 };
-module.exports = { ResourceWatcher };
+module.exports = { ResourceWatcher, TYPES: ResourceWatcher.TYPES };
 
 // Backward compat code for each type of resource.
 // Each section added here should eventually be removed once the equivalent server
@@ -833,6 +847,8 @@ const ResourceTransformers = {
     .ERROR_MESSAGE]: require("devtools/shared/resources/transformers/error-messages"),
   [ResourceWatcher.TYPES
     .INDEXED_DB]: require("devtools/shared/resources/transformers/storage-indexed-db.js"),
+  [ResourceWatcher.TYPES
+    .LOCAL_STORAGE]: require("devtools/shared/resources/transformers/storage-local-storage.js"),
   [ResourceWatcher.TYPES
     .ROOT_NODE]: require("devtools/shared/resources/transformers/root-node"),
 };

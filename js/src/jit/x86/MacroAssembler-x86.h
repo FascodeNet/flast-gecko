@@ -12,6 +12,7 @@
 #include "js/HeapAPI.h"
 #include "vm/BigIntType.h"  // JS::BigInt
 #include "vm/Realm.h"
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -875,6 +876,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
   void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
   void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
   void vpandSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpxorSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpshufbSimd128(const SimdConstant& v, FloatRegister srcDest);
 
   Condition testInt32Truthy(bool truthy, const ValueOperand& operand) {
     test32(operand.payloadReg(), operand.payloadReg());

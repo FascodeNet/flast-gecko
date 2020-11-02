@@ -33,7 +33,11 @@ class RenderCompositorSWGL : public RenderCompositor {
   void Pause() override;
   bool Resume() override;
 
+  bool SurfaceOriginIsTopLeft() override { return true; }
+
   LayoutDeviceIntSize GetBufferSize() override;
+
+  bool SupportsExternalBufferTextures() const override { return true; }
 
   // Interface for wr::Compositor
   CompositorCapabilities GetCompositorCapabilities() override;

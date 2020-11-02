@@ -18,6 +18,7 @@
 #include "jit/MIRGraph.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "util/Memory.h"
+#include "wasm/WasmTypes.h"
 
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/BytecodeUtil-inl.h"
@@ -1192,6 +1193,13 @@ void LIRGenerator::lowerBitOp(JSOp op, MBinaryBitwiseInstruction* ins) {
 
 void LIRGenerator::visitTypeOf(MTypeOf* ins) {
   MDefinition* opd = ins->input();
+
+  if (opd->type() == MIRType::Object) {
+    auto* lir = new (alloc()) LTypeOfO(useRegister(opd));
+    define(lir, ins);
+    return;
+  }
+
   MOZ_ASSERT(opd->type() == MIRType::Value);
 
   LTypeOfV* lir = new (alloc()) LTypeOfV(useBox(opd), tempToUnbox());
@@ -3114,6 +3122,14 @@ void LIRGenerator::visitGetNextEntryForIterator(MGetNextEntryForIterator* ins) {
   assignSafepoint(lir, ins);
 }
 
+void LIRGenerator::visitArrayBufferByteLengthInt32(
+    MArrayBufferByteLengthInt32* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+  auto* lir = new (alloc())
+      LArrayBufferByteLengthInt32(useRegisterAtStart(ins->object()));
+  define(lir, ins);
+}
+
 void LIRGenerator::visitArrayBufferViewLength(MArrayBufferViewLength* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
   define(new (alloc())
@@ -4511,6 +4527,17 @@ void LIRGenerator::visitGuardFunctionFlags(MGuardFunctionFlags* ins) {
   redefine(ins, ins->function());
 }
 
+void LIRGenerator::visitGuardFunctionIsNonBuiltinCtor(
+    MGuardFunctionIsNonBuiltinCtor* ins) {
+  MOZ_ASSERT(ins->function()->type() == MIRType::Object);
+
+  auto* lir = new (alloc())
+      LGuardFunctionIsNonBuiltinCtor(useRegister(ins->function()), temp());
+  assignSnapshot(lir, BailoutKind::FunctionIsNonBuiltinCtorGuard);
+  add(lir, ins);
+  redefine(ins, ins->function());
+}
+
 void LIRGenerator::visitGuardFunctionKind(MGuardFunctionKind* ins) {
   MOZ_ASSERT(ins->function()->type() == MIRType::Object);
 
@@ -5362,6 +5389,40 @@ void LIRGenerator::visitGetDOMMember(MGetDOMMember* ins) {
         new (alloc()) LGetDOMMemberT(useRegisterForTypedLoad(obj, type));
     define(lir, ins);
   }
+}
+
+void LIRGenerator::visitLoadDOMExpandoValue(MLoadDOMExpandoValue* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir =
+      new (alloc()) LLoadDOMExpandoValue(useRegisterAtStart(ins->proxy()));
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitLoadDOMExpandoValueGuardGeneration(
+    MLoadDOMExpandoValueGuardGeneration* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir = new (alloc())
+      LLoadDOMExpandoValueGuardGeneration(useRegisterAtStart(ins->proxy()));
+  assignSnapshot(lir, BailoutKind::DOMExpandoValueGenerationGuard);
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitLoadDOMExpandoValueIgnoreGeneration(
+    MLoadDOMExpandoValueIgnoreGeneration* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir = new (alloc())
+      LLoadDOMExpandoValueIgnoreGeneration(useRegisterAtStart(ins->proxy()));
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitGuardDOMExpandoMissingOrGuardShape(
+    MGuardDOMExpandoMissingOrGuardShape* ins) {
+  MOZ_ASSERT(ins->expando()->type() == MIRType::Value);
+  auto* lir = new (alloc())
+      LGuardDOMExpandoMissingOrGuardShape(useBox(ins->expando()), temp());
+  assignSnapshot(lir, BailoutKind::DOMExpandoMissingOrShapeGuard);
+  add(lir, ins);
+  redefine(ins, ins->expando());
 }
 
 void LIRGenerator::visitRecompileCheck(MRecompileCheck* ins) {

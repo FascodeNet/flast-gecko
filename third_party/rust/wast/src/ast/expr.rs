@@ -945,7 +945,7 @@ instructions! {
         I32x4MinU : [0xfd, 0xb7] : "i32x4.min_u",
         I32x4MaxS : [0xfd, 0xb8] : "i32x4.max_s",
         I32x4MaxU : [0xfd, 0xb9] : "i32x4.max_u",
-        I32x4DotI16x8S : [0xfd, 0xba] : "i32x4.dot_i8x16_s",
+        I32x4DotI16x8S : [0xfd, 0xba] : "i32x4.dot_i16x8_s",
 
         I64x2Neg : [0xfd, 0xc1] : "i64x2.neg",
         I64x2Shl : [0xfd, 0xcb] : "i64x2.shl",
@@ -992,6 +992,9 @@ instructions! {
         I32x4TruncSatF32x4U : [0xfd, 0xf9] : "i32x4.trunc_sat_f32x4_u",
         F32x4ConvertI32x4S : [0xfd, 0xfa] : "f32x4.convert_i32x4_s",
         F32x4ConvertI32x4U : [0xfd, 0xfb] : "f32x4.convert_i32x4_u",
+
+        V128Load32Zero(MemArg<4>) : [0xfd, 0xfc] : "v128.load32_zero",
+        V128Load64Zero(MemArg<8>) : [0xfd, 0xfd] : "v128.load64_zero",
 
         // Exception handling proposal
         Try(BlockType<'a>) : [0x06] : "try",

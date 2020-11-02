@@ -10,6 +10,7 @@ html {
 body {
   overflow-x: hidden;
 }
+
 #process-table {
   user-select: none;
   font-size: 1em;
@@ -48,24 +49,34 @@ tr {
 
 /* column-memory-resident */
 td:nth-child(2) {
-  width:  15%;
+  width: 15%;
+}
+#process-tbody td:nth-child(2) {
   /*
   Right-alignment is more readable in LTR languages.
   At the time of this writing, the units are not localized, so this is also true in RTL
   languages. However, if/when we localize units, we should make this a `text-align: end`.
   */
-  text-align: right;
+  text-align: end;
 }
 
 /* column-cpu-total */
 td:nth-child(3) {
   width: 15%;
+}
+#process-tbody td:nth-child(3) {
   /*
   Right-alignment is more readable in LTR languages.
   At the time of this writing, the units are not localized, so this is also true in RTL
   languages. However, if/when we localize units, we should make this a `text-align: end`.
   */
-  text-align: right;
+  text-align: end;
+}
+
+/* column-action-icon */
+td:nth-child(4) {
+  width: 16px;
+  text-align: center;
 }
 
 #process-thead > tr {
@@ -84,7 +95,8 @@ td:nth-child(3) {
 }
 td {
   padding: 5px 10px;
-  min-height: 2em;
+  min-height: 16px;
+  max-height: 16px;
   color: var(--in-content-text-color);
   max-width: 70vw;
   overflow: hidden;
@@ -94,13 +106,13 @@ td.type, td.favicon {
   background-repeat: no-repeat;
   background-origin: border-box;
   background-size: 16px 16px;
-  background-position: 8px center;
-  padding-inline-start: 32px;
+  background-position: 11px center;
+  padding-inline-start: 38px;
   -moz-context-properties: fill;
   fill: currentColor;
 }
 td.type:dir(rtl), td.favicon:dir(rtl) {
-  background-position-x: right 8px;
+  background-position-x: right 11px;
 }
 #process-tbody > tr > td:first-child {
   text-overflow: ellipsis;
@@ -189,6 +201,32 @@ td.type:dir(rtl), td.favicon:dir(rtl) {
 }
 #process-tbody > tr.thread {
   font-size-adjust: 0.5;
+}
+
+.killing {
+  opacity: 0.3;
+  transition-property: opacity;
+  transition-duration: 1s;
+}
+
+.killed {
+  opacity: 0.3;
+}
+
+/* icons */
+.close-icon {
+  background: url("chrome://global/skin/icons/close.svg") no-repeat center;
+  opacity: 0;      /* Start out as transparent */
+  fill-opacity: 0; /* Make SVG background transparent */
+  -moz-context-properties: fill-opacity;
+}
+
+tr:is([selected], :hover):not(.killing) > .close-icon {
+  opacity: 1;
+}
+
+.close-icon:hover {
+  background-color: var(--in-content-button-background);
 }
 
 /* column-name */

@@ -35,7 +35,7 @@
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "GLLibraryEGL.h"
-#  include "mozilla/webrender/RenderAndroidSurfaceTextureHostOGL.h"
+#  include "mozilla/webrender/RenderAndroidSurfaceTextureHost.h"
 #endif
 
 #ifdef MOZ_WIDGET_GTK
@@ -391,6 +391,24 @@ void RenderThread::SetClearColor(wr::WindowId aWindowId, wr::ColorF aColor) {
   MOZ_ASSERT(it != mRenderers.end());
   if (it != mRenderers.end()) {
     wr_renderer_set_clear_color(it->second->GetRenderer(), aColor);
+  }
+}
+
+void RenderThread::SetProfilerUI(wr::WindowId aWindowId, nsCString aUI) {
+  if (mHasShutdown) {
+    return;
+  }
+
+  if (!IsInRenderThread()) {
+    Loop()->PostTask(NewRunnableMethod<wr::WindowId, nsCString>(
+        "wr::RenderThread::SetProfilerUI", this, &RenderThread::SetProfilerUI,
+        aWindowId, aUI));
+    return;
+  }
+
+  auto it = mRenderers.find(aWindowId);
+  if (it != mRenderers.end()) {
+    it->second->SetProfilerUI(aUI);
   }
 }
 

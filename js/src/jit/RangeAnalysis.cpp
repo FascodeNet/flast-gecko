@@ -14,6 +14,7 @@
 #include "jsmath.h"
 #include "jsnum.h"
 
+#include "jit/CompileInfo.h"
 #include "jit/Ion.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitSpewer.h"
@@ -25,6 +26,7 @@
 #include "util/CheckedArithmetic.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/TypedArrayObject.h"
+#include "vm/Uint8Clamped.h"
 
 #include "vm/BytecodeUtil-inl.h"
 

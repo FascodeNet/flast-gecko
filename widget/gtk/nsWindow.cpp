@@ -218,6 +218,8 @@ static gboolean window_state_event_cb(GtkWidget* widget,
                                       GdkEventWindowState* event);
 static void settings_changed_cb(GtkSettings* settings, GParamSpec* pspec,
                                 nsWindow* data);
+static void settings_xft_dpi_changed_cb(GtkSettings* settings,
+                                        GParamSpec* pspec, nsWindow* data);
 static void check_resize_cb(GtkContainer* container, gpointer user_data);
 static void screen_composited_changed_cb(GdkScreen* screen, gpointer user_data);
 static void widget_composited_changed_cb(GtkWidget* widget, gpointer user_data);
@@ -715,8 +717,7 @@ void nsWindow::Destroy() {
 
   ClearCachedResources();
 
-  g_signal_handlers_disconnect_by_func(
-      gtk_settings_get_default(), FuncToGpointer(settings_changed_cb), this);
+  g_signal_handlers_disconnect_by_data(gtk_settings_get_default(), this);
 
   nsIRollupListener* rollupListener = nsBaseWidget::GetActiveRollupListener();
   if (rollupListener) {
@@ -3066,6 +3067,12 @@ gboolean nsWindow::OnConfigureEvent(GtkWidget* aWidget,
     // loop when nsXULPopupManager::PopupMoved moves the window to the new
     // position and nsMenuPopupFrame::SetPopupPosition adds
     // offsetForContextMenu on each iteration.
+
+    // Our back buffer might have been invalidated while we drew the last
+    // frame, and its contents might be incorrect. See bug 1280653 comment 7
+    // and comment 10. Specifically we must ensure we recomposite the frame
+    // as soon as possible to avoid the corrupted frame being displayed.
+    GetLayerManager()->ForceComposite();
     return FALSE;
   }
 
@@ -3984,7 +3991,8 @@ void nsWindow::OnWindowStateEvent(GtkWidget* aWidget,
 }
 
 void nsWindow::ThemeChanged() {
-  NotifyThemeChanged();
+  // Everything could've changed.
+  NotifyThemeChanged(ThemeChangeKind::StyleAndLayout);
 
   if (!mGdkWindow || MOZ_UNLIKELY(mIsDestroyed)) return;
 
@@ -4010,8 +4018,9 @@ void nsWindow::OnDPIChanged() {
   if (mWidgetListener) {
     if (PresShell* presShell = mWidgetListener->GetPresShell()) {
       presShell->BackingScaleFactorChanged();
-      // Update menu's font size etc
-      presShell->ThemeChanged();
+      // Update menu's font size etc.
+      // This affects style / layout because it affects system font sizes.
+      presShell->ThemeChanged(ThemeChangeKind::StyleAndLayout);
     }
     mWidgetListener->UIResolutionChanged();
   }
@@ -4020,12 +4029,9 @@ void nsWindow::OnDPIChanged() {
 void nsWindow::OnCheckResize() { mPendingConfigures++; }
 
 void nsWindow::OnCompositedChanged() {
-  if (mWidgetListener) {
-    if (PresShell* presShell = mWidgetListener->GetPresShell()) {
-      // Update CSD after the change in alpha visibility
-      presShell->ThemeChanged();
-    }
-  }
+  // Update CSD after the change in alpha visibility. This only affects
+  // system metrics, not other theme shenanigans.
+  NotifyThemeChanged(ThemeChangeKind::MediaQueriesOnly);
 }
 
 void nsWindow::OnScaleChanged(GtkAllocation* aAllocation) {
@@ -4690,6 +4696,8 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                            G_CALLBACK(settings_changed_cb), this);
     g_signal_connect_after(default_settings, "notify::gtk-decoration-layout",
                            G_CALLBACK(settings_changed_cb), this);
+    g_signal_connect_after(default_settings, "notify::gtk-xft-dpi",
+                           G_CALLBACK(settings_xft_dpi_changed_cb), this);
   }
 
   if (mContainer) {
@@ -5048,7 +5056,8 @@ void nsWindow::HideWaylandWindow() {
 
 void nsWindow::WaylandStartVsync() {
 #ifdef MOZ_WAYLAND
-  if (!gUseWaylandVsync) {
+  // only use for toplevel windows for now - see bug 1619246
+  if (!gUseWaylandVsync || mWindowType != eWindowType_toplevel) {
     return;
   }
 
@@ -6818,6 +6827,16 @@ static void settings_changed_cb(GtkSettings* settings, GParamSpec* pspec,
                                 nsWindow* data) {
   RefPtr<nsWindow> window = data;
   window->ThemeChanged();
+}
+
+static void settings_xft_dpi_changed_cb(GtkSettings* gtk_settings,
+                                        GParamSpec* pspec, nsWindow* data) {
+  RefPtr<nsWindow> window = data;
+  window->OnDPIChanged();
+  // Even though the window size in screen pixels has not changed,
+  // nsViewManager stores the dimensions in app units.
+  // DispatchResized() updates those.
+  window->DispatchResized();
 }
 
 static void check_resize_cb(GtkContainer* container, gpointer user_data) {

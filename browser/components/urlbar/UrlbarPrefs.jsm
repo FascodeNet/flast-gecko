@@ -27,6 +27,10 @@ const PREF_URLBAR_BRANCH = "browser.urlbar.";
 // value, type]].  In the former case, the getter method name is inferred from
 // the typeof the default value.
 const PREF_URLBAR_DEFAULTS = new Map([
+  // Whether we announce to screen readers when tab-to-search results are
+  // inserted.
+  ["accessibility.tabToSearch.announceResults", true],
+
   // "Autofill" is the name of the feature that automatically completes domains
   // and URLs that the user has visited as the user is typing them in the urlbar
   // textbox.  If false, autofill will be disabled.
@@ -143,11 +147,27 @@ const PREF_URLBAR_DEFAULTS = new Map([
   // active window.
   ["switchTabs.adoptIntoActiveWindow", false],
 
+  // If true, we stop showing tab-to-search onboarding results after one is
+  // interacted with.
+  ["tabToSearch.onboard.oneInteraction", true],
+
+  // The maximum number of times we show the larger tip-style tab-to-search
+  // result.
+  ["tabToSearch.onboard.maxShown", 10],
+
+  // The maximum number of times per session we show the larger tip-style
+  // tab-to-search result.
+  ["tabToSearch.onboard.maxShownPerSession", 2],
+
   // The number of times the user has been shown the onboarding search tip.
   ["tipShownCount.searchTip_onboard", 0],
 
   // The number of times the user has been shown the redirect search tip.
   ["tipShownCount.searchTip_redirect", 0],
+
+  // The number of times the user has been shown the tab-to-search onboarding
+  // tip.
+  ["tipShownCount.tabToSearch", 0],
 
   // Remove redundant portions from URLs.
   ["trimURLs", true],
@@ -161,11 +181,11 @@ const PREF_URLBAR_DEFAULTS = new Map([
 
   // Whether aliases are styled as a "chiclet" separated from the Urlbar.
   // Also controls the other urlbar.update2 prefs.
-  ["update2", false],
+  ["update2", true],
 
   // Whether horizontal key navigation with left/right is disabled for urlbar's
   // one-off buttons.
-  ["update2.disableOneOffsHorizontalKeyNavigation", false],
+  ["update2.disableOneOffsHorizontalKeyNavigation", true],
 
   // Controls the empty search behavior in Search Mode:
   //  0 - Show nothing
@@ -175,11 +195,11 @@ const PREF_URLBAR_DEFAULTS = new Map([
 
   // Whether the urlbar displays one-offs to filter searches to history,
   // bookmarks, or tabs.
-  ["update2.localOneOffs", false],
+  ["update2.localOneOffs", true],
 
   // Whether the urlbar one-offs act as search filters instead of executing a
   // search immediately.
-  ["update2.oneOffsRefresh", false],
+  ["update2.oneOffsRefresh", true],
 
   // Whether browsing history that is recognized as a previous search should
   // be restyled and deduped against form history. This only happens when
@@ -188,7 +208,7 @@ const PREF_URLBAR_DEFAULTS = new Map([
 
   // Whether we display a tab-to-complete result when the user types an engine
   // name.
-  ["update2.tabToComplete", false],
+  ["update2.tabToComplete", true],
 ]);
 const PREF_OTHER_DEFAULTS = new Map([
   ["keyword.enabled", true],

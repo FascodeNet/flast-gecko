@@ -6,6 +6,7 @@
 
 #include "nsDOMWindowUtils.h"
 
+#include "MobileViewportManager.h"
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/LayerTransactionChild.h"
 #include "nsPresContext.h"
@@ -530,7 +531,7 @@ nsDOMWindowUtils::SetDisplayPortMarginsForElement(
 
   DisplayPortUtils::SetDisplayPortMargins(
       aElement, presShell,
-      DisplayPortMargins::WithNoAdjustment(displayportMargins), aPriority);
+      DisplayPortMargins::ForContent(aElement, displayportMargins), aPriority);
 
   return NS_OK;
 }
@@ -691,6 +692,15 @@ nsDOMWindowUtils::SendMouseEventCommon(
       presShell, aType, aX, aY, aButton, aButtons, aClickCount, aModifiers,
       aIgnoreRootScrollFrame, aPressure, aInputSourceArg, aPointerId, aToWindow,
       aPreventDefault, aIsDOMEventSynthesized, aIsWidgetEventSynthesized);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::IsCORSSafelistedRequestHeader(const nsACString& aName,
+                                                const nsACString& aValue,
+                                                bool* aRetVal) {
+  NS_ENSURE_ARG_POINTER(aRetVal);
+  *aRetVal = nsContentUtils::IsCORSSafelistedRequestHeader(aName, aValue);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2579,6 +2589,26 @@ nsDOMWindowUtils::DisableApzForElement(Element* aElement) {
   return NS_OK;
 }
 
+static nsTArray<nsIScrollableFrame*> CollectScrollableAncestors(
+    nsIFrame* aStart) {
+  nsTArray<nsIScrollableFrame*> result;
+  nsIFrame* frame = aStart;
+  while (frame) {
+    frame = nsLayoutUtils::GetCrossDocParentFrame(frame);
+    if (!frame) {
+      break;
+    }
+    nsIScrollableFrame* scrollAncestor =
+        nsLayoutUtils::GetAsyncScrollableAncestorFrame(frame);
+    if (!scrollAncestor) {
+      break;
+    }
+    result.AppendElement(scrollAncestor);
+    frame = do_QueryFrame(scrollAncestor);
+  }
+  return result;
+}
+
 NS_IMETHODIMP
 nsDOMWindowUtils::ZoomToFocusedInput() {
   if (!Preferences::GetBool("apz.zoom-to-focused-input.enabled")) {
@@ -2685,7 +2715,27 @@ nsDOMWindowUtils::ZoomToFocusedInput() {
   }
 
   bounds.Inflate(15.0f, 0.0f);
-  widget->ZoomToRect(presShellId, viewId, bounds, flags);
+
+  bool waitForRefresh = false;
+  for (nsIScrollableFrame* scrollAncestor :
+       CollectScrollableAncestors(element->GetPrimaryFrame())) {
+    if (scrollAncestor->HasScrollUpdates()) {
+      waitForRefresh = true;
+      break;
+    }
+  }
+  if (waitForRefresh) {
+    waitForRefresh =
+        presShell->AddPostRefreshObserver(new OneShotPostRefreshObserver(
+            presShell, [widget = RefPtr<nsIWidget>(widget), presShellId, viewId,
+                        bounds, flags](PresShell*) {
+              widget->ZoomToRect(presShellId, viewId, bounds, flags);
+            }));
+  }
+  if (!waitForRefresh) {
+    widget->ZoomToRect(presShellId, viewId, bounds, flags);
+  }
+
   return NS_OK;
 }
 
@@ -3045,9 +3095,7 @@ nsDOMWindowUtils::GetFileReferences(const nsAString& aDatabaseName, int64_t aId,
   NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
   nsCString origin;
-  nsresult rv =
-      quota::QuotaManager::GetInfoFromWindow(window, nullptr, nullptr, &origin);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY_VAR(origin, quota::QuotaManager::GetOriginFromWindow(window));
 
   IDBOpenDBOptions options;
   JS::Rooted<JS::Value> optionsVal(aCx, aOptions);
@@ -3063,8 +3111,9 @@ nsDOMWindowUtils::GetFileReferences(const nsAString& aDatabaseName, int64_t aId,
   RefPtr<IndexedDatabaseManager> mgr = IndexedDatabaseManager::Get();
 
   if (mgr) {
-    rv = mgr->BlockAndGetFileReferences(persistenceType, origin, aDatabaseName,
-                                        aId, aRefCnt, aDBRefCnt, aResult);
+    nsresult rv =
+        mgr->BlockAndGetFileReferences(persistenceType, origin, aDatabaseName,
+                                       aId, aRefCnt, aDBRefCnt, aResult);
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
     *aRefCnt = *aDBRefCnt = -1;
@@ -4439,4 +4488,16 @@ nsDOMWindowUtils::GetEffectivelyThrottlesFrameRequests(bool* aResult) {
   *aResult = !doc->WouldScheduleFrameRequestCallbacks() ||
              doc->ShouldThrottleFrameRequests();
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::ResetMobileViewportManager() {
+  if (RefPtr<PresShell> presShell = GetPresShell()) {
+    if (auto mvm = presShell->GetMobileViewportManager()) {
+      mvm->SetInitialViewport();
+      return NS_OK;
+    }
+  }
+  // Unable to reset, so let's error out
+  return NS_ERROR_FAILURE;
 }

@@ -60,6 +60,15 @@ interface nsISearchEngine : nsISupports
   readonly attribute AString searchUrlQueryParamName;
 
   /**
+   * Returns the public suffix for the submission URL of type
+   * `SearchUtils.URL_TYPE.SEARCH`.
+   *
+   * @returns A string which is a known public suffix, or empty string
+   *          if one cannot be found.
+   */
+  readonly attribute AString searchUrlPublicSuffix;
+
+  /**
    * Determines whether the engine can return responses in the given
    * MIME type.  Returns true if the engine spec has a URL with the
    * given responseType, false otherwise.
@@ -244,6 +253,11 @@ interface nsISearchService : nsISupports
    * initialization has not been triggered yet.
    */
   readonly attribute bool isInitialized;
+
+  /**
+   * Checks if WebExtension Search Engines are valid and up-to-date.
+   */
+  Promise checkWebExtensionEngines();
 
   /**
    * Resets the default engine to its original value.

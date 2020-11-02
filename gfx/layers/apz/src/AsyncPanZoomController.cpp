@@ -34,7 +34,6 @@
 #include "base/message_loop.h"          // for MessageLoop
 #include "base/task.h"                  // for NewRunnableMethod, etc
 #include "gfxTypes.h"                   // for gfxFloat
-#include "LayersLogging.h"              // for print_stderr
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/BasicEvents.h"        // for Modifiers, MODIFIER_*
 #include "mozilla/ClearOnShutdown.h"    // for ClearOnShutdown
@@ -72,6 +71,7 @@
 #include "mozilla/layers/DirectionUtils.h"  // for GetAxis{Start,End,Length,Scale}
 #include "mozilla/layers/LayerTransactionParent.h"  // for LayerTransactionParent
 #include "mozilla/layers/MetricsSharingController.h"  // for MetricsSharingController
+#include "mozilla/layers/ScrollInputMethods.h"        // for ScrollInputMethod
 #include "mozilla/mozalloc.h"                         // for operator new, etc
 #include "mozilla/Unused.h"                           // for unused
 #include "mozilla/FloatingPoint.h"                    // for FuzzyEquals*
@@ -930,6 +930,10 @@ nsEventStatus AsyncPanZoomController::HandleDragEvent(
   if (aEvent.mType == MouseInput::MouseType::MOUSE_DOWN) {
     APZC_LOG("%p starting scrollbar drag\n", this);
     SetState(SCROLLBAR_DRAG);
+
+    mozilla::Telemetry::Accumulate(
+        mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t)ScrollInputMethod::ApzScrollbarDrag);
   }
 
   if (aEvent.mType != MouseInput::MouseType::MOUSE_MOVE) {
@@ -1202,6 +1206,9 @@ nsEventStatus AsyncPanZoomController::HandleGestureEvent(
 void AsyncPanZoomController::StartAutoscroll(const ScreenPoint& aPoint) {
   // Cancel any existing animation.
   CancelAnimation();
+
+  Telemetry::Accumulate(Telemetry::SCROLL_INPUT_METHODS,
+                        (uint32_t)ScrollInputMethod::ApzAutoscrolling);
 
   SetState(AUTOSCROLL);
   StartAnimation(new AutoscrollAnimation(*this, aPoint));
@@ -1614,6 +1621,33 @@ nsEventStatus AsyncPanZoomController::OnScale(const PinchGestureInput& aEvent) {
                 delay);
           }
         }
+      } else if (apz::AboutToCheckerboard(mLastContentPaintMetrics,
+                                          Metrics())) {
+        // If we already scheduled a throttled repaint request but are also
+        // in danger of checkerboarding soon, trigger the repaint request to
+        // go out immediately. This should reduce the amount of time we spend
+        // checkerboarding.
+        //
+        // Note that if we remain in this "about to
+        // checkerboard" state over a period of time with multiple pinch input
+        // events (which is quite likely), then we will flip-flop between taking
+        // the above branch (!mPinchPaintTimerSet) and this branch (which will
+        // flush the repaint request and reset mPinchPaintTimerSet to false).
+        // This is sort of desirable because it halves the number of repaint
+        // requests we send, and therefore reduces IPC traffic.
+        // Keep in mind that many of these repaint requests will be ignored on
+        // the main-thread anyway due to the resolution mismatch - the first
+        // repaint request will be honored because APZ's notion of the painted
+        // resolution matches the actual main thread resolution, but that first
+        // repaint request will change the resolution on the main thread.
+        // Subsequent repaint requests will be ignored in APZCCallbackHelper, at
+        // https://searchfox.org/mozilla-central/rev/e0eb861a187f0bb6d994228f2e0e49b2c9ee455e/gfx/layers/apz/util/APZCCallbackHelper.cpp#331-338,
+        // until we receive a NotifyLayersUpdated call that re-syncs APZ's
+        // notion of the painted resolution to the main thread. These ignored
+        // repaint requests are contributing to IPC traffic needlessly, and so
+        // halving the number of repaint requests (as mentioned above) seems
+        // desirable.
+        DoDelayedRequestContentRepaint();
       }
 
       UpdateSharedCompositorFrameMetrics();
@@ -1892,7 +1926,36 @@ ParentLayerPoint AsyncPanZoomController::GetScrollWheelDelta(
   return delta;
 }
 
+static void ReportKeyboardScrollAction(const KeyboardScrollAction& aAction) {
+  ScrollInputMethod scrollMethod;
+
+  switch (aAction.mType) {
+    case KeyboardScrollAction::eScrollLine: {
+      scrollMethod = ScrollInputMethod::ApzScrollLine;
+      break;
+    }
+    case KeyboardScrollAction::eScrollCharacter: {
+      scrollMethod = ScrollInputMethod::ApzScrollCharacter;
+      break;
+    }
+    case KeyboardScrollAction::eScrollPage: {
+      scrollMethod = ScrollInputMethod::ApzScrollPage;
+      break;
+    }
+    case KeyboardScrollAction::eScrollComplete: {
+      scrollMethod = ScrollInputMethod::ApzCompleteScroll;
+      break;
+    }
+  }
+
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+                                 (uint32_t)scrollMethod);
+}
+
 nsEventStatus AsyncPanZoomController::OnKeyboard(const KeyboardInput& aEvent) {
+  // Report the type of scroll action to telemetry
+  ReportKeyboardScrollAction(aEvent.mAction);
+
   // Mark that this APZC has async key scrolled
   mTestHasAsyncKeyScrolled = true;
 
@@ -2170,6 +2233,23 @@ void AsyncPanZoomController::DoDelayedRequestContentRepaint() {
   mPinchPaintTimerSet = false;
 }
 
+static ScrollInputMethod ScrollInputMethodForWheelDeltaType(
+    ScrollWheelInput::ScrollDeltaType aDeltaType) {
+  switch (aDeltaType) {
+    case ScrollWheelInput::SCROLLDELTA_LINE: {
+      return ScrollInputMethod::ApzWheelLine;
+    }
+    case ScrollWheelInput::SCROLLDELTA_PAGE: {
+      return ScrollInputMethod::ApzWheelPage;
+    }
+    case ScrollWheelInput::SCROLLDELTA_PIXEL: {
+      return ScrollInputMethod::ApzWheelPixel;
+    }
+  }
+  MOZ_ASSERT_UNREACHABLE("Invalid value");
+  return ScrollInputMethod::ApzWheelLine;
+}
+
 static void AdjustDeltaForAllowedScrollDirections(
     ParentLayerPoint& aDelta,
     const ScrollDirections& aAllowedScrollDirections) {
@@ -2253,6 +2333,10 @@ nsEventStatus AsyncPanZoomController::OnScrollWheel(
     // Avoid spurious state changes and unnecessary work
     return nsEventStatus_eIgnore;
   }
+
+  mozilla::Telemetry::Accumulate(
+      mozilla::Telemetry::SCROLL_INPUT_METHODS,
+      (uint32_t)ScrollInputMethodForWheelDeltaType(aEvent.mDeltaType));
 
   switch (aEvent.mScrollMode) {
     case ScrollWheelInput::SCROLLMODE_INSTANT: {
@@ -2386,6 +2470,9 @@ nsEventStatus AsyncPanZoomController::OnPanBegin(
   }
 
   StartTouch(aEvent.mLocalPanStartPoint, aEvent.mTimeStamp);
+
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+                                 (uint32_t)ScrollInputMethod::ApzPanGesture);
 
   if (GetAxisLockMode() == FREE) {
     SetState(PANNING);
@@ -3048,6 +3135,9 @@ nsEventStatus AsyncPanZoomController::StartPanning(
   }
 
   if (IsInPanningState()) {
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+                                   (uint32_t)ScrollInputMethod::ApzTouch);
+
     if (RefPtr<GeckoContentController> controller =
             GetGeckoContentController()) {
       controller->NotifyAPZStateChange(GetGuid(),
@@ -3652,9 +3742,10 @@ gfx::IntSize AsyncPanZoomController::GetDisplayportAlignmentMultiplier(
 /**
  * Enlarges the displayport along both axes based on the velocity.
  */
-static CSSSize CalculateDisplayPortSize(const CSSSize& aCompositionSize,
-                                        const CSSPoint& aVelocity,
-                                        const CSSToScreenScale2D& aDpPerCSS) {
+static CSSSize CalculateDisplayPortSize(
+    const CSSSize& aCompositionSize, const CSSPoint& aVelocity,
+    AsyncPanZoomController::ZoomInProgress aZoomInProgress,
+    const CSSToScreenScale2D& aDpPerCSS) {
   bool xIsStationarySpeed =
       fabsf(aVelocity.x) < StaticPrefs::apz_min_skate_speed();
   bool yIsStationarySpeed =
@@ -3672,6 +3763,23 @@ static CSSSize CalculateDisplayPortSize(const CSSSize& aCompositionSize,
 
   if (IsHighMemSystem() && !yIsStationarySpeed) {
     yMultiplier += StaticPrefs::apz_y_skate_highmem_adjust();
+  }
+
+  if (aZoomInProgress == AsyncPanZoomController::ZoomInProgress::Yes) {
+    // If a zoom is in progress, we will be making content visible on the
+    // x and y axes in equal proportion, because the zoom operation scales
+    // equally on the x and y axes. The default multipliers computed above are
+    // biased towards the y-axis since that's where most scrolling occurs, but
+    // in the case of zooming, we should really use equal multipliers on both
+    // axes. This does that while preserving the total displayport area
+    // quantity (aCompositionSize.Area() * xMultiplier * yMultiplier).
+    // Note that normally changing the shape of the displayport is expensive
+    // and should be avoided, but if a zoom is in progress the displayport
+    // is likely going to be fully repainted anyway due to changes in resolution
+    // so there should be no marginal cost to also changing the shape of it.
+    float areaMultiplier = xMultiplier * yMultiplier;
+    xMultiplier = sqrt(areaMultiplier);
+    yMultiplier = xMultiplier;
   }
 
   if (gfx::gfxVars::UseWebRender()) {
@@ -3749,7 +3857,8 @@ static void RedistributeDisplayPortExcess(CSSSize& aDisplayPortSize,
 
 /* static */
 const ScreenMargin AsyncPanZoomController::CalculatePendingDisplayPort(
-    const FrameMetrics& aFrameMetrics, const ParentLayerPoint& aVelocity) {
+    const FrameMetrics& aFrameMetrics, const ParentLayerPoint& aVelocity,
+    ZoomInProgress aZoomInProgress) {
   if (aFrameMetrics.IsScrollInfoLayer()) {
     // Don't compute margins. Since we can't asynchronously scroll this frame,
     // we don't want to paint anything more than the composition bounds.
@@ -3766,8 +3875,9 @@ const ScreenMargin AsyncPanZoomController::CalculatePendingDisplayPort(
 
   // Calculate the displayport size based on how fast we're moving along each
   // axis.
-  CSSSize displayPortSize = CalculateDisplayPortSize(
-      compositionSize, velocity, aFrameMetrics.DisplayportPixelsPerCSSPixel());
+  CSSSize displayPortSize =
+      CalculateDisplayPortSize(compositionSize, velocity, aZoomInProgress,
+                               aFrameMetrics.DisplayportPixelsPerCSSPixel());
 
   displayPortSize =
       ExpandDisplayPortToDangerZone(displayPortSize, aFrameMetrics);
@@ -3793,10 +3903,11 @@ const ScreenMargin AsyncPanZoomController::CalculatePendingDisplayPort(
   float paintFactor = kDefaultEstimatedPaintDurationMs;
   displayPort.MoveBy(velocity * paintFactor * StaticPrefs::apz_velocity_bias());
 
-  APZC_LOGV_FM(
-      aFrameMetrics,
-      "Calculated displayport as %s from velocity %s paint time %f metrics",
-      ToString(displayPort).c_str(), ToString(aVelocity).c_str(), paintFactor);
+  APZC_LOGV_FM(aFrameMetrics,
+               "Calculated displayport as %s from velocity %s zooming %d paint "
+               "time %f metrics",
+               ToString(displayPort).c_str(), ToString(aVelocity).c_str(),
+               (int)aZoomInProgress, paintFactor);
 
   CSSMargin cssMargins;
   cssMargins.left = -displayPort.X();
@@ -3913,8 +4024,9 @@ void AsyncPanZoomController::RequestContentRepaint(
 
   RecursiveMutexAutoLock lock(mRecursiveMutex);
   ParentLayerPoint velocity = GetVelocityVector();
-  ScreenMargin displayportMargins =
-      CalculatePendingDisplayPort(Metrics(), velocity);
+  ScreenMargin displayportMargins = CalculatePendingDisplayPort(
+      Metrics(), velocity,
+      mState == PINCHING ? ZoomInProgress::Yes : ZoomInProgress::No);
   Metrics().SetPaintRequestTime(TimeStamp::Now());
   RequestContentRepaint(Metrics(), velocity, displayportMargins, aUpdateType);
 }
@@ -3968,7 +4080,8 @@ void AsyncPanZoomController::RequestContentRepaint(
     return;
   }
 
-  APZC_LOGV_FM(aFrameMetrics, "%p requesting content repaint", this);
+  APZC_LOGV("%p requesting content repaint %s", this,
+            ToString(request).c_str());
   {  // scope lock
     MutexAutoLock lock(mCheckerboardEventLock);
     if (mCheckerboardEvent && mCheckerboardEvent->IsRecordingTrace()) {
@@ -4642,7 +4755,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
   bool scrollOffsetUpdated = false;
   for (const auto& scrollUpdate : aScrollMetadata.GetScrollUpdates()) {
     APZC_LOG("%p processing scroll update %s\n", this,
-             Stringify(scrollUpdate).c_str());
+             ToString(scrollUpdate).c_str());
     if (scrollUpdate.GetGeneration() <= Metrics().GetScrollGeneration()) {
       // This is stale, let's ignore it
       // XXX maybe use a 64-bit value for the scroll generation, or add some
@@ -5087,8 +5200,8 @@ void AsyncPanZoomController::ZoomToRect(CSSRect aRect, const uint32_t aFlags) {
     // Schedule a repaint now, so the new displayport will be painted before the
     // animation finishes.
     ParentLayerPoint velocity(0, 0);
-    ScreenMargin displayportMargins =
-        CalculatePendingDisplayPort(endZoomToMetrics, velocity);
+    ScreenMargin displayportMargins = CalculatePendingDisplayPort(
+        endZoomToMetrics, velocity, ZoomInProgress::Yes);
     endZoomToMetrics.SetPaintRequestTime(TimeStamp::Now());
 
     RefPtr<GeckoContentController> controller = GetGeckoContentController();

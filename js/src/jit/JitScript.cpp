@@ -7,6 +7,7 @@
 #include "jit/JitScript-inl.h"
 
 #include "mozilla/BinarySearch.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/ScopeExit.h"
 
@@ -15,6 +16,8 @@
 #include "jit/BaselineIC.h"
 #include "jit/BytecodeAnalysis.h"
 #include "jit/IonScript.h"
+#include "jit/JitFrames.h"
+#include "jit/ScriptFromCalleeToken.h"
 #include "util/Memory.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
@@ -34,6 +37,8 @@
 
 using namespace js;
 using namespace js::jit;
+
+using mozilla::CheckedInt;
 
 /* static */
 size_t JitScript::NumTypeSets(JSScript* script) {

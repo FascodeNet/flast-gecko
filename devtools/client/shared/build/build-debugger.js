@@ -8,18 +8,10 @@ const Babel = require("./babel");
 const fs = require("fs");
 const _path = require("path");
 
-const EXCLUDED_FILES = {
-  "../assets/panel/debugger.properties": "devtools/shared/flags",
-  "devtools-connection": "devtools/shared/flags",
-  "chrome-remote-interface": "devtools/shared/flags",
-  "devtools-launchpad": "devtools/shared/flags",
-};
-
 const mappings = {
   "./source-editor": "devtools/client/shared/sourceeditor/editor",
   "../editor/source-editor": "devtools/client/shared/sourceeditor/editor",
   "./test-flag": "devtools/shared/flags",
-  "./fronts-device": "devtools/client/fronts/device",
   immutable: "devtools/client/shared/vendor/immutable",
   lodash: "devtools/client/shared/vendor/lodash",
   react: "devtools/client/shared/vendor/react",
@@ -35,14 +27,12 @@ const mappings = {
   "whatwg-url": "devtools/client/shared/vendor/whatwg-url",
   "framework-actions": "devtools/client/framework/actions/index",
   "inspector-shared-utils": "devtools/client/inspector/shared/utils",
-  ...EXCLUDED_FILES,
 };
 
 const mappingValues = Object.values(mappings);
 
 // Add two additional mappings that cannot be reused when creating the
 // webpack bundles.
-mappings["devtools-reps"] = "devtools/client/shared/components/reps/reps.js";
 mappings["devtools-source-map"] = "devtools/client/shared/source-map/index.js";
 
 function isRequire(t, node) {
@@ -53,7 +43,6 @@ function isRequire(t, node) {
 // Should be synchronized with vendors.js
 const VENDORS = [
   "classnames",
-  "devtools-components",
   "devtools-environment",
   "devtools-splitter",
   "devtools-utils",
@@ -103,8 +92,6 @@ function transformMC({ types: t }) {
         }
 
         // Handle require() to files mapped to other mozilla-central files.
-        // e.g. require("devtools-reps")
-        //   -> require("devtools/client/shared/components/reps/reps.js")
         if (Object.keys(mappings).includes(value)) {
           path.replaceWith(t.stringLiteral(mappings[value]));
           return;

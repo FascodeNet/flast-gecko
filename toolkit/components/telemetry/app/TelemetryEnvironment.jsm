@@ -321,6 +321,12 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["signon.generation.enabled", { what: RECORD_PREF_VALUE }],
   ["signon.rememberSignons", { what: RECORD_PREF_VALUE }],
   ["toolkit.telemetry.pioneerId", { what: RECORD_PREF_STATE }],
+  ["widget.content.allow-gtk-dark-theme", { what: RECORD_DEFAULTPREF_VALUE }],
+  ["widget.content.gtk-theme-override", { what: RECORD_PREF_STATE }],
+  [
+    "widget.content.gtk-high-contrast.enabled",
+    { what: RECORD_DEFAULTPREF_VALUE },
+  ],
   ["xpinstall.signatures.required", { what: RECORD_PREF_VALUE }],
 ]);
 
@@ -2074,6 +2080,10 @@ EnvironmentCache.prototype = {
     if (this._shutdown) {
       this._log.trace("_onEnvironmentChange - Already shut down.");
       return;
+    }
+
+    if (ObjectUtils.deepEqual(this._currentEnvironment, oldEnvironment)) {
+      Services.telemetry.scalarAdd("telemetry.environment_didnt_change", 1);
     }
 
     for (let [name, listener] of this._changeListeners) {

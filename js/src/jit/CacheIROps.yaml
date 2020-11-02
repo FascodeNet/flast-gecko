@@ -787,7 +787,7 @@
 # See CacheIR.cpp 'DOM proxies' comment.
 - name: LoadDOMExpandoValue
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -795,7 +795,7 @@
 
 - name: LoadDOMExpandoValueGuardGeneration
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     obj: ObjId
@@ -805,7 +805,7 @@
 
 - name: LoadDOMExpandoValueIgnoreGeneration
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -813,7 +813,7 @@
 
 - name: GuardDOMExpandoMissingOrGuardShape
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     expando: ValId
@@ -873,28 +873,6 @@
     newGroup: GroupField
     newShape: ShapeField
     numNewSlots: RawInt32Field
-
-- name: StoreTypedObjectReferenceProperty
-  shared: false
-  transpile: false
-  cost_estimate: 6
-  args:
-    obj: ObjId
-    offset: RawInt32Field
-    layout: TypedThingLayoutImm
-    type: ReferenceTypeImm
-    rhs: ValId
-
-- name: StoreTypedObjectScalarProperty
-  shared: true
-  transpile: false
-  cost_estimate: 2
-  args:
-    obj: ObjId
-    offset: RawInt32Field
-    layout: TypedThingLayoutImm
-    type: ScalarTypeImm
-    rhs: RawId
 
 - name: StoreDenseElement
   shared: false
@@ -1343,17 +1321,6 @@
     rhs: RawId
     handleOOB: BoolImm
 
-- name: StoreTypedObjectElement
-  shared: true
-  transpile: false
-  cost_estimate: 3
-  args:
-    obj: ObjId
-    layout: TypedThingLayoutImm
-    elementType: ScalarTypeImm
-    index: Int32Id
-    rhs: RawId
-
 - name: AtomicsCompareExchangeResult
   shared: true
   transpile: true
@@ -1570,6 +1537,17 @@
     argc: Int32Id
     flags: CallFlagsImm
 
+- name: CallWasmFunction
+  shared: false
+  transpile: true
+  cost_estimate: 3
+  args:
+    callee: ObjId
+    argc: Int32Id
+    flags: CallFlagsImm
+    funcExport: RawPointerField
+    instance: ObjectField
+
 - name: CallNativeFunction
   shared: false
   transpile: true
@@ -1658,16 +1636,6 @@
     obj: ObjId
     offset: RawInt32Field
 
-- name: LoadTypedObjectResult
-  shared: true
-  transpile: false
-  cost_estimate: 4
-  args:
-    obj: ObjId
-    layout: TypedThingLayoutImm
-    typeDescr: ByteImm
-    offset: RawInt32Field
-
 - name: LoadDenseElementResult
   shared: true
   transpile: true
@@ -1708,15 +1676,6 @@
     obj: ObjId
     index: Int32Id
 
-- name: LoadTypedObjectElementExistsResult
-  shared: true
-  transpile: false
-  cost_estimate: 2
-  args:
-    obj: ObjId
-    index: Int32Id
-    layout: TypedThingLayoutImm
-
 - name: LoadDenseElementHoleExistsResult
   shared: true
   transpile: false
@@ -1735,16 +1694,6 @@
     elementType: ScalarTypeImm
     handleOOB: BoolImm
     allowDoubleForUint32: BoolImm
-
-- name: LoadTypedObjectElementResult
-  shared: true
-  transpile: false
-  cost_estimate: 4
-  args:
-    obj: ObjId
-    index: Int32Id
-    layout: TypedThingLayoutImm
-    elementType: ScalarTypeImm
 
 - name: LoadDataViewValueResult
   shared: true
@@ -1809,6 +1758,13 @@
   shared: true
   transpile: true
   cost_estimate: 2
+  args:
+    obj: ObjId
+
+- name: LoadArrayBufferByteLengthInt32Result
+  shared: true
+  transpile: true
+  cost_estimate: 1
   args:
     obj: ObjId
 
@@ -2064,7 +2020,7 @@
 
 - name: LoadConstantStringResult
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     str: StringField
@@ -2079,7 +2035,7 @@
 
 - name: LoadTypeOfObjectResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     obj: ObjId

@@ -39,9 +39,6 @@
 #include "builtin/Promise.h"
 #include "builtin/Stream.h"
 #include "builtin/Symbol.h"
-#ifdef JS_HAS_TYPED_OBJECTS
-#  include "builtin/TypedObject.h"
-#endif
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScriptToStencil, frontend::InstantiateStencils
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationInfoVector, frontend::CompilationGCOutput
@@ -91,6 +88,7 @@
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtom.h"
+#include "vm/JSAtomState.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
@@ -5770,13 +5768,14 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
     return res;
   }
 
-  frontend::CompilationGCOutput gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, compilationInfos.get(), gcOutput)) {
+  Rooted<frontend::CompilationGCOutput> gcOutput(cx);
+  if (!frontend::InstantiateStencils(cx, compilationInfos.get(),
+                                     gcOutput.get())) {
     return JS::TranscodeResult_Throw;
   }
 
-  MOZ_ASSERT(gcOutput.script);
-  scriptp.set(gcOutput.script);
+  MOZ_ASSERT(gcOutput.get().script);
+  scriptp.set(gcOutput.get().script);
 
   return JS::TranscodeResult_Ok;
 }
@@ -5832,15 +5831,17 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
     return JS::TranscodeResult_Throw;
   }
 
-  frontend::CompilationGCOutput gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, compilationInfos.get(), gcOutput)) {
+  Rooted<frontend::CompilationGCOutput> gcOutput(cx);
+  if (!frontend::InstantiateStencils(cx, compilationInfos.get(),
+                                     gcOutput.get())) {
     return JS::TranscodeResult_Throw;
   }
 
-  MOZ_ASSERT(gcOutput.script);
-  gcOutput.script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
+  MOZ_ASSERT(gcOutput.get().script);
+  gcOutput.get().script->scriptSource()->setIncrementalEncoder(
+      xdrEncoder.release());
 
-  scriptp.set(gcOutput.script);
+  scriptp.set(gcOutput.get().script);
 
   return JS::TranscodeResult_Ok;
 }

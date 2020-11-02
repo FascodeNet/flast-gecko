@@ -10,9 +10,11 @@
 
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/JSJitFrameIter.h"
+#include "jit/SafepointIndex.h"
 #include "jit/Snapshots.h"
 #include "vm/JSContext.h"
 #include "vm/Stack.h"
