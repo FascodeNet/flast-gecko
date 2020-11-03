@@ -67,7 +67,7 @@ class ArrayBufferViewObject : public NativeObject {
 
  public:
   MOZ_MUST_USE bool init(JSContext* cx, ArrayBufferObjectMaybeShared* buffer,
-                         uint32_t byteOffset, uint32_t length,
+                         BufferSize byteOffset, BufferSize length,
                          uint32_t bytesPerElement);
 
   static ArrayBufferObjectMaybeShared* bufferObject(
@@ -145,16 +145,13 @@ class ArrayBufferViewObject : public NativeObject {
     return buffer->isDetached();
   }
 
-  size_t byteOffset() const {
-    size_t offset = size_t(getFixedSlot(BYTEOFFSET_SLOT).toPrivate());
-    MOZ_ASSERT(offset <= INT32_MAX);
-    return offset;
+  BufferSize byteOffset() const {
+    return BufferSize(size_t(getFixedSlot(BYTEOFFSET_SLOT).toPrivate()));
   }
 
   Value byteOffsetValue() const {
-    size_t offset = byteOffset();
-    MOZ_ASSERT(offset <= INT32_MAX);
-    return Int32Value(offset);
+    size_t offset = byteOffset().get();
+    return NumberValue(offset);
   }
 
   static void trace(JSTracer* trc, JSObject* obj);

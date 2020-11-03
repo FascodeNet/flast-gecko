@@ -10421,13 +10421,17 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
       parentReflowInput.SetComputedWidth(std::max(parentSize.width, 0));
     if (parentSize.height != NS_UNCONSTRAINEDSIZE)
       parentReflowInput.SetComputedHeight(std::max(parentSize.height, 0));
-    parentReflowInput.ComputedPhysicalMargin().SizeTo(0, 0, 0, 0);
+    parentReflowInput.SetComputedLogicalMargin(parentWM,
+                                               LogicalMargin(parentWM));
     // XXX use box methods
-    parentFrame->GetXULPadding(parentReflowInput.ComputedPhysicalPadding());
-    parentFrame->GetXULBorder(
-        parentReflowInput.ComputedPhysicalBorderPadding());
-    parentReflowInput.ComputedPhysicalBorderPadding() +=
-        parentReflowInput.ComputedPhysicalPadding();
+    nsMargin padding;
+    parentFrame->GetXULPadding(padding);
+    parentReflowInput.SetComputedLogicalPadding(
+        parentWM, LogicalMargin(parentWM, padding));
+    nsMargin border;
+    parentFrame->GetXULBorder(border);
+    parentReflowInput.SetComputedLogicalBorderPadding(
+        parentWM, LogicalMargin(parentWM, border + padding));
 
     // Construct the parent chain manually since constructing it normally
     // messes up dimensions.
@@ -11368,11 +11372,21 @@ DR_intrinsic_size_cookie::~DR_intrinsic_size_cookie() {
 
 DR_init_constraints_cookie::DR_init_constraints_cookie(
     nsIFrame* aFrame, ReflowInput* aState, nscoord aCBWidth, nscoord aCBHeight,
-    const nsMargin* aMargin, const nsMargin* aPadding)
+    const mozilla::Maybe<mozilla::LogicalMargin> aBorder,
+    const mozilla::Maybe<mozilla::LogicalMargin> aPadding)
     : mFrame(aFrame), mState(aState) {
   MOZ_COUNT_CTOR(DR_init_constraints_cookie);
+  nsMargin border;
+  if (aBorder) {
+    border = aBorder->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
+  nsMargin padding;
+  if (aPadding) {
+    padding = aPadding->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
   mValue = ReflowInput::DisplayInitConstraintsEnter(
-      mFrame, mState, aCBWidth, aCBHeight, aMargin, aPadding);
+      mFrame, mState, aCBWidth, aCBHeight, aBorder ? &border : nullptr,
+      aPadding ? &padding : nullptr);
 }
 
 DR_init_constraints_cookie::~DR_init_constraints_cookie() {
@@ -11380,16 +11394,24 @@ DR_init_constraints_cookie::~DR_init_constraints_cookie() {
   ReflowInput::DisplayInitConstraintsExit(mFrame, mState, mValue);
 }
 
-DR_init_offsets_cookie::DR_init_offsets_cookie(nsIFrame* aFrame,
-                                               SizeComputationInput* aState,
-                                               nscoord aPercentBasis,
-                                               WritingMode aCBWritingMode,
-                                               const nsMargin* aMargin,
-                                               const nsMargin* aPadding)
+DR_init_offsets_cookie::DR_init_offsets_cookie(
+    nsIFrame* aFrame, SizeComputationInput* aState, nscoord aPercentBasis,
+    WritingMode aCBWritingMode,
+    const mozilla::Maybe<mozilla::LogicalMargin> aBorder,
+    const mozilla::Maybe<mozilla::LogicalMargin> aPadding)
     : mFrame(aFrame), mState(aState) {
   MOZ_COUNT_CTOR(DR_init_offsets_cookie);
+  nsMargin border;
+  if (aBorder) {
+    border = aBorder->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
+  nsMargin padding;
+  if (aPadding) {
+    padding = aPadding->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
   mValue = SizeComputationInput::DisplayInitOffsetsEnter(
-      mFrame, mState, aPercentBasis, aCBWritingMode, aMargin, aPadding);
+      mFrame, mState, aPercentBasis, aCBWritingMode,
+      aBorder ? &border : nullptr, aPadding ? &padding : nullptr);
 }
 
 DR_init_offsets_cookie::~DR_init_offsets_cookie() {
@@ -12331,9 +12353,12 @@ void SizeComputationInput::DisplayInitOffsetsExit(nsIFrame* aFrame,
   if (treeNode->mDisplay) {
     DR_state->DisplayFrameTypeInfo(aFrame, treeNode->mIndent);
     printf("InitOffsets=");
-    DR_state->PrintMargin("m", &aState->ComputedPhysicalMargin());
-    DR_state->PrintMargin("p", &aState->ComputedPhysicalPadding());
-    DR_state->PrintMargin("p+b", &aState->ComputedPhysicalBorderPadding());
+    const auto m = aState->ComputedPhysicalMargin();
+    DR_state->PrintMargin("m", &m);
+    const auto p = aState->ComputedPhysicalPadding();
+    DR_state->PrintMargin("p", &p);
+    const auto bp = aState->ComputedPhysicalBorderPadding();
+    DR_state->PrintMargin("b+p", &bp);
     putchar('\n');
   }
   DR_state->DeleteTreeNode(*treeNode);

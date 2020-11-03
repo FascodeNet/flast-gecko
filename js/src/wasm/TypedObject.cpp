@@ -1046,32 +1046,12 @@ OutlineTypedObject* OutlineTypedObject::createUnattached(JSContext* cx,
   return obj;
 }
 
-void OutlineTypedObject::attach(ArrayBufferObject& buffer, uint32_t offset) {
-  MOZ_ASSERT(offset <= wasm::ByteLength32(buffer));
-  MOZ_ASSERT(size() <= wasm::ByteLength32(buffer) - offset);
+void OutlineTypedObject::attach(ArrayBufferObject& buffer) {
+  MOZ_ASSERT(size() <= wasm::ByteLength32(buffer));
   MOZ_ASSERT(buffer.hasTypedObjectViews());
   MOZ_ASSERT(!buffer.isDetached());
 
-  setOwnerAndData(&buffer, buffer.dataPointer() + offset);
-}
-
-void OutlineTypedObject::attach(JSContext* cx, TypedObject& typedObj,
-                                uint32_t offset) {
-  JSObject* owner = &typedObj;
-  if (typedObj.is<OutlineTypedObject>()) {
-    owner = &typedObj.as<OutlineTypedObject>().owner();
-    MOZ_ASSERT(typedObj.offset() <= UINT32_MAX - offset);
-    offset += typedObj.offset();
-  }
-
-  if (owner->is<ArrayBufferObject>()) {
-    attach(owner->as<ArrayBufferObject>(), offset);
-  } else {
-    MOZ_ASSERT(owner->is<InlineTypedObject>());
-    JS::AutoCheckCannotGC nogc(cx);
-    setOwnerAndData(
-        owner, owner->as<InlineTypedObject>().inlineTypedMem(nogc) + offset);
-  }
+  setOwnerAndData(&buffer, buffer.dataPointer());
 }
 
 /*static*/
@@ -1088,12 +1068,12 @@ OutlineTypedObject* OutlineTypedObject::createZeroed(JSContext* cx,
   // Allocate and initialize the memory for this instance.
   size_t totalSize = descr->size();
   Rooted<ArrayBufferObject*> buffer(cx);
-  buffer = ArrayBufferObject::createForTypedObject(cx, totalSize);
+  buffer = ArrayBufferObject::createForTypedObject(cx, BufferSize(totalSize));
   if (!buffer) {
     return nullptr;
   }
   descr->initInstance(buffer->dataPointer());
-  obj->attach(*buffer, 0);
+  obj->attach(*buffer);
   return obj;
 }
 

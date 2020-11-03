@@ -117,50 +117,33 @@ struct SizeComputationInput {
   // Rendering context to use for measurement.
   gfxContext* mRenderingContext;
 
-  const nsMargin& ComputedPhysicalMargin() const { return mComputedMargin; }
-  const nsMargin& ComputedPhysicalBorderPadding() const {
+  nsMargin ComputedPhysicalMargin() const {
+    return mComputedMargin.GetPhysicalMargin(mWritingMode);
+  }
+  nsMargin ComputedPhysicalBorderPadding() const {
+    return mComputedBorderPadding.GetPhysicalMargin(mWritingMode);
+  }
+  nsMargin ComputedPhysicalPadding() const {
+    return mComputedPadding.GetPhysicalMargin(mWritingMode);
+  }
+
+  LogicalMargin ComputedLogicalMargin() const { return mComputedMargin; }
+  LogicalMargin ComputedLogicalBorderPadding() const {
     return mComputedBorderPadding;
   }
-  const nsMargin& ComputedPhysicalPadding() const { return mComputedPadding; }
-
-  // We may need to eliminate the (few) users of these writable-reference
-  // accessors as part of migrating to logical coordinates.
-  nsMargin& ComputedPhysicalMargin() { return mComputedMargin; }
-  nsMargin& ComputedPhysicalBorderPadding() { return mComputedBorderPadding; }
-  nsMargin& ComputedPhysicalPadding() { return mComputedPadding; }
-
-  LogicalMargin ComputedLogicalMargin() const {
-    return LogicalMargin(mWritingMode, mComputedMargin);
-  }
-  LogicalMargin ComputedLogicalBorderPadding() const {
-    return LogicalMargin(mWritingMode, mComputedBorderPadding);
-  }
-  LogicalMargin ComputedLogicalPadding() const {
-    return LogicalMargin(mWritingMode, mComputedPadding);
-  }
+  LogicalMargin ComputedLogicalPadding() const { return mComputedPadding; }
 
   void SetComputedLogicalMargin(mozilla::WritingMode aWM,
                                 const LogicalMargin& aMargin) {
-    mComputedMargin = aMargin.GetPhysicalMargin(aWM);
+    mComputedMargin = aMargin.ConvertTo(mWritingMode, aWM);
   }
-  void SetComputedLogicalMargin(const LogicalMargin& aMargin) {
-    SetComputedLogicalMargin(mWritingMode, aMargin);
-  }
-
   void SetComputedLogicalBorderPadding(mozilla::WritingMode aWM,
-                                       const LogicalMargin& aMargin) {
-    mComputedBorderPadding = aMargin.GetPhysicalMargin(aWM);
+                                       const LogicalMargin& aBorderPadding) {
+    mComputedBorderPadding = aBorderPadding.ConvertTo(mWritingMode, aWM);
   }
-  void SetComputedLogicalBorderPadding(const LogicalMargin& aMargin) {
-    SetComputedLogicalBorderPadding(mWritingMode, aMargin);
-  }
-
   void SetComputedLogicalPadding(mozilla::WritingMode aWM,
-                                 const LogicalMargin& aMargin) {
-    mComputedPadding = aMargin.GetPhysicalMargin(aWM);
-  }
-  void SetComputedLogicalPadding(const LogicalMargin& aMargin) {
-    SetComputedLogicalPadding(mWritingMode, aMargin);
+                                 const LogicalMargin& aPadding) {
+    mComputedPadding = aPadding.ConvertTo(mWritingMode, aWM);
   }
 
   WritingMode GetWritingMode() const { return mWritingMode; }
@@ -169,17 +152,14 @@ struct SizeComputationInput {
   // cached copy of the frame's writing-mode, for logical coordinates
   WritingMode mWritingMode;
 
-  // These are PHYSICAL coordinates (for now).
-  // Will probably become logical in due course.
-
   // Computed margin values
-  nsMargin mComputedMargin;
+  LogicalMargin mComputedMargin;
 
   // Cached copy of the border + padding values
-  nsMargin mComputedBorderPadding;
+  LogicalMargin mComputedBorderPadding;
 
   // Computed padding values
-  nsMargin mComputedPadding;
+  LogicalMargin mComputedPadding;
 
  public:
   // Callers using this constructor must call InitOffsets on their own.
@@ -208,33 +188,35 @@ struct SizeComputationInput {
    * Computes margin values from the specified margin style information, and
    * fills in the mComputedMargin member.
    *
-   * @param aWM Writing mode of the containing block
+   * @param aCBWM Writing mode of the containing block
    * @param aPercentBasis
    *    Inline size of the containing block (in its own writing mode), to use
    *    for resolving percentage margin values in the inline and block axes.
    * @return true if the margin is dependent on the containing block size.
    */
-  bool ComputeMargin(mozilla::WritingMode aWM, nscoord aPercentBasis);
+  bool ComputeMargin(mozilla::WritingMode aCBWM, nscoord aPercentBasis);
 
   /**
    * Computes padding values from the specified padding style information, and
    * fills in the mComputedPadding member.
    *
-   * @param aWM Writing mode of the containing block
+   * @param aCBWM Writing mode of the containing block
    * @param aPercentBasis
    *    Inline size of the containing block (in its own writing mode), to use
    *    for resolving percentage padding values in the inline and block axes.
    * @return true if the padding is dependent on the containing block size.
    */
-  bool ComputePadding(mozilla::WritingMode aWM, nscoord aPercentBasis,
+  bool ComputePadding(mozilla::WritingMode aCBWM, nscoord aPercentBasis,
                       mozilla::LayoutFrameType aFrameType);
 
  protected:
-  void InitOffsets(mozilla::WritingMode aWM, nscoord aPercentBasis,
+  void InitOffsets(mozilla::WritingMode aCBWM, nscoord aPercentBasis,
                    mozilla::LayoutFrameType aFrameType,
                    mozilla::ComputeSizeFlags aFlags = {},
-                   const nsMargin* aBorder = nullptr,
-                   const nsMargin* aPadding = nullptr,
+                   const mozilla::Maybe<mozilla::LogicalMargin>& aBorder =
+                       mozilla::Nothing(),
+                   const mozilla::Maybe<mozilla::LogicalMargin>& aPadding =
+                       mozilla::Nothing(),
                    const nsStyleDisplay* aDisplay = nullptr);
 
   /*
@@ -800,9 +782,11 @@ struct ReflowInput : public SizeComputationInput {
    * @param aAvailableSpace The available space to reflow aFrame (in aFrame's
    *        writing-mode). See comments for mAvailableHeight and mAvailableWidth
    *        members for more information.
-   * @param aContainingBlockSize An optional size, in app units, specifying
-   *        the containing block size to use instead of the default which is
-   *        computed by ComputeContainingBlockRectangle().
+   * @param aContainingBlockSize An optional size (in aFrame's writing mode),
+   *        specifying the containing block size to use instead of the default
+   *        size computed by ComputeContainingBlockRectangle(). If
+   *        InitFlag::CallerWillInit is used, this is ignored. Pass it via
+   *        Init() instead.
    * @param aFlags A set of flags used for additional boolean parameters (see
    *        InitFlags above).
    * @param aComputeSizeFlags A set of flags used when we call
@@ -816,13 +800,25 @@ struct ReflowInput : public SizeComputationInput {
               InitFlags aFlags = {},
               mozilla::ComputeSizeFlags aComputeSizeFlags = {});
 
-  // This method initializes various data members. It is automatically
-  // called by the various constructors
+  /**
+   * This method initializes various data members. It is automatically called by
+   * the constructors if InitFlags::CallerWillInit is *not* used.
+   *
+   * @param aContainingBlockSize An optional size (in mFrame's writing mode),
+   *        specifying the containing block size to use instead of the default
+   *        size computed by ComputeContainingBlockRectangle().
+   * @param aBorder An optional border (in mFrame's writing mode). If given, use
+   *        it instead of the border computed from mFrame's StyleBorder.
+   * @param aPadding An optional padding (in mFrame's writing mode). If given,
+   *        use it instead of the padding computing from mFrame's StylePadding.
+   */
   void Init(nsPresContext* aPresContext,
             const mozilla::Maybe<mozilla::LogicalSize>& aContainingBlockSize =
                 mozilla::Nothing(),
-            const nsMargin* aBorder = nullptr,
-            const nsMargin* aPadding = nullptr);
+            const mozilla::Maybe<mozilla::LogicalMargin>& aBorder =
+                mozilla::Nothing(),
+            const mozilla::Maybe<mozilla::LogicalMargin>& aPadding =
+                mozilla::Nothing());
 
   /**
    * Find the content isize of our containing block for the given writing mode,
@@ -1014,7 +1010,8 @@ struct ReflowInput : public SizeComputationInput {
   void InitConstraints(
       nsPresContext* aPresContext,
       const mozilla::Maybe<mozilla::LogicalSize>& aContainingBlockSize,
-      const nsMargin* aBorder, const nsMargin* aPadding,
+      const mozilla::Maybe<mozilla::LogicalMargin>& aBorder,
+      const mozilla::Maybe<mozilla::LogicalMargin>& aPadding,
       mozilla::LayoutFrameType aFrameType);
 
   // Returns the nearest containing block or block frame (whether or not

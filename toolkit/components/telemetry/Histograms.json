@@ -221,7 +221,7 @@
   "CHECKERBOARD_DURATION": {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "botond@mozilla.com"],
     "bug_numbers": [1238040, 1539309, 1584109],
     "releaseChannelCollection": "opt-out",
     "expires_in_version": "never",
@@ -233,7 +233,7 @@
   "CHECKERBOARD_PEAK": {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "botond@mozilla.com"],
     "bug_numbers": [1238040, 1539309, 1584109],
     "releaseChannelCollection": "opt-out",
     "expires_in_version": "never",
@@ -245,7 +245,7 @@
   "CHECKERBOARD_POTENTIAL_DURATION": {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "botond@mozilla.com"],
     "bug_numbers": [1238040, 1539309, 1584109],
     "releaseChannelCollection": "opt-out",
     "expires_in_version": "never",
@@ -257,7 +257,7 @@
   "CHECKERBOARD_SEVERITY": {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "botond@mozilla.com"],
     "bug_numbers": [1238040, 1539309, 1584109],
     "releaseChannelCollection": "opt-out",
     "expires_in_version": "never",
@@ -357,17 +357,6 @@
     "kind": "boolean",
     "releaseChannelCollection": "opt-out",
     "description": "Whether a content process was launched synchronously (unnecessarily delaying UI response)."
-  },
-  "CONTENT_RESPONSE_DURATION" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
-    "bug_numbers": [1261373],
-    "expires_in_version": "70",
-    "description": "Main thread response times for APZ notifications about input events (ms)",
-    "kind" : "exponential",
-    "high": 60000,
-    "n_buckets": 50
   },
   "CYCLE_COLLECTOR": {
     "record_in_processes": ["main", "content"],
@@ -1162,8 +1151,8 @@
   },
   "MEMORY_RESIDENT_PEAK": {
     "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["memshrink-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "products": ["firefox"],
+    "alert_emails": ["memshrink-telemetry-alerts@mozilla.com", "amccreight@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "low": 32768,
@@ -1175,7 +1164,7 @@
   "MEMORY_TOTAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec", "thunderbird"],
-    "alert_emails": ["memshrink-telemetry-alerts@mozilla.com", "erahm@mozilla.com"],
+    "alert_emails": ["memshrink-telemetry-alerts@mozilla.com", "amccreight@mozilla.com"],
     "bug_numbers": [1198209, 1511918],
     "expires_in_version": "never",
     "kind": "exponential",
@@ -1212,7 +1201,7 @@
   "MEMORY_UNIQUE_CONTENT_STARTUP": {
     "record_in_processes": ["content"],
     "products": ["firefox", "fennec"],
-    "alert_emails": ["erahm@mozilla.com", "memshrink-telemetry-alerts@mozilla.com"],
+    "alert_emails": ["amccreight@mozilla.com", "memshrink-telemetry-alerts@mozilla.com"],
     "bug_numbers": [1494827],
     "expires_in_version": "never",
     "kind": "exponential",
@@ -13241,9 +13230,9 @@
   "SCROLL_INPUT_METHODS": {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox"],
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1670003],
-    "expires_in_version": "85",
+    "alert_emails": ["botond@mozilla.com"],
+    "bug_numbers": [1670003, 1672576],
+    "expires_in_version": "89",
     "kind": "enumerated",
     "n_values": 64,
     "description": "Count of scroll actions triggered by different input methods. See gfx/layers/apz/util/ScrollInputMethods.h for a list of possible values and their meanings."
@@ -15122,7 +15111,7 @@
   "WR_SCENEBUILD_TIME": {
     "record_in_processes": ["main", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "jmuizelaar@mozilla.com"],
     "bug_numbers": [1470901, 1584109],
     "expires_in_version": "never",
     "kind": "exponential",
@@ -15133,7 +15122,7 @@
   "WR_SCENESWAP_TIME": {
     "record_in_processes": ["main", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "jmuizelaar@mozilla.com"],
     "bug_numbers": [1470901, 1584109],
     "expires_in_version": "never",
     "kind": "exponential",
@@ -15144,7 +15133,7 @@
   "WR_FRAMEBUILD_TIME": {
     "record_in_processes": ["main", "gpu"],
     "products": ["firefox", "fennec", "geckoview_streaming"],
-    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "kgupta@mozilla.com"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "jmuizelaar@mozilla.com"],
     "bug_numbers": [1470901, 1584109],
     "expires_in_version": "never",
     "kind": "exponential",
@@ -15833,31 +15822,21 @@
   "APZ_ZOOM_ACTIVITY" : {
     "products": ["firefox"],
     "record_in_processes": ["content"],
-    "alert_emails": ["kgupta@mozilla.com"],
-    "expires_in_version": "85",
+    "alert_emails": ["botond@mozilla.com"],
+    "expires_in_version": "never",
     "kind" : "boolean",
-    "bug_numbers": [1627708],
+    "bug_numbers": [1627708, 1672576],
     "description": "Whether non-RDM page had user-triggered zooming activity",
-    "releaseChannelCollection": "opt-out"
-  },
-  "APZ_ZOOM_ACTIVITY_RDM" : {
-    "products": ["firefox"],
-    "record_in_processes": ["content"],
-    "alert_emails": ["kgupta@mozilla.com"],
-    "expires_in_version": "85",
-    "kind" : "boolean",
-    "bug_numbers": [1627708],
-    "description": "Whether RDM page had user-triggered zooming activity",
     "releaseChannelCollection": "opt-out"
   },
   "APZ_ZOOM_PINCHSOURCE" : {
     "products": ["firefox"],
     "record_in_processes": ["main", "gpu"],
-    "alert_emails": ["kgupta@mozilla.com"],
-    "expires_in_version": "85",
+    "alert_emails": ["botond@mozilla.com"],
+    "expires_in_version": "never",
     "kind" : "enumerated",
     "n_values": 5,
-    "bug_numbers": [1627708],
+    "bug_numbers": [1627708, 1672576],
     "description": "Input device that triggered the zoom gesture (InputData::PinchGestureSource)",
     "releaseChannelCollection": "opt-out"
   },
@@ -15946,5 +15925,49 @@
     "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
     "kind": "enumerated",
     "description": "The reason why a HTTP transaction is restarted."
+  },
+  "TRANSACTION_ECH_RETRY_WITH_ECH_COUNT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1671886],
+    "description": "When echConfig is enabled, number of times a transaction is retried because of SSL_ERROR_ECH_RETRY_WITH_ECH"
+  },
+  "TRANSACTION_ECH_RETRY_WITHOUT_ECH_COUNT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1671886],
+    "description": "When echConfig is enabled, number of times a transaction is retried because of SSL_ERROR_ECH_RETRY_WITHOUT_ECH"
+  },
+  "TRANSACTION_ECH_RETRY_ECH_FAILED_COUNT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1671886],
+    "description": "When echConfig is enabled, number of times a transaction is retried because of SSL_ERROR_ECH_FAILED"
+  },
+  "TRANSACTION_ECH_RETRY_OTHERS_COUNT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "bug_numbers": [1671886],
+    "description": "When echConfig is enabled, number of times a transaction is retried because of other error"
   }
 }

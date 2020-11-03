@@ -1065,7 +1065,8 @@ static bool intrinsic_ArrayBufferByteLength(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[0].isObject());
   MOZ_ASSERT(args[0].toObject().is<T>());
 
-  size_t byteLength = args[0].toObject().as<T>().byteLength();
+  size_t byteLength =
+      args[0].toObject().as<T>().byteLength().deprecatedGetUint32();
   args.rval().setInt32(mozilla::AssertedCast<int32_t>(byteLength));
   return true;
 }
@@ -1083,7 +1084,7 @@ static bool intrinsic_PossiblyWrappedArrayBufferByteLength(JSContext* cx,
     return false;
   }
 
-  uint32_t length = obj->byteLength();
+  uint32_t length = obj->byteLength().deprecatedGetUint32();
   args.rval().setInt32(mozilla::AssertedCast<int32_t>(length));
   return true;
 }
@@ -1254,7 +1255,7 @@ static bool intrinsic_PossiblyWrappedTypedArrayLength(JSContext* cx,
     return false;
   }
 
-  uint32_t typedArrayLength = obj->length();
+  uint32_t typedArrayLength = obj->length().deprecatedGetUint32();
   args.rval().setInt32(mozilla::AssertedCast<int32_t>(typedArrayLength));
   return true;
 }
@@ -1316,7 +1317,7 @@ static bool intrinsic_MoveTypedArrayElements(JSContext* cx, unsigned argc,
 
 #ifdef DEBUG
   {
-    uint32_t viewByteLength = tarray->byteLength();
+    uint32_t viewByteLength = tarray->byteLength().deprecatedGetUint32();
     MOZ_ASSERT(byteSize <= viewByteLength);
     MOZ_ASSERT(byteDest < viewByteLength);
     MOZ_ASSERT(byteSrc < viewByteLength);
@@ -1439,9 +1440,10 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[3].toInt32() >= 0);
   uint32_t count = uint32_t(args[3].toInt32());
 
-  MOZ_ASSERT(count > 0 && count <= source->length());
-  MOZ_ASSERT(sourceOffset <= source->length() - count);
-  MOZ_ASSERT(count <= unsafeTypedArrayCrossCompartment->length());
+  MOZ_ASSERT(count > 0 && count <= source->length().deprecatedGetUint32());
+  MOZ_ASSERT(sourceOffset <= source->length().deprecatedGetUint32() - count);
+  MOZ_ASSERT(count <=
+             unsafeTypedArrayCrossCompartment->length().deprecatedGetUint32());
 
   size_t elementSize = TypedArrayElemSize(sourceType);
   MOZ_ASSERT(elementSize ==
@@ -1499,7 +1501,7 @@ static bool intrinsic_TypedArrayInitFromPackedArray(JSContext* cx,
 
   RootedArrayObject source(cx, &args[1].toObject().as<ArrayObject>());
   MOZ_ASSERT(IsPackedArray(source));
-  MOZ_ASSERT(source->length() == target->length());
+  MOZ_ASSERT(source->length() == target->length().get());
 
   switch (target->type()) {
 #define INIT_TYPED_ARRAY(T, N)                                         \

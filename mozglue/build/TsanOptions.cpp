@@ -221,15 +221,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1506812
          "race:BeginBackgroundRead\n"
 
-         // Bug 1601286
-         "race:setFlagBit\n"
-         "race:isFatInline\n"
-         "race:AtomizeAndCopyCharsFromLookup\n"
-         "race:inlinedMarkAtomInternal\n"
-         "race:XDRInnerObject<js::XDR_DECODE>\n"
-         "race:ScriptStencil::finishGCThings\n"
-         "race:XDRScriptGCThing<js::XDR_DECODE>\n"
-
          // Bug 1619162
          "race:currentNameHasEscapes\n"
 
@@ -271,6 +262,9 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:makeOwnBaseShape\n"
          "race:numDynamicSlots\n"
 
+         // Bug 1608462
+         "deadlock:ScriptPreloader::OffThreadDecodeCallback\n"
+
          // Bug 1615017
          "race:CacheFileMetadata::SetHash\n"
          "race:CacheFileMetadata::OnDataWritten\n"
@@ -278,9 +272,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1615123
          "race:_dl_deallocate_tls\n"
          "race:__libc_memalign\n"
-
-         // Bug 1615265
-         "race:ScriptPreloader::OffThreadDecodeCallback\n"
 
          // Bug 1664535
          "race:setNeedsIncrementalBarrier\n"

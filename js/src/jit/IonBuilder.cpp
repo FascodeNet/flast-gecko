@@ -8890,7 +8890,8 @@ TypedArrayObject* IonBuilder::tryTypedArrayEmbedConstantElements(
   // TypedArrays are only singletons when created with a (Shared)ArrayBuffer
   // and a length greater or equal to |SINGLETON_BYTE_LENGTH|.
   MOZ_ASSERT(tarr->hasBuffer());
-  MOZ_ASSERT(tarr->byteLength() >= TypedArrayObject::SINGLETON_BYTE_LENGTH ||
+  MOZ_ASSERT(tarr->byteLength().get() >=
+                 TypedArrayObject::SINGLETON_BYTE_LENGTH ||
              tarr->hasDetachedBuffer());
 
   // TypedArrays using an ArrayBuffer don't have nursery-allocated data, see
@@ -8923,7 +8924,7 @@ void IonBuilder::addTypedArrayLengthAndData(MDefinition* obj,
 
     obj->setImplicitlyUsedUnchecked();
 
-    int32_t len = AssertedCast<int32_t>(tarr->length());
+    int32_t len = AssertedCast<int32_t>(tarr->length().deprecatedGetUint32());
     *length = MConstant::New(alloc(), Int32Value(len));
     current->add(*length);
 
@@ -8991,7 +8992,8 @@ MInstruction* IonBuilder::addTypedArrayByteOffset(MDefinition* obj) {
   if (TypedArrayObject* tarr = tryTypedArrayEmbedConstantElements(obj)) {
     obj->setImplicitlyUsedUnchecked();
 
-    int32_t offset = AssertedCast<int32_t>(tarr->byteOffset());
+    int32_t offset =
+        AssertedCast<int32_t>(tarr->byteOffset().deprecatedGetUint32());
     byteOffset = MConstant::New(alloc(), Int32Value(offset));
   } else {
     byteOffset = MArrayBufferViewByteOffset::New(alloc(), obj);
