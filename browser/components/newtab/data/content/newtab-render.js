@@ -4,7 +4,13 @@
 "use strict";
 
 // exported by activity-stream.bundle.js
-window.NewtabRenderUtils.renderWithoutState();window.addEventListener('load', function(){
+if (window.__FROM_STARTUP_CACHE__) {
+  window.NewtabRenderUtils.renderCache(window.__STARTUP_STATE__);
+} else {
+  window.NewtabRenderUtils.renderWithoutState();
+}
+
+window.addEventListener('load', function(){
     
   var elementkun=document.getElementsByClassName("outer-wrapper")[0];
   var url_head="resource://activity-stream/background-images/"

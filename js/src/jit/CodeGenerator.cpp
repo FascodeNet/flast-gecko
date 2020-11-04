@@ -8606,7 +8606,8 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
   MOZ_ASSERT(!lir->safepoint()->isWasmTrap());
 
   if (reloadRegs) {
-    masm.loadWasmTlsRegFromFrame();
+    masm.loadPtr(Address(masm.getStackPointer(), WasmCallerTLSOffsetBeforeCall),
+                 WasmTlsReg);
     masm.loadWasmPinnedRegsFromTls();
     if (switchRealm) {
       masm.switchToWasmTlsRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
@@ -8766,8 +8767,8 @@ void CodeGenerator::visitTypedArrayIndexToInt32(LTypedArrayIndexToInt32* lir) {
   auto* ool = new (alloc()) OutOfLineTypedArrayIndexToInt32(lir);
   addOutOfLineCode(ool, lir->mir());
 
-  static_assert(TypedArrayObject::MAX_BYTE_LENGTH <= INT32_MAX,
-                "Double exceeding Int32 range can't be in-bounds array access");
+  MOZ_ASSERT(TypedArrayObject::maxByteLength() <= INT32_MAX,
+             "Double exceeding Int32 range can't be in-bounds array access");
 
   masm.convertDoubleToInt32(index, output, ool->entry(), false);
   masm.bind(ool->rejoin());
@@ -15379,7 +15380,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
   const wasm::FuncExport& funcExport = lir->mir()->funcExport();
   const wasm::FuncType& sig = funcExport.funcType();
 
-  ABIArgGenerator abi;
+  WasmABIArgGenerator abi;
   for (size_t i = 0; i < lir->numOperands(); i++) {
     MIRType argMir;
     switch (sig.args()[i].kind()) {

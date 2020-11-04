@@ -24,6 +24,9 @@ bool IsCOMInitializedOnCurrentThread();
 bool IsCurrentThreadMTA();
 bool IsCurrentThreadExplicitMTA();
 bool IsCurrentThreadImplicitMTA();
+#if defined(MOZILLA_INTERNAL_API)
+bool IsCurrentThreadNonMainMTA();
+#endif  // defined(MOZILLA_INTERNAL_API)
 bool IsProxy(IUnknown* aUnknown);
 bool IsValidGUID(REFGUID aCheckGuid);
 uintptr_t GetContainingModuleHandle();
@@ -38,8 +41,8 @@ uintptr_t GetContainingModuleHandle();
  * @param aOutStream Outparam to receive the newly created stream.
  * @return HRESULT error code.
  */
-uint32_t CreateStream(const uint8_t* aBuf, const uint32_t aBufLen,
-                      IStream** aOutStream);
+long CreateStream(const uint8_t* aBuf, const uint32_t aBufLen,
+                  IStream** aOutStream);
 
 /**
  * Creates a deep copy of a proxy contained in a stream.
@@ -48,7 +51,7 @@ uint32_t CreateStream(const uint8_t* aBuf, const uint32_t aBufLen,
  * @param aOutStream Outparam to receive the newly created stream.
  * @return HRESULT error code.
  */
-uint32_t CopySerializedProxy(IStream* aInStream, IStream** aOutStream);
+long CopySerializedProxy(IStream* aInStream, IStream** aOutStream);
 
 #if defined(MOZILLA_INTERNAL_API)
 /**

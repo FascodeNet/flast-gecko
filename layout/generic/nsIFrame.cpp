@@ -5975,7 +5975,9 @@ AspectRatio nsIFrame::GetAspectRatio() const {
   // return here.
 
   const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
-  if (!aspectRatio.auto_) {
+  // If aspect-ratio is infinite, it behaves as auto.
+  // https://github.com/w3c/csswg-drafts/issues/4572
+  if (!aspectRatio.BehavesAsAuto()) {
     // Non-auto. Return the preferred aspect ratio from the aspect-ratio style.
     return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
@@ -5984,7 +5986,10 @@ AspectRatio nsIFrame::GetAspectRatio() const {
   if (auto intrinsicRatio = GetIntrinsicRatio()) {
     return intrinsicRatio;
   }
+
   if (aspectRatio.HasRatio()) {
+    // If there is no finite ratio, this returns 0. Just the same as the auto
+    // case.
     return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
@@ -5997,9 +6002,6 @@ AspectRatio nsIFrame::GetIntrinsicRatio() const { return AspectRatio(); }
 static nscoord ComputeInlineSizeFromAspectRatio(
     WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aBlockSize,
     const LogicalSize& aBoxSizingAdjustment) {
-  MOZ_ASSERT(aAspectRatio.ratio.IsRatio());
-  // FIXME: We have to handle zero and infinity for aspect-ratio later.
-  // https://github.com/w3c/csswg-drafts/issues/4572
   MOZ_ASSERT(aAspectRatio.HasFiniteRatio(),
              "Infinite or zero ratio may have undefined behavior when "
              "computing the size");
@@ -6013,9 +6015,6 @@ static nscoord ComputeInlineSizeFromAspectRatio(
 static nscoord ComputeBlockSizeFromAspectRatio(
     WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aInlineSize,
     const LogicalSize& aBoxSizingAdjustment) {
-  MOZ_ASSERT(aAspectRatio.ratio.IsRatio());
-  // FIXME: We have to handle zero and infinity for aspect-ratio later.
-  // https://github.com/w3c/csswg-drafts/issues/4572
   MOZ_ASSERT(aAspectRatio.HasFiniteRatio(),
              "Infinite or zero ratio may have undefined behavior when "
              "computing the size");
@@ -10488,10 +10487,10 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
         reflowInput.SetComputedHeight(computedHeight);
       } else {
         reflowInput.SetComputedHeight(
-            ComputeSize(aRenderingContext, wm, logicalSize,
-                        logicalSize.ISize(wm),
-                        reflowInput.ComputedLogicalMargin().Size(wm),
-                        reflowInput.ComputedLogicalBorderPadding().Size(wm), {})
+            ComputeSize(
+                aRenderingContext, wm, logicalSize, logicalSize.ISize(wm),
+                reflowInput.ComputedLogicalMargin(wm).Size(wm),
+                reflowInput.ComputedLogicalBorderPadding(wm).Size(wm), {})
                 .mLogicalSize.Height(wm));
       }
     }

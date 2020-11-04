@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if defined(MOZILLA_INTERNAL_API)
+#  include "MainThreadUtils.h"
 #  include "mozilla/dom/ContentChild.h"
 #endif
 
@@ -74,6 +75,16 @@ bool IsCurrentThreadImplicitMTA() {
          aptTypeQualifier == APTTYPEQUALIFIER_IMPLICIT_MTA;
 }
 
+#if defined(MOZILLA_INTERNAL_API)
+bool IsCurrentThreadNonMainMTA() {
+  if (NS_IsMainThread()) {
+    return false;
+  }
+
+  return IsCurrentThreadMTA();
+}
+#endif  // defined(MOZILLA_INTERNAL_API)
+
 bool IsProxy(IUnknown* aUnknown) {
   if (!aUnknown) {
     return false;
@@ -128,8 +139,8 @@ uintptr_t GetContainingModuleHandle() {
   return reinterpret_cast<uintptr_t>(thisModule);
 }
 
-uint32_t CreateStream(const uint8_t* aInitBuf, const uint32_t aInitBufSize,
-                      IStream** aOutStream) {
+long CreateStream(const uint8_t* aInitBuf, const uint32_t aInitBufSize,
+                  IStream** aOutStream) {
   if (!aInitBufSize || !aOutStream) {
     return E_INVALIDARG;
   }
@@ -208,7 +219,7 @@ uint32_t CreateStream(const uint8_t* aInitBuf, const uint32_t aInitBufSize,
   return S_OK;
 }
 
-uint32_t CopySerializedProxy(IStream* aInStream, IStream** aOutStream) {
+long CopySerializedProxy(IStream* aInStream, IStream** aOutStream) {
   if (!aInStream || !aOutStream) {
     return E_INVALIDARG;
   }

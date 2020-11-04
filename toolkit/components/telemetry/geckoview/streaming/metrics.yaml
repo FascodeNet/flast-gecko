@@ -794,6 +794,117 @@ gfx.status:
       - jmuizelaar@mozilla.com
     expires: never
 
+avif:
+  decode_result:
+    type: labeled_counter
+    labels:
+      - success
+      - parse_error
+      - no_primary_item
+      - decode_error
+      - size_overflow
+      - out_of_memory
+      - pipe_init_error
+      - write_buffer_error
+    gecko_datapoint: AVIF_DECODE_RESULT
+    description: >
+      Decode result of AVIF image.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+    notification_emails:
+      - cchang@mozilla.com
+      - jbauman@mozilla.com
+    expires: never
+
+  decoder:
+    type: labeled_counter
+    labels:
+      - dav1d
+      - aom
+    gecko_datapoint: AVIF_DECODER
+    description: >
+      Decoder of AVIF image.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+    notification_emails:
+      - cchang@mozilla.com
+      - jbauman@mozilla.com
+    expires: never
+
+  aom_decode_error:
+    type: quantity
+    unit: error code
+    gecko_datapoint: avif.aom_decode_error
+    description: >
+      Image-decode Error from AOM decoder
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+    notification_emails:
+      - cchang@mozilla.com
+      - jbauman@mozilla.com
+    expires: never
+
+  dav1d_decode_error:
+    type: quantity
+    unit: error code
+    gecko_datapoint: avif.dav1d_decode_error
+    description: >
+      Image-decode Error from dav1d decoder
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+    notification_emails:
+      - cchang@mozilla.com
+      - jbauman@mozilla.com
+    expires: never
+
+  yuv_color_space:
+    type: labeled_counter
+    labels:
+      - bt601
+      - bt709
+      - bt2020
+      - identity
+      - unknown
+    gecko_datapoint: AVIF_YUV_COLOR_SPACE
+    description: >
+      YUV color space of AVIF image.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+    notification_emails:
+      - cchang@mozilla.com
+      - jbauman@mozilla.com
+    expires: never
+
+  bit_depth:
+    type: labeled_counter
+    labels:
+      - color_8
+      - color_10
+      - color_12
+      - color_16
+      - unknown
+    gecko_datapoint: AVIF_BIT_DEPTH
+    description: >
+      Bits per pixel of AVIF image.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+    notification_emails:
+      - cchang@mozilla.com
+      - jbauman@mozilla.com
+    expires: never
+
 network:
   cache_hit_time:
     type: timing_distribution

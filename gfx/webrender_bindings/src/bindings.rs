@@ -202,10 +202,9 @@ impl DocumentHandle {
         api: RenderApi,
         hit_tester: Option<Arc<dyn ApiHitTester>>,
         size: DeviceIntSize,
-        layer: i8,
         id: u32,
     ) -> DocumentHandle {
-        let doc = api.add_document_with_id(size, layer, id);
+        let doc = api.add_document_with_id(size, id);
         let hit_tester_request = if hit_tester.is_none() {
             // Request the hit tester early to reduce the likelihood of blocking on the
             // first hit testing query.
@@ -1086,7 +1085,8 @@ pub extern "C" fn wr_thread_pool_new(low_priority: bool) -> *mut WrThreadPool {
             wr_register_thread_local_arena();
             let name = format!("WRWorker{}#{}", priority_tag, idx);
             register_thread_with_profiler(name.clone());
-            gecko_profiler_register_thread(CString::new(name).unwrap().as_ptr());
+            let name = CString::new(name).unwrap();
+            gecko_profiler_register_thread(name.as_ptr());
         })
         .exit_handler(|_idx| unsafe {
             gecko_profiler_unregister_thread();
@@ -1634,12 +1634,10 @@ pub extern "C" fn wr_window_new(
     unsafe {
         *out_max_texture_size = renderer.get_max_texture_size();
     }
-    let layer = 0;
     *out_handle = Box::into_raw(Box::new(DocumentHandle::new(
         sender.create_api_by_client(next_namespace_id()),
         None,
         window_size,
-        layer,
         document_id,
     )));
     *out_renderer = Box::into_raw(Box::new(renderer));
@@ -3773,10 +3771,12 @@ pub extern "C" fn wr_dump_display_list(
 
     #[cfg(target_os = "android")]
     unsafe {
+        let gecko = CString::new("Gecko").unwrap();
+        let sink = CString::new(sink.into_inner()).unwrap();
         __android_log_write(
             4, /* info */
-            CString::new("Gecko").unwrap().as_ptr(),
-            CString::new(sink.into_inner()).unwrap().as_ptr(),
+            gecko.as_ptr(),
+            sink.as_ptr(),
         );
     }
 

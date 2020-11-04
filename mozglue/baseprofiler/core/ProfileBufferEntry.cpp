@@ -183,7 +183,7 @@ class MOZ_RAII AutoArraySchemaWithStringsWriter : public AutoArraySchemaWriter {
                                    UniqueJSONStrings& aStrings)
       : AutoArraySchemaWriter(aWriter), mStrings(aStrings) {}
 
-  void StringElement(uint32_t aIndex, const char* aValue) {
+  void StringElement(uint32_t aIndex, const Span<const char>& aValue) {
     FillUpTo(aIndex);
     mStrings.WriteElement(Writer(), aValue);
   }
@@ -191,37 +191,6 @@ class MOZ_RAII AutoArraySchemaWithStringsWriter : public AutoArraySchemaWriter {
  private:
   UniqueJSONStrings& mStrings;
 };
-
-UniqueJSONStrings::UniqueJSONStrings() { mStringTableWriter.StartBareList(); }
-
-UniqueJSONStrings::UniqueJSONStrings(const UniqueJSONStrings& aOther) {
-  mStringTableWriter.StartBareList();
-  uint32_t count = mStringHashToIndexMap.count();
-  if (count != 0) {
-    MOZ_RELEASE_ASSERT(mStringHashToIndexMap.reserve(count));
-    for (auto iter = aOther.mStringHashToIndexMap.iter(); !iter.done();
-         iter.next()) {
-      mStringHashToIndexMap.putNewInfallible(iter.get().key(),
-                                             iter.get().value());
-    }
-    mStringTableWriter.CopyAndSplice(
-        aOther.mStringTableWriter.ChunkedWriteFunc());
-  }
-}
-
-uint32_t UniqueJSONStrings::GetOrAddIndex(const char* aStr) {
-  uint32_t count = mStringHashToIndexMap.count();
-  HashNumber hash = HashString(aStr);
-  auto entry = mStringHashToIndexMap.lookupForAdd(hash);
-  if (entry) {
-    MOZ_ASSERT(entry->value() < count);
-    return entry->value();
-  }
-
-  MOZ_RELEASE_ASSERT(mStringHashToIndexMap.add(entry, hash, count));
-  mStringTableWriter.StringElement(MakeStringSpan(aStr));
-  return count;
-}
 
 UniqueStacks::StackKey UniqueStacks::BeginStack(const FrameKey& aFrame) {
   return StackKey(GetOrAddFrameIndex(aFrame));
@@ -310,7 +279,7 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
   AutoArraySchemaWithStringsWriter writer(mFrameTableWriter, *mUniqueStrings);
 
   const NormalFrameData& data = aFrame.mData.as<NormalFrameData>();
-  writer.StringElement(LOCATION, data.mLocation.c_str());
+  writer.StringElement(LOCATION, data.mLocation);
   writer.BoolElement(RELEVANT_FOR_JS, data.mRelevantForJS);
 
   // It's okay to convert uint64_t to double here because DOM always creates IDs
@@ -820,8 +789,7 @@ void ProfileBuffer::StreamMarkersToJSON(SpliceableJSONWriter& aWriter,
         !::mozilla::base_profiler_markers_detail::DeserializeAfterKindAndStream(
             aER, aWriter, aThreadId,
             [&](const mozilla::ProfilerString8View& aName) {
-              aUniqueStacks.mUniqueStrings->WriteElement(
-                  aWriter, aName.String().c_str());
+              aUniqueStacks.mUniqueStrings->WriteElement(aWriter, aName);
             },
             [&](ProfileChunkedBuffer& aChunkedBuffer) {
               ProfilerBacktrace backtrace("", &aChunkedBuffer);

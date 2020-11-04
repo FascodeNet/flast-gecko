@@ -196,7 +196,7 @@ class MOZ_RAII AutoArraySchemaWithStringsWriter : public AutoArraySchemaWriter {
                                    UniqueJSONStrings& aStrings)
       : AutoArraySchemaWriter(aWriter), mStrings(aStrings) {}
 
-  void StringElement(uint32_t aIndex, const char* aValue) {
+  void StringElement(uint32_t aIndex, const Span<const char>& aValue) {
     FillUpTo(aIndex);
     mStrings.WriteElement(Writer(), aValue);
   }
@@ -204,37 +204,6 @@ class MOZ_RAII AutoArraySchemaWithStringsWriter : public AutoArraySchemaWriter {
  private:
   UniqueJSONStrings& mStrings;
 };
-
-UniqueJSONStrings::UniqueJSONStrings() { mStringTableWriter.StartBareList(); }
-
-UniqueJSONStrings::UniqueJSONStrings(const UniqueJSONStrings& aOther) {
-  mStringTableWriter.StartBareList();
-  uint32_t count = mStringHashToIndexMap.count();
-  if (count != 0) {
-    MOZ_RELEASE_ASSERT(mStringHashToIndexMap.reserve(count));
-    for (auto iter = aOther.mStringHashToIndexMap.iter(); !iter.done();
-         iter.next()) {
-      mStringHashToIndexMap.putNewInfallible(iter.get().key(),
-                                             iter.get().value());
-    }
-    mStringTableWriter.CopyAndSplice(
-        aOther.mStringTableWriter.ChunkedWriteFunc());
-  }
-}
-
-uint32_t UniqueJSONStrings::GetOrAddIndex(const char* aStr) {
-  uint32_t count = mStringHashToIndexMap.count();
-  HashNumber hash = HashString(aStr);
-  auto entry = mStringHashToIndexMap.lookupForAdd(hash);
-  if (entry) {
-    MOZ_ASSERT(entry->value() < count);
-    return entry->value();
-  }
-
-  MOZ_RELEASE_ASSERT(mStringHashToIndexMap.add(entry, hash, count));
-  mStringTableWriter.StringElement(MakeStringSpan(aStr));
-  return count;
-}
 
 UniqueStacks::StackKey UniqueStacks::BeginStack(const FrameKey& aFrame) {
   return StackKey(GetOrAddFrameIndex(aFrame));
@@ -415,7 +384,7 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
   AutoArraySchemaWithStringsWriter writer(mFrameTableWriter, *mUniqueStrings);
 
   const NormalFrameData& data = aFrame.mData.as<NormalFrameData>();
-  writer.StringElement(LOCATION, data.mLocation.get());
+  writer.StringElement(LOCATION, data.mLocation);
   writer.BoolElement(RELEVANT_FOR_JS, data.mRelevantForJS);
 
   // It's okay to convert uint64_t to double here because DOM always creates IDs
@@ -425,7 +394,7 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
   // The C++ interpreter is the default implementation so we only emit element
   // for Baseline Interpreter frames.
   if (data.mBaselineInterp) {
-    writer.StringElement(IMPLEMENTATION, "blinterp");
+    writer.StringElement(IMPLEMENTATION, MakeStringSpan("blinterp"));
   }
 
   if (data.mLine.isSome()) {
@@ -459,7 +428,7 @@ static void StreamJITFrame(JSContext* aContext, SpliceableJSONWriter& aWriter,
 
   AutoArraySchemaWithStringsWriter writer(aWriter, aUniqueStrings);
 
-  writer.StringElement(LOCATION, aJITFrame.label());
+  writer.StringElement(LOCATION, MakeStringSpan(aJITFrame.label()));
   writer.BoolElement(RELEVANT_FOR_JS, false);
 
   // It's okay to convert uint64_t to double here because DOM always creates IDs
@@ -470,9 +439,10 @@ static void StreamJITFrame(JSContext* aContext, SpliceableJSONWriter& aWriter,
   JS::ProfilingFrameIterator::FrameKind frameKind = aJITFrame.frameKind();
   MOZ_ASSERT(frameKind == JS::ProfilingFrameIterator::Frame_Ion ||
              frameKind == JS::ProfilingFrameIterator::Frame_Baseline);
-  writer.StringElement(
-      IMPLEMENTATION,
-      frameKind == JS::ProfilingFrameIterator::Frame_Ion ? "ion" : "baseline");
+  writer.StringElement(IMPLEMENTATION,
+                       frameKind == JS::ProfilingFrameIterator::Frame_Ion
+                           ? MakeStringSpan("ion")
+                           : MakeStringSpan("baseline"));
 
   const JS::ProfilingCategoryPairInfo& info = JS::GetProfilingCategoryPairInfo(
       frameKind == JS::ProfilingFrameIterator::Frame_Ion
@@ -1222,7 +1192,7 @@ void ProfileBuffer::StreamMarkersToJSON(SpliceableJSONWriter& aWriter,
 
           // Now write this information to JSON with the following schema:
           // [name, startTime, endTime, phase, category, data]
-          aUniqueStacks.mUniqueStrings->WriteElement(aWriter, name.c_str());
+          aUniqueStacks.mUniqueStrings->WriteElement(aWriter, name);
           aWriter.DoubleElement(startTime);
           aWriter.DoubleElement(endTime);
           aWriter.IntElement(phase);
@@ -1243,8 +1213,8 @@ void ProfileBuffer::StreamMarkersToJSON(SpliceableJSONWriter& aWriter,
                 DeserializeAfterKindAndStream(
                     aER, aWriter, aThreadId,
                     [&](const mozilla::ProfilerString8View& aName) {
-                      aUniqueStacks.mUniqueStrings->WriteElement(
-                          aWriter, aName.String().c_str());
+                      aUniqueStacks.mUniqueStrings->WriteElement(aWriter,
+                                                                 aName);
                     },
                     [&](ProfileChunkedBuffer& aChunkedBuffer) {
                       ProfilerBacktrace backtrace("", &aChunkedBuffer);

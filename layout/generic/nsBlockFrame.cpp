@@ -1072,8 +1072,7 @@ static LogicalSize CalculateContainingBlockSizeForAbsolutes(
       // its computed metrics if available, converted to our writing mode
       WritingMode lastWM = aLastRI->GetWritingMode();
       LogicalSize lastRISize = aLastRI->ComputedSize().ConvertTo(aWM, lastWM);
-      LogicalMargin lastRIPadding =
-          aLastRI->ComputedLogicalPadding().ConvertTo(aWM, lastWM);
+      LogicalMargin lastRIPadding = aLastRI->ComputedLogicalPadding(aWM);
       LogicalMargin logicalScrollbars(aWM, scrollbars);
       if (lastRISize.ISize(aWM) != NS_UNCONSTRAINEDSIZE) {
         cbSize.ISize(aWM) =
@@ -1264,14 +1263,15 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
       aReflowInput.ComputedBSize() != NS_UNCONSTRAINEDSIZE &&
       (ShouldApplyOverflowClipping(aReflowInput.mStyleDisplay) &
        physicalBlockAxis)) {
-    LogicalMargin blockDirExtras = aReflowInput.ComputedLogicalBorderPadding();
+    LogicalMargin blockDirExtras =
+        aReflowInput.ComputedLogicalBorderPadding(wm);
     if (GetLogicalSkipSides().BStart()) {
       blockDirExtras.BStart(wm) = 0;
     } else {
       // Block-end margin never causes us to create continuations, so we
       // don't need to worry about whether it fits in its entirety.
       blockDirExtras.BStart(wm) +=
-          aReflowInput.ComputedLogicalMargin().BStart(wm);
+          aReflowInput.ComputedLogicalMargin(wm).BStart(wm);
     }
 
     if (effectiveComputedBSize + blockDirExtras.BStartEnd(wm) <=
@@ -1443,7 +1443,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
         nsLayoutUtils::GetFirstLinePosition(wm, this, &position);
     nscoord lineBStart =
         havePosition ? position.mBStart
-                     : reflowInput->ComputedLogicalBorderPadding().BStart(wm);
+                     : reflowInput->ComputedLogicalBorderPadding(wm).BStart(wm);
     nsIFrame* marker = GetOutsideMarker();
     ReflowOutsideMarker(marker, state, reflowOutput, lineBStart);
     NS_ASSERTION(!MarkerIsEmpty() || reflowOutput.BSize(wm) == 0,
@@ -1957,7 +1957,7 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
                      borderPadding.BStart(wm);
       // Note that |borderPadding| has GetSkipSides applied, so we ask
       // aReflowInput for the actual value we'd use on a last fragment here:
-      bEnd += aReflowInput.ComputedLogicalBorderPadding().BEnd(wm);
+      bEnd += aReflowInput.ComputedLogicalBorderPadding(wm).BEnd(wm);
       if (bEnd <= aReflowInput.AvailableBSize()) {
         // We actually fit after applying `max-size` so we should be
         // Overflow-Incomplete instead.
@@ -2000,8 +2000,9 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     bool found;
     nscoord cbSize = GetProperty(BClampMarginBoxMinSizeProperty(), &found);
     if (found) {
-      auto marginBoxBSize = finalSize.BSize(wm) +
-                            aReflowInput.ComputedLogicalMargin().BStartEnd(wm);
+      auto marginBoxBSize =
+          finalSize.BSize(wm) +
+          aReflowInput.ComputedLogicalMargin(wm).BStartEnd(wm);
       auto overflow = marginBoxBSize - cbSize;
       if (overflow > 0) {
         auto contentBSize = finalSize.BSize(wm) - borderPadding.BStartEnd(wm);
@@ -2267,7 +2268,7 @@ void nsBlockFrame::PrepareResizeReflow(BlockReflowInput& aState) {
   if (tryAndSkipLines) {
     WritingMode wm = aState.mReflowInput.GetWritingMode();
     nscoord newAvailISize =
-        aState.mReflowInput.ComputedLogicalBorderPadding().IStart(wm) +
+        aState.mReflowInput.ComputedLogicalBorderPadding(wm).IStart(wm) +
         aState.mReflowInput.ComputedISize();
 
 #ifdef DEBUG
@@ -6648,7 +6649,7 @@ void nsBlockFrame::ReflowFloat(BlockReflowInput& aState,
   // Capture the margin and offsets information for the caller
   aFloatMargin =
       // float margins don't collapse
-      floatRS.ComputedLogicalMargin().ConvertTo(wm, floatRS.GetWritingMode());
+      floatRS.ComputedLogicalMargin(wm);
   aFloatOffsets =
       floatRS.ComputedLogicalOffsets().ConvertTo(wm, floatRS.GetWritingMode());
 
@@ -7443,10 +7444,9 @@ void nsBlockFrame::ReflowOutsideMarker(nsIFrame* aMarkerFrame,
   WritingMode wm = ri.GetWritingMode();
   // Get the ::marker's margin, converted to our writing mode so that we can
   // combine it with other logical values here.
-  LogicalMargin markerMargin =
-      reflowInput.ComputedLogicalMargin().ConvertTo(wm, markerWM);
+  LogicalMargin markerMargin = reflowInput.ComputedLogicalMargin(wm);
   nscoord iStart = floatAvailSpace.IStart(wm) -
-                   ri.ComputedLogicalBorderPadding().IStart(wm) -
+                   ri.ComputedLogicalBorderPadding(wm).IStart(wm) -
                    markerMargin.IEnd(wm) - aMetrics.ISize(wm);
 
   // Approximate the ::marker's position; vertical alignment will provide
@@ -7638,11 +7638,10 @@ nsBlockFrame::ReplacedElementISizeToClear nsBlockFrame::ISizeToClearPastFloats(
   ReflowInput reflowInput(aState.mPresContext, aState.mReflowInput, aFrame,
                           availSpace);
   result.borderBoxISize =
-      reflowInput.ComputedSizeWithBorderPadding().ConvertTo(wm, frWM).ISize(wm);
+      reflowInput.ComputedSizeWithBorderPadding(wm).ISize(wm);
   // Use the margins from offsetState rather than reflowInput so that
   // they aren't reduced by ignoring margins in overconstrained cases.
-  LogicalMargin computedMargin =
-      offsetState.ComputedLogicalMargin().ConvertTo(wm, frWM);
+  LogicalMargin computedMargin = offsetState.ComputedLogicalMargin(wm);
   result.marginIStart = computedMargin.IStart(wm);
   return result;
 }

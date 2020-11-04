@@ -305,8 +305,8 @@ typedef PlatformSpecificStateBase
  *
  * \li\b apz.fling_min_velocity_threshold
  * Minimum velocity for a fling to actually kick off. If the user pans and lifts
- * their finger such that the velocity is smaller than this amount, no fling
- * is initiated.\n
+ * their finger such that the velocity is smaller than or equal to this amount,
+ * no fling is initiated.\n
  * Units: screen pixels per millisecond
  *
  * \li\b apz.fling_stop_on_tap_threshold
@@ -1771,11 +1771,11 @@ nsEventStatus AsyncPanZoomController::HandleEndOfPan() {
   StateChangeNotificationBlocker blocker(this);
   SetState(NOTHING);
 
-  APZC_LOG("%p starting a fling animation if %f >= %f\n", this,
+  APZC_LOG("%p starting a fling animation if %f > %f\n", this,
            flingVelocity.Length().value,
            StaticPrefs::apz_fling_min_velocity_threshold());
 
-  if (flingVelocity.Length() <
+  if (flingVelocity.Length() <=
       StaticPrefs::apz_fling_min_velocity_threshold()) {
     // Relieve overscroll now if needed, since we will not transition to a fling
     // animation and then an overscroll animation, and relieve it then.
@@ -2643,8 +2643,10 @@ nsEventStatus AsyncPanZoomController::OnPan(const PanGestureInput& aEvent,
 nsEventStatus AsyncPanZoomController::OnPanEnd(const PanGestureInput& aEvent) {
   APZC_LOG("%p got a pan-end in state %d\n", this, mState);
 
-  // Call into OnPan in order to process any delta included in this event.
-  OnPan(aEvent, true);
+  if (aEvent.mPanDisplacement != ScreenPoint{}) {
+    // Call into OnPan in order to process the delta included in this event.
+    OnPan(aEvent, true);
+  }
 
   EndTouch(aEvent.mTimeStamp);
 
@@ -3151,7 +3153,19 @@ nsEventStatus AsyncPanZoomController::StartPanning(
 
 void AsyncPanZoomController::UpdateWithTouchAtDevicePoint(
     const MultiTouchInput& aEvent) {
-  ParentLayerPoint point = GetFirstTouchPoint(aEvent);
+  const SingleTouchData& touchData = aEvent.mTouches[0];
+  // Take historical touch data into account in order to improve the accuracy
+  // of the velocity estimate. On many Android devices, the touch screen samples
+  // at a higher rate than vsync (e.g. 100Hz vs 60Hz), and the historical data
+  // lets us take advantage of those high-rate samples.
+  for (const auto& historicalData : touchData.mHistoricalData) {
+    ParentLayerPoint historicalPoint = historicalData.mLocalScreenPoint;
+    mX.UpdateWithTouchAtDevicePoint(historicalPoint.x,
+                                    historicalData.mTimeStamp);
+    mY.UpdateWithTouchAtDevicePoint(historicalPoint.y,
+                                    historicalData.mTimeStamp);
+  }
+  ParentLayerPoint point = touchData.mLocalScreenPoint;
   mX.UpdateWithTouchAtDevicePoint(point.x, aEvent.mTimeStamp);
   mY.UpdateWithTouchAtDevicePoint(point.y, aEvent.mTimeStamp);
 }
@@ -3359,7 +3373,7 @@ ParentLayerPoint AsyncPanZoomController::AttemptFling(
   // that generate events faster than the clock resolution.
   ParentLayerPoint velocity = GetVelocityVector();
   if (!velocity.IsFinite() ||
-      velocity.Length() < StaticPrefs::apz_fling_min_velocity_threshold()) {
+      velocity.Length() <= StaticPrefs::apz_fling_min_velocity_threshold()) {
     // Relieve overscroll now if needed, since we will not transition to a fling
     // animation and then an overscroll animation, and relieve it then.
     aHandoffState.mChain->SnapBackOverscrolledApzc(this);

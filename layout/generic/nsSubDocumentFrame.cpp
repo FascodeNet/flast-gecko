@@ -634,11 +634,8 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
     return {};  // XUL <iframe> and <browser> have no useful intrinsic size
   }
 
-  // We must be an HTML <iframe>.  Default to size of
-  // REPLACED_ELEM_FALLBACK_PX_WIDTH x REPLACED_ELEM_FALLBACK_PX_HEIGHT (i.e.
-  // 300px x 150px), for IE compat (and per CSS2.1 draft)
-  return IntrinsicSize(CSSPixel::ToAppUnits(REPLACED_ELEM_FALLBACK_PX_WIDTH),
-                       CSSPixel::ToAppUnits(REPLACED_ELEM_FALLBACK_PX_HEIGHT));
+  // We must be an HTML <iframe>. Return fallback size.
+  return IntrinsicSize(CSSPixel::ToAppUnits(kFallbackIntrinsicSizeInPixels));
 }
 
 /* virtual */
@@ -707,8 +704,8 @@ void nsSubDocumentFrame::Reflow(nsPresContext* aPresContext,
   NS_ASSERTION(mContent->GetPrimaryFrame() == this, "Shouldn't happen");
 
   // XUL <iframe> or <browser>, or HTML <iframe>, <object> or <embed>
-  aDesiredSize.SetSize(aReflowInput.GetWritingMode(),
-                       aReflowInput.ComputedSizeWithBorderPadding());
+  const auto wm = aReflowInput.GetWritingMode();
+  aDesiredSize.SetSize(wm, aReflowInput.ComputedSizeWithBorderPadding(wm));
 
   // "offset" is the offset of our content area from our frame's
   // top-left corner.

@@ -83,14 +83,14 @@ bool ArrayBufferViewObject::init(JSContext* cx,
   MOZ_ASSERT_IF(!buffer, byteOffset.get() == 0);
   MOZ_ASSERT_IF(buffer, !buffer->isDetached());
 
-  MOZ_ASSERT(byteOffset.get() <= ArrayBufferObject::MaxBufferByteLength);
-  MOZ_ASSERT(length.get() <= ArrayBufferObject::MaxBufferByteLength);
+  MOZ_ASSERT(byteOffset.get() <= ArrayBufferObject::maxBufferByteLength());
+  MOZ_ASSERT(length.get() <= ArrayBufferObject::maxBufferByteLength());
   MOZ_ASSERT(byteOffset.get() + length.get() <=
-             ArrayBufferObject::MaxBufferByteLength);
+             ArrayBufferObject::maxBufferByteLength());
 
   MOZ_ASSERT_IF(
       is<TypedArrayObject>(),
-      length.get() < TypedArrayObject::MAX_BYTE_LENGTH / bytesPerElement);
+      length.get() < TypedArrayObject::maxByteLength() / bytesPerElement);
 
   // The isSharedMemory property is invariant.  Self-hosting code that
   // sets BUFFER_SLOT or the private slot (if it does) must maintain it by

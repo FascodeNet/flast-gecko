@@ -3030,7 +3030,7 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::GridReflowInput {
         mInFragmentainer(false) {
     MOZ_ASSERT(!aReflowInput || aReflowInput->mFrame == mFrame);
     if (aReflowInput) {
-      mBorderPadding = aReflowInput->ComputedLogicalBorderPadding();
+      mBorderPadding = aReflowInput->ComputedLogicalBorderPadding(mWM);
       mSkipSides = aFrame->PreReflowBlockLevelLogicalSkipSides();
       mBorderPadding.ApplySkipSides(mSkipSides);
     }
@@ -5244,7 +5244,7 @@ static nscoord ContentContribution(
 
       // XXXdholbert This won't have percentage margins resolved.
       // Hopefully we can just avoid those for XUL-content-in-css-grid?
-      size += childRI.ComputedLogicalMargin().BStartEnd(childWM);
+      size += childRI.ComputedLogicalMargin(childWM).BStartEnd(childWM);
     } else {
       size = ::MeasuringReflow(child, aState.mReflowInput, aRC, availableSize,
                                cbSize, iMinSizeClamp, bMinSizeClamp);
@@ -8399,7 +8399,7 @@ nscoord nsGridContainerFrame::ReflowChildren(GridReflowInput& aState,
     if (!children.IsEmpty()) {
       // 'gridOrigin' is the origin of the grid (the start of the first track),
       // with respect to the grid container's padding-box (CB).
-      LogicalMargin pad(aState.mReflowInput->ComputedLogicalPadding());
+      LogicalMargin pad(aState.mReflowInput->ComputedLogicalPadding(wm));
       const LogicalPoint gridOrigin(wm, pad.IStart(wm), pad.BStart(wm));
       const LogicalRect gridCB(wm, 0, 0,
                                aContentArea.ISize(wm) + pad.IStartEnd(wm),

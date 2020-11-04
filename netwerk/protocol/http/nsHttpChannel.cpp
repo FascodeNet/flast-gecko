@@ -1242,6 +1242,9 @@ nsresult nsHttpChannel::SetupTransaction() {
   if (!mAllowSpdy) {
     mCaps |= NS_HTTP_DISALLOW_SPDY;
   }
+  if (!mAllowHttp3) {
+    mCaps |= NS_HTTP_DISALLOW_HTTP3;
+  }
   if (mBeConservative) {
     mCaps |= NS_HTTP_BE_CONSERVATIVE;
   }
@@ -6648,6 +6651,14 @@ nsresult nsHttpChannel::BeginConnect() {
         this, originAttributes);
   }
 
+  // Adjust mCaps according to our request headers:
+  //  - If "Connection: close" is set as a request header, then do not bother
+  //    trying to establish a keep-alive connection.
+  if (mRequestHead.HasHeaderValue(nsHttp::Connection, "close")) {
+    mCaps &= ~(NS_HTTP_ALLOW_KEEPALIVE);
+    mAllowHttp3 = false;
+  }
+
   gHttpHandler->MaybeAddAltSvcForTesting(mURI, mUsername, GetTopWindowOrigin(),
                                          mPrivateBrowsing, IsIsolated(),
                                          mCallbacks, originAttributes);
@@ -6656,9 +6667,12 @@ nsresult nsHttpChannel::BeginConnect() {
       host, port, ""_ns, mUsername, GetTopWindowOrigin(), proxyInfo,
       originAttributes, isHttps);
   bool http2Allowed = !gHttpHandler->IsHttp2Excluded(connInfo);
+  if (!mAllowHttp3) {
+    mCaps |= NS_HTTP_DISALLOW_HTTP3;
+  }
   bool http3Allowed = !mUpgradeProtocolCallback && !mProxyInfo &&
                       !(mCaps & NS_HTTP_BE_CONSERVATIVE) && !mBeConservative &&
-                      !gHttpHandler->IsHttp3Excluded(connInfo);
+                      !gHttpHandler->IsHttp3Excluded(connInfo) && mAllowHttp3;
 
   // No need to lookup HTTPSSVC record if we already have one.
   mUseHTTPSSVC =
@@ -6759,12 +6773,6 @@ nsresult nsHttpChannel::BeginConnect() {
       (mLoadFlags & VALIDATE_ALWAYS ||
        BYPASS_LOCAL_CACHE(mLoadFlags, mPreferCacheLoadOverBypass)))
     mCaps |= NS_HTTP_REFRESH_DNS;
-
-  // Adjust mCaps according to our request headers:
-  //  - If "Connection: close" is set as a request header, then do not bother
-  //    trying to establish a keep-alive connection.
-  if (mRequestHead.HasHeaderValue(nsHttp::Connection, "close"))
-    mCaps &= ~(NS_HTTP_ALLOW_KEEPALIVE);
 
   if (gHttpHandler->CriticalRequestPrioritization()) {
     if (mClassOfService & nsIClassOfService::Leader) {
