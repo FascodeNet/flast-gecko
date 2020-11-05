@@ -173,8 +173,6 @@ function getOrderedResource(resource) {
     timeStamp: resource.timeStamp,
     node: resource.node,
     actor: resource.actor,
-    discardRequestBody: resource.discardRequestBody,
-    discardResponseBody: resource.discardResponseBody,
     startedDateTime: resource.startedDateTime,
     request: resource.request,
     isXHR: resource.isXHR,
@@ -191,6 +189,7 @@ function getOrderedResource(resource) {
     updates: resource.updates,
     totalTime: resource.totalTime,
     securityState: resource.securityState,
+    isRacing: resource.isRacing,
   };
 }
 

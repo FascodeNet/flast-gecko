@@ -22,8 +22,6 @@ rawPackets.set(`GET request`, {
   "resourceType": "network-event",
   "timeStamp": 1572867483805,
   "actor": "server0.conn0.netEvent4",
-  "discardRequestBody": true,
-  "discardResponseBody": false,
   "startedDateTime": "2019-11-04T11:06:34.542Z",
   "request": {
     "url": "http://example.com/inexistent.html",
@@ -72,15 +70,14 @@ rawPackets.set(`GET request`, {
     "securityInfo"
   ],
   "totalTime": 2,
-  "securityState": "insecure"
+  "securityState": "insecure",
+  "isRacing": false
 });
 
 rawPackets.set(`GET request update`, {
   "resourceType": "network-event",
   "timeStamp": 1572867483805,
   "actor": "server0.conn0.netEvent5",
-  "discardRequestBody": true,
-  "discardResponseBody": false,
   "startedDateTime": "2020-07-07T14:41:14.572Z",
   "request": {
     "url": "http://example.com/inexistent.html",
@@ -129,15 +126,14 @@ rawPackets.set(`GET request update`, {
     "securityInfo"
   ],
   "totalTime": 3,
-  "securityState": "insecure"
+  "securityState": "insecure",
+  "isRacing": false
 });
 
 rawPackets.set(`XHR GET request`, {
   "resourceType": "network-event",
   "timeStamp": 1572867483805,
   "actor": "server0.conn0.netEvent21",
-  "discardRequestBody": true,
-  "discardResponseBody": false,
   "startedDateTime": "2020-07-07T14:41:14.612Z",
   "request": {
     "url": "http://example.com/inexistent.html",
@@ -186,15 +182,14 @@ rawPackets.set(`XHR GET request`, {
     "securityInfo"
   ],
   "totalTime": 1,
-  "securityState": "insecure"
+  "securityState": "insecure",
+  "isRacing": false
 });
 
 rawPackets.set(`XHR GET request update`, {
   "resourceType": "network-event",
   "timeStamp": 1572867483805,
   "actor": "server0.conn0.netEvent20",
-  "discardRequestBody": true,
-  "discardResponseBody": false,
   "request": {
     "url": "http://example.com/inexistent.html",
     "method": "GET",
@@ -242,15 +237,14 @@ rawPackets.set(`XHR GET request update`, {
     "securityInfo"
   ],
   "totalTime": 1,
-  "securityState": "insecure"
+  "securityState": "insecure",
+  "isRacing": false
 });
 
 rawPackets.set(`XHR POST request`, {
   "resourceType": "network-event",
   "timeStamp": 1572867483805,
   "actor": "server0.conn0.netEvent36",
-  "discardRequestBody": true,
-  "discardResponseBody": false,
   "startedDateTime": "2019-11-04T11:06:35.007Z",
   "request": {
     "url": "http://example.com/inexistent.html",
@@ -299,15 +293,14 @@ rawPackets.set(`XHR POST request`, {
     "securityInfo"
   ],
   "totalTime": 1,
-  "securityState": "insecure"
+  "securityState": "insecure",
+  "isRacing": false
 });
 
 rawPackets.set(`XHR POST request update`, {
   "resourceType": "network-event",
   "timeStamp": 1572867483805,
   "actor": "server0.conn0.netEvent36",
-  "discardRequestBody": true,
-  "discardResponseBody": false,
   "request": {
     "url": "http://example.com/inexistent.html",
     "method": "POST",
@@ -355,7 +348,8 @@ rawPackets.set(`XHR POST request update`, {
     "securityInfo"
   ],
   "totalTime": 2,
-  "securityState": "insecure"
+  "securityState": "insecure",
+  "isRacing": false
 });
 
 

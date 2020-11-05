@@ -192,7 +192,12 @@ uint64_t HyperTextAccessible::NativeState() const {
     states |= states::READONLY;
   }
 
-  if (HasChildren()) states |= states::SELECTABLE_TEXT;
+  nsIFrame* frame = GetFrame();
+  if ((states & states::EDITABLE) || (frame && frame->IsSelectable(nullptr))) {
+    // If the accessible is editable the layout selectable state only disables
+    // mouse selection, but keyboard (shift+arrow) selection is still possible.
+    states |= states::SELECTABLE_TEXT;
+  }
 
   return states;
 }
@@ -819,14 +824,15 @@ uint32_t HyperTextAccessible::FindLineBoundary(
       // layout could not find the offset for us. This can happen with certain
       // inline-block elements.
       if (nextLineBeginOffset <= aOffset) {
-        // Walk back from the tmpOffset to the offset we started from,
+        // Walk forward from the offset we started from up to tmpOffset,
         // stopping after a line end character.
-        nextLineBeginOffset = tmpOffset;
-        while (nextLineBeginOffset >= aOffset &&
-               !IsLineEndCharAt(nextLineBeginOffset - 1)) {
-          nextLineBeginOffset--;
+        nextLineBeginOffset = aOffset;
+        while (nextLineBeginOffset < tmpOffset) {
+          if (IsLineEndCharAt(nextLineBeginOffset)) {
+            return nextLineBeginOffset + 1;
+          }
+          nextLineBeginOffset++;
         }
-        return nextLineBeginOffset;
       }
 
       return nextLineBeginOffset;

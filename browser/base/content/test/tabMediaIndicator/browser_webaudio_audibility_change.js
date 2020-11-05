@@ -38,21 +38,85 @@ add_task(
     await unmuteWebAudioByGainNode(tab);
     await waitForTabSoundIndicatorAppears(tab);
 
+    info(`sound indicator should disappear when closing web audio`);
+    await closeWebAudio(tab);
+    await waitForTabSoundIndicatorDisappears(tab);
+
     info("remove tab");
     BrowserTestUtils.removeTab(tab);
   }
 );
 
+add_task(async function testSoundIndicatorShouldDisappearAfterTabNavigation() {
+  info("create a tab loading media document");
+  const tab = await createBlankForegroundTab();
+
+  info(`sound indicator should appear when audible web audio starts playing`);
+  await Promise.all([
+    initWebAudioDocument(tab),
+    waitForTabSoundIndicatorAppears(tab),
+  ]);
+
+  info(`sound indicator should disappear after navigating tab to blank page`);
+  await Promise.all([
+    BrowserTestUtils.loadURI(tab.linkedBrowser, "about:blank"),
+    waitForTabSoundIndicatorDisappears(tab),
+  ]);
+
+  info("remove tab");
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(
+  async function testSoundIndicatorShouldDisappearAfterWebAudioBecomesSilent() {
+    info("create a tab loading media document");
+    const tab = await createBlankForegroundTab();
+
+    info(`sound indicator should appear when audible web audio starts playing`);
+    await Promise.all([
+      initWebAudioDocument(tab, { duration: 0.1 }),
+      waitForTabSoundIndicatorAppears(tab),
+    ]);
+
+    info(`sound indicator should disappear after web audio become silent`);
+    await waitForTabSoundIndicatorDisappears(tab);
+
+    info("remove tab");
+    BrowserTestUtils.removeTab(tab);
+  }
+);
+
+add_task(async function testNoSoundIndicatorWhenSimplyCreateAudioContext() {
+  info("create a tab loading media document");
+  const tab = await createBlankForegroundTab({ needObserver: true });
+
+  info(`sound indicator should not appear when simply create an AudioContext`);
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async _ => {
+    content.ac = new content.AudioContext();
+    while (content.ac.state != "running") {
+      info(`wait until web audio starts running`);
+      await new Promise(r => (content.ac.onstatechange = r));
+    }
+  });
+  ok(!tab.observer.hasEverUpdated(), "didn't ever update sound indicator");
+
+  info("remove tab");
+  BrowserTestUtils.removeTab(tab);
+});
+
 /**
  * Following are helper functions
  */
-function initWebAudioDocument(tab) {
-  return SpecialPowers.spawn(tab.linkedBrowser, [], async _ => {
+function initWebAudioDocument(tab, { duration } = {}) {
+  return SpecialPowers.spawn(tab.linkedBrowser, [duration], async duration => {
     content.ac = new content.AudioContext();
     const ac = content.ac;
     const dest = ac.destination;
     const source = new content.OscillatorNode(ac);
     source.start(ac.currentTime);
+    if (duration != undefined) {
+      source.stop(ac.currentTime + duration);
+    }
     // create a gain node for future muting/unmuting
     content.gainNode = ac.createGain();
     source.connect(content.gainNode);
@@ -73,6 +137,12 @@ function suspendWebAudio(tab) {
 function resumeWebAudio(tab) {
   return SpecialPowers.spawn(tab.linkedBrowser, [], async _ => {
     await content.ac.resume();
+  });
+}
+
+function closeWebAudio(tab) {
+  return SpecialPowers.spawn(tab.linkedBrowser, [], async _ => {
+    await content.ac.close();
   });
 }
 

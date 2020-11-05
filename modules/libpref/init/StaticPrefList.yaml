@@ -382,19 +382,24 @@
   value: 1.0f
   mirror: always
 
-- name: apz.fling_accel_interval_ms
-  type: RelaxedAtomicInt32
-  value: 500
-  mirror: always
-
 - name: apz.fling_accel_supplemental_mult
   type: AtomicFloat
   value: 1.0f
   mirror: always
 
-- name: apz.fling_accel_min_velocity
+- name: apz.fling_accel_min_fling_velocity
   type: AtomicFloat
   value: 1.5f
+  mirror: always
+
+- name: apz.fling_accel_min_pan_velocity
+  type: AtomicFloat
+  value: 0.8f
+  mirror: always
+
+- name: apz.fling_accel_max_pause_interval_ms
+  type: RelaxedAtomicInt32
+  value: 65
   mirror: always
 
 - name: apz.fling_curve_function_x1
@@ -7241,17 +7246,23 @@
 #endif # MOZ_WAYLAND
 #endif  # MOZ_FFMPEG
 
-#ifdef MOZ_FFVPX
 -   name: media.ffvpx.enabled
     type: RelaxedAtomicBool
+#ifdef MOZ_FFVPX
     value: true
+#else
+    value: false
+#endif
     mirror: always
 
 -   name: media.ffvpx.mp3.enabled
     type: RelaxedAtomicBool
+#ifdef MOZ_FFVPX
     value: true
-    mirror: always
+#else
+    value: false
 #endif
+    mirror: always
 
 # Set to true in marionette tests to disable the sanity test
 # which would lead to unnecessary start of the RDD process.
@@ -9160,6 +9171,14 @@
 - name: privacy.userInteraction.document.interval
   type: uint32_t
   value: 1800   # 30 minutes (in seconds)
+  mirror: always
+
+# Enable Anti-tracking testing. When it enables, it will notify the observers
+# when user-interaction permission or storage access permission is added. This
+# is for testing only.
+- name: privacy.antitracking.testing
+  type: bool
+  value: false
   mirror: always
 
 # Enable the heuristic to allow storage access for recent visited pages

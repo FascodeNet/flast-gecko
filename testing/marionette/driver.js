@@ -24,14 +24,16 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Capabilities: "chrome://marionette/content/capabilities.js",
   capture: "chrome://marionette/content/capture.js",
   ChromeWebElement: "chrome://marionette/content/element.js",
+  clearElementIdCache:
+    "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
   Context: "chrome://marionette/content/browser.js",
   cookie: "chrome://marionette/content/cookie.js",
   DebounceCallback: "chrome://marionette/content/sync.js",
   element: "chrome://marionette/content/element.js",
   error: "chrome://marionette/content/error.js",
   evaluate: "chrome://marionette/content/evaluate.js",
-  getMarionetteFrameActorProxy:
-    "chrome://marionette/content/actors/MarionetteFrameParent.jsm",
+  getMarionetteCommandsActorProxy:
+    "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
   IdlePromise: "chrome://marionette/content/sync.js",
   interaction: "chrome://marionette/content/interaction.js",
   l10n: "chrome://marionette/content/l10n.js",
@@ -369,18 +371,20 @@ GeckoDriver.prototype.sendAsync = function(name, data, commandID) {
 };
 
 /**
- * Get the current "MarionetteFrame" parent actor.
+ * Get the current "MarionetteCommands" parent actor.
  *
  * @param {Object} options
  * @param {boolean=} options.top
  *     If set to true use the window's top-level browsing context for the actor,
  *     otherwise the one from the currently selected frame. Defaults to false.
  *
- * @returns {MarionetteFrameParent}
+ * @returns {MarionetteCommandsParent}
  *     The parent actor.
  */
 GeckoDriver.prototype.getActor = function(options = {}) {
-  return getMarionetteFrameActorProxy(() => this.getBrowsingContext(options));
+  return getMarionetteCommandsActorProxy(() =>
+    this.getBrowsingContext(options)
+  );
 };
 
 /**
@@ -861,22 +865,16 @@ GeckoDriver.prototype.newSession = async function(cmd) {
   await browserListening;
 
   if (MarionettePrefs.useActors) {
-    // Register the JSWindowActor pair as used by Marionette
-    ChromeUtils.registerWindowActor("MarionetteFrame", {
+    // Register the JSWindowActor pair that holds all the commands.
+    ChromeUtils.registerWindowActor("MarionetteCommands", {
       kind: "JSWindowActor",
       parent: {
         moduleURI:
-          "chrome://marionette/content/actors/MarionetteFrameParent.jsm",
+          "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
       },
       child: {
         moduleURI:
-          "chrome://marionette/content/actors/MarionetteFrameChild.jsm",
-        events: {
-          beforeunload: { capture: true },
-          DOMContentLoaded: { mozSystemGroup: true },
-          pagehide: { mozSystemGroup: true },
-          pageshow: { mozSystemGroup: true },
-        },
+          "chrome://marionette/content/actors/MarionetteCommandsChild.jsm",
       },
 
       allFrames: true,
@@ -3018,17 +3016,9 @@ GeckoDriver.prototype.deleteSession = function() {
   }
 
   if (MarionettePrefs.useActors) {
-    if (this.getBrowsingContext()) {
-      try {
-        // reset any global state used by parent actor
-        this.getActor().cleanUp();
-      } catch (e) {
-        if (e.result != Cr.NS_ERROR_DOM_NOT_FOUND_ERR) {
-          throw e;
-        }
-      }
-    }
-    ChromeUtils.unregisterWindowActor("MarionetteFrame");
+    clearElementIdCache();
+
+    ChromeUtils.unregisterWindowActor("MarionetteCommands");
   }
 
   // reset to the top-most frame, and clear browsing context references

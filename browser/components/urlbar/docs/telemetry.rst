@@ -102,6 +102,10 @@ urlbar.tips
     Incremented when the user picks the update_web search intervention.
   - ``intervention_update_web-shown``
     Incremented when the update_web search intervention is shown.
+  - ``tabtosearch_onboard-shown``
+    Incremented when a tab-to-search onboarding result is shown. Please note
+    that the number of times tab-to-search onboarding results are picked is
+    the sum of all keys in ``urlbar.searchmode.tabtosearch_onboard``.
   - ``searchTip_onboard-picked``
     Incremented when the user picks the onboarding search tip.
   - ``searchTip_onboard-shown``
@@ -323,7 +327,7 @@ SEARCH_COUNTS
       Note there is often confusion between the terms alias and keyword, and
       they may be used inappropriately: aliases refer to search engines, while
       keywords refer to bookmarks. We expect no results for this SAP in Firefox
-      82+, since urlbar-searchmode replaces it.
+      83+, since urlbar-searchmode replaces it.
     - ``abouthome``
     - ``contextmenu``
     - ``newtab``

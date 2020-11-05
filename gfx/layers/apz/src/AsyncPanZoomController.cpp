@@ -251,17 +251,22 @@ typedef PlatformSpecificStateBase
  * generated displayport's size is beyond that of the scrollable rect on the
  * opposite axis.
  *
- * \li\b apz.fling_accel_interval_ms
- * The time that determines whether a second fling will be treated as
- * accelerated. If two flings are started within this interval, the second one
- * will be accelerated. Setting an interval of 0 means that acceleration will
- * be disabled.\n
- * Units: milliseconds
- *
- * \li\b apz.fling_accel_min_velocity
- * The minimum velocity of the second fling for it to be considered for fling
- * acceleration.
+ * \li\b apz.fling_accel_min_fling_velocity
+ * The minimum velocity of the second fling, and the minimum velocity of the
+ * previous fling animation at the point of interruption, for the new fling to
+ * be considered for fling acceleration.
  * Units: screen pixels per milliseconds
+ *
+ * \li\b apz.fling_accel_min_pan_velocity
+ * The minimum velocity during the pan gesture that causes a fling for that
+ * fling to be considered for fling acceleration.
+ * Units: screen pixels per milliseconds
+ *
+ * \li\b apz.fling_accel_max_pause_interval_ms
+ * The maximum time that is allowed to elapse between the touch start event that
+ * interrupts the previous fling, and the touch move that initiates panning for
+ * the current fling, for that fling to be considered for fling acceleration.
+ * Units: milliseconds
  *
  * \li\b apz.fling_accel_base_mult
  * \li\b apz.fling_accel_supplemental_mult
@@ -523,9 +528,8 @@ static uint32_t sAsyncPanZoomControllerCount = 0;
 AsyncPanZoomAnimation* PlatformSpecificStateBase::CreateFlingAnimation(
     AsyncPanZoomController& aApzc, const FlingHandoffState& aHandoffState,
     float aPLPPI) {
-  return new GenericFlingAnimation<DesktopFlingPhysics>(
-      aApzc, aHandoffState.mChain, aHandoffState.mIsHandoff,
-      aHandoffState.mScrolledApzc, aPLPPI);
+  return new GenericFlingAnimation<DesktopFlingPhysics>(aApzc, aHandoffState,
+                                                        aPLPPI);
 }
 
 UniquePtr<VelocityTracker> PlatformSpecificStateBase::CreateVelocityTracker(
@@ -856,9 +860,14 @@ bool AsyncPanZoomController::ArePointerEventsConsumable(
   bool pannableX = aBlock->TouchActionAllowsPanningX() &&
                    aBlock->GetOverscrollHandoffChain()->CanScrollInDirection(
                        this, ScrollDirection::eHorizontal);
-  bool pannableY = aBlock->TouchActionAllowsPanningY() &&
-                   aBlock->GetOverscrollHandoffChain()->CanScrollInDirection(
-                       this, ScrollDirection::eVertical);
+  bool pannableY =
+      (aBlock->TouchActionAllowsPanningY() &&
+       (aBlock->GetOverscrollHandoffChain()->CanScrollInDirection(
+            this, ScrollDirection::eVertical) ||
+        // In the case of the root APZC with any dynamic toolbar, it
+        // shoule be pannable if there is room moving the dynamic
+        // toolbar.
+        (IsRootContent() && CanScrollDownwardsWithDynamicToolbar())));
 
   bool pannable;
 
@@ -1252,6 +1261,7 @@ nsEventStatus AsyncPanZoomController::OnTouchStart(
             GetCurrentTouchBlock()->GetOverscrollHandoffChain()->CanBePanned(
                 this));
       }
+      mTouchStartTime = aEvent.mTimeStamp;
       SetState(TOUCHING);
       break;
     }
@@ -1304,11 +1314,11 @@ nsEventStatus AsyncPanZoomController::OnTouchMove(
         // ConsumeNoDefault status immediately to trigger cancel event further.
         // It should happen independent of the parent type (whether it is
         // scrolling or not).
-        StartPanning(extPoint);
+        StartPanning(extPoint, aEvent.mTimeStamp);
         return nsEventStatus_eConsumeNoDefault;
       }
 
-      return StartPanning(extPoint);
+      return StartPanning(extPoint, aEvent.mTimeStamp);
     }
 
     case PANNING:
@@ -1709,7 +1719,8 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(
     } else {
       // If zooming isn't allowed, StartTouch() was already called
       // in OnScaleBegin().
-      StartPanning(ToExternalPoint(aEvent.mScreenOffset, aEvent.mFocusPoint));
+      StartPanning(ToExternalPoint(aEvent.mScreenOffset, aEvent.mFocusPoint),
+                   aEvent.mTimeStamp);
     }
   } else {
     // Otherwise, handle the gesture being completely done.
@@ -1790,8 +1801,12 @@ nsEventStatus AsyncPanZoomController::HandleEndOfPan() {
   // which nulls out mTreeManager, could be called concurrently.
   if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
     const FlingHandoffState handoffState{
-        flingVelocity, GetCurrentInputBlock()->GetOverscrollHandoffChain(),
-        false /* not handoff */, GetCurrentInputBlock()->GetScrolledApzc()};
+        flingVelocity,
+        GetCurrentInputBlock()->GetOverscrollHandoffChain(),
+        Some(mTouchStartRestingTimeBeforePan),
+        mMinimumVelocityDuringPan.valueOr(0),
+        false /* not handoff */,
+        GetCurrentInputBlock()->GetScrolledApzc()};
     treeManagerLocal->DispatchFling(this, handoffState);
   }
   return nsEventStatus_eConsumeNoDefault;
@@ -2200,6 +2215,18 @@ bool AsyncPanZoomController::CanScroll(ScrollDirection aDirection) const {
   }
   MOZ_ASSERT_UNREACHABLE("Invalid value");
   return false;
+}
+
+bool AsyncPanZoomController::CanScrollDownwardsWithDynamicToolbar() const {
+  MOZ_ASSERT(IsRootContent());
+
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+  return mY.CanScrollDownwardsWithDynamicToolbar();
+}
+
+bool AsyncPanZoomController::CanScrollDownwards() const {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+  return mY.CanScrollTo(eSideBottom);
 }
 
 bool AsyncPanZoomController::IsContentOfHonouredTargetRightToLeft(
@@ -3119,7 +3146,7 @@ void AsyncPanZoomController::HandlePinchLocking(
 }
 
 nsEventStatus AsyncPanZoomController::StartPanning(
-    const ExternalPoint& aStartPoint) {
+    const ExternalPoint& aStartPoint, const TimeStamp& aEventTime) {
   ParentLayerPoint vector =
       ToParentLayerCoordinates(PanVector(aStartPoint), mStartTouch);
   double angle = atan2(vector.y, vector.x);  // range [-pi, pi]
@@ -3139,6 +3166,8 @@ nsEventStatus AsyncPanZoomController::StartPanning(
   if (IsInPanningState()) {
     mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
                                    (uint32_t)ScrollInputMethod::ApzTouch);
+    mTouchStartRestingTimeBeforePan = aEventTime - mTouchStartTime;
+    mMinimumVelocityDuringPan = Nothing();
 
     if (RefPtr<GeckoContentController> controller =
             GetGeckoContentController()) {
@@ -3460,8 +3489,9 @@ void AsyncPanZoomController::HandleFlingOverscroll(
     const RefPtr<const AsyncPanZoomController>& aScrolledApzc) {
   APZCTreeManager* treeManagerLocal = GetApzcTreeManager();
   if (treeManagerLocal) {
-    const FlingHandoffState handoffState{aVelocity, aOverscrollHandoffChain,
-                                         true /* handoff */, aScrolledApzc};
+    const FlingHandoffState handoffState{
+        aVelocity, aOverscrollHandoffChain, Nothing(),
+        0,         true /* handoff */,      aScrolledApzc};
     ParentLayerPoint residualVelocity =
         treeManagerLocal->DispatchFling(this, handoffState);
     FLING_LOG("APZC %p left with residual velocity %s\n", this,
@@ -3609,6 +3639,15 @@ void AsyncPanZoomController::TrackTouch(const MultiTouchInput& aEvent) {
   ParentLayerPoint touchPoint = GetFirstTouchPoint(aEvent);
 
   UpdateWithTouchAtDevicePoint(aEvent);
+
+  auto velocity = GetVelocityVector().Length();
+  if (mMinimumVelocityDuringPan) {
+    mMinimumVelocityDuringPan =
+        Some(std::min(*mMinimumVelocityDuringPan, velocity));
+  } else {
+    mMinimumVelocityDuringPan = Some(velocity);
+  }
+
   if (prevTouchPoint != touchPoint) {
     MOZ_ASSERT(GetCurrentTouchBlock());
     OverscrollHandoffState handoffState(
@@ -4740,6 +4779,14 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     if (!Metrics().GetCompositionBounds().IsEqualEdges(
             aLayerMetrics.GetCompositionBounds())) {
       Metrics().SetCompositionBounds(aLayerMetrics.GetCompositionBounds());
+      needToReclampScroll = true;
+    }
+
+    if (Metrics().IsRootContent() &&
+        Metrics().GetCompositionSizeWithoutDynamicToolbar() !=
+            aLayerMetrics.GetCompositionSizeWithoutDynamicToolbar()) {
+      Metrics().SetCompositionSizeWithoutDynamicToolbar(
+          aLayerMetrics.GetCompositionSizeWithoutDynamicToolbar());
       needToReclampScroll = true;
     }
     Metrics().SetRootCompositionSize(aLayerMetrics.GetRootCompositionSize());

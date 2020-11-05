@@ -2118,7 +2118,9 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
       mFocusedElement = nullptr;
       return true;
     }
-    if (element == mFirstBlurEvent) return true;
+    if (element == mFirstBlurEvent) {
+      return true;
+    }
   }
 
   RefPtr<BrowsingContext> focusedBrowsingContext = GetFocusedBrowsingContext();
@@ -2154,10 +2156,10 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
     return true;
   }
 
-  bool clearFirstBlurEvent = false;
+  Maybe<AutoRestore<RefPtr<Element>>> ar;
   if (!mFirstBlurEvent) {
+    ar.emplace(mFirstBlurEvent);
     mFirstBlurEvent = element;
-    clearFirstBlurEvent = true;
   }
 
   nsPresContext* focusedPresContext =
@@ -2328,8 +2330,6 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
     UpdateCaret(false, true, nullptr);
   }
 
-  if (clearFirstBlurEvent) mFirstBlurEvent = nullptr;
-
   return result;
 }
 
@@ -2394,10 +2394,10 @@ void nsFocusManager::Focus(nsPIDOMWindowOuter* aWindow, Element* aElement,
     return;
   }
 
-  bool clearFirstFocusEvent = false;
+  Maybe<AutoRestore<RefPtr<Element>>> ar;
   if (!mFirstFocusEvent) {
+    ar.emplace(mFirstFocusEvent);
     mFirstFocusEvent = aElement;
-    clearFirstFocusEvent = true;
   }
 
   LOGCONTENT("Element %s has been focused", aElement);
@@ -2573,10 +2573,6 @@ void nsFocusManager::Focus(nsPIDOMWindowOuter* aWindow, Element* aElement,
   if (mFocusedElement == aElement)
     UpdateCaret(aFocusChanged && !(aFlags & FLAG_BYMOUSE), aIsNewDocument,
                 mFocusedElement);
-
-  if (clearFirstFocusEvent) {
-    mFirstFocusEvent = nullptr;
-  }
 }
 
 class FocusBlurEvent : public Runnable {

@@ -4,7 +4,6 @@
 
 "use strict";
 
-const { gDevTools } = require("devtools/client/framework/devtools");
 const EventEmitter = require("devtools/shared/event-emitter");
 const Services = require("Services");
 const {
@@ -490,20 +489,31 @@ class WebConsoleUI {
       return;
     }
 
-    // Allow frame, but only in content toolbox, when the fission/content toolbox pref is
-    // set. i.e. still ignore them in the content of the browser toolbox as we inspect
-    // messages via the process targets
-    // Also ignore workers as they are not supported yet. (see bug 1592584)
-    const isContentToolbox = this.hud.targetList.targetFront.isLocalTab;
-    const listenForFrames =
-      isContentToolbox && gDevTools.isFissionContentToolboxEnabled();
-    if (
-      targetFront.targetType != this.hud.targetList.TYPES.PROCESS &&
-      (targetFront.targetType != this.hud.targetList.TYPES.FRAME ||
-        !listenForFrames)
-    ) {
+    // Allow frame, but only in content toolbox, i.e. still ignore them in
+    // the context of the browser toolbox as we inspect messages via the process targets
+    const listenForFrames = this.hud.targetList.targetFront.isLocalTab;
+
+    const { TYPES } = this.hud.targetList;
+    const isWorkerTarget =
+      targetFront.targetType == TYPES.WORKER ||
+      targetFront.targetType == TYPES.SHARED_WORKER ||
+      targetFront.targetType == TYPES.SERVICE_WORKER;
+
+    const acceptTarget =
+      // Unconditionally accept all process targets, this should only happens in the
+      // multiprocess browser toolbox/console
+      targetFront.targetType == TYPES.PROCESS ||
+      (targetFront.targetType == TYPES.FRAME && listenForFrames) ||
+      // Accept worker targets if the platform dispatching of worker messages to the main
+      // thread is disabled (e.g. we get them directly from the worker target).
+      (isWorkerTarget &&
+        !this.hud.targetList.rootFront.traits
+          .workerConsoleApiMessagesDispatchedToMainThread);
+
+    if (!acceptTarget) {
       return;
     }
+
     const proxy = new WebConsoleConnectionProxy(this, targetFront);
     this.additionalProxies.set(targetFront, proxy);
     await proxy.connect();

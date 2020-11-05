@@ -19,8 +19,10 @@ DevToolsModules(
     "fonts.js",
     "geometry-editor.js",
     "measuring-tool.js",
+    "node-tabbing-order.js",
     "paused-debugger.js",
     "rulers.js",
     "selector.js",
     "shapes.js",
+    "tabbing-order.js",
 )

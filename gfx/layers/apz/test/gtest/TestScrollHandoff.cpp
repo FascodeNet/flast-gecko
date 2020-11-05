@@ -138,7 +138,8 @@ class APZScrollHandoffTester : public APZCTreeManagerTester {
     // whether acceleration occured.
     const float kAcceleration = 100.0f;
     SCOPED_GFX_PREF_FLOAT("apz.fling_accel_base_mult", kAcceleration);
-    SCOPED_GFX_PREF_FLOAT("apz.fling_accel_min_velocity", 0.0);
+    SCOPED_GFX_PREF_FLOAT("apz.fling_accel_min_fling_velocity", 0.0);
+    SCOPED_GFX_PREF_FLOAT("apz.fling_accel_min_pan_velocity", 0.0);
 
     RefPtr<TestAsyncPanZoomController> childApzc = ApzcOf(layers[1]);
 
@@ -567,6 +568,12 @@ TEST_F(APZScrollHandoffTester, ScrollgrabFlingAcceleration1) {
   SCOPED_GFX_PREF_FLOAT("apz.fling_min_velocity_threshold", 0.0f);
   SCOPED_GFX_VAR(UseWebRender, bool, false);
   CreateScrollgrabLayerTree(true /* make parent scrollable */);
+
+  // Note: Usually, fling acceleration does not work across handoff, because our
+  // fling acceleration code does not propagate the "fling cancel velocity"
+  // across handoff. However, this test sets apz.fling_min_velocity_threshold to
+  // zero, so the "fling cancel velocity" is allowed to be zero, and fling
+  // acceleration succeeds, almost by accident.
   TestFlingAcceleration();
 }
 

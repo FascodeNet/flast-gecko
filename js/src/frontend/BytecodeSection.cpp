@@ -26,7 +26,6 @@ bool GCThingList::append(FunctionBox* funbox, GCThingIndex* index) {
   *index = GCThingIndex(vector.length());
 
   if (!vector.append(mozilla::AsVariant(funbox->index()))) {
-    js::ReportOutOfMemory(cx);
     return false;
   }
   return true;
@@ -53,13 +52,13 @@ mozilla::Maybe<ScopeIndex> GCThingList::getScopeIndex(size_t index) const {
   return mozilla::Some(vector[index].as<ScopeIndex>());
 }
 
-bool js::frontend::EmitScriptThingsVector(JSContext* cx,
-                                          CompilationInfo& compilationInfo,
-                                          CompilationGCOutput& gcOutput,
-                                          const ScriptThingsVector& objects,
-                                          mozilla::Span<JS::GCCellPtr> output) {
-  MOZ_ASSERT(objects.length() <= INDEX_LIMIT);
-  MOZ_ASSERT(objects.length() == output.size());
+bool js::frontend::EmitScriptThingsVector(
+    JSContext* cx, CompilationInfo& compilationInfo,
+    CompilationGCOutput& gcOutput,
+    mozilla::Span<const ScriptThingVariant> things,
+    mozilla::Span<JS::GCCellPtr> output) {
+  MOZ_ASSERT(things.size() <= INDEX_LIMIT);
+  MOZ_ASSERT(things.size() == output.size());
 
   struct Matcher {
     JSContext* cx;
@@ -93,7 +92,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
 
     bool operator()(const RegExpIndex& rindex) {
       RegExpStencil& data = stencil.regExpData[rindex];
-      RegExpObject* regexp = data.createRegExp(cx);
+      RegExpObject* regexp = data.createRegExp(cx, atomCache);
       if (!regexp) {
         return false;
       }
@@ -128,14 +127,14 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
   };
 
-  for (uint32_t i = 0; i < objects.length(); i++) {
+  for (uint32_t i = 0; i < things.size(); i++) {
     Matcher m{cx,
               compilationInfo.input.atomCache,
               compilationInfo.stencil,
               gcOutput,
               i,
               output};
-    if (!objects[i].match(m)) {
+    if (!things[i].match(m)) {
       return false;
     }
   }

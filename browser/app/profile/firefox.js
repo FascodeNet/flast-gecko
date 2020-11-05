@@ -1340,6 +1340,8 @@ pref("browser.topsites.useRemoteSetting", false);
 
 pref("browser.partnerlink.attributionURL", "https://topsites.services.mozilla.com/cid/amzn_2020_a1");
 
+pref("browser.partnerlink.useAttributionURL", false);
+
 // Whether to show tab level system prompts opened via nsIPrompt(Service) as
 // SubDialogs in the TabDialogBox (true) or as TabModalPrompt in the
 // TabModalPromptBox (false).
@@ -2089,13 +2091,6 @@ pref("devtools.browsertoolbox.fission", true);
 #else
 pref("devtools.browsertoolbox.fission", false);
 #endif
-
-// The fission pref for enabling Fission frame debugging directly from the
-// regular web/content toolbox.
-// When set to true, the toolbox will start showing content from remote frames
-// if (and only if) fission.autostart is also set to true.
-// When set to false, the toolbox should not show content from remote frames.
-pref("devtools.contenttoolbox.fission", true);
 
 // This pref is also related to fission, but not only. It allows the toolbox
 // to stay open even if the debugged tab switches to another process.

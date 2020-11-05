@@ -11,17 +11,15 @@ const {
 module.exports = async function({
   targetList,
   targetFront,
-  isFissionEnabledOnContentToolbox,
   onAvailable,
   onUpdated,
 }) {
   // Allow the top level target unconditionnally.
-  // Also allow frame, but only in content toolbox, when the fission/content toolbox pref is
-  // set. i.e. still ignore them in the content of the browser toolbox as we inspect
-  // messages via the process targets
+  // Also allow frame, but only in content toolbox, i.e. still ignore them in
+  // the context of the browser toolbox as we inspect messages via the process
+  // targets
   // Also ignore workers as they are not supported yet. (see bug 1592584)
-  const isContentToolbox = targetList.targetFront.isLocalTab;
-  const listenForFrames = isContentToolbox && isFissionEnabledOnContentToolbox;
+  const listenForFrames = targetList.targetFront.isLocalTab;
   const isAllowed =
     targetFront.isTopLevel ||
     targetFront.targetType === targetList.TYPES.PROCESS ||
@@ -41,8 +39,6 @@ module.exports = async function({
       resourceType: ResourceWatcher.TYPES.NETWORK_EVENT,
       timeStamp: actor.timeStamp,
       actor: actor.actor,
-      discardRequestBody: true,
-      discardResponseBody: true,
       startedDateTime: actor.startedDateTime,
       request: {
         url: actor.url,
@@ -94,7 +90,6 @@ module.exports = async function({
         });
         break;
       case "requestPostData":
-        resourceUpdates.discardRequestBody = packet.discardRequestBody;
         resourceUpdates.request = Object.assign({}, resource.request, {
           bodySize: packet.dataSize,
         });
@@ -112,11 +107,8 @@ module.exports = async function({
           },
           waitingTime: packet.response.waitingTime,
         });
-        resourceUpdates.discardResponseBody =
-          packet.response.discardResponseBody;
         break;
       case "responseContent":
-        resourceUpdates.discardResponseBody = packet.discardResponseBody;
         resourceUpdates.response = Object.assign({}, resource.response, {
           bodySize: packet.contentSize,
           transferredSize: packet.transferredSize,
@@ -128,6 +120,7 @@ module.exports = async function({
         break;
       case "securityInfo":
         resourceUpdates.securityState = packet.state;
+        resourceUpdates.isRacing = packet.isRacing;
         break;
       case "responseCache":
         resourceUpdates.response = Object.assign({}, resource.response, {

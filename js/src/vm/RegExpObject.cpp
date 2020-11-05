@@ -18,8 +18,8 @@
 #include "gc/HashUtil.h"
 #include "irregexp/RegExpAPI.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"  // js::ReportOverRecursed
-#include "js/Object.h"              // JS::GetBuiltinClass
+#include "js/friend/StackLimits.h"    // js::ReportOverRecursed
+#include "js/Object.h"                // JS::GetBuiltinClass
 #include "js/RegExp.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
 #include "js/StableStringChars.h"
@@ -250,19 +250,6 @@ RegExpObject* RegExpObject::create(JSContext* cx, HandleAtom source,
   if (!irregexp::CheckPatternSyntax(cx, tokenStream, source, flags)) {
     return nullptr;
   }
-  return createSyntaxChecked(cx, source, flags, newKind);
-}
-
-RegExpObject* RegExpObject::createSyntaxChecked(JSContext* cx,
-                                                const char16_t* chars,
-                                                size_t length,
-                                                RegExpFlags flags,
-                                                NewObjectKind newKind) {
-  RootedAtom source(cx, AtomizeChars(cx, chars, length));
-  if (!source) {
-    return nullptr;
-  }
-
   return createSyntaxChecked(cx, source, flags, newKind);
 }
 
