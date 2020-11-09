@@ -843,7 +843,6 @@ already_AddRefed<ContentParent> ContentParent::MinTabSelect(
   for (uint32_t i = 0; i < maxSelectable; i++) {
     ContentParent* p = aContentParents[i];
     MOZ_DIAGNOSTIC_ASSERT(!p->IsDead());
-    MOZ_DIAGNOSTIC_ASSERT(!p->mShutdownPending);
 
     uint32_t tabCount = cpm->GetBrowserParentCountByProcessId(p->ChildID());
     if (tabCount < min) {
@@ -1135,32 +1134,23 @@ RefPtr<ContentParent::LaunchPromise> ContentParent::WaitForLaunchAsync(
   // We've started an async content process launch.
   Telemetry::Accumulate(Telemetry::CONTENT_PROCESS_LAUNCH_IS_SYNC, 0);
 
-  // We have located a process that hasn't finished initializing. Let's race
-  // against whoever launched it (and whoever else is already racing). Once
-  // the race is complete, the winner will finish the initialization.
+  // We have located a process that hasn't finished initializing, then attempt
+  // to finish initializing. Both `LaunchSubprocessResolve` and
+  // `LaunchSubprocessReject` are safe to call multiple times if we race with
+  // other `WaitForLaunchAsync` callbacks.
   return mSubprocess->WhenProcessHandleReady()->Then(
       GetCurrentSerialEventTarget(), __func__,
-      // On resolve.
-      [self = RefPtr{this}, aPriority]() {
-        if (self->IsLaunching()) {
-          if (!self->LaunchSubprocessResolve(/* aIsSync = */ false,
-                                             aPriority)) {
-            self->LaunchSubprocessReject();
-            return LaunchPromise::CreateAndReject(LaunchError(), __func__);
-          }
+      [self = RefPtr{this}, aPriority] {
+        if (self->LaunchSubprocessResolve(/* aIsSync = */ false, aPriority)) {
           self->mActivateTS = TimeStamp::Now();
-        } else if (self->IsDead()) {
-          // This could happen if we're racing against a sync launch and it
-          // failed.
-          return LaunchPromise::CreateAndReject(LaunchError(), __func__);
+          return LaunchPromise::CreateAndResolve(self, __func__);
         }
-        return LaunchPromise::CreateAndResolve(self, __func__);
+
+        self->LaunchSubprocessReject();
+        return LaunchPromise::CreateAndReject(LaunchError(), __func__);
       },
-      // On reject.
-      [self = RefPtr{this}]() {
-        if (self->IsLaunching()) {
-          self->LaunchSubprocessReject();
-        }
+      [self = RefPtr{this}] {
+        self->LaunchSubprocessReject();
         return LaunchPromise::CreateAndReject(LaunchError(), __func__);
       });
 }
@@ -1227,7 +1217,7 @@ void ContentParent::SendAsyncUpdate(nsIWidget* aWidget) {
   NS_ASSERTION(hwnd, "Expected valid hwnd value.");
   ContentParent* cp = reinterpret_cast<ContentParent*>(
       ::GetPropW(hwnd, kPluginWidgetContentParentProperty));
-  if (cp && !cp->IsDestroyed()) {
+  if (cp && cp->CanSend()) {
     Unused << cp->SendUpdateWindow((uintptr_t)hwnd);
   }
 }
@@ -1598,15 +1588,18 @@ void ContentParent::MaybeAsyncSendShutDownMessage() {
 }
 
 void ContentParent::ShutDownProcess(ShutDownMethod aMethod) {
+  // NB: must MarkAsDead() here so that this isn't accidentally
+  // returned from Get*() while in the midst of shutdown.
+  MarkAsDead();
+
   // Shutting down by sending a shutdown message works differently than the
   // other methods. We first call Shutdown() in the child. After the child is
   // ready, it calls FinishShutdown() on us. Then we close the channel.
   if (aMethod == SEND_SHUTDOWN_MESSAGE) {
-    if (mIPCOpen && !mShutdownPending) {
+    if (CanSend() && !mShutdownPending) {
       // Stop sending input events with input priority when shutting down.
       SetInputPriorityEventEnabled(false);
       if (SendShutdown()) {
-        RemoveFromList();
         mShutdownPending = true;
         // Start the force-kill timer if we haven't already.
         StartForceKillTimer();
@@ -1641,10 +1634,6 @@ void ContentParent::ShutDownProcess(ShutDownMethod aMethod) {
             iter.Get()->GetKey());
     ocuParent->StopSendingMessagesToChild();
   }
-
-  // NB: must MarkAsDead() here so that this isn't accidentally
-  // returned from Get*() while in the midst of shutdown.
-  MarkAsDead();
 
   // A ContentParent object might not get freed until after XPCOM shutdown has
   // shut down the cycle collector.  But by then it's too late to release any
@@ -1712,10 +1701,7 @@ void ContentParent::AssertNotInPool() {
   }
 }
 
-void ContentParent::AssertAlive() {
-  MOZ_DIAGNOSTIC_ASSERT(!IsDead());
-  MOZ_DIAGNOSTIC_ASSERT(!mShutdownPending);
-}
+void ContentParent::AssertAlive() { MOZ_DIAGNOSTIC_ASSERT(!IsDead()); }
 
 void ContentParent::RemoveFromList() {
   if (IsForJSPlugin()) {
@@ -1770,9 +1756,7 @@ void ContentParent::MarkAsDead() {
   MOZ_LOG(ContentParent::GetLog(), LogLevel::Verbose,
           ("Marking ContentProcess %p as dead", this));
   MOZ_DIAGNOSTIC_ASSERT(!sInProcessSelector);
-  if (!mShutdownPending) {
-    RemoveFromList();
-  }
+  RemoveFromList();
 
   PreallocatedProcessManager::Erase(this);
 
@@ -1836,8 +1820,6 @@ void ContentParent::ActorDestroy(ActorDestroyReason why) {
 
   // Signal shutdown completion regardless of error state, so we can
   // finish waiting in the xpcom-shutdown/profile-before-change observer.
-  mIPCOpen = false;
-
   RemoveShutdownBlockers();
 
   if (mHangMonitorActor) {
@@ -2017,7 +1999,7 @@ bool ContentParent::TryToRecycle() {
       ("TryToRecycle ContentProcess %p (%u) with lifespan %f seconds", this,
        (unsigned int)ChildID(), (TimeStamp::Now() - mActivateTS).ToSeconds()));
 
-  if (mShutdownPending || mCalledKillHard || !IsAlive() ||
+  if (mCalledKillHard || !IsAlive() ||
       (TimeStamp::Now() - mActivateTS).ToSeconds() > kMaxLifeSpan) {
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
             ("TryToRecycle did not recycle %p", this));
@@ -2088,8 +2070,12 @@ bool ContentParent::ShouldKeepProcessAlive() {
     return true;
   }
 
+  if (IsLaunching()) {
+    return true;
+  }
+
   // If we have already been marked as dead, don't prevent shutdown.
-  if (!IsAlive()) {
+  if (IsDead()) {
     return false;
   }
 
@@ -2162,7 +2148,7 @@ void ContentParent::RemoveKeepAlive() {
 }
 
 void ContentParent::StartForceKillTimer() {
-  if (mForceKillTimer || !mIPCOpen) {
+  if (mForceKillTimer || !CanSend()) {
     return;
   }
 
@@ -2407,6 +2393,18 @@ void ContentParent::LaunchSubprocessReject() {
 bool ContentParent::LaunchSubprocessResolve(bool aIsSync,
                                             ProcessPriority aPriority) {
   AUTO_PROFILER_LABEL("ContentParent::LaunchSubprocess::resolve", OTHER);
+
+  // Take the pending IPC channel. This channel will be used to open the raw IPC
+  // connection between this process and the launched content process.
+  UniquePtr<IPC::Channel> channel = mSubprocess->TakeChannel();
+  if (!channel) {
+    // We don't have a channel, so this method must've been called already.
+    MOZ_ASSERT(sCreatedFirstContentProcess);
+    MOZ_ASSERT(!mPrefSerializer);
+    MOZ_ASSERT(mLifecycleState != LifecycleState::LAUNCHING);
+    return true;
+  }
+
   // Now that communication with the child is complete, we can cleanup
   // the preference serializer.
   mPrefSerializer = nullptr;
@@ -2431,7 +2429,7 @@ bool ContentParent::LaunchSubprocessResolve(bool aIsSync,
 
   base::ProcessId procId =
       base::GetProcId(mSubprocess->GetChildProcessHandle());
-  Open(mSubprocess->TakeChannel(), procId);
+  Open(std::move(channel), procId);
 
   ContentProcessManager::GetSingleton()->AddContentProcess(this);
 
@@ -2440,7 +2438,16 @@ bool ContentParent::LaunchSubprocessResolve(bool aIsSync,
       CodeCoverageHandler::Get()->GetMutexHandle(procId));
 #endif
 
+  // We must be in the LAUNCHING state still. If we've somehow already been
+  // marked as DEAD, fail the process launch, and immediately begin tearing down
+  // the content process.
+  if (IsDead()) {
+    ShutDownProcess(SEND_SHUTDOWN_MESSAGE);
+    return false;
+  }
+  MOZ_ASSERT(mLifecycleState == LifecycleState::LAUNCHING);
   mLifecycleState = LifecycleState::ALIVE;
+
   if (!InitInternal(aPriority)) {
     NS_WARNING("failed to initialize child in the parent");
     // We've already called Open() by this point, so we need to close the
@@ -2548,7 +2555,6 @@ ContentParent::ContentParent(const nsACString& aRemoteType, int32_t aJSPluginID)
       mCalledKillHard(false),
       mCreatedPairedMinidumps(false),
       mShutdownPending(false),
-      mIPCOpen(true),
       mIsRemoteInputEventQueueEnabled(false),
       mIsInputPriorityEventEnabled(false),
       mIsInPool(false),
@@ -3098,7 +3104,7 @@ bool ContentParent::IsInputEventQueueSupported() {
 }
 
 void ContentParent::OnVarChanged(const GfxVarUpdate& aVar) {
-  if (!mIPCOpen) {
+  if (!CanSend()) {
     return;
   }
   Unused << SendVarUpdate(aVar);

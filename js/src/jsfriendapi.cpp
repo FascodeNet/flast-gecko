@@ -21,6 +21,7 @@
 #include "gc/WeakMap.h"
 #include "js/CharacterEncoding.h"
 #include "js/experimental/CodeCoverage.h"
+#include "js/experimental/CTypes.h"  // JS::AutoCTypesActivityCallback, JS::SetCTypesActivityCallback
 #include "js/experimental/Intl.h"  // JS::Add{,Moz}DisplayNamesConstructor, JS::AddMozDateTimeFormatConstructor
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // JS_STACK_GROWTH_DIRECTION
@@ -737,14 +738,13 @@ JS_FRIEND_API void js::SetScriptEnvironmentPreparer(
   cx->runtime()->scriptEnvironmentPreparer = preparer;
 }
 
-JS_FRIEND_API void js::SetCTypesActivityCallback(JSContext* cx,
+JS_FRIEND_API void JS::SetCTypesActivityCallback(JSContext* cx,
                                                  CTypesActivityCallback cb) {
   cx->runtime()->ctypesActivityCallback = cb;
 }
 
-js::AutoCTypesActivityCallback::AutoCTypesActivityCallback(
-    JSContext* cx, js::CTypesActivityType beginType,
-    js::CTypesActivityType endType)
+JS::AutoCTypesActivityCallback::AutoCTypesActivityCallback(
+    JSContext* cx, CTypesActivityType beginType, CTypesActivityType endType)
     : cx(cx),
       callback(cx->runtime()->ctypesActivityCallback),
       endType(endType) {

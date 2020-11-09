@@ -66,6 +66,7 @@
 #include "MediaEngineDefault.h"
 #if defined(MOZ_WEBRTC)
 #  include "MediaEngineWebRTC.h"
+#  include "MediaEngineWebRTCAudio.h"
 #  include "browser_logging/WebRtcLog.h"
 #  include "webrtc/modules/audio_processing/include/audio_processing.h"
 #endif
@@ -1123,7 +1124,7 @@ nsresult MediaDevice::Allocate(const MediaTrackConstraints& aConstraints,
   return mSource->Allocate(aConstraints, aPrefs, aWindowID, aOutBadConstraint);
 }
 
-void MediaDevice::SetTrack(const RefPtr<SourceMediaTrack>& aTrack,
+void MediaDevice::SetTrack(const RefPtr<MediaTrack>& aTrack,
                            const PrincipalHandle& aPrincipalHandle) {
   MOZ_ASSERT(MediaManager::IsInMediaThread());
   MOZ_ASSERT(mSource);
@@ -1287,7 +1288,17 @@ class GetUserMediaStreamRunnable : public Runnable {
       } else {
         nsString audioDeviceName;
         mAudioDevice->GetName(audioDeviceName);
-        RefPtr<MediaTrack> track = mtg->CreateSourceTrack(MediaSegment::AUDIO);
+        RefPtr<MediaTrack> track;
+#ifdef MOZ_WEBRTC
+        if (mAudioDevice->mIsFake) {
+          track = mtg->CreateSourceTrack(MediaSegment::AUDIO);
+        } else {
+          track = AudioInputTrack::Create(mtg);
+          track->Suspend();  // Microphone source resumes in SetTrack
+        }
+#else
+        track = mtg->CreateSourceTrack(MediaSegment::AUDIO);
+#endif
         audioTrackSource = new LocalTrackSource(
             principal, audioDeviceName, mSourceListener,
             mAudioDevice->GetMediaSource(), track, mPeerIdentity);
@@ -4166,25 +4177,25 @@ SourceListener::InitializeAsync() {
              [principal = GetPrincipalHandle(),
               audioDevice =
                   mAudioDeviceState ? mAudioDeviceState->mDevice : nullptr,
-              audioStream = mAudioDeviceState
-                                ? mAudioDeviceState->mTrackSource->mTrack
-                                : nullptr,
+              audioTrack = mAudioDeviceState
+                               ? mAudioDeviceState->mTrackSource->mTrack
+                               : nullptr,
               audioDeviceMuted =
                   mAudioDeviceState ? mAudioDeviceState->mDeviceMuted : false,
               videoDevice =
                   mVideoDeviceState ? mVideoDeviceState->mDevice : nullptr,
-              videoStream = mVideoDeviceState
-                                ? mVideoDeviceState->mTrackSource->mTrack
-                                : nullptr,
+              videoTrack = mVideoDeviceState
+                               ? mVideoDeviceState->mTrackSource->mTrack
+                               : nullptr,
               videoDeviceMuted =
                   mVideoDeviceState ? mVideoDeviceState->mDeviceMuted : false](
                  MozPromiseHolder<SourceListenerPromise>& aHolder) {
                if (audioDevice) {
-                 audioDevice->SetTrack(audioStream->AsSourceTrack(), principal);
+                 audioDevice->SetTrack(audioTrack, principal);
                }
 
                if (videoDevice) {
-                 videoDevice->SetTrack(videoStream->AsSourceTrack(), principal);
+                 videoDevice->SetTrack(videoTrack, principal);
                }
 
                if (audioDevice) {

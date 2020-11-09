@@ -418,17 +418,17 @@ struct ReflowInput : public SizeComputationInput {
     return nsSize(ComputedWidth(), ComputedHeight());
   }
 
-  // XXX this will need to change when we make mComputedOffsets logical;
-  // we won't be able to return a reference for the physical offsets
-  const nsMargin& ComputedPhysicalOffsets() const { return mComputedOffsets; }
-  nsMargin& ComputedPhysicalOffsets() { return mComputedOffsets; }
-
-  const LogicalMargin ComputedLogicalOffsets() const {
-    return LogicalMargin(mWritingMode, mComputedOffsets);
+  nsMargin ComputedPhysicalOffsets() const {
+    return mComputedOffsets.GetPhysicalMargin(mWritingMode);
   }
 
-  void SetComputedLogicalOffsets(const LogicalMargin& aOffsets) {
-    mComputedOffsets = aOffsets.GetPhysicalMargin(mWritingMode);
+  LogicalMargin ComputedLogicalOffsets(mozilla::WritingMode aWM) const {
+    return mComputedOffsets.ConvertTo(aWM, mWritingMode);
+  }
+
+  void SetComputedLogicalOffsets(mozilla::WritingMode aWM,
+                                 const LogicalMargin& aOffsets) {
+    mComputedOffsets = aOffsets.ConvertTo(mWritingMode, aWM);
   }
 
   // Return the state's computed size including border-padding, with
@@ -492,9 +492,9 @@ struct ReflowInput : public SizeComputationInput {
   MOZ_INIT_OUTSIDE_CTOR
   nscoord mComputedHeight;
 
-  // Computed values for 'left/top/right/bottom' offsets. Only applies to
-  // 'positioned' elements. These are PHYSICAL coordinates (for now).
-  nsMargin mComputedOffsets;
+  // Computed values for 'inset' properties. Only applies to 'positioned'
+  // elements.
+  mozilla::LogicalMargin mComputedOffsets{mWritingMode};
 
   // Computed values for 'min-width/max-width' and 'min-height/max-height'
   // XXXldb The width ones here should go; they should be needed only
@@ -507,7 +507,7 @@ struct ReflowInput : public SizeComputationInput {
 
  public:
   // Our saved containing block dimensions.
-  LogicalSize mContainingBlockSize = LogicalSize(mWritingMode);
+  LogicalSize mContainingBlockSize{mWritingMode};
 
   // Cached pointers to the various style structs used during initialization.
   const nsStyleDisplay* mStyleDisplay = nullptr;
@@ -940,9 +940,11 @@ struct ReflowInput : public SizeComputationInput {
   }
 
   // Compute the offsets for a relative position element
-  static void ComputeRelativeOffsets(mozilla::WritingMode aWM, nsIFrame* aFrame,
-                                     const mozilla::LogicalSize& aCBSize,
-                                     nsMargin& aComputedOffsets);
+  //
+  // @param aWM the writing mode of aCBSize and the returned offsets.
+  static mozilla::LogicalMargin ComputeRelativeOffsets(
+      mozilla::WritingMode aWM, nsIFrame* aFrame,
+      const mozilla::LogicalSize& aCBSize);
 
   // If a relatively positioned element, adjust the position appropriately.
   static void ApplyRelativePositioning(nsIFrame* aFrame,
@@ -960,8 +962,9 @@ struct ReflowInput : public SizeComputationInput {
 
   void ApplyRelativePositioning(mozilla::LogicalPoint* aPosition,
                                 const nsSize& aContainerSize) const {
-    ApplyRelativePositioning(mFrame, mWritingMode, ComputedLogicalOffsets(),
-                             aPosition, aContainerSize);
+    ApplyRelativePositioning(mFrame, mWritingMode,
+                             ComputedLogicalOffsets(mWritingMode), aPosition,
+                             aContainerSize);
   }
 
 #ifdef DEBUG

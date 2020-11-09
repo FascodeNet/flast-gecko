@@ -300,11 +300,6 @@ extern JS_FRIEND_API void IterateGrayObjects(
 extern JS_FRIEND_API bool CheckGrayMarkingState(JSRuntime* rt);
 #endif
 
-#ifdef JS_HAS_CTYPES
-extern JS_FRIEND_API size_t
-SizeOfDataIfCDataObject(mozilla::MallocSizeOf mallocSizeOf, JSObject* obj);
-#endif
-
 // Note: this returns nullptr iff |zone| is the atoms zone.
 extern JS_FRIEND_API JS::Realm* GetAnyRealmInZone(JS::Zone* zone);
 
@@ -647,40 +642,6 @@ extern JS_FRIEND_API void PrepareScriptEnvironmentAndInvoke(
 
 JS_FRIEND_API void SetScriptEnvironmentPreparer(
     JSContext* cx, ScriptEnvironmentPreparer* preparer);
-
-enum CTypesActivityType {
-  CTYPES_CALL_BEGIN,
-  CTYPES_CALL_END,
-  CTYPES_CALLBACK_BEGIN,
-  CTYPES_CALLBACK_END
-};
-
-using CTypesActivityCallback = void (*)(JSContext*, CTypesActivityType);
-
-/**
- * Sets a callback that is run whenever js-ctypes is about to be used when
- * calling into C.
- */
-JS_FRIEND_API void SetCTypesActivityCallback(JSContext* cx,
-                                             CTypesActivityCallback cb);
-
-class MOZ_RAII JS_FRIEND_API AutoCTypesActivityCallback {
- private:
-  JSContext* cx;
-  CTypesActivityCallback callback;
-  CTypesActivityType endType;
-
- public:
-  AutoCTypesActivityCallback(JSContext* cx, CTypesActivityType beginType,
-                             CTypesActivityType endType);
-  ~AutoCTypesActivityCallback() { DoEndCallback(); }
-  void DoEndCallback() {
-    if (callback) {
-      callback(cx, endType);
-      callback = nullptr;
-    }
-  }
-};
 
 // Abstract base class for objects that build allocation metadata for JavaScript
 // values.

@@ -81,7 +81,7 @@ var StarUI = {
       case "popuphidden": {
         clearTimeout(this._autoCloseTimer);
         if (aEvent.originalTarget == this.panel) {
-          let selectedFolderGuid = gEditItemOverlay.selectedFolderGuid;
+          let { selectedFolderGuid, didChangeFolder } = gEditItemOverlay;
           gEditItemOverlay.uninitPanel(true);
 
           this._anchorElement.removeAttribute("open");
@@ -111,9 +111,10 @@ var StarUI = {
           }
 
           if (!removeBookmarksOnPopupHidden) {
-            this._storeRecentlyUsedFolder(selectedFolderGuid).catch(
-              console.error
-            );
+            this._storeRecentlyUsedFolder(
+              selectedFolderGuid,
+              didChangeFolder
+            ).catch(console.error);
           }
         }
         break;
@@ -382,12 +383,21 @@ var StarUI = {
     this._batching = false;
   },
 
-  async _storeRecentlyUsedFolder(selectedFolderGuid) {
-    // These are displayed by default, so don't save the folder for them.
-    if (
-      !selectedFolderGuid ||
-      PlacesUtils.bookmarks.userContentRoots.includes(selectedFolderGuid)
-    ) {
+  async _storeRecentlyUsedFolder(selectedFolderGuid, didChangeFolder) {
+    if (!selectedFolderGuid) {
+      return;
+    }
+
+    // If we're changing where a bookmark gets saved, persist that location.
+    if (didChangeFolder) {
+      Services.prefs.setCharPref(
+        "browser.bookmarks.defaultLocation",
+        selectedFolderGuid
+      );
+    }
+
+    // Don't store folders that are always displayed in "Recent Folders".
+    if (PlacesUtils.bookmarks.userContentRoots.includes(selectedFolderGuid)) {
       return;
     }
 
@@ -468,7 +478,9 @@ var PlacesCommandHook = {
     let isNewBookmark = !info;
     let showEditUI = !isNewBookmark || StarUI.showForNewBookmarks;
     if (isNewBookmark) {
-      let parentGuid = PlacesUtils.bookmarks.unfiledGuid;
+      // This is async because we have to validate the guid
+      // coming from prefs.
+      let parentGuid = await PlacesUIUtils.defaultParentGuid;
       info = { url, parentGuid };
       // Bug 1148838 - Make this code work for full page plugins.
       let charset = null;
@@ -540,9 +552,11 @@ var PlacesCommandHook = {
       return;
     }
 
+    let parentGuid = await PlacesUIUtils.defaultParentGuid;
+    let parentId = await PlacesUtils.promiseItemId(parentGuid);
     let defaultInsertionPoint = new PlacesInsertionPoint({
-      parentId: PlacesUtils.bookmarksMenuFolderId,
-      parentGuid: PlacesUtils.bookmarks.menuGuid,
+      parentId,
+      parentGuid,
     });
     PlacesUIUtils.showBookmarkDialog(
       {
@@ -1574,6 +1588,12 @@ var BookmarkingUI = {
     menu.setAttribute("id", "toggle_" + toolbar.id);
     menu.setAttribute("accesskey", toolbar.getAttribute("accesskey"));
     menu.setAttribute("toolbarId", toolbar.id);
+
+    // Used by the Places context menu in the Bookmarks Toolbar
+    // when nothing is selected
+    menu.setAttribute("selectiontype", "none");
+
+    MozXULElement.insertFTLIfNeeded("browser/toolbarContextMenu.ftl");
     let menuItems = [
       [
         showOnNewTabMenuItem,
@@ -1619,22 +1639,21 @@ var BookmarkingUI = {
   },
 
   bookmarksToolbarHasVisibleChildren() {
-    let bookmarksToolbarWidgets = CustomizableUI.getWidgetsInArea(
-      CustomizableUI.AREA_BOOKMARKS
+    let bookmarksToolbarItemsPlacement = CustomizableUI.getPlacementOfWidget(
+      "personal-bookmarks"
     );
 
-    const BOOKMARKS_TOOLBAR_ITEMS_ID = "personal-bookmarks";
     if (
-      bookmarksToolbarWidgets.find(w => w.id == BOOKMARKS_TOOLBAR_ITEMS_ID) &&
+      bookmarksToolbarItemsPlacement.area == CustomizableUI.AREA_BOOKMARKS &&
       PlacesUtils.getChildCountForFolder(PlacesUtils.bookmarks.toolbarGuid)
     ) {
       return true;
     }
 
-    // The bookmarks items may not have any children, but if there are
-    // other widgets present then treat them as visible.
-    return bookmarksToolbarWidgets.some(
-      w => w.id != BOOKMARKS_TOOLBAR_ITEMS_ID
+    let bookmarksToolbar = document.getElementById("PersonalToolbar");
+    return !!bookmarksToolbar.querySelector(
+      `#PersonalToolbar > toolbarbutton:not([hidden]),
+       #PersonalToolbar > toolbaritem:not([hidden]):not(#personal-bookmarks)`
     );
   },
 
@@ -2292,6 +2311,7 @@ var BookmarkingUI = {
       let result = PlacesUtils.getFolderContents(unfiledGuid);
       let node = result.root;
       otherBookmarksPopup._placesNode = PlacesUtils.asContainer(node);
+      otherBookmarks._placesNode = PlacesUtils.asContainer(node);
 
       otherBookmarks.hidden = false;
     } else {

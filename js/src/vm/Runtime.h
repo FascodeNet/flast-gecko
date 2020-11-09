@@ -34,6 +34,7 @@
 #include "js/AllocationRecording.h"
 #include "js/BuildId.h"  // JS::BuildIdOp
 #include "js/Debug.h"
+#include "js/experimental/CTypes.h"      // JS::CTypesActivityCallback
 #include "js/experimental/SourceHook.h"  // js::SourceHook
 #include "js/friend/StackLimits.h"       // js::ReportOverRecursed
 #include "js/friend/UsageStatistics.h"   // JSAccumulateTelemetryDataCallback
@@ -414,7 +415,7 @@ struct JSRuntime {
 
   js::MainThreadData<js::ScriptEnvironmentPreparer*> scriptEnvironmentPreparer;
 
-  js::MainThreadData<js::CTypesActivityCallback> ctypesActivityCallback;
+  js::MainThreadData<JS::CTypesActivityCallback> ctypesActivityCallback;
 
  private:
   js::WriteOnceData<const JSClass*> windowProxyClass_;
