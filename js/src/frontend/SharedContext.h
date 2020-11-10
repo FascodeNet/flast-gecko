@@ -315,14 +315,9 @@ inline EvalSharedContext* SharedContext::asEvalContext() {
 }
 
 enum class HasHeritage { No, Yes };
-enum class TopLevelFunction { No, Yes };
 
 class FunctionBox : public SharedContext {
   friend struct GCThingList;
-
-  // The parser handles tracing the fields below via the FunctionBox linked
-  // list represented by |traceLink_|.
-  FunctionBox* traceLink_ = nullptr;
 
   // If this FunctionBox refers to a lazy child of the function being
   // compiled, this field holds the child's immediately enclosing scope's index.
@@ -376,8 +371,6 @@ class FunctionBox : public SharedContext {
   // Back pointer used by asm.js for error messages.
   FunctionNode* functionNode = nullptr;
 
-  TopLevelFunction isTopLevel_ = TopLevelFunction::No;
-
   // True if bytecode will be emitted for this function in the current
   // compilation.
   bool emitBytecode : 1;
@@ -425,8 +418,7 @@ class FunctionBox : public SharedContext {
   FunctionBox(JSContext* cx, SourceExtent extent,
               CompilationInfo& compilationInfo, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
-              const ParserAtom* atom, FunctionFlags flags, FunctionIndex index,
-              TopLevelFunction isTopLevel);
+              const ParserAtom* atom, FunctionFlags flags, FunctionIndex index);
 
   ScriptStencil& functionStencil() const;
 
@@ -698,8 +690,6 @@ class FunctionBox : public SharedContext {
   }
 
   FunctionIndex index() { return funcDataIndex_; }
-
-  FunctionBox* traceLink() { return traceLink_; }
 
   void finishScriptFlags();
   void copyScriptFields(ScriptStencil& script);

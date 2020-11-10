@@ -48,4 +48,8 @@ dom/permission/
 dom/plugins/
 dom/power/
 dom/quota/
+dom/reporting/
+dom/res/
+dom/script/
+dom/security/
 dom/simpledb/

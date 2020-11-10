@@ -7717,6 +7717,16 @@ nsHttpChannel::OnStopRequest(nsIRequest* request, nsresult status) {
     if (mCaps & NS_HTTP_STICKY_CONNECTION ||
         mTransaction->HasStickyConnection()) {
       transactionWithStickyConn = mTransaction;
+      // Make sure we use the updated caps and connection info from transaction.
+      // We read these values when the transaction is already closed, so there
+      // should be no race.
+      if (mTransaction->Http2Disabled()) {
+        mCaps |= NS_HTTP_DISALLOW_SPDY;
+      }
+      if (mTransaction->Http3Disabled()) {
+        mCaps |= NS_HTTP_DISALLOW_HTTP3;
+      }
+      mConnectionInfo = mTransaction->GetConnInfo();
       LOG(("  transaction %p has sticky connection",
            transactionWithStickyConn.get()));
     }
@@ -7962,6 +7972,45 @@ nsresult nsHttpChannel::ContinueOnStopRequest(nsresult aStatus, bool aIsFromNet,
   LOG(("  nsHttpChannel::OnStopRequest ChannelDisposition %d\n",
        chanDisposition));
   Telemetry::Accumulate(Telemetry::HTTP_CHANNEL_DISPOSITION, chanDisposition);
+
+  // If we upgraded because of 'security.mixed_content.upgrade_display_content',
+  // we collect telemetry if the upgrade was a success.
+  if (mLoadInfo->GetBrowserDidUpgradeInsecureRequests()) {
+    bool success = NS_SUCCEEDED(aStatus);
+    nsContentPolicyType type;
+    mLoadInfo->GetInternalContentPolicyType(&type);
+
+    switch (type) {
+      case nsIContentPolicy::TYPE_INTERNAL_IMAGE:
+      case nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD:
+      case nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON:
+        Telemetry::AccumulateCategorical(
+            success
+                ? Telemetry::LABELS_MIXED_CONTENT_UPGRADE_SUCCESS::ImageSuccess
+                : Telemetry::LABELS_MIXED_CONTENT_UPGRADE_SUCCESS::ImageFailed);
+        break;
+
+      case nsIContentPolicy::TYPE_INTERNAL_VIDEO:
+        Telemetry::AccumulateCategorical(
+            success
+                ? Telemetry::LABELS_MIXED_CONTENT_UPGRADE_SUCCESS::VideoSuccess
+                : Telemetry::LABELS_MIXED_CONTENT_UPGRADE_SUCCESS::VideoFailed);
+        break;
+
+      case nsIContentPolicy::TYPE_INTERNAL_AUDIO:
+      case nsIContentPolicy::TYPE_INTERNAL_TRACK:
+        Telemetry::AccumulateCategorical(
+            success
+                ? Telemetry::LABELS_MIXED_CONTENT_UPGRADE_SUCCESS::AudioSuccess
+                : Telemetry::LABELS_MIXED_CONTENT_UPGRADE_SUCCESS::AudioFailed);
+        break;
+
+      default:
+        // upgrade_display_content only upgrades
+        // audio, video and images.
+        MOZ_ASSERT(false, "Unexpected content type.");
+    }
+  }
 
   // if needed, check cache entry has all data we expect
   if (mCacheEntry && mCachePump && mConcurrentCacheAccess && aContentComplete) {

@@ -694,7 +694,8 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
   }
 
   onWindowScroll() {
-    const SCROLL_THRESHOLD = 34;
+    const showLogo = this.props.Prefs.values["logowordmark.alwaysVisible"];
+    const SCROLL_THRESHOLD = showLogo ? 179 : 34;
 
     if (global.scrollY > SCROLL_THRESHOLD && !this.state.fixedSearch) {
       this.setState({
@@ -732,13 +733,14 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
     const pocketEnabled = prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"];
     const noSectionsEnabled = !prefs["feeds.topsites"] && !pocketEnabled && filteredSections.filter(section => section.enabled).length === 0;
     const searchHandoffEnabled = prefs["improvesearch.handoffToAwesomebar"];
-    const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search"].filter(v => v).join(" ");
+    const showLogo = prefs["logowordmark.alwaysVisible"];
+    const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search", showLogo && "visible-logo"].filter(v => v).join(" ");
     return react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
       className: outerClassName
     }, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("main", null, prefs.showSearch && react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
       className: "non-collapsible-section"
     }, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], null, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_Search_Search__WEBPACK_IMPORTED_MODULE_8__["Search"], _extends({
-      showLogo: noSectionsEnabled,
+      showLogo: noSectionsEnabled || showLogo,
       handoffEnabled: searchHandoffEnabled
     }, props.Search)))), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(_asrouter_asrouter_content__WEBPACK_IMPORTED_MODULE_2__["ASRouterUISurface"], {
       adminContent: this.props.adminContent,
@@ -9348,12 +9350,13 @@ class TopSiteLink extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
   }
   /*
    * Helper to determine whether the drop zone should allow a drop. We only allow
-   * dropping top sites for now.
+   * dropping top sites for now. We don't allow dropping on sponsored top sites
+   * as their position is fixed.
    */
 
 
   _allowDrop(e) {
-    return e.dataTransfer.types.includes("text/topsite-index");
+    return !this.props.link.sponsored_position && e.dataTransfer.types.includes("text/topsite-index");
   }
 
   onDragEvent(event) {
@@ -9857,17 +9860,8 @@ class TopSiteList extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
             topSitesPreview: null
           });
         } else {
-          let topSites = this._getTopSites();
-
-          let adjustedIndex = index; // Disallow dropping on sponsored sites since their position is
-          // fixed.
-
-          while (topSites[adjustedIndex] && topSites[adjustedIndex].sponsored_position) {
-            adjustedIndex++;
-          }
-
           this.setState({
-            topSitesPreview: this._makeTopSitesPreview(adjustedIndex)
+            topSitesPreview: this._makeTopSitesPreview(index)
           });
         }
 
