@@ -52,4 +52,15 @@ dom/reporting/
 dom/res/
 dom/script/
 dom/security/
+dom/serviceworkers/
 dom/simpledb/
+dom/smil/
+dom/storage/
+dom/svg/
+dom/system/
+dom/tests/
+dom/u2f/
+dom/url/
+dom/vr/
+dom/webauthn/
+dom/webbrowserpersist/

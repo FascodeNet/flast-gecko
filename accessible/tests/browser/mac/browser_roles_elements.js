@@ -170,7 +170,7 @@ addAccessibleTask(
     testRoleAndSubRole(accDoc, "ariaStatus", "AXGroup", "AXApplicationStatus");
     testRoleAndSubRole(accDoc, "switch", "AXCheckBox", "AXSwitch");
     testRoleAndSubRole(accDoc, "timer", null, "AXApplicationTimer");
-    testRoleAndSubRole(accDoc, "tooltip", null, "AXUserInterfaceTooltip");
+    testRoleAndSubRole(accDoc, "tooltip", "AXGroup", "AXUserInterfaceTooltip");
 
     // True HTML5 search field
     testRoleAndSubRole(accDoc, "htmlSearch", "AXTextField", "AXSearchField");
@@ -259,8 +259,15 @@ addAccessibleTask(`<button>hello world</button>`, async (browser, accDoc) => {
     Ci.nsIAccessibleMacInterface
   );
 
-  is(webArea.getAttributeValue("AXRole"), "AXWebArea");
-  is(webArea.getAttributeValue("AXSubrole"), "AXUnknown");
+  is(
+    webArea.getAttributeValue("AXRole"),
+    "AXWebArea",
+    "web area should be an AXWebArea"
+  );
+  ok(
+    !webArea.attributeNames.includes("AXSubrole"),
+    "AXWebArea should not have a subrole"
+  );
 
   let roleChanged = waitForMacEvent("AXMozRoleChanged");
   await SpecialPowers.spawn(browser, [], () => {
@@ -268,6 +275,17 @@ addAccessibleTask(`<button>hello world</button>`, async (browser, accDoc) => {
   });
   await roleChanged;
 
-  is(webArea.getAttributeValue("AXRole"), "AXGroup");
-  is(webArea.getAttributeValue("AXSubrole"), "AXLandmarkApplication");
+  is(
+    webArea.getAttributeValue("AXRole"),
+    "AXWebArea",
+    "web area should retain AXWebArea role"
+  );
+  ok(
+    !webArea.attributeNames.includes("AXSubrole"),
+    "AXWebArea should not have a subrole"
+  );
+
+  let rootGroup = webArea.getAttributeValue("AXChildren")[0];
+  is(rootGroup.getAttributeValue("AXRole"), "AXGroup");
+  is(rootGroup.getAttributeValue("AXSubrole"), "AXLandmarkApplication");
 });

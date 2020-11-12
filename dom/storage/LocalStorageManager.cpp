@@ -7,16 +7,20 @@
 #include "LocalStorageManager.h"
 #include "LocalStorage.h"
 #include "StorageDBThread.h"
+#include "StorageIPC.h"
 #include "StorageUtils.h"
 
 #include "nsIEffectiveTLDService.h"
 
+#include "nsPIDOMWindow.h"
 #include "nsNetUtil.h"
 #include "nsNetCID.h"
 #include "nsPrintfCString.h"
 #include "nsXULAppAPI.h"
 #include "nsThreadUtils.h"
 #include "nsIObserverService.h"
+#include "mozilla/ipc/BackgroundChild.h"
+#include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/LocalStorageCommon.h"
@@ -57,7 +61,9 @@ LocalStorageManager::LocalStorageManager() : mCaches(8) {
     // Do this only on the child process.  The thread IPC bridge
     // is also used to communicate chrome observer notifications.
     // Note: must be called after we set sSelf
-    StorageDBChild::GetOrCreate();
+    for (const uint32_t id : {0, 1}) {
+      StorageDBChild::GetOrCreate(id);
+    }
   }
 }
 
@@ -96,7 +102,7 @@ LocalStorageCache* LocalStorageManager::GetCache(
 }
 
 already_AddRefed<StorageUsage> LocalStorageManager::GetOriginUsage(
-    const nsACString& aOriginNoSuffix) {
+    const nsACString& aOriginNoSuffix, const uint32_t aPrivateBrowsingId) {
   RefPtr<StorageUsage> usage;
   if (mUsages.Get(aOriginNoSuffix, &usage)) {
     return usage.forget();
@@ -104,7 +110,8 @@ already_AddRefed<StorageUsage> LocalStorageManager::GetOriginUsage(
 
   usage = new StorageUsage(aOriginNoSuffix);
 
-  StorageDBChild* storageChild = StorageDBChild::GetOrCreate();
+  StorageDBChild* storageChild =
+      StorageDBChild::GetOrCreate(aPrivateBrowsingId);
   if (storageChild) {
     storageChild->AsyncGetUsage(usage);
   }
@@ -163,9 +170,12 @@ nsresult LocalStorageManager::GetStorageInternal(
     }
 
     if (aCreateMode == CreateMode::CreateIfShouldPreload) {
+      const uint32_t privateBrowsingId =
+          aStoragePrincipal->GetPrivateBrowsingId();
+
       // This is a demand to just preload the cache, if the scope has
       // no data stored, bypass creation and preload of the cache.
-      StorageDBChild* db = StorageDBChild::Get();
+      StorageDBChild* db = StorageDBChild::Get(privateBrowsingId);
       if (db) {
         if (!db->ShouldPreloadOrigin(LocalStorageManager::CreateOrigin(
                 originAttrSuffix, originKey))) {
@@ -179,13 +189,13 @@ nsresult LocalStorageManager::GetStorageInternal(
     }
 
 #if !defined(MOZ_WIDGET_ANDROID)
-    PBackgroundChild* backgroundActor =
-        BackgroundChild::GetOrCreateForCurrentThread();
+    ::mozilla::ipc::PBackgroundChild* backgroundActor =
+        ::mozilla::ipc::BackgroundChild::GetOrCreateForCurrentThread();
     if (NS_WARN_IF(!backgroundActor)) {
       return NS_ERROR_FAILURE;
     }
 
-    PrincipalInfo principalInfo;
+    ::mozilla::ipc::PrincipalInfo principalInfo;
     rv = mozilla::ipc::PrincipalToPrincipalInfo(aStoragePrincipal,
                                                 &principalInfo);
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -362,7 +372,7 @@ nsresult LocalStorageManager::Observe(const char* aTopic,
 
   // Clear all private-browsing caches
   if (!strcmp(aTopic, "private-browsing-data-cleared")) {
-    ClearCaches(LocalStorageCache::kUnloadPrivate, pattern, ""_ns);
+    ClearCaches(LocalStorageCache::kUnloadComplete, pattern, ""_ns);
     return NS_OK;
   }
 

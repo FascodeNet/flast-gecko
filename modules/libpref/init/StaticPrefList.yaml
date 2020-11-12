@@ -257,11 +257,6 @@
   value: false
   mirror: always
 
-- name: apz.android.chrome_fling_physics.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
 - name: apz.android.chrome_fling_physics.friction
   type: AtomicFloat
   value: 0.015f
@@ -4057,7 +4052,7 @@
 
 - name: gfx.canvas.remote
   type: RelaxedAtomicBool
-#if defined(XP_WIN) && defined(EARLY_BETA_OR_EARLIER)
+#if defined(XP_WIN)
   value: true
 #else
   value: false
@@ -4459,10 +4454,14 @@
 # WebRender is not enabled when there is no GPU process on window when
 # WebRender uses ANGLE. It is for avoiding that WebGL and WebRender use ANGLE
 # at once. But there is a case that we want to enable WebRender for testing.
-#if defined(NIGHTLY_BUILD) && defined(XP_WIN)
+#ifdef XP_WIN
 - name: gfx.webrender.enabled-no-gpu-process-with-angle-win
   type: bool
+#ifdef NIGHTLY_BUILD
+  value: true
+#else
   value: false
+#endif
   mirror: once
 #endif
 
@@ -5171,6 +5170,26 @@
   type: bool
   value: true
   mirror: once
+
+- name: javascript.options.wasm_optimizingjit
+  type: bool
+#if defined(MOZ_AARCH64) && !defined(ENABLE_WASM_CRANELIFT)
+  value: false
+#else
+  value: true
+#endif
+  mirror: always
+
+#if defined(ENABLE_WASM_SIMD)
+- name: javascript.options.wasm_simd
+  type: bool
+  #if defined(NIGHTLY_BUILD)
+  value: true
+  #else
+  value: false
+  #endif
+#endif
+  mirror: always
 
 #---------------------------------------------------------------------------
 # Prefs starting with "layers."
@@ -8066,7 +8085,7 @@
 # See the full list of values in nsICookieService.idl.
 - name: network.cookie.rejectForeignWithExceptions.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
 
 # Stale threshold for cookies in seconds.
@@ -9408,7 +9427,7 @@
 # Pref for mixed display content upgrading (images, audio, video).
 - name: security.mixed_content.upgrade_display_content
   type: bool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Whether strict file origin policy is in effect. "False" is traditional.

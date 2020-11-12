@@ -167,7 +167,7 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
   // They may be named explicitly, but they still provide a label not a title.
   return mRole == roles::GROUPING || mRole == roles::RADIO_GROUP ||
          mRole == roles::FIGURE || mRole == roles::GRAPHIC ||
-         mRole == roles::DOCUMENT;
+         mRole == roles::DOCUMENT || mRole == roles::OUTLINE;
 }
 
 - (mozilla::a11y::AccessibleOrProxy)geckoAccessible {
@@ -538,9 +538,6 @@ struct RoleDescrComparator {
 };
 
 - (NSString*)moxRoleDescription {
-  if (mRole == roles::DOCUMENT)
-    return utils::LocalizedString(u"htmlContent"_ns);
-
   if (mRole == roles::FIGURE) return utils::LocalizedString(u"figure"_ns);
 
   if (mRole == roles::HEADING) return utils::LocalizedString(u"heading"_ns);

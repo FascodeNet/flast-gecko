@@ -384,9 +384,16 @@ class MacroAssemblerX86Shared : public Assembler {
     vcvtdq2ps(src, dest);
   }
 
+  void binarySimd128(const SimdConstant& rhs, FloatRegister lhsDest,
+                     void (MacroAssembler::*regOp)(const Operand&,
+                                                   FloatRegister,
+                                                   FloatRegister),
+                     void (MacroAssembler::*constOp)(const SimdConstant&,
+                                                     FloatRegister));
   // SIMD methods, defined in MacroAssembler-x86-shared-SIMD.cpp.
 
   void unsignedConvertInt32x4ToFloat32x4(FloatRegister src, FloatRegister dest);
+  void bitwiseTestSimd128(const SimdConstant& rhs, FloatRegister lhs);
 
   void truncSatFloat32x4ToInt32x4(FloatRegister src, FloatRegister dest);
   void unsignedTruncSatFloat32x4ToInt32x4(FloatRegister src, FloatRegister temp,
@@ -422,16 +429,22 @@ class MacroAssemblerX86Shared : public Assembler {
 
   void compareInt8x16(FloatRegister lhs, Operand rhs, Assembler::Condition cond,
                       FloatRegister output);
+  void compareInt8x16(Assembler::Condition cond, const SimdConstant& rhs,
+                      FloatRegister lhsDest);
   void unsignedCompareInt8x16(FloatRegister lhs, Operand rhs,
                               Assembler::Condition cond, FloatRegister output,
                               FloatRegister tmp1, FloatRegister tmp2);
   void compareInt16x8(FloatRegister lhs, Operand rhs, Assembler::Condition cond,
                       FloatRegister output);
+  void compareInt16x8(Assembler::Condition cond, const SimdConstant& rhs,
+                      FloatRegister lhsDest);
   void unsignedCompareInt16x8(FloatRegister lhs, Operand rhs,
                               Assembler::Condition cond, FloatRegister output,
                               FloatRegister tmp1, FloatRegister tmp2);
   void compareInt32x4(FloatRegister lhs, Operand rhs, Assembler::Condition cond,
                       FloatRegister output);
+  void compareInt32x4(Assembler::Condition cond, const SimdConstant& rhs,
+                      FloatRegister lhsDest);
   void unsignedCompareInt32x4(FloatRegister lhs, Operand rhs,
                               Assembler::Condition cond, FloatRegister output,
                               FloatRegister tmp1, FloatRegister tmp2);
@@ -510,31 +523,6 @@ class MacroAssemblerX86Shared : public Assembler {
                      FloatRegister output);
 
   // SIMD inline methods private to the implementation, that appear to be used.
-
-  void bitwiseAndFloat32x4(FloatRegister lhs, const Operand& rhs,
-                           FloatRegister dest) {
-    vandps(rhs, lhs, dest);
-  }
-  void bitwiseAndSimdInt(FloatRegister lhs, const Operand& rhs,
-                         FloatRegister dest) {
-    vpand(rhs, lhs, dest);
-  }
-  void bitwiseOrSimdInt(FloatRegister lhs, const Operand& rhs,
-                        FloatRegister dest) {
-    vpor(rhs, lhs, dest);
-  }
-  void bitwiseXorFloat32x4(FloatRegister lhs, const Operand& rhs,
-                           FloatRegister dest) {
-    vxorps(rhs, lhs, dest);
-  }
-  void bitwiseXorSimdInt(FloatRegister lhs, const Operand& rhs,
-                         FloatRegister dest) {
-    vpxor(rhs, lhs, dest);
-  }
-  void bitwiseAndNotSimdInt(FloatRegister lhs, const Operand& rhs,
-                            FloatRegister dest) {
-    vpandn(rhs, lhs, dest);
-  }
 
   void zeroSimd128Float(FloatRegister dest) { vxorps(dest, dest, dest); }
   void zeroSimd128Int(FloatRegister dest) { vpxor(dest, dest, dest); }
@@ -709,6 +697,14 @@ class MacroAssemblerX86Shared : public Assembler {
 
   // Unused inline methods ditto.
 
+  void bitwiseAndSimdInt(FloatRegister lhs, const Operand& rhs,
+                         FloatRegister dest) {
+    vpand(rhs, lhs, dest);
+  }
+  void bitwiseOrSimdInt(FloatRegister lhs, const Operand& rhs,
+                        FloatRegister dest) {
+    vpor(rhs, lhs, dest);
+  }
   void bitwiseOrFloat32x4(FloatRegister lhs, const Operand& rhs,
                           FloatRegister dest) {
     vorps(rhs, lhs, dest);

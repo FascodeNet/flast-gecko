@@ -12,6 +12,7 @@
 #include "nsString.h"
 
 #include "mozilla/DataMutex.h"
+#include "mozilla/FunctionRef.h"
 #include "mozilla/RecursiveMutex.h"
 
 /**
@@ -43,6 +44,9 @@ class nsPrinterCUPS final : public nsPrinterBase {
         mDisplayName(std::move(aDisplayName)),
         mPrinter(aPrinter),
         mPrinterInfoMutex("nsPrinterCUPS::mPrinterInfoMutex") {}
+
+  static void ForEachExtraMonochromeSetting(
+      mozilla::FunctionRef<void(const nsACString&, const nsACString&)>);
 
  private:
   struct CUPSPrinterInfo {
@@ -129,6 +133,7 @@ class nsPrinterCUPS final : public nsPrinterBase {
   macro_("ColorModel", "Gray")                /* Generic */  \
       macro_("BRMonoColor", "Mono")           /* Brother */  \
       macro_("BRPrintQuality", "Black")       /* Brother */  \
+      macro_("CNIJGrayScale", "1")            /* Canon */    \
       macro_("INK", "MONO")                   /* Epson */    \
       macro_("HPColorMode", "GrayscalePrint") /* HP */       \
       macro_("ColorMode", "Mono")             /* Samsung */  \

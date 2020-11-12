@@ -154,7 +154,7 @@ void LIRGeneratorX86Shared::lowerMulI(MMul* mul, MDefinition* lhs,
       useRegisterAtStart(lhs),
       lhs != rhs ? useOrConstant(rhs) : useOrConstantAtStart(rhs), lhsCopy);
   if (mul->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, mul->bailoutKind());
   }
   defineReuseInput(lir, mul, 0);
 }
@@ -190,7 +190,7 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
             LDivPowTwoI(lhs, useRegister(div->lhs()), shift, rhs < 0);
       }
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineReuseInput(lir, div, 0);
       return;
@@ -200,7 +200,7 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
       lir = new (alloc())
           LDivOrModConstantI(useRegister(div->lhs()), rhs, tempFixed(eax));
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineFixed(lir, div, LAllocation(AnyRegister(edx)));
       return;
@@ -210,7 +210,7 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
   LDivI* lir = new (alloc())
       LDivI(useRegister(div->lhs()), useRegister(div->rhs()), tempFixed(edx));
   if (div->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, div->bailoutKind());
   }
   defineFixed(lir, div, LAllocation(AnyRegister(eax)));
 }
@@ -228,7 +228,7 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
       LModPowTwoI* lir =
           new (alloc()) LModPowTwoI(useRegisterAtStart(mod->lhs()), shift);
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineReuseInput(lir, mod, 0);
       return;
@@ -238,7 +238,7 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
       lir = new (alloc())
           LDivOrModConstantI(useRegister(mod->lhs()), rhs, tempFixed(edx));
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineFixed(lir, mod, LAllocation(AnyRegister(eax)));
       return;
@@ -248,7 +248,7 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
   LModI* lir = new (alloc())
       LModI(useRegister(mod->lhs()), useRegister(mod->rhs()), tempFixed(eax));
   if (mod->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, mod->bailoutKind());
   }
   defineFixed(lir, mod, LAllocation(AnyRegister(edx)));
 }
@@ -366,14 +366,14 @@ void LIRGeneratorX86Shared::lowerUDiv(MDiv* div) {
     if (rhs != 0 && uint32_t(1) << shift == rhs) {
       LDivPowTwoI* lir = new (alloc()) LDivPowTwoI(lhs, lhs, shift, false);
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineReuseInput(lir, div, 0);
     } else {
       LUDivOrModConstant* lir = new (alloc())
           LUDivOrModConstant(useRegister(div->lhs()), rhs, tempFixed(eax));
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineFixed(lir, div, LAllocation(AnyRegister(edx)));
     }
@@ -383,7 +383,7 @@ void LIRGeneratorX86Shared::lowerUDiv(MDiv* div) {
   LUDivOrMod* lir = new (alloc()) LUDivOrMod(
       useRegister(div->lhs()), useRegister(div->rhs()), tempFixed(edx));
   if (div->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, div->bailoutKind());
   }
   defineFixed(lir, div, LAllocation(AnyRegister(eax)));
 }
@@ -397,14 +397,14 @@ void LIRGeneratorX86Shared::lowerUMod(MMod* mod) {
       LModPowTwoI* lir =
           new (alloc()) LModPowTwoI(useRegisterAtStart(mod->lhs()), shift);
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineReuseInput(lir, mod, 0);
     } else {
       LUDivOrModConstant* lir = new (alloc())
           LUDivOrModConstant(useRegister(mod->lhs()), rhs, tempFixed(edx));
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineFixed(lir, mod, LAllocation(AnyRegister(eax)));
     }
@@ -414,7 +414,7 @@ void LIRGeneratorX86Shared::lowerUMod(MMod* mod) {
   LUDivOrMod* lir = new (alloc()) LUDivOrMod(
       useRegister(mod->lhs()), useRegister(mod->rhs()), tempFixed(eax));
   if (mod->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, mod->bailoutKind());
   }
   defineFixed(lir, mod, LAllocation(AnyRegister(edx)));
 }
@@ -446,7 +446,7 @@ void LIRGeneratorX86Shared::lowerPowOfTwoI(MPow* mir) {
   // shift operator should be in register ecx;
   // x86 can't shift a non-ecx register.
   auto* lir = new (alloc()) LPowOfTwoI(base, useFixed(power, ecx));
-  assignSnapshot(lir, BailoutKind::PrecisionLoss);
+  assignSnapshot(lir, mir->bailoutKind());
   define(lir, mir);
 }
 
@@ -890,6 +890,103 @@ void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128* ins) {
   auto* lir = new (alloc())
       LWasmBinarySimd128(op, lhsDestAlloc, rhsAlloc, tempReg0, tempReg1);
   defineReuseInput(lir, ins, LWasmBinarySimd128::LhsDest);
+}
+
+bool MWasmBinarySimd128::specializeForConstantRhs() {
+  // The order follows MacroAssembler.h, generally
+  switch (simdOp()) {
+    // Operations implemented by a single native instruction where it is
+    // plausible that the rhs (after commutation if available) could be a
+    // constant.
+    //
+    // Swizzle is not here because it was handled earlier in the pipeline.
+    //
+    // Integer compares >= and < are not here because they are not supported in
+    // the hardware.
+    //
+    // Floating compares are not here because our patching machinery can't
+    // handle them yet.
+    //
+    // Floating-point min and max (including pmin and pmax) are not here because
+    // they are not straightforward to implement.
+    case wasm::SimdOp::I8x16Add:
+    case wasm::SimdOp::I16x8Add:
+    case wasm::SimdOp::I32x4Add:
+    case wasm::SimdOp::I64x2Add:
+    case wasm::SimdOp::I8x16Sub:
+    case wasm::SimdOp::I16x8Sub:
+    case wasm::SimdOp::I32x4Sub:
+    case wasm::SimdOp::I64x2Sub:
+    case wasm::SimdOp::I16x8Mul:
+    case wasm::SimdOp::I32x4Mul:
+    case wasm::SimdOp::I8x16AddSaturateS:
+    case wasm::SimdOp::I8x16AddSaturateU:
+    case wasm::SimdOp::I16x8AddSaturateS:
+    case wasm::SimdOp::I16x8AddSaturateU:
+    case wasm::SimdOp::I8x16SubSaturateS:
+    case wasm::SimdOp::I8x16SubSaturateU:
+    case wasm::SimdOp::I16x8SubSaturateS:
+    case wasm::SimdOp::I16x8SubSaturateU:
+    case wasm::SimdOp::I8x16MinS:
+    case wasm::SimdOp::I8x16MinU:
+    case wasm::SimdOp::I16x8MinS:
+    case wasm::SimdOp::I16x8MinU:
+    case wasm::SimdOp::I32x4MinS:
+    case wasm::SimdOp::I32x4MinU:
+    case wasm::SimdOp::I8x16MaxS:
+    case wasm::SimdOp::I8x16MaxU:
+    case wasm::SimdOp::I16x8MaxS:
+    case wasm::SimdOp::I16x8MaxU:
+    case wasm::SimdOp::I32x4MaxS:
+    case wasm::SimdOp::I32x4MaxU:
+    case wasm::SimdOp::V128And:
+    case wasm::SimdOp::V128Or:
+    case wasm::SimdOp::V128Xor:
+    case wasm::SimdOp::I8x16Eq:
+    case wasm::SimdOp::I8x16Ne:
+    case wasm::SimdOp::I8x16GtS:
+    case wasm::SimdOp::I8x16LeS:
+    case wasm::SimdOp::I16x8Eq:
+    case wasm::SimdOp::I16x8Ne:
+    case wasm::SimdOp::I16x8GtS:
+    case wasm::SimdOp::I16x8LeS:
+    case wasm::SimdOp::I32x4Eq:
+    case wasm::SimdOp::I32x4Ne:
+    case wasm::SimdOp::I32x4GtS:
+    case wasm::SimdOp::I32x4LeS:
+    case wasm::SimdOp::I32x4DotSI16x8:
+    case wasm::SimdOp::F32x4Add:
+    case wasm::SimdOp::F64x2Add:
+    case wasm::SimdOp::F32x4Sub:
+    case wasm::SimdOp::F64x2Sub:
+    case wasm::SimdOp::F32x4Div:
+    case wasm::SimdOp::F64x2Div:
+    case wasm::SimdOp::F32x4Mul:
+    case wasm::SimdOp::F64x2Mul:
+    case wasm::SimdOp::I8x16NarrowSI16x8:
+    case wasm::SimdOp::I8x16NarrowUI16x8:
+    case wasm::SimdOp::I16x8NarrowSI32x4:
+    case wasm::SimdOp::I16x8NarrowUI32x4:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void LIRGenerator::visitWasmBinarySimd128WithConstant(
+    MWasmBinarySimd128WithConstant* ins) {
+  MDefinition* lhs = ins->lhs();
+
+  MOZ_ASSERT(lhs->type() == MIRType::Simd128);
+  MOZ_ASSERT(ins->type() == MIRType::Simd128);
+
+  // Always beneficial to reuse the lhs register here, see discussion in
+  // visitWasmBinarySimd128() and also code in specializeForConstantRhs().
+
+  LAllocation lhsDestAlloc = useRegisterAtStart(lhs);
+  auto* lir =
+      new (alloc()) LWasmBinarySimd128WithConstant(lhsDestAlloc, ins->rhs());
+  defineReuseInput(lir, ins, LWasmBinarySimd128WithConstant::LhsDest);
 }
 
 void LIRGenerator::visitWasmShiftSimd128(MWasmShiftSimd128* ins) {

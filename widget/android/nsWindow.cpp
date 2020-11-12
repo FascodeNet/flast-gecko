@@ -360,12 +360,9 @@ class NPZCSupport final
         WheelDeltaAdjustmentStrategy::eNone);
 
     APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
-    int32_t ret = (result.mHandledByRootApzc == Some(true))
-                      ? INPUT_RESULT_HANDLED
-                      : INPUT_RESULT_HANDLED_CONTENT;
-
     if (result.mStatus == nsEventStatus_eConsumeNoDefault) {
-      return ret;
+      MOZ_ASSERT(result.mHandledResult, "Should have a valid APZHandledResult");
+      return ConvertAPZHandledResult(result.mHandledResult.value());
     }
 
     PostInputEvent([input, result](nsWindow* window) {
@@ -377,7 +374,9 @@ class NPZCSupport final
       case nsEventStatus_eIgnore:
         return INPUT_RESULT_UNHANDLED;
       case nsEventStatus_eConsumeDoDefault:
-        return ret;
+        return (result.mHandledResult == Some(APZHandledResult::HandledByRoot))
+                   ? INPUT_RESULT_HANDLED
+                   : INPUT_RESULT_HANDLED_CONTENT;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected nsEventStatus");
         return INPUT_RESULT_UNHANDLED;
@@ -502,12 +501,9 @@ class NPZCSupport final
         nsWindow::GetEventTimeStamp(aTime), nsWindow::GetModifiers(aMetaState));
 
     APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
-    int32_t ret = (result.mHandledByRootApzc == Some(true))
-                      ? INPUT_RESULT_HANDLED
-                      : INPUT_RESULT_HANDLED_CONTENT;
-
     if (result.mStatus == nsEventStatus_eConsumeNoDefault) {
-      return ret;
+      MOZ_ASSERT(result.mHandledResult, "Should have a valid APZHandledResult");
+      return ConvertAPZHandledResult(result.mHandledResult.value());
     }
 
     PostInputEvent([input, result](nsWindow* window) {
@@ -519,7 +515,9 @@ class NPZCSupport final
       case nsEventStatus_eIgnore:
         return INPUT_RESULT_UNHANDLED;
       case nsEventStatus_eConsumeDoDefault:
-        return ret;
+        return (result.mHandledResult == Some(APZHandledResult::HandledByRoot))
+                   ? INPUT_RESULT_HANDLED
+                   : INPUT_RESULT_HANDLED_CONTENT;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected nsEventStatus");
         return INPUT_RESULT_UNHANDLED;
@@ -702,13 +700,12 @@ class NPZCSupport final
     }
 
     APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
-    int32_t handled = (result.mHandledByRootApzc == Some(true))
-                          ? INPUT_RESULT_HANDLED
-                          : INPUT_RESULT_HANDLED_CONTENT;
-
     if (result.mStatus == nsEventStatus_eConsumeNoDefault) {
       if (returnResult) {
-        returnResult->Complete(java::sdk::Integer::ValueOf(handled));
+        MOZ_ASSERT(result.mHandledResult,
+                   "Should have a valid APZHandledResult");
+        returnResult->Complete(java::sdk::Integer::ValueOf(
+            ConvertAPZHandledResult(result.mHandledResult.value())));
       }
       return;
     }
@@ -725,7 +722,7 @@ class NPZCSupport final
       return;
     }
 
-    if (result.mHandledByRootApzc != Nothing()) {
+    if (result.mHandledResult != Nothing()) {
       // We know conclusively that the root APZ handled this or not and
       // don't need to do any more work.
       switch (result.mStatus) {
@@ -734,7 +731,8 @@ class NPZCSupport final
               java::sdk::Integer::ValueOf(INPUT_RESULT_UNHANDLED));
           break;
         case nsEventStatus_eConsumeDoDefault:
-          returnResult->Complete(java::sdk::Integer::ValueOf(handled));
+          returnResult->Complete(java::sdk::Integer::ValueOf(
+              ConvertAPZHandledResult(result.mHandledResult.value())));
           break;
         default:
           MOZ_ASSERT_UNREACHABLE("Unexpected nsEventStatus");

@@ -492,9 +492,21 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0a7c);
       break;
     case DeviceFamily::NvidiaRolloutWebRender:
+#ifdef NIGHTLY_BUILD
+      APPEND_RANGE(0x0400, 0x04ff);
+      APPEND_RANGE(0x05e0, 0x05ff);
+      APPEND_RANGE(0x0600, INT32_MAX);
+#else
       APPEND_RANGE(0x06c0, INT32_MAX);
+#endif
       break;
     case DeviceFamily::IntelRolloutWebRender:
+#ifdef NIGHTLY_BUILD
+      // gen5 (ironlake)
+      APPEND_DEVICE(0x0042);
+      APPEND_DEVICE(0x0046);
+#endif
+
 #ifdef EARLY_BETA_OR_EARLIER
       // cherryview
       APPEND_DEVICE(0x22b0);

@@ -5,14 +5,31 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #define MOZ_USE_LAUNCHER_ERROR
+#define DONT_SKIP_DEFAULT_DEPENDENT_MODULES
 
-#include "freestanding/FunctionTableResolver.cpp"
+#include "freestanding/SharedSection.cpp"
 #include "mozilla/CmdLineAndEnvUtils.h"
 #include "mozilla/NativeNt.h"
 
 const wchar_t kChildArg[] = L"--child";
 
+#if !defined(__MINGW32__)
+// MinGW includes an old winternl.h that defines FILE_BASIC_INFORMATION.
+typedef struct FILE_BASIC_INFORMATION {
+  LARGE_INTEGER CreationTime;
+  LARGE_INTEGER LastAccessTime;
+  LARGE_INTEGER LastWriteTime;
+  LARGE_INTEGER ChangeTime;
+  ULONG FileAttributes;
+} FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
+#endif  // !defined(__MINGW32__)
+
+extern "C" NTSTATUS NTAPI
+NtQueryAttributesFile(POBJECT_ATTRIBUTES aObjectAttributes,
+                      PFILE_BASIC_INFORMATION aFileInformation);
+
 using namespace mozilla;
+using namespace mozilla::freestanding;
 
 template <typename T, int N>
 void PrintLauncherError(const LauncherResult<T>& aResult,
@@ -22,16 +39,82 @@ void PrintLauncherError(const LauncherResult<T>& aResult,
          err.mError.AsHResult(), err.mFile, err.mLine);
 }
 
-#define VERIFY_FUNCTION_RESOLVED(mod, name)                      \
-  do {                                                           \
-    if (reinterpret_cast<FARPROC>(freestanding::gK32.m##name) != \
-        ::GetProcAddress(mod, #name)) {                          \
-      printf(                                                    \
-          "TEST-FAILED | TestCrossProcessWin | "                 \
-          "Kernel32ExportsSolver::" #name " did not match.\n");  \
-      return 1;                                                  \
-    }                                                            \
+#define VERIFY_FUNCTION_RESOLVED(mod, exports, name)            \
+  do {                                                          \
+    if (reinterpret_cast<FARPROC>(exports.m##name) !=           \
+        ::GetProcAddress(mod, #name)) {                         \
+      printf(                                                   \
+          "TEST-FAILED | TestCrossProcessWin | "                \
+          "Kernel32ExportsSolver::" #name " did not match.\n"); \
+      return false;                                             \
+    }                                                           \
   } while (0)
+
+static bool VerifySharedSection(SharedSection& aSharedSection) {
+  LauncherResult<SharedSection::Layout*> resultView = aSharedSection.GetView();
+  if (resultView.isErr()) {
+    PrintLauncherError(resultView, "Failed to map a shared section");
+    return false;
+  }
+
+  SharedSection::Layout* view = resultView.unwrap();
+
+  // Use a local variable of RTL_RUN_ONCE to resolve Kernel32Exports every time
+  RTL_RUN_ONCE sRunEveryTime = RTL_RUN_ONCE_INIT;
+  view->mK32Exports.Resolve(sRunEveryTime);
+
+  HMODULE k32mod = ::GetModuleHandleW(L"kernel32.dll");
+  VERIFY_FUNCTION_RESOLVED(k32mod, view->mK32Exports, FlushInstructionCache);
+  VERIFY_FUNCTION_RESOLVED(k32mod, view->mK32Exports, GetSystemInfo);
+  VERIFY_FUNCTION_RESOLVED(k32mod, view->mK32Exports, VirtualProtect);
+
+  Span<uint32_t> modulePaths = []() -> Span<uint32_t> {
+    auto getDependentModulePaths =
+        reinterpret_cast<uint32_t (*)(uint32_t**)>(::GetProcAddress(
+            ::GetModuleHandleW(nullptr), "GetDependentModulePaths"));
+    if (!getDependentModulePaths) {
+      printf(
+          "TEST-FAILED | TestCrossProcessWin | "
+          "Failed to get a pointer to GetDependentModulePaths - %08lx.\n",
+          ::GetLastError());
+      return nullptr;
+    }
+
+    uint32_t* modulePathArray;
+    uint32_t modulePathArrayLen = getDependentModulePaths(&modulePathArray);
+    return Span(modulePathArray, modulePathArrayLen);
+  }();
+
+  if (modulePaths.IsEmpty()) {
+    return false;
+  }
+
+  const uint8_t* arrayBase =
+      reinterpret_cast<const uint8_t*>(modulePaths.data());
+  for (const uint32_t& offset : modulePaths) {
+    // Use NtQueryAttributesFile to check the validity of an NT path.
+    UNICODE_STRING ntpath;
+    ::RtlInitUnicodeString(
+        &ntpath, reinterpret_cast<const wchar_t*>(arrayBase + offset));
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &ntpath, OBJ_CASE_INSENSITIVE, nullptr,
+                               nullptr);
+    FILE_BASIC_INFORMATION info;
+    NTSTATUS status = ::NtQueryAttributesFile(&oa, &info);
+    if (!NT_SUCCESS(status)) {
+      printf(
+          "TEST-FAILED | TestCrossProcessWin | "
+          "Invalid path %ls - %08lx.\n",
+          ntpath.Buffer, status);
+      return false;
+    }
+
+    printf("%p: %ls\n", &offset,
+           reinterpret_cast<const wchar_t*>(arrayBase + offset));
+  }
+
+  return true;
+}
 
 class ChildProcess final {
   nsAutoHandle mChildProcess;
@@ -69,18 +152,24 @@ class ChildProcess final {
       return 1;
     }
 
-    static RTL_RUN_ONCE sRunOnce = RTL_RUN_ONCE_INIT;
-    freestanding::gK32.Resolve(sRunOnce);
-    if (!freestanding::gK32.IsResolved()) {
-      printf(
-          "TEST-FAILED | TestCrossProcessWin | "
-          "Kernel32ExportsSolver::Resolve failed.\n");
+    if (!VerifySharedSection(gSharedSection)) {
+      return 1;
     }
 
-    HMODULE k32mod = ::GetModuleHandleW(L"kernel32.dll");
-    VERIFY_FUNCTION_RESOLVED(k32mod, FlushInstructionCache);
-    VERIFY_FUNCTION_RESOLVED(k32mod, GetSystemInfo);
-    VERIFY_FUNCTION_RESOLVED(k32mod, VirtualProtect);
+    // Test a scenario to transfer a transferred section
+    static HANDLE copiedHandle = nullptr;
+    nt::CrossExecTransferManager tansferToSelf(::GetCurrentProcess());
+    LauncherVoidResult result =
+        gSharedSection.TransferHandle(tansferToSelf, &copiedHandle);
+    if (result.isErr()) {
+      PrintLauncherError(result, "SharedSection::TransferHandle(self) failed");
+      return 1;
+    }
+
+    gSharedSection.Reset(copiedHandle);
+    if (!VerifySharedSection(gSharedSection)) {
+      return 1;
+    }
 
     return 0;
   }
@@ -175,35 +264,19 @@ int wmain(int argc, wchar_t* argv[]) {
     return 1;
   }
 
-  freestanding::gK32.Init();
-  if (!freestanding::gK32.IsInitialized()) {
-    printf(
-        "TEST-FAILED | TestCrossProcessWin | "
-        "Kernel32ExportsSolver initialization failed.\n");
-    return 1;
-  }
-
-  LauncherVoidResult writeResult =
-      freestanding::gK32.Transfer(transferMgr, &freestanding::gK32);
-  if (writeResult.isErr()) {
-    PrintLauncherError(writeResult, "Kernel32ExportsSolver::Transfer failed");
-    return 1;
-  }
-
-  writeResult =
+  LauncherVoidResult result =
       transferMgr.Transfer(&ChildProcess::sExecutableImageBase,
                            &remoteImageBase.inspect(), sizeof(HMODULE));
-  if (writeResult.isErr()) {
-    PrintLauncherError(writeResult,
-                       "ChildProcess::WriteData(Imagebase) failed");
+  if (result.isErr()) {
+    PrintLauncherError(result, "ChildProcess::WriteData(Imagebase) failed");
     return 1;
   }
 
   DWORD childPid = childProcess.GetProcessId();
 
   DWORD* readOnlyData = const_cast<DWORD*>(&ChildProcess::sReadOnlyProcessId);
-  writeResult = transferMgr.Transfer(readOnlyData, &childPid, sizeof(DWORD));
-  if (writeResult.isOk()) {
+  result = transferMgr.Transfer(readOnlyData, &childPid, sizeof(DWORD));
+  if (result.isOk()) {
     printf(
         "TEST-UNEXPECTED | TestCrossProcessWin | "
         "A constant was located in a writable section.");
@@ -220,10 +293,26 @@ int wmain(int argc, wchar_t* argv[]) {
     return 1;
   }
 
-  writeResult = transferMgr.Transfer(readOnlyData, &childPid, sizeof(DWORD));
-  if (writeResult.isErr()) {
-    PrintLauncherError(writeResult, "ChildProcess::WriteData(PID) failed");
+  result = transferMgr.Transfer(readOnlyData, &childPid, sizeof(DWORD));
+  if (result.isErr()) {
+    PrintLauncherError(result, "ChildProcess::WriteData(PID) failed");
     return 1;
+  }
+
+  {
+    // Define a scope for |sharedSection| to resume the child process after
+    // the section is deleted in the parent process.
+    result = gSharedSection.Init(transferMgr.LocalPEHeaders());
+    if (result.isErr()) {
+      PrintLauncherError(result, "SharedSection::Init failed");
+      return 1;
+    }
+
+    result = gSharedSection.TransferHandle(transferMgr);
+    if (result.isErr()) {
+      PrintLauncherError(result, "SharedSection::TransferHandle failed");
+      return 1;
+    }
   }
 
   if (!childProcess.ResumeAndWaitUntilExit()) {

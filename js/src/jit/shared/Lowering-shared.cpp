@@ -255,6 +255,10 @@ void LIRGeneratorShared::assignSnapshot(LInstruction* ins, BailoutKind kind) {
   // assignSnapshot must be called before define/add, since
   // it may add new instructions for emitted-at-use operands.
   MOZ_ASSERT(ins->id() == 0);
+  if (kind == BailoutKind::Unknown) {
+    MOZ_ASSERT(!JitOptions.warpBuilder);
+    kind = BailoutKind::GenericIon;
+  }
 
   LSnapshot* snapshot = buildSnapshot(ins, lastResumePoint_, kind);
   if (!snapshot) {
@@ -308,6 +312,13 @@ void LIRGenerator::visitWasmBitselectSimd128(MWasmBitselectSimd128*) {
 }
 
 void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128*) {
+  MOZ_CRASH("SIMD not enabled");
+}
+
+bool MWasmBinarySimd128::specializeForConstantRhs() { return false; }
+
+void LIRGenerator::visitWasmBinarySimd128WithConstant(
+    MWasmBinarySimd128WithConstant*) {
   MOZ_CRASH("SIMD not enabled");
 }
 
