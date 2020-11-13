@@ -34,14 +34,13 @@ exports.isTypeRegistered = isTypeRegistered;
 /**
  * Registers a given constructor as highlighter, for the `typeName` given.
  */
-const register = (typeName, modulePath) => {
+const registerHighlighter = (typeName, modulePath) => {
   if (highlighterTypes.has(typeName)) {
     throw Error(`${typeName} is already registered.`);
   }
 
   highlighterTypes.set(typeName, modulePath);
 };
-exports.register = register;
 
 /**
  * CustomHighlighterActor is a generic Actor that instantiates a custom implementation of
@@ -69,8 +68,7 @@ exports.CustomHighlighterActor = protocol.ActorClassWithSpec(
         );
       }
 
-      const constructor = require("devtools/server/actors/highlighters/" +
-        modulePath)[typeName];
+      const constructor = require(modulePath)[typeName];
       // The assumption is that custom highlighters either need the canvasframe
       // container to append their elements and thus a non-XUL window or they have
       // to define a static XULSupported flag that indicates that the highlighter
@@ -351,17 +349,45 @@ HighlighterEnvironment.prototype = {
   },
 };
 
-register("AccessibleHighlighter", "accessible");
-register("BoxModelHighlighter", "box-model");
-register("CssGridHighlighter", "css-grid");
-register("CssTransformHighlighter", "css-transform");
-register("EyeDropper", "eye-dropper");
-register("FlexboxHighlighter", "flexbox");
-register("FontsHighlighter", "fonts");
-register("GeometryEditorHighlighter", "geometry-editor");
-register("MeasuringToolHighlighter", "measuring-tool");
-register("PausedDebuggerOverlay", "paused-debugger");
-register("RulersHighlighter", "rulers");
-register("SelectorHighlighter", "selector");
-register("ShapesHighlighter", "shapes");
-register("TabbingOrderHighlighter", "tabbing-order");
+// This constant object is created to make the calls array more
+// readable. Otherwise, linting rules force some array defs to span 4
+// lines instead, which is much harder to parse.
+const HIGHLIGHTERS = {
+  accessible: "devtools/server/actors/highlighters/accessible",
+  boxModel: "devtools/server/actors/highlighters/box-model",
+  cssGrid: "devtools/server/actors/highlighters/css-grid",
+  cssTransform: "devtools/server/actors/highlighters/css-transform",
+  eyeDropper: "devtools/server/actors/highlighters/eye-dropper",
+  flexbox: "devtools/server/actors/highlighters/flexbox",
+  fonts: "devtools/server/actors/highlighters/fonts",
+  geometryEditor: "devtools/server/actors/highlighters/geometry-editor",
+  measuringTool: "devtools/server/actors/highlighters/measuring-tool",
+  pausedDebugger: "devtools/server/actors/highlighters/paused-debugger",
+  rulers: "devtools/server/actors/highlighters/rulers",
+  selector: "devtools/server/actors/highlighters/selector",
+  shapes: "devtools/server/actors/highlighters/shapes",
+  tabbingOrder: "devtools/server/actors/highlighters/tabbing-order",
+};
+
+// Each array in this array is called as register(arr[0], arr[1]).
+const registerCalls = [
+  ["AccessibleHighlighter", HIGHLIGHTERS.accessible],
+  ["BoxModelHighlighter", HIGHLIGHTERS.boxModel],
+  ["CssGridHighlighter", HIGHLIGHTERS.cssGrid],
+  ["CssTransformHighlighter", HIGHLIGHTERS.cssTransform],
+  ["EyeDropper", HIGHLIGHTERS.eyeDropper],
+  ["FlexboxHighlighter", HIGHLIGHTERS.flexbox],
+  ["FontsHighlighter", HIGHLIGHTERS.fonts],
+  ["GeometryEditorHighlighter", HIGHLIGHTERS.geometryEditor],
+  ["MeasuringToolHighlighter", HIGHLIGHTERS.measuringTool],
+  ["PausedDebuggerOverlay", HIGHLIGHTERS.pausedDebugger],
+  ["RulersHighlighter", HIGHLIGHTERS.rulers],
+  ["SelectorHighlighter", HIGHLIGHTERS.selector],
+  ["ShapesHighlighter", HIGHLIGHTERS.shapes],
+  ["TabbingOrderHighlighter", HIGHLIGHTERS.tabbingOrder],
+];
+
+// Register each highlighter above.
+registerCalls.forEach(arr => {
+  registerHighlighter(arr[0], arr[1]);
+});
