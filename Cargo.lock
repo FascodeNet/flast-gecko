@@ -1545,9 +1545,9 @@ dependencies = [
 
 [[package]]
 name = "fluent-pseudo"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3a870aefc42d175d11fb1ec089221ced8a160d66ca1e0c64a57b4ae90d2462"
+checksum = "f028d6802c52903b3d8fa1cc37264ae5b8b630161e600eccfa68d4ee6ce5163a"
 dependencies = [
  "regex",
 ]
@@ -2992,11 +2992,10 @@ dependencies = [
 
 [[package]]
 name = "mapped_hyph"
-version = "0.4.2"
-source = "git+https://github.com/jfkthame/mapped_hyph.git?tag=v0.4.2#d0d2e862cea33c262d8173a2dddbe0b50fdd6775"
+version = "0.4.3"
+source = "git+https://github.com/jfkthame/mapped_hyph.git?rev=578d7058a638c955a597f035ce1a11049c3021d7#578d7058a638c955a597f035ce1a11049c3021d7"
 dependencies = [
  "arrayref",
- "env_logger 0.7.1",
  "log",
  "memmap",
 ]
@@ -3330,7 +3329,7 @@ checksum = "a2983372caf4480544083767bf2d27defafe32af49ab4df3a0b7fc90793a3664"
 [[package]]
 name = "naga"
 version = "0.2.0"
-source = "git+https://github.com/gfx-rs/naga?rev=aa35110471ee7915e1f4e1de61ea41f2f32f92c4#aa35110471ee7915e1f4e1de61ea41f2f32f92c4"
+source = "git+https://github.com/gfx-rs/naga?rev=4d4e1cd4cbfad2b81264a7239a336b6ec1346611#4d4e1cd4cbfad2b81264a7239a336b6ec1346611"
 dependencies = [
  "bitflags",
  "fxhash",

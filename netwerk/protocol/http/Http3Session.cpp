@@ -186,8 +186,10 @@ nsresult Http3Session::Init(const nsHttpConnectionInfo* aConnInfo,
 void Http3Session::Shutdown() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  if ((mBeforeConnectedError || (mError == NS_ERROR_NET_HTTP3_PROTOCOL_ERROR)) &&
-      (mError != mozilla::psm::GetXPCOMFromNSSError(SSL_ERROR_BAD_CERT_DOMAIN))) {
+  if ((mBeforeConnectedError ||
+       (mError == NS_ERROR_NET_HTTP3_PROTOCOL_ERROR)) &&
+      (mError !=
+       mozilla::psm::GetXPCOMFromNSSError(SSL_ERROR_BAD_CERT_DOMAIN))) {
     gHttpHandler->ExcludeHttp3(mConnInfo);
   }
 
@@ -822,9 +824,13 @@ nsresult Http3Session::SendRequestBody(uint64_t aStreamId, const char* buf,
   } else if (NS_FAILED(rv)) {
     // Ignore this error. This may happen if some events are not handled yet.
     // TODO we may try to add an assertion here.
-    rv = NS_OK;
+    // We will pretend that sender is blocked, that will cause the caller to
+    // stop trying.
+    *countRead = 0;
+    rv = NS_BASE_STREAM_WOULD_BLOCK;
   }
 
+  MOZ_ASSERT((*countRead != 0) || NS_FAILED(rv));
   return rv;
 }
 
@@ -1370,9 +1376,13 @@ nsresult Http3Session::ReadResponseData(uint64_t aStreamId, char* aBuf,
           " [this=%p]",
           static_cast<uint32_t>(rv), this));
     // This error will be handled by neqo and the whole connection will be
-    // cloed. We will return NS_BASE_STREAM_WOULD_BLOCK here.
+    // closed. We will return NS_BASE_STREAM_WOULD_BLOCK here.
+    *aCountWritten = 0;
+    *aFin = false;
     rv = NS_BASE_STREAM_WOULD_BLOCK;
   }
+
+  MOZ_ASSERT((*aCountWritten != 0) || aFin || NS_FAILED(rv));
   return rv;
 }
 

@@ -199,17 +199,6 @@
     "bug_numbers": [1172689, 1531034],
     "description": "Recorded when application reputation remote lookup is performed, `true` is recorded if the lookup times out."
   },
-  "AUDIOSTREAM_BACKEND_USED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["padenot@mozilla.com", "kinetik@flim.org"],
-    "bug_numbers": [1280630, 1444878],
-    "expires_in_version": "70",
-    "kind": "enumerated",
-    "n_values": 16,
-    "description": "The operating system audio back-end used when successfully opening an audio stream, or whether the failure occurred on the first try or not <https://searchfox.org/mozilla-central/search?q=AUDIOSTREAM_BACKEND_ID_STR>",
-    "releaseChannelCollection": "opt-out"
-  },
   "BACKGROUNDFILESAVER_THREAD_COUNT": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -1032,37 +1021,6 @@
     "kind": "flag",
     "description": "Has seen location error"
   },
-  "GEOLOCATION_GETCURRENTPOSITION_SECURE_ORIGIN" : {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["mds@mozilla.com"],
-    "expires_in_version": "60",
-    "kind": "enumerated",
-    "n_values": 10,
-    "bug_numbers": [1230209],
-    "description" : "Number of navigator.geolocation.getCurrentPosition() calls (0=other, 1=http, 2=https)"
-  },
-  "GEOLOCATION_REQUEST_GRANTED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["tdsmith@mozilla.com"],
-    "expires_in_version": "72",
-    "kind": "enumerated",
-    "n_values": 20,
-    "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1230209, 1494496, 1519170, 1544539],
-    "description": "Geolocation requests either granted or denied (0=denied/other, 1=denied/http, 2=denied/https, ..., 10=granted/other, 11=granted/http, 12=granted/https)"
-  },
-  "GEOLOCATION_WATCHPOSITION_SECURE_ORIGIN" : {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["mds@mozilla.com"],
-    "expires_in_version": "60",
-    "kind": "enumerated",
-    "n_values": 10,
-    "bug_numbers": [1230209],
-    "description" : "Number of navigator.geolocation.watchPosition() calls (0=other, 1=http, 2=https)"
-  },
   "GEOLOCATION_WIN8_SOURCE_IS_MLS": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -1076,24 +1034,6 @@
     "expires_in_version": "default",
     "kind": "boolean",
     "description": "Geolocation on OS X is either MLS or CoreLocation"
-  },
-  "GEOLOCATION_GETCURRENTPOSITION_VISIBLE": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["mds@mozilla.com"],
-    "expires_in_version": "60",
-    "kind": "boolean",
-    "bug_numbers": [1255198],
-    "description": "This metric is recorded every time a navigator.geolocation.getCurrentPosition() request gets allowed/fulfilled. A false value is recorded if the owner is not visible according to document.isVisible."
-  },
-  "GEOLOCATION_WATCHPOSITION_VISIBLE": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["mds@mozilla.com"],
-    "expires_in_version": "60",
-    "kind": "boolean",
-    "bug_numbers": [1255198],
-    "description": "This metric is recorded every time a navigator.geolocation.watchPosition() request gets allowed/fulfilled. A false value is recorded if the owner is not visible according to document.isVisible."
   },
   "GPU_PROCESS_LAUNCH_TIME_MS_2" : {
     "record_in_processes": ["main", "content"],
@@ -9986,6 +9926,46 @@
     "kind": "count",
     "operating_systems": ["android"],
     "description": "Records a value each time GeckoView remote decoding process crashes unexpectedly while decoding media content."
+  },
+  "MEDIA_AUDIO_INIT_FAILURE": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["padenot@mozilla.com", "kinetik@flim.org", "cchang@mozilla.com"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "categorical",
+    "labels": [
+      "first",
+      "other"
+    ],
+    "description": "Failure occurs when initializing the audio stream",
+    "bug_numbers": [1671714]
+  },
+  "MEDIA_AUDIO_BACKEND": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": ["padenot@mozilla.com", "kinetik@flim.org", "cchang@mozilla.com"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "categorical",
+    "labels": [
+      "unknown",
+      "audiounit",
+      "audiounit_rust",
+      "aaudio",
+      "opensl",
+      "wasapi",
+      "winmm",
+      "alsa",
+      "jack",
+      "oss",
+      "pulse",
+      "pulse_rust",
+      "sndio",
+      "sun"
+    ],
+    "description": "The operating system audio backend",
+    "bug_numbers": [1671714]
   },
   "WEBRTC_DTLS_CIPHER": {
     "record_in_processes": ["content", "socket"],

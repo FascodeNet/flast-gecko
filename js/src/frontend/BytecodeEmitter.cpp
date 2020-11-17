@@ -1549,12 +1549,9 @@ bool BytecodeEmitter::isInLoop() {
   return findInnermostNestableControl<LoopControl>();
 }
 
-bool BytecodeEmitter::checkRunOnceContext() {
-  return sc->treatAsRunOnce() && !isInLoop();
-}
-
 bool BytecodeEmitter::checkSingletonContext() {
-  return sc->isTopLevelContext() && checkRunOnceContext();
+  MOZ_ASSERT_IF(sc->treatAsRunOnce(), sc->isTopLevelContext());
+  return sc->treatAsRunOnce() && !isInLoop();
 }
 
 bool BytecodeEmitter::needsImplicitThis() {
@@ -1661,6 +1658,10 @@ bool BytecodeEmitter::iteratorResultShape(GCThingIndex* shape) {
   ObjLiteralFlags flags{ObjLiteralFlag::NoValues};
 
   ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (uint32_t(objIndex) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
   if (!compilationInfo.stencil.objLiteralData.emplaceBack()) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -4626,6 +4627,10 @@ bool BytecodeEmitter::emitCallSiteObjectArray(ListNode* cookedOrRaw,
   }
 
   ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (uint32_t(objIndex) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
   if (!compilationInfo.stencil.objLiteralData.emplaceBack()) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -5729,36 +5734,10 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
                                   FieldPlacement::Instance);
       if (!memberInitializers) {
         ReportAllocationOverflow(cx);
+        return false;
       }
       funbox->setMemberInitializers(*memberInitializers);
     }
-
-    // A function is a run-once lambda if the following all hold:
-    //  - Enclosing script must be run-once lambda or run-once top-level.
-    //        `SharedContext::treatAsRunOnce()`
-    //  - Function definition must not be in a loop.
-    //        `BytecodeEmitter::isInLoop() == false`
-    //  - Function must be an IIFE like "(function(){ })()".
-    //        `CallOrNewEmitter::state == State::FunctionCallee`
-    //  - Function must not match `shouldSuppressRunOnce` conditions.
-    //
-    // NOTE: This is a heuristic and through trick such as `fun.caller` it may
-    //       still be run more than once. The VM must accomodate this.
-    // NOTE: For a lazy function, this will be applied to any existing function
-    //       in UpdateEmittedInnerFunctions().
-    bool isRunOnceLambda =
-        emittingRunOnceLambda && !funbox->shouldSuppressRunOnce();
-    funbox->setTreatAsRunOnce(isRunOnceLambda);
-
-    // Mark functions which are expected to only have one instance as singletons
-    // functions. These function instances will then always have a unique script
-    // of which they are the canonical function. This improves type-inferrence
-    // precision. CloneFunctionObject will make a deep clone of the function and
-    // script as needed if our prediction is wrong.
-    //
-    // NOTE: This heuristic is arbitrary, but some debugger tests rely on the
-    //       current behaviour and need to be updated if the condiditons change.
-    funbox->setIsSingleton(checkRunOnceContext());
 
     if (!funbox->emitBytecode) {
       return fe.emitLazy();
@@ -8839,6 +8818,10 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
 bool BytecodeEmitter::emitPropertyListObjLiteral(ListNode* obj,
                                                  ObjLiteralFlags flags) {
   ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (uint32_t(objIndex) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
   if (!compilationInfo.stencil.objLiteralData.emplaceBack()) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -8911,6 +8894,10 @@ bool BytecodeEmitter::emitDestructuringRestExclusionSetObjLiteral(
   ObjLiteralFlags flags{ObjLiteralFlag::NoValues};
 
   ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (uint32_t(objIndex) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
   if (!compilationInfo.stencil.objLiteralData.emplaceBack()) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -8964,6 +8951,10 @@ bool BytecodeEmitter::emitDestructuringRestExclusionSetObjLiteral(
 
 bool BytecodeEmitter::emitObjLiteralArray(ParseNode* arrayHead, bool isCow) {
   ObjLiteralIndex objIndex(compilationInfo.stencil.objLiteralData.length());
+  if (uint32_t(objIndex) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
   if (!compilationInfo.stencil.objLiteralData.emplaceBack()) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -11257,8 +11248,8 @@ bool BytecodeEmitter::intoScriptStencil(ScriptStencil* script) {
   auto& things = perScriptData().gcThingList().objects();
   size_t ngcthings = things.length();
 
-  // Copy the ScriptThingVariant data from the emitter to the stencil.
-  mozilla::Span<ScriptThingVariant> stencilThings =
+  // Copy the TaggedScriptThingIndex data from the emitter to the stencil.
+  mozilla::Span<TaggedScriptThingIndex> stencilThings =
       NewScriptThingSpanUninitialized(cx, compilationInfo.stencil.alloc,
                                       ngcthings);
   if (stencilThings.empty()) {

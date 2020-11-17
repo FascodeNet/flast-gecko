@@ -234,18 +234,13 @@ FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
       funcDataIndex_(index),
       flags_(FunctionFlags::clearMutableflags(flags)),
       emitBytecode(false),
-      isStandalone_(false),
       wasEmitted_(false),
-      isSingleton_(false),
       isAnnexB(false),
       useAsm(false),
       hasParameterExprs(false),
       hasDestructuringArgs(false),
       hasDuplicateParameters(false),
       hasExprBody_(false),
-      usesApply(false),
-      usesThis(false),
-      usesReturn(false),
       isFunctionFieldCopiedToStencil(false) {
   setFlag(ImmutableFlags::IsGenerator,
           generatorKind == GeneratorKind::Generator);
@@ -410,8 +405,6 @@ void FunctionBox::finishScriptFlags() {
 
   using ImmutableFlags = ImmutableScriptFlagsEnum;
   immutableFlags_.setFlag(ImmutableFlags::HasMappedArgsObj, hasMappedArgsObj());
-  immutableFlags_.setFlag(ImmutableFlags::IsLikelyConstructorWrapper,
-                          isLikelyConstructorWrapper());
 }
 
 void FunctionBox::copyScriptFields(ScriptStencil& script) {
@@ -431,14 +424,12 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
 
   if (atom_) {
     atom_->markUsedByStencil();
+    script.functionAtom = atom_->toIndex();
   }
-  script.functionAtom = atom_;
   script.functionFlags = flags_;
   script.nargs = nargs_;
   script.lazyFunctionEnclosingScopeIndex_ = enclosingScopeIndex_;
-  script.isStandaloneFunction = isStandalone_;
   script.wasFunctionEmitted = wasEmitted_;
-  script.isSingletonFunction = isSingleton_;
 
   isFunctionFieldCopiedToStencil = true;
 }
@@ -467,19 +458,14 @@ void FunctionBox::copyUpdatedAtomAndFlags() {
   ScriptStencil& script = functionStencil();
   if (atom_) {
     atom_->markUsedByStencil();
+    script.functionAtom = atom_->toIndex();
   }
-  script.functionAtom = atom_;
   script.functionFlags = flags_;
 }
 
 void FunctionBox::copyUpdatedWasEmitted() {
   ScriptStencil& script = functionStencil();
   script.wasFunctionEmitted = wasEmitted_;
-}
-
-void FunctionBox::copyUpdatedIsSingleton() {
-  ScriptStencil& script = functionStencil();
-  script.isSingletonFunction = isSingleton_;
 }
 
 }  // namespace frontend

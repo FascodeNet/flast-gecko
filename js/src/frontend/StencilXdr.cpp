@@ -15,120 +15,6 @@
 using namespace js;
 using namespace js::frontend;
 
-struct ScriptThingVariantIndexMatcher {
-  template <typename T>
-  uint32_t operator()(TypedIndex<T>& index) {
-    return index;
-  }
-
-  template <typename T>
-  uint32_t operator()(T&) {
-    return UINT32_MAX;
-  }
-};
-
-template <XDRMode mode>
-static XDRResult XDRScriptThingVariant(XDRState<mode>* xdr,
-                                       ScriptThingVariant& thing) {
-  enum class ScriptThingKind {
-    ScriptAtom,            // JSAtom*
-    NullScriptThing,       // nothing.
-    BigIntIndex,           // Index.
-    ObjLiteralIndex,       // Index.
-    RegExpIndex,           // Index.
-    ScopeIndex,            // Index.
-    FunctionIndex,         // Index.
-    EmptyGlobalScopeType,  // Nothing
-  } kind;
-
-  uint32_t index = UINT32_MAX;
-
-  struct KindMatcher {
-    ScriptThingKind operator()(ScriptAtom& atom) {
-      return ScriptThingKind::ScriptAtom;
-    }
-    ScriptThingKind operator()(NullScriptThing&) {
-      return ScriptThingKind::NullScriptThing;
-    }
-    ScriptThingKind operator()(BigIntIndex& index) {
-      return ScriptThingKind::BigIntIndex;
-    }
-    ScriptThingKind operator()(ObjLiteralIndex& index) {
-      return ScriptThingKind::ObjLiteralIndex;
-    }
-    ScriptThingKind operator()(RegExpIndex& index) {
-      return ScriptThingKind::RegExpIndex;
-    }
-    ScriptThingKind operator()(ScopeIndex& index) {
-      return ScriptThingKind::ScopeIndex;
-    }
-    ScriptThingKind operator()(FunctionIndex& index) {
-      return ScriptThingKind::FunctionIndex;
-    }
-    ScriptThingKind operator()(EmptyGlobalScopeType&) {
-      return ScriptThingKind::EmptyGlobalScopeType;
-    }
-  };
-
-  if (mode == XDR_ENCODE) {
-    kind = thing.match(KindMatcher());
-    index = thing.match(ScriptThingVariantIndexMatcher());
-  }
-
-  MOZ_TRY(xdr->codeEnum32(&kind));
-
-  const ParserAtom* atom = nullptr;
-  if (kind == ScriptThingKind::ScriptAtom) {
-    MOZ_ASSERT(index == UINT32_MAX);
-    if (mode == XDR_ENCODE) {
-      atom = thing.as<ScriptAtom>();
-    }
-    MOZ_TRY(XDRParserAtom(xdr, &atom));
-  } else if (kind == ScriptThingKind::BigIntIndex ||
-             kind == ScriptThingKind::ObjLiteralIndex ||
-             kind == ScriptThingKind::RegExpIndex ||
-             kind == ScriptThingKind::ScopeIndex ||
-             kind == ScriptThingKind::FunctionIndex) {
-    MOZ_TRY(xdr->codeUint32(&index));
-  } else {
-    MOZ_ASSERT(kind == ScriptThingKind::NullScriptThing ||
-               kind == ScriptThingKind::EmptyGlobalScopeType);
-  }
-
-  if (mode == XDR_DECODE) {
-    switch (kind) {
-      case ScriptThingKind::ScriptAtom:
-        // `atom` is initialized above if `kind` == ScriptAtom
-        MOZ_ASSERT(atom != nullptr);
-        thing.emplace<ScriptAtom>(atom);
-        break;
-      case ScriptThingKind::NullScriptThing:
-        thing.emplace<NullScriptThing>();
-        break;
-      case ScriptThingKind::EmptyGlobalScopeType:
-        thing.emplace<EmptyGlobalScopeType>();
-        break;
-      case ScriptThingKind::BigIntIndex:
-        thing.emplace<BigIntIndex>(index);
-        break;
-      case ScriptThingKind::ObjLiteralIndex:
-        thing.emplace<ObjLiteralIndex>(index);
-        break;
-      case ScriptThingKind::RegExpIndex:
-        thing.emplace<RegExpIndex>(index);
-        break;
-      case ScriptThingKind::ScopeIndex:
-        thing.emplace<ScopeIndex>(index);
-        break;
-      case ScriptThingKind::FunctionIndex:
-        thing.emplace<FunctionIndex>(index);
-        break;
-    }
-  }
-
-  return Ok();
-}
-
 template <XDRMode mode>
 /* static */ XDRResult StencilXDR::Script(XDRState<mode>* xdr,
                                           ScriptStencil& stencil) {
@@ -137,9 +23,7 @@ template <XDRMode mode>
     HasSharedData,
     HasFunctionAtom,
     HasScopeIndex,
-    IsStandaloneFunction,
     WasFunctionEmitted,
-    IsSingletonFunction,
     AllowRelazify,
   };
 
@@ -185,14 +69,8 @@ template <XDRMode mode>
     xdrFields.scopeIndex =
         stencil.lazyFunctionEnclosingScopeIndex_.valueOr(ScopeIndex());
 
-    if (stencil.isStandaloneFunction) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::IsStandaloneFunction);
-    }
     if (stencil.wasFunctionEmitted) {
       xdrFlags |= 1 << uint8_t(XdrFlags::WasFunctionEmitted);
-    }
-    if (stencil.isSingletonFunction) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::IsSingletonFunction);
     }
     if (stencil.allowRelazify) {
       xdrFlags |= 1 << uint8_t(XdrFlags::AllowRelazify);
@@ -233,15 +111,13 @@ template <XDRMode mode>
 
     MOZ_ASSERT(stencil.gcThings.empty());
     if (xdrFields.numGcThings > 0) {
-      // Allocated ScriptThingVariant array and initialize to safe value.
-      mozilla::Span<ScriptThingVariant> stencilThings =
+      // Allocated TaggedScriptThingIndex array and initialize to safe value.
+      mozilla::Span<TaggedScriptThingIndex> stencilThings =
           NewScriptThingSpanUninitialized(xdr->cx(), xdr->stencilAlloc(),
                                           xdrFields.numGcThings);
       if (stencilThings.empty()) {
         return xdr->fail(JS::TranscodeResult_Throw);
       }
-      std::uninitialized_fill(stencilThings.begin(), stencilThings.end(),
-                              NullScriptThing());
       stencil.gcThings = stencilThings;
     }
 
@@ -252,30 +128,32 @@ template <XDRMode mode>
       stencil.lazyFunctionEnclosingScopeIndex_.emplace(xdrFields.scopeIndex);
     }
 
-    if (xdrFlags & (1 << uint8_t(XdrFlags::IsStandaloneFunction))) {
-      stencil.isStandaloneFunction = true;
-    }
     if (xdrFlags & (1 << uint8_t(XdrFlags::WasFunctionEmitted))) {
       stencil.wasFunctionEmitted = true;
-    }
-    if (xdrFlags & (1 << uint8_t(XdrFlags::IsSingletonFunction))) {
-      stencil.isSingletonFunction = true;
     }
     if (xdrFlags & (1 << uint8_t(XdrFlags::AllowRelazify))) {
       stencil.allowRelazify = true;
     }
   }
 
-  for (ScriptThingVariant& thing : stencil.gcThings) {
-    MOZ_TRY(XDRScriptThingVariant(xdr, thing));
-  }
+#ifdef __cpp_lib_has_unique_object_representations
+  // We check endianess before decoding so if structures are fully packed, we
+  // may transcode them directly as raw bytes.
+  static_assert(
+      std::has_unique_object_representations<TaggedScriptThingIndex>(),
+      "TaggedScriptThingIndex structure must be fully packed");
+#endif
+
+  MOZ_TRY(xdr->codeBytes(
+      const_cast<TaggedScriptThingIndex*>(stencil.gcThings.data()),
+      sizeof(TaggedScriptThingIndex) * xdrFields.numGcThings));
 
   if (xdrFlags & (1 << uint8_t(XdrFlags::HasSharedData))) {
     MOZ_TRY(StencilXDR::SharedData<mode>(xdr, stencil.sharedData));
   }
 
   if (xdrFlags & (1 << uint8_t(XdrFlags::HasFunctionAtom))) {
-    MOZ_TRY(XDRParserAtom(xdr, &stencil.functionAtom));
+    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &stencil.functionAtom));
   }
 
   return Ok();
@@ -657,10 +535,10 @@ static XDRResult XDRStencilModuleEntryVector(
     MOZ_TRY(xdr->codeUint32(&entry.lineno));
     MOZ_TRY(xdr->codeUint32(&entry.column));
 
-    MOZ_TRY(XDRParserAtomOrNull(xdr, &entry.specifier));
-    MOZ_TRY(XDRParserAtomOrNull(xdr, &entry.localName));
-    MOZ_TRY(XDRParserAtomOrNull(xdr, &entry.importName));
-    MOZ_TRY(XDRParserAtomOrNull(xdr, &entry.exportName));
+    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.specifier));
+    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.localName));
+    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.importName));
+    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.exportName));
   }
 
   return Ok();
@@ -832,9 +710,9 @@ template <XDRMode mode>
                                               ObjLiteralStencil& stencil) {
   MOZ_TRY(XDRObjLiteralWriter(xdr, stencil.writer_));
 
-  MOZ_TRY(XDRVector(xdr, stencil.atoms_, nullptr));
-  for (const ParserAtom*& entry : stencil.atoms_) {
-    MOZ_TRY(XDRParserAtom(xdr, &entry));
+  MOZ_TRY(XDRVector(xdr, stencil.atoms_));
+  for (auto& entry : stencil.atoms_) {
+    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry));
   }
 
   return Ok();
@@ -873,7 +751,7 @@ template <XDRMode mode>
     flags = stencil.flags_.value();
   }
 
-  MOZ_TRY(XDRParserAtom(xdr, &stencil.atom_));
+  MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &stencil.atom_));
   MOZ_TRY(xdr->codeUint8(&flags));
 
   if (mode == XDR_DECODE) {

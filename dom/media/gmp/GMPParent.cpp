@@ -130,6 +130,10 @@ nsresult GMPParent::GetPluginFileArch(nsIFile* aPluginDir,
   rv = nsMacUtilsImpl::GetArchitecturesForBinary(pluginPath.get(), &aArchSet);
   NS_ENSURE_SUCCESS(rv, rv);
 
+#  if defined(__aarch64__)
+  mPluginFilePath = pluginPath;
+#  endif
+
   return NS_OK;
 }
 #endif  // defined(XP_MACOSX)
@@ -172,10 +176,11 @@ RefPtr<GenericPromise> GMPParent::Init(GeckoMediaPluginServiceParent* aService,
 
   uint32_t x86 = base::PROCESS_ARCH_X86_64 | base::PROCESS_ARCH_I386;
 #  if defined(__aarch64__)
+  uint32_t arm64 = base::PROCESS_ARCH_ARM_64;
   // When executing in an ARM64 process, if the library is x86 or x64,
   // set |mChildLaunchArch| to x64 and allow the library to be used as long
   // as this process is a universal binary.
-  if (pluginArch & x86) {
+  if (!(pluginArch & arm64) && (pluginArch & x86)) {
     bool isWidevine = parentLeafName.Find("widevine") != kNotFound;
     bool isWidevineAllowed =
         Preferences::GetBool("media.gmp-widevinecdm.allow-x64-plugin-on-arm64");
@@ -210,6 +215,7 @@ RefPtr<GenericPromise> GMPParent::Init(GeckoMediaPluginServiceParent* aService,
                              (bundleArch & base::PROCESS_ARCH_ARM_64);
     if (isUniversalBinary) {
       mChildLaunchArch = base::PROCESS_ARCH_X86_64;
+      PreTranslateBins();
     } else {
       return GenericPromise::CreateAndReject(NS_ERROR_NOT_IMPLEMENTED,
                                              __func__);
@@ -1025,6 +1031,27 @@ bool GMPParent::EnsureProcessLoaded(base::ProcessId* aID) {
 void GMPParent::IncrementGMPContentChildCount() { ++mGMPContentChildCount; }
 
 nsString GMPParent::GetPluginBaseName() const { return u"gmp-"_ns + mName; }
+
+#if defined(XP_MACOSX) && defined(__aarch64__)
+void GMPParent::PreTranslateBins() {
+  nsCOMPtr<nsIRunnable> event = mozilla::NewRunnableMethod(
+      "RosettaTranslation", this, &GMPParent::PreTranslateBinsWorker);
+
+  DebugOnly<nsresult> rv =
+      NS_DispatchBackgroundTask(event.forget(), NS_DISPATCH_EVENT_MAY_BLOCK);
+
+  MOZ_ASSERT(NS_SUCCEEDED(rv));
+}
+
+void GMPParent::PreTranslateBinsWorker() {
+  int rv = nsMacUtilsImpl::PreTranslateXUL();
+  GMP_PARENT_LOG_DEBUG("%s: XUL translation result: %d", __FUNCTION__, rv);
+
+  rv = nsMacUtilsImpl::PreTranslateBinary(mPluginFilePath);
+  GMP_PARENT_LOG_DEBUG("%s: %s translation result: %d", __FUNCTION__,
+                       mPluginFilePath.get(), rv);
+}
+#endif
 
 }  // namespace mozilla::gmp
 

@@ -103,6 +103,8 @@ struct CompilationAtomCache {
 
  public:
   JSAtom* getExistingAtomAt(ParserAtomIndex index) const;
+  JSAtom* getExistingAtomAt(JSContext* cx,
+                            TaggedParserAtomIndex taggedIndex) const;
   JSAtom* getAtomAt(ParserAtomIndex index) const;
   bool hasAtomAt(ParserAtomIndex index) const;
   bool setAtomAt(JSContext* cx, ParserAtomIndex index, JSAtom* atom);
@@ -285,6 +287,9 @@ struct CompilationStencil {
     alloc.steal(&other.alloc);
   }
 
+  const ParserAtom* getParserAtomAt(JSContext* cx,
+                                    TaggedParserAtomIndex taggedIndex) const;
+
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump();
   void dump(js::JSONPrinter& json);
@@ -462,17 +467,18 @@ struct CompilationInfo {
 struct CompilationInfoVector {
  private:
   using FunctionKey = uint64_t;
-  using FunctionMap = HashMap<FunctionKey, FunctionIndex>;
+  using FunctionIndexVector = Vector<FunctionIndex, 0, js::SystemAllocPolicy>;
 
   static FunctionKey toFunctionKey(const SourceExtent& extent) {
     return (FunctionKey)extent.sourceStart << 32 | extent.sourceEnd;
   }
 
-  MOZ_MUST_USE bool buildDelazificationStencilMap(FunctionMap& functionMap);
+  MOZ_MUST_USE bool buildDelazificationIndices(JSContext* cx);
 
  public:
   frontend::CompilationInfo initial;
   GCVector<frontend::CompilationInfo, 0, js::SystemAllocPolicy> delazifications;
+  FunctionIndexVector delazificationIndices;
 
   CompilationInfoVector(JSContext* cx,
                         const JS::ReadOnlyCompileOptions& options)
@@ -501,7 +507,7 @@ struct CompilationInfoVector {
 };
 
 // Allocate an uninitialized script-things array using the Stencil's allocator.
-mozilla::Span<ScriptThingVariant> NewScriptThingSpanUninitialized(
+mozilla::Span<TaggedScriptThingIndex> NewScriptThingSpanUninitialized(
     JSContext* cx, LifoAlloc& alloc, uint32_t ngcthings);
 
 }  // namespace frontend

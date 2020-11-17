@@ -34,84 +34,6 @@ using mozilla::Unused;  // <snicker>
 using namespace mozilla::dom;
 using namespace mozilla;
 using DelegateInfo = PermissionDelegateHandler::PermissionDelegateInfo;
-#define kVisibilityChange u"visibilitychange"
-
-class VisibilityChangeListener final : public nsIDOMEventListener {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIDOMEVENTLISTENER
-
-  explicit VisibilityChangeListener(nsPIDOMWindowInner* aWindow);
-
-  void RemoveListener();
-  void SetCallback(nsIContentPermissionRequestCallback* aCallback);
-  already_AddRefed<nsIContentPermissionRequestCallback> GetCallback();
-
- private:
-  virtual ~VisibilityChangeListener() = default;
-
-  nsWeakPtr mWindow;
-  nsCOMPtr<nsIContentPermissionRequestCallback> mCallback;
-};
-
-NS_IMPL_ISUPPORTS(VisibilityChangeListener, nsIDOMEventListener)
-
-VisibilityChangeListener::VisibilityChangeListener(
-    nsPIDOMWindowInner* aWindow) {
-  MOZ_ASSERT(aWindow);
-
-  mWindow = do_GetWeakReference(aWindow);
-  nsCOMPtr<Document> doc = aWindow->GetExtantDoc();
-  if (doc) {
-    doc->AddSystemEventListener(nsLiteralString(kVisibilityChange),
-                                /* listener */ this,
-                                /* use capture */ true,
-                                /* wants untrusted */ false);
-  }
-}
-
-NS_IMETHODIMP
-VisibilityChangeListener::HandleEvent(Event* aEvent) {
-  nsAutoString type;
-  aEvent->GetType(type);
-  if (!type.EqualsLiteral(kVisibilityChange)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  nsCOMPtr<Document> doc = do_QueryInterface(aEvent->GetTarget());
-  MOZ_ASSERT(doc);
-
-  if (mCallback) {
-    mCallback->NotifyVisibility(!doc->Hidden());
-  }
-
-  return NS_OK;
-}
-
-void VisibilityChangeListener::RemoveListener() {
-  nsCOMPtr<nsPIDOMWindowInner> window = do_QueryReferent(mWindow);
-  if (!window) {
-    return;
-  }
-
-  nsCOMPtr<EventTarget> target = window->GetExtantDoc();
-  if (target) {
-    target->RemoveSystemEventListener(nsLiteralString(kVisibilityChange),
-                                      /* listener */ this,
-                                      /* use capture */ true);
-  }
-}
-
-void VisibilityChangeListener::SetCallback(
-    nsIContentPermissionRequestCallback* aCallback) {
-  mCallback = aCallback;
-}
-
-already_AddRefed<nsIContentPermissionRequestCallback>
-VisibilityChangeListener::GetCallback() {
-  nsCOMPtr<nsIContentPermissionRequestCallback> callback = mCallback;
-  return callback.forget();
-}
 
 namespace mozilla::dom {
 
@@ -138,8 +60,6 @@ class ContentPermissionRequestParent : public PContentPermissionRequestParent {
   // Not MOZ_CAN_RUN_SCRIPT because we can't annotate the thing we override yet.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   virtual mozilla::ipc::IPCResult Recvprompt() override;
-  virtual mozilla::ipc::IPCResult RecvNotifyVisibility(
-      const bool& aIsVisible) override;
   virtual mozilla::ipc::IPCResult RecvDestroy() override;
   virtual void ActorDestroy(ActorDestroyReason why) override;
 };
@@ -169,15 +89,6 @@ mozilla::ipc::IPCResult ContentPermissionRequestParent::Recvprompt() {
     RefPtr<nsContentPermissionRequestProxy> proxy(mProxy);
     proxy->Cancel();
   }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentPermissionRequestParent::RecvNotifyVisibility(
-    const bool& aIsVisible) {
-  if (!mProxy) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  mProxy->NotifyVisibility(aIsVisible);
   return IPC_OK();
 }
 
@@ -443,18 +354,6 @@ void nsContentPermissionUtils::NotifyRemoveContentPermissionRequestChild(
   ContentPermissionRequestChildMap().erase(it);
 }
 
-NS_IMPL_ISUPPORTS(nsContentPermissionRequester, nsIContentPermissionRequester)
-
-nsContentPermissionRequester::nsContentPermissionRequester(
-    nsPIDOMWindowInner* aWindow)
-    : mWindow(do_GetWeakReference(aWindow)),
-      mListener(new VisibilityChangeListener(aWindow)) {}
-
-nsContentPermissionRequester::~nsContentPermissionRequester() {
-  mListener->RemoveListener();
-  mListener = nullptr;
-}
-
 static nsIPrincipal* GetTopLevelPrincipal(nsPIDOMWindowInner* aWindow) {
   MOZ_ASSERT(aWindow);
 
@@ -491,7 +390,6 @@ ContentPermissionRequestBase::ContentPermissionRequestBase(
     : mPrincipal(aPrincipal),
       mTopLevelPrincipal(aWindow ? ::GetTopLevelPrincipal(aWindow) : nullptr),
       mWindow(aWindow),
-      mRequester(aWindow ? new nsContentPermissionRequester(aWindow) : nullptr),
       mPrefName(aPrefName),
       mType(aType),
       mIsHandlingUserInput(false),
@@ -566,16 +464,6 @@ NS_IMETHODIMP
 ContentPermissionRequestBase::GetIsHandlingUserInput(
     bool* aIsHandlingUserInput) {
   *aIsHandlingUserInput = mIsHandlingUserInput;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-ContentPermissionRequestBase::GetRequester(
-    nsIContentPermissionRequester** aRequester) {
-  NS_ENSURE_ARG_POINTER(aRequester);
-
-  nsCOMPtr<nsIContentPermissionRequester> requester = mRequester;
-  requester.forget(aRequester);
   return NS_OK;
 }
 
@@ -743,24 +631,6 @@ nsresult TranslateChoices(
 
 }  // namespace mozilla::dom
 
-NS_IMPL_ISUPPORTS(
-    nsContentPermissionRequestProxy::nsContentPermissionRequesterProxy,
-    nsIContentPermissionRequester)
-
-void nsContentPermissionRequestProxy::nsContentPermissionRequesterProxy ::
-    NotifyVisibilityResult(const bool& aIsVisible) {
-  if (mWaitGettingResult) {
-    MOZ_ASSERT(mGetCallback);
-    mWaitGettingResult = false;
-    mGetCallback->NotifyVisibility(aIsVisible);
-    return;
-  }
-
-  if (mOnChangeCallback) {
-    mOnChangeCallback->NotifyVisibility(aIsVisible);
-  }
-}
-
 nsContentPermissionRequestProxy::nsContentPermissionRequestProxy(
     ContentPermissionRequestParent* parent)
     : mParent(parent) {
@@ -772,7 +642,6 @@ nsContentPermissionRequestProxy::~nsContentPermissionRequestProxy() = default;
 nsresult nsContentPermissionRequestProxy::Init(
     const nsTArray<PermissionRequest>& requests) {
   mPermissionRequests = requests.Clone();
-  mRequester = new nsContentPermissionRequesterProxy();
 
   nsCOMPtr<nsIContentPermissionPrompt> prompt =
       do_GetService(NS_CONTENT_PERMISSION_PROMPT_CONTRACTID);
@@ -784,10 +653,7 @@ nsresult nsContentPermissionRequestProxy::Init(
   return NS_OK;
 }
 
-void nsContentPermissionRequestProxy::OnParentDestroyed() {
-  mRequester = nullptr;
-  mParent = nullptr;
-}
+void nsContentPermissionRequestProxy::OnParentDestroyed() { mParent = nullptr; }
 
 NS_IMPL_ISUPPORTS(nsContentPermissionRequestProxy, nsIContentPermissionRequest)
 
@@ -924,32 +790,14 @@ nsContentPermissionRequestProxy::Allow(JS::HandleValue aChoices) {
   return NS_OK;
 }
 
-void nsContentPermissionRequestProxy::NotifyVisibility(const bool& aIsVisible) {
-  MOZ_ASSERT(mRequester);
-
-  mRequester->NotifyVisibilityResult(aIsVisible);
-}
-
-NS_IMETHODIMP
-nsContentPermissionRequestProxy::GetRequester(
-    nsIContentPermissionRequester** aRequester) {
-  NS_ENSURE_ARG_POINTER(aRequester);
-
-  RefPtr<nsContentPermissionRequesterProxy> requester = mRequester;
-  requester.forget(aRequester);
-  return NS_OK;
-}
-
 // RemotePermissionRequest
-
-NS_IMPL_ISUPPORTS(RemotePermissionRequest, nsIContentPermissionRequestCallback);
 
 RemotePermissionRequest::RemotePermissionRequest(
     nsIContentPermissionRequest* aRequest, nsPIDOMWindowInner* aWindow)
-    : mRequest(aRequest), mWindow(aWindow), mIPCOpen(false), mDestroyed(false) {
-  mListener = new VisibilityChangeListener(mWindow);
-  mListener->SetCallback(this);
-}
+    : mRequest(aRequest),
+      mWindow(aWindow),
+      mIPCOpen(false),
+      mDestroyed(false) {}
 
 RemotePermissionRequest::~RemotePermissionRequest() {
   MOZ_ASSERT(
@@ -1014,17 +862,5 @@ void RemotePermissionRequest::Destroy() {
     return;
   }
   Unused << this->SendDestroy();
-  mListener->RemoveListener();
-  mListener = nullptr;
   mDestroyed = true;
-}
-
-NS_IMETHODIMP
-RemotePermissionRequest::NotifyVisibility(bool isVisible) {
-  if (!IPCOpen()) {
-    return NS_OK;
-  }
-
-  Unused << SendNotifyVisibility(isVisible);
-  return NS_OK;
 }

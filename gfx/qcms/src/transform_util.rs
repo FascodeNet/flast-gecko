@@ -97,10 +97,7 @@ pub fn lut_interp_linear16(mut input_value: u16, mut table: &[u16]) -> u16 {
 }
 /* same as above but takes an input_value from 0..PRECACHE_OUTPUT_MAX
  * and returns a uint8_t value representing a range from 0..1 */
-fn lut_interp_linear_precache_output(
-    mut input_value: u32,
-    mut table: &[u16]
-) -> u8 {
+fn lut_interp_linear_precache_output(mut input_value: u32, mut table: &[u16]) -> u8 {
     /* Start scaling input_value to the length of the array: PRECACHE_OUTPUT_MAX*(length-1).
      * We'll divide out the PRECACHE_OUTPUT_MAX next */
     let mut value: u32 = input_value * (table.len() - 1) as libc::c_uint;
@@ -114,26 +111,21 @@ fn lut_interp_linear_precache_output(
     /* the table values range from 0..65535 */
     value = table[upper as usize] as libc::c_uint * interp
         + table[lower as usize] as libc::c_uint * (PRECACHE_OUTPUT_MAX as libc::c_uint - interp); // 0..(65535*PRECACHE_OUTPUT_MAX)
-                                                                                                 /* round and scale */
+                                                                                                  /* round and scale */
     value = value + (PRECACHE_OUTPUT_MAX * 65535 / 255 / 2) as libc::c_uint; // scale to 0..255
     value = value / (PRECACHE_OUTPUT_MAX * 65535 / 255) as libc::c_uint;
     return value as u8;
 }
 /* value must be a value between 0 and 1 */
 //XXX: is the above a good restriction to have?
-#[no_mangle]
-pub unsafe extern "C" fn lut_interp_linear_float(
-    mut value: f32,
-    mut table: *const f32,
-    mut length: i32,
-) -> f32 {
-    value = value * (length - 1) as f32;
+pub fn lut_interp_linear_float(mut value: f32, mut table: &[f32]) -> f32 {
+    value = value * (table.len() - 1) as f32;
 
     let mut upper: i32 = value.ceil() as i32;
     let mut lower: i32 = value.floor() as i32;
     //XXX: can we be more performant here?
-    value = (*table.offset(upper as isize) as f64 * (1.0f64 - (upper as f32 - value) as f64)
-        + (*table.offset(lower as isize) * (upper as f32 - value)) as f64) as f32;
+    value = (table[upper as usize] as f64 * (1.0f64 - (upper as f32 - value) as f64)
+        + (table[lower as usize] * (upper as f32 - value)) as f64) as f32;
     /* scale the value */
     return value;
 }
@@ -391,17 +383,14 @@ fn compute_precache_pow(output: &mut [u8; PRECACHE_OUTPUT_SIZE], mut gamma: f32)
         v = v + 1
     }
 }
-pub fn compute_precache_lut(
-    mut output: &mut [u8; PRECACHE_OUTPUT_SIZE],
-    mut table: &[u16],
-) {
+pub fn compute_precache_lut(mut output: &mut [u8; PRECACHE_OUTPUT_SIZE], mut table: &[u16]) {
     let mut v: u32 = 0;
     while v < PRECACHE_OUTPUT_SIZE as u32 {
         output[v as usize] = lut_interp_linear_precache_output(v, table);
         v = v + 1
     }
 }
-pub fn compute_precache_linear(mut output: &mut[u8; PRECACHE_OUTPUT_SIZE]) {
+pub fn compute_precache_linear(mut output: &mut [u8; PRECACHE_OUTPUT_SIZE]) {
     let mut v: u32 = 0;
     while v < PRECACHE_OUTPUT_SIZE as u32 {
         //XXX: round?

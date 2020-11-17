@@ -6,6 +6,8 @@
 #include "RenderPipeline.h"
 
 #include "Device.h"
+#include "ipc/WebGPUChild.h"
+#include "mozilla/dom/WebGPUBinding.h"
 
 namespace mozilla {
 namespace webgpu {
@@ -13,8 +15,11 @@ namespace webgpu {
 GPU_IMPL_CYCLE_COLLECTION(RenderPipeline, mParent)
 GPU_IMPL_JS_WRAP(RenderPipeline)
 
-RenderPipeline::RenderPipeline(Device* const aParent, RawId aId)
-    : ChildOf(aParent), mId(aId) {}
+RenderPipeline::RenderPipeline(Device* const aParent, RawId aId,
+                               nsTArray<RawId>&& aImplicitBindGroupLayoutIds)
+    : ChildOf(aParent),
+      mImplicitBindGroupLayoutIds(std::move(aImplicitBindGroupLayoutIds)),
+      mId(aId) {}
 
 RenderPipeline::~RenderPipeline() { Cleanup(); }
 
@@ -26,6 +31,13 @@ void RenderPipeline::Cleanup() {
       bridge->SendRenderPipelineDestroy(mId);
     }
   }
+}
+
+already_AddRefed<BindGroupLayout> RenderPipeline::GetBindGroupLayout(
+    uint32_t index) const {
+  RefPtr<BindGroupLayout> object =
+      new BindGroupLayout(mParent, mImplicitBindGroupLayoutIds[index]);
+  return object.forget();
 }
 
 }  // namespace webgpu

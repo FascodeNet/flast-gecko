@@ -196,6 +196,7 @@
 #include "base/task.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/PCycleCollectWithLogsChild.h"
+#include "mozilla/dom/PerformanceStorage.h"
 #include "nsChromeRegistryContent.h"
 #include "nsFrameMessageManager.h"
 #include "nsIScriptSecurityManager.h"
@@ -3751,7 +3752,8 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowBlur(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvRaiseWindow(
-    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType) {
+    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
+    uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3768,7 +3770,7 @@ mozilla::ipc::IPCResult ContentChild::RecvRaiseWindow(
 
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
-    fm->RaiseWindow(window, aCallerType);
+    fm->RaiseWindow(window, aCallerType, aActionId);
   }
   return IPC_OK();
 }
@@ -3828,7 +3830,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetFocusedBrowsingContext(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvSetActiveBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3855,7 +3857,7 @@ mozilla::ipc::IPCResult ContentChild::RecvAbortOrientationPendingPromises(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvUnsetActiveBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3909,7 +3911,7 @@ mozilla::ipc::IPCResult ContentChild::RecvBlurToChild(
     const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
     const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
     const MaybeDiscarded<BrowsingContext>& aAncestorBrowsingContextToFocus,
-    bool aIsLeavingDocument, bool aAdjustWidget) {
+    bool aIsLeavingDocument, bool aAdjustWidget, uint64_t aActionId) {
   if (aFocusedBrowsingContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3926,7 +3928,7 @@ mozilla::ipc::IPCResult ContentChild::RecvBlurToChild(
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     fm->BlurFromOtherProcess(aFocusedBrowsingContext.get(), toClear, toFocus,
-                             aIsLeavingDocument, aAdjustWidget);
+                             aIsLeavingDocument, aAdjustWidget, aActionId);
   }
   return IPC_OK();
 }
@@ -3944,6 +3946,16 @@ mozilla::ipc::IPCResult ContentChild::RecvSetupFocusedAndActive(
       fm->SetFocusedBrowsingContextFromOtherProcess(
           aFocusedBrowsingContext.get());
     }
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvReviseActiveBrowsingContext(
+    const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
+    uint64_t aActionId) {
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm && !aActiveBrowsingContext.IsNullOrDiscarded()) {
+    fm->ReviseActiveBrowsingContext(aActiveBrowsingContext.get(), aActionId);
   }
   return IPC_OK();
 }
@@ -4075,6 +4087,24 @@ mozilla::ipc::IPCResult ContentChild::RecvScriptError(
   rv = consoleService->LogMessage(scriptError);
   NS_ENSURE_SUCCESS(rv, IPC_FAIL(this, "Failed to log script error"));
 
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvReportFrameTimingData(
+    uint64_t innerWindowId, const nsString& entryName,
+    const nsString& initiatorType, UniquePtr<PerformanceTimingData>&& aData) {
+  auto* innerWindow = nsGlobalWindowInner::GetInnerWindowWithId(innerWindowId);
+  if (!innerWindow) {
+    return IPC_OK();
+  }
+
+  mozilla::dom::Performance* performance = innerWindow->GetPerformance();
+  if (!performance) {
+    return IPC_OK();
+  }
+
+  performance->AsPerformanceStorage()->AddEntry(entryName, initiatorType,
+                                                std::move(aData));
   return IPC_OK();
 }
 

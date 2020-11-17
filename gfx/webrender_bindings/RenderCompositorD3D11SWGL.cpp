@@ -225,8 +225,9 @@ bool RenderCompositorD3D11SWGL::MapTile(wr::NativeTileId aId,
   mCompositor->GetDevice()->GetImmediateContext(getter_AddRefs(context));
 
   D3D11_MAPPED_SUBRESOURCE mappedSubresource;
-  DebugOnly<HRESULT> hr = context->Map(mCurrentTile.mStagingTexture, 0,
-                                       D3D11_MAP_WRITE, 0, &mappedSubresource);
+  DebugOnly<HRESULT> hr =
+      context->Map(mCurrentTile.mStagingTexture, 0, D3D11_MAP_READ_WRITE, 0,
+                   &mappedSubresource);
   MOZ_ASSERT(SUCCEEDED(hr));
 
   // aData is expected to contain a pointer to the first pixel within the valid
@@ -304,12 +305,7 @@ void RenderCompositorD3D11SWGL::CreateTile(wr::NativeSurfaceId aId, int32_t aX,
   RefPtr<DataTextureSourceD3D11> source = new DataTextureSourceD3D11(
       mCompositor->GetDevice(), gfx::SurfaceFormat::B8G8R8A8, texture);
 
-  // We need to pad our tile textures by 16 bytes since SWGL can read up
-  // to 3 pixels past the end. We don't control the allocation size, so
-  // add an extra row instead.
-  desc.Height += 1;
-
-  desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+  desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE | D3D11_CPU_ACCESS_READ;
   desc.Usage = D3D11_USAGE_STAGING;
   desc.BindFlags = 0;
 

@@ -659,7 +659,8 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvWindowBlur(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvRaiseWindow(
-      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType);
+      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
+      uint64_t aActionId);
   mozilla::ipc::IPCResult RecvAdjustWindowFocus(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aCheckPermission,
       bool aIsVisible);
@@ -668,21 +669,22 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvSetFocusedBrowsingContext(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetActiveBrowsingContext(
-      const MaybeDiscarded<BrowsingContext>& aContext);
+      const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId);
   mozilla::ipc::IPCResult RecvUnsetActiveBrowsingContext(
-      const MaybeDiscarded<BrowsingContext>& aContext);
+      const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId);
   mozilla::ipc::IPCResult RecvSetFocusedElement(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aNeedsFocus);
   mozilla::ipc::IPCResult RecvFinalizeFocusOuter(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aCanFocus,
       CallerType aCallerType);
+  mozilla::ipc::IPCResult RecvInsertNewFocusActionId(uint64_t aActionId);
   mozilla::ipc::IPCResult RecvBlurToParent(
       const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
       const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
       const MaybeDiscarded<BrowsingContext>& aAncestorBrowsingContextToFocus,
       bool aIsLeavingDocument, bool aAdjustWidget,
       bool aBrowsingContextToClearHandled,
-      bool aAncestorBrowsingContextToFocusHandled);
+      bool aAncestorBrowsingContextToFocusHandled, uint64_t aActionId);
   mozilla::ipc::IPCResult RecvMaybeExitFullscreen(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
@@ -1096,6 +1098,10 @@ class ContentParent final
       const uint32_t& aColNumber, const uint32_t& aFlags,
       const nsCString& aCategory, const bool& aIsFromPrivateWindow,
       const uint64_t& aInnerWindowId, const bool& aIsFromChromeContext);
+
+  mozilla::ipc::IPCResult RecvReportFrameTimingData(
+      uint64_t innerWindowId, const nsString& entryName,
+      const nsString& initiatorType, UniquePtr<PerformanceTimingData>&& aData);
 
   mozilla::ipc::IPCResult RecvScriptErrorWithStack(
       const nsString& aMessage, const nsString& aSourceName,
@@ -1606,7 +1612,9 @@ bool IsWebRemoteType(const nsACString& aContentProcessType);
 
 bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType);
 
-bool IsPriviligedMozillaRemoteType(const nsACString& aContentProcessType);
+bool IsPrivilegedMozillaRemoteType(const nsACString& aContentProcessType);
+
+bool IsExtensionRemoteType(const nsACString& aContentProcessType);
 
 inline nsISupports* ToSupports(mozilla::dom::ContentParent* aContentParent) {
   return static_cast<nsIDOMProcessParent*>(aContentParent);

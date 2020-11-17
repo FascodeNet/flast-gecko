@@ -259,7 +259,10 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
 
   FunctionIndex index =
       FunctionIndex(compilationInfo_.stencil.scriptData.length());
-
+  if (uint32_t(index) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx_);
+    return nullptr;
+  }
   if (!compilationInfo_.stencil.scriptData.emplaceBack()) {
     js::ReportOutOfMemory(cx_);
     return nullptr;
@@ -839,14 +842,14 @@ bool PerHandlerParser<ParseHandler>::
       // TODO-Stencil
       //   After closed-over-bindings are snapshotted in the handler,
       //   remove this.
-      auto mbNameId = this->compilationState_.parserAtoms.internJSAtom(
-          cx_, this->getCompilationInfo(), name);
-      if (mbNameId.isErr()) {
+      const ParserAtom* parserAtom =
+          this->compilationState_.parserAtoms.internJSAtom(
+              cx_, this->getCompilationInfo(), name);
+      if (!parserAtom) {
         return false;
       }
-      const ParserName* nameId = mbNameId.unwrap()->asName();
 
-      scope.lookupDeclaredName(nameId)->value()->setClosedOver();
+      scope.lookupDeclaredName(parserAtom->asName())->value()->setClosedOver();
       MOZ_ASSERT(slotCount > 0);
       slotCount--;
     }
@@ -1749,7 +1752,8 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
   StencilModuleMetadata& moduleMetadata =
       this->compilationInfo_.stencil.moduleMetadata;
   for (auto entry : moduleMetadata.localExportEntries) {
-    const ParserAtom* nameId = entry.localName;
+    const ParserAtom* nameId =
+        this->compilationInfo_.stencil.getParserAtomAt(cx_, entry.localName);
     MOZ_ASSERT(nameId);
 
     DeclaredNamePtr p = modulepc.varScope().lookupDeclaredName(nameId);
@@ -1985,7 +1989,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   }
 
   // Allocate the `stencilThings` array without initializing it yet.
-  mozilla::Span<ScriptThingVariant> stencilThings =
+  mozilla::Span<TaggedScriptThingIndex> stencilThings =
       NewScriptThingSpanUninitialized(cx_, compilationInfo_.stencil.alloc,
                                       ngcthings.value());
   if (stencilThings.empty()) {
@@ -2002,15 +2006,15 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   auto cursor = stencilThings.begin();
   for (const FunctionIndex& index : pc_->innerFunctionIndexesForLazy) {
     void* raw = &(*cursor++);
-    new (raw) ScriptThingVariant(index);
+    new (raw) TaggedScriptThingIndex(index);
   }
-  for (const ScriptAtom& binding : pc_->closedOverBindingsForLazy()) {
+  for (const ParserAtom* binding : pc_->closedOverBindingsForLazy()) {
     void* raw = &(*cursor++);
     if (binding) {
       binding->markUsedByStencil();
-      new (raw) ScriptThingVariant(binding);
+      new (raw) TaggedScriptThingIndex(binding->toIndex());
     } else {
-      new (raw) ScriptThingVariant(NullScriptThing());
+      new (raw) TaggedScriptThingIndex();
     }
   }
   MOZ_ASSERT(cursor == stencilThings.end());
@@ -2154,7 +2158,7 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneFunction(
   }
 
   // Function is not syntactically part of another script.
-  funbox->setIsStandalone(true);
+  MOZ_ASSERT(funbox->index() == CompilationInfo::TopLevelIndex);
 
   funbox->initStandalone(this->compilationState_.scopeContext, flags,
                          syntaxKind);
@@ -2395,8 +2399,7 @@ const ParserAtom* ParserBase::prefixAccessorName(PropertyType propType,
 
   const ParserAtom* atoms[2] = {prefix, propAtom};
   auto atomsRange = mozilla::Range(atoms, 2);
-  return this->compilationState_.parserAtoms.concatAtoms(cx_, atomsRange)
-      .unwrapOr(nullptr);
+  return this->compilationState_.parserAtoms.concatAtoms(cx_, atomsRange);
 }
 
 template <class ParseHandler, typename Unit>
@@ -2740,10 +2743,8 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   // TODO-Stencil: Consider for snapshotting.
   const ParserAtom* displayAtom = nullptr;
   if (fun->displayAtom()) {
-    displayAtom =
-        this->compilationState_.parserAtoms
-            .internJSAtom(cx_, this->compilationInfo_, fun->displayAtom())
-            .unwrapOr(nullptr);
+    displayAtom = this->compilationState_.parserAtoms.internJSAtom(
+        cx_, this->compilationInfo_, fun->displayAtom());
     if (!displayAtom) {
       return false;
     }
@@ -3232,10 +3233,8 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
   // TODO-Stencil: Consider for snapshotting.
   const ParserAtom* displayAtom = nullptr;
   if (fun->displayAtom()) {
-    displayAtom =
-        this->compilationState_.parserAtoms
-            .internJSAtom(cx_, this->compilationInfo_, fun->displayAtom())
-            .unwrapOr(nullptr);
+    displayAtom = this->compilationState_.parserAtoms.internJSAtom(
+        cx_, this->compilationInfo_, fun->displayAtom());
     if (!displayAtom) {
       return null();
     }
@@ -6635,7 +6634,6 @@ GeneralParser<ParseHandler, Unit>::returnStatement(
   uint32_t begin = pos().begin;
 
   MOZ_ASSERT(pc_->isFunctionBox());
-  pc_->functionBox()->usesReturn = true;
 
   // Parse an optional operand.
   //
@@ -7893,7 +7891,6 @@ GeneralParser<ParseHandler, Unit>::privateMethodInitializer(
   handler_.setFunctionFormalParametersAndBody(funNode, argsbody);
   setFunctionStartAtCurrentToken(funbox);
   funbox->setArgCount(0);
-  funbox->usesThis = true;
 
   // Note both the stored private method body and it's private name as being
   // used in the initializer. They will be emitted into the method body in the
@@ -8030,7 +8027,6 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
   handler_.setFunctionFormalParametersAndBody(funNode, argsbody);
   funbox->setArgCount(0);
 
-  funbox->usesThis = true;
   NameNodeType thisName = newThisName();
   if (!thisName) {
     return null();
@@ -9991,9 +9987,6 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberCall(
     // syntax.
     if (prop == cx_->parserNames().apply) {
       op = JSOp::FunApply;
-      if (pc_->isFunctionBox()) {
-        pc_->functionBox()->usesApply = true;
-      }
     } else if (prop == cx_->parserNames().call) {
       op = JSOp::FunCall;
     }
@@ -10289,16 +10282,20 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
     }
   }
 
-  const ParserAtom* atom = this->compilationState_.parserAtoms
-                               .internChar16(cx_, chars.begin(), chars.length())
-                               .unwrapOr(nullptr);
+  const ParserAtom* atom = this->compilationState_.parserAtoms.internChar16(
+      cx_, chars.begin(), chars.length());
   if (!atom) {
     return nullptr;
   }
   atom->markUsedByStencil();
 
   RegExpIndex index(this->getCompilationInfo().stencil.regExpData.length());
-  if (!this->getCompilationInfo().stencil.regExpData.emplaceBack(atom, flags)) {
+  if (uint32_t(index) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx_);
+    return nullptr;
+  }
+  if (!this->getCompilationInfo().stencil.regExpData.emplaceBack(
+          atom->toIndex(), flags)) {
     js::ReportOutOfMemory(cx_);
     return nullptr;
   }
@@ -10346,6 +10343,10 @@ BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   const auto& chars = tokenStream.getCharBuffer();
 
   BigIntIndex index(this->getCompilationInfo().stencil.bigIntData.length());
+  if (uint32_t(index) >= TaggedScriptThingIndex::IndexLimit) {
+    ReportAllocationOverflow(cx_);
+    return null();
+  }
   if (!this->getCompilationInfo().stencil.bigIntData.emplaceBack()) {
     js::ReportOutOfMemory(cx_);
     return null();
@@ -11437,9 +11438,6 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::primaryExpr(
     case TokenKind::False:
       return handler_.newBooleanLiteral(false, pos());
     case TokenKind::This: {
-      if (pc_->isFunctionBox()) {
-        pc_->functionBox()->usesThis = true;
-      }
       NameNodeType thisName = null();
       if (pc_->sc()->hasFunctionThisBinding()) {
         thisName = newThisName();

@@ -1909,10 +1909,12 @@ bool gfxPlatform::IsFontFormatSupported(uint32_t aFormatFlags) {
 
 gfxFontGroup* gfxPlatform::CreateFontGroup(
     const FontFamilyList& aFontFamilyList, const gfxFontStyle* aStyle,
-    gfxTextPerfMetrics* aTextPerf, FontMatchingStats* aFontMatchingStats,
-    gfxUserFontSet* aUserFontSet, gfxFloat aDevToCssSize) const {
-  return new gfxFontGroup(aFontFamilyList, aStyle, aTextPerf,
-                          aFontMatchingStats, aUserFontSet, aDevToCssSize);
+    nsAtom* aLanguage, bool aExplicitLanguage, gfxTextPerfMetrics* aTextPerf,
+    FontMatchingStats* aFontMatchingStats, gfxUserFontSet* aUserFontSet,
+    gfxFloat aDevToCssSize) const {
+  return new gfxFontGroup(aFontFamilyList, aStyle, aLanguage, aExplicitLanguage,
+                          aTextPerf, aFontMatchingStats, aUserFontSet,
+                          aDevToCssSize);
 }
 
 gfxFontEntry* gfxPlatform::LookupLocalFont(const nsACString& aFontName,
@@ -2880,6 +2882,11 @@ void gfxPlatform::InitWebGPUConfig() {
                        "WebGPU can only be enabled in nightly",
                        "WEBGPU_DISABLE_NON_NIGHTLY"_ns);
 #endif
+  if (!UseWebRender()) {
+    feature.ForceDisable(FeatureStatus::UnavailableNoWebRender,
+                         "WebGPU can't present without WebRender",
+                         "FEATURE_FAILURE_WEBGPU_NEED_WEBRENDER"_ns);
+  }
 }
 
 void gfxPlatform::InitOMTPConfig() {
