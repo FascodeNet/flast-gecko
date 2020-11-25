@@ -244,7 +244,6 @@ template <class ParseHandler, typename Unit>
 class AutoInParametersOfAsyncFunction;
 
 class MOZ_STACK_CLASS ParserSharedBase : public JS::CustomAutoRooter {
-  
  public:
   enum class Kind { Parser };
 
@@ -264,6 +263,7 @@ class MOZ_STACK_CLASS ParserSharedBase : public JS::CustomAutoRooter {
 
   // innermost parse context (stack-allocated)
   ParseContext* pc_;
+
   // For tracking used names in this parsing session.
   UsedNameTracker& usedNames_;
 
@@ -276,10 +276,6 @@ class MOZ_STACK_CLASS ParserSharedBase : public JS::CustomAutoRooter {
   const ParserAtom* lowerJSAtomToParserAtom(JSAtom* atom) {
     return compilationInfo_.lowerJSAtomToParserAtom(cx_, atom);
   }
-  const ParserAtom* lowerJSAtomToParserAtom(JSAtom* atom) {
-    return compilationInfo_.lowerJSAtomToParserAtom(cx_, atom);
-  }
-  
 };
 
 class MOZ_STACK_CLASS ParserBase : public ParserSharedBase,
