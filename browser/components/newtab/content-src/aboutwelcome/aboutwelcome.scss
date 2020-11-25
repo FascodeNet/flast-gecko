@@ -359,23 +359,15 @@ body {
   .tiles-theme-section {
     display: grid;
     grid-gap: 21px;
-    grid-template-columns: repeat(4, auto);
-
-    /* --newtab-background-color-1 will be invisible, but it's necessary to
-     * keep the content from jumping around when it gets focus-within and
-     * does sprout a dotted border.  This way it keeps a 1 pixel wide border
-     * either way so things don't change position.
-     */
-    border: var(--tiles-theme-section-border-width)
-    solid
-    var(--newtab-background-color-1);
+    grid-template-columns: repeat(3, auto);
+    border: 0;
 
     @media (max-width: $break-point-medium) {
       grid-template-columns: repeat(2, auto);
     }
 
     &:focus-within {
-      border: var(--tiles-theme-section-border-width) dotted;
+      border: 1px dotted;
     }
 
     .theme {
