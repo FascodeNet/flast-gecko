@@ -35,18 +35,17 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/ChromeMessageBroadcaster.h"
 #include "mozilla/dom/DebuggerNotificationManager.h"
+#include "mozilla/dom/Location.h"
 #include "mozilla/dom/NavigatorBinding.h"
 #include "mozilla/dom/StorageEvent.h"
 #include "mozilla/dom/StorageEventBinding.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/CallState.h"
-#include "mozilla/ErrorResult.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/OwningNonNull.h"
 #include "mozilla/TimeStamp.h"
 #include "nsWrapperCacheInlines.h"
-#include "mozilla/dom/Document.h"
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/WindowProxyHolder.h"
@@ -74,6 +73,7 @@ class nsIControllers;
 class nsIScriptContext;
 class nsIScriptTimeoutHandler;
 class nsIBrowserChild;
+class nsIPrintSettings;
 class nsITimeoutHandler;
 class nsIWebBrowserChrome;
 class nsIWebProgressListener;
@@ -97,6 +97,8 @@ class PromiseDocumentFlushedResolver;
 
 namespace mozilla {
 class AbstractThread;
+class ErrorResult;
+
 namespace dom {
 class BarProp;
 class BrowsingContext;
@@ -116,7 +118,6 @@ class IdleRequestCallback;
 class IncrementalRunnable;
 class InstallTriggerImpl;
 class IntlUtils;
-class Location;
 class MediaQueryList;
 class OwningExternalOrWindowProxy;
 class Promise;
@@ -947,9 +948,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   void UpdateTopInnerWindow();
 
-  virtual bool IsInSyncOperation() override {
-    return GetExtantDoc() && GetExtantDoc()->IsInSyncOperation();
-  }
+  virtual bool IsInSyncOperation() override;
 
   bool IsSharedMemoryAllowed() const override;
 

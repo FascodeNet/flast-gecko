@@ -128,30 +128,6 @@ void LIRGenerator::visitCheckOverRecursed(MCheckOverRecursed* ins) {
   assignSafepoint(lir, ins);
 }
 
-void LIRGenerator::visitDefVar(MDefVar* ins) {
-  LDefVar* lir =
-      new (alloc()) LDefVar(useRegisterAtStart(ins->environmentChain()));
-  add(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitDefLexical(MDefLexical* ins) {
-  LDefLexical* lir =
-      new (alloc()) LDefLexical(useRegisterAtStart(ins->environmentChain()));
-  add(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitDefFun(MDefFun* ins) {
-  MDefinition* fun = ins->fun();
-  MOZ_ASSERT(fun->type() == MIRType::Object);
-
-  LDefFun* lir = new (alloc()) LDefFun(
-      useRegisterAtStart(fun), useRegisterAtStart(ins->environmentChain()));
-  add(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
 void LIRGenerator::visitNewArray(MNewArray* ins) {
   LNewArray* lir = new (alloc()) LNewArray(temp());
   define(lir, ins);
@@ -246,14 +222,6 @@ void LIRGenerator::visitNewStringObject(MNewStringObject* ins) {
   LNewStringObject* lir =
       new (alloc()) LNewStringObject(useRegister(ins->input()), temp());
   define(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitInitElem(MInitElem* ins) {
-  LInitElem* lir = new (alloc())
-      LInitElem(useRegisterAtStart(ins->getObject()),
-                useBoxAtStart(ins->getId()), useBoxAtStart(ins->getValue()));
-  add(lir, ins);
   assignSafepoint(lir, ins);
 }
 
@@ -953,18 +921,6 @@ void LIRGenerator::visitTest(MTest* test) {
     default:
       MOZ_CRASH("Bad type");
   }
-}
-
-void LIRGenerator::visitFunctionDispatch(MFunctionDispatch* ins) {
-  LFunctionDispatch* lir =
-      new (alloc()) LFunctionDispatch(useRegister(ins->input()));
-  add(lir, ins);
-}
-
-void LIRGenerator::visitObjectGroupDispatch(MObjectGroupDispatch* ins) {
-  LObjectGroupDispatch* lir =
-      new (alloc()) LObjectGroupDispatch(useRegister(ins->input()), temp());
-  add(lir, ins);
 }
 
 static inline bool CanEmitCompareAtUses(MInstruction* ins) {
@@ -2014,17 +1970,7 @@ void LIRGenerator::visitStringConvertCase(MStringConvertCase* ins) {
   assignSafepoint(lir, ins);
 }
 
-void LIRGenerator::visitStart(MStart* start) {
-  LStart* lir = new (alloc()) LStart;
-
-  // Create a snapshot that captures the initial state of the function.
-  assignSnapshot(lir, start->bailoutKind());
-  if (start->block()->graph().entryBlock() == start->block()) {
-    lirGraph_.setEntrySnapshot(lir->snapshot());
-  }
-
-  add(lir);
-}
+void LIRGenerator::visitStart(MStart* start) {}
 
 void LIRGenerator::visitNop(MNop* nop) {}
 
@@ -2653,12 +2599,9 @@ void LIRGenerator::visitDynamicImport(MDynamicImport* ins) {
 }
 
 void LIRGenerator::visitLambda(MLambda* ins) {
-  if (ins->info().singletonType || ins->info().useSingletonForClone) {
+  if (ins->info().singletonType) {
     // If the function has a singleton type, this instruction will only be
     // executed once so we don't bother inlining it.
-    //
-    // If UseSingletonForClone is true, we will assign a singleton type to
-    // the clone and we have to clone the script, we can't do that inline.
     LLambdaForSingleton* lir = new (alloc())
         LLambdaForSingleton(useRegisterAtStart(ins->environmentChain()));
     defineReturn(lir, ins);
@@ -3536,11 +3479,8 @@ void LIRGenerator::visitArrayPush(MArrayPush* ins) {
     case MIRType::Value: {
       LArrayPushV* lir = new (alloc())
           LArrayPushV(object, useBox(ins->value()), temp(), spectreTemp);
-      // With Warp (and without TI) we will bailout before pushing
-      // if the length would overflow INT32_MAX.
-      if (!IsTypeInferenceEnabled()) {
-        assignSnapshot(lir, ins->bailoutKind());
-      }
+      // We will bailout before pushing if the length would overflow INT32_MAX.
+      assignSnapshot(lir, ins->bailoutKind());
       define(lir, ins);
       assignSafepoint(lir, ins);
       break;
@@ -3550,9 +3490,7 @@ void LIRGenerator::visitArrayPush(MArrayPush* ins) {
       const LAllocation value = useRegisterOrNonDoubleConstant(ins->value());
       LArrayPushT* lir =
           new (alloc()) LArrayPushT(object, value, temp(), spectreTemp);
-      if (!IsTypeInferenceEnabled()) {
-        assignSnapshot(lir, ins->bailoutKind());
-      }
+      assignSnapshot(lir, ins->bailoutKind());
       define(lir, ins);
       assignSafepoint(lir, ins);
       break;
@@ -4031,11 +3969,9 @@ void LIRGenerator::visitGetPropertyCache(MGetPropertyCache* ins) {
   MOZ_ASSERT(id->type() == MIRType::String || id->type() == MIRType::Symbol ||
              id->type() == MIRType::Int32 || id->type() == MIRType::Value);
 
-  if (ins->monitoredResult()) {
-    // Emit an overrecursed check: this is necessary because the cache can
-    // attach a scripted getter stub that calls this script recursively.
-    gen->setNeedsOverrecursedCheck();
-  }
+  // Emit an overrecursed check: this is necessary because the cache can
+  // attach a scripted getter stub that calls this script recursively.
+  gen->setNeedsOverrecursedCheck();
 
   // If this is a GetProp, the id is a constant string. Allow passing it as a
   // constant to reduce register allocation pressure.
@@ -4536,30 +4472,6 @@ void LIRGenerator::visitAssertShape(MAssertShape* ins) {
   add(lir, ins);
 }
 
-void LIRGenerator::visitCallGetProperty(MCallGetProperty* ins) {
-  LCallGetProperty* lir =
-      new (alloc()) LCallGetProperty(useBoxAtStart(ins->value()));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitCallGetElement(MCallGetElement* ins) {
-  MOZ_ASSERT(ins->lhs()->type() == MIRType::Value);
-  MOZ_ASSERT(ins->rhs()->type() == MIRType::Value);
-
-  LCallGetElement* lir = new (alloc())
-      LCallGetElement(useBoxAtStart(ins->lhs()), useBoxAtStart(ins->rhs()));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitCallSetProperty(MCallSetProperty* ins) {
-  LInstruction* lir = new (alloc()) LCallSetProperty(
-      useRegisterAtStart(ins->object()), useBoxAtStart(ins->value()));
-  add(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
 void LIRGenerator::visitDeleteProperty(MDeleteProperty* ins) {
   LCallDeleteProperty* lir =
       new (alloc()) LCallDeleteProperty(useBoxAtStart(ins->value()));
@@ -4609,14 +4521,6 @@ void LIRGenerator::visitCallSetElement(MCallSetElement* ins) {
   LCallSetElement* lir = new (alloc())
       LCallSetElement(useRegisterAtStart(ins->object()),
                       useBoxAtStart(ins->index()), useBoxAtStart(ins->value()));
-  add(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitCallInitElementArray(MCallInitElementArray* ins) {
-  LCallInitElementArray* lir = new (alloc()) LCallInitElementArray(
-      useRegisterAtStart(ins->object()),
-      useRegisterOrConstantAtStart(ins->index()), useBoxAtStart(ins->value()));
   add(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -5382,9 +5286,8 @@ void LIRGenerator::visitThrowRuntimeLexicalError(
   assignSafepoint(lir, ins);
 }
 
-void LIRGenerator::visitGlobalNameConflictsCheck(
-    MGlobalNameConflictsCheck* ins) {
-  LGlobalNameConflictsCheck* lir = new (alloc()) LGlobalNameConflictsCheck();
+void LIRGenerator::visitGlobalDeclInstantiation(MGlobalDeclInstantiation* ins) {
+  LGlobalDeclInstantiation* lir = new (alloc()) LGlobalDeclInstantiation();
   add(lir, ins);
   assignSafepoint(lir, ins);
 }

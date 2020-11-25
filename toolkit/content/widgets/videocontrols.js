@@ -77,7 +77,14 @@ this.VideoControlsWidget = class {
     }
     if (newImpl) {
       this.impl = new newImpl(this.shadowRoot, this.prefs);
-      this.impl.onsetup();
+
+      this.mDirection = "ltr";
+      let intlUtils = this.window.intlUtils;
+      if (intlUtils) {
+        this.mDirection = intlUtils.isAppLocaleRTL() ? "rtl" : "ltr";
+      }
+
+      this.impl.onsetup(this.mDirection);
     } else {
       this.impl = undefined;
     }
@@ -225,8 +232,10 @@ this.VideoControlsImplWidget = class {
     this.window = this.document.defaultView;
   }
 
-  onsetup() {
+  onsetup(direction) {
     this.generateContent();
+
+    this.shadowRoot.firstElementChild.setAttribute("localedir", direction);
 
     this.Utils = {
       debug: false,
@@ -2794,11 +2803,14 @@ this.NoControlsMobileImplWidget = class {
     this.window = this.document.defaultView;
   }
 
-  onsetup() {
+  onsetup(direction) {
     this.generateContent();
 
+    this.shadowRoot.firstElementChild.setAttribute("localedir", direction);
+
     this.Utils = {
-      videoEvents: ["play", "playing", "MozNoControlsBlockedVideo"],
+      videoEvents: ["play", "playing"],
+      videoControlEvents: ["MozNoControlsBlockedVideo"],
       terminate() {
         for (let event of this.videoEvents) {
           try {
@@ -2806,6 +2818,12 @@ this.NoControlsMobileImplWidget = class {
               capture: true,
               mozSystemGroup: true,
             });
+          } catch (ex) {}
+        }
+
+        for (let event of this.videoControlEvents) {
+          try {
+            this.videocontrols.removeEventListener(event, this);
           } catch (ex) {}
         }
 
@@ -2894,6 +2912,10 @@ this.NoControlsMobileImplWidget = class {
             mozSystemGroup: true,
           });
         }
+
+        for (let event of this.videoControlEvents) {
+          this.videocontrols.addEventListener(event, this);
+        }
       },
     };
     this.Utils.init(this.shadowRoot);
@@ -2955,8 +2977,10 @@ this.NoControlsPictureInPictureImplWidget = class {
     this.window = this.document.defaultView;
   }
 
-  onsetup() {
+  onsetup(direction) {
     this.generateContent();
+
+    this.shadowRoot.firstElementChild.setAttribute("localedir", direction);
   }
 
   elementStateMatches(element) {
@@ -3010,8 +3034,10 @@ this.NoControlsDesktopImplWidget = class {
     this.prefs = prefs;
   }
 
-  onsetup() {
+  onsetup(direction) {
     this.generateContent();
+
+    this.shadowRoot.firstElementChild.setAttribute("localedir", direction);
 
     this.Utils = {
       handleEvent(event) {

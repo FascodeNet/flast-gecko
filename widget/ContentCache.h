@@ -10,14 +10,17 @@
 
 #include <stdint.h>
 
+#include "mozilla/widget/IMEData.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/EventForwards.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/WritingModes.h"
-#include "nsIWidget.h"
 #include "nsString.h"
 #include "nsTArray.h"
 #include "Units.h"
+
+class nsIWidget;
 
 namespace mozilla {
 
@@ -38,14 +41,14 @@ class ContentCache {
   typedef CopyableTArray<LayoutDeviceIntRect> RectArray;
   typedef widget::IMENotification IMENotification;
 
-  ContentCache();
+  ContentCache() = default;
 
  protected:
   // Whole text in the target
   nsString mText;
 
   // Start offset of the composition string.
-  uint32_t mCompositionStart;
+  Maybe<uint32_t> mCompositionStart;
 
   enum { ePrevCharRect = 1, eNextCharRect = 0 };
 
@@ -212,7 +215,9 @@ class ContentCache {
     LayoutDeviceIntRect GetUnionRect(uint32_t aOffset, uint32_t aLength) const;
     LayoutDeviceIntRect GetUnionRectAsFarAsPossible(
         uint32_t aOffset, uint32_t aLength, bool aRoundToExistingOffset) const;
-  } mTextRectArray;
+  };
+  TextRectArray mTextRectArray;
+  TextRectArray mLastCommitStringTextRectArray;
 
   LayoutDeviceIntRect mEditorRect;
 
@@ -222,7 +227,13 @@ class ContentCache {
 
 class ContentCacheInChild final : public ContentCache {
  public:
-  ContentCacheInChild();
+  ContentCacheInChild() = default;
+
+  /**
+   * Called when composition event will be dispatched in this process from
+   * PuppetWidget.
+   */
+  void OnCompositionEvent(const WidgetCompositionEvent& aCompositionEvent);
 
   /**
    * When IME loses focus, this should be called and making this forget the
@@ -261,6 +272,13 @@ class ContentCacheInChild final : public ContentCache {
                   const IMENotification* aNotification = nullptr);
   bool CacheTextRects(nsIWidget* aWidget,
                       const IMENotification* aNotification = nullptr);
+
+  // Once composition is committed, all of the commit string may be composed
+  // again by Kakutei-Undo of Japanese IME.  Therefore, we need to keep
+  // storing the last composition start to cache all character rects of the
+  // last commit string.
+  Maybe<uint32_t> mLastCommitStringStart;
+  nsString mLastCommitString;
 };
 
 class ContentCacheInParent final : public ContentCache {
@@ -407,7 +425,7 @@ class ContentCacheInParent final : public ContentCache {
   uint32_t mPendingEventsNeedingAck;
   // mCompositionStartInChild stores current composition start offset in the
   // remote process.
-  uint32_t mCompositionStartInChild;
+  Maybe<uint32_t> mCompositionStartInChild;
   // mPendingCommitLength is commit string length of the first pending
   // composition.  This is used by relative offset query events when querying
   // new composition start offset.

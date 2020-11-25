@@ -146,6 +146,8 @@ SI Bool if_then_else(I32 c, Bool t, Bool e) { return (c & t) | (~c & e); }
 
 SI Bool if_then_else(int32_t c, Bool t, Bool e) { return c ? t : e; }
 
+SI I16 if_then_else(I16 c, I16 t, I16 e) { return (c & t) | (~c & e); }
+
 template <typename T> SI void swap(T& a, T& b) {
   T t(a);
   a = b;
@@ -359,6 +361,12 @@ struct vec2_scalar {
     return *this;
   }
 
+  vec2_scalar operator/=(vec2_scalar a) {
+    x /= a.x;
+    y /= a.y;
+    return *this;
+  }
+
   vec2_scalar operator+=(vec2_scalar a) {
     x += a.x;
     y += a.y;
@@ -412,7 +420,7 @@ struct vec2 {
   constexpr vec2(vec2_scalar s) : x(s.x), y(s.y) {}
   constexpr vec2(vec2_scalar s0, vec2_scalar s1, vec2_scalar s2, vec2_scalar s3)
       : x(Float{s0.x, s1.x, s2.x, s3.x}), y(Float{s0.y, s1.y, s2.y, s3.y}) {}
-  vec2(ivec2 a);
+  explicit vec2(ivec2 a);
   Float x;
   Float y;
 
@@ -639,11 +647,13 @@ template <typename T> SI auto round_pixel(T v) { return roundfast(v, 255.0f); }
 
 float round(float a) { return roundf(a); }
 
-float fract(float a) { return a - floor(a); }
-
 Float round(Float v) { return floor(v + 0.5f); }
 
+float fract(float a) { return a - floor(a); }
+
 Float fract(Float v) { return v - floor(v); }
+
+vec2 fract(vec2 v) { return vec2(fract(v.x), fract(v.y)); }
 
 // X derivatives can be approximated by dFdx(x) = x[1] - x[0].
 // Y derivatives are not easily available since we operate in terms of X spans
@@ -691,6 +701,24 @@ Float exp(Float y) {
   float l2e = 1.4426950408889634074f;
   return approx_pow2(l2e * y);
 }
+
+#define exp2 __glsl_exp2
+
+SI float exp2(float x) { return exp2f(x); }
+
+Float exp2(Float x) { return approx_pow2(x); }
+
+#define log __glsl_log
+
+SI float log(float x) { return logf(x); }
+
+Float log(Float x) { return approx_log2(x) * 0.69314718f; }
+
+#define log2 __glsl_log2
+
+SI float log2(float x) { return log2f(x); }
+
+Float log2(Float x) { return approx_log2(x); }
 
 struct ivec4;
 

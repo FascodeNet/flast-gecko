@@ -40,7 +40,7 @@ fn flexbox_enabled() -> bool {
         return servo_config::prefs::pref_map()
             .get("layout.flexbox.enabled")
             .as_bool()
-            .unwrap_or(false)
+            .unwrap_or(false);
     }
 
     true
@@ -108,12 +108,6 @@ pub enum DisplayInside {
     WebkitBox,
     #[cfg(feature = "gecko")]
     MozBox,
-    #[cfg(feature = "gecko")]
-    MozGrid,
-    #[cfg(feature = "gecko")]
-    MozGridGroup,
-    #[cfg(feature = "gecko")]
-    MozGridLine,
     #[cfg(feature = "gecko")]
     MozStack,
     #[cfg(feature = "gecko")]
@@ -231,12 +225,6 @@ impl Display {
     pub const MozBox: Self = Self::new(DisplayOutside::Block, DisplayInside::MozBox);
     #[cfg(feature = "gecko")]
     pub const MozInlineBox: Self = Self::new(DisplayOutside::Inline, DisplayInside::MozBox);
-    #[cfg(feature = "gecko")]
-    pub const MozGrid: Self = Self::new(DisplayOutside::XUL, DisplayInside::MozGrid);
-    #[cfg(feature = "gecko")]
-    pub const MozGridGroup: Self = Self::new(DisplayOutside::XUL, DisplayInside::MozGridGroup);
-    #[cfg(feature = "gecko")]
-    pub const MozGridLine: Self = Self::new(DisplayOutside::XUL, DisplayInside::MozGridLine);
     #[cfg(feature = "gecko")]
     pub const MozStack: Self = Self::new(DisplayOutside::XUL, DisplayInside::MozStack);
     #[cfg(feature = "gecko")]
@@ -615,12 +603,6 @@ impl Parse for Display {
             "-moz-box" if moz_box_display_values_enabled(context) => Display::MozBox,
             #[cfg(feature = "gecko")]
             "-moz-inline-box" if moz_box_display_values_enabled(context) => Display::MozInlineBox,
-            #[cfg(feature = "gecko")]
-            "-moz-grid" if moz_display_values_enabled(context) => Display::MozGrid,
-            #[cfg(feature = "gecko")]
-            "-moz-grid-group" if moz_display_values_enabled(context) => Display::MozGridGroup,
-            #[cfg(feature = "gecko")]
-            "-moz-grid-line" if moz_display_values_enabled(context) => Display::MozGridLine,
             #[cfg(feature = "gecko")]
             "-moz-stack" if moz_display_values_enabled(context) => Display::MozStack,
             #[cfg(feature = "gecko")]

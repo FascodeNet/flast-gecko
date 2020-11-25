@@ -14,6 +14,7 @@
 #include "nsIChromeRegistry.h"
 #include "nsIObserverService.h"
 #include "nsIXULAppInfo.h"
+#include "nsNetUtil.h"
 
 #ifdef MOZ_PLACES
 #  include "nsIFaviconService.h"
@@ -318,7 +319,6 @@ void MediaStatusManager::UpdateActualPlaybackState() {
   mActualPlaybackState = newState;
   LOG("UpdateActualPlaybackState : '%s'",
       ToMediaSessionPlaybackStateStr(mActualPlaybackState));
-  HandleActualPlaybackStateChanged();
   mPlaybackStateChangedEvent.Notify(mActualPlaybackState);
 }
 

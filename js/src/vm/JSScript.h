@@ -1541,13 +1541,12 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
 
   // Position of the function in the source buffer. Both in terms of line/column
   // and code-unit offset.
-  SourceExtent extent_ = {};
+  const SourceExtent extent_ = {};
 
   // Immutable flags are a combination of parser options and bytecode
   // characteristics. These flags are preserved when serializing or copying this
-  // script. These flags are static after script initialization with the key
-  // exception that delazification / relazification may modify a subset of them.
-  ImmutableScriptFlags immutableFlags_ = {};
+  // script.
+  const ImmutableScriptFlags immutableFlags_ = {};
 
   // Mutable flags store transient information used by subsystems such as the
   // debugger and the JITs. These flags are *not* preserved when serializing or
@@ -1569,7 +1568,7 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   // End of fields.
 
   BaseScript(uint8_t* stubEntry, JSObject* functionOrGlobal,
-             ScriptSourceObject* sourceObject, SourceExtent extent,
+             ScriptSourceObject* sourceObject, const SourceExtent& extent,
              uint32_t immutableFlags)
       : TenuredCellWithNonGCPointer(stubEntry),
         functionOrGlobal_(functionOrGlobal),
@@ -1648,7 +1647,6 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   MOZ_MUST_USE bool hasFlag(ImmutableFlags flag) const {
     return immutableFlags_.hasFlag(flag);
   }
-  void clearFlag(ImmutableFlags flag) { immutableFlags_.clearFlag(flag); }
 
   // MutableFlags accessors.
   MOZ_MUST_USE bool hasFlag(MutableFlags flag) const {
@@ -1720,8 +1718,6 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   MUTABLE_FLAG_GETTER_SETTER(hadLICMBailout, HadLICMBailout)
   MUTABLE_FLAG_GETTER_SETTER(hadOverflowBailout, HadOverflowBailout)
   MUTABLE_FLAG_GETTER_SETTER(uninlineable, Uninlineable)
-  MUTABLE_FLAG_GETTER_SETTER(invalidatedIdempotentCache,
-                             InvalidatedIdempotentCache)
   MUTABLE_FLAG_GETTER_SETTER(failedLexicalCheck, FailedLexicalCheck)
   MUTABLE_FLAG_GETTER_SETTER(hadSpeculativePhiBailout, HadSpeculativePhiBailout)
 
@@ -1943,7 +1939,7 @@ class JSScript : public js::BaseScript {
  public:
   static JSScript* Create(JSContext* cx, js::HandleObject functionOrGlobal,
                           js::HandleScriptSourceObject sourceObject,
-                          js::SourceExtent extent,
+                          const js::SourceExtent& extent,
                           js::ImmutableScriptFlags flags);
 
   // NOTE: This should only be used while delazifying.
@@ -2098,17 +2094,6 @@ class JSScript : public js::BaseScript {
     return hasMappedArgsObj();
   }
 
-  // If there are more than MaxBytecodeTypeSets JOF_TYPESET ops in the script,
-  // the first MaxBytecodeTypeSets - 1 JOF_TYPESET ops have their own TypeSet
-  // and all other JOF_TYPESET ops share the last TypeSet.
-  static constexpr size_t MaxBytecodeTypeSets = UINT16_MAX;
-  static_assert(sizeof(js::ImmutableScriptData::numBytecodeTypeSets) == 2,
-                "MaxBytecodeTypeSets must match sizeof(numBytecodeTypeSets)");
-
-  size_t numBytecodeTypeSets() const {
-    return immutableScriptData()->numBytecodeTypeSets;
-  }
-
   size_t numICEntries() const { return immutableScriptData()->numICEntries; }
 
   size_t funLength() const { return immutableScriptData()->funLength; }
@@ -2178,9 +2163,6 @@ class JSScript : public js::BaseScript {
   bool mayReadFrameArgsDirectly();
 
   static JSLinearString* sourceData(JSContext* cx, JS::HandleScript script);
-
-  void setDefaultClassConstructorSpan(uint32_t start, uint32_t end,
-                                      unsigned line, unsigned column);
 
 #ifdef MOZ_VTUNE
   // Unique Method ID passed to the VTune profiler. Allows attribution of
@@ -2569,7 +2551,8 @@ extern void DescribeScriptedCallerForDirectEval(
 
 JSScript* CloneScriptIntoFunction(JSContext* cx, HandleScope enclosingScope,
                                   HandleFunction fun, HandleScript src,
-                                  Handle<ScriptSourceObject*> sourceObject);
+                                  Handle<ScriptSourceObject*> sourceObject,
+                                  SourceExtent* maybeClassExtent = nullptr);
 
 JSScript* CloneGlobalScript(JSContext* cx, ScopeKind scopeKind,
                             HandleScript src);

@@ -53,7 +53,7 @@ use crate::{
     },
 };
 
-use ::libc::{self, free, malloc};
+use ::libc::{self};
 use std::sync::{atomic::AtomicBool, Arc};
 use std::{ptr::null_mut, sync::atomic::Ordering};
 
@@ -86,23 +86,15 @@ impl Default for precache_output {
 
 #[repr(C)]
 #[repr(align(16))]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct qcms_transform {
     pub matrix: [[f32; 4]; 3],
     pub input_gamma_table_r: Option<Vec<f32>>,
     pub input_gamma_table_g: Option<Vec<f32>>,
     pub input_gamma_table_b: Option<Vec<f32>>,
-    pub input_clut_table_r: *mut f32,
-    pub input_clut_table_g: *mut f32,
-    pub input_clut_table_b: *mut f32,
     pub input_clut_table_length: u16,
-    pub r_clut: *mut f32,
-    pub g_clut: *mut f32,
-    pub b_clut: *mut f32,
+    pub clut: Option<Vec<f32>>,
     pub grid_size: u16,
-    pub output_clut_table_r: *mut f32,
-    pub output_clut_table_g: *mut f32,
-    pub output_clut_table_b: *mut f32,
     pub output_clut_table_length: u16,
     pub input_gamma_table_gray: Option<Vec<f32>>,
     pub out_gamma_r: f32,
@@ -121,46 +113,6 @@ pub struct qcms_transform {
     pub output_table_g: Option<Arc<precache_output>>,
     pub output_table_b: Option<Arc<precache_output>>,
     pub transform_fn: transform_fn_t,
-}
-
-impl Default for qcms_transform {
-    fn default() -> qcms_transform {
-        qcms_transform {
-            matrix: Default::default(),
-            input_gamma_table_r: Default::default(),
-            input_gamma_table_b: Default::default(),
-            input_gamma_table_g: Default::default(),
-            input_clut_table_r: null_mut(),
-            input_clut_table_g: null_mut(),
-            input_clut_table_b: null_mut(),
-            input_clut_table_length: Default::default(),
-            r_clut: null_mut(),
-            g_clut: null_mut(),
-            b_clut: null_mut(),
-            grid_size: Default::default(),
-            output_clut_table_r: null_mut(),
-            output_clut_table_g: null_mut(),
-            output_clut_table_b: null_mut(),
-            output_clut_table_length: Default::default(),
-            input_gamma_table_gray: Default::default(),
-            out_gamma_r: Default::default(),
-            out_gamma_g: Default::default(),
-            out_gamma_b: Default::default(),
-            out_gamma_gray: Default::default(),
-            output_gamma_lut_r: Default::default(),
-            output_gamma_lut_g: Default::default(),
-            output_gamma_lut_b: Default::default(),
-            output_gamma_lut_gray: Default::default(),
-            output_gamma_lut_r_length: Default::default(),
-            output_gamma_lut_g_length: Default::default(),
-            output_gamma_lut_b_length: Default::default(),
-            output_gamma_lut_gray_length: Default::default(),
-            output_table_r: Default::default(),
-            output_table_g: Default::default(),
-            output_table_b: Default::default(),
-            transform_fn: Default::default(),
-        }
-    }
 }
 
 pub type transform_fn_t = Option<
@@ -831,9 +783,10 @@ unsafe extern "C" fn qcms_transform_data_tetra_clut_template<F: Format>(
     let mut xy_len: i32 = 1;
     let mut x_len: i32 = (*transform).grid_size as i32;
     let mut len: i32 = x_len * x_len;
-    let mut r_table: *mut f32 = (*transform).r_clut;
-    let mut g_table: *mut f32 = (*transform).g_clut;
-    let mut b_table: *mut f32 = (*transform).b_clut;
+    let mut table = (*transform).clut.as_ref().unwrap().as_ptr();
+    let mut r_table: *const f32 = table;
+    let mut g_table: *const f32 = table.offset(1);
+    let mut b_table: *const f32 = table.offset(2);
     let mut c0_r: f32;
     let mut c1_r: f32;
     let mut c2_r: f32;
@@ -1110,10 +1063,6 @@ fn precache_create() -> Arc<precache_output> {
 #[no_mangle]
 pub unsafe extern "C" fn qcms_transform_release(mut t: *mut qcms_transform) {
     let t = Box::from_raw(t);
-    /* r_clut points to beginning of buffer allocated in qcms_transform_precacheLUT_float */
-    if !(*t).r_clut.is_null() {
-        free((*t).r_clut as *mut libc::c_void);
-    }
     drop(t)
 }
 
@@ -1214,8 +1163,7 @@ pub extern "C" fn qcms_profile_precache_output_transform(mut profile: &mut qcms_
     };
 }
 /* Replace the current transformation with a LUT transformation using a given number of sample points */
-#[no_mangle]
-pub unsafe extern "C" fn qcms_transform_precacheLUT_float(
+fn qcms_transform_precacheLUT_float(
     mut transform: Box<qcms_transform>,
     mut in_0: &qcms_profile,
     mut out: &qcms_profile,
@@ -1229,39 +1177,22 @@ pub unsafe extern "C" fn qcms_transform_precacheLUT_float(
     let mut l: u32;
     let mut lutSize: u32 = (3 * samples * samples * samples) as u32;
 
-    let mut lut: *mut f32 = 0 as *mut f32;
-
-    let mut src: *mut f32 = malloc(lutSize as usize * ::std::mem::size_of::<f32>()) as *mut f32;
-    let mut dest: *mut f32 = malloc(lutSize as usize * ::std::mem::size_of::<f32>()) as *mut f32;
-    if !src.is_null() && !dest.is_null() {
+    let mut src = Vec::with_capacity(lutSize as usize);
+    let mut dest = vec![0.; lutSize as usize];
+    if true && true {
         /* Prepare a list of points we want to sample */
-        l = 0;
-        x = 0u16;
-        while (x as i32) < samples {
-            y = 0u16;
-            while (y as i32) < samples {
-                z = 0u16;
-                while (z as i32) < samples {
-                    let fresh8 = l;
-                    l = l + 1;
-                    *src.offset(fresh8 as isize) = x as i32 as f32 / (samples - 1) as f32;
-                    let fresh9 = l;
-                    l = l + 1;
-                    *src.offset(fresh9 as isize) = y as i32 as f32 / (samples - 1) as f32;
-                    let fresh10 = l;
-                    l = l + 1;
-                    *src.offset(fresh10 as isize) = z as i32 as f32 / (samples - 1) as f32;
-                    z = z + 1
+        for x in 0..samples {
+            for y in 0..samples {
+                for z in 0..samples {
+                    src.push(x as i32 as f32 / (samples - 1) as f32);
+                    src.push(y as i32 as f32 / (samples - 1) as f32);
+                    src.push(z as i32 as f32 / (samples - 1) as f32);
                 }
-                y = y + 1
             }
-            x = x + 1
         }
-        lut = qcms_chain_transform(in_0, out, src, dest, lutSize as usize);
-        if !lut.is_null() {
-            (*transform).r_clut = &mut *lut.offset(0isize) as *mut f32;
-            (*transform).g_clut = &mut *lut.offset(1isize) as *mut f32;
-            (*transform).b_clut = &mut *lut.offset(2isize) as *mut f32;
+        let lut = unsafe { qcms_chain_transform(in_0, out, src, dest, lutSize as usize) };
+        if let Some(lut) = lut {
+            (*transform).clut = Some(lut);
             (*transform).grid_size = samples as u16;
             if in_type == QCMS_DATA_RGBA_8 {
                 (*transform).transform_fn = Some(qcms_transform_data_tetra_clut_rgba)
@@ -1271,18 +1202,9 @@ pub unsafe extern "C" fn qcms_transform_precacheLUT_float(
                 (*transform).transform_fn = Some(qcms_transform_data_tetra_clut_rgb)
             }
             debug_assert!((*transform).transform_fn.is_some());
+        } else {
+            return null_mut();
         }
-    }
-    //XXX: qcms_modular_transform_data may return either the src or dest buffer. If so it must not be free-ed
-    // It will be stored in r_clut, which will be cleaned up in qcms_transform_release.
-    if !src.is_null() && lut != src {
-        free(src as *mut libc::c_void);
-    }
-    if !dest.is_null() && lut != dest {
-        free(dest as *mut libc::c_void);
-    }
-    if lut.is_null() {
-        return 0 as *mut qcms_transform;
     }
     return Box::into_raw(transform);
 }
@@ -1337,7 +1259,7 @@ pub extern "C" fn qcms_transform_create(
         // TODO For transforming small data sets of about 200x200 or less
         // precaching should be avoided.
         let mut result: *mut qcms_transform =
-            unsafe { qcms_transform_precacheLUT_float(transform, in_0, out, 33, in_type) };
+            qcms_transform_precacheLUT_float(transform, in_0, out, 33, in_type);
         if result.is_null() {
             debug_assert!(false, "precacheLUT failed");
             return 0 as *mut qcms_transform;

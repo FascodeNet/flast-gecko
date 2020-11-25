@@ -219,9 +219,9 @@ class QuotaManager final : public BackgroundThreadObject {
                            const GroupAndOrigin& aGroupAndOrigin,
                            Client::Type aClientType);
 
-  bool GetUsageForClient(PersistenceType aPersistenceType,
-                         const GroupAndOrigin& aGroupAndOrigin,
-                         Client::Type aClientType, uint64_t& aUsage);
+  UsageInfo GetUsageForClient(PersistenceType aPersistenceType,
+                              const GroupAndOrigin& aGroupAndOrigin,
+                              Client::Type aClientType);
 
   void UpdateOriginAccessTime(PersistenceType aPersistenceType,
                               const GroupAndOrigin& aGroupAndOrigin);
@@ -338,35 +338,23 @@ class QuotaManager final : public BackgroundThreadObject {
 
   nsresult EnsureStorageIsInitialized();
 
-  /**
-   * @returns a Result with the success value pointing to the storage directory
-   * for the origin.
-   */
-  Result<nsCOMPtr<nsIFile>, nsresult> EnsureStorageAndOriginIsInitialized(
-      PersistenceType aPersistenceType, const QuotaInfo& aQuotaInfo,
-      Client::Type aClientType);
+  // Returns a pair of an nsIFile object referring to the directory, and a bool
+  // indicating whether the directory was newly created.
+  Result<std::pair<nsCOMPtr<nsIFile>, bool>, nsresult>
+  EnsurePersistentOriginIsInitialized(const QuotaInfo& aQuotaInfo);
 
   // Returns a pair of an nsIFile object referring to the directory, and a bool
   // indicating whether the directory was newly created.
   Result<std::pair<nsCOMPtr<nsIFile>, bool>, nsresult>
-  EnsureStorageAndOriginIsInitializedInternal(
-      PersistenceType aPersistenceType, const QuotaInfo& aQuotaInfo,
-      const Nullable<Client::Type>& aClientType);
-
-  nsresult EnsurePersistentOriginIsInitialized(const QuotaInfo& aQuotaInfo,
-                                               nsIFile** aDirectory,
-                                               bool* aCreated);
-
-  nsresult EnsureTemporaryOriginIsInitialized(PersistenceType aPersistenceType,
-                                              const QuotaInfo& aQuotaInfo,
-                                              nsIFile** aDirectory,
-                                              bool* aCreated);
+  EnsureTemporaryOriginIsInitialized(PersistenceType aPersistenceType,
+                                     const QuotaInfo& aQuotaInfo);
 
   nsresult EnsureTemporaryStorageIsInitialized();
 
   void ShutdownStorage();
 
-  nsresult EnsureOriginDirectory(nsIFile* aDirectory, bool* aCreated);
+  // Returns a bool indicating whether the directory was newly created.
+  Result<bool, nsresult> EnsureOriginDirectory(nsIFile& aDirectory);
 
   nsresult AboutToClearOrigins(
       const Nullable<PersistenceType>& aPersistenceType,

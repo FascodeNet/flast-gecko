@@ -87,7 +87,6 @@ add_task(async function setup() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.update2", true],
-      ["browser.urlbar.update2.localOneOffs", true],
       ["browser.urlbar.update2.oneOffsRefresh", true],
       // Disable tab-to-search onboarding results for general tests. They are
       // enabled in tests that specifically address onboarding.
@@ -569,13 +568,6 @@ add_task(async function test_tabtosearch_onboard() {
     entry: "tabtosearch_onboard",
   });
 
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true, false);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "urlbar.tips",
-    "tabtosearch_onboard-shown",
-    1
-  );
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: "foo",

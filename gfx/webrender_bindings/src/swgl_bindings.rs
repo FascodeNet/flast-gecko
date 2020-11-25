@@ -10,7 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::os::raw::c_void;
 use std::ptr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicIsize, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicPtr, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use webrender::{
@@ -207,8 +207,10 @@ impl SwTile {
         let dest_rect = transform
             .outer_transformed_rect(&valid.to_f32())?
             .round_out()
-            .to_i32()
-            .intersection(clip_rect)?;
+            .to_i32();
+        if !dest_rect.intersects(clip_rect) {
+             return None;
+        }
         // To get a valid source rect, we need to inverse transform the clipped destination rect to find out the effect
         // of the clip rect in source-space. After this, we subtract off the source-space valid rect origin to get
         // a source rect that is now relative to the surface origin rather than absolute.
@@ -371,6 +373,7 @@ impl DrawTileHelper {
         viewport: &DeviceIntRect,
         dest: &DeviceIntRect,
         src: &DeviceIntRect,
+        _clip: &DeviceIntRect,
         surface: &SwSurface,
         tile: &SwTile,
         flip_y: bool,
@@ -443,6 +446,7 @@ struct SwCompositeJob {
     locked_dst: swgl::LockedResource,
     src_rect: DeviceIntRect,
     dst_rect: DeviceIntRect,
+    clipped_dst: DeviceIntRect,
     opaque: bool,
     flip_y: bool,
     filter: ImageRendering,
@@ -457,8 +461,12 @@ impl SwCompositeJob {
         // the following index.
         let band_index = band_index as i32;
         let num_bands = self.num_bands as i32;
-        let band_offset = (self.dst_rect.size.height * band_index) / num_bands;
-        let band_height = (self.dst_rect.size.height * (band_index + 1)) / num_bands - band_offset;
+        let band_offset = (self.clipped_dst.size.height * band_index) / num_bands;
+        let band_height = (self.clipped_dst.size.height * (band_index + 1)) / num_bands - band_offset;
+        // Create a rect that is the intersection of the band with the clipped dest
+        let band_clip = DeviceIntRect::new(DeviceIntPoint::new(self.clipped_dst.origin.x,
+                                                               self.clipped_dst.origin.y + band_offset),
+                                           DeviceIntSize::new(self.clipped_dst.size.width, band_height));
         match self.locked_src {
             SwCompositeSource::BGRA(ref resource) => {
                 self.locked_dst.composite(
@@ -474,8 +482,10 @@ impl SwCompositeJob {
                     self.opaque,
                     self.flip_y,
                     image_rendering_to_gl_filter(self.filter),
-                    band_offset,
-                    band_height,
+                    band_clip.origin.x,
+                    band_clip.origin.y,
+                    band_clip.size.width,
+                    band_clip.size.height,
                 );
             }
             SwCompositeSource::YUV(ref y, ref u, ref v, color_space, color_depth) => {
@@ -500,8 +510,10 @@ impl SwCompositeJob {
                     self.dst_rect.size.width,
                     self.dst_rect.size.height,
                     self.flip_y,
-                    band_offset,
-                    band_height,
+                    band_clip.origin.x,
+                    band_clip.origin.y,
+                    band_clip.size.width,
+                    band_clip.size.height,
                 );
             }
         }
@@ -529,6 +541,10 @@ impl SwCompositeGraphNodeRef {
 
     fn get_mut(&self) -> &mut SwCompositeGraphNode {
         unsafe { &mut *self.0.get() }
+    }
+
+    fn get_ptr_mut(&self) -> *mut SwCompositeGraphNode {
+        self.0.get()
     }
 }
 
@@ -615,9 +631,13 @@ impl SwCompositeGraphNode {
         self.parents.fetch_sub(1, Ordering::SeqCst) <= 1
     }
 
-    fn take_band(&self) -> (u8, bool) {
+    fn take_band(&self) -> Option<u8> {
         let band_index = self.band_index.fetch_add(1, Ordering::SeqCst);
-        (band_index, band_index + 1 >= self.max_bands)
+        if band_index < self.max_bands {
+            Some(band_index)
+        } else {
+            None
+        }
     }
 
     /// Try to take the job from this node for processing and then process it within the current band.
@@ -655,6 +675,11 @@ impl SwCompositeGraphNode {
 struct SwCompositeThread {
     /// Queue of available composite jobs
     jobs: Mutex<SwCompositeJobQueue>,
+    /// Cache of the current job being processed. This maintains a pointer to
+    /// the contents of the SwCompositeGraphNodeRef, which is safe due to the
+    /// fact that SwCompositor maintains a strong reference to the contents
+    /// in an SwTile to keep it alive while this is in use.
+    current_job: AtomicPtr<SwCompositeGraphNode>,
     /// Count of unprocessed jobs still in the queue
     job_count: AtomicIsize,
     /// Condition signaled when either there are jobs available to process or
@@ -680,6 +705,7 @@ impl SwCompositeThread {
     fn new() -> Arc<SwCompositeThread> {
         let info = Arc::new(SwCompositeThread {
             jobs: Mutex::new(SwCompositeJobQueue::new()),
+            current_job: AtomicPtr::new(ptr::null_mut()),
             job_count: AtomicIsize::new(0),
             jobs_available: Condvar::new(),
         });
@@ -718,7 +744,7 @@ impl SwCompositeThread {
     /// Process a job contained in a dependency graph node received from the job queue.
     /// Any child dependencies will be unblocked as appropriate after processing. The
     /// job count will be updated to reflect this.
-    fn process_job(&self, mut graph_node: SwCompositeGraphNodeRef, band: u8) {
+    fn process_job(&self, graph_node: &mut SwCompositeGraphNode, band: u8) {
         // Do the actual processing of the job contained in this node.
         graph_node.process_job(band);
         // Unblock any child dependencies now that this job has been processed.
@@ -734,6 +760,7 @@ impl SwCompositeThread {
         locked_dst: swgl::LockedResource,
         src_rect: DeviceIntRect,
         dst_rect: DeviceIntRect,
+        clip_rect: DeviceIntRect,
         opaque: bool,
         flip_y: bool,
         filter: ImageRendering,
@@ -742,8 +769,13 @@ impl SwCompositeThread {
     ) {
         // For jobs that would span a sufficiently large destination rectangle, split
         // it into multiple horizontal bands so that multiple threads can process them.
-        let num_bands = if dst_rect.size.width >= 64 && dst_rect.size.height >= 64 {
-            (dst_rect.size.height / 64).min(4) as u8
+        let clipped_dst = match dst_rect.intersection(&clip_rect) {
+            Some(clipped_dst) => clipped_dst,
+            None => return,
+        };
+
+        let num_bands = if clipped_dst.size.width >= 64 && clipped_dst.size.height >= 64 {
+            (clipped_dst.size.height / 64).min(4) as u8
         } else {
             1
         };
@@ -752,6 +784,7 @@ impl SwCompositeThread {
             locked_dst,
             src_rect,
             dst_rect,
+            clipped_dst,
             opaque,
             flip_y,
             filter,
@@ -785,14 +818,49 @@ impl SwCompositeThread {
         queue.push_back(job);
     }
 
+    /// Try to get a band of work from the currently cached job when available.
+    /// If there is a job, but it has no available bands left, null out the job
+    /// so that other threads do not bother checking the job.
+    fn try_take_job(&self) -> Option<(&mut SwCompositeGraphNode, u8)> {
+        let current_job_ptr = self.current_job.load(Ordering::SeqCst);
+        if let Some(current_job) = unsafe { current_job_ptr.as_mut() } {
+            if let Some(band) = current_job.take_band() {
+                return Some((current_job, band));
+            }
+            self.current_job
+                .compare_and_swap(current_job_ptr, ptr::null_mut(), Ordering::Relaxed);
+        }
+        return None;
+    }
+
     /// Take a job from the queue. Optionally block waiting for jobs to become
     /// available if this is called from the SwComposite thread.
-    fn take_job(&self, wait: bool) -> Option<(SwCompositeGraphNodeRef, u8)> {
+    fn take_job(&self, wait: bool) -> Option<(&mut SwCompositeGraphNode, u8)> {
+        // First try checking the cached job outside the scope of the mutex.
+        // For jobs that have multiple bands, this allows us to avoid having
+        // to lock the mutex multiple times to check the job for each band.
+        if let Some((job, band)) = self.try_take_job() {
+            return Some((job, band));
+        }
         // Lock the job queue while checking for available jobs. The lock
         // won't be held while the job is processed later outside of this
         // function so that other threads can pull from the queue meanwhile.
         let mut jobs = self.lock();
-        while jobs.is_empty() {
+        loop {
+            // While inside the mutex, check the cached job again to see if it
+            // has been updated.
+            if let Some((job, band)) = self.try_take_job() {
+                return Some((job, band));
+            }
+            // If no cached job was available, try to take a job from the queue
+            // and install it as the current job.
+            if let Some(job) = jobs.pop_front() {
+                self.current_job.store(job.get_ptr_mut(), Ordering::SeqCst);
+                continue;
+            }
+            // Otherwise, the job queue is currently empty. Depending on the
+            // value of the job count we may either wait for jobs to become
+            // available or exit.
             match self.job_count.load(Ordering::SeqCst) {
                 // If we completed all available jobs, signal completion. If
                 // waiting inside the SwCompositeThread, then block waiting for
@@ -811,16 +879,6 @@ impl SwCompositeThread {
             // The SwCompositeThread needs to wait for jobs to become
             // available to avoid busy waiting on the queue.
             jobs = self.jobs_available.wait(jobs).unwrap();
-        }
-        // Look for a job at the front of the queue. If there is one, take the
-        // next unprocessed band from the job. If this was the last band in the
-        // job, then finally remove it from the queue.
-        if let Some(job) = jobs.front() {
-            let (band, done) = job.take_band();
-            let job = if done { jobs.pop_front().unwrap() } else { job.clone() };
-            Some((job, band))
-        } else {
-            None
         }
     }
 
@@ -909,6 +967,7 @@ impl SwCompositor {
         // Only create the SwComposite thread if we're neither using OpenGL composition nor a native
         // render compositor. Thus, we are compositing into the main software framebuffer, which in
         // that case benefits from compositing asynchronously while we are updating tiles.
+        assert!(native_gl.is_none() || compositor.is_none());
         let composite_thread = if native_gl.is_none() && compositor.is_none() {
             Some(SwCompositeThread::new())
         } else {
@@ -981,6 +1040,7 @@ impl SwCompositor {
     /// in composition.
     fn init_overlaps(
         &self,
+        overlap_id: &NativeSurfaceId,
         overlap_surface: &SwSurface,
         overlap_tile: &SwTile,
         overlap_transform: &CompositorSurfaceTransform,
@@ -994,6 +1054,11 @@ impl SwCompositor {
         // on its own future update.
         let mut overlaps = if overlap_tile.invalid.get() { 1 } else { 0 };
         for &(ref id, ref transform, ref clip_rect, _) in &self.frame_surfaces {
+            // We only want to consider surfaces that were added before the current one we're
+            // checking for overlaps. If we find that surface, then we're done.
+            if id == overlap_id {
+                break;
+            }
             // If the surface's clip rect doesn't overlap the tile's rect,
             // then there is no need to check any tiles within the surface.
             if !overlap_rect.intersects(clip_rect) {
@@ -1070,6 +1135,7 @@ impl SwCompositor {
                     framebuffer,
                     src_rect,
                     dst_rect,
+                    *clip_rect,
                     surface.is_opaque,
                     flip_y,
                     filter,
@@ -1094,7 +1160,7 @@ impl SwCompositor {
                     color_depth: ColorDepth::Color8,
                     size: DeviceIntSize::zero(),
                 };
-                assert!(surface.tiles.len() > 0);
+                assert!(!surface.tiles.is_empty());
                 let mut tile = &mut surface.tiles[0];
                 if unsafe { wr_swgl_lock_composite_surface(self.gl.into(), external_image, &mut info) } {
                     tile.valid_rect = DeviceIntRect::from_size(info.size);
@@ -1468,7 +1534,7 @@ impl Compositor for SwCompositor {
                 assert!(stride % 4 == 0);
                 let buf = if tile.pbo_id != 0 {
                     native_gl.unmap_buffer(gl::PIXEL_UNPACK_BUFFER);
-                    0 as *mut c_void
+                    std::ptr::null_mut::<c_void>()
                 } else {
                     swbuf
                 };
@@ -1496,21 +1562,6 @@ impl Compositor for SwCompositor {
                 native_gl.pixel_store_i(gl::UNPACK_ROW_LENGTH, 0);
                 if tile.pbo_id != 0 {
                     native_gl.bind_buffer(gl::PIXEL_UNPACK_BUFFER, 0);
-                }
-
-                if let Some(compositor) = &mut self.compositor {
-                    let info = compositor.bind(id, tile.dirty_rect, tile.valid_rect);
-                    native_gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, info.fbo_id);
-
-                    let viewport = dirty.translate(info.origin.to_vector());
-                    let draw_tile = self.draw_tile.as_ref().unwrap();
-                    draw_tile.enable(&viewport);
-                    draw_tile.draw(&viewport, &viewport, &dirty, &surface, &tile, false, gl::LINEAR);
-                    draw_tile.disable();
-
-                    native_gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, 0);
-
-                    compositor.unbind();
                 }
 
                 native_gl.bind_texture(gl::TEXTURE_2D, 0);
@@ -1554,13 +1605,6 @@ impl Compositor for SwCompositor {
                 self.late_surfaces.push((id, transform, clip_rect, filter));
                 return;
             }
-
-            // Compute overlap dependencies for the surface.
-            if let Some(surface) = self.surfaces.get(&id) {
-                for tile in &surface.tiles {
-                    self.init_overlaps(surface, tile, &transform, &clip_rect);
-                }
-            }
         }
 
         self.frame_surfaces.push((id, transform, clip_rect, filter));
@@ -1571,8 +1615,26 @@ impl Compositor for SwCompositor {
     /// frame will not have overlap dependencies assigned and so must instead
     /// be added to the late_surfaces queue to be processed at the end of the
     /// frame.
-    fn start_compositing(&mut self, _dirty_rects: &[DeviceIntRect]) {
+    fn start_compositing(&mut self, dirty_rects: &[DeviceIntRect]) {
+        if dirty_rects.len() == 1 {
+            // Factor dirty rect into surface clip rects and discard surfaces that are
+            // entirely clipped out.
+            for &mut (ref _id, ref _transform, ref mut clip_rect, _filter) in &mut self.frame_surfaces {
+                *clip_rect = clip_rect.intersection(&dirty_rects[0]).unwrap_or_default();
+            }
+            self.frame_surfaces.retain(|&(_, _, clip_rect, _)| !clip_rect.is_empty());
+        }
+
         if let Some(ref composite_thread) = self.composite_thread {
+            // Compute overlap dependencies for surfaces.
+            for &(ref id, ref transform, ref clip_rect, _filter) in &self.frame_surfaces {
+                if let Some(surface) = self.surfaces.get(id) {
+                    for tile in &surface.tiles {
+                        self.init_overlaps(id, surface, tile, transform, clip_rect);
+                    }
+                }
+            }
+
             composite_thread.start_compositing();
             // Issue any initial composite jobs for the SwComposite thread.
             let mut lock = composite_thread.lock();
@@ -1617,6 +1679,7 @@ impl Compositor for SwCompositor {
                                 &viewport,
                                 &dst_rect,
                                 &src_rect,
+                                clip_rect,
                                 surface,
                                 tile,
                                 flip_y,

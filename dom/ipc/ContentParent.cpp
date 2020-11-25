@@ -15,15 +15,14 @@
 
 #include "chrome/common/process_watcher.h"
 #include "mozilla/Result.h"
+#include "mozilla/XREAppData.h"
+#include "nsComponentManagerUtils.h"
 #include "nsIBrowserDOMWindow.h"
 
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/PDocAccessible.h"
 #endif
 #include "GeckoProfiler.h"
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
 #include "GMPServiceParent.h"
 #include "HandlerServiceParent.h"
 #include "IHistory.h"
@@ -137,6 +136,7 @@
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/CrashReporterHost.h"
+#include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/FileDescriptorSetParent.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/IPCStreamAlloc.h"
@@ -918,9 +918,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
       if (profiler_thread_is_being_profiled()) {
         nsPrintfCString marker("Reused process %u",
                                (unsigned int)retval->ChildID());
-        TimeStamp now = TimeStamp::Now();
-        PROFILER_ADD_MARKER_WITH_PAYLOAD("Process", DOM, TextMarkerPayload,
-                                         (marker, now, now));
+        PROFILER_MARKER_TEXT("Process", DOM, {}, marker);
       }
 #endif
       MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
@@ -959,9 +957,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
     if (profiler_thread_is_being_profiled()) {
       nsPrintfCString marker("Recycled process %u (%p)",
                              (unsigned int)recycled->ChildID(), recycled.get());
-      TimeStamp now = TimeStamp::Now();
-      PROFILER_ADD_MARKER_WITH_PAYLOAD("Process", DOM, TextMarkerPayload,
-                                       (marker, now, now));
+      PROFILER_MARKER_TEXT("Process", DOM, {}, marker);
     }
 #endif
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
@@ -984,9 +980,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
     if (profiler_thread_is_being_profiled()) {
       nsPrintfCString marker("Assigned preallocated process %u",
                              (unsigned int)preallocated->ChildID());
-      TimeStamp now = TimeStamp::Now();
-      PROFILER_ADD_MARKER_WITH_PAYLOAD("Process", DOM, TextMarkerPayload,
-                                       (marker, now, now));
+      PROFILER_MARKER_TEXT("Process", DOM, {}, marker);
     }
 #endif
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
@@ -2423,9 +2417,10 @@ bool ContentParent::LaunchSubprocessResolve(bool aIsSync,
     nsPrintfCString marker("Process start%s for %u",
                            mIsAPreallocBlocker ? " (immediate)" : "",
                            (unsigned int)ChildID());
-    PROFILER_ADD_MARKER_WITH_PAYLOAD(
-        mIsAPreallocBlocker ? "Process Immediate Launch" : "Process Launch",
-        DOM, TextMarkerPayload, (marker, mLaunchTS, launchResumeTS));
+    PROFILER_MARKER_TEXT(
+        mIsAPreallocBlocker ? ProfilerString8View("Process Immediate Launch")
+                            : ProfilerString8View("Process Launch"),
+        DOM, MarkerTiming::Interval(mLaunchTS, launchResumeTS), marker);
   }
 #endif
 
@@ -3669,6 +3664,19 @@ mozilla::ipc::IPCResult ContentParent::RecvCloneDocumentTreeInto(
 
   ContentParent* cp = source->GetContentParent();
   if (NS_WARN_IF(!cp)) {
+    return IPC_OK();
+  }
+
+  if (NS_WARN_IF(cp->GetRemoteType() == GetRemoteType())) {
+    // Wanted to switch to a target browsing context that's already local again.
+    // See bug 1676996 for how this can happen.
+    //
+    // Dropping the switch on the floor seems fine for this case, though we
+    // could also try to clone the local document.
+    //
+    // If the remote type matches & it's in the same group (which was confirmed
+    // by CloneIsLegal), it must be the exact same process.
+    MOZ_DIAGNOSTIC_ASSERT(cp == this);
     return IPC_OK();
   }
 
@@ -7026,10 +7034,12 @@ mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryGo(
     const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
-    uint64_t aHistoryEpoch, HistoryGoResolver&& aResolveRequestedIndex) {
+    uint64_t aHistoryEpoch, bool aRequireUserInteraction,
+    HistoryGoResolver&& aResolveRequestedIndex) {
   if (!aContext.IsDiscarded()) {
-    aContext.get_canonical()->HistoryGo(aOffset, aHistoryEpoch, Some(ChildID()),
-                                        std::move(aResolveRequestedIndex));
+    aContext.get_canonical()->HistoryGo(
+        aOffset, aHistoryEpoch, aRequireUserInteraction, Some(ChildID()),
+        std::move(aResolveRequestedIndex));
   }
   return IPC_OK();
 }

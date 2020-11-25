@@ -27,16 +27,15 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/DOMJSClass.h"
 #include "mozilla/dom/DOMJSProxyHandler.h"
+#include "mozilla/dom/JSSlots.h"
 #include "mozilla/dom/NonRefcountedDOMObject.h"
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/PrototypeList.h"
 #include "mozilla/dom/RemoteObjectProxy.h"
-#include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/dom/Document.h"
 #include "nsIGlobalObject.h"
 #include "nsJSUtils.h"
 #include "nsISupportsImpl.h"
@@ -47,6 +46,15 @@
 
 #include "nsWrapperCacheInlines.h"
 
+// XXX(Bug 1674080) Remove this and let Codegen.py generate it instead when
+// needed.
+#include "mozilla/BasePrincipal.h"
+#include "nsJSPrincipals.h"
+
+class nsGlobalWindowInner;
+class nsGlobalWindowOuter;
+class nsIInterfaceRequestor;
+
 namespace mozilla {
 
 enum UseCounter : int16_t;
@@ -54,11 +62,15 @@ enum class UseCounterWorker : int16_t;
 
 namespace dom {
 class CustomElementReactionsStack;
+class Document;
+class EventTarget;
 class MessageManagerGlobal;
 class DedicatedWorkerGlobalScope;
 template <typename KeyType, typename ValueType>
 class Record;
 class WindowProxyHolder;
+
+enum class DeprecatedOperations : uint16_t;
 
 nsresult UnwrapArgImpl(JSContext* cx, JS::Handle<JSObject*> src,
                        const nsIID& iid, void** ppArg);
@@ -2451,6 +2463,10 @@ void ConstructJSImplementation(const char* aContractId,
                                JS::MutableHandle<JSObject*> aObject,
                                ErrorResult& aRv);
 
+// XXX Avoid pulling in the whole ScriptSettings.h, however there should be a
+// unique declaration of this function somewhere else.
+JS::RootingContext* RootingCx();
+
 template <typename T>
 already_AddRefed<T> ConstructJSImplementation(const char* aContractId,
                                               nsIGlobalObject* aGlobal,
@@ -3091,10 +3107,10 @@ void SetUseCounter(UseCounterWorker aUseCounter);
 
 // Warnings
 void DeprecationWarning(JSContext* aCx, JSObject* aObject,
-                        Document::DeprecatedOperations aOperation);
+                        DeprecatedOperations aOperation);
 
 void DeprecationWarning(const GlobalObject& aGlobal,
-                        Document::DeprecatedOperations aOperation);
+                        DeprecatedOperations aOperation);
 
 // A callback to perform funToString on an interface object
 JSString* InterfaceObjectToString(JSContext* aCx, JS::Handle<JSObject*> aObject,

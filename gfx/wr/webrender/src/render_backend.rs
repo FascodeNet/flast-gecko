@@ -1066,7 +1066,7 @@ impl RenderBackend {
                     memory_pressure: true,
                 };
                 self.result_tx.send(msg).unwrap();
-                self.notifier.wake_up();
+                self.notifier.wake_up(false);
             }
             ApiMsg::ReportMemory(tx) => {
                 self.report_memory(tx);
@@ -1210,7 +1210,7 @@ impl RenderBackend {
                     _ => ResultMsg::DebugCommand(option),
                 };
                 self.result_tx.send(msg).unwrap();
-                self.notifier.wake_up();
+                self.notifier.wake_up(true);
             }
             ApiMsg::UpdateDocuments(transaction_msgs) => {
                 self.prepare_transactions(
@@ -1308,7 +1308,7 @@ impl RenderBackend {
             SceneBuilderResult::DocumentsForDebugger(json) => {
                 let msg = ResultMsg::DebugOutput(DebugOutput::FetchDocuments(json));
                 self.result_tx.send(msg).unwrap();
-                self.notifier.wake_up();
+                self.notifier.wake_up(false);
             }
         }
 
@@ -1479,13 +1479,16 @@ impl RenderBackend {
         // Request composite is true when we want to composite frame even when
         // there is no frame update. This happens when video frame is updated under
         // external image with NativeTexture or when platform requested to composite frame.
-        // TODO(gw): This may no longer be required by Gecko - since we track the image
-        //           generation in the composite descriptor, and picture caching is _always_ enabled.
         if invalidate_rendered_frame {
             doc.rendered_frame_is_valid = false;
+            if let CompositorKind::Draw { max_partial_present_rects, .. } = doc.scene.config.compositor_kind {
 
-            // When partial present is enabled, we need to force redraw.
-            doc.dirty_rects_are_valid = false;
+              // When partial present is enabled, we need to force redraw.
+              if max_partial_present_rects > 0 {
+                  let msg = ResultMsg::ForceRedraw;
+                  self.result_tx.send(msg).unwrap();
+              }
+            }
         }
 
         let mut frame_build_time = None;

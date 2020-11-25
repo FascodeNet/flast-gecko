@@ -862,8 +862,7 @@ bool WarpBuilder::build_RegExp(BytecodeLocation loc) {
 
   auto* snapshot = getOpSnapshot<WarpRegExp>(loc);
 
-  MRegExp* regexp = MRegExp::New(alloc(), /* constraints = */ nullptr, reObj,
-                                 snapshot->hasShared());
+  MRegExp* regexp = MRegExp::New(alloc(), reObj, snapshot->hasShared());
   current->add(regexp);
   current->push(regexp);
 
@@ -1068,6 +1067,25 @@ bool WarpBuilder::build_StrictEq(BytecodeLocation loc) {
 
 bool WarpBuilder::build_StrictNe(BytecodeLocation loc) {
   return buildCompareOp(loc);
+}
+
+// Returns true iff the MTest added for |op| has a true-target corresponding
+// with the join point in the bytecode.
+static bool TestTrueTargetIsJoinPoint(JSOp op) {
+  switch (op) {
+    case JSOp::IfNe:
+    case JSOp::Or:
+    case JSOp::Case:
+      return true;
+
+    case JSOp::IfEq:
+    case JSOp::And:
+    case JSOp::Coalesce:
+      return false;
+
+    default:
+      MOZ_CRASH("Unexpected op");
+  }
 }
 
 bool WarpBuilder::build_JumpTarget(BytecodeLocation loc) {
@@ -1433,14 +1451,12 @@ bool WarpBuilder::buildBackedge() {
   MBasicBlock* header = loopStack_.popCopy().header();
   current->end(MGoto::New(alloc(), header));
 
-  AbortReason r = header->setBackedge(alloc(), current);
-  if (r == AbortReason::NoAbort) {
-    setTerminatedBlock();
-    return true;
+  if (!header->setBackedge(current)) {
+    return false;
   }
 
-  MOZ_ASSERT(r == AbortReason::Alloc);
-  return false;
+  setTerminatedBlock();
+  return true;
 }
 
 bool WarpBuilder::buildForwardGoto(BytecodeLocation target) {
@@ -1485,7 +1501,7 @@ bool WarpBuilder::build_DynamicImport(BytecodeLocation loc) {
 
 bool WarpBuilder::build_Not(BytecodeLocation loc) {
   MDefinition* value = current->pop();
-  MNot* ins = MNot::New(alloc(), value, /* constraints = */ nullptr);
+  MNot* ins = MNot::New(alloc(), value);
   current->add(ins);
   current->push(ins);
   return true;
@@ -1514,45 +1530,9 @@ bool WarpBuilder::usesEnvironmentChain() const {
   return script_->jitScript()->usesEnvironmentChain();
 }
 
-bool WarpBuilder::build_DefVar(BytecodeLocation loc) {
-  MOZ_ASSERT(usesEnvironmentChain());
-
-  MDefinition* env = current->environmentChain();
-  MDefVar* defvar = MDefVar::New(alloc(), env);
-  current->add(defvar);
-  return resumeAfter(defvar, loc);
-}
-
-bool WarpBuilder::buildDefLexicalOp(BytecodeLocation loc) {
-  MOZ_ASSERT(usesEnvironmentChain());
-
-  MDefinition* env = current->environmentChain();
-  MDefLexical* defLexical = MDefLexical::New(alloc(), env);
-  current->add(defLexical);
-  return resumeAfter(defLexical, loc);
-}
-
-bool WarpBuilder::build_DefLet(BytecodeLocation loc) {
-  return buildDefLexicalOp(loc);
-}
-
-bool WarpBuilder::build_DefConst(BytecodeLocation loc) {
-  return buildDefLexicalOp(loc);
-}
-
-bool WarpBuilder::build_DefFun(BytecodeLocation loc) {
-  MOZ_ASSERT(usesEnvironmentChain());
-
-  MDefinition* fun = current->pop();
-  MDefinition* env = current->environmentChain();
-  MDefFun* deffun = MDefFun::New(alloc(), fun, env);
-  current->add(deffun);
-  return resumeAfter(deffun, loc);
-}
-
-bool WarpBuilder::build_CheckGlobalOrEvalDecl(BytecodeLocation loc) {
+bool WarpBuilder::build_GlobalOrEvalDeclInstantiation(BytecodeLocation loc) {
   MOZ_ASSERT(!script_->isForEval(), "Eval scripts not supported");
-  auto* redeclCheck = MGlobalNameConflictsCheck::New(alloc());
+  auto* redeclCheck = MGlobalDeclInstantiation::New(alloc());
   current->add(redeclCheck);
   return resumeAfter(redeclCheck, loc);
 }
@@ -2281,11 +2261,11 @@ bool WarpBuilder::build_NewArray(BytecodeLocation loc) {
 
   MNewArray* ins;
   if (useVMCall) {
-    ins = MNewArray::NewVM(alloc(), /* constraints = */ nullptr, length,
-                           templateConst, heap, loc.toRawBytecode());
+    ins = MNewArray::NewVM(alloc(), length, templateConst, heap,
+                           loc.toRawBytecode());
   } else {
-    ins = MNewArray::New(alloc(), /* constraints = */ nullptr, length,
-                         templateConst, heap, loc.toRawBytecode());
+    ins = MNewArray::New(alloc(), length, templateConst, heap,
+                         loc.toRawBytecode());
   }
   current->add(ins);
   current->push(ins);
@@ -2299,12 +2279,10 @@ bool WarpBuilder::build_NewArrayCopyOnWrite(BytecodeLocation loc) {
 
   // TODO: pre-tenuring.
   gc::InitialHeap heap = gc::DefaultHeap;
-  MConstant* templateConst =
-      MConstant::NewConstraintlessObject(alloc(), templateObject);
+  MConstant* templateConst = MConstant::NewObject(alloc(), templateObject);
   current->add(templateConst);
 
-  auto* ins = MNewArrayCopyOnWrite::New(alloc(), /* constraints = */ nullptr,
-                                        templateConst, heap);
+  auto* ins = MNewArrayCopyOnWrite::New(alloc(), templateConst, heap);
   current->add(ins);
   current->push(ins);
   return true;
@@ -2317,12 +2295,12 @@ bool WarpBuilder::build_NewObject(BytecodeLocation loc) {
   MNewObject* ins;
   if (const auto* snapshot = getOpSnapshot<WarpNewObject>(loc)) {
     auto* templateConst = constant(ObjectValue(*snapshot->templateObject()));
-    ins = MNewObject::New(alloc(), /* constraints = */ nullptr, templateConst,
-                          heap, MNewObject::ObjectLiteral);
+    ins = MNewObject::New(alloc(), templateConst, heap,
+                          MNewObject::ObjectLiteral);
   } else {
     auto* templateConst = constant(NullValue());
-    ins = MNewObject::NewVM(alloc(), /* constraints = */ nullptr, templateConst,
-                            heap, MNewObject::ObjectLiteral);
+    ins = MNewObject::NewVM(alloc(), templateConst, heap,
+                            MNewObject::ObjectLiteral);
   }
   current->add(ins);
   current->push(ins);
@@ -2596,11 +2574,9 @@ bool WarpBuilder::build_InitElemInc(BytecodeLocation loc) {
 
 static LambdaFunctionInfo LambdaInfoFromSnapshot(JSFunction* fun,
                                                  const WarpLambda* snapshot) {
-  // Pass false for singletonType and useSingletonForClone as asserted in
-  // WarpOracle.
+  // Pass false for singletonType as asserted in WarpOracle.
   return LambdaFunctionInfo(fun, snapshot->baseScript(), snapshot->flags(),
-                            snapshot->nargs(), /* singletonType = */ false,
-                            /* useSingletonForClone = */ false);
+                            snapshot->nargs(), /* singletonType = */ false);
 }
 
 bool WarpBuilder::build_Lambda(BytecodeLocation loc) {
@@ -2613,7 +2589,7 @@ bool WarpBuilder::build_Lambda(BytecodeLocation loc) {
   JSFunction* fun = loc.getFunction(script_);
   MConstant* funConst = constant(ObjectValue(*fun));
 
-  auto* ins = MLambda::New(alloc(), /* constraints = */ nullptr, env, funConst,
+  auto* ins = MLambda::New(alloc(), env, funConst,
                            LambdaInfoFromSnapshot(fun, snapshot));
   current->add(ins);
   current->push(ins);
@@ -2631,9 +2607,8 @@ bool WarpBuilder::build_LambdaArrow(BytecodeLocation loc) {
   JSFunction* fun = loc.getFunction(script_);
   MConstant* funConst = constant(ObjectValue(*fun));
 
-  auto* ins =
-      MLambdaArrow::New(alloc(), /* constraints = */ nullptr, env, newTarget,
-                        funConst, LambdaInfoFromSnapshot(fun, snapshot));
+  auto* ins = MLambdaArrow::New(alloc(), env, newTarget, funConst,
+                                LambdaInfoFromSnapshot(fun, snapshot));
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins, loc);
@@ -2806,11 +2781,11 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
     MConstant* templateConst = constant(ObjectValue(*templateObject));
     MNewArray* newArray;
     if (numRest > snapshot->maxInlineElements()) {
-      newArray = MNewArray::NewVM(alloc(), /* constraints = */ nullptr, numRest,
-                                  templateConst, heap, loc.toRawBytecode());
+      newArray = MNewArray::NewVM(alloc(), numRest, templateConst, heap,
+                                  loc.toRawBytecode());
     } else {
-      newArray = MNewArray::New(alloc(), /* constraints = */ nullptr, numRest,
-                                templateConst, heap, loc.toRawBytecode());
+      newArray = MNewArray::New(alloc(), numRest, templateConst, heap,
+                                loc.toRawBytecode());
     }
     current->add(newArray);
     current->push(newArray);
@@ -2863,8 +2838,7 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
   // Pass in the number of actual arguments, the number of formals (not
   // including the rest parameter slot itself), and the template object.
   unsigned numFormals = info().nargs() - 1;
-  MRest* rest = MRest::New(alloc(), /* constraints = */ nullptr, numActuals,
-                           numFormals, templateObject);
+  MRest* rest = MRest::New(alloc(), numActuals, numFormals, templateObject);
   current->add(rest);
   current->push(rest);
   return true;
@@ -3048,11 +3022,7 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
           val = maybeGuardNotOptimizedArguments(val);
         }
       }
-      // For now pass monitoredResult = true to get the behavior we want (no
-      // TI-related restrictions apply, similar to the Baseline IC).
-      // See also IonGetPropertyICFlags.
-      bool monitoredResult = true;
-      auto* ins = MGetPropertyCache::New(alloc(), val, id, monitoredResult);
+      auto* ins = MGetPropertyCache::New(alloc(), val, id);
       current->add(ins);
       current->push(ins);
       return resumeAfter(ins, loc);
@@ -3060,9 +3030,7 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
     case CacheKind::GetElem: {
       MOZ_ASSERT(numInputs == 2);
       MDefinition* val = maybeGuardNotOptimizedArguments(getInput(0));
-      bool monitoredResult = true;  // See GetProp case above.
-      auto* ins =
-          MGetPropertyCache::New(alloc(), val, getInput(1), monitoredResult);
+      auto* ins = MGetPropertyCache::New(alloc(), val, getInput(1));
       current->add(ins);
       current->push(ins);
       return resumeAfter(ins, loc);
@@ -3072,24 +3040,16 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
       PropertyName* name = loc.getPropertyName(script_);
       MConstant* id = constant(StringValue(name));
       bool strict = loc.isStrictSetOp();
-      bool needsPostBarrier = true;
-      bool needsTypeBarrier = false;
-      bool guardHoles = true;
-      auto* ins = MSetPropertyCache::New(alloc(), getInput(0), id, getInput(1),
-                                         strict, needsPostBarrier,
-                                         needsTypeBarrier, guardHoles);
+      auto* ins =
+          MSetPropertyCache::New(alloc(), getInput(0), id, getInput(1), strict);
       current->add(ins);
       return resumeAfter(ins, loc);
     }
     case CacheKind::SetElem: {
       MOZ_ASSERT(numInputs == 3);
       bool strict = loc.isStrictSetOp();
-      bool needsPostBarrier = true;
-      bool needsTypeBarrier = false;
-      bool guardHoles = true;
       auto* ins = MSetPropertyCache::New(alloc(), getInput(0), getInput(1),
-                                         getInput(2), strict, needsPostBarrier,
-                                         needsTypeBarrier, guardHoles);
+                                         getInput(2), strict);
       current->add(ins);
       return resumeAfter(ins, loc);
     }

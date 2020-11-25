@@ -383,6 +383,10 @@ bool nsCoreUtils::IsErrorPage(Document* aDocument) {
   return StringBeginsWith(path, neterror) || StringBeginsWith(path, certerror);
 }
 
+PresShell* nsCoreUtils::GetPresShellFor(nsINode* aNode) {
+  return aNode->OwnerDoc()->GetPresShell();
+}
+
 bool nsCoreUtils::GetID(nsIContent* aContent, nsAString& aID) {
   return aContent->IsElement() &&
          aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::id, aID);
@@ -536,6 +540,12 @@ void nsCoreUtils::ScrollTo(PresShell* aPresShell, nsIContent* aContent,
   ConvertScrollTypeToPercents(aScrollType, &vertical, &horizontal);
   aPresShell->ScrollContentIntoView(aContent, vertical, horizontal,
                                     ScrollFlags::ScrollOverflowHidden);
+}
+
+bool nsCoreUtils::IsHTMLTableHeader(nsIContent* aContent) {
+  return aContent->NodeInfo()->Equals(nsGkAtoms::th) ||
+         (aContent->IsElement() &&
+          aContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::scope));
 }
 
 bool nsCoreUtils::IsWhitespaceString(const nsAString& aString) {

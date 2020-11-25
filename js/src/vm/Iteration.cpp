@@ -935,13 +935,6 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
     return nullptr;
   }
 
-  if (IsTypeInferenceEnabled()) {
-    if (obj->isSingleton() && !JSObject::setIteratedSingleton(cx, obj)) {
-      return nullptr;
-    }
-    MarkObjectGroupFlags(cx, obj, OBJECT_FLAG_ITERATED);
-  }
-
   // If the object has dense elements, mark the dense elements as
   // maybe-in-iteration.
   //
@@ -1076,18 +1069,6 @@ PlainObject* Realm::createIterResultTemplateObject(
   if (!NativeDefineDataProperty(cx, templateObject, cx->names().done,
                                 TrueHandleValue, JSPROP_ENUMERATE)) {
     return nullptr;
-  }
-
-  AutoSweepObjectGroup sweep(group);
-  if (!group->unknownProperties(sweep)) {
-    // Update `value` property typeset, since it can be any value.
-    HeapTypeSet* types =
-        group->maybeGetProperty(sweep, NameToId(cx->names().value));
-    MOZ_ASSERT(types);
-    {
-      AutoEnterAnalysis enter(cx);
-      types->makeUnknown(sweep, cx);
-    }
   }
 
   // Make sure that the properties are in the right slots.

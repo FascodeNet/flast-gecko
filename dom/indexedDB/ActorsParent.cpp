@@ -84,6 +84,7 @@
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/Scoped.h"
 #include "mozilla/SnappyCompressOutputStream.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/TimeStamp.h"
@@ -4538,9 +4539,9 @@ class IndexCursorBase : public CursorBase {
 
     const nsCString& GetContinueQuery(const bool hasContinueKey,
                                       const bool hasContinuePrimaryKey) const {
-      return hasContinuePrimaryKey
-                 ? mContinuePrimaryKeyQuery
-                 : hasContinueKey ? mContinueToQuery : mContinueQuery;
+      return hasContinuePrimaryKey ? mContinuePrimaryKeyQuery
+             : hasContinueKey      ? mContinueToQuery
+                                   : mContinueQuery;
     }
   };
 };
@@ -12882,71 +12883,74 @@ nsresult QuotaClient::UpgradeStorageFrom1_0To2_0(nsIFile* aDirectory) {
                   GetDatabaseFilenames(*aDirectory,
                                        /* aCanceled */ AtomicBool{false}));
 
-  for (const nsString& subdirName : subdirsToProcess) {
-    // If the directory has the correct suffix then it should exist in
-    // databaseFilenames.
-    nsDependentSubstring subdirNameBase;
-    if (GetFilenameBase(subdirName, kFileManagerDirectoryNameSuffix,
-                        subdirNameBase)) {
-      Unused << NS_WARN_IF(!databaseFilenames.GetEntry(subdirNameBase));
+  IDB_TRY(CollectEachInRange(
+      subdirsToProcess,
+      [&databaseFilenames = databaseFilenames,
+       aDirectory](const nsString& subdirName) -> Result<Ok, nsresult> {
+        // If the directory has the correct suffix then it should exist in
+        // databaseFilenames.
+        nsDependentSubstring subdirNameBase;
+        if (GetFilenameBase(subdirName, kFileManagerDirectoryNameSuffix,
+                            subdirNameBase)) {
+          IDB_TRY(OkIf(databaseFilenames.GetEntry(subdirNameBase)), Ok{});
+          return Ok{};
+        }
 
-      continue;
-    }
+        // The directory didn't have the right suffix but we might need to
+        // rename it. Check to see if we have a database that references this
+        // directory.
+        IDB_TRY_INSPECT(
+            const auto& subdirNameWithSuffix,
+            ([&databaseFilenames,
+              &subdirName]() -> Result<nsAutoString, NotOk> {
+              if (databaseFilenames.GetEntry(subdirName)) {
+                return nsAutoString{subdirName +
+                                    kFileManagerDirectoryNameSuffix};
+              }
 
-    // The directory didn't have the right suffix but we might need to rename
-    // it. Check to see if we have a database that references this directory.
-    nsString subdirNameWithSuffix;
-    if (databaseFilenames.GetEntry(subdirName)) {
-      subdirNameWithSuffix = subdirName + kFileManagerDirectoryNameSuffix;
-    } else {
-      // Windows doesn't allow a directory to end with a dot ('.'), so we have
-      // to check that possibility here too.
-      // We do this on all platforms, because the origin directory may have
-      // been created on Windows and now accessed on different OS.
-      nsString subdirNameWithDot = subdirName + u"."_ns;
-      if (NS_WARN_IF(!databaseFilenames.GetEntry(subdirNameWithDot))) {
-        continue;
-      }
-      subdirNameWithSuffix =
-          subdirNameWithDot + kFileManagerDirectoryNameSuffix;
-    }
+              // Windows doesn't allow a directory to end with a dot ('.'), so
+              // we have to check that possibility here too. We do this on all
+              // platforms, because the origin directory may have been created
+              // on Windows and now accessed on different OS.
+              const nsAutoString subdirNameWithDot = subdirName + u"."_ns;
+              IDB_TRY(OkIf(databaseFilenames.GetEntry(subdirNameWithDot)),
+                      Err(NotOk{}));
 
-    // We do have a database that uses this subdir so we should rename it now.
-    IDB_TRY_INSPECT(const auto& subdir,
-                    CloneFileAndAppend(*aDirectory, subdirName));
+              return nsAutoString{subdirNameWithDot +
+                                  kFileManagerDirectoryNameSuffix};
+            }()),
+            Ok{});
 
-    DebugOnly<bool> isDirectory;
-    MOZ_ASSERT(NS_SUCCEEDED(subdir->IsDirectory(&isDirectory)));
-    MOZ_ASSERT(isDirectory);
+        // We do have a database that uses this subdir so we should rename it
+        // now.
+        IDB_TRY_INSPECT(const auto& subdir,
+                        CloneFileAndAppend(*aDirectory, subdirName));
 
-    // Check if the subdir with suffix already exists before renaming.
-    IDB_TRY_INSPECT(const auto& subdirWithSuffix,
-                    CloneFileAndAppend(*aDirectory, subdirNameWithSuffix));
+        DebugOnly<bool> isDirectory;
+        MOZ_ASSERT(NS_SUCCEEDED(subdir->IsDirectory(&isDirectory)));
+        MOZ_ASSERT(isDirectory);
 
-    bool exists;
-    nsresult rv = subdirWithSuffix->Exists(&exists);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+        // Check if the subdir with suffix already exists before renaming.
+        IDB_TRY_INSPECT(const auto& subdirWithSuffix,
+                        CloneFileAndAppend(*aDirectory, subdirNameWithSuffix));
 
-    if (exists) {
-      IDB_WARNING("Deleting old %s files directory!",
-                  NS_ConvertUTF16toUTF8(subdirName).get());
+        IDB_TRY_INSPECT(const bool& exists,
+                        MOZ_TO_RESULT_INVOKE(subdirWithSuffix, Exists));
 
-      rv = subdir->Remove(/* aRecursive */ true);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+        if (exists) {
+          IDB_WARNING("Deleting old %s files directory!",
+                      NS_ConvertUTF16toUTF8(subdirName).get());
 
-      continue;
-    }
+          IDB_TRY(subdir->Remove(/* aRecursive */ true));
 
-    // Finally, rename the subdir.
-    rv = subdir->RenameTo(nullptr, subdirNameWithSuffix);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-  }
+          return Ok{};
+        }
+
+        // Finally, rename the subdir.
+        IDB_TRY(subdir->RenameTo(nullptr, subdirNameWithSuffix));
+
+        return Ok{};
+      }));
 
   return NS_OK;
 }
@@ -13935,12 +13939,12 @@ nsresult Maintenance::DirectoryWork() {
             // (EnsureTemporaryStorageIsInitialized cleans up only
             // non-persistent origins).
 
-            nsCOMPtr<nsIFile> directory;
-            bool created;
-            IDB_TRY(quotaManager->EnsurePersistentOriginIsInitialized(
-                        quotaInfo, getter_AddRefs(directory), &created),
-                    // Not much we can do here...
-                    Ok{});
+            IDB_TRY_UNWRAP(
+                const DebugOnly<bool> created,
+                quotaManager->EnsurePersistentOriginIsInitialized(quotaInfo)
+                    .map([](const auto& res) { return res.second; }),
+                // Not much we can do here...
+                Ok{});
 
             // We found this origin directory by traversing the repository, so
             // EnsurePersistentOriginIsInitialized shouldn't report that a new
@@ -14152,52 +14156,52 @@ NS_IMETHODIMP
 Maintenance::Run() {
   MOZ_ASSERT(mState != State::Complete);
 
-  nsresult rv;
+  const auto handleError = [this](const nsresult rv) {
+    if (mState != State::Finishing) {
+      if (NS_SUCCEEDED(mResultCode)) {
+        mResultCode = rv;
+      }
+
+      // Must set mState before dispatching otherwise we will race with the
+      // owning thread.
+      mState = State::Finishing;
+
+      if (IsOnBackgroundThread()) {
+        Finish();
+      } else {
+        MOZ_ALWAYS_SUCCEEDS(mQuotaClient->BackgroundThread()->Dispatch(
+            this, NS_DISPATCH_NORMAL));
+      }
+    }
+  };
 
   switch (mState) {
     case State::Initial:
-      rv = Start();
+      IDB_TRY(Start(), NS_OK, handleError);
       break;
 
     case State::CreateIndexedDatabaseManager:
-      rv = CreateIndexedDatabaseManager();
+      IDB_TRY(CreateIndexedDatabaseManager(), NS_OK, handleError);
       break;
 
     case State::IndexedDatabaseManagerOpen:
-      rv = OpenDirectory();
+      IDB_TRY(OpenDirectory(), NS_OK, handleError);
       break;
 
     case State::DirectoryWorkOpen:
-      rv = DirectoryWork();
+      IDB_TRY(DirectoryWork(), NS_OK, handleError);
       break;
 
     case State::BeginDatabaseMaintenance:
-      rv = BeginDatabaseMaintenance();
+      IDB_TRY(BeginDatabaseMaintenance(), NS_OK, handleError);
       break;
 
     case State::Finishing:
       Finish();
-      return NS_OK;
+      break;
 
     default:
       MOZ_CRASH("Bad state!");
-  }
-
-  if (NS_WARN_IF(NS_FAILED(rv)) && mState != State::Finishing) {
-    if (NS_SUCCEEDED(mResultCode)) {
-      mResultCode = rv;
-    }
-
-    // Must set mState before dispatching otherwise we will race with the owning
-    // thread.
-    mState = State::Finishing;
-
-    if (IsOnBackgroundThread()) {
-      Finish();
-    } else {
-      MOZ_ALWAYS_SUCCEEDS(
-          mQuotaClient->BackgroundThread()->Dispatch(this, NS_DISPATCH_NORMAL));
-    }
   }
 
   return NS_OK;
@@ -16103,66 +16107,66 @@ NS_IMPL_ISUPPORTS_INHERITED0(FactoryOp, DatabaseOperationBase)
 // See bug 1356824 for more details.
 NS_IMETHODIMP
 FactoryOp::Run() {
-  nsresult rv;
+  const auto handleError = [this](const nsresult rv) {
+    if (mState != State::SendingResults) {
+      SetFailureCodeIfUnset(rv);
+
+      // Must set mState before dispatching otherwise we will race with the
+      // owning thread.
+      mState = State::SendingResults;
+
+      if (IsOnOwningThread()) {
+        SendResults();
+      } else {
+        MOZ_ALWAYS_SUCCEEDS(
+            mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
+      }
+    }
+  };
 
   switch (mState) {
     case State::Initial:
-      rv = Open();
+      IDB_TRY(Open(), NS_OK, handleError);
       break;
 
     case State::PermissionChallenge:
-      rv = ChallengePermission();
+      IDB_TRY(ChallengePermission(), NS_OK, handleError);
       break;
 
     case State::PermissionRetry:
-      rv = RetryCheckPermission();
+      IDB_TRY(RetryCheckPermission(), NS_OK, handleError);
       break;
 
     case State::FinishOpen:
-      rv = FinishOpen();
+      IDB_TRY(FinishOpen(), NS_OK, handleError);
       break;
 
     case State::QuotaManagerPending:
-      rv = QuotaManagerOpen();
+      IDB_TRY(QuotaManagerOpen(), NS_OK, handleError);
       break;
 
     case State::DatabaseOpenPending:
-      rv = DatabaseOpen();
+      IDB_TRY(DatabaseOpen(), NS_OK, handleError);
       break;
 
     case State::DatabaseWorkOpen:
-      rv = DoDatabaseWork();
+      IDB_TRY(DoDatabaseWork(), NS_OK, handleError);
       break;
 
     case State::BeginVersionChange:
-      rv = BeginVersionChange();
+      IDB_TRY(BeginVersionChange(), NS_OK, handleError);
       break;
 
     case State::WaitingForTransactionsToComplete:
-      rv = DispatchToWorkThread();
+      IDB_TRY(DispatchToWorkThread(), NS_OK, handleError);
       break;
 
     case State::SendingResults:
       SendResults();
-      return NS_OK;
+      break;
 
     default:
       MOZ_CRASH("Bad state!");
-  }
-
-  if (NS_WARN_IF(NS_FAILED(rv)) && mState != State::SendingResults) {
-    SetFailureCodeIfUnset(rv);
-
-    // Must set mState before dispatching otherwise we will race with the owning
-    // thread.
-    mState = State::SendingResults;
-
-    if (IsOnOwningThread()) {
-      SendResults();
-    } else {
-      MOZ_ALWAYS_SUCCEEDS(
-          mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
-    }
   }
 
   return NS_OK;
@@ -16298,9 +16302,22 @@ nsresult OpenDatabaseOp::DoDatabaseWork() {
   QuotaManager* const quotaManager = QuotaManager::Get();
   MOZ_ASSERT(quotaManager);
 
-  IDB_TRY_INSPECT(const auto& dbDirectory,
-                  quotaManager->EnsureStorageAndOriginIsInitialized(
-                      persistenceType, mQuotaInfo, Client::IDB));
+  IDB_TRY(quotaManager->EnsureStorageIsInitialized());
+
+  IDB_TRY_INSPECT(
+      const auto& dbDirectory,
+      ([persistenceType, &quotaManager, this]()
+           -> mozilla::Result<std::pair<nsCOMPtr<nsIFile>, bool>, nsresult> {
+        if (persistenceType == PERSISTENCE_TYPE_PERSISTENT) {
+          IDB_TRY_RETURN(
+              quotaManager->EnsurePersistentOriginIsInitialized(mQuotaInfo));
+        }
+
+        IDB_TRY(quotaManager->EnsureTemporaryStorageIsInitialized());
+        IDB_TRY_RETURN(quotaManager->EnsureTemporaryOriginIsInitialized(
+            persistenceType, mQuotaInfo));
+      }()
+                  .map([](const auto& res) { return res.first; })));
 
   IDB_TRY(
       dbDirectory->Append(NS_LITERAL_STRING_FROM_CSTRING(IDB_DIRECTORY_NAME)));
@@ -18318,33 +18335,34 @@ nsresult DatabaseOp::SendToIOThread() {
 
 NS_IMETHODIMP
 DatabaseOp::Run() {
-  nsresult rv;
+  const auto handleError = [this](const nsresult rv) {
+    if (mState != State::SendingResults) {
+      SetFailureCodeIfUnset(rv);
+
+      // Must set mState before dispatching otherwise we will race with the
+      // owning thread.
+      mState = State::SendingResults;
+
+      MOZ_ALWAYS_SUCCEEDS(
+          mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
+    }
+  };
 
   switch (mState) {
     case State::Initial:
-      rv = SendToIOThread();
+      IDB_TRY(SendToIOThread(), NS_OK, handleError);
       break;
 
     case State::DatabaseWork:
-      rv = DoDatabaseWork();
+      IDB_TRY(DoDatabaseWork(), NS_OK, handleError);
       break;
 
     case State::SendingResults:
       SendResults();
-      return NS_OK;
+      break;
 
     default:
       MOZ_CRASH("Bad state!");
-  }
-
-  if (NS_WARN_IF(NS_FAILED(rv)) && mState != State::SendingResults) {
-    SetFailureCodeIfUnset(rv);
-
-    // Must set mState before dispatching otherwise we will race with the owning
-    // thread.
-    mState = State::SendingResults;
-
-    MOZ_ALWAYS_SUCCEEDS(mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
   }
 
   return NS_OK;

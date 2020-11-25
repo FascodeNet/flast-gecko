@@ -10,7 +10,7 @@ replace-with = "vendored-sources"
 [source."https://github.com/mozilla/neqo"]
 git = "https://github.com/mozilla/neqo"
 replace-with = "vendored-sources"
-tag = "v0.4.14"
+tag = "v0.4.16"
 
 [source."https://github.com/mozilla/mp4parse-rust"]
 git = "https://github.com/mozilla/mp4parse-rust"
@@ -21,6 +21,11 @@ rev = "f7c35a30ff25521bebe64c19d3f306569ecb5385"
 git = "https://github.com/mozilla/application-services"
 replace-with = "vendored-sources"
 rev = "8a576fbe79199fa8664f64285524017f74ebcc5f"
+
+[source."https://github.com/mozilla-spidermonkey/wasmtime"]
+branch = "firefox85"
+git = "https://github.com/mozilla-spidermonkey/wasmtime"
+replace-with = "vendored-sources"
 
 [source."https://github.com/mozilla-spidermonkey/jsparagus"]
 git = "https://github.com/mozilla-spidermonkey/jsparagus"
@@ -57,11 +62,6 @@ git = "https://github.com/djg/cubeb-pulse-rs"
 replace-with = "vendored-sources"
 rev = "bf31534d08b2c16fb5e4c5834944ae3271efbd63"
 
-[source."https://github.com/bytecodealliance/wasmtime"]
-git = "https://github.com/bytecodealliance/wasmtime"
-replace-with = "vendored-sources"
-rev = "e22e2c3722f2fbccd3c8d3230119fa04c332c69c"
-
 [source."https://github.com/badboy/failure"]
 git = "https://github.com/badboy/failure"
 replace-with = "vendored-sources"
@@ -80,7 +80,7 @@ rev = "477d8fc53a64705a9d3fbcce9de92f4988558525"
 [source."https://github.com/ChunMinChang/cubeb-coreaudio-rs"]
 git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs"
 replace-with = "vendored-sources"
-rev = "87667052a5ffaf47fbeac4ae67f1ecdefa8d7b09"
+rev = "1e1222d6213e28eabd7f4302d00765ae1153a31e"
 
 [source.crates-io]
 replace-with = "vendored-sources"

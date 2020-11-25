@@ -179,7 +179,7 @@ extern "C" const char* __tsan_default_suppressions() {
          //
          // Probably a false-positive from crossbeam's deque not being
          // understood by tsan.
-         "race:crossbeam_deque::Worker$LT$T$GT$::resize\n"
+         "race:crossbeam_deque::Worker*::resize\n"
 
 
 
@@ -242,10 +242,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1607446
          "race:nsJARChannel::Suspend\n"
          "race:nsJARChannel::Resume\n"
-
-         // Bug 1607449
-         "race:fill_CERTCertificateFields\n"
-         "race:CERT_DestroyCertificate\n"
 
          // Bug 1608462
          "deadlock:ScriptPreloader::OffThreadDecodeCallback\n"

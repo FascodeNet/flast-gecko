@@ -421,11 +421,10 @@ static const nsCString GetSinkMaskNameStr(DWORD aSinkMask) {
 }
 
 static const char* GetActiveSelEndName(TsActiveSelEnd aSelEnd) {
-  return aSelEnd == TS_AE_NONE
-             ? "TS_AE_NONE"
-             : aSelEnd == TS_AE_START
-                   ? "TS_AE_START"
-                   : aSelEnd == TS_AE_END ? "TS_AE_END" : "Unknown";
+  return aSelEnd == TS_AE_NONE    ? "TS_AE_NONE"
+         : aSelEnd == TS_AE_START ? "TS_AE_START"
+         : aSelEnd == TS_AE_END   ? "TS_AE_END"
+                                  : "Unknown";
 }
 
 static const nsCString GetLockFlagNameStr(DWORD aLockFlags) {
@@ -1596,9 +1595,9 @@ TSFStaticSink::OnActivated(DWORD dwProfileType, LANGID langid, REFCLSID rclsid,
            this,
            dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR
                ? "TF_PROFILETYPE_INPUTPROCESSOR"
-               : dwProfileType == TF_PROFILETYPE_KEYBOARDLAYOUT
-                     ? "TF_PROFILETYPE_KEYBOARDLAYOUT"
-                     : "Unknown",
+           : dwProfileType == TF_PROFILETYPE_KEYBOARDLAYOUT
+               ? "TF_PROFILETYPE_KEYBOARDLAYOUT"
+               : "Unknown",
            dwProfileType, langid, GetCLSIDNameStr(rclsid).get(),
            GetGUIDNameStr(catid).get(), GetGUIDNameStr(guidProfile).get(), hkl,
            dwFlags, GetBoolName(dwFlags & TF_IPSINK_FLAG_ACTIVE),
@@ -2337,11 +2336,11 @@ void TSFTextStore::FlushPendingActions() {
           MOZ_LOG(sTextStoreLog, LogLevel::Error,
                   ("0x%p   TSFTextStore::FlushPendingActions() "
                    "FAILED to dispatch compositionstart event, "
-                   "IsHandlingComposition()=%s",
-                   this, GetBoolName(IsHandlingComposition())));
+                   "IsHandlingCompositionInContent()=%s",
+                   this, GetBoolName(IsHandlingCompositionInContent())));
           // XXX Is this right? If there is a composition in content,
           //     shouldn't we wait NOTIFY_IME_OF_COMPOSITION_EVENT_HANDLED?
-          mDeferClearingContentForTSF = !IsHandlingComposition();
+          mDeferClearingContentForTSF = !IsHandlingCompositionInContent();
         }
         if (!widget || widget->Destroyed()) {
           break;
@@ -2368,11 +2367,11 @@ void TSFTextStore::FlushPendingActions() {
           MOZ_LOG(sTextStoreLog, LogLevel::Error,
                   ("0x%p   TSFTextStore::FlushPendingActions() "
                    "FAILED to setting pending composition... "
-                   "IsHandlingComposition()=%s",
-                   this, GetBoolName(IsHandlingComposition())));
+                   "IsHandlingCompositionInContent()=%s",
+                   this, GetBoolName(IsHandlingCompositionInContent())));
           // XXX Is this right? If there is a composition in content,
           //     shouldn't we wait NOTIFY_IME_OF_COMPOSITION_EVENT_HANDLED?
-          mDeferClearingContentForTSF = !IsHandlingComposition();
+          mDeferClearingContentForTSF = !IsHandlingCompositionInContent();
         } else {
           MOZ_LOG(sTextStoreLog, LogLevel::Debug,
                   ("0x%p   TSFTextStore::FlushPendingActions() "
@@ -2385,11 +2384,11 @@ void TSFTextStore::FlushPendingActions() {
             MOZ_LOG(sTextStoreLog, LogLevel::Error,
                     ("0x%p   TSFTextStore::FlushPendingActions() "
                      "FAILED to dispatch compositionchange event, "
-                     "IsHandlingComposition()=%s",
-                     this, GetBoolName(IsHandlingComposition())));
+                     "IsHandlingCompositionInContent()=%s",
+                     this, GetBoolName(IsHandlingCompositionInContent())));
             // XXX Is this right? If there is a composition in content,
             //     shouldn't we wait NOTIFY_IME_OF_COMPOSITION_EVENT_HANDLED?
-            mDeferClearingContentForTSF = !IsHandlingComposition();
+            mDeferClearingContentForTSF = !IsHandlingCompositionInContent();
           }
           // Be aware, the mWidget might already have been destroyed.
         }
@@ -2421,11 +2420,11 @@ void TSFTextStore::FlushPendingActions() {
           MOZ_LOG(sTextStoreLog, LogLevel::Error,
                   ("0x%p   TSFTextStore::FlushPendingActions() "
                    "FAILED to dispatch compositioncommit event, "
-                   "IsHandlingComposition()=%s",
-                   this, GetBoolName(IsHandlingComposition())));
+                   "IsHandlingCompositionInContent()=%s",
+                   this, GetBoolName(IsHandlingCompositionInContent())));
           // XXX Is this right? If there is a composition in content,
           //     shouldn't we wait NOTIFY_IME_OF_COMPOSITION_EVENT_HANDLED?
-          mDeferClearingContentForTSF = !IsHandlingComposition();
+          mDeferClearingContentForTSF = !IsHandlingCompositionInContent();
         }
         break;
       }
@@ -4359,14 +4358,18 @@ TSFTextStore::GetTextExt(TsViewCookie vcView, LONG acpStart, LONG acpEnd,
       sTextStoreLog, LogLevel::Info,
       ("0x%p TSFTextStore::GetTextExt(vcView=%ld, "
        "acpStart=%ld, acpEnd=%ld, prc=0x%p, pfClipped=0x%p), "
-       "IsHandlingComposition()=%s, "
+       "IsHandlingCompositionInParent()=%s, "
+       "IsHandlingCompositionInContent()=%s, "
        "mContentForTSF={ MinOffsetOfLayoutChanged()=%u, "
-       "LatestCompositionStartOffset()=%d, LatestCompositionEndOffset()=%d }, "
-       "mComposition= { IsComposing()=%s, mStart=%d, EndOffset()=%d }, "
+       "LatestCompositionStartOffset()=%d, LatestCompositionEndOffset()=%d, "
+       "mSelection={ acpStart=%ld, acpEnd=%ld, style.ase=%s, "
+       "style.fInterimChar=%s } "
+       "}, mComposition={ IsComposing()=%s, mStart=%d, EndOffset()=%d }, "
        "mDeferNotifyingTSF=%s, mWaitingQueryLayout=%s, "
        "IMEHandler::IsA11yHandlingNativeCaret()=%s",
        this, vcView, acpStart, acpEnd, prc, pfClipped,
-       GetBoolName(IsHandlingComposition()),
+       GetBoolName(IsHandlingCompositionInParent()),
+       GetBoolName(IsHandlingCompositionInContent()),
        mContentForTSF.MinOffsetOfLayoutChanged(),
        mContentForTSF.HasOrHadComposition()
            ? mContentForTSF.LatestCompositionStartOffset()
@@ -4374,6 +4377,10 @@ TSFTextStore::GetTextExt(TsViewCookie vcView, LONG acpStart, LONG acpEnd,
        mContentForTSF.HasOrHadComposition()
            ? mContentForTSF.LatestCompositionEndOffset()
            : -1,
+       mContentForTSF.Selection().StartOffset(),
+       mContentForTSF.Selection().EndOffset(),
+       GetActiveSelEndName(mContentForTSF.Selection().ActiveSelEnd()),
+       GetBoolName(mContentForTSF.Selection().IsInterimChar()),
        GetBoolName(mComposition.IsComposing()), mComposition.mStart,
        mComposition.EndOffset(), GetBoolName(mDeferNotifyingTSF),
        GetBoolName(mWaitingQueryLayout),
@@ -4423,7 +4430,8 @@ TSFTextStore::GetTextExt(TsViewCookie vcView, LONG acpStart, LONG acpEnd,
 
   mWaitingQueryLayout = false;
 
-  if (IsHandlingComposition() && mContentForTSF.HasOrHadComposition() &&
+  if (IsHandlingCompositionInContent() &&
+      mContentForTSF.HasOrHadComposition() &&
       mContentForTSF.IsLayoutChanged() &&
       mContentForTSF.MinOffsetOfLayoutChanged() > LONG_MAX) {
     MOZ_LOG(sTextStoreLog, LogLevel::Error,
@@ -4471,8 +4479,9 @@ TSFTextStore::GetTextExt(TsViewCookie vcView, LONG acpStart, LONG acpEnd,
     // the position where TSFTextStore believes it at.
     options.mRelativeToInsertionPoint = true;
     startOffset -= mComposition.mStart;
-  } else if (IsHandlingComposition() && mContentForTSF.HasOrHadComposition()) {
-    // If there was a composition and it hasn't been committed in the content
+  } else if (IsHandlingCompositionInParent() &&
+             mContentForTSF.HasOrHadComposition()) {
+    // If there was a composition and its commit event hasn't been dispatched
     // yet, ContentCacheInParent is still open for relative offset query from
     // the latest composition.
     options.mRelativeToInsertionPoint = true;
@@ -4585,7 +4594,8 @@ bool TSFTextStore::MaybeHackNoErrorLayoutBugs(LONG& aACPStart, LONG& aACPEnd) {
   // TS_E_NOLAYOUT correctly in this case. See:
   // https://github.com/google/mozc/blob/6b878e31fb6ac4347dc9dfd8ccc1080fe718479f/src/win32/tip/tip_range_util.cc#L237-L257
 
-  if (!IsHandlingComposition() || !mContentForTSF.HasOrHadComposition() ||
+  if (!IsHandlingCompositionInContent() ||
+      !mContentForTSF.HasOrHadComposition() ||
       !mContentForTSF.IsLayoutChangedAt(aACPEnd)) {
     return false;
   }
@@ -4988,11 +4998,10 @@ TSFTextStore::InsertTextAtSelection(DWORD dwFlags, const WCHAR* pchText,
        "pchText=0x%p \"%s\", cch=%lu, pacpStart=0x%p, pacpEnd=0x%p, "
        "pChange=0x%p), IsComposing()=%s",
        this,
-       dwFlags == 0
-           ? "0"
-           : dwFlags == TF_IAS_NOQUERY
-                 ? "TF_IAS_NOQUERY"
-                 : dwFlags == TF_IAS_QUERYONLY ? "TF_IAS_QUERYONLY" : "Unknown",
+       dwFlags == 0                  ? "0"
+       : dwFlags == TF_IAS_NOQUERY   ? "TF_IAS_NOQUERY"
+       : dwFlags == TF_IAS_QUERYONLY ? "TF_IAS_QUERYONLY"
+                                     : "Unknown",
        pchText, pchText && cch ? GetEscapedUTF8String(pchText, cch).get() : "",
        cch, pacpStart, pacpEnd, pChange,
        GetBoolName(mComposition.IsComposing())));
@@ -6016,7 +6025,8 @@ nsresult TSFTextStore::OnSelectionChangeInternal(
   // because we may have some cache to do it.
   // Note that if we have composition, we'll notified composition-updated
   // later so that we don't need to create native caret in such case.
-  if (!IsHandlingComposition() && IMEHandler::NeedsToCreateNativeCaret()) {
+  if (!IsHandlingCompositionInContent() &&
+      IMEHandler::NeedsToCreateNativeCaret()) {
     CreateNativeCaret();
   }
 
@@ -6259,7 +6269,7 @@ nsresult TSFTextStore::OnUpdateCompositionInternal() {
   // If composition is completely finished both in TSF/TIP and the focused
   // editor which may be in a remote process, we can clear the cache and don't
   // have it until starting next composition.
-  if (!mComposition.IsComposing() && !IsHandlingComposition()) {
+  if (!mComposition.IsComposing() && !IsHandlingCompositionInContent()) {
     mDeferClearingContentForTSF = false;
   }
   mDeferNotifyingTSF = false;

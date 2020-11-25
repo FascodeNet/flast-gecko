@@ -102,6 +102,10 @@ bool DirectoryPaddingFileExists(nsIFile* aBaseDir,
  *
  */
 
+// Returns a Result with a success value denoting the padding size.
+Result<int64_t, nsresult> LockedDirectoryPaddingGet(nsIFile& aBaseDir);
+
+// XXX Remove this overload when migrating the callers to use CACHE_TRY.
 nsresult LockedDirectoryPaddingGet(nsIFile* aBaseDir, int64_t* aPaddingSizeOut);
 
 nsresult LockedDirectoryPaddingInit(nsIFile* aBaseDir);
@@ -117,10 +121,9 @@ nsresult LockedDirectoryPaddingTemporaryWrite(nsIFile* aBaseDir,
 
 nsresult LockedDirectoryPaddingFinalizeWrite(nsIFile* aBaseDir);
 
-nsresult LockedDirectoryPaddingRestore(nsIFile* aBaseDir,
-                                       mozIStorageConnection* aConn,
-                                       bool aMustRestore,
-                                       int64_t* aPaddingSizeOut);
+// Returns a Result with a success value denoting the padding size.
+Result<int64_t, nsresult> LockedDirectoryPaddingRestore(
+    nsIFile& aBaseDir, mozIStorageConnection& aConn, bool aMustRestore);
 
 nsresult LockedDirectoryPaddingDeleteFile(nsIFile* aBaseDir,
                                           DirPaddingFile aPaddingFileType);

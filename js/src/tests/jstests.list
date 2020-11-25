@@ -282,17 +282,11 @@ skip script test262/language/expressions/compound-assignment/compound-assignment
 skip script test262/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v-.js
 skip script test262/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--20.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1662977
-skip script test262/intl402/NumberFormat/dft-currency-mnfd-range-check-mxfd.js
-
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1670502
 skip script test262/built-ins/Function/prototype/toString/built-in-function-object.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1225839
 ignore-flag(--more-compartments) script test262/built-ins/Function/internals/Call/class-ctor-realm.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1670062
-skip script test262/intl402/Collator/constructor-options-throwing-getters.js
 
 # These two tests assume that assignment to function calls is a SyntaxError.  We
 # historically implemented otherwise, as web reality.  Perhaps that can be
@@ -407,16 +401,6 @@ skip script test262/annexB/built-ins/Function/createdynfn-no-line-terminator-htm
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1462745
 skip script test262/annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1508683
-# All of these tests pass except with --more-compartments.
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/multiline/cross-realm.js
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/global/cross-realm.js
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/sticky/cross-realm.js
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/ignoreCase/cross-realm.js
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/unicode/cross-realm.js
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/dotAll/cross-realm.js
-ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/source/cross-realm.js
-
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1545038
 # All of these tests pass except with --more-compartments.
 ignore-flag(--more-compartments) script test262/built-ins/String/prototype/valueOf/non-generic-realm.js
@@ -439,9 +423,6 @@ ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return
 ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-null-realm.js
 ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js
 ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1362154
-skip script test262/built-ins/String/prototype/replaceAll/searchValue-replacer-RegExp-call.js
 
 # Depends upon the SharedArrayBuffer constructor being defined as a global
 # property -- and right now, it's only defined for cross-site-isolated pages

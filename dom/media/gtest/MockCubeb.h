@@ -151,6 +151,7 @@ class MockCubebStream {
   void ForceError();
 
   MediaEventSource<uint32_t>& FramesProcessedEvent();
+  MediaEventSource<uint32_t>& FramesVerifiedEvent();
   MediaEventSource<Tuple<uint64_t, float, uint32_t>>& OutputVerificationEvent();
   MediaEventSource<void>& ErrorForcedEvent();
 
@@ -188,6 +189,7 @@ class MockCubebStream {
   AudioVerifier<AudioDataValue> mAudioVerifier;
 
   MediaEventProducer<uint32_t> mFramesProcessedEvent;
+  MediaEventProducer<uint32_t> mFramesVerifiedEvent;
   MediaEventProducer<Tuple<uint64_t, float, uint32_t>> mOutputVerificationEvent;
   MediaEventProducer<void> mErrorForcedEvent;
 };
@@ -249,7 +251,7 @@ class MockCubeb {
 
   // MockCubeb specific API
   void StartStream(MockCubebStream* aStream);
-  void StopStream(MockCubebStream* aStream);
+  int StopStream(MockCubebStream* aStream);
 
   // Simulates the audio thread. The thread is created at Start and destroyed
   // at Stop. At next StreamStart a new thread is created.

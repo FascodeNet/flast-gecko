@@ -1360,7 +1360,7 @@ nsMargin nsTableFrame::GetDeflationForBackground(
 }
 
 nsIFrame::LogicalSides nsTableFrame::GetLogicalSkipSides(
-    const ReflowInput* aReflowInput) const {
+    const Maybe<SkipSidesDuringReflow>&) const {
   LogicalSides skip(mWritingMode);
   if (MOZ_UNLIKELY(StyleBorder()->mBoxDecorationBreak ==
                    StyleBoxDecorationBreak::Clone)) {
@@ -1369,10 +1369,10 @@ nsIFrame::LogicalSides nsTableFrame::GetLogicalSkipSides(
 
   // frame attribute was accounted for in nsHTMLTableElement::MapTableBorderInto
   // account for pagination
-  if (nullptr != GetPrevInFlow()) {
+  if (GetPrevInFlow()) {
     skip |= eLogicalSideBitsBStart;
   }
-  if (nullptr != GetNextInFlow()) {
+  if (GetNextInFlow()) {
     skip |= eLogicalSideBitsBEnd;
   }
   return skip;
@@ -2016,7 +2016,7 @@ void nsTableFrame::FixupPositionedTableParts(nsPresContext* aPresContext,
   nsLayoutUtils::UnionChildOverflow(this, aDesiredSize.mOverflowAreas);
 }
 
-bool nsTableFrame::ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas) {
+bool nsTableFrame::ComputeCustomOverflow(OverflowAreas& aOverflowAreas) {
   // As above in Reflow, make sure the table overflow area includes the table
   // rect, and check for collapsed borders leaking out.
   if (ShouldApplyOverflowClipping(StyleDisplay()) != PhysicalAxes::Both) {
@@ -2147,7 +2147,7 @@ void nsTableFrame::AdjustForCollapsingRowsCols(
   nsTableFrame* firstInFlow = static_cast<nsTableFrame*>(FirstInFlow());
   nscoord iSize = firstInFlow->GetCollapsedISize(aWM, aBorderPadding);
   nscoord rgISize = iSize - GetColSpacing(-1) - GetColSpacing(GetColCount());
-  nsOverflowAreas overflow;
+  OverflowAreas overflow;
   // Walk the list of children
   for (uint32_t childX = 0; childX < rowGroups.Length(); childX++) {
     nsTableRowGroupFrame* rgFrame = rowGroups[childX];
@@ -2840,7 +2840,7 @@ void nsTableFrame::PlaceRepeatedFooter(TableReflowInput& aReflowInput,
 void nsTableFrame::ReflowChildren(TableReflowInput& aReflowInput,
                                   nsReflowStatus& aStatus,
                                   nsIFrame*& aLastChildReflowed,
-                                  nsOverflowAreas& aOverflowAreas) {
+                                  OverflowAreas& aOverflowAreas) {
   aStatus.Reset();
   aLastChildReflowed = nullptr;
 

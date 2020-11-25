@@ -1339,10 +1339,10 @@ void Grouper::ConstructItemInsideInactive(
 
 /* This is just a copy of nsRect::ScaleToOutsidePixels with an offset added in.
  * The offset is applied just before the rounding. It's in the scaled space. */
-static mozilla::gfx::IntRect ScaleToOutsidePixelsOffset(
+static mozilla::LayerIntRect ScaleToOutsidePixelsOffset(
     nsRect aRect, float aXScale, float aYScale, nscoord aAppUnitsPerPixel,
     LayerPoint aOffset) {
-  mozilla::gfx::IntRect rect;
+  mozilla::LayerIntRect rect;
   rect.SetNonEmptyBox(
       NSToIntFloor(NSAppUnitsToFloatPixels(aRect.x, float(aAppUnitsPerPixel)) *
                        aXScale +
@@ -1431,17 +1431,16 @@ void WebRenderCommandBuilder::DoGroupingForDisplayList(
   // allocating much larger textures than necessary in webrender.
   //
   // Don't bother fixing this unless we run into this in the real world, though.
-  auto layerBounds = LayerIntRect::FromUnknownRect(
+  auto layerBounds =
       ScaleToOutsidePixelsOffset(groupBounds, scale.width, scale.height,
-                                 appUnitsPerDevPixel, residualOffset));
+                                 appUnitsPerDevPixel, residualOffset);
 
   const nsRect& untransformedPaintRect =
       aWrappingItem->GetUntransformedPaintRect();
 
-  auto visibleRect = LayerIntRect::FromUnknownRect(
-                         ScaleToOutsidePixelsOffset(
-                             untransformedPaintRect, scale.width, scale.height,
-                             appUnitsPerDevPixel, residualOffset))
+  auto visibleRect = ScaleToOutsidePixelsOffset(
+                         untransformedPaintRect, scale.width, scale.height,
+                         appUnitsPerDevPixel, residualOffset)
                          .Intersect(layerBounds);
 
   GP("LayerBounds: %d %d %d %d\n", layerBounds.x, layerBounds.y,
@@ -1553,7 +1552,7 @@ void WebRenderCommandBuilder::BuildWebRenderCommands(
   AUTO_PROFILER_LABEL_CATEGORY_PAIR(GRAPHICS_WRDisplayList);
 
   StackingContextHelper sc;
-  aScrollData = WebRenderScrollData(mManager);
+  aScrollData = WebRenderScrollData(mManager, aDisplayListBuilder);
   MOZ_ASSERT(mLayerScrollData.empty());
   mClipManager.BeginBuild(mManager, aBuilder);
   mBuilderDumpIndex = 0;
@@ -1927,8 +1926,6 @@ bool BuildLayer(nsDisplayItem* aItem, BlobItemData* aData,
   RefPtr<Layer> root = aItem->AsPaintedDisplayItem()->BuildLayer(
       aDisplayListBuilder, blm, param);
 
-  aDisplayListBuilder->NotifyAndClearScrollFrames();
-
   if (root) {
     blm->SetRoot(root);
     layerBuilder->WillEndTransaction();
@@ -1970,8 +1967,6 @@ static bool PaintByLayer(nsDisplayItem* aItem,
   ContainerLayerParameters param(aScale.width, aScale.height);
   RefPtr<Layer> root = aItem->AsPaintedDisplayItem()->BuildLayer(
       aDisplayListBuilder, aManager, param);
-
-  aDisplayListBuilder->NotifyAndClearScrollFrames();
 
   if (root) {
     aManager->SetRoot(root);
@@ -2177,14 +2172,12 @@ WebRenderCommandBuilder::GenerateFallbackData(
                           appUnitsPerDevPixel, residualOffset))
                       .Intersect(dtRect);
   } else {
-    dtRect = LayerIntRect::FromUnknownRect(
-        ScaleToOutsidePixelsOffset(paintBounds, scale.width, scale.height,
-                                   appUnitsPerDevPixel, residualOffset));
+    dtRect = ScaleToOutsidePixelsOffset(paintBounds, scale.width, scale.height,
+                                        appUnitsPerDevPixel, residualOffset);
 
-    visibleRect = LayerIntRect::FromUnknownRect(
-                      ScaleToOutsidePixelsOffset(
-                          aItem->GetBuildingRect(), scale.width, scale.height,
-                          appUnitsPerDevPixel, residualOffset))
+    visibleRect = ScaleToOutsidePixelsOffset(
+                      aItem->GetBuildingRect(), scale.width, scale.height,
+                      appUnitsPerDevPixel, residualOffset)
                       .Intersect(dtRect);
   }
 

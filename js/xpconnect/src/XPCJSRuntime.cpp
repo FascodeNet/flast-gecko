@@ -53,6 +53,7 @@
 #include "js/MemoryMetrics.h"
 #include "js/Object.h"  // JS::GetClass
 #include "js/Stream.h"  // JS::AbortSignalIsAborted, JS::InitPipeToHandling
+#include "js/SliceBudget.h"
 #include "js/UbiNode.h"
 #include "js/UbiNodeUtils.h"
 #include "js/friend/UsageStatistics.h"  // JS_TELEMETRY_*, JS_SetAccumulateTelemetryCallback
@@ -1408,9 +1409,6 @@ static void ReportZoneStats(const JS::ZoneStats& zStats,
   ZRREPORT_GC_BYTES(
       pathPrefix + "object-groups/gc-heap"_ns, zStats.objectGroupsGCHeap,
       "Classification and type inference information about objects.");
-
-  ZRREPORT_BYTES(pathPrefix + "object-groups/malloc-heap"_ns,
-                 zStats.objectGroupsMallocHeap, "Object group addenda.");
 
   ZRREPORT_GC_BYTES(pathPrefix + "scopes/gc-heap"_ns, zStats.scopesGCHeap,
                     "Scope information for scripts.");

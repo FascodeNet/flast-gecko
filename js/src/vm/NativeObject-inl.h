@@ -81,18 +81,7 @@ inline void NativeObject::clearShouldConvertDoubleElements() {
 inline void NativeObject::addDenseElementType(JSContext* cx, uint32_t index,
                                               const Value& val) {
   MOZ_ASSERT(!val.isMagic(JS_ELEMENTS_HOLE));
-
-  if (!IsTypeInferenceEnabled()) {
-    return;
-  }
-
-  // Avoid a slow AddTypePropertyId call if the type is the same as the type
-  // of the previous element.
-  TypeSet::Type thisType = TypeSet::GetValueType(val);
-  if (index == 0 || elements_[index - 1].isMagic() ||
-      TypeSet::GetValueType(elements_[index - 1]) != thisType) {
-    AddTypePropertyId(cx, this, JSID_VOID, thisType);
-  }
+  // TODO(no-TI): remove.
 }
 
 inline void NativeObject::setDenseElementWithType(JSContext* cx, uint32_t index,
@@ -125,22 +114,16 @@ inline void NativeObject::setDenseElementHole(JSContext* cx, uint32_t index) {
 inline void NativeObject::removeDenseElementForSparseIndex(JSContext* cx,
                                                            uint32_t index) {
   MOZ_ASSERT(containsPure(INT_TO_JSID(index)));
-  if (IsTypeInferenceEnabled()) {
-    MarkObjectGroupFlags(cx, this, OBJECT_FLAG_SPARSE_INDEXES);
-  }
   if (containsDenseElement(index)) {
     setDenseElementHole(cx, index);
   }
 }
 
+// TODO(no-TI): remove cx argument.
 inline void NativeObject::markDenseElementsNotPacked(JSContext* cx) {
   MOZ_ASSERT(isNative());
 
   getElementsHeader()->markNonPacked();
-
-  if (IsTypeInferenceEnabled()) {
-    MarkObjectGroupFlags(cx, this, OBJECT_FLAG_NON_PACKED);
-  }
 }
 
 inline void NativeObject::elementsRangePostWriteBarrier(uint32_t start,
@@ -512,17 +495,12 @@ inline DenseElementResult NativeObject::setOrExtendDenseElements(
   return DenseElementResult::Success;
 }
 
+// TODO(no-TI): remove.
 MOZ_ALWAYS_INLINE void NativeObject::setSlotWithType(JSContext* cx,
                                                      Shape* shape,
                                                      const Value& value,
                                                      bool overwriting) {
   setSlot(shape->slot(), value);
-
-  if (overwriting) {
-    shape->setOverwritten();
-  }
-
-  AddTypePropertyId(cx, this, shape->propid(), value);
 }
 
 inline bool NativeObject::isInWholeCellBuffer() const {
@@ -934,10 +912,6 @@ inline bool IsPackedArray(JSObject* obj) {
   }
 
   if (!arr->denseElementsArePacked()) {
-    // Assert TI agrees the elements are not packed.
-    MOZ_ASSERT_IF(
-        !arr->hasLazyGroup(),
-        arr->group()->hasAllFlagsDontCheckGeneration(OBJECT_FLAG_NON_PACKED));
     return false;
   }
 

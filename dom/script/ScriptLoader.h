@@ -7,29 +7,36 @@
 #ifndef mozilla_dom_ScriptLoader_h
 #define mozilla_dom_ScriptLoader_h
 
+#include "js/TypeDecls.h"
 #include "nsCOMPtr.h"
 #include "nsRefPtrHashtable.h"
-#include "mozilla/Encoding.h"
 #include "nsIScriptElement.h"
 #include "nsCOMArray.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsTArray.h"
-#include "mozilla/dom/Document.h"
-#include "nsIIncrementalStreamLoader.h"
+#include "nsINode.h"
+#include "nsIObserver.h"
+#include "nsIScriptLoaderObserver.h"
 #include "nsURIHashKey.h"
 #include "mozilla/CORSMode.h"
+#include "mozilla/dom/LoadedScript.h"
 #include "mozilla/dom/ScriptLoadRequest.h"
-#include "mozilla/dom/SRIMetadata.h"
-#include "mozilla/dom/SRICheck.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/MozPromise.h"
-#include "mozilla/Utf8.h"  // mozilla::Utf8Unit
-#include "mozilla/Vector.h"
 #include "ScriptKind.h"
 
+class nsCycleCollectionTraversalCallback;
+class nsIChannel;
+class nsIConsoleReportCollector;
+class nsIContent;
+class nsIIncrementalStreamLoader;
+class nsIPrincipal;
+class nsIScriptGlobalObject;
 class nsIURI;
 
 namespace JS {
+
+class CompileOptions;
 
 template <typename UnitT>
 class SourceText;
@@ -37,14 +44,44 @@ class SourceText;
 }  // namespace JS
 
 namespace mozilla {
+
+class LazyLogModule;
+union Utf8Unit;
+
 namespace dom {
 
 class AutoJSAPI;
+class DocGroup;
+class Document;
 class LoadedScript;
 class ModuleLoadRequest;
 class ModuleScript;
+class SRICheckDataVerifier;
+class SRIMetadata;
 class ScriptLoadHandler;
+class ScriptLoader;
 class ScriptRequestProcessor;
+
+enum class ReferrerPolicy : uint8_t;
+
+class AsyncCompileShutdownObserver final : public nsIObserver {
+  ~AsyncCompileShutdownObserver() { Unregister(); }
+
+ public:
+  explicit AsyncCompileShutdownObserver(ScriptLoader* aLoader)
+      : mScriptLoader(aLoader) {}
+
+  void OnShutdown();
+  void Unregister();
+
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIOBSERVER
+
+ private:
+  // Defined during registration in ScriptLoader constructor, and
+  // cleared during destructor, ScriptLoader::Destroy() or Shutdown.
+  ScriptLoader* mScriptLoader;
+};
 
 //////////////////////////////////////////////////////////////
 // Script loader implementation
@@ -279,24 +316,7 @@ class ScriptLoader final : public nsISupports {
    * Starts deferring deferred scripts and puts them in the mDeferredRequests
    * queue instead.
    */
-  void BeginDeferringScripts() {
-    mDeferEnabled = true;
-    if (mDeferCheckpointReached) {
-      // We already completed a parse and were just waiting for some async
-      // scripts to load (and were already blocking the load event waiting for
-      // that to happen), when document.open() happened and now we're doing a
-      // new parse.  We shouldn't block the load event again, but _should_ reset
-      // mDeferCheckpointReached to false.  It'll get set to true again when the
-      // DeferCheckpointReached call that corresponds to this
-      // BeginDeferringScripts call happens (on document.close()), since we just
-      // set mDeferEnabled to true.
-      mDeferCheckpointReached = false;
-    } else {
-      if (mDocument) {
-        mDocument->BlockOnload();
-      }
-    }
-  }
+  void BeginDeferringScripts();
 
   /**
    * Notifies the script loader that parsing is done.  If aTerminated is true,
@@ -357,9 +377,7 @@ class ScriptLoader final : public nsISupports {
     return true;
   }
 
-  mozilla::dom::DocGroup* GetDocGroup() const {
-    return mDocument->GetDocGroup();
-  }
+  mozilla::dom::DocGroup* GetDocGroup() const;
 
   /**
    * Register the fact that we saw the load event, and that we need to save the
@@ -373,7 +391,7 @@ class ScriptLoader final : public nsISupports {
    * any references to the JSScript or to the Request which might be used for
    * caching the encoded bytecode.
    */
-  void Destroy() { GiveUpBytecodeEncoding(); }
+  void Destroy();
 
   /**
    * Implement the HostResolveImportedModule abstract operation.
@@ -404,6 +422,11 @@ class ScriptLoader final : public nsISupports {
   static LoadedScript* GetActiveScript(JSContext* aCx);
 
   Document* GetDocument() const { return mDocument; }
+
+  /**
+   *   Called by shutdown observer.
+   */
+  void Shutdown();
 
  private:
   virtual ~ScriptLoader();
@@ -612,6 +635,12 @@ class ScriptLoader final : public nsISupports {
 
   void RunScriptWhenSafe(ScriptLoadRequest* aRequest);
 
+  /**
+   *  Wait for any unused off thread compilations to finish and then
+   *  cancel them.
+   */
+  void CancelScriptLoadRequests();
+
   Document* mDocument;  // [WEAK]
   nsCOMArray<nsIScriptLoaderObserver> mObservers;
   ScriptLoadRequestList mNonAsyncExternalScriptInsertedRequests;
@@ -673,6 +702,9 @@ class ScriptLoader final : public nsISupports {
 
   nsCOMPtr<nsIConsoleReportCollector> mReporter;
 
+  // ShutdownObserver for off thread compilations
+  RefPtr<AsyncCompileShutdownObserver> mShutdownObserver;
+
   // Logging
  public:
   static LazyLogModule gCspPRLog;
@@ -681,19 +713,9 @@ class ScriptLoader final : public nsISupports {
 
 class nsAutoScriptLoaderDisabler {
  public:
-  explicit nsAutoScriptLoaderDisabler(Document* aDoc) {
-    mLoader = aDoc->ScriptLoader();
-    mWasEnabled = mLoader->GetEnabled();
-    if (mWasEnabled) {
-      mLoader->SetEnabled(false);
-    }
-  }
+  explicit nsAutoScriptLoaderDisabler(Document* aDoc);
 
-  ~nsAutoScriptLoaderDisabler() {
-    if (mWasEnabled) {
-      mLoader->SetEnabled(true);
-    }
-  }
+  ~nsAutoScriptLoaderDisabler();
 
   bool mWasEnabled;
   RefPtr<ScriptLoader> mLoader;

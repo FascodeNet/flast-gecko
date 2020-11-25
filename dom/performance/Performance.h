@@ -11,6 +11,7 @@
 #include "mozilla/DOMEventTargetHelper.h"
 #include "nsCOMPtr.h"
 #include "nsDOMNavigationTiming.h"
+#include "nsTObserverArray.h"
 
 class nsITimedChannel;
 
@@ -121,7 +122,7 @@ class Performance : public DOMEventTargetHelper {
   void QueueNotificationObserversTask();
 
  protected:
-  explicit Performance(bool aSystemPrincipal);
+  Performance(nsIGlobalObject* aGlobal, bool aSystemPrincipal);
   Performance(nsPIDOMWindowInner* aWindow, bool aSystemPrincipal);
 
   virtual ~Performance();

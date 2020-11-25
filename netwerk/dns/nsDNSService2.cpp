@@ -399,9 +399,11 @@ nsDNSByTypeRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
 NS_IMETHODIMP
 nsDNSByTypeRecord::GetAllRecordsWithEchConfig(
     bool aNoHttp2, bool aNoHttp3, bool* aAllRecordsHaveEchConfig,
+    bool* aAllRecordsInH3ExcludedList,
     nsTArray<RefPtr<nsISVCBRecord>>& aResult) {
   return mHostRecord->GetAllRecordsWithEchConfig(
-      aNoHttp2, aNoHttp3, aAllRecordsHaveEchConfig, aResult);
+      aNoHttp2, aNoHttp3, aAllRecordsHaveEchConfig, aAllRecordsInH3ExcludedList,
+      aResult);
 }
 
 NS_IMETHODIMP
@@ -645,27 +647,14 @@ already_AddRefed<nsDNSService> nsDNSService::GetSingleton() {
   MOZ_ASSERT_IF(!nsIOService::UseSocketProcess(), XRE_IsParentProcess());
 
   if (!gDNSService) {
-    auto initTask = []() {
-      gDNSService = new nsDNSService();
-      if (NS_SUCCEEDED(gDNSService->Init())) {
-        ClearOnShutdown(&gDNSService);
-      } else {
-        gDNSService = nullptr;
-      }
-    };
-
     if (!NS_IsMainThread()) {
-      // Forward to the main thread synchronously.
-      RefPtr<nsIThread> mainThread = do_GetMainThread();
-      if (!mainThread) {
-        return nullptr;
-      }
-
-      SyncRunnable::DispatchToThread(mainThread,
-                                     new SyncRunnable(NS_NewRunnableFunction(
-                                         "nsDNSService::Init", initTask)));
+      return nullptr;
+    }
+    gDNSService = new nsDNSService();
+    if (NS_SUCCEEDED(gDNSService->Init())) {
+      ClearOnShutdown(&gDNSService);
     } else {
-      initTask();
+      gDNSService = nullptr;
     }
   }
 

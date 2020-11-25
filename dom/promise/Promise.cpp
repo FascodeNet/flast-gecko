@@ -12,6 +12,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/CycleCollectedJSContext.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/OwningNonNull.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ResultExtensions.h"
@@ -848,6 +849,14 @@ Promise::PromiseState Promise::State() const {
   }
 
   return PromiseState::Pending;
+}
+
+void Promise::SetSettledPromiseIsHandled() {
+  AutoAllowLegacyScriptExecution exemption;
+  AutoEntryScript aes(mGlobal, "Set settled promise handled");
+  JSContext* cx = aes.cx();
+  JS::RootedObject promiseObj(cx, mPromiseObj);
+  JS::SetSettledPromiseIsHandled(cx, promiseObj);
 }
 
 }  // namespace dom

@@ -4939,7 +4939,7 @@ static nscoord MeasuringReflow(nsIFrame* aChild,
     rs = dummyParentState.ptr();
   }
 #ifdef DEBUG
-  // This will suppress various CRAZY_SIZE warnings for this reflow.
+  // This will suppress various ABSURD_SIZE warnings for this reflow.
   parent->SetProperty(nsContainerFrame::DebugReflowingWithInfiniteISize(),
                       true);
 #endif
@@ -8338,7 +8338,7 @@ nscoord nsGridContainerFrame::ReflowChildren(GridReflowInput& aState,
   MOZ_ASSERT(aState.mReflowInput);
   MOZ_ASSERT(aStatus.IsEmpty(), "Caller should pass a fresh reflow status!");
 
-  nsOverflowAreas ocBounds;
+  OverflowAreas ocBounds;
   nsReflowStatus ocStatus;
   if (GetPrevInFlow()) {
     ReflowOverflowContainerChildren(PresContext(), *aState.mReflowInput,
@@ -8532,7 +8532,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
       }
     }
   } else {
-    consumedBSize = ConsumedBSize(wm);
+    consumedBSize = CalcAndCacheConsumedBSize();
     gridReflowInput.InitializeForContinuation(this, consumedBSize);
     // XXX Technically incorrect: We're ignoring our row sizes, when really
     // we should use them but *they* should be computed as if we had no

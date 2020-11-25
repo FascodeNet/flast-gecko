@@ -155,7 +155,7 @@ void nsAbsoluteContainingBlock::Reflow(nsContainerFrame* aDelegatingFrame,
                                        nsReflowStatus& aReflowStatus,
                                        const nsRect& aContainingBlock,
                                        AbsPosReflowFlags aFlags,
-                                       nsOverflowAreas* aOverflowAreas) {
+                                       OverflowAreas* aOverflowAreas) {
   // PageContentFrame replicates fixed pos children so we really don't want
   // them contributing to overflow areas because that means we'll create new
   // pages ad infinitum if one of them overflows the page.
@@ -666,7 +666,7 @@ void nsAbsoluteContainingBlock::ReflowAbsoluteFrame(
     nsIFrame* aDelegatingFrame, nsPresContext* aPresContext,
     const ReflowInput& aReflowInput, const nsRect& aContainingBlock,
     AbsPosReflowFlags aFlags, nsIFrame* aKidFrame, nsReflowStatus& aStatus,
-    nsOverflowAreas* aOverflowAreas) {
+    OverflowAreas* aOverflowAreas) {
   MOZ_ASSERT(aStatus.IsEmpty(), "Caller should pass a fresh reflow status!");
 
 #ifdef DEBUG
@@ -767,7 +767,7 @@ void nsAbsoluteContainingBlock::ReflowAbsoluteFrame(
   ReflowOutput kidDesiredSize(kidReflowInput);
   aKidFrame->Reflow(aPresContext, kidDesiredSize, kidReflowInput, aStatus);
 
-  const LogicalSize kidSize = kidDesiredSize.Size(wm).ConvertTo(outerWM, wm);
+  const LogicalSize kidSize = kidDesiredSize.Size(outerWM);
 
   LogicalMargin offsets = kidReflowInput.ComputedLogicalOffsets(outerWM);
 

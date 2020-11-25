@@ -197,8 +197,31 @@ browser.engagement:
       - 1529232
     description: >
       The count of the total non-unique http(s) URIs visited in a subsession, including
-      page reloads, after the session has been restored. This does not include background
-      page requests and URIs from embedded pages or private browsing.
+      page reloads, after the session has been restored. URIs on minimized or background
+      tabs may also be counted towards this. Private browsing is not included in this
+      count.
+    expires: never
+    kind: uint
+    notification_emails:
+      - rweiss@mozilla.com
+      - loines@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+      - 'fennec'
+    record_in_processes:
+      - 'main'
+    record_into_store:
+      - 'main'
+      - 'account-ecosystem'
+
+  total_uri_count_normal_and_private_mode:
+    bug_numbers:
+      - 1535169
+    description: >
+      The count of the total non-unique http(s) URIs visited in a subsession, including
+      page reloads, after the session has been restored. URIs on minimized or background
+      tabs may also be counted towards this. Private browsing is included in this count.
     expires: never
     kind: uint
     notification_emails:
@@ -315,6 +338,42 @@ browser.engagement:
       - 'main'
     operating_systems:
       - windows
+
+  bookmarks_toolbar_bookmark_added:
+    bug_numbers:
+      - 1665391
+    description: >
+      The count of bookmarks added to the bookmarks toolbar. This counts bookmarks created on the
+      bookmarks toolbar and bookmarks moved to the bookmarks toolbar.
+    expires: never
+    kind: uint
+    notification_emails:
+      - rtestard@mozilla.com
+      - jaws@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  bookmarks_toolbar_bookmark_opened:
+    bug_numbers:
+      - 1665391
+    description: >
+      The count of bookmarks opened from the Bookmarks Toolbar. This counts bookmarks opened on the
+      toolbar and bookmarks opened from the 'symlinked' Other Bookmarks folder on the
+      Bookmarks Toolbar. It does not count Bookmarks Toolbar bookmarks opened via the Library,
+      Bookmarks Menu, or other UI since the goal is to measure interactions that pass through the toolbar.
+    expires: never
+    kind: uint
+    notification_emails:
+      - rtestard@mozilla.com
+      - jaws@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
 
 # The following section contains the browser engagement scalars.
 browser.engagement.navigation:
@@ -4690,14 +4749,15 @@ browser.search:
     bug_numbers:
       - 1495548
       - 1505411
+      - 1664849
     description: >
-      Records counts of SERP pages with adverts displayed. The key format is ‘<engine-name>’.
+      Records counts of SERP pages with adverts displayed. The key format is ‘<provider>:<sap|organic>’.
     expires: never
     keyed: true
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - adw@mozilla.com
+      - teon@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4709,14 +4769,15 @@ browser.search:
     bug_numbers:
       - 1495548
       - 1505411
+      - 1664849
     description: >
-      Records clicks of adverts on SERP pages. The key format is ‘<engine-name>’.
+      Records clicks of adverts on SERP pages. The key format is ‘<provider>:<sap|organic>’.
     expires: never
     keyed: true
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - adw@mozilla.com
+      - teon@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -6252,9 +6313,10 @@ migration:
   uninstaller_profile_refresh:
     bug_numbers:
       - 1634115
+      - 1672585
     description: >
       Set when a profile refresh is initiated from the uninstaller.
-    expires: "85"
+    expires: "90"
     kind: boolean
     notification_emails:
       - agashlin@mozilla.com

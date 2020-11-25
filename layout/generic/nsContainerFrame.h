@@ -11,6 +11,7 @@
 
 #include "mozilla/Attributes.h"
 #include "LayoutConstants.h"
+#include "nsISelectionDisplay.h"
 #include "nsSplittableFrame.h"
 #include "nsFrameList.h"
 #include "nsLineBox.h"
@@ -29,9 +30,9 @@ class PresShell;
 #ifdef DEBUG
 // 10 million pixels, converted to app units. Note that this a bit larger
 // than 1/4 of nscoord_MAX. So, if any content gets to be this large, we're
-// definitely in danger of grazing up against nscoord_MAX; hence, it's CRAZY.
-#  define CRAZY_COORD (10000000 * 60)
-#  define CRAZY_SIZE(_x) (((_x) < -CRAZY_COORD) || ((_x) > CRAZY_COORD))
+// definitely in danger of grazing up against nscoord_MAX; hence, it's ABSURD.
+#  define ABSURD_COORD (10000000 * 60)
+#  define ABSURD_SIZE(_x) (((_x) < -ABSURD_COORD) || ((_x) > ABSURD_COORD))
 #endif
 
 /**
@@ -369,7 +370,7 @@ class nsContainerFrame : public nsSplittableFrame {
    */
   void ReflowOverflowContainerChildren(
       nsPresContext* aPresContext, const ReflowInput& aReflowInput,
-      nsOverflowAreas& aOverflowRects, ReflowChildFlags aFlags,
+      mozilla::OverflowAreas& aOverflowRects, ReflowChildFlags aFlags,
       nsReflowStatus& aStatus,
       ChildFrameMerger aMergeFunc = DefaultChildFrameMerge,
       Maybe<nsSize> aContainerSize = Nothing());
@@ -482,16 +483,16 @@ class nsContainerFrame : public nsSplittableFrame {
   void ClearHasFirstLetterChild() { mHasFirstLetterChild = false; }
 
 #ifdef DEBUG
-  // Use this to suppress the CRAZY_SIZE assertions.
+  // Use this to suppress the ABSURD_SIZE assertions.
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(DebugReflowingWithInfiniteISize, bool)
-  bool IsCrazySizeAssertSuppressed() const {
+  bool IsAbsurdSizeAssertSuppressed() const {
     return GetProperty(DebugReflowingWithInfiniteISize());
   }
 #endif
 
   // Incorporate the child overflow areas into aOverflowAreas.
   // If the child does not have a overflow, use the child area.
-  void ConsiderChildOverflow(nsOverflowAreas& aOverflowAreas,
+  void ConsiderChildOverflow(mozilla::OverflowAreas& aOverflowAreas,
                              nsIFrame* aChildFrame);
 
  protected:

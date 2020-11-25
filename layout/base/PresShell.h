@@ -13,7 +13,6 @@
 
 #include <stdio.h>  // for FILE definition
 #include "FrameMetrics.h"
-#include "GeckoProfiler.h"
 #include "TouchManager.h"
 #include "Units.h"
 #include "Visibility.h"
@@ -25,6 +24,7 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
+#include "mozilla/dom/DocumentBinding.h"
 #include "mozilla/layers/FocusTarget.h"
 #include "mozilla/layout/LayoutTelemetryTools.h"
 #include "mozilla/widget/ThemeChangeKind.h"
@@ -94,6 +94,10 @@ class EventStates;
 class GeckoMVMContext;
 class OverflowChangedTracker;
 class StyleSheet;
+
+#ifdef MOZ_GECKO_PROFILER
+class ProfileChunkedBuffer;
+#endif
 
 #ifdef ACCESSIBILITY
 namespace a11y {
@@ -931,7 +935,7 @@ class PresShell final : public nsStubDocumentObserver,
   }
 
   float GetResolution() const { return mResolution.valueOr(1.0); }
-  float GetCumulativeResolution();
+  float GetCumulativeResolution() const;
 
   /**
    * Accessors for a flag that tracks whether the most recent change to
@@ -2861,8 +2865,8 @@ class PresShell final : public nsStubDocumentObserver,
   // These two fields capture call stacks of any changes that require a restyle
   // or a reflow. Only the first change per restyle / reflow is recorded (the
   // one that caused a call to SetNeedStyleFlush() / SetNeedLayoutFlush()).
-  UniqueProfilerBacktrace mStyleCause;
-  UniqueProfilerBacktrace mReflowCause;
+  UniquePtr<ProfileChunkedBuffer> mStyleCause;
+  UniquePtr<ProfileChunkedBuffer> mReflowCause;
 #endif
 
   nsTArray<UniquePtr<DelayedEvent>> mDelayedEvents;

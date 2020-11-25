@@ -1199,7 +1199,7 @@ nsIFrame* nsCSSRendering::FindNonTransparentBackgroundFrame(
 // We need to treat the viewport as canvas because, even though
 // it does not actually paint a background, we need to get the right
 // background style so we correctly detect transparent documents.
-bool nsCSSRendering::IsCanvasFrame(nsIFrame* aFrame) {
+bool nsCSSRendering::IsCanvasFrame(const nsIFrame* aFrame) {
   LayoutFrameType frameType = aFrame->Type();
   return frameType == LayoutFrameType::Canvas ||
          frameType == LayoutFrameType::XULRoot ||
@@ -1278,7 +1278,7 @@ ComputedStyle* nsCSSRendering::FindRootFrameBackground(nsIFrame* aForFrame) {
   return FindBackgroundStyleFrame(aForFrame)->Style();
 }
 
-inline bool FindElementBackground(nsIFrame* aForFrame,
+inline bool FindElementBackground(const nsIFrame* aForFrame,
                                   nsIFrame* aRootElementFrame) {
   if (aForFrame == aRootElementFrame) {
     // We must have propagated our background to the viewport or canvas. Abort.
@@ -1316,7 +1316,7 @@ inline bool FindElementBackground(nsIFrame* aForFrame,
   return !htmlBG->IsTransparent(aRootElementFrame);
 }
 
-bool nsCSSRendering::FindBackgroundFrame(nsIFrame* aForFrame,
+bool nsCSSRendering::FindBackgroundFrame(const nsIFrame* aForFrame,
                                          nsIFrame** aBackgroundFrame) {
   nsIFrame* rootElementFrame =
       aForFrame->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
@@ -1325,11 +1325,11 @@ bool nsCSSRendering::FindBackgroundFrame(nsIFrame* aForFrame,
     return true;
   }
 
-  *aBackgroundFrame = aForFrame;
+  *aBackgroundFrame = const_cast<nsIFrame*>(aForFrame);
   return FindElementBackground(aForFrame, rootElementFrame);
 }
 
-bool nsCSSRendering::FindBackground(nsIFrame* aForFrame,
+bool nsCSSRendering::FindBackground(const nsIFrame* aForFrame,
                                     ComputedStyle** aBackgroundSC) {
   nsIFrame* backgroundFrame = nullptr;
   if (FindBackgroundFrame(aForFrame, &backgroundFrame)) {
@@ -4865,7 +4865,7 @@ bool nsContextBoxBlur::InsetBoxBlur(
   // input data to the blur. This way, we don't have to scale the min
   // inset blur to the invert of the dest context, then rescale it back
   // when we draw to the destination surface.
-  gfx::Size scale = aDestinationCtx->CurrentMatrix().ScaleFactors(true);
+  gfx::Size scale = aDestinationCtx->CurrentMatrix().ScaleFactors();
   Matrix transform = aDestinationCtx->CurrentMatrix();
 
   // XXX: we could probably handle negative scales but for now it's easier just

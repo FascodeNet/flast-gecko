@@ -16,6 +16,7 @@
 #include "mozilla/java/GeckoEditableChildWrappers.h"
 #include "mozilla/java/GeckoServiceChildProcessWrappers.h"
 #include "mozilla/Logging.h"
+#include "mozilla/MiscEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_intl.h"
 #include "mozilla/TextComposition.h"
@@ -461,7 +462,8 @@ void GeckoEditableSupport::OnKeyEvent(int32_t aAction, int32_t aKeyCode,
   nsCOMPtr<nsIWidget> widget = GetWidget();
   RefPtr<TextEventDispatcher> dispatcher =
       mDispatcher ? mDispatcher.get()
-                  : widget ? widget->GetTextEventDispatcher() : nullptr;
+      : widget    ? widget->GetTextEventDispatcher()
+                  : nullptr;
   NS_ENSURE_TRUE_VOID(dispatcher && widget);
 
   if (!aIsSynthesizedImeKey) {

@@ -12,7 +12,6 @@
 #include "mozilla/dom/Document.h"
 #include "nsIFocusManager.h"
 #include "nsIObserver.h"
-#include "nsIWidget.h"
 #include "nsWeakReference.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/RefPtr.h"
@@ -255,12 +254,6 @@ class nsFocusManager final : public nsIFocusManager,
    * Fire any events that have been delayed due to synchronized actions.
    */
   void FireDelayedEvents(Document* aDocument);
-
-  /**
-   * Used in a child process to indicate that the parent window is now
-   * active or deactive.
-   */
-  void ParentActivated(mozIDOMWindowProxy* aWindow, bool aActive);
 
   /**
    * Indicate that a plugin wishes to take the focus. This is similar to a

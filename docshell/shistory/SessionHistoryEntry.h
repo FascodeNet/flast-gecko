@@ -101,6 +101,11 @@ class SessionHistoryInfo {
   }
   bool GetURIWasModified() const { return mURIWasModified; }
 
+  void SetHasUserInteraction(bool aHasUserInteraction) {
+    mHasUserInteraction = aHasUserInteraction;
+  }
+  bool GetHasUserInteraction() const { return mHasUserInteraction; }
+
   uint64_t SharedId() const;
 
   nsILayoutHistoryState* GetLayoutHistoryState();
@@ -152,6 +157,7 @@ class SessionHistoryInfo {
   bool mIsSrcdocEntry = false;
   bool mScrollRestorationIsManual = false;
   bool mPersist = true;
+  bool mHasUserInteraction = false;
 
   union SharedState {
     SharedState();
@@ -291,6 +297,8 @@ NS_DEFINE_STATIC_IID_ACCESSOR(SessionHistoryEntry, NS_SESSIONHISTORYENTRY_IID)
 }  // namespace dom
 
 namespace ipc {
+
+class IProtocol;
 
 // Allow sending SessionHistoryInfo objects over IPC.
 template <>

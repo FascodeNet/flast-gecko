@@ -7,6 +7,7 @@
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
 #include "nsNetAddr.h"
+#include "nsNetUtil.h"
 
 namespace mozilla {
 namespace net {
@@ -67,12 +68,12 @@ SvcParam::GetType(uint16_t* aType) {
 }
 
 NS_IMETHODIMP
-SvcParam::GetAlpn(nsACString& aAlpn) {
+SvcParam::GetAlpn(nsTArray<nsCString>& aAlpn) {
   if (!mValue.is<SvcParamAlpn>()) {
     MOZ_ASSERT(false, "Unexpected type for variant");
     return NS_ERROR_NOT_AVAILABLE;
   }
-  aAlpn = mValue.as<SvcParamAlpn>().mValue;
+  aAlpn.AppendElements(mValue.as<SvcParamAlpn>().mValue);
   return NS_OK;
 }
 
@@ -172,13 +173,13 @@ bool SVCB::NoDefaultAlpn() const {
 Maybe<Tuple<nsCString, bool>> SVCB::GetAlpn(bool aNoHttp2,
                                             bool aNoHttp3) const {
   Maybe<Tuple<nsCString, bool>> alpn;
-  nsAutoCString alpnValue;
   for (const auto& value : mSvcFieldValue) {
     if (value.mValue.is<SvcParamAlpn>()) {
-      alpn.emplace();
-      alpnValue = value.mValue.as<SvcParamAlpn>().mValue;
-      if (!alpnValue.IsEmpty()) {
-        alpn = Some(SelectAlpnFromAlpnList(alpnValue, aNoHttp2, aNoHttp3));
+      nsTArray<nsCString> alpnList;
+      alpnList.AppendElements(value.mValue.as<SvcParamAlpn>().mValue);
+      if (!alpnList.IsEmpty()) {
+        alpn.emplace();
+        alpn = Some(SelectAlpnFromAlpnList(alpnList, aNoHttp2, aNoHttp3));
       }
       return alpn;
     }
@@ -233,16 +234,33 @@ NS_IMETHODIMP SVCBRecord::GetHasIPHintAddress(bool* aHasIPHintAddress) {
   return NS_OK;
 }
 
+static bool CheckAlpnIsUsable(const nsACString& aTargetName,
+                              const nsACString& aAlpn, bool aIsHttp3,
+                              uint32_t& aExcludedCount) {
+  if (aAlpn.IsEmpty()) {
+    return false;
+  }
+
+  if (aIsHttp3 && gHttpHandler->IsHttp3Excluded(aTargetName)) {
+    aExcludedCount++;
+    return false;
+  }
+
+  return true;
+}
+
 already_AddRefed<nsISVCBRecord>
 DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
     bool aNoHttp2, bool aNoHttp3, const nsTArray<SVCB>& aRecords,
-    bool& aRecordsAllExcluded) {
+    bool& aRecordsAllExcluded, bool aCheckHttp3ExcludedList) {
   nsCOMPtr<nsISVCBRecord> selectedRecord;
   uint32_t recordHasNoDefaultAlpnCount = 0;
   uint32_t recordExcludedCount = 0;
   aRecordsAllExcluded = false;
   nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
   bool RRSetHasEchConfig = false;
+  uint32_t h3ExcludedCount = 0;
+
   for (const SVCB& record : aRecords) {
     if (record.mSvcFieldPriority == 0) {
       // In ServiceMode, the SvcPriority should never be 0.
@@ -271,9 +289,12 @@ DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
     }
 
     Maybe<Tuple<nsCString, bool>> alpn = record.GetAlpn(aNoHttp2, aNoHttp3);
-    if (alpn && Get<0>(*alpn).IsEmpty()) {
-      // Can't find any supported protocols, skip.
-      continue;
+    if (alpn) {
+      if (!CheckAlpnIsUsable(record.mSvcDomainName, Get<0>(*alpn),
+                             aCheckHttp3ExcludedList && Get<1>(*alpn),
+                             h3ExcludedCount)) {
+        continue;
+      }
     }
 
     if (gHttpHandler->EchConfigEnabled() && RRSetHasEchConfig &&
@@ -294,6 +315,14 @@ DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
 
   if (recordExcludedCount == aRecords.Length()) {
     aRecordsAllExcluded = true;
+    return nullptr;
+  }
+
+  // If all records are in http3 excluded list, try again without checking the
+  // excluded list. This is better than returning nothing.
+  if (h3ExcludedCount == aRecords.Length() && aCheckHttp3ExcludedList) {
+    return GetServiceModeRecordInternal(aNoHttp2, aNoHttp3, aRecords,
+                                        aRecordsAllExcluded, false);
   }
 
   return selectedRecord.forget();
@@ -301,17 +330,20 @@ DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
 
 void DNSHTTPSSVCRecordBase::GetAllRecordsWithEchConfigInternal(
     bool aNoHttp2, bool aNoHttp3, const nsTArray<SVCB>& aRecords,
-    bool* aAllRecordsHaveEchConfig, nsTArray<RefPtr<nsISVCBRecord>>& aResult) {
+    bool* aAllRecordsHaveEchConfig, bool* aAllRecordsInH3ExcludedList,
+    nsTArray<RefPtr<nsISVCBRecord>>& aResult, bool aCheckHttp3ExcludedList) {
   if (aRecords.IsEmpty()) {
     return;
   }
 
   *aAllRecordsHaveEchConfig = aRecords[0].mHasEchConfig;
+  *aAllRecordsInH3ExcludedList = false;
   // The first record should have echConfig.
   if (!(*aAllRecordsHaveEchConfig)) {
     return;
   }
 
+  uint32_t h3ExcludedCount = 0;
   for (const SVCB& record : aRecords) {
     if (record.mSvcFieldPriority == 0) {
       // This should not happen, since GetAllRecordsWithEchConfigInternal()
@@ -336,14 +368,26 @@ void DNSHTTPSSVCRecordBase::GetAllRecordsWithEchConfigInternal(
     }
 
     Maybe<Tuple<nsCString, bool>> alpn = record.GetAlpn(aNoHttp2, aNoHttp3);
-    if (alpn && Get<0>(*alpn).IsEmpty()) {
-      // Can't find any supported protocols, skip.
-      continue;
+    if (alpn) {
+      if (!CheckAlpnIsUsable(record.mSvcDomainName, Get<0>(*alpn),
+                             aCheckHttp3ExcludedList && Get<1>(*alpn),
+                             h3ExcludedCount)) {
+        continue;
+      }
     }
 
     RefPtr<nsISVCBRecord> svcbRecord =
         new SVCBRecord(record, std::move(port), std::move(alpn));
     aResult.AppendElement(svcbRecord);
+  }
+
+  // If all records are in http3 excluded list, try again without checking the
+  // excluded list. This is better than returning nothing.
+  if (h3ExcludedCount == aRecords.Length() && aCheckHttp3ExcludedList) {
+    GetAllRecordsWithEchConfigInternal(
+        aNoHttp2, aNoHttp3, aRecords, aAllRecordsHaveEchConfig,
+        aAllRecordsInH3ExcludedList, aResult, false);
+    *aAllRecordsInH3ExcludedList = true;
   }
 }
 

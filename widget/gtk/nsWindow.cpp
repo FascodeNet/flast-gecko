@@ -20,6 +20,8 @@
 #include "mozilla/TouchEvents.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/WidgetUtils.h"
+#include "mozilla/XREAppData.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/WheelEventBinding.h"
 #include "nsAppRunner.h"
 #include <algorithm>
@@ -3670,9 +3672,9 @@ void nsWindow::OnContainerFocusOutEvent(GdkEventFocus* aEvent) {
 
   if (IsChromeWindowTitlebar()) {
     // DispatchDeactivateEvent() ultimately results in a call to
-    // nsGlobalWindowOuter::ActivateOrDeactivate(), which resets
-    // the mIsActive flag.  We call UpdateMozWindowActive() to keep
-    // the flag in sync with GDK_WINDOW_STATE_FOCUSED.
+    // BrowsingContext::SetIsActiveBrowserWindow(), which resets
+    // the state.  We call UpdateMozWindowActive() to keep it in
+    // sync with GDK_WINDOW_STATE_FOCUSED.
     UpdateMozWindowActive();
   }
 
@@ -3918,7 +3920,7 @@ void nsWindow::OnWindowStateEvent(GtkWidget* aWidget,
     mTitlebarBackdropState =
         !(aEvent->new_window_state & GDK_WINDOW_STATE_FOCUSED);
 
-    // keep mIsActive in sync with GDK_WINDOW_STATE_FOCUSED
+    // keep IsActiveBrowserWindow in sync with GDK_WINDOW_STATE_FOCUSED
     UpdateMozWindowActive();
 
     ForceTitlebarRedraw();
@@ -8140,11 +8142,12 @@ void nsWindow::UpdateMozWindowActive() {
   // Update activation state for the :-moz-window-inactive pseudoclass.
   // Normally, this follows focus; we override it here to follow
   // GDK_WINDOW_STATE_FOCUSED.
-  mozilla::dom::Document* document = GetDocument();
-  if (document) {
-    nsPIDOMWindowOuter* window = document->GetWindow();
-    if (window) {
-      window->SetActive(!mTitlebarBackdropState);
+  if (mozilla::dom::Document* document = GetDocument()) {
+    if (nsPIDOMWindowOuter* window = document->GetWindow()) {
+      if (RefPtr<mozilla::dom::BrowsingContext> bc =
+              window->GetBrowsingContext()) {
+        bc->SetIsActiveBrowserWindow(!mTitlebarBackdropState);
+      }
     }
   }
 }

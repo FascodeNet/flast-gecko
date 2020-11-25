@@ -11,6 +11,7 @@
 #include "ActiveLayerTracker.h"
 #include "base/compiler_specific.h"
 #include "DisplayItemClip.h"
+#include "Layers.h"
 #include "nsCOMPtr.h"
 #include "nsIContentViewer.h"
 #include "nsPresContext.h"
@@ -311,7 +312,7 @@ struct MOZ_STACK_CLASS ScrollReflowInput {
   nsMargin mComputedBorder;
 
   // === Filled in by ReflowScrolledFrame ===
-  nsOverflowAreas mContentsOverflowAreas;
+  OverflowAreas mContentsOverflowAreas;
   MOZ_INIT_OUTSIDE_CTOR
   bool mReflowedContentsWithHScrollbar;
   MOZ_INIT_OUTSIDE_CTOR
@@ -783,7 +784,7 @@ void nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowInput* aState,
   if (MOZ_UNLIKELY(
           disp->mOverflowClipBoxBlock == StyleOverflowClipBox::ContentBox ||
           disp->mOverflowClipBoxInline == StyleOverflowClipBox::ContentBox)) {
-    nsOverflowAreas childOverflow;
+    OverflowAreas childOverflow;
     nsLayoutUtils::UnionChildOverflow(mHelper.mScrolledFrame, childOverflow);
     nsRect childScrollableOverflow = childOverflow.ScrollableOverflow();
     if (disp->mOverflowClipBoxBlock == StyleOverflowClipBox::PaddingBox) {
@@ -992,7 +993,7 @@ void nsHTMLScrollFrame::PlaceScrollArea(ScrollReflowInput& aState,
   // scrolled frames can't have 'overflow' either.
   // This needs to happen before SyncFrameViewAfterReflow so
   // HasOverflowRect() will return the correct value.
-  nsOverflowAreas overflow(scrolledArea, scrolledArea);
+  OverflowAreas overflow(scrolledArea, scrolledArea);
   scrolledFrame->FinishAndStoreOverflow(overflow, scrolledFrame->GetSize());
 
   // Note that making the view *exactly* the size of the scrolled area
@@ -3528,6 +3529,26 @@ class MOZ_RAII AutoContainsBlendModeCapturer {
   }
 };
 
+// Finds the max z-index of the items in aList that meet the following
+// conditions
+//   1) have z-index auto or z-index >= 0.
+//   2) aFrame is a proper ancestor of the item's frame.
+// Returns -1 if there is no such item.
+static int32_t MaxZIndexInListOfItemsContainedInFrame(nsDisplayList* aList,
+                                                      nsIFrame* aFrame) {
+  int32_t maxZIndex = -1;
+  for (nsDisplayItem* item = aList->GetBottom(); item;
+       item = item->GetAbove()) {
+    nsIFrame* itemFrame = item->Frame();
+    // Perspective items return the scroll frame as their Frame(), so consider
+    // their TransformFrame() instead.
+    if (nsLayoutUtils::IsProperAncestorFrame(aFrame, itemFrame)) {
+      maxZIndex = std::max(maxZIndex, item->ZIndex());
+    }
+  }
+  return maxZIndex;
+}
+
 void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                          const nsDisplayListSet& aLists) {
   SetAndNullOnExit<const nsIFrame> tmpBuilder(
@@ -4046,11 +4067,35 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     // create a displayport for this frame. We'll add the item later on.
     if (!mWillBuildScrollableLayer) {
       if (aBuilder->BuildCompositorHitTestInfo()) {
+        int32_t zIndex = MaxZIndexInListOfItemsContainedInFrame(
+            scrolledContent.PositionedDescendants(), mOuter);
+        if (aBuilder->IsPartialUpdate()) {
+          if (auto* items =
+                  mScrolledFrame->GetProperty(nsIFrame::DisplayItems())) {
+            for (nsDisplayItemBase* item : *items) {
+              if (item->GetType() ==
+                  DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO) {
+                auto* hitTestItem =
+                    static_cast<nsDisplayCompositorHitTestInfo*>(item);
+                if (hitTestItem->HasHitTestInfo() &&
+                    hitTestItem->HitTestFlags().contains(
+                        CompositorHitTestFlags::eInactiveScrollframe)) {
+                  zIndex = std::max(zIndex, hitTestItem->ZIndex());
+                  item->SetCantBeReused();
+                }
+              }
+            }
+          }
+        }
+        // Make sure the z-index of the inactive item is at least zero.
+        // Otherwise, it will end up behind non-positioned items in the scrolled
+        // content.
+        zIndex = std::max(zIndex, 0);
         nsDisplayCompositorHitTestInfo* hitInfo =
             MakeDisplayItemWithIndex<nsDisplayCompositorHitTestInfo>(
                 aBuilder, mScrolledFrame, 1, info, Some(area));
         if (hitInfo) {
-          AppendInternalItemToTop(scrolledContent, hitInfo, Some(INT32_MAX));
+          AppendInternalItemToTop(scrolledContent, hitInfo, Some(zIndex));
         }
       }
     }
@@ -6154,7 +6199,7 @@ nsresult nsXULScrollFrame::XULLayout(nsBoxLayoutState& aState) {
     nsRect clippedRect = origRect;
     clippedRect.MoveBy(mHelper.mScrollPort.TopLeft());
     clippedRect.IntersectRect(clippedRect, mHelper.mScrollPort);
-    nsOverflowAreas overflow = f->GetOverflowAreas();
+    OverflowAreas overflow = f->GetOverflowAreas();
     f->FinishAndStoreOverflow(overflow, clippedRect.Size());
     clippedRect.MoveTo(origRect.TopLeft());
     f->SetRect(clippedRect);
@@ -6490,7 +6535,7 @@ void ScrollFrameHelper::ReflowCallbackCanceled() {
   mPostedReflowCallback = false;
 }
 
-bool ScrollFrameHelper::ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas) {
+bool ScrollFrameHelper::ComputeCustomOverflow(OverflowAreas& aOverflowAreas) {
   nsIScrollableFrame* sf = do_QueryFrame(mOuter);
   ScrollStyles ss = sf->GetScrollStyles();
 

@@ -15,8 +15,10 @@
 #  include <unistd.h>
 #endif
 
+#include "chrome/common/ipc_channel.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/HangDetails.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/RemoteDecoderManagerChild.h"
 #include "mozilla/RemoteDecoderManagerParent.h"
 #include "mozilla/TimeStamp.h"
@@ -166,6 +168,7 @@ mozilla::ipc::IPCResult RDDParent::RecvNewContentRemoteDecoderManager(
 
 mozilla::ipc::IPCResult RDDParent::RecvInitVideoBridge(
     Endpoint<PVideoBridgeChild>&& aEndpoint,
+    const bool& aCreateHardwareDevice,
     const ContentDeviceData& aContentDeviceData) {
   if (!RemoteDecoderManagerParent::CreateVideoBridgeToOtherProcess(
           std::move(aEndpoint))) {
@@ -187,7 +190,9 @@ mozilla::ipc::IPCResult RDDParent::RecvInitVideoBridge(
     auto* devmgr = DeviceManagerDx::Get();
     if (devmgr) {
       devmgr->ImportDeviceInfo(aContentDeviceData.d3d11());
-      devmgr->CreateContentDevices();
+      if (aCreateHardwareDevice) {
+        devmgr->CreateContentDevices();
+      }
     }
   }
 #endif

@@ -245,28 +245,10 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   // analyzed by IonBuilder. This is done lazily to improve performance and
   // memory usage as most scripts are never Ion-compiled.
   struct CachedIonData {
-    // The freeze constraints added to stack type sets will only directly
-    // invalidate the script containing those stack type sets. This Vector
-    // contains compilations that inlined this script, so we can invalidate
-    // them as well.
-    RecompileInfoVector inlinedCompilations_;
-
     // For functions with a call object, template objects to use for the call
     // object and decl env object (linked via the call object's enclosing
     // scope).
     const HeapPtr<EnvironmentObject*> templateEnv = nullptr;
-
-    // The total bytecode length of all scripts we inlined when we Ion-compiled
-    // this script. 0 if Ion did not compile this script or if we didn't inline
-    // anything.
-    uint16_t inlinedBytecodeLength = 0;
-
-    // The max inlining depth where we can still inline all functions we inlined
-    // when we Ion-compiled this script. This starts as UINT8_MAX, since we have
-    // no data yet, and won't affect inlining heuristics in that case. The value
-    // is updated when we Ion-compile this script. See makeInliningDecision for
-    // more info.
-    uint8_t maxInliningDepth = UINT8_MAX;
 
     // Analysis information based on the script and its bytecode.
     IonBytecodeInfo bytecodeInfo = {};
@@ -296,18 +278,6 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
     // and type information and JIT code should not be discarded.
     bool active : 1;
 
-    // Generation for type sweeping. If out of sync with the TypeZone's
-    // generation, this JitScript needs to be swept.
-    bool typesGeneration : 1;
-
-    // Whether freeze constraints for stack type sets have been generated.
-    bool hasFreezeConstraints : 1;
-
-    // Flag set if this script has ever been Ion compiled, either directly or
-    // inlined into another script. This is cleared when the script's type
-    // information or caches are cleared.
-    bool ionCompiledOrInlined : 1;
-
     // True if this script entered Ion via OSR at a loop header.
     bool hadIonOSR : 1;
   };
@@ -322,12 +292,6 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   Offset endOffset() const { return endOffset_; }
 
   ICEntry* icEntries() { return icScript_.icEntries(); }
-
-  uint32_t typesGeneration() const { return uint32_t(flags_.typesGeneration); }
-  void setTypesGeneration(uint32_t generation) {
-    MOZ_ASSERT(generation <= 1);
-    flags_.typesGeneration = generation;
-  }
 
   bool hasCachedIonData() const { return !!cachedIonData_; }
 
@@ -357,42 +321,8 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   MOZ_MUST_USE bool ensureHasCachedIonData(JSContext* cx, HandleScript script);
 
-  bool hasFreezeConstraints(const js::AutoSweepJitScript& sweep) const {
-    MOZ_ASSERT(sweep.jitScript() == this);
-    return flags_.hasFreezeConstraints;
-  }
-  void setHasFreezeConstraints(const js::AutoSweepJitScript& sweep) {
-    MOZ_ASSERT(sweep.jitScript() == this);
-    flags_.hasFreezeConstraints = true;
-  }
-
-  inline bool typesNeedsSweep(Zone* zone) const;
-  void sweepTypes(const js::AutoSweepJitScript& sweep, Zone* zone);
-
-  void setIonCompiledOrInlined() { flags_.ionCompiledOrInlined = true; }
-  void clearIonCompiledOrInlined() { flags_.ionCompiledOrInlined = false; }
-  bool ionCompiledOrInlined() const { return flags_.ionCompiledOrInlined; }
-
   void setHadIonOSR() { flags_.hadIonOSR = true; }
   bool hadIonOSR() const { return flags_.hadIonOSR; }
-
-  RecompileInfoVector* maybeInlinedCompilations(
-      const js::AutoSweepJitScript& sweep) {
-    MOZ_ASSERT(sweep.jitScript() == this);
-    if (!hasCachedIonData()) {
-      return nullptr;
-    }
-    return &cachedIonData().inlinedCompilations_;
-  }
-  MOZ_MUST_USE bool addInlinedCompilation(const js::AutoSweepJitScript& sweep,
-                                          RecompileInfo info) {
-    MOZ_ASSERT(sweep.jitScript() == this);
-    auto& inlinedCompilations = cachedIonData().inlinedCompilations_;
-    if (!inlinedCompilations.empty() && inlinedCompilations.back() == info) {
-      return true;
-    }
-    return inlinedCompilations.append(info);
-  }
 
   uint32_t numICEntries() const { return icScript_.numICEntries(); }
 
@@ -490,26 +420,6 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   }
   bool hasTryFinally() const {
     return cachedIonData().bytecodeInfo.hasTryFinally;
-  }
-
-  uint8_t maxInliningDepth() const {
-    return hasCachedIonData() ? cachedIonData().maxInliningDepth : UINT8_MAX;
-  }
-  void resetMaxInliningDepth() { cachedIonData().maxInliningDepth = UINT8_MAX; }
-
-  void setMaxInliningDepth(uint32_t depth) {
-    MOZ_ASSERT(depth <= UINT8_MAX);
-    cachedIonData().maxInliningDepth = depth;
-  }
-
-  uint16_t inlinedBytecodeLength() const {
-    return hasCachedIonData() ? cachedIonData().inlinedBytecodeLength : 0;
-  }
-  void setInlinedBytecodeLength(uint32_t len) {
-    if (len > UINT16_MAX) {
-      len = UINT16_MAX;
-    }
-    cachedIonData().inlinedBytecodeLength = len;
   }
 
  private:

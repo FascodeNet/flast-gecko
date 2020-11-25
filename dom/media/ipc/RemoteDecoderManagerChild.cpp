@@ -16,8 +16,9 @@
 #include "mozilla/gfx/DataSurfaceHelpers.h"
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/PBackgroundChild.h"
-#include "mozilla/ipc/ProtocolUtils.h"
+#include "mozilla/ipc/Endpoint.h"
 #include "mozilla/layers/ISurfaceAllocator.h"
+#include "nsContentUtils.h"
 #include "nsIObserver.h"
 
 namespace mozilla {
@@ -253,8 +254,8 @@ RemoteDecoderManagerChild::CreateVideoDecoder(
         MediaResult result = child->InitIPDL(
             params.VideoConfig(), params.mRate.mValue, params.mOptions,
             params.mKnowsCompositor
-                ? &params.mKnowsCompositor->GetTextureFactoryIdentifier()
-                : nullptr);
+                ? Some(params.mKnowsCompositor->GetTextureFactoryIdentifier())
+                : Nothing());
         if (NS_FAILED(result)) {
           return PlatformDecoderModule::CreateDecoderPromise::CreateAndReject(
               result, __func__);

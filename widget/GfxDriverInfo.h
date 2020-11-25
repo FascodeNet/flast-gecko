@@ -143,7 +143,7 @@ enum class OperatingSystem : uint8_t {
   OSX10_13,
   OSX10_14,
   OSX10_15,
-  OSX10_16,
+  OSX11_0,
   Android,
   Ios
 };
@@ -180,7 +180,7 @@ enum class DeviceFamily : uint8_t {
   IntelHDGraphicsToIvyBridge,
   IntelHDGraphicsToSandyBridge,
   IntelHaswell,
-  IntelHD3000,
+  IntelSandyBridge,
   IntelHD520,
   IntelMobileHDGraphics,
   NvidiaBlockD3D9Layers,
@@ -236,6 +236,10 @@ enum DriverVendor : uint8_t {
   MesaUnknown,
   // Wildcard for all non-Mesa drivers.
   NonMesaAll,
+  // Wildcard for all hardware Mesa drivers.
+  HardwareMesaAll,
+  // Wildcard for all software Mesa drivers.
+  SoftwareMesaAll,
 
   Max
 };

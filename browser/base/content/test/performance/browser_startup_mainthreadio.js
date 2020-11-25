@@ -269,12 +269,6 @@ const startupPhases = {
     },
     {
       // bug 1541246
-      path: "ProfD:extensions",
-      condition: WIN,
-      stat: 1,
-    },
-    {
-      // bug 1541246
       path: "UAppData:",
       ignoreIfUnused: true, // sometimes before opening first browser window,
       // sometimes before first paint
@@ -301,12 +295,6 @@ const startupPhases = {
     {
       // bug 1446012
       path: "UpdRootD:updates/0/update.status",
-      condition: WIN,
-      stat: 1,
-    },
-    {
-      // bug 1586808
-      path: "UserPlugins.parent:",
       condition: WIN,
       stat: 1,
     },

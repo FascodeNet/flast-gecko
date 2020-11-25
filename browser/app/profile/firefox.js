@@ -368,7 +368,9 @@ pref("browser.urlbar.update2.emptySearchBehavior", 0);
 
 // Whether the urlbar displays one-offs to filter searches to history,
 // bookmarks, or tabs.
-pref("browser.urlbar.update2.localOneOffs", true);
+pref("browser.urlbar.shortcuts.bookmarks", true);
+pref("browser.urlbar.shortcuts.tabs", true);
+pref("browser.urlbar.shortcuts.history", true);
 
 // Whether the urlbar one-offs act as search filters instead of executing a
 // search immediately.
@@ -1361,6 +1363,13 @@ pref("prompts.tabChromePromptSubDialog", true);
 // Activates preloading of the new tab url.
 pref("browser.newtab.preload", true);
 
+// Preference to enable the entire new newtab experience at once.
+pref("browser.newtabpage.activity-stream.newNewtabExperience.enabled", false);
+
+// A preference which allows us to enable the fly out customization overlay
+// on the newtab page.
+pref("browser.newtabpage.activity-stream.customizationMenu.enabled", false);
+
 // Activity Stream prefs that control to which page to redirect
 #ifndef RELEASE_OR_BETA
   pref("browser.newtabpage.activity-stream.debug", false);
@@ -1429,7 +1438,7 @@ pref("browser.newtabpage.activity-stream.feeds.section.topstories", true);
   pref("browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar", false);
 #endif
 
-pref("browser.newtabpage.activity-stream.logowordmark.alwaysVisible", false);
+pref("browser.newtabpage.activity-stream.logowordmark.alwaysVisible", true);
 
 // Used to display triplet cards on newtab
 pref("trailhead.firstrun.newtab.triplets", "");
@@ -1595,20 +1604,6 @@ pref("media.gmp.trial-create.enabled", true);
 
 pref("media.gmp-gmpopenh264.visible", true);
 pref("media.gmp-gmpopenh264.enabled", true);
-
-#ifdef XP_MACOSX
-  // These prefs control whether or not a universal build running on
-  // an Apple Silicon machine will attempt to use an x64 Widevine or
-  // OpenH264 plugin. This requires launching the GMP child process
-  // executable in x64 mode. We expect to allow this for Widevine until
-  // an arm64 version of Widevine is made available. We don't expect
-  // to need to allow this for OpenH264.
-  //
-  // Allow a Widevine GMP x64 process to be executed on ARM builds.
-  pref("media.gmp-widevinecdm.allow-x64-plugin-on-arm64", true);
-  // Don't allow an OpenH264 GMP x64 process to be executed on ARM builds.
-  pref("media.gmp-gmpopenh264.allow-x64-plugin-on-arm64", false);
-#endif
 
 // Set Firefox to block autoplay, asking for permission by default.
 pref("media.autoplay.default", 1); // 0=Allowed, 1=Blocked, 5=All Blocked
@@ -1891,12 +1886,7 @@ pref("dom.ipc.processPrelaunch.enabled", true);
 // See comments in bug 1340115 on how we got to these numbers.
 pref("browser.migrate.chrome.history.limit", 2000);
 pref("browser.migrate.chrome.history.maxAgeInDays", 180);
-
-#ifdef EARLY_BETA_OR_EARLIER
 pref("browser.migrate.showBookmarksToolbarAfterMigration", true);
-#else
-pref("browser.migrate.showBookmarksToolbarAfterMigration", false);
-#endif
 
 pref("extensions.pocket.api", "api.getpocket.com");
 pref("extensions.pocket.enabled", true);
@@ -2076,6 +2066,11 @@ pref("browser.toolbars.keyboard_navigation", true);
 // "always": Always show
 // "never": Never show
 pref("browser.toolbars.bookmarks.visibility", "newtab");
+
+// Visibility of the "Show Other Bookmarks" menuitem in the
+// bookmarks toolbar contextmenu.
+pref("browser.toolbars.bookmarks.showOtherBookmarks", true);
+
 // When true, this pref will always show the bookmarks bar on
 // the New Tab Page, allowing showing/hiding via keyboard shortcut,
 // and other functionality to improve the usage of the Bookmarks Toolbar.

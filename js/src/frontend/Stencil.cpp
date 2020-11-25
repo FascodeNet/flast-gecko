@@ -657,8 +657,6 @@ bool CompilationInfo::instantiateStencilsAfterPreparation(
     return false;
   }
 
-  MOZ_RELEASE_ASSERT(!IsTypeInferenceEnabled());
-
   if (!input.lazy) {
     if (!InstantiateScriptStencils(cx, *this, gcOutput)) {
       return false;
@@ -1433,9 +1431,6 @@ static void DumpFunctionFlagsItems(js::JSONPrinter& json,
           break;
         case FunctionFlags::Flags::RESOLVED_LENGTH:
           json.value("RESOLVED_LENGTH");
-          break;
-        case FunctionFlags::Flags::NEW_SCRIPT_CLEARED:
-          json.value("NEW_SCRIPT_CLEARED");
           break;
         default:
           json.value("Unknown(%x)", i);

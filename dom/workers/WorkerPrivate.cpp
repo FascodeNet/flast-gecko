@@ -16,14 +16,20 @@
 #include "js/MemoryMetrics.h"
 #include "js/SourceText.h"
 #include "MessageEventRunnable.h"
+#include "mozilla/BasePrincipal.h"
+#include "mozilla/CycleCollectedJSContext.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/Result.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/CallbackDebuggerNotification.h"
 #include "mozilla/dom/ClientManager.h"
 #include "mozilla/dom/ClientState.h"
 #include "mozilla/dom/Console.h"
+#include "mozilla/dom/DocGroup.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/DOMTypes.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/Exceptions.h"
@@ -54,6 +60,7 @@
 #include "nsCycleCollector.h"
 #include "nsGlobalWindowInner.h"
 #include "nsNetUtil.h"
+#include "nsIFile.h"
 #include "nsIMemoryReporter.h"
 #include "nsIPermissionManager.h"
 #include "nsIProtocolHandler.h"
@@ -3264,10 +3271,10 @@ void WorkerPrivate::SetGCTimerMode(GCTimerMode aMode) {
 
   data->mPeriodicGCTimerRunning = false;
   data->mIdleGCTimerRunning = false;
-  LOG(WorkerLog(),
-      ("Worker %p canceled GC timer because %s\n", this,
-       aMode == PeriodicTimer ? "periodic"
-                              : aMode == IdleTimer ? "idle" : "none"));
+  LOG(WorkerLog(), ("Worker %p canceled GC timer because %s\n", this,
+                    aMode == PeriodicTimer ? "periodic"
+                    : aMode == IdleTimer   ? "idle"
+                                           : "none"));
 
   if (aMode == NoTimer) {
     return;

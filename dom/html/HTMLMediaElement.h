@@ -44,6 +44,8 @@ typedef uint16_t nsMediaReadyState;
 typedef uint32_t SuspendTypes;
 typedef uint32_t AudibleChangedReasons;
 
+class nsIStreamListener;
+
 namespace mozilla {
 class AbstractThread;
 class ChannelMediaDecoder;
@@ -1326,6 +1328,10 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // When the doc is blocked permanantly, we would dispatch event to notify
   // front-end side to show blocking icon.
   void MaybeNotifyAutoplayBlocked();
+
+  // Dispatch event for video control when video gets blocked in order to show
+  // the click-to-play icon.
+  void DispatchBlockEventForVideoControl();
 
   // When playing state change, we have to notify MediaControl in the chrome
   // process in order to keep its playing state correct.

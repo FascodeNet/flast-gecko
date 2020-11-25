@@ -31,6 +31,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/Services.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticPrefs_threads.h"
 #include "mozilla/TaskController.h"
 #include "nsXPCOMPrivate.h"
@@ -38,13 +39,11 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Unused.h"
+#include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "nsThreadSyncDispatch.h"
 #include "nsServiceManagerUtils.h"
 #include "GeckoProfiler.h"
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
 #include "InputEventStatistics.h"
 #include "ThreadEventQueue.h"
 #include "ThreadEventTarget.h"
@@ -1524,9 +1523,28 @@ void PerformanceCounterState::MaybeReportAccumulatedTime(TimeStamp aNow) {
 
 #ifdef MOZ_GECKO_PROFILER
     if (profiler_thread_is_being_profiled()) {
-      PROFILER_ADD_MARKER_WITH_PAYLOAD(
-          mCurrentRunnableIsIdleRunnable ? "LongIdleTask" : "LongTask", OTHER,
-          LongTaskMarkerPayload, (mCurrentTimeSliceStart, aNow));
+      struct LongTaskMarker {
+        static constexpr Span<const char> MarkerTypeName() {
+          return MakeStringSpan("MainThreadLongTask");
+        }
+        static void StreamJSONMarkerData(
+            baseprofiler::SpliceableJSONWriter& aWriter) {
+          aWriter.StringProperty("category", "LongTask");
+        }
+        static MarkerSchema MarkerTypeDisplay() {
+          using MS = MarkerSchema;
+          MS schema{MS::Location::markerChart, MS::Location::markerTable};
+          schema.AddKeyLabelFormat("category", "Type", MS::Format::string);
+          return schema;
+        }
+      };
+
+      profiler_add_marker(mCurrentRunnableIsIdleRunnable
+                              ? ProfilerString8View("LongIdleTask")
+                              : ProfilerString8View("LongTask"),
+                          geckoprofiler::category::OTHER,
+                          MarkerTiming::Interval(mCurrentTimeSliceStart, aNow),
+                          LongTaskMarker{});
     }
 #endif
   }

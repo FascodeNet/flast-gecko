@@ -315,7 +315,6 @@ impl VertexDescriptor {
 }
 
 impl VBOId {
-    const INVALID: Self = VBOId(0);
     fn bind(&self, gl: &dyn gl::Gl) {
         gl.bind_buffer(gl::ARRAY_BUFFER, self.0);
     }
@@ -325,11 +324,6 @@ impl IBOId {
     fn bind(&self, gl: &dyn gl::Gl) {
         gl.bind_buffer(gl::ELEMENT_ARRAY_BUFFER, self.0);
     }
-}
-
-impl SBOId {
-    const INVALID: Self = SBOId(0);
-    const BIND_POINT: gl::GLenum = gl::SHADER_STORAGE_BUFFER;
 }
 
 impl FBOId {
@@ -591,7 +585,6 @@ pub struct VAO {
     main_vbo_id: VBOId,
     instance_vbo_id: VBOId,
     instance_stride: usize,
-    storage_id: SBOId,
     owns_vertices_and_indices: bool,
 }
 
@@ -648,10 +641,6 @@ pub struct VBOId(gl::GLuint);
 
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 struct IBOId(gl::GLuint);
-
-// Storage buffer
-#[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
-struct SBOId(gl::GLuint);
 
 #[derive(Clone, Debug)]
 enum ProgramSourceType {
@@ -972,8 +961,6 @@ pub struct Capabilities {
     pub supports_texture_usage: bool,
     /// Whether offscreen render targets can be partially updated.
     pub supports_render_target_partial_update: bool,
-    /// Whether we can use SSBOs.
-    pub supports_shader_storage_object: bool,
     /// Whether the driver prefers fewer and larger texture uploads
     /// over many smaller updates.
     pub prefers_batched_texture_uploads: bool,
@@ -1347,8 +1334,6 @@ impl Device {
         let max_texture_size = max_texture_size[0];
         let max_texture_layers = max_texture_layers[0] as u32;
         let renderer_name = gl.get_string(gl::RENDERER);
-        info!("Renderer: {}", renderer_name);
-        info!("Max texture size: {}", max_texture_size);
 
         let mut extension_count = [0];
         unsafe {
@@ -1428,12 +1413,7 @@ impl Device {
         // So we must use glTexStorage instead. See bug 1591436.
         let is_emulator = renderer_name.starts_with("Android Emulator");
         let avoid_tex_image = is_emulator;
-        let mut gl_version = [0; 2];
-        unsafe {
-            gl.get_integer_v(gl::MAJOR_VERSION, &mut gl_version[0..1]);
-            gl.get_integer_v(gl::MINOR_VERSION, &mut gl_version[1..2]);
-        }
-        info!("GL context {:?} {}.{}", gl.get_type(), gl_version[0], gl_version[1]);
+        let gl_version = gl.get_string(gl::VERSION);
 
         // We block texture storage on mac because it doesn't support BGRA
         let supports_texture_storage = allow_texture_storage_support && !cfg!(target_os = "macos") &&
@@ -1446,7 +1426,7 @@ impl Device {
         let supports_texture_swizzle = allow_texture_swizzling &&
             match gl.get_type() {
                 // see https://www.g-truc.net/post-0734.html
-                gl::GlType::Gl => gl_version >= [3, 3] ||
+                gl::GlType::Gl => gl_version.as_str() >= "3.3" ||
                     supports_extension(&extensions, "GL_ARB_texture_swizzle"),
                 gl::GlType::Gles => true,
             };
@@ -1517,12 +1497,11 @@ impl Device {
             color_formats, bgra_formats, bgra8_sampling_swizzle, texture_storage_usage, depth_format);
 
         // On Mali-T devices glCopyImageSubData appears to stall the pipeline until any pending
-        // renders to the source texture have completed. Using an alternative such as
-        // glBlitFramebuffer is preferable on such devices, so pretend we don't support
-        // glCopyImageSubData. See bug 1669494.
-        // We cannot do the same on Mali-G devices, because glBlitFramebuffer can cause corruption.
-        // See bug 1669960.
-        let supports_copy_image_sub_data = if renderer_name.starts_with("Mali-T") {
+        // renders to the source texture have completed. On Mali-G, it has been observed to
+        // indefinitely hang in some circumstances. Using an alternative such as glBlitFramebuffer
+        // is preferable on such devices, so pretend we don't support glCopyImageSubData.
+        // See bugs 1669494 and 1677757.
+        let supports_copy_image_sub_data = if renderer_name.starts_with("Mali") {
             false
         } else {
             supports_extension(&extensions, "GL_EXT_copy_image") ||
@@ -1614,12 +1593,6 @@ impl Device {
         // and handles fewer, larger uploads better.
         let prefers_batched_texture_uploads = is_mali_g;
 
-        let supports_shader_storage_object = match gl.get_type() {
-            // see https://www.g-truc.net/post-0734.html
-            gl::GlType::Gl => supports_extension(&extensions, "GL_ARB_shader_storage_buffer_object"),
-            gl::GlType::Gles => gl_version >= [3, 1],
-        };
-
         Device {
             gl,
             base_gl: None,
@@ -1641,7 +1614,6 @@ impl Device {
                 supports_nonzero_pbo_offsets,
                 supports_texture_usage,
                 supports_render_target_partial_update,
-                supports_shader_storage_object,
                 prefers_batched_texture_uploads,
                 renderer_name,
             },
@@ -2411,8 +2383,10 @@ impl Device {
             .tex_parameter_i(target, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as gl::GLint);
     }
 
-    /// Copies the contents from one renderable texture to another.
-    pub fn blit_renderable_texture(
+    /// Copies the entire contents of one texture to another. The dest texture must be at least
+    /// as large as the source texture in each dimension. No scaling is performed, so if the dest
+    /// texture is larger than the source texture then some of its pixels will not be written to.
+    pub fn copy_entire_texture(
         &mut self,
         dst: &mut Texture,
         src: &Texture,
@@ -2422,32 +2396,77 @@ impl Device {
         debug_assert!(dst.size.height >= src.size.height);
         debug_assert!(dst.layer_count >= src.layer_count);
 
+        self.copy_texture_sub_region(
+            src,
+            0,
+            0,
+            0,
+            dst,
+            0,
+            0,
+            0,
+            src.size.width as _,
+            src.size.height as _,
+            src.layer_count as _,
+        );
+    }
+
+    /// Copies the specified subregion from src_texture to dest_texture.
+    pub fn copy_texture_sub_region(
+        &mut self,
+        src_texture: &Texture,
+        src_x: usize,
+        src_y: usize,
+        src_z: LayerIndex,
+        dest_texture: &Texture,
+        dest_x: usize,
+        dest_y: usize,
+        dest_z: LayerIndex,
+        width: usize,
+        height: usize,
+        depth: LayerIndex,
+    ) {
         if self.capabilities.supports_copy_image_sub_data {
-            assert_ne!(src.id, dst.id,
-                    "glCopyImageSubData's behaviour is undefined if src and dst images are identical and the rectangles overlap.");
-            unsafe {
-                self.gl.copy_image_sub_data(src.id, src.target, 0,
-                                            0, 0, 0,
-                                            dst.id, dst.target, 0,
-                                            0, 0, 0,
-                                            src.size.width as _, src.size.height as _, src.layer_count);
-            }
-        } else {
-            let rect = FramebufferIntRect::new(
-                FramebufferIntPoint::zero(),
-                device_size_as_framebuffer_size(src.get_dimensions()),
+            assert_ne!(
+                src_texture.id, dest_texture.id,
+                "glCopyImageSubData's behaviour is undefined if src and dst images are identical and the rectangles overlap."
             );
-            for layer in 0..src.layer_count.min(dst.layer_count) as LayerIndex {
-                self.blit_render_target(
-                    ReadTarget::from_texture(src, layer),
-                    rect,
-                    DrawTarget::from_texture(dst, layer, false),
-                    rect,
-                    TextureFilter::Linear
+            unsafe {
+                self.gl.copy_image_sub_data(
+                    src_texture.id,
+                    src_texture.target,
+                    0,
+                    src_x as _,
+                    src_y as _,
+                    src_z as _,
+                    dest_texture.id,
+                    dest_texture.target,
+                    0,
+                    dest_x as _,
+                    dest_y as _,
+                    dest_z as _,
+                    width as _,
+                    height as _,
+                    depth as _,
                 );
             }
-            self.reset_draw_target();
-            self.reset_read_target();
+        } else {
+            for i in 0..depth as LayerIndex {
+                let src_offset = FramebufferIntPoint::new(src_x as i32, src_y as i32);
+                let dest_offset = FramebufferIntPoint::new(dest_x as i32, dest_y as i32);
+                let size = FramebufferIntSize::new(width as i32, height as i32);
+
+                self.blit_render_target(
+                    ReadTarget::from_texture(src_texture, src_z + i),
+                    FramebufferIntRect::new(src_offset, size),
+                    DrawTarget::from_texture(dest_texture, dest_z + i, false),
+                    FramebufferIntRect::new(dest_offset, size),
+                    // In most cases the filter shouldn't matter, as there is no scaling involved
+                    // in the blit. We were previously using Linear, but this caused issues when
+                    // blitting RGBAF32 textures on Mali, so use Nearest to be safe.
+                    TextureFilter::Nearest,
+                );
+            }
         }
     }
 
@@ -3162,34 +3181,7 @@ impl Device {
             main_vbo_id,
             instance_vbo_id,
             instance_stride,
-            storage_id: SBOId::INVALID,
             owns_vertices_and_indices,
-        }
-    }
-
-    pub fn create_storage_vao(
-        &mut self,
-        descriptor: &VertexDescriptor,
-        instance_stride: usize,
-    ) -> VAO {
-        let buffer_ids = self.gl.gen_buffers(3);
-        let ibo_id = IBOId(buffer_ids[0]);
-        let vbo_id = VBOId(buffer_ids[1]);
-        let storage_id = SBOId(buffer_ids[2]);
-        let vao_id = self.gl.gen_vertex_arrays(1)[0];
-
-        self.bind_vao_impl(vao_id);
-        ibo_id.bind(self.gl()); // force it to be a part of VAO
-        descriptor.bind(self.gl(), vbo_id, VBOId::INVALID);
-
-        VAO {
-            id: vao_id,
-            ibo_id,
-            main_vbo_id: vbo_id,
-            instance_vbo_id: VBOId::INVALID,
-            instance_stride,
-            storage_id,
-            owns_vertices_and_indices: true,
         }
     }
 
@@ -3259,11 +3251,7 @@ impl Device {
             self.gl.delete_buffers(&[vao.main_vbo_id.0]);
         }
 
-        if vao.instance_vbo_id != VBOId::INVALID {
-            self.gl.delete_buffers(&[vao.instance_vbo_id.0])
-        } else {
-            self.gl.delete_buffers(&[vao.storage_id.0])
-        }
+        self.gl.delete_buffers(&[vao.instance_vbo_id.0])
     }
 
     pub fn allocate_vbo<V>(
@@ -3354,26 +3342,6 @@ impl Device {
         debug_assert_eq!(vao.instance_stride as usize, mem::size_of::<V>());
 
         self.update_vbo_data(vao.instance_vbo_id, instances, usage_hint)
-    }
-
-    pub fn update_vao_storage<V>(
-        &mut self,
-        vao: &VAO,
-        storage: &[V],
-        shader_location: gl::GLuint,
-        usage_hint: VertexUsageHint,
-    ) {
-        debug_assert!(self.inside_frame);
-        debug_assert_eq!(self.bound_vao, vao.id);
-        debug_assert_eq!(vao.instance_stride as usize, mem::size_of::<V>());
-
-        self.gl.bind_buffer_base(SBOId::BIND_POINT, shader_location, vao.storage_id.0);
-        gl::buffer_data(
-            self.gl(),
-            SBOId::BIND_POINT,
-            storage,
-            usage_hint.to_gl(),
-        );
     }
 
     pub fn update_vao_indices<I>(&mut self, vao: &VAO, indices: &[I], usage_hint: VertexUsageHint) {

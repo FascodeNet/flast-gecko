@@ -230,25 +230,20 @@ if (window.docShell.QueryInterface(Ci.nsIWebNavigation).sessionHistory) {
 }
 
 var gViewController = {
-  viewPort: null,
   currentViewId: "",
   currentViewObj: null,
   currentViewRequest: 0,
+  isLoading: true,
   // All historyEntryId values must be unique within one session, because the
   // IDs are used to map history entries to page state. It is not possible to
   // see whether a historyEntryId was used in history entries before this page
   // was loaded, so start counting from a random value to avoid collisions.
   nextHistoryEntryId: Math.floor(Math.random() * 2 ** 32),
   viewObjects: {},
-  viewChangeCallback: null,
   initialViewSelected: false,
   lastHistoryIndex: -1,
 
   initialize() {
-    this.viewPort = document.getElementById("view-port");
-    this.headeredViews = document.getElementById("headered-views");
-    this.headeredViewsDeck = document.getElementById("headered-views-content");
-
     this.viewObjects.shortcuts = htmlView("shortcuts");
     this.viewObjects.list = htmlView("list");
     this.viewObjects.detail = htmlView("detail");
@@ -274,18 +269,6 @@ var gViewController = {
       this.currentViewObj.hide();
     }
     this.currentViewRequest = 0;
-
-    for (let type in this.viewObjects) {
-      let view = this.viewObjects[type];
-      if ("shutdown" in view) {
-        try {
-          view.shutdown();
-        } catch (e) {
-          // this shouldn't be fatal
-          Cu.reportError(e);
-        }
-      }
-    }
 
     window.controllers.removeController(this);
   },
@@ -314,12 +297,6 @@ var gViewController = {
     var matchRegex = /^addons:\/\/([^\/]+)\/(.*)$/;
     var [, viewType, viewParam] = aViewId.match(matchRegex) || [];
     return { type: viewType, param: decodeURIComponent(viewParam) };
-  },
-
-  get isLoading() {
-    return (
-      !this.currentViewObj || this.currentViewObj.node.hasAttribute("loading")
-    );
   },
 
   loadView(aViewId) {
@@ -377,23 +354,6 @@ var gViewController = {
     notifyInitialized();
   },
 
-  get displayedView() {
-    if (this.viewPort.selectedPanel == this.headeredViews) {
-      return this.headeredViewsDeck.selectedPanel;
-    }
-    return this.viewPort.selectedPanel;
-  },
-
-  set displayedView(view) {
-    let node = view.node;
-    if (node.parentNode == this.headeredViewsDeck) {
-      this.headeredViewsDeck.selectedPanel = node;
-      this.viewPort.selectedPanel = this.headeredViews;
-    } else {
-      this.viewPort.selectedPanel = node;
-    }
-  },
-
   loadViewInternal(aViewId, aPreviousView, aState, aEvent) {
     var view = this.parseViewId(aViewId);
 
@@ -414,7 +374,7 @@ var gViewController = {
         if (canHide === false) {
           return;
         }
-        this.displayedView.removeAttribute("loading");
+        this.isLoading = false;
       } catch (e) {
         // this shouldn't be fatal
         Cu.reportError(e);
@@ -424,8 +384,7 @@ var gViewController = {
     this.currentViewId = aViewId;
     this.currentViewObj = viewObj;
 
-    this.displayedView = this.currentViewObj;
-    this.currentViewObj.node.setAttribute("loading", "true");
+    this.isLoading = true;
 
     recordViewTelemetry(view.param);
 
@@ -442,19 +401,8 @@ var gViewController = {
     this.initialViewSelected = true;
   },
 
-  // Moves back in the document history and removes the current history entry
-  popState(aCallback) {
-    this.viewChangeCallback = aCallback;
-    gHistory.popState();
-  },
-
   notifyViewChanged() {
-    this.displayedView.removeAttribute("loading");
-
-    if (this.viewChangeCallback) {
-      this.viewChangeCallback();
-      this.viewChangeCallback = null;
-    }
+    this.isLoading = false;
 
     var event = document.createEvent("Events");
     event.initEvent("ViewChanged", true, true);
@@ -532,23 +480,21 @@ async function promiseHtmlBrowserLoaded() {
 
 function htmlView(type) {
   return {
-    _browser: null,
     node: null,
 
     initialize() {
-      this._browser = getHtmlBrowser();
-      this.node = this._browser.closest("#html-view");
+      this.node = getHtmlBrowser();
     },
 
     async show(param, request, state) {
       await promiseHtmlBrowserLoaded();
-      await this._browser.contentWindow.show(type, param, state);
+      await this.node.contentWindow.show(type, param, state);
       gViewController.notifyViewChanged();
     },
 
     async hide() {
       await promiseHtmlBrowserLoaded();
-      return this._browser.contentWindow.hide();
+      return this.node.contentWindow.hide();
     },
 
     getSelectedAddon() {

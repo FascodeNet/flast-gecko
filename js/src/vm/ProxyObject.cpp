@@ -86,21 +86,6 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   }
 #endif
 
-  /*
-   * Eagerly mark properties unknown for proxies, so we don't try to track
-   * their properties and so that we don't need to walk the compartment if
-   * their prototype changes later.  But don't do this for DOM proxies,
-   * because we want to be able to keep track of them in typesets in useful
-   * ways.
-   */
-  if (proto.isObject() && !clasp->isDOMClass()) {
-    ObjectGroupRealm& realm = ObjectGroupRealm::getForNewObject(cx);
-    RootedObject protoObj(cx, proto.toObject());
-    if (!JSObject::setNewGroupUnknown(cx, realm, clasp, protoObj)) {
-      return nullptr;
-    }
-  }
-
   gc::AllocKind allocKind = GetProxyGCObjectKind(clasp, handler, priv);
 
   Realm* realm = cx->realm();
@@ -132,15 +117,11 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   // Ensure that the wrapper has the same lifetime assumptions as the
   // wrappee. Prefer to allocate in the nursery, when possible.
   gc::InitialHeap heap;
-  {
-    AutoSweepObjectGroup sweep(group);
-    if (group->shouldPreTenure(sweep) ||
-        (priv.isGCThing() && priv.toGCThing()->isTenured()) ||
-        !handler->canNurseryAllocate()) {
-      heap = gc::TenuredHeap;
-    } else {
-      heap = gc::DefaultHeap;
-    }
+  if ((priv.isGCThing() && priv.toGCThing()->isTenured()) ||
+      !handler->canNurseryAllocate()) {
+    heap = gc::TenuredHeap;
+  } else {
+    heap = gc::DefaultHeap;
   }
 
   debugCheckNewObject(group, shape, allocKind, heap);
@@ -161,11 +142,6 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   gc::gcprobes::CreateObject(proxy);
 
   proxy->init(handler, priv, cx);
-
-  // Don't track types of properties of non-DOM and non-singleton proxies.
-  if (!clasp->isDOMClass()) {
-    MarkObjectGroupUnknownProperties(cx, proxy->group());
-  }
 
   return proxy;
 }

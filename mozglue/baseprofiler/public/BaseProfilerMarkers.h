@@ -106,17 +106,6 @@ inline ProfileBufferBlockIndex AddMarker(const ProfilerString8View& aName,
   return AddMarker(aName, aCategory, std::move(aOptions), markers::NoPayload{});
 }
 
-// Marker types' StreamJSONMarkerData functions should use this to correctly
-// output timestamps as a JSON property.
-inline void WritePropertyTime(JSONWriter& aWriter,
-                              const Span<const char>& aName,
-                              const TimeStamp& aTime) {
-  if (!aTime.IsNull()) {
-    aWriter.DoubleProperty(
-        aName, (aTime - TimeStamp::ProcessCreation()).ToMilliseconds());
-  }
-}
-
 }  // namespace mozilla::baseprofiler
 
 // Same as `AddMarker()` (without payload). This macro is safe to use even if
@@ -157,6 +146,25 @@ struct Text {
     schema.SetChartLabel("{marker.name} - {marker.data.name}");
     schema.SetTableLabel("{marker.name} - {marker.data.name}");
     schema.AddKeyLabelFormat("name", "Details", MarkerSchema::Format::string);
+    return schema;
+  }
+};
+
+struct Tracing {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("tracing");
+  }
+  static void StreamJSONMarkerData(SpliceableJSONWriter& aWriter,
+                                   const ProfilerString8View& aCategory) {
+    if (aCategory.Length() != 0) {
+      aWriter.StringProperty("category", aCategory);
+    }
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable,
+              MS::Location::timelineOverview};
+    schema.AddKeyLabelFormat("category", "Type", MS::Format::string);
     return schema;
   }
 };

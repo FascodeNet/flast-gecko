@@ -22,6 +22,8 @@
 #  define debugf(...) printf(__VA_ARGS__)
 #endif
 
+// #define PRINT_TIMINGS
+
 #ifdef _WIN32
 #  define ALWAYS_INLINE __forceinline
 #  define NO_INLINE __declspec(noinline)
@@ -71,6 +73,12 @@ struct IntRect {
     x1 = min(x1, o.x1);
     y1 = min(y1, o.y1);
     return *this;
+  }
+
+  IntRect intersection(const IntRect& o) {
+    IntRect result = *this;
+    result.intersect(o);
+    return result;
   }
 
   // Scale from source-space to dest-space, optionally rounding inward
@@ -1241,12 +1249,6 @@ void GetIntegerv(GLenum pname, GLint* params) {
       break;
     case GL_NUM_EXTENSIONS:
       params[0] = sizeof(extensions) / sizeof(extensions[0]);
-      break;
-    case GL_MAJOR_VERSION:
-      params[0] = 3;
-      break;
-    case GL_MINOR_VERSION:
-      params[0] = 2;
       break;
     default:
       debugf("unhandled glGetIntegerv parameter %x\n", pname);
@@ -3017,6 +3019,7 @@ static inline void commit_output(P* buf, Z z, DepthRun* zbuf, int span) {
   }
 }
 
+#include "composite.h"
 #include "swgl_ext.h"
 
 #pragma GCC diagnostic push
@@ -4026,8 +4029,8 @@ void DrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
     v.validate();
   }
 
-#ifndef NDEBUG
-  // uint64_t start = get_time_value();
+#ifdef PRINT_TIMINGS
+  uint64_t start = get_time_value();
 #endif
 
   ctx->shaded_rows = 0;
@@ -4079,17 +4082,23 @@ void DrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
     q.value += ctx->shaded_pixels;
   }
 
-#ifndef NDEBUG
-  // uint64_t end = get_time_value();
-  // debugf("draw(%d): %fms for %d pixels in %d rows (avg %f pixels/row, %f
-  // ns/pixel)\n", instancecount, double(end - start)/(1000.*1000.),
-  // ctx->shaded_pixels, ctx->shaded_rows,
-  // double(ctx->shaded_pixels)/ctx->shaded_rows, double(end -
-  // start)/max(ctx->shaded_pixels, 1));
+#ifdef PRINT_TIMINGS
+  uint64_t end = get_time_value();
+  printf("%7.3fms draw(%s, %d): %d pixels in %d rows (avg %f pixels/row, %fns/pixel)\n",
+         double(end - start)/(1000.*1000.),
+         ctx->programs[ctx->current_program].impl->get_name(),
+         instancecount,
+         ctx->shaded_pixels, ctx->shaded_rows,
+         double(ctx->shaded_pixels)/ctx->shaded_rows,
+         double(end - start)/max(ctx->shaded_pixels, 1));
 #endif
 }
 
-void Finish() {}
+void Finish() {
+#ifdef PRINT_TIMINGS
+  printf("Finish\n");
+#endif
+}
 
 void MakeCurrent(Context* c) {
   if (ctx == c) {
@@ -4131,4 +4140,3 @@ void DestroyContext(Context* c) {
 
 }  // extern "C"
 
-#include "composite.h"

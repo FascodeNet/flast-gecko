@@ -170,7 +170,6 @@ bool ObjectElements::PrepareForPreventExtensions(JSContext* cx,
 
   if (!obj->hasEmptyElements()) {
     obj->shrinkCapacityToInitializedLength(cx);
-    MarkObjectGroupFlags(cx, obj, OBJECT_FLAG_NON_EXTENSIBLE_ELEMENTS);
   }
 
   // shrinkCapacityToInitializedLength ensures there are no shifted elements.
@@ -365,27 +364,6 @@ Shape* js::NativeObject::lookup(JSContext* cx, jsid id) {
 Shape* js::NativeObject::lookupPure(jsid id) {
   MOZ_ASSERT(isNative());
   return Shape::searchNoHashify(lastProperty(), id);
-}
-
-void NativeObject::setLastPropertyShrinkFixedSlots(Shape* shape) {
-  MOZ_ASSERT(!inDictionaryMode());
-  MOZ_ASSERT(!shape->inDictionary());
-  MOZ_ASSERT(shape->zone() == zone());
-  MOZ_ASSERT(lastProperty()->slotSpan() == shape->slotSpan());
-  MOZ_ASSERT(shape->getObjectClass() == getClass());
-
-  DebugOnly<size_t> oldFixed = numFixedSlots();
-  DebugOnly<size_t> newFixed = shape->numFixedSlots();
-  MOZ_ASSERT(newFixed < oldFixed);
-  MOZ_ASSERT(shape->slotSpan() <= oldFixed);
-  MOZ_ASSERT(shape->slotSpan() <= newFixed);
-  MOZ_ASSERT(numDynamicSlots() == 0);
-  MOZ_ASSERT(calculateDynamicSlots(oldFixed, shape->slotSpan(), getClass()) ==
-             0);
-  MOZ_ASSERT(calculateDynamicSlots(newFixed, shape->slotSpan(), getClass()) ==
-             0);
-
-  setShape(shape);
 }
 
 bool NativeObject::ensureSlotsForDictionaryObject(JSContext* cx,
@@ -1371,21 +1349,6 @@ static MOZ_ALWAYS_INLINE void UpdateShapeTypeAndValue(JSContext* cx,
 
   if (shape->isDataProperty()) {
     obj->setSlotWithType(cx, shape, value, /* overwriting = */ false);
-
-    // Per the acquired properties analysis, when the shape of a partially
-    // initialized object is changed to its fully initialized shape, its
-    // group can be updated as well.
-    AutoSweepObjectGroup sweep(obj->groupRaw());
-    if (TypeNewScript* newScript = obj->groupRaw()->newScript(sweep)) {
-      if (newScript->initializedShape() == shape) {
-        obj->setGroup(newScript->initializedGroup());
-      }
-    }
-  } else {
-    MarkTypePropertyNonData(cx, obj, id);
-  }
-  if (!shape->writable()) {
-    MarkTypePropertyNonWritable(cx, obj, id);
   }
 }
 
@@ -1401,68 +1364,6 @@ static MOZ_ALWAYS_INLINE void UpdateShapeTypeAndValueForWritableDataProp(
   MOZ_ASSERT(shape->writable());
 
   obj->setSlotWithType(cx, shape, value, /* overwriting = */ false);
-
-  // Per the acquired properties analysis, when the shape of a partially
-  // initialized object is changed to its fully initialized shape, its
-  // group can be updated as well.
-  AutoSweepObjectGroup sweep(obj->groupRaw());
-  if (TypeNewScript* newScript = obj->groupRaw()->newScript(sweep)) {
-    if (newScript->initializedShape() == shape) {
-      obj->setGroup(newScript->initializedGroup());
-    }
-  }
-}
-
-void js::AddPropertyTypesAfterProtoChange(JSContext* cx, NativeObject* obj,
-                                          ObjectGroup* oldGroup) {
-  MOZ_ASSERT(obj->group() != oldGroup);
-  MOZ_ASSERT(!obj->group()->unknownPropertiesDontCheckGeneration());
-
-  AutoSweepObjectGroup sweepOldGroup(oldGroup);
-  if (oldGroup->unknownProperties(sweepOldGroup)) {
-    MarkObjectGroupUnknownProperties(cx, obj->group());
-    return;
-  }
-
-  // First copy the dynamic flags.
-  MarkObjectGroupFlags(
-      cx, obj, oldGroup->flags(sweepOldGroup) & OBJECT_FLAG_DYNAMIC_MASK);
-
-  // Now update all property types. If the object has many properties, this
-  // function may be slow so we mark all properties as unknown.
-  static const size_t MaxPropertyCount = 40;
-
-  size_t nprops = obj->getDenseInitializedLength();
-  if (nprops > MaxPropertyCount) {
-    MarkObjectGroupUnknownProperties(cx, obj->group());
-    return;
-  }
-
-  // Add dense element types.
-  for (size_t i = 0; i < obj->getDenseInitializedLength(); i++) {
-    Value val = obj->getDenseElement(i);
-    if (!val.isMagic(JS_ELEMENTS_HOLE)) {
-      AddTypePropertyId(cx, obj, JSID_VOID, val);
-    }
-  }
-
-  // Add property types.
-  for (Shape::Range<NoGC> r(obj->lastProperty()); !r.empty(); r.popFront()) {
-    Shape* shape = &r.front();
-    jsid id = shape->propid();
-    if (JSID_IS_EMPTY(id)) {
-      continue;
-    }
-
-    if (nprops++ > MaxPropertyCount) {
-      MarkObjectGroupUnknownProperties(cx, obj->group());
-      return;
-    }
-
-    Value val = shape->isDataProperty() ? obj->getSlot(shape->slot())
-                                        : UndefinedValue();
-    UpdateShapeTypeAndValue(cx, obj, shape, id, val);
-  }
 }
 
 static bool ReshapeForShadowedPropSlow(JSContext* cx, HandleNativeObject obj,
@@ -2397,11 +2298,6 @@ static MOZ_ALWAYS_INLINE bool GetExistingProperty(
     MOZ_ASSERT(shape->hasDefaultGetter());
 
     vp.set(obj->getSlot(shape->slot()));
-
-    MOZ_ASSERT_IF(
-        !vp.isMagic(JS_UNINITIALIZED_LEXICAL) && !obj->isSingleton() &&
-            !obj->template is<EnvironmentObject>() && shape->hasDefaultGetter(),
-        ObjectGroupHasProperty(cx, obj->group(), shape->propid(), vp));
     return true;
   }
 

@@ -135,10 +135,6 @@
 #  include "GeckoTaskTracer.h"
 #endif
 
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
-
 namespace mozilla {
 
 using namespace dom;
@@ -9364,7 +9360,8 @@ void nsHttpChannel::MaybeWarnAboutAppCache() {
   nsCOMPtr<nsIDeprecationWarner> warner;
   GetCallback(warner);
   if (warner) {
-    warner->IssueWarning(Document::eAppCache, false);
+    warner->IssueWarning(static_cast<uint32_t>(DeprecatedOperations::eAppCache),
+                         false);
   }
 }
 

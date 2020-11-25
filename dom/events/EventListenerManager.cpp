@@ -30,6 +30,7 @@
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/TouchEvent.h"
 #include "mozilla/dom/UserActivation.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TimelineConsumers.h"
 #include "mozilla/EventTimelineMarker.h"
 #include "mozilla/TimeStamp.h"
@@ -277,7 +278,7 @@ void EventListenerManager::AddEventListenerInternal(
       if (doc &&
           !(aFlags.mInSystemGroup &&
             doc->DontWarnAboutMutationEventsAndAllowSlowDOMMutations())) {
-        doc->WarnOnceAbout(Document::eMutationEvent);
+        doc->WarnOnceAbout(DeprecatedOperations::eMutationEvent);
       }
       // If aEventMessage is eLegacySubtreeModified, we need to listen all
       // mutations. nsContentUtils::HasMutationListeners relies on this.

@@ -22,6 +22,7 @@
 #include "mozilla/Telemetry.h"
 #include "nsBufferedStreams.h"
 #include "nsCategoryCache.h"
+#include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
 #include "nsFileStreams.h"
 #include "nsHashKeys.h"
@@ -138,6 +139,18 @@ nsresult NS_NewLocalFileInputStream(nsIInputStream** result, nsIFile* file,
   return rv;
 }
 
+Result<nsCOMPtr<nsIInputStream>, nsresult> NS_NewLocalFileInputStream(
+    nsIFile* file, int32_t ioFlags /* = -1 */, int32_t perm /* = -1 */,
+    int32_t behaviorFlags /* = 0 */) {
+  nsCOMPtr<nsIInputStream> stream;
+  const nsresult rv = NS_NewLocalFileInputStream(getter_AddRefs(stream), file,
+                                                 ioFlags, perm, behaviorFlags);
+  if (NS_SUCCEEDED(rv)) {
+    return stream;
+  }
+  return Err(rv);
+}
+
 nsresult NS_NewLocalFileOutputStream(nsIOutputStream** result, nsIFile* file,
                                      int32_t ioFlags /* = -1 */,
                                      int32_t perm /* = -1 */,
@@ -150,6 +163,18 @@ nsresult NS_NewLocalFileOutputStream(nsIOutputStream** result, nsIFile* file,
     if (NS_SUCCEEDED(rv)) out.forget(result);
   }
   return rv;
+}
+
+Result<nsCOMPtr<nsIOutputStream>, nsresult> NS_NewLocalFileOutputStream(
+    nsIFile* file, int32_t ioFlags /* = -1 */, int32_t perm /* = -1 */,
+    int32_t behaviorFlags /* = 0 */) {
+  nsCOMPtr<nsIOutputStream> stream;
+  const nsresult rv = NS_NewLocalFileOutputStream(getter_AddRefs(stream), file,
+                                                  ioFlags, perm, behaviorFlags);
+  if (NS_SUCCEEDED(rv)) {
+    return stream;
+  }
+  return Err(rv);
 }
 
 nsresult NS_NewLocalFileOutputStream(nsIOutputStream** result,
@@ -1267,6 +1292,18 @@ nsresult NS_NewLocalFileStream(nsIFileStream** result, nsIFile* file,
   return rv;
 }
 
+mozilla::Result<nsCOMPtr<nsIFileStream>, nsresult> NS_NewLocalFileStream(
+    nsIFile* file, int32_t ioFlags /* = -1 */, int32_t perm /* = -1 */,
+    int32_t behaviorFlags /* = 0 */) {
+  nsCOMPtr<nsIFileStream> stream;
+  const nsresult rv = NS_NewLocalFileStream(getter_AddRefs(stream), file,
+                                            ioFlags, perm, behaviorFlags);
+  if (NS_SUCCEEDED(rv)) {
+    return stream;
+  }
+  return Err(rv);
+}
+
 nsresult NS_NewBufferedOutputStream(
     nsIOutputStream** aResult, already_AddRefed<nsIOutputStream> aOutputStream,
     uint32_t aBufferSize) {
@@ -1301,6 +1338,17 @@ nsresult NS_NewBufferedOutputStream(
     }
   }
   return rv;
+}
+
+Result<nsCOMPtr<nsIInputStream>, nsresult> NS_NewBufferedInputStream(
+    already_AddRefed<nsIInputStream> aInputStream, uint32_t aBufferSize) {
+  nsCOMPtr<nsIInputStream> stream;
+  const nsresult rv = NS_NewBufferedInputStream(
+      getter_AddRefs(stream), std::move(aInputStream), aBufferSize);
+  if (NS_SUCCEEDED(rv)) {
+    return stream;
+  }
+  return Err(rv);
 }
 
 namespace {
@@ -2670,13 +2718,9 @@ void net_EnsurePSMInit() {
   nsCOMPtr<nsISupports> psm = do_GetService(PSM_COMPONENT_CONTRACTID, &rv);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
-  nsCOMPtr<nsISupports> sss = do_GetService(NS_SSSERVICE_CONTRACTID);
-#ifdef MOZ_NEW_CERT_STORAGE
-  nsCOMPtr<nsISupports> cbl = do_GetService(NS_CERTSTORAGE_CONTRACTID);
-#else
+#ifndef MOZ_NEW_CERT_STORAGE
   nsCOMPtr<nsISupports> cbl = do_GetService(NS_CERTBLOCKLIST_CONTRACTID);
 #endif
-  nsCOMPtr<nsISupports> cos = do_GetService(NS_CERTOVERRIDE_CONTRACTID);
 }
 
 bool NS_IsAboutBlank(nsIURI* uri) {

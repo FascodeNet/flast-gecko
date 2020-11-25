@@ -1530,17 +1530,6 @@ inline void js::GCMarker::eagerlyMarkChildren(Scope* scope) {
 }
 
 void js::ObjectGroup::traceChildren(JSTracer* trc) {
-  AutoSweepObjectGroup sweep(this);
-
-  if (!trc->canSkipJsids()) {
-    unsigned count = getPropertyCount(sweep);
-    for (unsigned i = 0; i < count; i++) {
-      if (ObjectGroup::Property* prop = getProperty(sweep, i)) {
-        TraceEdge(trc, &prop->id, "group_property");
-      }
-    }
-  }
-
   if (proto().isObject()) {
     TraceEdge(trc, &proto(), "group_proto");
   }
@@ -1550,34 +1539,14 @@ void js::ObjectGroup::traceChildren(JSTracer* trc) {
     TraceManuallyBarrieredEdge(trc, &global, "group_global");
   }
 
-  if (newScript(sweep)) {
-    newScript(sweep)->trace(trc);
-  }
-
-  if (maybePreliminaryObjects(sweep)) {
-    maybePreliminaryObjects(sweep)->trace(trc);
-  }
-
   if (JSObject* descr = maybeTypeDescr()) {
     TraceManuallyBarrieredEdge(trc, &descr, "group_type_descr");
     MOZ_ASSERT(js::IsTypeDescrClass(MaybeForwardedObjectClass(descr)));
     setTypeDescr(static_cast<TypeDescr*>(descr));
   }
-
-  if (JSObject* fun = maybeInterpretedFunction()) {
-    TraceManuallyBarrieredEdge(trc, &fun, "group_function");
-    setInterpretedFunction(&MaybeForwardedObjectAs<JSFunction>(fun));
-  }
 }
-void js::GCMarker::lazilyMarkChildren(ObjectGroup* group) {
-  AutoSweepObjectGroup sweep(group);
-  unsigned count = group->getPropertyCount(sweep);
-  for (unsigned i = 0; i < count; i++) {
-    if (ObjectGroup::Property* prop = group->getProperty(sweep, i)) {
-      traverseEdge(group, prop->id.get());
-    }
-  }
 
+void js::GCMarker::lazilyMarkChildren(ObjectGroup* group) {
   if (group->proto().isObject()) {
     traverseEdge(group, group->proto().toObject());
   }
@@ -1587,20 +1556,8 @@ void js::GCMarker::lazilyMarkChildren(ObjectGroup* group) {
     traverseEdge(group, static_cast<JSObject*>(global));
   }
 
-  if (group->newScript(sweep)) {
-    group->newScript(sweep)->trace(this);
-  }
-
-  if (group->maybePreliminaryObjects(sweep)) {
-    group->maybePreliminaryObjects(sweep)->trace(this);
-  }
-
   if (TypeDescr* descr = group->maybeTypeDescr()) {
     traverseEdge(group, static_cast<JSObject*>(descr));
-  }
-
-  if (JSFunction* fun = group->maybeInterpretedFunction()) {
-    traverseEdge(group, static_cast<JSObject*>(fun));
   }
 }
 
@@ -1883,49 +1840,6 @@ bool GCMarker::markUntilBudgetExhausted(SliceBudget& budget,
   return true;
 }
 
-inline static bool ObjectDenseElementsMayBeMarkable(NativeObject* nobj) {
-  /*
-   * For arrays that are large enough it's worth checking the type information
-   * to see if the object's elements contain any GC pointers.  If not, we
-   * don't need to trace them.
-   */
-  const unsigned MinElementsLength = 32;
-  if (nobj->getDenseInitializedLength() < MinElementsLength ||
-      nobj->isSingleton()) {
-    return true;
-  }
-
-  ObjectGroup* group = nobj->group();
-  if (group->needsSweep() || group->unknownPropertiesDontCheckGeneration()) {
-    return true;
-  }
-
-  MOZ_ASSERT(IsTypeInferenceEnabled());
-
-  // This typeset doesn't escape this function so avoid sweeping here.
-  HeapTypeSet* typeSet = group->maybeGetPropertyDontCheckGeneration(JSID_VOID);
-  if (!typeSet) {
-    return true;
-  }
-
-  static const uint32_t flagMask = TYPE_FLAG_STRING | TYPE_FLAG_SYMBOL |
-                                   TYPE_FLAG_LAZYARGS | TYPE_FLAG_ANYOBJECT |
-                                   TYPE_FLAG_BIGINT;
-  bool mayBeMarkable =
-      typeSet->hasAnyFlag(flagMask) || typeSet->getObjectCount() != 0;
-
-#ifdef DEBUG
-  if (!mayBeMarkable) {
-    const Value* elements = nobj->getDenseElementsAllowCopyOnWrite();
-    for (unsigned i = 0; i < nobj->getDenseInitializedLength(); i++) {
-      MOZ_ASSERT(!elements[i].isGCThing());
-    }
-  }
-#endif
-
-  return mayBeMarkable;
-}
-
 static inline void CheckForCompartmentMismatch(JSObject* obj, JSObject* obj2) {
 #ifdef DEBUG
   if (MOZ_UNLIKELY(obj->compartment() != obj2->compartment())) {
@@ -2114,10 +2028,6 @@ scan_obj : {
         traverseEdge(obj, owner);
         break;
       }
-    }
-
-    if (!ObjectDenseElementsMayBeMarkable(nobj)) {
-      break;
     }
 
     base = nobj->getDenseElementsAllowCopyOnWrite();
@@ -3203,8 +3113,7 @@ void js::TenuringTracer::traceObject(JSObject* obj) {
   // Note: the contents of copy on write elements pointers are filled in
   // during parsing and cannot contain nursery pointers.
   NativeObject* nobj = &obj->as<NativeObject>();
-  if (!nobj->hasEmptyElements() && !nobj->denseElementsAreCopyOnWrite() &&
-      ObjectDenseElementsMayBeMarkable(nobj)) {
+  if (!nobj->hasEmptyElements() && !nobj->denseElementsAreCopyOnWrite()) {
     HeapSlotArray elements = nobj->getDenseElements();
     Value* elems = elements.begin()->unbarrieredAddress();
     traceSlots(elems, elems + nobj->getDenseInitializedLength());

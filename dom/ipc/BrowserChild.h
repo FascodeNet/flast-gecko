@@ -19,7 +19,6 @@
 #include "nsIWindowProvider.h"
 #include "nsIDocShell.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsFrameMessageManager.h"
 #include "nsWeakReference.h"
 #include "nsIBrowserChild.h"
 #include "nsITooltipListener.h"
@@ -29,6 +28,7 @@
 #include "mozilla/dom/TabContext.h"
 #include "mozilla/dom/CoalescedMouseData.h"
 #include "mozilla/dom/CoalescedWheelData.h"
+#include "mozilla/dom/MessageManagerCallback.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventForwards.h"
@@ -41,6 +41,7 @@
 #include "AudioChannelService.h"
 #include "PuppetWidget.h"
 #include "nsDeque.h"
+#include "nsIRemoteTab.h"
 
 class nsBrowserStatusFilter;
 class nsIDOMWindow;
@@ -565,8 +566,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   bool IPCOpen() const { return mIPCOpen; }
 
-  bool ParentIsActive() const { return mParentIsActive; }
-
   const mozilla::layers::CompositorOptions& GetCompositorOptions() const;
   bool AsyncPanZoomEnabled() const;
 
@@ -714,8 +713,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   mozilla::ipc::IPCResult RecvSuppressDisplayport(const bool& aEnabled);
 
-  mozilla::ipc::IPCResult RecvParentActivated(const bool& aActivated);
-
   mozilla::ipc::IPCResult RecvScrollbarPreferenceChanged(ScrollbarPreference);
 
   mozilla::ipc::IPCResult RecvSetKeyboardIndicators(
@@ -848,7 +845,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   bool mIsTransparent;
 
   bool mIPCOpen;
-  bool mParentIsActive;
   CSSSize mUnscaledInnerSize;
   bool mDidSetRealShowInfo;
   bool mDidLoadURLInit;

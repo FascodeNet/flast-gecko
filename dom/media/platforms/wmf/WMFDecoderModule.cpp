@@ -27,6 +27,7 @@
 #include "mozilla/WindowsVersion.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/mscom/EnsureMTA.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIXULRuntime.h"
 #include "nsIXULRuntime.h"  // for BrowserTabsRemoteAutostart
@@ -36,28 +37,19 @@
 
 #define LOG(...) MOZ_LOG(sPDMLog, mozilla::LogLevel::Debug, (__VA_ARGS__))
 
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#  define WFM_DECODER_MODULE_STATUS_MARKER(tag, text, markerTime)            \
-    PROFILER_ADD_MARKER_WITH_PAYLOAD(tag, MEDIA_PLAYBACK, TextMarkerPayload, \
-                                     (text, markerTime))
-#else
-#  define WFM_DECODER_MODULE_STATUS_MARKER(tag, text, markerTime)
-#endif
-
 extern const GUID CLSID_WebmMfVpxDec;
 
 namespace mozilla {
 
 // Helper function to add a profile marker and log at the same time.
 static void MOZ_FORMAT_PRINTF(2, 3)
-    WmfDeocderModuleMarkerAndLog(const char* aTag, const char* aFormat, ...) {
+    WmfDeocderModuleMarkerAndLog(const ProfilerString8View& aMarkerTag,
+                                 const char* aFormat, ...) {
   va_list ap;
   va_start(ap, aFormat);
   const nsVprintfCString markerString(aFormat, ap);
   va_end(ap);
-  WFM_DECODER_MODULE_STATUS_MARKER(aTag, markerString,
-                                   TimeStamp::NowUnfuzzed());
+  PROFILER_MARKER_TEXT(aMarkerTag, MEDIA_PLAYBACK, {}, markerString);
   LOG("%s", markerString.get());
 }
 
@@ -115,9 +107,13 @@ void WMFDecoderModule::Init() {
     // means that we've given up on the GPU process (it's been crashing) so we
     // should disable DXVA
     sDXVAEnabled = !StaticPrefs::media_gpu_process_decoder();
-  } else if (XRE_IsGPUProcess() || XRE_IsRDDProcess()) {
-    // Always allow DXVA in the GPU or RDD process.
+  } else if (XRE_IsGPUProcess()) {
+    // Always allow DXVA in the GPU process.
     sDXVAEnabled = true;
+  } else if (XRE_IsRDDProcess()) {
+    // Only allows DXVA if we have an image device. We may have explicitly
+    // disabled its creation following an earlier RDD process crash.
+    sDXVAEnabled = !!DeviceManagerDx::Get()->GetImageDevice();
   } else {
     // Only allow DXVA in the UI process if we aren't in e10s Firefox
     sDXVAEnabled = !mozilla::BrowserTabsRemoteAutostart();

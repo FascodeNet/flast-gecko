@@ -303,8 +303,10 @@ class FirefoxDataProvider {
    * @return {object}
    */
   async _getStackTraceFromWatcher(actor) {
-    const stacktracesFront = await actor.targetFront.getFront("stacktraces");
-    const stacktrace = await stacktracesFront.getStackTrace(
+    const networkContentFront = await actor.targetFront.getFront(
+      "networkContent"
+    );
+    const stacktrace = await networkContentFront.getStackTrace(
       actor.stacktraceResourceId
     );
     return { stacktrace };
@@ -520,7 +522,7 @@ class FirefoxDataProvider {
       // Do a RDP request to fetch data from the actor.
       if (
         clientMethodName == "getStackTrace" &&
-        this.resourceWatcher.hasWatcherSupport(
+        this.resourceWatcher.hasResourceWatcherSupport(
           this.resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE
         )
       ) {

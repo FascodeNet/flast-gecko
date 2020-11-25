@@ -290,9 +290,9 @@ void nsBlockReflowContext::ReflowBlock(
 
 #ifdef DEBUG
   if (!aFrameReflowStatus.IsInlineBreakBefore()) {
-    if ((CRAZY_SIZE(mMetrics.ISize(mWritingMode)) ||
-         CRAZY_SIZE(mMetrics.BSize(mWritingMode))) &&
-        !mFrame->GetParent()->IsCrazySizeAssertSuppressed()) {
+    if ((ABSURD_SIZE(mMetrics.ISize(mWritingMode)) ||
+         ABSURD_SIZE(mMetrics.BSize(mWritingMode))) &&
+        !mFrame->GetParent()->IsAbsurdSizeAssertSuppressed()) {
       printf("nsBlockReflowContext: ");
       mFrame->ListTag(stdout);
       printf(" metrics=%d,%d!\n", mMetrics.ISize(mWritingMode),
@@ -339,7 +339,7 @@ void nsBlockReflowContext::ReflowBlock(
 bool nsBlockReflowContext::PlaceBlock(const ReflowInput& aReflowInput,
                                       bool aForceFit, nsLineBox* aLine,
                                       nsCollapsingMargin& aBEndMarginResult,
-                                      nsOverflowAreas& aOverflowAreas,
+                                      OverflowAreas& aOverflowAreas,
                                       const nsReflowStatus& aReflowStatus) {
   // Compute collapsed block-end margin value.
   WritingMode parentWM = mMetrics.GetWritingMode();

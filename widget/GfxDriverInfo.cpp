@@ -295,7 +295,13 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0D2B); /* IntelHaswell_GT3e_4 */
       APPEND_DEVICE(0x0D2E); /* IntelHaswell_GT3e_5 */
       break;
-    case DeviceFamily::IntelHD3000:
+    case DeviceFamily::IntelSandyBridge:
+      APPEND_DEVICE(0x0102);
+      APPEND_DEVICE(0x0106);
+      APPEND_DEVICE(0x010a);
+      APPEND_DEVICE(0x0112);
+      APPEND_DEVICE(0x0116);
+      APPEND_DEVICE(0x0122);
       APPEND_DEVICE(0x0126);
       break;
     case DeviceFamily::IntelHD520:
@@ -639,7 +645,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x190a);
       APPEND_DEVICE(0x190e);
 
-      // skylake gt2+
+      // skylake gt2
       APPEND_DEVICE(0x1912);
       APPEND_DEVICE(0x1913);
       APPEND_DEVICE(0x1915);
@@ -650,11 +656,16 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x191d);
       APPEND_DEVICE(0x191e);
       APPEND_DEVICE(0x1921);
+
+      // skylake gt3
       APPEND_DEVICE(0x1923);
       APPEND_DEVICE(0x1926);
       APPEND_DEVICE(0x1927);
       APPEND_DEVICE(0x192b);
+
+      // skylake gt4
       APPEND_DEVICE(0x1932);
+      APPEND_DEVICE(0x193a);
       APPEND_DEVICE(0x193b);
       APPEND_DEVICE(0x193d);
 
@@ -887,7 +898,7 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceFamily id) {
     case DeviceFamily::IntelHDGraphicsToIvyBridge:
     case DeviceFamily::IntelHDGraphicsToSandyBridge:
     case DeviceFamily::IntelHaswell:
-    case DeviceFamily::IntelHD3000:
+    case DeviceFamily::IntelSandyBridge:
     case DeviceFamily::IntelHD520:
     case DeviceFamily::IntelMobileHDGraphics:
     case DeviceFamily::IntelRolloutWebRender:
@@ -995,6 +1006,8 @@ const nsAString& GfxDriverInfo::GetDriverVendor(DriverVendor id) {
     DECLARE_DRIVER_VENDOR_ID(MesaUnknown, "mesa/unknown");
     DECLARE_DRIVER_VENDOR_ID(MesaNouveau, "mesa/nouveau");
     DECLARE_DRIVER_VENDOR_ID(NonMesaAll, "non-mesa/all");
+    DECLARE_DRIVER_VENDOR_ID(HardwareMesaAll, "mesa/hw-all");
+    DECLARE_DRIVER_VENDOR_ID(SoftwareMesaAll, "mesa/sw-all");
     case DriverVendor::Max:  // Suppress a warning.
       DECLARE_DRIVER_VENDOR_ID(All, "");
   }

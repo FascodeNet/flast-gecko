@@ -34,6 +34,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/EventListenerManager.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
@@ -65,6 +66,7 @@
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/PBrowser.h"
 #include "mozilla/dom/PaymentRequestChild.h"
+#include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/SessionStoreListener.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/WindowProxyHolder.h"
@@ -321,7 +323,6 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mHasSiblings(false),
       mIsTransparent(false),
       mIPCOpen(false),
-      mParentIsActive(false),
       mDidSetRealShowInfo(false),
       mDidLoadURLInit(false),
       mSkipKeyPress(false),
@@ -1061,7 +1062,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvCloneDocumentTreeIntoSelf(
 
 void BrowserChild::DoFakeShow(const ParentShowInfo& aParentShowInfo) {
   OwnerShowInfo ownerInfo{ScreenIntSize(), ScrollbarPreference::Auto,
-                          mParentIsActive, nsSizeMode_Normal};
+                          nsSizeMode_Normal};
   RecvShow(aParentShowInfo, ownerInfo);
   mDidFakeShow = true;
 }
@@ -1105,7 +1106,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvShow(
   }
 
   ApplyParentShowInfo(aParentInfo);
-  RecvParentActivated(aOwnerInfo.parentWindowIsActive());
+
   if (!mIsTopLevel) {
     RecvScrollbarPreferenceChanged(aOwnerInfo.scrollbarPreference());
   }
@@ -1426,18 +1427,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvActivate(uint64_t aActionId) {
 mozilla::ipc::IPCResult BrowserChild::RecvDeactivate(uint64_t aActionId) {
   MOZ_ASSERT(mWebBrowser);
   mWebBrowser->FocusDeactivate(aActionId);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserChild::RecvParentActivated(
-    const bool& aActivated) {
-  mParentIsActive = aActivated;
-
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  NS_ENSURE_TRUE(fm, IPC_OK());
-
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
-  fm->ParentActivated(window, aActivated);
   return IPC_OK();
 }
 

@@ -7,13 +7,17 @@
 #ifndef mozilla_dom_PopupBlocker_h
 #define mozilla_dom_PopupBlocker_h
 
-#include "Element.h"
-#include "mozilla/BasicEvents.h"
+#include <stdint.h>
+#include "mozilla/Attributes.h"
+#include "mozilla/TimeStamp.h"
 
+class AutoPopupStatePusherInternal;
 class nsIPrincipal;
 
 namespace mozilla {
+class WidgetEvent;
 namespace dom {
+class Event;
 
 class PopupBlocker final {
  public:

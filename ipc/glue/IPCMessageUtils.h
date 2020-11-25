@@ -14,6 +14,8 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
+#include "mozilla/ipc/IPCCore.h"
+#include "mozilla/ipc/SerializedStructuredCloneBuffer.h"
 #include "mozilla/BitSet.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/EnumTypeTraits.h"
@@ -43,7 +45,6 @@
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsTHashtable.h"
-#include "js/StructuredClone.h"
 #include "nsCSSPropertyID.h"
 
 #ifdef _MSC_VER
@@ -62,43 +63,13 @@ struct FileDescriptor {};
 #endif
 
 namespace mozilla {
+template <typename...>
+class Variant;
 
-// This is a cross-platform approximation to HANDLE, which we expect
-// to be typedef'd to void* or thereabouts.
-typedef uintptr_t WindowsHandle;
-
-// XXX there are out of place and might be generally useful.  Could
-// move to nscore.h or something.
-struct void_t {
-  bool operator==(const void_t&) const { return true; }
-};
-struct null_t {
-  bool operator==(const null_t&) const { return true; }
-};
-
-struct SerializedStructuredCloneBuffer final {
-  SerializedStructuredCloneBuffer() = default;
-
-  SerializedStructuredCloneBuffer(SerializedStructuredCloneBuffer&&) = default;
-  SerializedStructuredCloneBuffer& operator=(
-      SerializedStructuredCloneBuffer&&) = default;
-
-  SerializedStructuredCloneBuffer(const SerializedStructuredCloneBuffer&) =
-      delete;
-  SerializedStructuredCloneBuffer& operator=(
-      const SerializedStructuredCloneBuffer& aOther) = delete;
-
-  bool operator==(const SerializedStructuredCloneBuffer& aOther) const {
-    // The copy assignment operator and the equality operator are
-    // needed by the IPDL generated code. We relied on the copy
-    // assignment operator at some places but we never use the
-    // equality operator.
-    return false;
-  }
-
-  JSStructuredCloneData data{JS::StructuredCloneScope::Unassigned};
-};
-
+namespace detail {
+template <typename...>
+struct VariantTag;
+}
 }  // namespace mozilla
 
 namespace IPC {

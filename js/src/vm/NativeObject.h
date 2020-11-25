@@ -630,12 +630,6 @@ class NativeObject : public JSObject {
   // with the object's new slot span.
   MOZ_ALWAYS_INLINE bool setLastProperty(JSContext* cx, Shape* shape);
 
-  // As for setLastProperty(), but allows the number of fixed slots to
-  // change. This can only be used when fixed slots are being erased from the
-  // object, and only when the object will not require dynamic slots to cover
-  // the new properties.
-  void setLastPropertyShrinkFixedSlots(Shape* shape);
-
   // Newly-created TypedArrays that map a SharedArrayBuffer are
   // marked as shared by giving them an ObjectElements that has the
   // ObjectElements::SHARED_MEMORY flag set.
@@ -1172,9 +1166,6 @@ class NativeObject : public JSObject {
   inline void shiftDenseElementsUnchecked(uint32_t count);
 
  public:
-  static bool rollbackProperties(JSContext* cx, HandleNativeObject obj,
-                                 uint32_t slotSpan);
-
   MOZ_ALWAYS_INLINE void setSlotWithType(JSContext* cx, Shape* shape,
                                          const Value& value,
                                          bool overwriting = true);
@@ -1787,9 +1778,6 @@ inline NativeObject* MaybeNativeObject(JSObject* obj) {
 
 // Defined in NativeObject-inl.h.
 bool IsPackedArray(JSObject* obj);
-
-extern void AddPropertyTypesAfterProtoChange(JSContext* cx, NativeObject* obj,
-                                             ObjectGroup* oldGroup);
 
 // Initialize an object's reserved slot with a private value pointing to
 // malloc-allocated memory and associate the memory with the object.

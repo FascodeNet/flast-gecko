@@ -902,6 +902,13 @@ var BookmarksEventHandler = {
     var target = aEvent.originalTarget;
     if (target._placesNode) {
       PlacesUIUtils.openNodeWithEvent(target._placesNode, aEvent);
+      // Only record interactions through the Bookmarks Toolbar
+      if (target.closest("#PersonalToolbar")) {
+        Services.telemetry.scalarAdd(
+          "browser.engagement.bookmarks_toolbar_bookmark_opened",
+          1
+        );
+      }
     }
   },
 
@@ -1121,11 +1128,40 @@ var PlacesMenuDNDHandler = {
  * toolbar. It also has helper functions for the managed bookmarks button.
  */
 var PlacesToolbarHelper = {
+  /**
+   * If init is called and _canShowPromise is null, this method
+   * is overwritten and won't run.
+   * If we get called and nobody has tried to call `init` yet,
+   * just create a resolved promise for _canShowPromise.
+   */
+  _readyToShowCallback() {
+    this._canShowPromise = Promise.resolve();
+  },
+  _readyToShow: false,
+  _canShowPromise: null,
+
   get _viewElt() {
     return document.getElementById("PlacesToolbar");
   },
 
-  init: function PTH_init() {
+  /**
+   * Initialize. This will await _canShowPromise - which is either created
+   * as a resolved promise if the idle task calling startShowingToolbar is
+   * called first, or created here and resolved once startShowingToolbar is
+   * called.
+   */
+  init() {
+    if (!this._readyToShow) {
+      this._canShowPromise = new Promise(resolve => {
+        this._readyToShowCallback = resolve;
+      });
+      this._canShowPromise.then(() => this._realInit());
+    } else {
+      this._realInit();
+    }
+  },
+
+  _realInit() {
     let viewElt = this._viewElt;
     if (!viewElt || viewElt._placesView) {
       return;
@@ -1156,7 +1192,20 @@ var PlacesToolbarHelper = {
       return;
     }
 
+    if (
+      toolbar.id == "PersonalToolbar" &&
+      !toolbar.hasAttribute("initialized")
+    ) {
+      toolbar.setAttribute("initialized", "true");
+      BookmarkingUI.updateEmptyToolbarMessage();
+    }
+
     new PlacesToolbar(`place:parent=${PlacesUtils.bookmarks.toolbarGuid}`);
+  },
+
+  startShowingToolbar() {
+    this._readyToShow = true;
+    this._readyToShowCallback();
   },
 
   handleEvent(event) {
@@ -1169,12 +1218,16 @@ var PlacesToolbarHelper = {
     }
   },
 
+  /**
+   * This is a no-op if we haven't been initialized.
+   */
   uninit: function PTH_uninit() {
     if (this._isObservingToolbars) {
       delete this._isObservingToolbars;
       window.removeEventListener("toolbarvisibilitychange", this);
     }
     CustomizableUI.removeListener(this);
+    this._readyToShowCallback = () => {};
   },
 
   customizeStart: function PTH_customizeStart() {
@@ -1644,41 +1697,47 @@ var BookmarkingUI = {
     return menu;
   },
 
+  /**
+   * Check if we need to make the empty toolbar message `hidden`.
+   * We'll have it unhidden during startup, to make sure the toolbar
+   * has height, and we'll unhide it if there is nothing else on the toolbar.
+   * We hide it in customize mode, unless there's nothing on the toolbar.
+   */
   updateEmptyToolbarMessage() {
-    let hasVisibleChildren = !!this.toolbar.querySelector(
-      `#PersonalToolbar > toolbarpaletteitem > toolbarbutton:not([hidden]),
-       #PersonalToolbar > toolbarpaletteitem > toolbaritem:not([hidden]):not(#personal-bookmarks),
-       #PersonalToolbar > toolbarbutton:not([hidden]),
-       #PersonalToolbar > toolbaritem:not([hidden]):not(#personal-bookmarks)`
-    );
+    let emptyMsg = document.getElementById("personal-toolbar-empty");
 
-    let toolbarBookmarkCount = 0;
-    // Prevent loading PlacesUtil.jsm during startup.
-    if (Cu.isModuleLoaded("resource://gre/modules/PlacesUtils.jsm")) {
-      toolbarBookmarkCount = PlacesUtils.getChildCountForFolder(
-        PlacesUtils.bookmarks.toolbarGuid
-      );
-    } else {
-      const kPlacesInitComplete = "places-init-complete";
-      let observer = {
-        observe() {
-          Services.obs.removeObserver(observer, kPlacesInitComplete);
-          BookmarkingUI.updateEmptyToolbarMessage();
-        },
-      };
-      Services.obs.addObserver(observer, kPlacesInitComplete);
+    // If the bookmarks are here but it's early in startup, show the message.
+    // It'll get made visibility: hidden early in startup anyway - it's just
+    // to ensure the toolbar has height.
+    if (!this.toolbar.hasAttribute("initialized")) {
+      emptyMsg.hidden = false;
+      return;
     }
 
-    let bookmarksToolbarItemsPlacement = CustomizableUI.getPlacementOfWidget(
-      "personal-bookmarks"
+    // Do we have visible kids?
+    let hasVisibleChildren = !!this.toolbar.querySelector(
+      `:scope > toolbarpaletteitem > toolbarbutton:not([hidden]),
+       :scope > toolbarpaletteitem > toolbaritem:not([hidden]):not(#personal-bookmarks),
+       :scope > toolbarbutton:not([hidden]),
+       :scope > toolbaritem:not([hidden]):not(#personal-bookmarks)`
     );
-    hasVisibleChildren ||=
-      bookmarksToolbarItemsPlacement?.area == CustomizableUI.AREA_BOOKMARKS &&
-      (this._isCustomizing || !!toolbarBookmarkCount);
 
-    document.getElementById(
-      "personal-toolbar-empty"
-    ).hidden = hasVisibleChildren;
+    if (!hasVisibleChildren) {
+      // Hmm, apparently not. Check for bookmarks or customize mode:
+      let bookmarksToolbarItemsPlacement = CustomizableUI.getPlacementOfWidget(
+        "personal-bookmarks"
+      );
+      let bookmarksItemInToolbar =
+        bookmarksToolbarItemsPlacement?.area == CustomizableUI.AREA_BOOKMARKS;
+
+      hasVisibleChildren =
+        bookmarksItemInToolbar &&
+        (this._isCustomizing ||
+          !!PlacesUtils.getChildCountForFolder(
+            PlacesUtils.bookmarks.toolbarGuid
+          ));
+    }
+    emptyMsg.hidden = hasVisibleChildren;
   },
 
   openLibraryIfLinkClicked(event) {
@@ -2240,6 +2299,12 @@ var BookmarkingUI = {
               }
             }
           }
+          if (ev.parentGuid == PlacesUtils.bookmarks.toolbarGuid) {
+            Services.telemetry.scalarAdd(
+              "browser.engagement.bookmarks_toolbar_bookmark_added",
+              1
+            );
+          }
           break;
         case "bookmark-removed":
           // If one of the tracked bookmarks has been removed, unregister it.
@@ -2293,7 +2358,6 @@ var BookmarkingUI = {
   onBeginUpdateBatch() {},
   onEndUpdateBatch() {},
   onBeforeItemRemoved() {},
-  onItemVisited() {},
   onItemMoved(
     aItemId,
     aProperty,
@@ -2312,11 +2376,17 @@ var BookmarkingUI = {
       this.maybeShowOtherBookmarksFolder();
     }
 
-    let hasMovedToOrOutOfToolbar =
-      newParentGuid === PlacesUtils.bookmarks.toolbarGuid ||
+    let hasMovedToToolbar = newParentGuid === PlacesUtils.bookmarks.toolbarGuid;
+    let hasMovedOutOfToolbar =
       oldParentGuid === PlacesUtils.bookmarks.toolbarGuid;
-    if (hasMovedToOrOutOfToolbar) {
+    if (hasMovedToToolbar || hasMovedOutOfToolbar) {
       this.updateEmptyToolbarMessage();
+    }
+    if (hasMovedToToolbar) {
+      Services.telemetry.scalarAdd(
+        "browser.engagement.bookmarks_toolbar_bookmark_added",
+        1
+      );
     }
   },
 
@@ -2343,9 +2413,14 @@ var BookmarkingUI = {
     let unfiledGuid = PlacesUtils.bookmarks.unfiledGuid;
     let numberOfBookmarks = PlacesUtils.getChildCountForFolder(unfiledGuid);
     let placement = CustomizableUI.getPlacementOfWidget("personal-bookmarks");
+    let showOtherBookmarksEnabled = Services.prefs.getBoolPref(
+      "browser.toolbars.bookmarks.showOtherBookmarks",
+      true
+    );
 
     if (
       numberOfBookmarks > 0 &&
+      showOtherBookmarksEnabled &&
       placement?.area == CustomizableUI.AREA_BOOKMARKS
     ) {
       let otherBookmarksPopup = document.getElementById("OtherBookmarksPopup");
@@ -2358,6 +2433,44 @@ var BookmarkingUI = {
     } else {
       otherBookmarks.hidden = true;
     }
+  },
+
+  buildShowOtherBookmarksMenuItem() {
+    let unfiledGuid = PlacesUtils.bookmarks.unfiledGuid;
+    let numberOfBookmarks = PlacesUtils.getChildCountForFolder(unfiledGuid);
+
+    if (!gBookmarksToolbar2h2020 || numberOfBookmarks < 1) {
+      return null;
+    }
+
+    let showOtherBookmarksMenuItem = Services.prefs.getBoolPref(
+      "browser.toolbars.bookmarks.showOtherBookmarks",
+      true
+    );
+
+    let menuItem = document.createXULElement("menuitem");
+
+    menuItem.setAttribute("id", "show-other-bookmarks_PersonalToolbar");
+    menuItem.setAttribute("toolbarId", "PersonalToolbar");
+    menuItem.setAttribute("type", "checkbox");
+    menuItem.setAttribute("checked", showOtherBookmarksMenuItem);
+    menuItem.setAttribute("selectiontype", "none|single");
+
+    MozXULElement.insertFTLIfNeeded("browser/toolbarContextMenu.ftl");
+    document.l10n.setAttributes(
+      menuItem,
+      "toolbar-context-menu-bookmarks-show-other-bookmarks"
+    );
+    menuItem.addEventListener("command", () => {
+      Services.prefs.setBoolPref(
+        "browser.toolbars.bookmarks.showOtherBookmarks",
+        !showOtherBookmarksMenuItem
+      );
+
+      BookmarkingUI.maybeShowOtherBookmarksFolder();
+    });
+
+    return menuItem;
   },
 
   QueryInterface: ChromeUtils.generateQI(["nsINavBookmarkObserver"]),

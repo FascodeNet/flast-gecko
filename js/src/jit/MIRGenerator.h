@@ -81,7 +81,7 @@ class MIRGenerator final {
 
   // Collect the evaluation result of phases after IonBuilder, such that
   // off-thread compilation can report what error got encountered.
-  void setOffThreadStatus(AbortReasonOr<Ok> result) {
+  void setOffThreadStatus(AbortReasonOr<Ok>&& result) {
     MOZ_ASSERT(offThreadStatus_.isOk());
     offThreadStatus_ = std::move(result);
   }
@@ -104,9 +104,6 @@ class MIRGenerator final {
   bool stringsCanBeInNursery() const { return stringsCanBeInNursery_; }
 
   bool bigIntsCanBeInNursery() const { return bigIntsCanBeInNursery_; }
-
-  bool safeForMinorGC() const { return safeForMinorGC_; }
-  void setNotSafeForMinorGC() { safeForMinorGC_ = false; }
 
   // Whether the main thread is trying to cancel this build.
   bool shouldCancel(const char* why) { return cancelBuild_; }
@@ -151,7 +148,6 @@ class MIRGenerator final {
 
   bool instrumentedProfiling_;
   bool instrumentedProfilingIsCached_;
-  bool safeForMinorGC_;
   bool stringsCanBeInNursery_;
   bool bigIntsCanBeInNursery_;
 

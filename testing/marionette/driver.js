@@ -1191,7 +1191,11 @@ GeckoDriver.prototype.navigateTo = async function(cmd) {
   }
 
   // Switch to the top-level browsing context before navigating
-  await this.listener.switchToFrame();
+  if (MarionettePrefs.useActors) {
+    this.contentBrowsingContext = browsingContext;
+  } else {
+    await this.listener.switchToFrame();
+  }
 
   const currentURL = await this._getCurrentURL();
   const loadEventExpected = navigate.isLoadEventExpected(currentURL, validURL);
@@ -1365,8 +1369,12 @@ GeckoDriver.prototype.refresh = async function() {
   const browsingContext = assert.open(this.getBrowsingContext({ top: true }));
   await this._handleUserPrompts();
 
-  // Switch to the top-level browsiing context before navigating
-  await this.listener.switchToFrame();
+  // Switch to the top-level browsing context before navigating
+  if (MarionettePrefs.useActors) {
+    this.contentBrowsingContext = browsingContext;
+  } else {
+    await this.listener.switchToFrame();
+  }
 
   await navigate.waitForNavigationCompleted(this, () => {
     navigate.refresh(browsingContext);
@@ -1607,15 +1615,6 @@ GeckoDriver.prototype.switchToWindow = async function(cmd) {
     try {
       await this.setWindowHandle(found, focus);
       selected = true;
-
-      // Temporarily inform the framescript of the current browsing context to
-      // allow sending the correct page load events. This has to be done until
-      // the framescript is no longer in use (bug 1669172).
-      if (this.context == Context.Content) {
-        await this.listener.setBrowsingContextId(
-          this.contentBrowsingContext.id
-        );
-      }
     } catch (e) {
       logger.error(e);
     }
@@ -1751,14 +1750,6 @@ GeckoDriver.prototype.switchToParentFrame = async function() {
 
   if (MarionettePrefs.useActors) {
     this.contentBrowsingContext = browsingContext;
-
-    // Temporarily inform the framescript of the current browsing context to
-    // allow sending the correct page load events. This has to be done until
-    // the web progress listener is used (bug 1664165).
-    if (this.context == Context.Content) {
-      await this.listener.setBrowsingContextId(browsingContext.id);
-    }
-
     return;
   }
 
@@ -1806,14 +1797,6 @@ GeckoDriver.prototype.switchToFrame = async function(cmd) {
     );
 
     this.contentBrowsingContext = browsingContext;
-
-    // Temporarily inform the framescript of the current browsing context to
-    // allow sending the correct page load events. This has to be done until
-    // the web progress listener is used (bug 1664165).
-    if (this.context == Context.Content) {
-      await this.listener.setBrowsingContextId(browsingContext.id);
-    }
-
     return;
   }
 

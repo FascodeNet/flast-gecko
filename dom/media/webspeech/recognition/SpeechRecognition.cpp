@@ -19,6 +19,7 @@
 #include "mozilla/dom/SpeechGrammar.h"
 #include "mozilla/MediaManager.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ResultVariant.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/AbstractThread.h"
@@ -28,6 +29,7 @@
 #include "endpointer.h"
 
 #include "mozilla/dom/SpeechRecognitionEvent.h"
+#include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/Document.h"
 #include "nsIObserverService.h"

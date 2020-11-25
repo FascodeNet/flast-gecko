@@ -10,13 +10,16 @@
 #include "GLContextTypes.h"
 #include "GLConsts.h"
 #include "nsSize.h"
-#include "ipc/IPCMessageUtils.h"
+#include "mozilla/ipc/IPCTypes.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/gfx/Point.h"
 #include "../layers/ImageTypes.h"
 
+#include <map>
+
 #ifdef XP_WIN
 #  include <windows.h>
+struct ID3D11Texture2D;
 #endif
 
 #ifdef XP_MACOSX

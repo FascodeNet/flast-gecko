@@ -14,9 +14,6 @@
 
 #include "base/basictypes.h"
 #include "GeckoProfiler.h"
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
 #include "MainThreadUtils.h"
 #include "mozilla/ArenaAllocatorExtensions.h"
 #include "mozilla/ArenaAllocator.h"
@@ -36,6 +33,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Services.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPrefsAll.h"
 #include "mozilla/SyncRunnable.h"
@@ -49,6 +47,7 @@
 #include "nsClassHashtable.h"
 #include "nsCOMArray.h"
 #include "nsCOMPtr.h"
+#include "nsComponentManagerUtils.h"
 #include "nsCRT.h"
 #include "nsDataHashtable.h"
 #include "nsDirectoryServiceDefs.h"
@@ -4280,6 +4279,59 @@ static nsCString PrefValueToString(const nsACString& s) { return nsCString(s); }
 // We define these methods in a struct which is made friend of Preferences in
 // order to access private members.
 struct Internals {
+#ifdef MOZ_GECKO_PROFILER
+  struct PreferenceReadMarker {
+    static constexpr Span<const char> MarkerTypeName() {
+      return MakeStringSpan("PreferenceRead");
+    }
+    static void StreamJSONMarkerData(
+        baseprofiler::SpliceableJSONWriter& aWriter,
+        const ProfilerString8View& aPrefName,
+        const Maybe<PrefValueKind>& aPrefKind, PrefType aPrefType,
+        const ProfilerString8View& aPrefValue) {
+      aWriter.StringProperty("prefName", aPrefName);
+      aWriter.StringProperty("prefKind", PrefValueKindToString(aPrefKind));
+      aWriter.StringProperty("prefType", PrefTypeToString(aPrefType));
+      aWriter.StringProperty("prefValue", aPrefValue);
+    }
+    static MarkerSchema MarkerTypeDisplay() {
+      using MS = MarkerSchema;
+      MS schema{MS::Location::markerChart, MS::Location::markerTable};
+      schema.AddKeyLabelFormat("prefName", "Name", MS::Format::string);
+      schema.AddKeyLabelFormat("prefKind", "Kind", MS::Format::string);
+      schema.AddKeyLabelFormat("prefType", "Type", MS::Format::string);
+      schema.AddKeyLabelFormat("prefValue", "Value", MS::Format::string);
+      return schema;
+    }
+
+   private:
+    static Span<const char> PrefValueKindToString(
+        const Maybe<PrefValueKind>& aKind) {
+      if (aKind) {
+        return *aKind == PrefValueKind::Default ? MakeStringSpan("Default")
+                                                : MakeStringSpan("User");
+      }
+      return "Shared";
+    }
+
+    static Span<const char> PrefTypeToString(PrefType type) {
+      switch (type) {
+        case PrefType::None:
+          return "None";
+        case PrefType::Int:
+          return "Int";
+        case PrefType::Bool:
+          return "Bool";
+        case PrefType::String:
+          return "String";
+        default:
+          MOZ_ASSERT_UNREACHABLE("Unknown preference type.");
+          return "Unknown";
+      }
+    }
+  };
+#endif  // MOZ_GECKO_PROFILER
+
   template <typename T>
   static nsresult GetPrefValue(const char* aPrefName, T&& aResult,
                                PrefValueKind aKind) {
@@ -4291,10 +4343,11 @@ struct Internals {
 
 #ifdef MOZ_GECKO_PROFILER
       if (profiler_feature_active(ProfilerFeature::PreferenceReads)) {
-        PROFILER_ADD_MARKER_WITH_PAYLOAD(
-            "PreferenceRead", OTHER_PreferenceRead, PrefMarkerPayload,
-            (aPrefName, Some(aKind), Some(pref->Type()),
-             PrefValueToString(aResult), TimeStamp::Now()));
+        profiler_add_marker(
+            "PreferenceRead", baseprofiler::category::OTHER_PreferenceRead, {},
+            PreferenceReadMarker{},
+            ProfilerString8View::WrapNullTerminatedString(aPrefName),
+            Some(aKind), pref->Type(), PrefValueToString(aResult));
       }
 #endif
     }
@@ -4311,10 +4364,12 @@ struct Internals {
 
 #ifdef MOZ_GECKO_PROFILER
       if (profiler_feature_active(ProfilerFeature::PreferenceReads)) {
-        PROFILER_ADD_MARKER_WITH_PAYLOAD(
-            "PreferenceRead", OTHER_PreferenceRead, PrefMarkerPayload,
-            (aName, Nothing() /* indicates Shared */, Some(pref->Type()),
-             PrefValueToString(aResult), TimeStamp::Now()));
+        profiler_add_marker(
+            "PreferenceRead", baseprofiler::category::OTHER_PreferenceRead, {},
+            PreferenceReadMarker{},
+            ProfilerString8View::WrapNullTerminatedString(aName),
+            Nothing() /* indicates Shared */, pref->Type(),
+            PrefValueToString(aResult));
       }
 #endif
     }
@@ -4333,10 +4388,21 @@ struct Internals {
   template <typename T>
   static void UpdateMirror(const char* aPref, void* aMirror) {
     StripAtomic<T> value;
-    // We disallow the deletion of mirrored prefs.
-    // This assertion is the only place where we enforce this.
-    MOZ_ALWAYS_SUCCEEDS(GetPrefValue(aPref, &value, PrefValueKind::User));
-    *static_cast<T*>(aMirror) = value;
+
+    nsresult rv = GetPrefValue(aPref, &value, PrefValueKind::User);
+    if (NS_SUCCEEDED(rv)) {
+      *static_cast<T*>(aMirror) = value;
+    } else {
+      // GetPrefValue() can fail if the update is caused by the pref being
+      // deleted or if it fails to make a cast. This assertion is the only place
+      // where we safeguard these. In this case the mirror variable will be
+      // untouched, thus keeping the value it had prior to the change.
+      // (Note that this case won't happen for a deletion via DeleteBranch()
+      // unless bug 343600 is fixed, but it will happen for a deletion via
+      // ClearUserPref().)
+      NS_WARNING(nsPrintfCString("Pref changed failure: %s\n", aPref).get());
+      MOZ_ASSERT(false);
+    }
   }
 
   template <typename T>

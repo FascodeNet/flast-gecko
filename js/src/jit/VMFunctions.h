@@ -463,8 +463,9 @@ MOZ_MUST_USE bool GeneratorThrowOrReturn(
     Handle<AbstractGeneratorObject*> genObj, HandleValue arg,
     int32_t resumeKindArg);
 
-MOZ_MUST_USE bool GlobalNameConflictsCheckFromIon(JSContext* cx,
-                                                  HandleScript script);
+MOZ_MUST_USE bool GlobalDeclInstantiationFromIon(JSContext* cx,
+                                                 HandleScript script,
+                                                 jsbytecode* pc);
 MOZ_MUST_USE bool InitFunctionEnvironmentObjects(JSContext* cx,
                                                  BaselineFrame* frame);
 
@@ -663,8 +664,6 @@ AtomicsReadWriteModifyFn AtomicsSub(Scalar::Type elementType);
 AtomicsReadWriteModifyFn AtomicsAnd(Scalar::Type elementType);
 AtomicsReadWriteModifyFn AtomicsOr(Scalar::Type elementType);
 AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType);
-
-bool GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v);
 
 // Functions used when JS_MASM_VERBOSE is enabled.
 void AssumeUnreachable(const char* output);

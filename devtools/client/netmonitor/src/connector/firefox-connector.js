@@ -52,14 +52,14 @@ class FirefoxConnector {
     return this.toolbox.targetList.targetFront;
   }
 
-  get hasWatcherSupport() {
-    return this.toolbox.resourceWatcher.hasWatcherSupport(
+  get hasResourceWatcherSupport() {
+    return this.toolbox.resourceWatcher.hasResourceWatcherSupport(
       this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT
     );
   }
 
-  get currentWatcher() {
-    return this.toolbox.resourceWatcher.watcher;
+  get currentWatcherFront() {
+    return this.toolbox.resourceWatcher.watcherFront;
   }
 
   /**
@@ -385,10 +385,9 @@ class FirefoxConnector {
    * Send a HTTP request data payload
    *
    * @param {object} data data payload would like to sent to backend
-   * @param {function} callback callback will be invoked after the request finished
    */
-  sendHTTPRequest(data, callback) {
-    this.webConsoleFront.sendHTTPRequest(data).then(callback);
+  sendHTTPRequest(data) {
+    return this.webConsoleFront.sendHTTPRequest(data);
   }
 
   /**
@@ -413,8 +412,8 @@ class FirefoxConnector {
    * Get the list of blocked URLs
    */
   async getBlockedUrls() {
-    if (this.hasWatcherSupport && this.currentWatcher) {
-      const network = await this.currentWatcher.getNetworkActor();
+    if (this.hasResourceWatcherSupport && this.currentWatcherFront) {
+      const network = await this.currentWatcherFront.getNetworkParentActor();
       return network.getBlockedUrls();
     }
     if (!this.webConsoleFront.traits.blockedUrls) {
@@ -429,8 +428,8 @@ class FirefoxConnector {
    * @param {object} urls An array of URL strings
    */
   async setBlockedUrls(urls) {
-    if (this.hasWatcherSupport && this.currentWatcher) {
-      const network = await this.currentWatcher.getNetworkActor();
+    if (this.hasResourceWatcherSupport && this.currentWatcherFront) {
+      const network = await this.currentWatcherFront.getNetworkParentActor();
       return network.setBlockedUrls(urls);
     }
     return this.webConsoleFront.setBlockedUrls(urls);

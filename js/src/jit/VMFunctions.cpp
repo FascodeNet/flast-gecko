@@ -932,17 +932,7 @@ bool ArrayPushDense(JSContext* cx, HandleArrayObject arr, HandleValue v,
     return result == DenseElementResult::Success;
   }
 
-  // AutoDetectInvalidation uses GetTopJitJSScript(cx)->ionScript(), but it's
-  // possible the setOrExtendDenseElements call already invalidated the
-  // IonScript. JSJitFrameIter::ionScript works when the script is invalidated
-  // so we use that instead.
-  JSJitFrameIter frame(cx->activation()->asJit());
-  MOZ_ASSERT(frame.type() == FrameType::Exit);
-  ++frame;
-  IonScript* ionScript = frame.ionScript();
-
   JS::RootedValueArray<3> argv(cx);
-  AutoDetectInvalidation adi(cx, argv[0], ionScript);
   argv[0].setUndefined();
   argv[1].setObject(*arr);
   argv[2].set(v);
@@ -950,22 +940,9 @@ bool ArrayPushDense(JSContext* cx, HandleArrayObject arr, HandleValue v,
     return false;
   }
 
-  if (argv[0].isInt32()) {
-    *length = argv[0].toInt32();
-    return true;
-  }
-
-  // Without TI this should not happen, we should have bailed out before
-  // calling the VM function if we are about to overflow.
-  MOZ_ASSERT(IsTypeInferenceEnabled());
-
-  // array_push changed the length to be larger than INT32_MAX. In this case
-  // OBJECT_FLAG_LENGTH_OVERFLOW was set, TI invalidated the script, and the
-  // AutoDetectInvalidation instance on the stack will replace *length with
-  // the actual return value during bailout.
-  MOZ_ASSERT(adi.shouldSetReturnOverride());
-  MOZ_ASSERT(argv[0].toDouble() == double(INT32_MAX) + 1);
-  *length = 0;
+  // Length must fit in an int32 because we guard against overflow before
+  // calling this VM function.
+  *length = argv[0].toInt32();
   return true;
 }
 
@@ -1472,11 +1449,14 @@ bool GeneratorThrowOrReturn(JSContext* cx, BaselineFrame* frame,
   return false;
 }
 
-bool GlobalNameConflictsCheckFromIon(JSContext* cx, HandleScript script) {
-  Rooted<LexicalEnvironmentObject*> globalLexical(
-      cx, &cx->global()->lexicalEnvironment());
-  return CheckGlobalDeclarationConflicts(cx, script, globalLexical,
-                                         cx->global());
+bool GlobalDeclInstantiationFromIon(JSContext* cx, HandleScript script,
+                                    jsbytecode* pc) {
+  MOZ_ASSERT(!script->hasNonSyntacticScope());
+
+  RootedObject envChain(cx, &cx->global()->lexicalEnvironment());
+  GCThingIndex lastFun = GET_GCTHING_INDEX(pc);
+
+  return GlobalOrEvalDeclInstantiation(cx, envChain, script, lastFun);
 }
 
 bool InitFunctionEnvironmentObjects(JSContext* cx, BaselineFrame* frame) {
@@ -1525,12 +1505,7 @@ JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
     return arrRes;
   }
 
-  NewObjectKind newKind;
-  {
-    AutoSweepObjectGroup sweep(templateObj->group());
-    newKind = templateObj->group()->shouldPreTenure(sweep) ? TenuredObject
-                                                           : GenericObject;
-  }
+  NewObjectKind newKind = GenericObject;
   ArrayObject* arrRes = NewDenseCopiedArray(cx, length, rest, nullptr, newKind);
   if (arrRes) {
     arrRes->setGroup(templateObj->group());
@@ -2138,6 +2113,7 @@ template bool GetNativeDataPropertyByValuePure<true>(JSContext* cx,
 template bool GetNativeDataPropertyByValuePure<false>(JSContext* cx,
                                                       JSObject* obj, Value* vp);
 
+// TODO(no-TI): remove NeedsTypeBarrier.
 template <bool NeedsTypeBarrier>
 bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* val) {
@@ -2150,11 +2126,6 @@ bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
   NativeObject* nobj = &obj->as<NativeObject>();
   Shape* shape = nobj->lastProperty()->search(cx, NameToId(name));
   if (!shape || !shape->isDataProperty() || !shape->writable()) {
-    return false;
-  }
-
-  if (NeedsTypeBarrier && IsTypeInferenceEnabled() &&
-      !HasTypePropertyId(nobj, NameToId(name), *val)) {
     return false;
   }
 
@@ -2900,21 +2871,6 @@ AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType) {
     default:
       MOZ_CRASH("Unexpected TypedArray type");
   }
-}
-
-bool GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v) {
-  AutoUnsafeCallWithABI unsafe;
-  if (group->unknownPropertiesDontCheckGeneration()) {
-    return true;
-  }
-  HeapTypeSet* propTypes = group->maybeGetPropertyDontCheckGeneration(*id);
-  if (!propTypes) {
-    return true;
-  }
-  if (!propTypes->nonConstantProperty()) {
-    return false;
-  }
-  return propTypes->hasType(TypeSet::GetValueType(*v));
 }
 
 void AssumeUnreachable(const char* output) {

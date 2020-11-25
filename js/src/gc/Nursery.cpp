@@ -1101,13 +1101,7 @@ void js::Nursery::printCollectionProfile(JS::GCReason reason,
 }
 
 void js::Nursery::printTenuringData(const TenureCountCache& tenureCounts) {
-  for (const auto& entry : tenureCounts.entries) {
-    if (entry.count >= reportTenurings_) {
-      fprintf(stderr, "  %u x ", entry.count);
-      AutoSweepObjectGroup sweep(entry.group);
-      entry.group->print(sweep);
-    }
-  }
+  // TODO(no-TI): remove.
 }
 
 js::Nursery::CollectionResult js::Nursery::doCollection(
@@ -1124,15 +1118,6 @@ js::Nursery::CollectionResult js::Nursery::doCollection(
 
   // Mark the store buffer. This must happen first.
   StoreBuffer& sb = gc->storeBuffer();
-
-  // The MIR graph only contains nursery pointers if cancelIonCompilations()
-  // is set on the store buffer, in which case we cancel all compilations
-  // of such graphs.
-  startProfile(ProfileKey::CancelIonCompilations);
-  if (sb.cancelIonCompilations()) {
-    js::CancelOffThreadIonCompilesUsingNurseryPointers(rt);
-  }
-  endProfile(ProfileKey::CancelIonCompilations);
 
   // Strings in the whole cell buffer must be traced first, in order to mark
   // tenured dependent strings' bases as non-deduplicatable. The rest of
@@ -1258,20 +1243,12 @@ size_t js::Nursery::doPretenuring(JSRuntime* rt, JS::GCReason reason,
   size_t pretenureCount = 0;
 
   if (pretenureObj) {
-    JSContext* cx = rt->mainContextFromOwnThread();
     uint32_t threshold = tunables().pretenureGroupThreshold();
     for (auto& entry : tenureCounts.entries) {
       if (entry.count < threshold) {
         continue;
       }
-
-      ObjectGroup* group = entry.group;
-      AutoRealm ar(cx, group);
-      AutoSweepObjectGroup sweep(group);
-      if (group->canPreTenure(sweep)) {
-        group->setShouldPreTenure(sweep, cx);
-        pretenureCount++;
-      }
+      // TODO(no-TI): remove.
     }
   }
   stats().setStat(gcstats::STAT_OBJECT_GROUPS_PRETENURED, pretenureCount);

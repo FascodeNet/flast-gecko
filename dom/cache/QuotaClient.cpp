@@ -19,19 +19,11 @@
 #include "nsIFile.h"
 #include "nsThreadUtils.h"
 
-namespace {
+namespace mozilla::dom::cache {
 
-using mozilla::Atomic;
-using mozilla::MutexAutoLock;
-using mozilla::Some;
-using mozilla::Unused;
-using mozilla::dom::ContentParentId;
-using mozilla::dom::cache::DirPaddingFile;
-using mozilla::dom::cache::kCachesSQLiteFilename;
-using mozilla::dom::cache::Manager;
-using mozilla::dom::cache::QuotaInfo;
 using mozilla::dom::quota::AssertIsOnIOThread;
 using mozilla::dom::quota::Client;
+using mozilla::dom::quota::CloneFileAndAppend;
 using mozilla::dom::quota::DatabaseUsageType;
 using mozilla::dom::quota::GroupAndOrigin;
 using mozilla::dom::quota::PERSISTENCE_TYPE_DEFAULT;
@@ -40,95 +32,99 @@ using mozilla::dom::quota::QuotaManager;
 using mozilla::dom::quota::UsageInfo;
 using mozilla::ipc::AssertIsOnBackgroundThread;
 
-static nsresult GetBodyUsage(nsIFile* aMorgueDir, const Atomic<bool>& aCanceled,
-                             UsageInfo* aUsageInfo, const bool aInitializing) {
-  AssertIsOnIOThread();
+namespace {
 
-  nsCOMPtr<nsIDirectoryEnumerator> entries;
-  nsresult rv = aMorgueDir->GetDirectoryEntries(getter_AddRefs(entries));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+template <typename StepFunc>
+Result<UsageInfo, nsresult> ReduceUsageInfo(nsIFile& aDir,
+                                            const Atomic<bool>& aCanceled,
+                                            const StepFunc& aStepFunc) {
+  // XXX The following loop (including the cancellation check) is very similar
+  // to QuotaClient::GetDatabaseFilenames in dom/indexedDB/ActorsParent.cpp
+  CACHE_TRY_INSPECT(const auto& entries,
+                    MOZ_TO_RESULT_INVOKE_TYPED(nsCOMPtr<nsIDirectoryEnumerator>,
+                                               aDir, GetDirectoryEntries));
 
-  nsCOMPtr<nsIFile> bodyDir;
-  while (NS_SUCCEEDED(rv = entries->GetNextFile(getter_AddRefs(bodyDir))) &&
-         bodyDir && !aCanceled) {
-    if (NS_WARN_IF(QuotaManager::IsShuttingDown())) {
-      return NS_ERROR_ABORT;
-    }
-    bool isDir;
-    rv = bodyDir->IsDirectory(&isDir);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  CACHE_TRY_RETURN(ReduceEach(
+      [&entries, &aCanceled]() -> Result<nsCOMPtr<nsIFile>, nsresult> {
+        if (aCanceled) {
+          return nsCOMPtr<nsIFile>{};
+        }
 
-    if (!isDir) {
-      QuotaInfo dummy;
-      mozilla::DebugOnly<nsresult> result =
-          RemoveNsIFile(dummy, bodyDir, /* aTrackQuota */ false);
-      // Try to remove the unexpected files, and keep moving on even if it fails
-      // because it might be created by virus or the operation system
-      MOZ_ASSERT(NS_SUCCEEDED(result));
-      continue;
-    }
+        CACHE_TRY_RETURN(MOZ_TO_RESULT_INVOKE_TYPED(nsCOMPtr<nsIFile>, entries,
+                                                    GetNextFile));
+      },
+      UsageInfo{},
+      [&aStepFunc](UsageInfo usageInfo, const nsCOMPtr<nsIFile>& bodyDir)
+          -> Result<UsageInfo, nsresult> {
+        CACHE_TRY(OkIf(!QuotaManager::IsShuttingDown()), Err(NS_ERROR_ABORT));
 
-    const QuotaInfo dummy;
-    const auto getUsage = [&aUsageInfo](nsIFile* bodyFile,
-                                        const nsACString& leafName,
-                                        bool& fileDeleted) {
-      MOZ_DIAGNOSTIC_ASSERT(bodyFile);
-      Unused << leafName;
+        CACHE_TRY_INSPECT(const auto& stepUsageInfo, aStepFunc(bodyDir));
 
-      int64_t fileSize;
-      nsresult rv = bodyFile->GetFileSize(&fileSize);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
-      MOZ_DIAGNOSTIC_ASSERT(fileSize >= 0);
-      // FIXME: Separate file usage and database usage in OriginInfo so that the
-      // workaround for treating body file size as database usage can be
-      // removed.
-      //
-      // This is needed because we want to remove the mutex lock for padding
-      // files. The lock is needed because the padding file is accessed on the
-      // QM IO thread while getting origin usage and is accessed on the Cache IO
-      // thread in normal Cache operations.
-      // Using the cached usage in QM while getting origin usage can remove the
-      // access on the QM IO thread and thus we can remove the mutex lock.
-      // However, QM only separates usage types in initialization, and the
-      // separation is gone after that. So, before extending the separation of
-      // usage types in QM, this is a workaround to avoid the file usage
-      // mismatching in our tests. Note that file usage hasn't been exposed to
-      // users yet.
-      *aUsageInfo += DatabaseUsageType(Some(fileSize));
-
-      fileDeleted = false;
-
-      return NS_OK;
-    };
-    rv = mozilla::dom::cache::BodyTraverseFiles(dummy, bodyDir, getUsage,
-                                                /* aCanRemoveFiles */
-                                                aInitializing,
-                                                /* aTrackQuota */ false);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-  }
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  return NS_OK;
+        return usageInfo + stepUsageInfo;
+      }));
 }
 
-static nsresult LockedGetPaddingSizeFromDB(
-    nsIFile* aDir, const GroupAndOrigin& aGroupAndOrigin,
-    int64_t* aPaddingSizeOut) {
-  MOZ_DIAGNOSTIC_ASSERT(aDir);
-  MOZ_DIAGNOSTIC_ASSERT(aPaddingSizeOut);
+Result<UsageInfo, nsresult> GetBodyUsage(nsIFile& aMorgueDir,
+                                         const Atomic<bool>& aCanceled,
+                                         const bool aInitializing) {
+  AssertIsOnIOThread();
 
-  *aPaddingSizeOut = 0;
+  CACHE_TRY_RETURN(ReduceUsageInfo(
+      aMorgueDir, aCanceled,
+      [aInitializing](
+          const nsCOMPtr<nsIFile>& bodyDir) -> Result<UsageInfo, nsresult> {
+        CACHE_TRY_INSPECT(const bool& isDir,
+                          MOZ_TO_RESULT_INVOKE(bodyDir, IsDirectory));
 
+        if (!isDir) {
+          const DebugOnly<nsresult> result =
+              RemoveNsIFile(QuotaInfo{}, bodyDir, /* aTrackQuota */ false);
+          // Try to remove the unexpected files, and keep moving on even if it
+          // fails because it might be created by virus or the operation system
+          MOZ_ASSERT(NS_SUCCEEDED(result));
+          return UsageInfo{};
+        }
+
+        UsageInfo usageInfo;
+        const auto getUsage = [&usageInfo](nsIFile* bodyFile,
+                                           const nsACString& leafName,
+                                           bool& fileDeleted) -> nsresult {
+          MOZ_DIAGNOSTIC_ASSERT(bodyFile);
+          Unused << leafName;
+
+          CACHE_TRY_INSPECT(const int64_t& fileSize,
+                            MOZ_TO_RESULT_INVOKE(bodyFile, GetFileSize));
+          MOZ_DIAGNOSTIC_ASSERT(fileSize >= 0);
+          // FIXME: Separate file usage and database usage in OriginInfo so that
+          // the workaround for treating body file size as database usage can be
+          // removed.
+          //
+          // This is needed because we want to remove the mutex lock for padding
+          // files. The lock is needed because the padding file is accessed on
+          // the QM IO thread while getting origin usage and is accessed on the
+          // Cache IO thread in normal Cache operations. Using the cached usage
+          // in QM while getting origin usage can remove the access on the QM IO
+          // thread and thus we can remove the mutex lock. However, QM only
+          // separates usage types in initialization, and the separation is gone
+          // after that. So, before extending the separation of usage types in
+          // QM, this is a workaround to avoid the file usage mismatching in our
+          // tests. Note that file usage hasn't been exposed to users yet.
+          usageInfo += DatabaseUsageType(Some(fileSize));
+
+          fileDeleted = false;
+
+          return NS_OK;
+        };
+        CACHE_TRY(BodyTraverseFiles(QuotaInfo{}, bodyDir, getUsage,
+                                    /* aCanRemoveFiles */
+                                    aInitializing,
+                                    /* aTrackQuota */ false));
+        return usageInfo;
+      }));
+}
+
+Result<int64_t, nsresult> LockedGetPaddingSizeFromDB(
+    nsIFile& aDir, const GroupAndOrigin& aGroupAndOrigin) {
   QuotaInfo quotaInfo;
   static_cast<GroupAndOrigin&>(quotaInfo) = aGroupAndOrigin;
   // quotaInfo.mDirectoryLockId must be -1 (which is default for new QuotaInfo)
@@ -140,64 +136,34 @@ static nsresult LockedGetPaddingSizeFromDB(
   // for the SQLite file).
   MOZ_DIAGNOSTIC_ASSERT(quotaInfo.mDirectoryLockId == -1);
 
-  nsCOMPtr<nsIFile> dbFile;
-  nsresult rv = aDir->Clone(getter_AddRefs(dbFile));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  CACHE_TRY_INSPECT(const auto& dbFile,
+                    CloneFileAndAppend(aDir, kCachesSQLiteFilename));
 
-  rv = dbFile->Append(kCachesSQLiteFilename);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  CACHE_TRY_INSPECT(const bool& exists, MOZ_TO_RESULT_INVOKE(dbFile, Exists));
 
-  bool exists = false;
-  rv = dbFile->Exists(&exists);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  // Return NS_OK with size = 0 if caches.sqlite doesn't exist.
+  // Return size = 0 if caches.sqlite doesn't exist.
   // This function is only called if the value of the padding size couldn't be
   // determined from the padding file, possibly because it doesn't exist, or a
   // leftover temporary padding file was found.
   // There is no other way to get the overall padding size of an origin.
   if (!exists) {
-    return NS_OK;
+    return 0;
   }
 
-  nsCOMPtr<mozIStorageConnection> conn;
-  rv = mozilla::dom::cache::OpenDBConnection(quotaInfo, dbFile,
-                                             getter_AddRefs(conn));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  CACHE_TRY_INSPECT(const auto& conn, OpenDBConnection(quotaInfo, *dbFile));
 
   // Make sure that the database has the latest schema before we try to read
   // from it. We have to do this because LockedGetPaddingSizeFromDB is called
   // by QuotaClient::GetUsageForOrigin which may run at any time (there's no
   // guarantee that SetupAction::RunSyncWithDBOnTarget already checked the
   // schema for the given origin).
-  rv = mozilla::dom::cache::db::CreateOrMigrateSchema(*conn);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  CACHE_TRY(db::CreateOrMigrateSchema(*conn));
 
-  int64_t paddingSize = 0;
-  rv = mozilla::dom::cache::LockedDirectoryPaddingRestore(
-      aDir, conn, /* aMustRestore */ false, &paddingSize);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  *aPaddingSizeOut = paddingSize;
-
-  return rv;
+  CACHE_TRY_RETURN(LockedDirectoryPaddingRestore(aDir, *conn,
+                                                 /* aMustRestore */ false));
 }
 
 }  // namespace
-
-namespace mozilla::dom::cache {
 
 const nsLiteralString kCachesSQLiteFilename = u"caches.sqlite"_ns;
 
@@ -293,7 +259,7 @@ nsresult CacheQuotaClient::UpgradeStorageFrom2_0To2_1(nsIFile* aDirectory) {
 
   MutexAutoLock lock(mDirPaddingFileMutex);
 
-  nsresult rv = mozilla::dom::cache::LockedDirectoryPaddingInit(aDirectory);
+  nsresult rv = LockedDirectoryPaddingInit(aDirectory);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -307,15 +273,14 @@ nsresult CacheQuotaClient::RestorePaddingFileInternal(
   MOZ_DIAGNOSTIC_ASSERT(aBaseDir);
   MOZ_DIAGNOSTIC_ASSERT(aConn);
 
-  int64_t dummyPaddingSize;
-
   MutexAutoLock lock(mDirPaddingFileMutex);
 
-  nsresult rv = mozilla::dom::cache::LockedDirectoryPaddingRestore(
-      aBaseDir, aConn, /* aMustRestore */ true, &dummyPaddingSize);
-  Unused << NS_WARN_IF(NS_FAILED(rv));
+  CACHE_TRY_INSPECT(const int64_t& dummyPaddingSize,
+                    LockedDirectoryPaddingRestore(*aBaseDir, *aConn,
+                                                  /* aMustRestore */ true));
+  Unused << dummyPaddingSize;
 
-  return rv;
+  return NS_OK;
 }
 
 nsresult CacheQuotaClient::WipePaddingFileInternal(const QuotaInfo& aQuotaInfo,
@@ -325,17 +290,15 @@ nsresult CacheQuotaClient::WipePaddingFileInternal(const QuotaInfo& aQuotaInfo,
 
   MutexAutoLock lock(mDirPaddingFileMutex);
 
-  MOZ_ASSERT(mozilla::dom::cache::DirectoryPaddingFileExists(
-      aBaseDir, DirPaddingFile::FILE));
+  MOZ_ASSERT(DirectoryPaddingFileExists(aBaseDir, DirPaddingFile::FILE));
 
   int64_t paddingSize = 0;
   bool temporaryPaddingFileExist =
-      mozilla::dom::cache::DirectoryPaddingFileExists(aBaseDir,
-                                                      DirPaddingFile::TMP_FILE);
+      DirectoryPaddingFileExists(aBaseDir, DirPaddingFile::TMP_FILE);
 
   if (temporaryPaddingFileExist ||
-      NS_WARN_IF(NS_FAILED(mozilla::dom::cache::LockedDirectoryPaddingGet(
-          aBaseDir, &paddingSize)))) {
+      NS_WARN_IF(
+          NS_FAILED(LockedDirectoryPaddingGet(aBaseDir, &paddingSize)))) {
     // XXXtt: Maybe have a method in the QuotaManager to clean the usage under
     // the quota client and the origin.
     // There is nothing we can do to recover the file.
@@ -344,23 +307,22 @@ nsresult CacheQuotaClient::WipePaddingFileInternal(const QuotaInfo& aQuotaInfo,
   }
 
   if (paddingSize > 0) {
-    mozilla::dom::cache::DecreaseUsageForQuotaInfo(aQuotaInfo, paddingSize);
+    DecreaseUsageForQuotaInfo(aQuotaInfo, paddingSize);
   }
 
-  nsresult rv = mozilla::dom::cache::LockedDirectoryPaddingDeleteFile(
-      aBaseDir, DirPaddingFile::FILE);
+  nsresult rv =
+      LockedDirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
 
   // Remove temporary file if we have one.
-  rv = mozilla::dom::cache::LockedDirectoryPaddingDeleteFile(
-      aBaseDir, DirPaddingFile::TMP_FILE);
+  rv = LockedDirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::TMP_FILE);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
 
-  rv = mozilla::dom::cache::LockedDirectoryPaddingInit(aBaseDir);
+  rv = LockedDirectoryPaddingInit(aBaseDir);
   Unused << NS_WARN_IF(NS_FAILED(rv));
 
   return rv;
@@ -377,154 +339,109 @@ Result<UsageInfo, nsresult> CacheQuotaClient::GetUsageForOriginInternal(
     PersistenceType aPersistenceType, const GroupAndOrigin& aGroupAndOrigin,
     const AtomicBool& aCanceled, const bool aInitializing) {
   AssertIsOnIOThread();
-#ifndef NIGHTLY_BUILD
-  Unused << aInitializing;
-#endif
 
-  QuotaManager* qm = QuotaManager::Get();
+  QuotaManager* const qm = QuotaManager::Get();
   MOZ_DIAGNOSTIC_ASSERT(qm);
 
-  CACHE_TRY_UNWRAP(auto dir, qm->GetDirectoryForOrigin(
-                                 aPersistenceType, aGroupAndOrigin.mOrigin));
+  CACHE_TRY_INSPECT(
+      const auto& dir,
+      qm->GetDirectoryForOrigin(aPersistenceType, aGroupAndOrigin.mOrigin));
 
-  nsresult rv =
-      dir->Append(NS_LITERAL_STRING_FROM_CSTRING(DOMCACHE_DIRECTORY_NAME));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaExternalError,
-                                 Cache_Append);
-    return Err(rv);
-  }
+  CACHE_TRY(
+      dir->Append(NS_LITERAL_STRING_FROM_CSTRING(DOMCACHE_DIRECTORY_NAME)));
 
-  bool useCachedValue = false;
+  CACHE_TRY_INSPECT(
+      const auto& maybePaddingSize,
+      ([this, &dir, aInitializing,
+        &aGroupAndOrigin]() -> Result<Maybe<int64_t>, nsresult> {
+        // If the temporary file still exists after locking, it means the
+        // previous action failed, so restore the padding file.
+        MutexAutoLock lock(mDirPaddingFileMutex);
 
-  int64_t paddingSize = 0;
-  {
-    // If the tempoary file still exists after locking, it means the previous
-    // action failed, so restore the padding file.
-    MutexAutoLock lock(mDirPaddingFileMutex);
+        if (!DirectoryPaddingFileExists(dir, DirPaddingFile::TMP_FILE)) {
+          const auto& maybePaddingSize = [&dir]() -> Maybe<int64_t> {
+            CACHE_TRY_RETURN(LockedDirectoryPaddingGet(*dir).map(Some<int64_t>),
+                             Nothing{});
+          }();
 
-    if (mozilla::dom::cache::DirectoryPaddingFileExists(
-            dir, DirPaddingFile::TMP_FILE) ||
-        NS_WARN_IF(NS_FAILED(mozilla::dom::cache::LockedDirectoryPaddingGet(
-            dir, &paddingSize)))) {
-      if (aInitializing) {
-        rv = LockedGetPaddingSizeFromDB(dir, aGroupAndOrigin, &paddingSize);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaInternalError,
-                                       Cache_GetPaddingSize);
-          return Err(rv);
+          if (maybePaddingSize) {
+            return maybePaddingSize;
+          }
         }
-      } else {
+
+        if (aInitializing) {
+          CACHE_TRY_RETURN(LockedGetPaddingSizeFromDB(*dir, aGroupAndOrigin)
+                               .map(Some<int64_t>));
+        }
+
         // We can't open the database at this point, since it can be already
-        // used by Cache IO thread. Use the cached value instead. (In theory,
-        // we could check if the database is actually used by Cache IO thread
-        // at this moment, but it's probably not worth additional complexity.)
+        // used by Cache IO thread. Use the cached value instead. (In
+        // theory, we could check if the database is actually used by Cache
+        // IO thread at this moment, but it's probably not worth additional
+        // complexity.)
 
-        useCachedValue = true;
-      }
-    }
+        return Maybe<int64_t>{};
+      }()));
+
+  if (!maybePaddingSize) {
+    return qm->GetUsageForClient(PERSISTENCE_TYPE_DEFAULT, aGroupAndOrigin,
+                                 Client::DOMCACHE);
   }
 
-  UsageInfo usageInfo;
+  CACHE_TRY_INSPECT(
+      const auto& innerUsageInfo,
+      ReduceUsageInfo(
+          *dir, aCanceled,
+          [&aCanceled, aInitializing](
+              const nsCOMPtr<nsIFile>& file) -> Result<UsageInfo, nsresult> {
+            CACHE_TRY_INSPECT(
+                const auto& leafName,
+                MOZ_TO_RESULT_INVOKE_TYPED(nsAutoString, file, GetLeafName));
 
-  if (useCachedValue) {
-    uint64_t usage;
-    if (qm->GetUsageForClient(PERSISTENCE_TYPE_DEFAULT, aGroupAndOrigin,
-                              Client::DOMCACHE, usage)) {
-      usageInfo += DatabaseUsageType(Some(usage));
-    }
+            CACHE_TRY_INSPECT(const bool& isDir,
+                              MOZ_TO_RESULT_INVOKE(file, IsDirectory));
 
-    return usageInfo;
-  }
+            if (isDir) {
+              if (leafName.EqualsLiteral("morgue")) {
+                CACHE_TRY_RETURN(GetBodyUsage(*file, aCanceled, aInitializing));
+              } else {
+                NS_WARNING("Unknown Cache directory found!");
+              }
+
+              return UsageInfo{};
+            }
+
+            // Ignore transient sqlite files and marker files
+            if (leafName.EqualsLiteral("caches.sqlite-journal") ||
+                leafName.EqualsLiteral("caches.sqlite-shm") ||
+                leafName.Find("caches.sqlite-mj"_ns, false, 0, 0) == 0 ||
+                leafName.EqualsLiteral("context_open.marker")) {
+              return UsageInfo{};
+            }
+
+            if (leafName.Equals(kCachesSQLiteFilename) ||
+                leafName.EqualsLiteral("caches.sqlite-wal")) {
+              CACHE_TRY_INSPECT(const int64_t& fileSize,
+                                MOZ_TO_RESULT_INVOKE(file, GetFileSize));
+              MOZ_DIAGNOSTIC_ASSERT(fileSize >= 0);
+
+              return UsageInfo{DatabaseUsageType(Some(fileSize))};
+            }
+
+            // Ignore directory padding file
+            if (leafName.EqualsLiteral(PADDING_FILE_NAME) ||
+                leafName.EqualsLiteral(PADDING_TMP_FILE_NAME)) {
+              return UsageInfo{};
+            }
+
+            NS_WARNING("Unknown Cache file found!");
+
+            return UsageInfo{};
+          }));
 
   // FIXME: Separate file usage and database usage in OriginInfo so that the
   // workaround for treating padding file size as database usage can be removed.
-  usageInfo += DatabaseUsageType(Some(paddingSize));
-
-  nsCOMPtr<nsIDirectoryEnumerator> entries;
-  rv = dir->GetDirectoryEntries(getter_AddRefs(entries));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaExternalError,
-                                 Cache_GetDirEntries);
-    return Err(rv);
-  }
-
-  nsCOMPtr<nsIFile> file;
-  while (NS_SUCCEEDED(rv = entries->GetNextFile(getter_AddRefs(file))) &&
-         file && !aCanceled) {
-    if (NS_WARN_IF(QuotaManager::IsShuttingDown())) {
-      return Err(NS_ERROR_ABORT);
-    }
-
-    nsAutoString leafName;
-    rv = file->GetLeafName(leafName);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaExternalError,
-                                   Cache_GetLeafName);
-      return Err(rv);
-    }
-
-    bool isDir;
-    rv = file->IsDirectory(&isDir);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaExternalError,
-                                   Cache_IsDirectory);
-      return Err(rv);
-    }
-
-    if (isDir) {
-      if (leafName.EqualsLiteral("morgue")) {
-        rv = GetBodyUsage(file, aCanceled, &usageInfo, aInitializing);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          if (rv != NS_ERROR_ABORT) {
-            REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaExternalError,
-                                         Cache_GetBodyUsage);
-          }
-          return Err(rv);
-        }
-      } else {
-        NS_WARNING("Unknown Cache directory found!");
-      }
-
-      continue;
-    }
-
-    // Ignore transient sqlite files and marker files
-    if (leafName.EqualsLiteral("caches.sqlite-journal") ||
-        leafName.EqualsLiteral("caches.sqlite-shm") ||
-        leafName.Find("caches.sqlite-mj"_ns, false, 0, 0) == 0 ||
-        leafName.EqualsLiteral("context_open.marker")) {
-      continue;
-    }
-
-    if (leafName.Equals(kCachesSQLiteFilename) ||
-        leafName.EqualsLiteral("caches.sqlite-wal")) {
-      int64_t fileSize;
-      rv = file->GetFileSize(&fileSize);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_ERR_IN_INIT(aInitializing, kQuotaExternalError,
-                                     Cache_GetFileSize);
-        return Err(rv);
-      }
-      MOZ_DIAGNOSTIC_ASSERT(fileSize >= 0);
-
-      usageInfo += DatabaseUsageType(Some(fileSize));
-      continue;
-    }
-
-    // Ignore directory padding file
-    if (leafName.EqualsLiteral(PADDING_FILE_NAME) ||
-        leafName.EqualsLiteral(PADDING_TMP_FILE_NAME)) {
-      continue;
-    }
-
-    NS_WARNING("Unknown Cache file found!");
-  }
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return Err(rv);
-  }
-
-  return usageInfo;
+  return UsageInfo{DatabaseUsageType(maybePaddingSize)} + innerUsageInfo;
 }
 
 // static
@@ -566,4 +483,5 @@ nsresult WipePaddingFile(const QuotaInfo& aQuotaInfo, nsIFile* aBaseDir) {
 
   return rv;
 }
+
 }  // namespace mozilla::dom::cache

@@ -25,11 +25,17 @@
 #include "nsIThread.h"
 #include "nsITimer.h"
 
-#include "jsapi.h"
-#include "js/CompileOptions.h"  // JS::CompileOptions, JS::ReadOnlyCompileOptions
-#include "js/GCAnnotations.h"
+#include "js/GCAnnotations.h"  // for JS_HAZ_NON_GC_POINTER
+#include "js/RootingAPI.h"     // for Handle, Heap
+#include "js/Transcoding.h"  // for TranscodeBuffer, TranscodeRange, TranscodeSources
+#include "js/TypeDecls.h"  // for HandleObject, HandleScript
 
 #include <prio.h>
+
+namespace JS {
+class CompileOptions;
+class OffThreadToken;
+}  // namespace JS
 
 namespace mozilla {
 namespace dom {

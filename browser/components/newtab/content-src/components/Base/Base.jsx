@@ -9,15 +9,16 @@ import { ConfirmDialog } from "content-src/components/ConfirmDialog/ConfirmDialo
 import { connect } from "react-redux";
 import { DiscoveryStreamBase } from "content-src/components/DiscoveryStreamBase/DiscoveryStreamBase";
 import { ErrorBoundary } from "content-src/components/ErrorBoundary/ErrorBoundary";
+import { CustomizeMenu } from "content-src/components/CustomizeMenu/CustomizeMenu";
 import React from "react";
 import { Search } from "content-src/components/Search/Search";
 import { Sections } from "content-src/components/Sections/Sections";
 
-const PrefsButton = props => (
+export const PrefsButton = ({ onClick, icon }) => (
   <div className="prefs-button">
     <button
-      className="icon icon-settings"
-      onClick={props.onClick}
+      className={`icon ${icon || "icon-settings"}`}
+      onClick={onClick}
       data-l10n-id="newtab-settings-button"
     />
   </div>
@@ -102,8 +103,10 @@ export class BaseContent extends React.PureComponent {
   constructor(props) {
     super(props);
     this.openPreferences = this.openPreferences.bind(this);
+    this.openCustomizationMenu = this.openCustomizationMenu.bind(this);
+    this.closeCustomizationMenu = this.closeCustomizationMenu.bind(this);
     this.onWindowScroll = debounce(this.onWindowScroll.bind(this), 5);
-    this.state = { fixedSearch: false };
+    this.state = { fixedSearch: false, customizeMenuVisible: false };
   }
 
   componentDidMount() {
@@ -115,7 +118,11 @@ export class BaseContent extends React.PureComponent {
   }
 
   onWindowScroll() {
-    const showLogo = this.props.Prefs.values["logowordmark.alwaysVisible"];
+    const prefs = this.props.Prefs.values;
+    // Show logo only if the logo is enabled and pocket is not enabled.
+    const showLogo =
+      prefs["logowordmark.alwaysVisible"] &&
+      !(prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"]);
     const SCROLL_THRESHOLD = showLogo ? 179 : 34;
     if (global.scrollY > SCROLL_THRESHOLD && !this.state.fixedSearch) {
       this.setState({ fixedSearch: true });
@@ -129,11 +136,22 @@ export class BaseContent extends React.PureComponent {
     this.props.dispatch(ac.UserEvent({ event: "OPEN_NEWTAB_PREFS" }));
   }
 
+  openCustomizationMenu() {
+    this.setState({ customizeMenuVisible: true });
+  }
+
+  closeCustomizationMenu() {
+    this.setState({ customizeMenuVisible: false });
+  }
+
   render() {
     const { props } = this;
     const { App } = props;
     const { initialized } = App;
     const prefs = props.Prefs.values;
+
+    // Values from experiment data
+    const { prefsButtonIcon } = prefs.featureConfig || {};
 
     const isDiscoveryStream =
       props.DiscoveryStream.config && props.DiscoveryStream.config.enabled;
@@ -148,7 +166,12 @@ export class BaseContent extends React.PureComponent {
       !pocketEnabled &&
       filteredSections.filter(section => section.enabled).length === 0;
     const searchHandoffEnabled = prefs["improvesearch.handoffToAwesomebar"];
-    const showLogo = prefs["logowordmark.alwaysVisible"];
+    const showLogo = prefs["logowordmark.alwaysVisible"] && !pocketEnabled;
+
+    const customizationMenuEnabled = prefs["customizationMenu.enabled"];
+    const newNewtabExperienceEnabled = prefs["newNewtabExperience.enabled"];
+    const canShowCustomizationMenu =
+      customizationMenuEnabled || newNewtabExperienceEnabled;
 
     const outerClassName = [
       "outer-wrapper",
@@ -193,12 +216,23 @@ export class BaseContent extends React.PureComponent {
               ) : (
                 <Sections />
               )}
-              <PrefsButton onClick={this.openPreferences} />
             </div>
               */}
             <ConfirmDialog />
           </main>
         </div>
+        <PrefsButton
+          onClick={
+            canShowCustomizationMenu
+              ? this.openCustomizationMenu
+              : this.openPreferences
+          }
+          icon={prefsButtonIcon}
+        />
+
+        {canShowCustomizationMenu && this.state.customizeMenuVisible && (
+          <CustomizeMenu onClose={this.closeCustomizationMenu} />
+        )}
       </div>
     );
   }

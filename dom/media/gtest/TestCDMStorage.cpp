@@ -5,12 +5,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ChromiumCDMCallback.h"
+#include "ChromiumCDMParent.h"
 #include "GMPServiceParent.h"
 #include "GMPTestMonitor.h"
 #include "MediaResult.h"
 #include "gtest/gtest.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/SchedulerGroup.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "nsIFile.h"
 #include "nsNSSComponent.h"  //For EnsureNSSInitializedChromeOrContent
 #include "nsThreadUtils.h"

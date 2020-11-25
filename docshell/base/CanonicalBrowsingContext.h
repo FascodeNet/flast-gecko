@@ -21,12 +21,15 @@
 #include "nsISecureBrowserUI.h"
 
 class nsISHistory;
+class nsIWidget;
 class nsSHistory;
 class nsBrowserStatusFilter;
 class nsSecureBrowserUI;
 class CallerWillNotifyHistoryIndexAndLengthChanges;
 
 namespace mozilla {
+enum class CallState;
+
 namespace net {
 class DocumentLoadListener;
 }
@@ -102,6 +105,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   already_AddRefed<CanonicalBrowsingContext> GetParentCrossChromeBoundary();
 
+  already_AddRefed<CanonicalBrowsingContext> TopCrossChromeBoundary();
   Nullable<WindowProxyHolder> GetTopChromeWindow();
 
   nsISHistory* GetSessionHistory();
@@ -112,6 +116,13 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   UniquePtr<LoadingSessionHistoryInfo> ReplaceLoadingSessionHistoryEntryForLoad(
       LoadingSessionHistoryInfo* aInfo, nsIChannel* aChannel);
+
+  // Call the given callback on all top-level descendant BrowsingContexts.
+  // Return Callstate::Stop from the callback to stop calling
+  // further children.
+  void CallOnAllTopDescendants(
+      const std::function<mozilla::CallState(CanonicalBrowsingContext*)>&
+          aCallback);
 
   void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
                             uint32_t aLoadType);
@@ -140,6 +151,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void RemoveFromSessionHistory();
 
   void HistoryGo(int32_t aIndex, uint64_t aHistoryEpoch,
+                 bool aRequireUserInteraction,
                  Maybe<ContentParentId> aContentId,
                  std::function<void(int32_t&&)>&& aResolver);
 
@@ -323,6 +335,12 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   uint64_t mInFlightProcessId = 0;
 
   uint64_t mCrossGroupOpenerId = 0;
+
+  // This function will make the top window context reset its
+  // "SHEntryHasUserInteraction" cache that prevents documents from repeatedly
+  // setting user interaction on SH entries. Should be called anytime SH
+  // entries are added or replaced.
+  void ResetSHEntryHasUserInteractionCache();
 
   // The current remoteness change which is in a pending state.
   RefPtr<PendingRemotenessChange> mPendingRemotenessChange;

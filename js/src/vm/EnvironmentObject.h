@@ -358,8 +358,7 @@ class CallObject : public EnvironmentObject {
   const Value& aliasedFormalFromArguments(const Value& argsValue) {
     return getSlot(ArgumentsObject::SlotFromMagicScopeSlotValue(argsValue));
   }
-  inline void setAliasedFormalFromArguments(JSContext* cx,
-                                            const Value& argsValue, jsid id,
+  inline void setAliasedFormalFromArguments(const Value& argsValue,
                                             const Value& v);
 
   JSFunction& callee() const {
@@ -1212,9 +1211,10 @@ MOZ_MUST_USE bool CheckGlobalDeclarationConflicts(
     JSContext* cx, HandleScript script,
     Handle<LexicalEnvironmentObject*> lexicalEnv, HandleObject varObj);
 
-MOZ_MUST_USE bool CheckGlobalOrEvalDeclarationConflicts(JSContext* cx,
-                                                        HandleObject envChain,
-                                                        HandleScript script);
+MOZ_MUST_USE bool GlobalOrEvalDeclInstantiation(JSContext* cx,
+                                                HandleObject envChain,
+                                                HandleScript script,
+                                                GCThingIndex lastFun);
 
 MOZ_MUST_USE bool InitFunctionEnvironmentObjects(JSContext* cx,
                                                  AbstractFramePtr frame);

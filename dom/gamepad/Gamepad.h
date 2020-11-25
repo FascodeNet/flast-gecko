@@ -7,7 +7,6 @@
 #ifndef mozilla_dom_gamepad_Gamepad_h
 #define mozilla_dom_gamepad_Gamepad_h
 
-#include "mozilla/ErrorResult.h"
 #include "mozilla/dom/GamepadBinding.h"
 #include "mozilla/dom/GamepadButton.h"
 #include "mozilla/dom/GamepadPose.h"
@@ -17,6 +16,7 @@
 #include "mozilla/dom/Performance.h"
 #include <stdint.h>
 #include "nsCOMPtr.h"
+#include "nsDataHashtable.h"
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsWrapperCache.h"

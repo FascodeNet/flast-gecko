@@ -25,7 +25,9 @@ use cranelift_codegen::ir::immediates::{Ieee32, Ieee64};
 use cranelift_codegen::ir::{self, InstBuilder, SourceLoc};
 use cranelift_codegen::isa;
 
-use cranelift_wasm::{wasmparser, FuncIndex, GlobalIndex, SignatureIndex, TableIndex, WasmResult};
+use cranelift_wasm::{
+    wasmparser, FuncIndex, GlobalIndex, SignatureIndex, TableIndex, TypeIndex, WasmResult,
+};
 
 use crate::compile;
 use crate::utils::BasicError;
@@ -53,6 +55,7 @@ fn typecode_to_type(type_code: TypeCode) -> WasmResult<Option<ir::Type>> {
         TypeCode::I64 => Ok(Some(ir::types::I64)),
         TypeCode::F32 => Ok(Some(ir::types::F32)),
         TypeCode::F64 => Ok(Some(ir::types::F64)),
+        TypeCode::V128 => Ok(Some(ir::types::I8X16)),
         TypeCode::FuncRef => Ok(Some(REF_TYPE)),
         TypeCode::ExternRef => Ok(Some(REF_TYPE)),
         TypeCode::BlockVoid => Ok(None),
@@ -91,7 +94,7 @@ impl GlobalDesc {
         unsafe { low_level::global_isIndirect(self.0) }
     }
 
-    /// Insert an instruction at `pos` that materialized the constant value.
+    /// Insert an instruction at `pos` that materializes the constant value.
     pub fn emit_constant(self, pos: &mut FuncCursor) -> WasmResult<ir::Value> {
         unsafe {
             let v = low_level::global_constantValue(self.0);
@@ -100,6 +103,14 @@ impl GlobalDesc {
                 TypeCode::I64 => Ok(pos.ins().iconst(ir::types::I64, v.u.i64)),
                 TypeCode::F32 => Ok(pos.ins().f32const(Ieee32::with_bits(v.u.i32 as u32))),
                 TypeCode::F64 => Ok(pos.ins().f64const(Ieee64::with_bits(v.u.i64 as u64))),
+                TypeCode::V128 => {
+                    let c = pos
+                        .func
+                        .dfg
+                        .constants
+                        .insert(ir::ConstantData::from(&v.u.v128 as &[u8]));
+                    Ok(pos.ins().vconst(ir::types::I8X16, c))
+                }
                 TypeCode::NullableRef | TypeCode::ExternRef | TypeCode::FuncRef => {
                     assert!(v.u.r as usize == 0);
                     Ok(pos.ins().null(REF_TYPE))
@@ -195,6 +206,7 @@ fn typecode_to_parser_type(ty: TypeCode) -> wasmparser::Type {
         TypeCode::I64 => wasmparser::Type::I64,
         TypeCode::F32 => wasmparser::Type::F32,
         TypeCode::F64 => wasmparser::Type::F64,
+        TypeCode::V128 => wasmparser::Type::V128,
         TypeCode::FuncRef => wasmparser::Type::FuncRef,
         TypeCode::ExternRef => wasmparser::Type::ExternRef,
         TypeCode::BlockVoid => wasmparser::Type::EmptyBlockType,
@@ -284,8 +296,18 @@ impl<'a> ModuleEnvironment<'a> {
     pub fn func_is_import(&self, func_index: FuncIndex) -> bool {
         unsafe { low_level::env_func_is_import(self.env, func_index.index()) }
     }
-    pub fn signature(&self, sig_index: SignatureIndex) -> FuncTypeWithId {
-        FuncTypeWithId::new(unsafe { low_level::env_signature(self.env, sig_index.index()) })
+    pub fn signature(&self, type_index: TypeIndex) -> FuncTypeWithId {
+        // This function takes `TypeIndex` rather than the `SignatureIndex` that one
+        // might expect.  Why?  https://github.com/bytecodealliance/wasmtime/pull/2115
+        // introduces two new types to the type section as viewed by Cranelift.  This is
+        // in support of the module linking proposal.  So now a type index (for
+        // Cranelift) can refer to a func, module, or instance type.  When the type index
+        // refers to a func type, it can also be used to get the signature index which
+        // can be used to get the ir::Signature for that func type.  For us, Cranelift is
+        // only used with function types so we can just assume type index and signature
+        // index are 1:1.  If and when we come to support the module linking proposal,
+        // this will need to be revisited.
+        FuncTypeWithId::new(unsafe { low_level::env_signature(self.env, type_index.index()) })
     }
     pub fn table(&self, table_index: TableIndex) -> TableDesc {
         TableDesc(unsafe { low_level::env_table(self.env, table_index.index()) })

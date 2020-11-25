@@ -15,6 +15,7 @@
 #include "gc/PublicIterators.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
+#include "jit/Invalidation.h"
 #include "jit/Ion.h"
 #include "jit/JitZone.h"
 #include "vm/Runtime.h"
@@ -254,8 +255,6 @@ void Zone::changeGCState(GCState prev, GCState next) {
   }
 }
 
-void Zone::beginSweepTypes() { types.beginSweep(); }
-
 template <class Pred>
 static void EraseIf(js::gc::WeakEntryVector& entries, Pred pred) {
   auto* begin = entries.begin();
@@ -479,10 +478,6 @@ void Zone::discardJitCode(JSFreeOp* fop,
     // stubs because the optimizedStubSpace will be purged below.
     if (discardBaselineCode) {
       jitScript->purgeOptimizedStubs(script);
-
-      // ICs were purged so the script will need to warm back up before it can
-      // be inlined during Ion compilation.
-      jitScript->clearIonCompiledOrInlined();
     }
 
     // Finally, reset the active flag.
@@ -663,7 +658,7 @@ void Zone::addSizeOfIncludingThis(
     size_t* uniqueIdMap, size_t* shapeCaches, size_t* atomsMarkBitmaps,
     size_t* compartmentObjects, size_t* crossCompartmentWrappersTables,
     size_t* compartmentsPrivateData, size_t* scriptCountsMapArg) {
-  *typePool += types.typeLifoAlloc().sizeOfExcludingThis(mallocSizeOf);
+  // TODO(no-TI): remove typePool argument.
   *regexpZone += regExps().sizeOfExcludingThis(mallocSizeOf);
   if (jitZone_) {
     jitZone_->addSizeOfIncludingThis(mallocSizeOf, code, jitZone,

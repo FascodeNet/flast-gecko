@@ -59,15 +59,6 @@ inline NativeObject* NewObjectCache::newObjectFromHit(JSContext* cx,
     return nullptr;
   }
 
-  MOZ_ASSERT(!group->hasUnanalyzedPreliminaryObjects());
-
-  {
-    AutoSweepObjectGroup sweepGroup(group);
-    if (group->shouldPreTenure(sweepGroup)) {
-      heap = gc::TenuredHeap;
-    }
-  }
-
   if (cx->runtime()->gc.upcomingZealousGC()) {
     return nullptr;
   }

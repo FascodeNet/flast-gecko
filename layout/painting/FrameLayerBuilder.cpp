@@ -21,6 +21,7 @@
 #include "Layers.h"
 #include "MaskLayerImageCache.h"
 #include "MatrixStack.h"
+#include "TransformClipNode.h"
 #include "UnitTransforms.h"
 #include "Units.h"
 #include "gfx2DGlue.h"
@@ -128,6 +129,47 @@ static inline MaskLayerImageCache* GetMaskLayerImageCache() {
 
   return gMaskLayerImageCache;
 }
+
+struct InactiveLayerData {
+  RefPtr<layers::BasicLayerManager> mLayerManager;
+  RefPtr<layers::Layer> mLayer;
+  UniquePtr<layers::LayerProperties> mProps;
+
+  ~InactiveLayerData();
+};
+
+struct AssignedDisplayItem {
+  AssignedDisplayItem(nsPaintedDisplayItem* aItem, LayerState aLayerState,
+                      DisplayItemData* aData, const nsRect& aContentRect,
+                      DisplayItemEntryType aType, const bool aHasOpacity,
+                      const RefPtr<TransformClipNode>& aTransform,
+                      const bool aIsMerged);
+  AssignedDisplayItem(AssignedDisplayItem&& aRhs) = default;
+
+  bool HasOpacity() const { return mHasOpacity; }
+
+  bool HasTransform() const { return mTransform; }
+
+  nsPaintedDisplayItem* mItem;
+  DisplayItemData* mDisplayItemData;
+
+  /**
+   * If the display item is being rendered as an inactive
+   * layer, then this stores the layer manager being
+   * used for the inactive transaction.
+   */
+  UniquePtr<InactiveLayerData> mInactiveLayerData;
+  RefPtr<TransformClipNode> mTransform;
+
+  nsRect mContentRect;
+  LayerState mLayerState;
+  DisplayItemEntryType mType;
+
+  bool mReused;
+  bool mMerged;
+  bool mHasOpacity;
+  bool mHasPaintRect;
+};
 
 struct DisplayItemEntry {
   DisplayItemEntry(nsDisplayItem* aItem, DisplayItemEntryType aType)
@@ -244,6 +286,19 @@ DisplayItemData::DisplayItemData(LayerManagerData* aParent, uint32_t aKey,
   if (aFrame) {
     AddFrame(aFrame);
   }
+}
+
+void DisplayItemData::Destroy() {
+  // Get the pres context.
+  RefPtr<nsPresContext> presContext = mFrameList[0]->PresContext();
+
+  // Call our destructor.
+  this->~DisplayItemData();
+
+  // Don't let the memory be freed, since it will be recycled
+  // instead. Don't call the global operator delete.
+  presContext->PresShell()->FreeByObjectID(eArenaObjectID_DisplayItemData,
+                                           this);
 }
 
 void DisplayItemData::AddFrame(nsIFrame* aFrame) {
@@ -441,6 +496,12 @@ DisplayItemData* DisplayItemData::AssertDisplayItemData(
                      sAliveDisplayItemDatas->Contains(aData));
   MOZ_RELEASE_ASSERT(aData->mLayer);
   return aData;
+}
+
+void* DisplayItemData::operator new(size_t sz, nsPresContext* aPresContext) {
+  // Check the recycle list first.
+  return aPresContext->PresShell()->AllocateByObjectID(
+      eArenaObjectID_DisplayItemData, sz);
 }
 
 /**
@@ -5044,8 +5105,8 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
         nsDisplayScrollInfoLayer* scrollItem =
             static_cast<nsDisplayScrollInfoLayer*>(item);
         newLayerEntry->mOpaqueForAnimatedGeometryRootParent = false;
-        newLayerEntry->mBaseScrollMetadata =
-            scrollItem->ComputeScrollMetadata(ownLayer->Manager(), mParameters);
+        newLayerEntry->mBaseScrollMetadata = scrollItem->ComputeScrollMetadata(
+            mBuilder, ownLayer->Manager(), mParameters);
       }
 
       /**
@@ -6048,7 +6109,7 @@ Size FrameLayerBuilder::ChooseScale(nsIFrame* aContainerFrame,
     } else {
       // Scale factors are normalized to a power of 2 to reduce the number of
       // resolution changes
-      scale = aTransform2d.ScaleFactors(true);
+      scale = aTransform2d.ScaleFactors();
       // For frames with a changing scale transform round scale factors up to
       // nearest power-of-2 boundary so that we don't keep having to redraw
       // the content as it scales up and down. Rounding up to nearest
@@ -6506,7 +6567,7 @@ gfxSize FrameLayerBuilder::GetPaintedLayerScaleForFrame(nsIFrame* aFrame) {
 
   Matrix transform2d;
   if (transform.CanDraw2D(&transform2d)) {
-    return ThebesMatrix(transform2d).ScaleFactors(true);
+    return ThebesMatrix(transform2d).ScaleFactors();
   }
 
   return gfxSize(1.0, 1.0);
