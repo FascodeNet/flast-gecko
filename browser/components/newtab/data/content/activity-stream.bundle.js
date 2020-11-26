@@ -1,12 +1,4 @@
 /*! THIS FILE IS AUTO-GENERATED: webpack.system-addon.config.js */
-
-function randomBackground(){
-  var elementkun=document.getElementsByClassName("outer-wrapper")[0];
-  var url_head="resource://activity-stream/background-images/"
-  var n = 1+ Math.floor(Math.random() * 99);
-  var background_url=url_head + n + ".jpg";
-  elementkun.style.backgroundImage="url("  + background_url +")"; 
-}
 var NewtabRenderUtils =
 /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
@@ -775,40 +767,18 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
       appUpdateChannel: this.props.Prefs.values.appUpdateChannel,
       fxaEndpoint: this.props.Prefs.values.fxa_endpoint,
       dispatch: this.props.dispatch
-<<<<<<< HEAD
-    }), /*react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
-      className: `body-wrapper${initialized ? " on" : ""}`
-    }, isDiscoveryStream ? react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], {
-      className: "borderless-error"
-    }, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_DiscoveryStreamBase_DiscoveryStreamBase__WEBPACK_IMPORTED_MODULE_5__["DiscoveryStreamBase"], {
-      locale: props.App.locale
-    })) : react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_9__["Sections"], null), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(PrefsButton, {
-      onClick: this.openPreferences
-    })),*/ react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))),
-    react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("main",{
-      onload: "randomBackground();"
-    },
-    react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
-=======
     }), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
->>>>>>> upstream/master
       className: `body-wrapper${initialized ? " on" : ""}`
     }, isDiscoveryStream ? react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], {
       className: "borderless-error"
     }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_DiscoveryStreamBase_DiscoveryStreamBase__WEBPACK_IMPORTED_MODULE_5__["DiscoveryStreamBase"], {
       locale: props.App.locale
-<<<<<<< HEAD
-    })) : react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_9__["Sections"], null), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(PrefsButton, {
-      onClick: this.openPreferences
-    }))));
-=======
     })) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_10__["Sections"], null)), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
       onClick: canShowCustomizationMenu ? this.openCustomizationMenu : this.openPreferences,
       icon: prefsButtonIcon
     }), canShowCustomizationMenu && this.state.customizeMenuVisible && react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
       onClose: this.closeCustomizationMenu
     }));
->>>>>>> upstream/master
   }
 
 }

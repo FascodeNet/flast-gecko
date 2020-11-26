@@ -9,12 +9,3 @@ if (window.__FROM_STARTUP_CACHE__) {
 } else {
   window.NewtabRenderUtils.renderWithoutState();
 }
-
-window.addEventListener('load', function(){
-    
-  var elementkun=document.getElementsByClassName("outer-wrapper")[0];
-  var url_head="resource://activity-stream/background-images/"
-  var n = 1+ Math.floor(Math.random() * 99);
-  var background_url=url_head + n + ".jpg";
-  elementkun.style.backgroundImage="url("  + background_url +")"; 
-});
