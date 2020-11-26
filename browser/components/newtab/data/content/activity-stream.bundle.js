@@ -647,7 +647,7 @@ class _Base extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureComponent {
     document.body.classList.contains("inline-onboarding") ? "inline-onboarding" : ""].filter(v => v).join(" ");
     global.document.body.className = bodyClassName;
     var random = Math.floor( Math.random() * 99 )+1;
-    document.style.backgroundImage="url(resource://activity-stream/background-images/" +random + ".jpg)";
+    document.body.style.backgroundImage="url(resource://activity-stream/background-images/" +random + ".jpg)";
   }
 
   render() {
