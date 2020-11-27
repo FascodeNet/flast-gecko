@@ -646,8 +646,6 @@ class _Base extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureComponent {
     // we don't want to add them back to the Activity Stream view
     document.body.classList.contains("inline-onboarding") ? "inline-onboarding" : ""].filter(v => v).join(" ");
     global.document.body.className = bodyClassName;
-    var random = Math.floor( Math.random() * 99 )+1;
-    document.body.style.backgroundImage="url(resource://activity-stream/background-images/" +random + ".jpg)";
   }
 
   render() {
@@ -692,7 +690,6 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
 
   componentWillUnmount() {
     global.removeEventListener("scroll", this.onWindowScroll);
-    document.style.backgroundImage=null;
   }
 
   onWindowScroll() {
@@ -1297,8 +1294,6 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
         endpoint
       }
     }).then(this.setStateFromParent);
-
-
   }
 
   findOtherBundledMessagesOfSameTemplate(template) {
