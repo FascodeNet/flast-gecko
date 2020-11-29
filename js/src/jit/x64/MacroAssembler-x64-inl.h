@@ -289,6 +289,10 @@ void MacroAssembler::lshift64(Imm32 imm, Register64 dest) {
 }
 
 void MacroAssembler::lshift64(Register shift, Register64 srcDest) {
+  if (Assembler::HasBMI2()) {
+    shlxq(srcDest.reg, shift, srcDest.reg);
+    return;
+  }
   MOZ_ASSERT(shift == rcx);
   shlq_cl(srcDest.reg);
 }
@@ -303,6 +307,10 @@ void MacroAssembler::rshift64(Imm32 imm, Register64 dest) {
 }
 
 void MacroAssembler::rshift64(Register shift, Register64 srcDest) {
+  if (Assembler::HasBMI2()) {
+    shrxq(srcDest.reg, shift, srcDest.reg);
+    return;
+  }
   MOZ_ASSERT(shift == rcx);
   shrq_cl(srcDest.reg);
 }
@@ -318,6 +326,10 @@ void MacroAssembler::rshift64Arithmetic(Imm32 imm, Register64 dest) {
 }
 
 void MacroAssembler::rshift64Arithmetic(Register shift, Register64 srcDest) {
+  if (Assembler::HasBMI2()) {
+    sarxq(srcDest.reg, shift, srcDest.reg);
+    return;
+  }
   MOZ_ASSERT(shift == rcx);
   sarq_cl(srcDest.reg);
 }
@@ -390,8 +402,10 @@ void MacroAssembler::cmpPtrSet(Condition cond, T1 lhs, T2 rhs, Register dest) {
 // Bit counting functions
 
 void MacroAssembler::clz64(Register64 src, Register dest) {
-  // On very recent chips (Haswell and newer) there is actually an
-  // LZCNT instruction that does all of this.
+  if (AssemblerX86Shared::HasLZCNT()) {
+    lzcntq(src.reg, dest);
+    return;
+  }
 
   Label nonzero;
   bsrq(src.reg, dest);
@@ -402,6 +416,11 @@ void MacroAssembler::clz64(Register64 src, Register dest) {
 }
 
 void MacroAssembler::ctz64(Register64 src, Register dest) {
+  if (AssemblerX86Shared::HasBMI1()) {
+    tzcntq(src.reg, dest);
+    return;
+  }
+
   Label nonzero;
   bsfq(src.reg, dest);
   j(Assembler::NonZero, &nonzero);

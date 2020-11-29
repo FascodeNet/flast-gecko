@@ -66,8 +66,10 @@ void MacroAssembler::xor32(Register src, Register dest) { xorl(src, dest); }
 void MacroAssembler::xor32(Imm32 imm, Register dest) { xorl(imm, dest); }
 
 void MacroAssembler::clz32(Register src, Register dest, bool knownNotZero) {
-  // On very recent chips (Haswell and newer?) there is actually an
-  // LZCNT instruction that does all of this.
+  if (AssemblerX86Shared::HasLZCNT()) {
+    lzcntl(src, dest);
+    return;
+  }
 
   bsrl(src, dest);
   if (!knownNotZero) {
@@ -81,6 +83,11 @@ void MacroAssembler::clz32(Register src, Register dest, bool knownNotZero) {
 }
 
 void MacroAssembler::ctz32(Register src, Register dest, bool knownNotZero) {
+  if (AssemblerX86Shared::HasBMI1()) {
+    tzcntl(src, dest);
+    return;
+  }
+
   bsfl(src, dest);
   if (!knownNotZero) {
     Label nonzero;
@@ -323,11 +330,19 @@ void MacroAssembler::rotateRight(Register count, Register input,
 // Shift instructions
 
 void MacroAssembler::lshift32(Register shift, Register srcDest) {
+  if (HasBMI2()) {
+    shlxl(srcDest, shift, srcDest);
+    return;
+  }
   MOZ_ASSERT(shift == ecx);
   shll_cl(srcDest);
 }
 
 void MacroAssembler::flexibleLshift32(Register shift, Register srcDest) {
+  if (HasBMI2()) {
+    shlxl(srcDest, shift, srcDest);
+    return;
+  }
   if (shift == ecx) {
     shll_cl(srcDest);
   } else {
@@ -339,11 +354,19 @@ void MacroAssembler::flexibleLshift32(Register shift, Register srcDest) {
 }
 
 void MacroAssembler::rshift32(Register shift, Register srcDest) {
+  if (HasBMI2()) {
+    shrxl(srcDest, shift, srcDest);
+    return;
+  }
   MOZ_ASSERT(shift == ecx);
   shrl_cl(srcDest);
 }
 
 void MacroAssembler::flexibleRshift32(Register shift, Register srcDest) {
+  if (HasBMI2()) {
+    shrxl(srcDest, shift, srcDest);
+    return;
+  }
   if (shift == ecx) {
     shrl_cl(srcDest);
   } else {
@@ -355,12 +378,20 @@ void MacroAssembler::flexibleRshift32(Register shift, Register srcDest) {
 }
 
 void MacroAssembler::rshift32Arithmetic(Register shift, Register srcDest) {
+  if (HasBMI2()) {
+    sarxl(srcDest, shift, srcDest);
+    return;
+  }
   MOZ_ASSERT(shift == ecx);
   sarl_cl(srcDest);
 }
 
 void MacroAssembler::flexibleRshift32Arithmetic(Register shift,
                                                 Register srcDest) {
+  if (HasBMI2()) {
+    sarxl(srcDest, shift, srcDest);
+    return;
+  }
   if (shift == ecx) {
     sarl_cl(srcDest);
   } else {

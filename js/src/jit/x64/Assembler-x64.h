@@ -810,6 +810,18 @@ class Assembler : public AssemblerX86Shared {
   void shlq_cl(Register dest) { masm.shlq_CLr(dest.encoding()); }
   void shrq_cl(Register dest) { masm.shrq_CLr(dest.encoding()); }
   void sarq_cl(Register dest) { masm.sarq_CLr(dest.encoding()); }
+  void sarxq(Register src, Register shift, Register dest) {
+    MOZ_ASSERT(HasBMI2());
+    masm.sarxq_rrr(src.encoding(), shift.encoding(), dest.encoding());
+  }
+  void shlxq(Register src, Register shift, Register dest) {
+    MOZ_ASSERT(HasBMI2());
+    masm.shlxq_rrr(src.encoding(), shift.encoding(), dest.encoding());
+  }
+  void shrxq(Register src, Register shift, Register dest) {
+    MOZ_ASSERT(HasBMI2());
+    masm.shrxq_rrr(src.encoding(), shift.encoding(), dest.encoding());
+  }
   void rolq(Imm32 imm, Register dest) {
     masm.rolq_ir(imm.value, dest.encoding());
   }
@@ -904,6 +916,12 @@ class Assembler : public AssemblerX86Shared {
     masm.bsfq_rr(src.encoding(), dest.encoding());
   }
   void bswapq(const Register& reg) { masm.bswapq_r(reg.encoding()); }
+  void lzcntq(const Register& src, const Register& dest) {
+    masm.lzcntq_rr(src.encoding(), dest.encoding());
+  }
+  void tzcntq(const Register& src, const Register& dest) {
+    masm.tzcntq_rr(src.encoding(), dest.encoding());
+  }
   void popcntq(const Register& src, const Register& dest) {
     masm.popcntq_rr(src.encoding(), dest.encoding());
   }

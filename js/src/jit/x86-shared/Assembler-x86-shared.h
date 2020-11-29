@@ -1653,6 +1653,12 @@ class AssemblerX86Shared : public AssemblerShared {
     masm.bsfl_rr(src.encoding(), dest.encoding());
   }
   void bswapl(Register reg) { masm.bswapl_r(reg.encoding()); }
+  void lzcntl(const Register& src, const Register& dest) {
+    masm.lzcntl_rr(src.encoding(), dest.encoding());
+  }
+  void tzcntl(const Register& src, const Register& dest) {
+    masm.tzcntl_rr(src.encoding(), dest.encoding());
+  }
   void popcntl(const Register& src, const Register& dest) {
     masm.popcntl_rr(src.encoding(), dest.encoding());
   }
@@ -1726,6 +1732,19 @@ class AssemblerX86Shared : public AssemblerShared {
   }
   void shldl_cl(Register src, Register dest) {
     masm.shldl_CLr(src.encoding(), dest.encoding());
+  }
+
+  void sarxl(Register src, Register shift, Register dest) {
+    MOZ_ASSERT(HasBMI2());
+    masm.sarxl_rrr(src.encoding(), shift.encoding(), dest.encoding());
+  }
+  void shlxl(Register src, Register shift, Register dest) {
+    MOZ_ASSERT(HasBMI2());
+    masm.shlxl_rrr(src.encoding(), shift.encoding(), dest.encoding());
+  }
+  void shrxl(Register src, Register shift, Register dest) {
+    MOZ_ASSERT(HasBMI2());
+    masm.shrxl_rrr(src.encoding(), shift.encoding(), dest.encoding());
   }
 
   void roll(const Imm32 imm, Register dest) {

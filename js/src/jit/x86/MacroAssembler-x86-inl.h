@@ -547,6 +547,27 @@ void MacroAssembler::rotateRight64(Imm32 count, Register64 src, Register64 dest,
 // Bit counting functions
 
 void MacroAssembler::clz64(Register64 src, Register dest) {
+  if (AssemblerX86Shared::HasLZCNT()) {
+    Label nonzero, zero;
+
+    testl(src.high, src.high);
+    j(Assembler::Zero, &zero);
+
+    lzcntl(src.high, dest);
+    jump(&nonzero);
+
+    bind(&zero);
+    lzcntl(src.low, dest);
+    addl(Imm32(32), dest);
+
+    bind(&nonzero);
+    return;
+  }
+
+  // Because |dest| may be equal to |src.low|, we rely on BSR not modifying its
+  // output when the input is zero. AMD ISA documents BSR not modifying the
+  // output and current Intel CPUs follow AMD.
+
   Label nonzero, zero;
 
   bsrl(src.high, dest);
@@ -564,6 +585,27 @@ void MacroAssembler::clz64(Register64 src, Register dest) {
 }
 
 void MacroAssembler::ctz64(Register64 src, Register dest) {
+  if (AssemblerX86Shared::HasBMI1()) {
+    Label nonzero, zero;
+
+    testl(src.low, src.low);
+    j(Assembler::Zero, &zero);
+
+    tzcntl(src.low, dest);
+    jump(&nonzero);
+
+    bind(&zero);
+    tzcntl(src.high, dest);
+    addl(Imm32(32), dest);
+
+    bind(&nonzero);
+    return;
+  }
+
+  // Because |dest| may be equal to |src.low|, we rely on BSF not modifying its
+  // output when the input is zero. AMD ISA documents BSF not modifying the
+  // output and current Intel CPUs follow AMD.
+
   Label done, nonzero;
 
   bsfl(src.low, dest);

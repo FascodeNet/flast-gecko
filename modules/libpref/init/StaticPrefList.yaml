@@ -4217,13 +4217,7 @@
 
 - name: gfx.direct3d11.use-double-buffering
   type: RelaxedAtomicBool
-#ifdef XP_WIN
-  # Prefer flipping between two buffers over copying from our back buffer
-  # to the OS.
-  value: @IS_NIGHTLY_BUILD@
-#else
   value: false
-#endif
   mirror: always
 
 - name: gfx.direct3d11.enable-debug-layer
@@ -5081,6 +5075,15 @@
   value: @IS_ANDROID@
   mirror: always
 
+#ifdef XP_WIN
+  # If true, automatically extend selection to cluster boundaries when
+  # TSF/TIP requests to select from/by middle of a cluster.
+-   name: intl.tsf.hack.extend_setting_selection_range_to_cluster_boundaries
+    type: bool
+    value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+    mirror: always
+#endif
+
 # If you use legacy Chinese IME which puts an ideographic space to composition
 # string as placeholder, this pref might be useful.  If this is true and when
 # web contents forcibly commits composition (e.g., moving focus), the
@@ -5579,11 +5582,7 @@
 
 - name: layers.mlgpu.enabled
   type: bool
-#if defined(XP_WIN)
-  value: true
-#else
   value: false
-#endif
   mirror: once
   do_not_use_directly: true
 
@@ -8546,7 +8545,7 @@
 # API instead of PR_GetAddrInfoByName
 - name: network.dns.dns_query_single_label
   type: RelaxedAtomicBool
-  value: true
+  value: false
   mirror: always
 
 # The proxy type. See nsIProtocolProxyService.idl

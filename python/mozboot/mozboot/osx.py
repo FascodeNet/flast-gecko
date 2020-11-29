@@ -5,6 +5,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -188,6 +189,13 @@ class OSXBootstrapper(BaseBootstrapper):
         if self.os_version < StrictVersion("10.6"):
             raise Exception("OS X 10.6 or above is required.")
 
+        if platform.machine() == "arm64":
+            print(
+                "Bootstrap is not supported on Apple Silicon yet.\n"
+                "Please see instructions at https://bit.ly/36bUmEx in the meanwhile"
+            )
+            sys.exit(1)
+
         self.minor_version = version.split(".")[1]
 
     def install_system_packages(self):
@@ -369,7 +377,6 @@ class OSXBootstrapper(BaseBootstrapper):
         packages = [
             "git",
             "gnu-tar",
-            "node",
             "terminal-notifier",
             "watchman",
         ]
@@ -440,7 +447,7 @@ class OSXBootstrapper(BaseBootstrapper):
             self.run_as_root([self.port, "-v", "install"] + missing)
 
     def ensure_macports_system_packages(self, install_mercurial):
-        packages = ["gnutar", "watchman", "nodejs8"]
+        packages = ["gnutar", "watchman"]
         if install_mercurial:
             packages.append("mercurial")
 

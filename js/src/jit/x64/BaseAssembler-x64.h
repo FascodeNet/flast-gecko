@@ -200,6 +200,18 @@ class BaseAssemblerX64 : public BaseAssembler {
     m_formatter.twoByteOp64(OP2_BSF_GvEv, src, dst);
   }
 
+  void lzcntq_rr(RegisterID src, RegisterID dst) {
+    spew("lzcntq     %s, %s", GPReg64Name(src), GPReg64Name(dst));
+    m_formatter.legacySSEPrefix(VEX_SS);
+    m_formatter.twoByteOp64(OP2_LZCNT_GvEv, src, dst);
+  }
+
+  void tzcntq_rr(RegisterID src, RegisterID dst) {
+    spew("tzcntq     %s, %s", GPReg64Name(src), GPReg64Name(dst));
+    m_formatter.legacySSEPrefix(VEX_SS);
+    m_formatter.twoByteOp64(OP2_TZCNT_GvEv, src, dst);
+  }
+
   void popcntq_rr(RegisterID src, RegisterID dst) {
     spew("popcntq    %s, %s", GPReg64Name(src), GPReg64Name(dst));
     m_formatter.legacySSEPrefix(VEX_SS);
@@ -1120,6 +1132,41 @@ class BaseAssemblerX64 : public BaseAssembler {
   MOZ_MUST_USE JmpSrc vpcmpgtd_ripr(XMMRegisterID dst) {
     return twoByteRipOpSimd("vpcmpgtd", VEX_PD, OP2_PCMPGTD_VdqWdq, invalid_xmm,
                             dst);
+  }
+
+  // BMI instructions:
+
+  void sarxq_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
+    spew("sarxq      %s, %s, %s", GPReg64Name(src), GPReg64Name(shift),
+         GPReg64Name(dst));
+
+    RegisterID rm = src;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
+    int reg = dst;
+    m_formatter.threeByteOpVex64(VEX_SS /* = F3 */, OP3_SARX_GyEyBy, ESCAPE_38,
+                                 rm, src0, reg);
+  }
+
+  void shlxq_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
+    spew("shlxq      %s, %s, %s", GPReg64Name(src), GPReg64Name(shift),
+         GPReg64Name(dst));
+
+    RegisterID rm = src;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
+    int reg = dst;
+    m_formatter.threeByteOpVex64(VEX_PD /* = 66 */, OP3_SHLX_GyEyBy, ESCAPE_38,
+                                 rm, src0, reg);
+  }
+
+  void shrxq_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
+    spew("shrxq      %s, %s, %s", GPReg64Name(src), GPReg64Name(shift),
+         GPReg64Name(dst));
+
+    RegisterID rm = src;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
+    int reg = dst;
+    m_formatter.threeByteOpVex64(VEX_SD /* = F2 */, OP3_SHRX_GyEyBy, ESCAPE_38,
+                                 rm, src0, reg);
   }
 
  private:
