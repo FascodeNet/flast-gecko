@@ -47,10 +47,14 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   print: "chrome://marionette/content/print.js",
   proxy: "chrome://marionette/content/proxy.js",
   reftest: "chrome://marionette/content/reftest.js",
+  registerCommandsActor:
+    "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
   Sandboxes: "chrome://marionette/content/evaluate.js",
   TimedPromise: "chrome://marionette/content/sync.js",
   Timeouts: "chrome://marionette/content/capabilities.js",
   UnhandledPromptBehavior: "chrome://marionette/content/capabilities.js",
+  unregisterCommandsActor:
+    "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
   waitForEvent: "chrome://marionette/content/sync.js",
   waitForLoadEvent: "chrome://marionette/content/sync.js",
   waitForObserverTopic: "chrome://marionette/content/sync.js",
@@ -866,21 +870,7 @@ GeckoDriver.prototype.newSession = async function(cmd) {
   await browserListening;
 
   if (MarionettePrefs.useActors) {
-    // Register the JSWindowActor pair that holds all the commands.
-    ChromeUtils.registerWindowActor("MarionetteCommands", {
-      kind: "JSWindowActor",
-      parent: {
-        moduleURI:
-          "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
-      },
-      child: {
-        moduleURI:
-          "chrome://marionette/content/actors/MarionetteCommandsChild.jsm",
-      },
-
-      allFrames: true,
-      includeChrome: true,
-    });
+    registerCommandsActor();
   }
 
   if (this.mainFrame) {
@@ -897,6 +887,8 @@ GeckoDriver.prototype.newSession = async function(cmd) {
   this.dialogObserver = new modal.DialogObserver(this);
   this.dialogObserver.add(this.handleModalDialog.bind(this));
 
+  Services.obs.addObserver(this, "browsing-context-attached");
+
   // Check if there is already an open dialog for the selected browser window.
   this.dialog = modal.findModalDialogs(this.curBrowser);
 
@@ -904,6 +896,32 @@ GeckoDriver.prototype.newSession = async function(cmd) {
     sessionId: this.sessionID,
     capabilities: this.capabilities,
   };
+};
+
+GeckoDriver.prototype.observe = function(subject, topic, data) {
+  switch (topic) {
+    case "browsing-context-attached":
+      // For cross-group navigations the complete browsing context tree of a tab
+      // gets replaced. An indication for that is when the newly attached
+      // browsing context has the same browserId as the currently selected
+      // content browsing context, and doesn't have a parent.
+      //
+      // Also the current content browsing context gets only updated when it's
+      // the top-level one to not automatically switch away from the currently
+      // selected frame.
+      if (
+        subject.browserId == this.contentBrowsingContext?.browserId &&
+        !subject.parent &&
+        !this.contentBrowsingContext?.parent
+      ) {
+        logger.trace(
+          "Remoteness change detected. Set new top-level browsing context " +
+            `to ${subject.id}`
+        );
+        this.contentBrowsingContext = subject;
+      }
+      break;
+  }
 };
 
 /**
@@ -1197,8 +1215,12 @@ GeckoDriver.prototype.navigateTo = async function(cmd) {
     await this.listener.switchToFrame();
   }
 
-  const currentURL = await this._getCurrentURL();
-  const loadEventExpected = navigate.isLoadEventExpected(currentURL, validURL);
+  const loadEventExpected = navigate.isLoadEventExpected(
+    await this._getCurrentURL(),
+    {
+      future: validURL,
+    }
+  );
 
   await navigate.waitForNavigationCompleted(
     this,
@@ -2180,7 +2202,7 @@ GeckoDriver.prototype.getActiveElement = async function() {
  *     A modal dialog is open, blocking this operation.
  */
 GeckoDriver.prototype.clickElement = async function(cmd) {
-  assert.open(this.getBrowsingContext());
+  const browsingContext = assert.open(this.getBrowsingContext());
   await this._handleUserPrompts();
 
   let id = assert.string(cmd.parameters.id);
@@ -2189,12 +2211,19 @@ GeckoDriver.prototype.clickElement = async function(cmd) {
   if (MarionettePrefs.useActors) {
     const actor = this.getActor();
 
-    const target = await actor.getElementAttribute(webEl, "target");
+    const loadEventExpected = navigate.isLoadEventExpected(
+      await this._getCurrentURL(),
+      {
+        browsingContext,
+        target: await actor.getElementAttribute(webEl, "target"),
+      }
+    );
+
     await navigate.waitForNavigationCompleted(
       this,
       () => actor.clickElement(webEl, this.capabilities),
       {
-        loadEventExpected: target !== "_blank",
+        loadEventExpected,
         // The click might trigger a navigation, so don't count on it.
         requireBeforeUnload: false,
       }
@@ -2209,13 +2238,19 @@ GeckoDriver.prototype.clickElement = async function(cmd) {
       break;
 
     case Context.Content:
-      const target = await this.listener.getElementAttribute(webEl, "target");
+      const loadEventExpected = navigate.isLoadEventExpected(
+        await this._getCurrentURL(),
+        {
+          browsingContext,
+          target: this.listener.getElementAttribute(webEl, "target"),
+        }
+      );
 
       await navigate.waitForNavigationCompleted(
         this,
         () => this.listener.clickElement(webEl, this.capabilities),
         {
-          loadEventExpected: target !== "_blank",
+          loadEventExpected,
           // The click might trigger a navigation, so don't count on it.
           requireBeforeUnload: false,
         }
@@ -3014,7 +3049,7 @@ GeckoDriver.prototype.deleteSession = function() {
   if (MarionettePrefs.useActors) {
     clearElementIdCache();
 
-    ChromeUtils.unregisterWindowActor("MarionetteCommands");
+    unregisterCommandsActor();
   }
 
   // reset to the top-most frame, and clear browsing context references
@@ -3026,6 +3061,10 @@ GeckoDriver.prototype.deleteSession = function() {
     this.dialogObserver.cleanup();
     this.dialogObserver = null;
   }
+
+  try {
+    Services.obs.removeObserver(this, "browsing-context-attached");
+  } catch (e) {}
 
   this.sandboxes.clear();
   allowAllCerts.disable();
@@ -3630,6 +3669,10 @@ GeckoDriver.prototype.receiveMessage = function(message) {
       return { frameId };
 
     case "Marionette:ListenersAttached":
+      if (MarionettePrefs.useActors) {
+        return;
+      }
+
       if (message.json.frameId === this.curBrowser.curFrameId) {
         const browsingContext = BrowsingContext.get(message.json.frameId);
 

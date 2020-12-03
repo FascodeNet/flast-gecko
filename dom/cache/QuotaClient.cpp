@@ -225,6 +225,7 @@ void CacheQuotaClient::ReleaseIOThreadObjects() {
 
 void CacheQuotaClient::AbortOperations(const nsACString& aOrigin) {
   AssertIsOnBackgroundThread();
+  MOZ_ASSERT(!aOrigin.IsEmpty());
 
   Manager::Abort(aOrigin);
 }
@@ -240,6 +241,12 @@ void CacheQuotaClient::AbortOperationsForProcess(
   // handles asynchronous actor destruction when the child process dies.
   //
   // Therefore, do nothing here.
+}
+
+void CacheQuotaClient::AbortAllOperations() {
+  AssertIsOnBackgroundThread();
+
+  Manager::AbortAll();
 }
 
 void CacheQuotaClient::StartIdleMaintenance() {}
@@ -262,9 +269,10 @@ void CacheQuotaClient::ForceKillActors() {
   // Currently we don't implement killing actors (are there any to kill here?).
 }
 
-void CacheQuotaClient::ShutdownTimedOut() {
-  // XXX Crash here like in the other quota clients? (But maybe this handling
-  // will be moved to the QuotaManager)
+nsCString CacheQuotaClient::GetShutdownStatus() const {
+  AssertIsOnBackgroundThread();
+
+  return Manager::GetShutdownStatus();
 }
 
 void CacheQuotaClient::FinalizeShutdown() {

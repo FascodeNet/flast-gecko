@@ -78,6 +78,7 @@ printui-system-dialog-link = Print using the system dialog…
 printui-primary-button = Print
 printui-primary-button-save = Save
 printui-cancel-button = Cancel
+printui-close-button = Close
 
 printui-loading = Preparing Preview
 
@@ -85,6 +86,8 @@ printui-loading = Preparing Preview
 # the print preview has focus.
 printui-preview-label =
     .aria-label = Print Preview
+
+printui-pages-per-sheet = Pages per sheet
 
 ## Paper sizes that may be supported by the Save to PDF destination:
 

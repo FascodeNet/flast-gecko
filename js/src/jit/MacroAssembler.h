@@ -1572,6 +1572,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void branchIfNonNativeObj(Register obj, Register scratch, Label* label);
 
+  void branchIfObjectNotExtensible(Register obj, Register scratch,
+                                   Label* label);
+
   inline void branchTestClassIsProxy(bool proxy, Register clasp, Label* label);
 
   inline void branchTestObjectIsProxy(bool proxy, Register object,
@@ -2598,9 +2601,19 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                FloatRegister lhsDest)
       DEFINED_ON(x86_shared, arm64);
 
+  // On x86_shared, limited to ==, !=, <, <=
+  inline void compareFloat32x4(Assembler::Condition cond,
+                               const SimdConstant& rhs, FloatRegister lhsDest)
+      DEFINED_ON(x86_shared);
+
   inline void compareFloat64x2(Assembler::Condition cond, FloatRegister rhs,
                                FloatRegister lhsDest)
       DEFINED_ON(x86_shared, arm64);
+
+  // On x86_shared, limited to ==, !=, <, <=
+  inline void compareFloat64x2(Assembler::Condition cond,
+                               const SimdConstant& rhs, FloatRegister lhsDest)
+      DEFINED_ON(x86_shared);
 
   // Load
 

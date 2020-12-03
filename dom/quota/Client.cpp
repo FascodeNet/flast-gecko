@@ -204,17 +204,12 @@ bool Client::TypeToText(Type aType, nsAString& aText, const fallible_t&) {
 }
 
 // static
-void Client::TypeToText(Type aType, nsAString& aText) {
-  if (!TypeTo_impl(aType, aText)) {
+nsAutoCString Client::TypeToText(Type aType) {
+  nsAutoCString res;
+  if (!TypeTo_impl(aType, res)) {
     BadType();
   }
-}
-
-// static
-void Client::TypeToText(Type aType, nsACString& aText) {
-  if (!TypeTo_impl(aType, aText)) {
-    BadType();
-  }
+  return res;
 }
 
 // static
@@ -256,8 +251,42 @@ bool Client::TypeFromPrefix(char aPrefix, Type& aType, const fallible_t&) {
   return true;
 }
 
+void Client::MaybeRecordShutdownStep(const nsACString& aStepDescription) {
+  AssertIsOnBackgroundThread();
+
+  if (!mShutdownStartedAt) {
+    // We are not shutting down yet, we intentionally ignore this here to avoid
+    // that every caller has to make a distinction for shutdown vs. non-shutdown
+    // situations.
+    return;
+  }
+
+  const TimeDuration elapsedSinceShutdownStart =
+      TimeStamp::NowLoRes() - *mShutdownStartedAt;
+
+  const auto stepString =
+      nsPrintfCString("%fs: %s", elapsedSinceShutdownStart.ToSeconds(),
+                      nsPromiseFlatCString(aStepDescription).get());
+
+  mShutdownSteps.Append(stepString + "\n"_ns);
+
+#ifdef DEBUG
+  // XXX Probably this isn't the mechanism that should be used here.
+
+  NS_DebugBreak(
+      NS_DEBUG_WARNING,
+      nsAutoCString(TypeToText(GetType()) + " shutdown step"_ns).get(),
+      stepString.get(), __FILE__, __LINE__);
+#endif
+}
+
 void Client::ShutdownWorkThreads() {
   AssertIsOnBackgroundThread();
+  MOZ_ASSERT(mShutdownSteps.IsEmpty());
+
+  mShutdownStartedAt.init(TimeStamp::NowLoRes());
+
+  MaybeRecordShutdownStep("starting"_ns);
 
   InitiateShutdown();
 
@@ -275,7 +304,17 @@ void Client::ShutdownWorkThreads() {
                 auto* const quotaClient = static_cast<Client*>(aClosure);
 
                 MOZ_DIAGNOSTIC_ASSERT(!quotaClient->IsShutdownCompleted());
-                quotaClient->ShutdownTimedOut();
+
+                const auto type = TypeToText(quotaClient->GetType());
+
+                CrashReporter::AnnotateCrashReport(
+                    CrashReporter::Annotation::QuotaManagerShutdownTimeout,
+                    nsPrintfCString("%s: %s\nIntermediate steps:\n%s",
+                                    type.get(),
+                                    quotaClient->GetShutdownStatus().get(),
+                                    quotaClient->mShutdownSteps.get()));
+
+                MOZ_CRASH_UNSAFE_PRINTF("%s shutdown timed out", type.get());
               },
               aClosure, SHUTDOWN_FORCE_CRASH_TIMEOUT_MS,
               nsITimer::TYPE_ONE_SHOT,
@@ -289,6 +328,8 @@ void Client::ShutdownWorkThreads() {
 
     MOZ_ALWAYS_SUCCEEDS(timer->Cancel());
   }
+
+  MaybeRecordShutdownStep("completed"_ns);
 
   FinalizeShutdown();
 }

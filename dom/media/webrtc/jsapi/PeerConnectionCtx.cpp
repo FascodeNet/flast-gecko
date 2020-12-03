@@ -118,7 +118,7 @@ StaticRefPtr<PeerConnectionCtxObserver>
     PeerConnectionCtx::gPeerConnectionCtxObserver;
 
 const std::map<const std::string, PeerConnectionImpl*>&
-PeerConnectionCtx::mGetPeerConnections() {
+PeerConnectionCtx::GetPeerConnections() {
   return mPeerConnections;
 }
 
@@ -355,7 +355,7 @@ nsresult PeerConnectionCtx::Cleanup() {
 
   mQueuedJSEPOperations.Clear();
   mGMPService = nullptr;
-  mTransportHandler->Destroy();
+  mTransportHandler = nullptr;
   return NS_OK;
 }
 

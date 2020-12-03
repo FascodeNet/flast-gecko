@@ -78,8 +78,7 @@ void AliasAnalysis::spewDependencyList() {
 
 // Unwrap any slot or element to its corresponding object.
 static inline const MDefinition* MaybeUnwrap(const MDefinition* object) {
-  while (object->isSlots() || object->isElements() ||
-         object->isConvertElementsToDoubles()) {
+  while (object->isSlots() || object->isElements()) {
     MOZ_ASSERT(object->numOperands() == 1);
     object = object->getOperand(0);
   }
@@ -121,8 +120,6 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::SetArrayLength:
     case MDefinition::Opcode::Slots:
     case MDefinition::Opcode::Elements:
-    case MDefinition::Opcode::MaybeCopyElementsForWrite:
-    case MDefinition::Opcode::MaybeToDoubleElement:
     case MDefinition::Opcode::ArrayBufferByteLengthInt32:
     case MDefinition::Opcode::ArrayBufferViewLength:
     case MDefinition::Opcode::ArrayBufferViewByteOffset:
@@ -162,6 +159,10 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::FunctionLength:
     case MDefinition::Opcode::FunctionName:
     case MDefinition::Opcode::GuardArgumentsObjectNotOverriddenIterator:
+    case MDefinition::Opcode::GuardIsExtensible:
+    case MDefinition::Opcode::GuardIndexGreaterThanDenseInitLength:
+    case MDefinition::Opcode::GuardIndexIsValidUpdateOrAdd:
+    case MDefinition::Opcode::CallObjectHasSparseElement:
       object = ins->getOperand(0);
       break;
     case MDefinition::Opcode::GetPropertyCache:

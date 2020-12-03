@@ -8,6 +8,8 @@ const EXPORTED_SYMBOLS = [
   "clearElementIdCache",
   "getMarionetteCommandsActorProxy",
   "MarionetteCommandsParent",
+  "registerCommandsActor",
+  "unregisterCommandsActor",
 ];
 
 const { XPCOMUtils } = ChromeUtils.import(
@@ -33,15 +35,7 @@ class MarionetteCommandsParent extends JSWindowActorParent {
     this._resolveDialogOpened = null;
 
     this.dialogObserver = new modal.DialogObserver();
-    this.dialogObserver.add((action, dialogRef, win) => {
-      if (
-        this._resolveDialogOpened &&
-        action == "opened" &&
-        win == this.browsingContext.topChromeWindow
-      ) {
-        this._resolveDialogOpened({ data: null });
-      }
-    });
+    this.dialogObserver.add(this.onDialog.bind(this));
 
     this.topWindow = this.browsingContext.top.embedderElement?.ownerGlobal;
     this.topWindow?.addEventListener("TabClose", _onTabClose);
@@ -72,7 +66,20 @@ class MarionetteCommandsParent extends JSWindowActorParent {
   }
 
   didDestroy() {
+    this.dialogObserver.remove(this.onDialog);
+    this.dialogObserver.unregister();
+
     this.topWindow?.removeEventListener("TabClose", _onTabClose);
+  }
+
+  onDialog(action, dialogRef, win) {
+    if (
+      this._resolveDialogOpened &&
+      action == "opened" &&
+      win == this.browsingContext.topChromeWindow
+    ) {
+      this._resolveDialogOpened({ data: null });
+    }
   }
 
   // Proxying methods for WebDriver commands
@@ -350,4 +357,36 @@ function getMarionetteCommandsActorProxy(browsingContextFn) {
       },
     }
   );
+}
+
+/**
+ * Register the MarionetteCommands actor that holds all the commands.
+ */
+function registerCommandsActor() {
+  try {
+    ChromeUtils.registerWindowActor("MarionetteCommands", {
+      kind: "JSWindowActor",
+      parent: {
+        moduleURI:
+          "chrome://marionette/content/actors/MarionetteCommandsParent.jsm",
+      },
+      child: {
+        moduleURI:
+          "chrome://marionette/content/actors/MarionetteCommandsChild.jsm",
+      },
+
+      allFrames: true,
+      includeChrome: true,
+    });
+  } catch (e) {
+    if (e.name === "NotSupportedError") {
+      logger.warn(`MarionetteCommands actor is already registered!`);
+    } else {
+      throw e;
+    }
+  }
+}
+
+function unregisterCommandsActor() {
+  ChromeUtils.unregisterWindowActor("MarionetteCommands");
 }

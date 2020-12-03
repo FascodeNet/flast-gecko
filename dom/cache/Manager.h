@@ -129,8 +129,13 @@ class Manager final : public SafeRefCounted<Manager> {
 
   static bool IsShutdownAllComplete();
 
-  // Cancel actions for given origin or all actions if passed string is null.
+  static nsCString GetShutdownStatus();
+
+  // Cancel actions for given origin.
   static void Abort(const nsACString& aOrigin);
+
+  // Cancel all actions.
+  static void AbortAll();
 
   // Must be called by Listener objects before they are destroyed.
   void RemoveListener(Listener* aListener);

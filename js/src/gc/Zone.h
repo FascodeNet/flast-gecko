@@ -21,7 +21,6 @@
 #include "js/GCHashTable.h"
 #include "vm/AtomsTable.h"
 #include "vm/JSFunction.h"
-#include "vm/TypeInference.h"
 
 namespace js {
 
@@ -193,8 +192,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
 
  public:
   js::gc::ArenaLists arenas;
-
-  js::TypeZone types;
 
   // Per-zone data for use by an embedder.
   js::ZoneData<void*> data;

@@ -24,14 +24,13 @@
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/RegExpObject.h"
 #include "vm/SelfHosting.h"
-#include "vm/TypeInference.h"
 
 #include "jit/InlineScriptTree-inl.h"
+#include "jit/JitScript-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/BytecodeUtil-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -3483,6 +3482,8 @@ static bool TryEliminateBoundsCheck(BoundsCheckMap& checks, size_t blockIndex,
 
   dominating->setMinimum(newMinimum);
   dominating->setMaximum(newMaximum);
+  dominating->setBailoutKind(BailoutKind::HoistBoundsCheck);
+
   return true;
 }
 
@@ -3494,16 +3495,6 @@ static bool TryOptimizeLoadObjectOrNull(MDefinition* def,
 
   // TODO(no-TI): remove more code.
   return true;
-}
-
-static inline MDefinition* PassthroughOperand(MDefinition* def) {
-  if (def->isConvertElementsToDoubles()) {
-    return def->toConvertElementsToDoubles()->elements();
-  }
-  if (def->isMaybeCopyElementsForWrite()) {
-    return def->toMaybeCopyElementsForWrite()->object();
-  }
-  return nullptr;
 }
 
 // Eliminate checks which are redundant given each other or other instructions.
@@ -3570,12 +3561,6 @@ bool jit::EliminateRedundantChecks(MIRGraph& graph) {
           }
           break;
         default:
-          // Now that code motion passes have finished, replace
-          // instructions which pass through one of their operands
-          // (and perform additional checks) with that operand.
-          if (MDefinition* passthrough = PassthroughOperand(def)) {
-            def->replaceAllUsesWith(passthrough);
-          }
           break;
       }
 
@@ -3656,10 +3641,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
       MDefinition* ownerObject;
       switch (ins->op()) {
         case MDefinition::Opcode::ConstantElements:
-          continue;
-        case MDefinition::Opcode::ConvertElementsToDoubles:
-          // EliminateRedundantChecks should have replaced all uses.
-          MOZ_ASSERT(!ins->hasUses());
           continue;
         case MDefinition::Opcode::Elements:
         case MDefinition::Opcode::ArrayBufferViewElements:
@@ -3967,7 +3948,7 @@ static bool ArgumentsUseCanBeLazy(JSContext* cx, JSScript* script,
 
 bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
   RootedScript script(cx, scriptArg);
-  AutoEnterAnalysis enter(cx);
+  gc::AutoSuppressGC suppressGC(cx);
 
   MOZ_ASSERT(script->needsArgsAnalysis());
   MOZ_ASSERT(script->argumentsHasVarBinding());

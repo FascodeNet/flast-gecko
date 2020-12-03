@@ -881,17 +881,7 @@ bool BaselineStackBuilder::buildExpressionStack() {
           exprStackSlots());
   for (uint32_t i = 0; i < exprStackSlots(); i++) {
     Value v;
-
-    if (!iter_.moreFrames() && i == exprStackSlots() - 1 &&
-        cx_->hasIonReturnOverride()) {
-      // If coming from an invalidation bailout, and this is the topmost
-      // value, and a value override has been specified, don't read from the
-      // iterator. Otherwise, we risk using a garbage value.
-      // TODO(post-Warp): Remove value overrides and AutoDetectInvalidation.
-      iter_.skip();
-      JitSpew(JitSpew_BaselineBailouts, "      [Return Override]");
-      v = cx_->takeIonReturnOverride();
-    } else if (propagatingIonExceptionForDebugMode()) {
+    if (propagatingIonExceptionForDebugMode()) {
       // If we are in the middle of propagating an exception from Ion by
       // bailing to baseline due to debug mode, we might not have all
       // the stack if we are at the newest frame.
@@ -2064,10 +2054,20 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
       break;
 
     case BailoutKind::LICM:
-      // An instruction hoisted by LICM bailed out.
-      MOZ_ASSERT(!outerScript->hadLICMBailout());
-      outerScript->setHadLICMBailout();
-      InvalidateAfterBailout(cx, outerScript, "LICM failure");
+      // LICM may cause spurious bailouts by hoisting unreachable
+      // guards past branches.  To prevent bailout loops, when an
+      // instruction hoisted by LICM bails out, we set a flag on the
+      // IonScript and resume in baseline. If the guard would have
+      // been executed anyway, then the baseline fallback code will
+      // invalidate the script. Otherwise, the next time we reach this
+      // point, we will invalidate the script and disable LICM.
+      MOZ_ASSERT(!outerScript->hadLICMInvalidation());
+      if (outerScript->ionScript()->hadLICMBailout()) {
+        outerScript->setHadLICMInvalidation();
+        InvalidateAfterBailout(cx, outerScript, "LICM failure");
+      } else {
+        outerScript->ionScript()->setHadLICMBailout();
+      }
       break;
 
     case BailoutKind::HoistBoundsCheck:

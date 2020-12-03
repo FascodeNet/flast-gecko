@@ -30,7 +30,6 @@
 #include "jit/MacroAssembler-inl.h"
 #include "jit/VMFunctionList-inl.h"
 #include "vm/Realm-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -283,17 +282,9 @@ bool IonCacheIRCompiler::init() {
     case CacheKind::GetProp:
     case CacheKind::GetElem: {
       IonGetPropertyIC* ic = ic_->asGetPropertyIC();
-      TypedOrValueRegister output = ic->output();
+      ValueOperand output = ic->output();
 
-      if (output.hasValue()) {
-        available.add(output.valueReg());
-      } else if (!output.typedReg().isFloat()) {
-        available.add(output.typedReg().gpr());
-      }
-
-      if (ic->maybeTemp() != InvalidReg) {
-        available.add(ic->maybeTemp());
-      }
+      available.add(output);
 
       liveRegs_.emplace(ic->liveRegs());
       outputUnchecked_.emplace(output);
@@ -309,9 +300,9 @@ bool IonCacheIRCompiler::init() {
     case CacheKind::GetPropSuper:
     case CacheKind::GetElemSuper: {
       IonGetPropSuperIC* ic = ic_->asGetPropSuperIC();
-      TypedOrValueRegister output = ic->output();
+      ValueOperand output = ic->output();
 
-      available.add(output.valueReg());
+      available.add(output);
 
       liveRegs_.emplace(ic->liveRegs());
       outputUnchecked_.emplace(output);
@@ -1431,20 +1422,6 @@ static void EmitStoreDenseElement(MacroAssembler& masm,
   masm.storeTypedOrValue(reg, target);
 }
 
-static void EmitAssertNoCopyOnWriteElements(MacroAssembler& masm,
-                                            Register elementsReg) {
-#ifdef DEBUG
-  // IonBuilder::initOrSetElemTryCache ensures we have no copy-on-write
-  // elements. Assert this in debug builds.
-  Address elementsFlags(elementsReg, ObjectElements::offsetOfFlags());
-  Label ok;
-  masm.branchTest32(Assembler::Zero, elementsFlags,
-                    Imm32(ObjectElements::COPY_ON_WRITE), &ok);
-  masm.assumeUnreachable("Unexpected copy-on-write elements in Ion IC!");
-  masm.bind(&ok);
-#endif
-}
-
 static void EmitAssertExtensibleElements(MacroAssembler& masm,
                                          Register elementsReg) {
 #ifdef DEBUG
@@ -1491,8 +1468,6 @@ bool IonCacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
   // Load obj->elements in scratch1.
   masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch1);
 
-  EmitAssertNoCopyOnWriteElements(masm, scratch1);
-
   // Bounds check.
   Address initLength(scratch1, ObjectElements::offsetOfInitializedLength());
   masm.spectreBoundsCheck32(index, initLength, spectreScratch,
@@ -1531,8 +1506,6 @@ bool IonCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
 
   // Load obj->elements in scratch1.
   masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch1);
-
-  EmitAssertNoCopyOnWriteElements(masm, scratch1);
 
   EmitAssertExtensibleElements(masm, scratch1);
   if (handleAdd) {

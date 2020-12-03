@@ -712,25 +712,6 @@ void nsAbsoluteContainingBlock::ReflowAbsoluteFrame(
       initFlags += ReflowInput::InitFlag::StaticPosIsCBOrigin;
     }
   }
-  ReflowInput kidReflowInput(aPresContext, aReflowInput, aKidFrame,
-                             LogicalSize(wm, availISize, NS_UNCONSTRAINEDSIZE),
-                             Some(logicalCBSize), initFlags);
-
-  // Get the border values
-  WritingMode outerWM = aReflowInput.GetWritingMode();
-  const LogicalMargin border(outerWM, aDelegatingFrame->GetUsedBorder());
-
-  LogicalMargin margin = kidReflowInput.ComputedLogicalMargin(outerWM);
-
-  // If we're doing CSS Box Alignment in either axis, that will apply the
-  // margin for us in that axis (since the thing that's aligned is the margin
-  // box).  So, we clear out the margin here to avoid applying it twice.
-  if (kidReflowInput.mFlags.mIOffsetsNeedCSSAlign) {
-    margin.IStart(outerWM) = margin.IEnd(outerWM) = 0;
-  }
-  if (kidReflowInput.mFlags.mBOffsetsNeedCSSAlign) {
-    margin.BStart(outerWM) = margin.BEnd(outerWM) = 0;
-  }
 
   bool constrainBSize =
       (aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE) &&
@@ -751,10 +732,22 @@ void nsAbsoluteContainingBlock::ReflowAbsoluteFrame(
       (aKidFrame->GetLogicalRect(aContainingBlock.Size()).BStart(wm) <=
        aReflowInput.AvailableBSize());
 
-  if (constrainBSize) {
-    kidReflowInput.AvailableBSize() =
-        aReflowInput.AvailableBSize() -
-        border.ConvertTo(wm, outerWM).BStart(wm) -
+  // Get the border values
+  const WritingMode outerWM = aReflowInput.GetWritingMode();
+  const LogicalMargin border = aDelegatingFrame->GetLogicalUsedBorder(outerWM);
+
+  const nscoord availBSize = constrainBSize
+                                 ? aReflowInput.AvailableBSize() -
+                                       border.ConvertTo(wm, outerWM).BStart(wm)
+                                 : NS_UNCONSTRAINEDSIZE;
+
+  ReflowInput kidReflowInput(aPresContext, aReflowInput, aKidFrame,
+                             LogicalSize(wm, availISize, availBSize),
+                             Some(logicalCBSize), initFlags);
+
+  if (kidReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE) {
+    // Shrink available block-size if it's constrained.
+    kidReflowInput.AvailableBSize() -=
         kidReflowInput.ComputedLogicalMargin(wm).BStart(wm);
     const nscoord kidOffsetBStart =
         kidReflowInput.ComputedLogicalOffsets(wm).BStart(wm);
@@ -770,6 +763,17 @@ void nsAbsoluteContainingBlock::ReflowAbsoluteFrame(
   const LogicalSize kidSize = kidDesiredSize.Size(outerWM);
 
   LogicalMargin offsets = kidReflowInput.ComputedLogicalOffsets(outerWM);
+  LogicalMargin margin = kidReflowInput.ComputedLogicalMargin(outerWM);
+
+  // If we're doing CSS Box Alignment in either axis, that will apply the
+  // margin for us in that axis (since the thing that's aligned is the margin
+  // box).  So, we clear out the margin here to avoid applying it twice.
+  if (kidReflowInput.mFlags.mIOffsetsNeedCSSAlign) {
+    margin.IStart(outerWM) = margin.IEnd(outerWM) = 0;
+  }
+  if (kidReflowInput.mFlags.mBOffsetsNeedCSSAlign) {
+    margin.BStart(outerWM) = margin.BEnd(outerWM) = 0;
+  }
 
   // If we're solving for start in either inline or block direction,
   // then compute it now that we know the dimensions.

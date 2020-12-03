@@ -129,6 +129,7 @@
 #include "mozilla/dom/CrashReport.h"
 #include "nsISecureBrowserUI.h"
 #include "nsIXULRuntime.h"
+#include "VsyncSource.h"
 
 #ifdef XP_WIN
 #  include "mozilla/plugins/PluginWidgetParent.h"
@@ -224,6 +225,7 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mCustomCursorHotspotX(0),
       mCustomCursorHotspotY(0),
       mVerifyDropLinks{},
+      mVsyncParent(nullptr),
       mDocShellIsActive(false),
       mMarkedDestroying(false),
       mIsDestroyed(false),
@@ -562,6 +564,8 @@ void BrowserParent::SetOwnerElement(Element* aElement) {
   if (!GetBrowserBridgeParent() && mBrowsingContext && mFrameElement) {
     mBrowsingContext->SetEmbedderElement(mFrameElement);
   }
+
+  UpdateVsyncParentVsyncSource();
 
   VisitChildren([aElement](BrowserBridgeParent* aBrowser) {
     if (auto* browserParent = aBrowser->GetBrowserParent()) {
@@ -1344,6 +1348,29 @@ IPCResult BrowserParent::RecvNewWindowGlobal(
   BindPWindowGlobalEndpoint(std::move(aEndpoint), wgp);
   wgp->Init();
   return IPC_OK();
+}
+
+PVsyncParent* BrowserParent::AllocPVsyncParent() {
+  MOZ_ASSERT(!mVsyncParent);
+  mVsyncParent = new VsyncParent();
+  UpdateVsyncParentVsyncSource();
+  return mVsyncParent.get();
+}
+
+bool BrowserParent::DeallocPVsyncParent(PVsyncParent* aActor) {
+  MOZ_ASSERT(aActor);
+  mVsyncParent = nullptr;
+  return true;
+}
+
+void BrowserParent::UpdateVsyncParentVsyncSource() {
+  if (!mVsyncParent) {
+    return;
+  }
+
+  if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
+    mVsyncParent->UpdateVsyncSource(widget->GetVsyncSource());
+  }
 }
 
 void BrowserParent::SendMouseEvent(const nsAString& aType, float aX, float aY,
@@ -2903,7 +2930,7 @@ bool BrowserParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent) {
   }
   if (NS_WARN_IF(!mContentCache.HandleQueryContentEvent(
           aEvent, textInputHandlingWidget)) ||
-      NS_WARN_IF(!aEvent.mSucceeded)) {
+      NS_WARN_IF(aEvent.Failed())) {
     return true;
   }
   switch (aEvent.mMessage) {
@@ -2912,10 +2939,10 @@ bool BrowserParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent) {
     case eQueryEditorRect: {
       nsCOMPtr<nsIWidget> browserWidget = GetWidget();
       if (browserWidget != textInputHandlingWidget) {
-        aEvent.mReply.mRect += nsLayoutUtils::WidgetToWidgetOffset(
+        aEvent.mReply->mRect += nsLayoutUtils::WidgetToWidgetOffset(
             browserWidget, textInputHandlingWidget);
       }
-      aEvent.mReply.mRect = TransformChildToParent(aEvent.mReply.mRect);
+      aEvent.mReply->mRect = TransformChildToParent(aEvent.mReply->mRect);
       break;
     }
     default:

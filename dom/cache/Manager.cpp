@@ -267,36 +267,25 @@ class Manager::Factory {
 
     MOZ_ALWAYS_TRUE(sFactory->mManagerList.RemoveElement(&aManager));
 
+    CacheQuotaClient::Get()->MaybeRecordShutdownStep("Manager removed"_ns);
+
     // clean up the factory singleton if there are no more managers
     MaybeDestroyInstance();
   }
 
   static void Abort(const nsACString& aOrigin) {
     mozilla::ipc::AssertIsOnBackgroundThread();
+    MOZ_ASSERT(!aOrigin.IsEmpty());
 
-    if (!sFactory) {
-      return;
-    }
+    AbortMatching([&aOrigin](const auto& manager) {
+      return manager.mManagerId->QuotaOrigin() == aOrigin;
+    });
+  }
 
-    MOZ_DIAGNOSTIC_ASSERT(!sFactory->mManagerList.IsEmpty());
+  static void AbortAll() {
+    mozilla::ipc::AssertIsOnBackgroundThread();
 
-    {
-      // Note that we are synchronously calling abort code here.  If any
-      // of the shutdown code synchronously decides to delete the Factory
-      // we need to delay that delete until the end of this method.
-      AutoRestore<bool> restore(sFactory->mInSyncAbortOrShutdown);
-      sFactory->mInSyncAbortOrShutdown = true;
-
-      for (auto* manager : sFactory->mManagerList.ForwardRange()) {
-        if (aOrigin.IsVoid() || manager->mManagerId->QuotaOrigin() == aOrigin) {
-          auto pinnedManager =
-              SafeRefPtr{manager, AcquireStrongRefFromRawPtr{}};
-          pinnedManager->Abort();
-        }
-      }
-    }
-
-    MaybeDestroyInstance();
+    AbortMatching([](const auto&) { return true; });
   }
 
   static void ShutdownAll() {
@@ -327,6 +316,36 @@ class Manager::Factory {
   static bool IsShutdownAllComplete() {
     mozilla::ipc::AssertIsOnBackgroundThread();
     return !sFactory;
+  }
+
+  static nsCString GetShutdownStatus() {
+    mozilla::ipc::AssertIsOnBackgroundThread();
+
+    nsCString data;
+
+    if (sFactory && !sFactory->mManagerList.IsEmpty()) {
+      data.Append(
+          "Managers: "_ns +
+          IntToCString(static_cast<uint64_t>(sFactory->mManagerList.Length())) +
+          " ("_ns);
+
+      for (const auto* const manager :
+           sFactory->mManagerList.NonObservingRange()) {
+        data.Append(quota::AnonymizedOriginString(
+            manager->GetManagerId().QuotaOrigin()));
+
+        data.AppendLiteral(": ");
+
+        data.Append(manager->GetState() == State::Open ? "Open"_ns
+                                                       : "Closing"_ns);
+
+        data.AppendLiteral(", ");
+      }
+
+      data.AppendLiteral(" )");
+    }
+
+    return data;
   }
 
  private:
@@ -406,6 +425,37 @@ class Manager::Factory {
     return foundIt != range.end()
                ? SafeRefPtr{*foundIt, AcquireStrongRefFromRawPtr{}}
                : nullptr;
+  }
+
+  template <typename Condition>
+  static void AbortMatching(const Condition& aCondition) {
+    mozilla::ipc::AssertIsOnBackgroundThread();
+
+    if (!sFactory) {
+      return;
+    }
+
+    MOZ_DIAGNOSTIC_ASSERT(!sFactory->mManagerList.IsEmpty());
+
+    {
+      // Note that we are synchronously calling abort code here.  If any
+      // of the shutdown code synchronously decides to delete the Factory
+      // we need to delay that delete until the end of this method.
+      AutoRestore<bool> restore(sFactory->mInSyncAbortOrShutdown);
+      sFactory->mInSyncAbortOrShutdown = true;
+
+      for (const auto& manager : sFactory->mManagerList.ForwardRange()) {
+        MOZ_DIAGNOSTIC_ASSERT(manager);
+
+        if (aCondition(*manager)) {
+          auto pinnedManager =
+              SafeRefPtr{manager, AcquireStrongRefFromRawPtr{}};
+          pinnedManager->Abort();
+        }
+      }
+    }
+
+    MaybeDestroyInstance();
   }
 
   // Singleton created on demand and deleted when last Manager is cleared
@@ -1566,10 +1616,24 @@ bool Manager::IsShutdownAllComplete() {
 }
 
 // static
+nsCString Manager::GetShutdownStatus() {
+  mozilla::ipc::AssertIsOnBackgroundThread();
+
+  return Factory::GetShutdownStatus();
+}
+
+// static
 void Manager::Abort(const nsACString& aOrigin) {
   mozilla::ipc::AssertIsOnBackgroundThread();
 
   Factory::Abort(aOrigin);
+}
+
+// static
+void Manager::AbortAll() {
+  mozilla::ipc::AssertIsOnBackgroundThread();
+
+  Factory::AbortAll();
 }
 
 void Manager::RemoveListener(Listener* aListener) {

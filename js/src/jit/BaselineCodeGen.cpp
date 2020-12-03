@@ -42,13 +42,13 @@
 #include "debugger/DebugAPI-inl.h"
 #include "jit/ABIFunctionList-inl.h"
 #include "jit/BaselineFrameInfo-inl.h"
+#include "jit/JitScript-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SharedICHelpers-inl.h"
 #include "jit/VMFunctionList-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -222,8 +222,8 @@ MethodStatus BaselineCompiler::compile() {
     }
   }
 
-  // Pin analysis info during compilation.
-  AutoEnterAnalysis autoEnterAnalysis(cx);
+  // Suppress GC during compilation.
+  gc::AutoSuppressGC suppressGC(cx);
 
   MOZ_ASSERT(!script->hasBaselineScript());
 
@@ -2859,29 +2859,7 @@ bool BaselineCodeGen<Handler>::emit_NewArray() {
 
 template <>
 bool BaselineCompilerCodeGen::emit_NewArrayCopyOnWrite() {
-  // This is like the interpreter implementation, but we can call
-  // getOrFixupCopyOnWriteObject at compile-time.
-
-  RootedScript scriptRoot(cx, handler.script());
-  JSObject* obj =
-      ObjectGroup::getOrFixupCopyOnWriteObject(cx, scriptRoot, handler.pc());
-  if (!obj) {
-    return false;
-  }
-
-  prepareVMCall();
-
-  pushArg(ImmGCPtr(obj));
-
-  using Fn = ArrayObject* (*)(JSContext*, HandleArrayObject);
-  if (!callVM<Fn, js::NewDenseCopyOnWriteArray>()) {
-    return false;
-  }
-
-  // Box and push return value.
-  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
-  frame.push(R0);
-  return true;
+  MOZ_CRASH("TODO(no-TI): remove");
 }
 
 template <>

@@ -18,14 +18,13 @@
 #include "js/CharacterEncoding.h"
 #include "js/GCHashTable.h"
 #include "js/TypeDecls.h"
+#include "js/UbiNode.h"
 #include "vm/TaggedProto.h"
-#include "vm/TypeSet.h"
 
 namespace js {
 
 class TypeDescr;
 
-class AutoClearTypeInferenceStateOnOOM;
 class ObjectGroupRealm;
 class PlainObject;
 
@@ -55,6 +54,19 @@ enum NewObjectKind {
    */
   TenuredObject
 };
+
+// Flags stored in ObjectGroup::Flags.
+enum : uint32_t {
+  /* Whether this group is associated with a single object. */
+  OBJECT_FLAG_SINGLETON = 0x2,
+
+  /*
+   * Whether this group is used by objects whose singleton groups have not
+   * been created yet.
+   */
+  OBJECT_FLAG_LAZY_SINGLETON = 0x4,
+};
+using ObjectGroupFlags = uint32_t;
 
 /*
  * [SMDOC] Type-Inference lazy ObjectGroup
@@ -204,46 +216,6 @@ class ObjectGroup : public gc::TenuredCellWithNonGCPointer<const JSClass> {
                                                 ObjectGroup* oldGroup,
                                                 const JSClass* clasp,
                                                 TaggedProto proto);
-
-  // Static accessors for ObjectGroupRealm ArrayObjectTable and
-  // PlainObjectTable.
-
-  enum class NewArrayKind {
-    Normal,       // Specialize array group based on its element type.
-    CopyOnWrite,  // Make an array with copy-on-write elements.
-    UnknownIndex  // Make an array with an unknown element type.
-  };
-
-  // Create an ArrayObject with the specified elements and a group specialized
-  // for the elements.
-  static ArrayObject* newArrayObject(
-      JSContext* cx, const Value* vp, size_t length, NewObjectKind newKind,
-      NewArrayKind arrayKind = NewArrayKind::Normal);
-
-  // Create a PlainObject with the specified properties and a group specialized
-  // for those properties.
-  static JSObject* newPlainObject(JSContext* cx, IdValuePair* properties,
-                                  size_t nproperties, NewObjectKind newKind);
-
-  // Static accessors for ObjectGroupRealm AllocationSiteTable.
-
-  // Get a non-singleton group to use for objects created at the specified
-  // allocation site.
-  static ObjectGroup* allocationSiteGroup(JSContext* cx, JSScript* script,
-                                          jsbytecode* pc, JSProtoKey key,
-                                          HandleObject proto = nullptr);
-
-  // Get a non-singleton group to use for objects created in a JSNative call.
-  static ObjectGroup* callingAllocationSiteGroup(JSContext* cx, JSProtoKey key,
-                                                 HandleObject proto = nullptr);
-
-  static ArrayObject* getOrFixupCopyOnWriteObject(JSContext* cx,
-                                                  HandleScript script,
-                                                  jsbytecode* pc);
-  static ArrayObject* getCopyOnWriteObject(JSScript* script, jsbytecode* pc);
-
- private:
-  static ObjectGroup* defaultNewGroup(JSContext* cx, JSProtoKey key);
 };
 
 // Structure used to manage the groups in a realm.
@@ -344,5 +316,30 @@ PlainObject* NewPlainObjectWithProperties(JSContext* cx,
                                           NewObjectKind newKind);
 
 }  // namespace js
+
+// JS::ubi::Nodes can point to object groups; they're js::gc::Cell instances
+// with no associated compartment.
+namespace JS {
+namespace ubi {
+
+template <>
+class Concrete<js::ObjectGroup> : TracerConcrete<js::ObjectGroup> {
+ protected:
+  explicit Concrete(js::ObjectGroup* ptr)
+      : TracerConcrete<js::ObjectGroup>(ptr) {}
+
+ public:
+  static void construct(void* storage, js::ObjectGroup* ptr) {
+    new (storage) Concrete(ptr);
+  }
+
+  Size size(mozilla::MallocSizeOf mallocSizeOf) const override;
+
+  const char16_t* typeName() const override { return concreteTypeName; }
+  static const char16_t concreteTypeName[];
+};
+
+}  // namespace ubi
+}  // namespace JS
 
 #endif /* vm_ObjectGroup_h */

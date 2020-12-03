@@ -4243,8 +4243,6 @@ void MBeta::printOpcode(GenericPrinter& out) const {
 
 bool MCreateThisWithTemplate::canRecoverOnBailout() const {
   MOZ_ASSERT(templateObject()->is<PlainObject>());
-  MOZ_ASSERT(
-      !templateObject()->as<PlainObject>().denseElementsAreCopyOnWrite());
   return true;
 }
 
@@ -4443,7 +4441,6 @@ MNewArray::MNewArray(TempAllocator& alloc, uint32_t length,
     : MUnaryInstruction(classOpcode, templateConst),
       length_(length),
       initialHeap_(initialHeap),
-      convertDoubleElements_(false),
       pc_(pc),
       vmCall_(vmCall) {
   setResultType(MIRType::Object);
@@ -5814,6 +5811,16 @@ MDefinition* MCheckObjCoercible::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
+  return input;
+}
+
+MDefinition* MGuardIndexIsNonNegative::foldsTo(TempAllocator& alloc) {
+  MOZ_ASSERT(index()->type() == MIRType::Int32);
+
+  MDefinition* input = index();
+  if (!input->isConstant() || input->toConstant()->toInt32() < 0) {
+    return this;
+  }
   return input;
 }
 

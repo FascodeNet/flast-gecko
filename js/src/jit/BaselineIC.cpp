@@ -254,8 +254,13 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
         break;
       }
       case JSOp::NewArray: {
-        ObjectGroup* group = ObjectGroup::allocationSiteGroup(
-            cx, script, loc.toRawBytecode(), JSProto_Array);
+        JSObject* proto =
+            GlobalObject::getOrCreateArrayPrototype(cx, cx->global());
+        if (!proto) {
+          return false;
+        }
+        ObjectGroup* group = ObjectGroup::defaultNewGroup(
+            cx, &ArrayObject::class_, TaggedProto(proto));
         if (!group) {
           return false;
         }
@@ -460,9 +465,7 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
         break;
       }
       case JSOp::Rest: {
-        ArrayObject* templateObject = ObjectGroup::newArrayObject(
-            cx, nullptr, 0, TenuredObject,
-            ObjectGroup::NewArrayKind::UnknownIndex);
+        ArrayObject* templateObject = NewTenuredDenseEmptyArray(cx);
         if (!templateObject) {
           return false;
         }
@@ -2405,9 +2408,7 @@ bool DoRestFallback(JSContext* cx, BaselineFrame* frame, ICRest_Fallback* stub,
   unsigned numRest = numActuals > numFormals ? numActuals - numFormals : 0;
   Value* rest = frame->argv() + numFormals;
 
-  ArrayObject* obj =
-      ObjectGroup::newArrayObject(cx, rest, numRest, GenericObject,
-                                  ObjectGroup::NewArrayKind::UnknownIndex);
+  ArrayObject* obj = NewDenseCopiedArray(cx, numRest, rest);
   if (!obj) {
     return false;
   }

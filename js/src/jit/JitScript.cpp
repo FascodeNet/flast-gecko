@@ -25,7 +25,6 @@
 #include "vm/FrameIter.h"  // js::OnlyJSJitFrameIter
 #include "vm/JSScript.h"
 #include "vm/Stack.h"
-#include "vm/TypeInference.h"
 #include "wasm/WasmInstance.h"
 
 #include "gc/FreeOp-inl.h"
@@ -33,7 +32,6 @@
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
 #include "vm/JSScript-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -65,7 +63,7 @@ bool JSScript::createJitScript(JSContext* cx) {
   MOZ_ASSERT_IF(IsBaselineInterpreterEnabled(),
                 CanBaselineInterpretScript(this));
 
-  AutoEnterAnalysis enter(cx);
+  gc::AutoSuppressGC suppressGC(cx);
 
   // Run the arguments-analysis if needed. Both the Baseline Interpreter and
   // Compiler rely on this.
@@ -138,7 +136,7 @@ bool JSScript::createJitScript(JSContext* cx) {
 void JSScript::maybeReleaseJitScript(JSFreeOp* fop) {
   MOZ_ASSERT(hasJitScript());
 
-  if (zone()->types.keepJitScripts || jitScript()->hasBaselineScript() ||
+  if (zone()->jitZone()->keepJitScripts() || jitScript()->hasBaselineScript() ||
       jitScript()->active()) {
     return;
   }

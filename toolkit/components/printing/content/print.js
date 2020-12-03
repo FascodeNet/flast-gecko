@@ -148,7 +148,7 @@ var PrintEventHandler = {
 
   // These settings do not have an associated pref value or flag, but
   // changing them requires us to update the print preview.
-  _nonFlaggedUpdatePreviewSettings: new Set(["pageRanges"]),
+  _nonFlaggedUpdatePreviewSettings: new Set(["pageRanges", "numPagesPerSheet"]),
 
   async init() {
     Services.telemetry.scalarAdd("printing.preview_opened_tm", 1);
@@ -212,11 +212,21 @@ var PrintEventHandler = {
     logger.debug("defaultSystemPrinter: ", defaultSystemPrinter);
 
     document.addEventListener("print", async () => {
+      let cancelButton = document.getElementById("cancel-button");
+      document.l10n.setAttributes(
+        cancelButton,
+        cancelButton.dataset.closeL10nId
+      );
       let didPrint = await this.print();
       if (!didPrint) {
         // Re-enable elements of the form if the user cancels saving
         this.printForm.enable();
       }
+      // Reset the cancel button regardless of the outcome.
+      document.l10n.setAttributes(
+        cancelButton,
+        cancelButton.dataset.cancelL10nId
+      );
     });
     document.addEventListener("update-print-settings", e =>
       this.onUserSettingsChange(e.detail)
@@ -533,6 +543,7 @@ var PrintEventHandler = {
           let { marginTop, marginBottom } = this.viewSettings.defaultMargins;
           changedSettings.marginTop = changedSettings.customMarginTop = marginTop;
           changedSettings.marginBottom = changedSettings.customMarginBottom = marginBottom;
+          delete this._userChangedSettings.customMargins;
         }
 
         if (
@@ -547,6 +558,7 @@ var PrintEventHandler = {
           let { marginLeft, marginRight } = this.viewSettings.defaultMargins;
           changedSettings.marginLeft = changedSettings.customMarginLeft = marginLeft;
           changedSettings.marginRight = changedSettings.customMarginRight = marginRight;
+          delete this._userChangedSettings.customMargins;
         }
       } catch (e) {
         this.reportPrintingError("PAPER_MARGINS");
@@ -1536,6 +1548,10 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
       // Move the Print button to the end if this isn't Windows.
       this.printButton.parentElement.append(this.printButton);
     }
+    this.querySelector("#pages-per-sheet").hidden = !Services.prefs.getBoolPref(
+      "print.pages_per_sheet.enabled",
+      false
+    );
   }
 
   requestPrint() {

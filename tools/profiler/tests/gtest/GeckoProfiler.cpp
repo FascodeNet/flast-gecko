@@ -667,10 +667,10 @@ TEST(GeckoProfiler, Markers)
 
   // Keep this one first! (It's used to record `ts1` and `ts2`, to compare
   // to serialized numbers in other markers.)
-  MOZ_RELEASE_ASSERT(
-      profiler_add_marker("FirstMarker", geckoprofiler::category::OTHER,
-                          MarkerTiming::Interval(ts1, ts2),
-                          geckoprofiler::markers::Text{}, "First Marker"));
+  MOZ_RELEASE_ASSERT(profiler_add_marker(
+      "FirstMarker", geckoprofiler::category::OTHER,
+      MarkerTiming::Interval(ts1, ts2), geckoprofiler::markers::TextMarker{},
+      "First Marker"));
 
   // User-defined marker type with different properties, and fake schema.
   struct GtestMarker {
@@ -835,24 +835,24 @@ TEST(GeckoProfiler, Markers)
   MOZ_RELEASE_ASSERT(profiler_add_marker(
       "Text in main thread with stack", geckoprofiler::category::OTHER,
       {MarkerStack::Capture(), MarkerTiming::Interval(ts1, ts2)},
-      geckoprofiler::markers::Text{}, ""));
+      geckoprofiler::markers::TextMarker{}, ""));
   MOZ_RELEASE_ASSERT(profiler_add_marker(
       "Text from main thread with stack", geckoprofiler::category::OTHER,
       MarkerOptions(MarkerThreadId::MainThread(), MarkerStack::Capture()),
-      geckoprofiler::markers::Text{}, ""));
+      geckoprofiler::markers::TextMarker{}, ""));
 
   std::thread registeredThread([]() {
     AUTO_PROFILER_REGISTER_THREAD("Marker test sub-thread");
     // Marker in non-profiled thread won't be stored.
     MOZ_RELEASE_ASSERT(profiler_add_marker(
         "Text in registered thread with stack", geckoprofiler::category::OTHER,
-        MarkerStack::Capture(), geckoprofiler::markers::Text{}, ""));
+        MarkerStack::Capture(), geckoprofiler::markers::TextMarker{}, ""));
     // Marker will be stored in main thread, with stack from registered thread.
     MOZ_RELEASE_ASSERT(profiler_add_marker(
         "Text from registered thread with stack",
         geckoprofiler::category::OTHER,
         MarkerOptions(MarkerThreadId::MainThread(), MarkerStack::Capture()),
-        geckoprofiler::markers::Text{}, ""));
+        geckoprofiler::markers::TextMarker{}, ""));
   });
   registeredThread.join();
 
@@ -861,14 +861,14 @@ TEST(GeckoProfiler, Markers)
     MOZ_RELEASE_ASSERT(profiler_add_marker(
         "Text in unregistered thread with stack",
         geckoprofiler::category::OTHER, MarkerStack::Capture(),
-        geckoprofiler::markers::Text{}, ""));
+        geckoprofiler::markers::TextMarker{}, ""));
     // Marker will be stored in main thread, but stack cannot be captured in an
     // unregistered thread.
     MOZ_RELEASE_ASSERT(profiler_add_marker(
         "Text from unregistered thread with stack",
         geckoprofiler::category::OTHER,
         MarkerOptions(MarkerThreadId::MainThread(), MarkerStack::Capture()),
-        geckoprofiler::markers::Text{}, ""));
+        geckoprofiler::markers::TextMarker{}, ""));
   });
   unregisteredThread.join();
 
@@ -876,9 +876,9 @@ TEST(GeckoProfiler, Markers)
       profiler_add_marker("Tracing", geckoprofiler::category::OTHER, {},
                           geckoprofiler::markers::Tracing{}, "category"));
 
-  MOZ_RELEASE_ASSERT(profiler_add_marker("Text", geckoprofiler::category::OTHER,
-                                         {}, geckoprofiler::markers::Text{},
-                                         "Text text"));
+  MOZ_RELEASE_ASSERT(
+      profiler_add_marker("Text", geckoprofiler::category::OTHER, {},
+                          geckoprofiler::markers::TextMarker{}, "Text text"));
 
   MOZ_RELEASE_ASSERT(profiler_add_marker(
       "MediaSample", geckoprofiler::category::OTHER, {},
@@ -1591,25 +1591,25 @@ TEST(GeckoProfiler, Markers)
          (static_cast<unsigned long long>(info->mRangeEnd) -
           static_cast<unsigned long long>(info->mRangeStart)) *
              9);
-  printf("Stats:         min(ns) .. mean(ns) .. max(ns)  [count]\n");
+  printf("Stats:         min(us) .. mean(us) .. max(us)  [count]\n");
   printf("- Intervals:   %7.1f .. %7.1f  .. %7.1f  [%u]\n",
-         info->mIntervalsNs.min, info->mIntervalsNs.sum / info->mIntervalsNs.n,
-         info->mIntervalsNs.max, info->mIntervalsNs.n);
+         info->mIntervalsUs.min, info->mIntervalsUs.sum / info->mIntervalsUs.n,
+         info->mIntervalsUs.max, info->mIntervalsUs.n);
   printf("- Overheads:   %7.1f .. %7.1f  .. %7.1f  [%u]\n",
-         info->mOverheadsNs.min, info->mOverheadsNs.sum / info->mOverheadsNs.n,
-         info->mOverheadsNs.max, info->mOverheadsNs.n);
+         info->mOverheadsUs.min, info->mOverheadsUs.sum / info->mOverheadsUs.n,
+         info->mOverheadsUs.max, info->mOverheadsUs.n);
   printf("  - Locking:   %7.1f .. %7.1f  .. %7.1f  [%u]\n",
-         info->mLockingsNs.min, info->mLockingsNs.sum / info->mLockingsNs.n,
-         info->mLockingsNs.max, info->mLockingsNs.n);
+         info->mLockingsUs.min, info->mLockingsUs.sum / info->mLockingsUs.n,
+         info->mLockingsUs.max, info->mLockingsUs.n);
   printf("  - Clearning: %7.1f .. %7.1f  .. %7.1f  [%u]\n",
-         info->mCleaningsNs.min, info->mCleaningsNs.sum / info->mCleaningsNs.n,
-         info->mCleaningsNs.max, info->mCleaningsNs.n);
+         info->mCleaningsUs.min, info->mCleaningsUs.sum / info->mCleaningsUs.n,
+         info->mCleaningsUs.max, info->mCleaningsUs.n);
   printf("  - Counters:  %7.1f .. %7.1f  .. %7.1f  [%u]\n",
-         info->mCountersNs.min, info->mCountersNs.sum / info->mCountersNs.n,
-         info->mCountersNs.max, info->mCountersNs.n);
+         info->mCountersUs.min, info->mCountersUs.sum / info->mCountersUs.n,
+         info->mCountersUs.max, info->mCountersUs.n);
   printf("  - Threads:   %7.1f .. %7.1f  .. %7.1f  [%u]\n",
-         info->mThreadsNs.min, info->mThreadsNs.sum / info->mThreadsNs.n,
-         info->mThreadsNs.max, info->mThreadsNs.n);
+         info->mThreadsUs.min, info->mThreadsUs.sum / info->mThreadsUs.n,
+         info->mThreadsUs.max, info->mThreadsUs.n);
 
   profiler_stop();
 

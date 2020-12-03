@@ -44,20 +44,7 @@ class PopupBlocker final {
   static void PopupStatePusherCreated();
   static void PopupStatePusherDestroyed();
 
-  // This method checks if the principal is allowed by open popups by user
-  // permissions. In this case, the caller should not block popups.
-  static bool CanShowPopupByPermission(nsIPrincipal* aPrincipal);
-
   static uint32_t GetPopupPermission(nsIPrincipal* aPrincipal);
-
-  // This method returns true if the caller is allowed to show a popup, and it
-  // consumes the popup token for the current event. There is just 1 popup
-  // allowed per event.
-  // This method returns true if the token has been already consumed but
-  // aPrincipal is the system principal.
-  static bool TryUsePopupOpeningToken(nsIPrincipal* aPrincipal);
-
-  static bool IsPopupOpeningTokenUnused();
 
   static PopupBlocker::PopupControlState GetEventPopupControlState(
       WidgetEvent* aEvent, Event* aDOMEvent = nullptr);

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include "ErrorList.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/InitializedOnce.h"
 #include "mozilla/Result.h"
 #include "mozilla/dom/LocalStorageCommon.h"
 #include "mozilla/dom/ipc/IdType.h"
@@ -68,9 +69,7 @@ class Client {
 
   static bool TypeToText(Type aType, nsAString& aText, const fallible_t&);
 
-  static void TypeToText(Type aType, nsAString& aText);
-
-  static void TypeToText(Type aType, nsACString& aText);
+  static nsAutoCString TypeToText(Type aType);
 
   static bool TypeFromText(const nsAString& aText, Type& aType,
                            const fallible_t&);
@@ -132,18 +131,25 @@ class Client {
 
   virtual void AbortOperationsForProcess(ContentParentId aContentParentId) = 0;
 
+  virtual void AbortAllOperations() = 0;
+
   virtual void StartIdleMaintenance() = 0;
 
   virtual void StopIdleMaintenance() = 0;
 
   void ShutdownWorkThreads();
 
+  void MaybeRecordShutdownStep(const nsACString& aStepDescription);
+
  private:
   virtual void InitiateShutdown() = 0;
   virtual bool IsShutdownCompleted() const = 0;
+  virtual nsCString GetShutdownStatus() const = 0;
   virtual void ForceKillActors() = 0;
-  virtual void ShutdownTimedOut() = 0;
   virtual void FinalizeShutdown() = 0;
+
+  nsCString mShutdownSteps;
+  LazyInitializedOnce<const TimeStamp> mShutdownStartedAt;
 
  protected:
   virtual ~Client() = default;

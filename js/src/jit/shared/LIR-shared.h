@@ -3808,59 +3808,6 @@ class LElements : public LInstructionHelper<1, 1, 0> {
   const MElements* mir() const { return mir_->toElements(); }
 };
 
-// If necessary, convert any int32 elements in a vector into doubles.
-class LConvertElementsToDoubles : public LInstructionHelper<0, 1, 0> {
- public:
-  LIR_HEADER(ConvertElementsToDoubles)
-
-  explicit LConvertElementsToDoubles(const LAllocation& elements)
-      : LInstructionHelper(classOpcode) {
-    setOperand(0, elements);
-  }
-
-  const LAllocation* elements() { return getOperand(0); }
-};
-
-// If |elements| has the CONVERT_DOUBLE_ELEMENTS flag, convert int32 value to
-// double. Else return the original value.
-class LMaybeToDoubleElement : public LInstructionHelper<BOX_PIECES, 2, 1> {
- public:
-  LIR_HEADER(MaybeToDoubleElement)
-
-  LMaybeToDoubleElement(const LAllocation& elements, const LAllocation& value,
-                        const LDefinition& tempFloat)
-      : LInstructionHelper(classOpcode) {
-    setOperand(0, elements);
-    setOperand(1, value);
-    setTemp(0, tempFloat);
-  }
-
-  const LAllocation* elements() { return getOperand(0); }
-  const LAllocation* value() { return getOperand(1); }
-  const LDefinition* tempFloat() { return getTemp(0); }
-};
-
-// If necessary, copy the elements in an object so they may be written to.
-class LMaybeCopyElementsForWrite : public LInstructionHelper<0, 1, 1> {
- public:
-  LIR_HEADER(MaybeCopyElementsForWrite)
-
-  explicit LMaybeCopyElementsForWrite(const LAllocation& obj,
-                                      const LDefinition& temp)
-      : LInstructionHelper(classOpcode) {
-    setOperand(0, obj);
-    setTemp(0, temp);
-  }
-
-  const LAllocation* object() { return getOperand(0); }
-
-  const LDefinition* temp() { return getTemp(0); }
-
-  const MMaybeCopyElementsForWrite* mir() const {
-    return mir_->toMaybeCopyElementsForWrite();
-  }
-};
-
 // Load the initialized length from an elements header.
 class LInitializedLength : public LInstructionHelper<1, 1, 0> {
  public:
@@ -4132,23 +4079,21 @@ class LLoadElementV : public LInstructionHelper<BOX_PIECES, 2, 0> {
   const LAllocation* index() { return getOperand(1); }
 };
 
-class LInArray : public LInstructionHelper<1, 4, 0> {
+class LInArray : public LInstructionHelper<1, 3, 0> {
  public:
   LIR_HEADER(InArray)
 
   LInArray(const LAllocation& elements, const LAllocation& index,
-           const LAllocation& initLength, const LAllocation& object)
+           const LAllocation& initLength)
       : LInstructionHelper(classOpcode) {
     setOperand(0, elements);
     setOperand(1, index);
     setOperand(2, initLength);
-    setOperand(3, object);
   }
   const MInArray* mir() const { return mir_->toInArray(); }
   const LAllocation* elements() { return getOperand(0); }
   const LAllocation* index() { return getOperand(1); }
   const LAllocation* initLength() { return getOperand(2); }
-  const LAllocation* object() { return getOperand(3); }
 };
 
 class LGuardElementNotHole : public LInstructionHelper<0, 2, 0> {
@@ -4422,34 +4367,12 @@ class LFallibleStoreElementT : public LInstructionHelper<0, 4, 1> {
   const LDefinition* spectreTemp() { return getTemp(0); }
 };
 
-class LArrayPopShiftV : public LInstructionHelper<BOX_PIECES, 1, 2> {
+class LArrayPopShift : public LInstructionHelper<BOX_PIECES, 1, 2> {
  public:
-  LIR_HEADER(ArrayPopShiftV)
+  LIR_HEADER(ArrayPopShift)
 
-  LArrayPopShiftV(const LAllocation& object, const LDefinition& temp0,
-                  const LDefinition& temp1)
-      : LInstructionHelper(classOpcode) {
-    setOperand(0, object);
-    setTemp(0, temp0);
-    setTemp(1, temp1);
-  }
-
-  const char* extraName() const {
-    return mir()->mode() == MArrayPopShift::Pop ? "Pop" : "Shift";
-  }
-
-  const MArrayPopShift* mir() const { return mir_->toArrayPopShift(); }
-  const LAllocation* object() { return getOperand(0); }
-  const LDefinition* temp0() { return getTemp(0); }
-  const LDefinition* temp1() { return getTemp(1); }
-};
-
-class LArrayPopShiftT : public LInstructionHelper<1, 1, 2> {
- public:
-  LIR_HEADER(ArrayPopShiftT)
-
-  LArrayPopShiftT(const LAllocation& object, const LDefinition& temp0,
-                  const LDefinition& temp1)
+  LArrayPopShift(const LAllocation& object, const LDefinition& temp0,
+                 const LDefinition& temp1)
       : LInstructionHelper(classOpcode) {
     setOperand(0, object);
     setTemp(0, temp0);
@@ -5214,16 +5137,16 @@ class LCallGetIntrinsicValue : public LCallInstructionHelper<BOX_PIECES, 0, 0> {
   LCallGetIntrinsicValue() : LCallInstructionHelper(classOpcode) {}
 };
 
-class LGetPropSuperCacheV
+class LGetPropSuperCache
     : public LInstructionHelper<BOX_PIECES, 1 + 2 * BOX_PIECES, 0> {
  public:
-  LIR_HEADER(GetPropSuperCacheV)
+  LIR_HEADER(GetPropSuperCache)
 
   static const size_t Receiver = 1;
   static const size_t Id = Receiver + BOX_PIECES;
 
-  LGetPropSuperCacheV(const LAllocation& obj, const LBoxAllocation& receiver,
-                      const LBoxAllocation& id)
+  LGetPropSuperCache(const LAllocation& obj, const LBoxAllocation& receiver,
+                     const LBoxAllocation& id)
       : LInstructionHelper(classOpcode) {
     setOperand(0, obj);
     setBoxOperand(Receiver, receiver);
@@ -5235,43 +5158,20 @@ class LGetPropSuperCacheV
 
 // Patchable jump to stubs generated for a GetProperty cache, which loads a
 // boxed value.
-class LGetPropertyCacheV
-    : public LInstructionHelper<BOX_PIECES, 2 * BOX_PIECES, 1> {
+class LGetPropertyCache
+    : public LInstructionHelper<BOX_PIECES, 2 * BOX_PIECES, 0> {
  public:
-  LIR_HEADER(GetPropertyCacheV)
+  LIR_HEADER(GetPropertyCache)
 
   static const size_t Value = 0;
   static const size_t Id = BOX_PIECES;
 
-  LGetPropertyCacheV(const LBoxAllocation& value, const LBoxAllocation& id,
-                     const LDefinition& temp)
+  LGetPropertyCache(const LBoxAllocation& value, const LBoxAllocation& id)
       : LInstructionHelper(classOpcode) {
     setBoxOperand(Value, value);
     setBoxOperand(Id, id);
-    setTemp(0, temp);
   }
   const MGetPropertyCache* mir() const { return mir_->toGetPropertyCache(); }
-  const LDefinition* temp() { return getTemp(0); }
-};
-
-// Patchable jump to stubs generated for a GetProperty cache, which loads a
-// value of a known type, possibly into an FP register.
-class LGetPropertyCacheT : public LInstructionHelper<1, 2 * BOX_PIECES, 1> {
- public:
-  LIR_HEADER(GetPropertyCacheT)
-
-  static const size_t Value = 0;
-  static const size_t Id = BOX_PIECES;
-
-  LGetPropertyCacheT(const LBoxAllocation& value, const LBoxAllocation& id,
-                     const LDefinition& temp)
-      : LInstructionHelper(classOpcode) {
-    setBoxOperand(Value, value);
-    setBoxOperand(Id, id);
-    setTemp(0, temp);
-  }
-  const MGetPropertyCache* mir() const { return mir_->toGetPropertyCache(); }
-  const LDefinition* temp() { return getTemp(0); }
 };
 
 // Emit code to load a boxed value from an object's slots if its shape matches
@@ -6280,6 +6180,20 @@ class LGuardNullProto : public LInstructionHelper<0, 1, 1> {
   LIR_HEADER(GuardNullProto)
 
   LGuardNullProto(const LAllocation& obj, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+class LGuardIsNativeObject : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardIsNativeObject)
+
+  LGuardIsNativeObject(const LAllocation& obj, const LDefinition& temp)
       : LInstructionHelper(classOpcode) {
     setOperand(0, obj);
     setTemp(0, temp);
@@ -8304,6 +8218,148 @@ class LGuardHasGetterSetter : public LCallInstructionHelper<0, 1, 2> {
   const LDefinition* temp2() { return getTemp(1); }
 
   MGuardHasGetterSetter* mir() const { return mir_->toGuardHasGetterSetter(); }
+};
+
+class LGuardIsExtensible : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardIsExtensible)
+
+  LGuardIsExtensible(const LAllocation& object, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+class LGuardIndexIsNonNegative : public LInstructionHelper<0, 1, 0> {
+ public:
+  LIR_HEADER(GuardIndexIsNonNegative)
+
+  explicit LGuardIndexIsNonNegative(const LAllocation& index)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, index);
+  }
+
+  const LAllocation* index() { return getOperand(0); }
+};
+
+class LGuardIndexGreaterThanDenseInitLength
+    : public LInstructionHelper<0, 2, 2> {
+ public:
+  LIR_HEADER(GuardIndexGreaterThanDenseInitLength)
+
+  LGuardIndexGreaterThanDenseInitLength(const LAllocation& object,
+                                        const LAllocation& index,
+                                        const LDefinition& temp,
+                                        const LDefinition& spectreTemp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setOperand(1, index);
+    setTemp(0, temp);
+    setTemp(1, spectreTemp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LDefinition* temp() { return getTemp(0); }
+  const LDefinition* spectreTemp() { return getTemp(1); }
+};
+
+class LGuardIndexIsValidUpdateOrAdd : public LInstructionHelper<0, 2, 2> {
+ public:
+  LIR_HEADER(GuardIndexIsValidUpdateOrAdd)
+
+  LGuardIndexIsValidUpdateOrAdd(const LAllocation& object,
+                                const LAllocation& index,
+                                const LDefinition& temp,
+                                const LDefinition& spectreTemp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setOperand(1, index);
+    setTemp(0, temp);
+    setTemp(1, spectreTemp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LDefinition* temp() { return getTemp(0); }
+  const LDefinition* spectreTemp() { return getTemp(1); }
+};
+
+class LCallAddOrUpdateSparseElement
+    : public LCallInstructionHelper<0, 2 + BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(CallAddOrUpdateSparseElement)
+
+  LCallAddOrUpdateSparseElement(const LAllocation& object,
+                                const LAllocation& index,
+                                const LBoxAllocation& value)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setOperand(1, index);
+    setBoxOperand(ValueIndex, value);
+  }
+
+  static const size_t ValueIndex = 2;
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+
+  MCallAddOrUpdateSparseElement* mir() const {
+    return mir_->toCallAddOrUpdateSparseElement();
+  }
+};
+
+class LCallGetSparseElement : public LCallInstructionHelper<BOX_PIECES, 2, 0> {
+ public:
+  LIR_HEADER(CallGetSparseElement)
+
+  LCallGetSparseElement(const LAllocation& object, const LAllocation& index)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setOperand(1, index);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+};
+
+class LCallNativeGetElement : public LCallInstructionHelper<BOX_PIECES, 2, 0> {
+ public:
+  LIR_HEADER(CallNativeGetElement)
+
+  LCallNativeGetElement(const LAllocation& object, const LAllocation& index)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setOperand(1, index);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+};
+
+class LCallObjectHasSparseElement : public LCallInstructionHelper<1, 2, 2> {
+ public:
+  LIR_HEADER(CallObjectHasSparseElement)
+
+  LCallObjectHasSparseElement(const LAllocation& object,
+                              const LAllocation& index,
+                              const LDefinition& temp1,
+                              const LDefinition& temp2)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, object);
+    setOperand(1, index);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
 };
 
 template <size_t NumDefs>

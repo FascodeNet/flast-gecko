@@ -1407,8 +1407,8 @@ void GlobalHelperThreadState::destroyHelperContexts(
 }
 
 #ifdef DEBUG
-bool GlobalHelperThreadState::isLockedByCurrentThread() const {
-  return gHelperThreadLock.ownedByCurrentThread();
+void GlobalHelperThreadState::assertIsLockedByCurrentThread() const {
+  gHelperThreadLock.assertOwnedByCurrentThread();
 }
 #endif  // DEBUG
 
@@ -1536,7 +1536,9 @@ static inline bool IsHelperThreadSimulatingOOM(js::ThreadType threadType) {
 
 void GlobalHelperThreadState::addSizeOfIncludingThis(
     JS::GlobalStats* stats, AutoLockHelperThreadState& lock) const {
-  MOZ_ASSERT(isLockedByCurrentThread());
+#ifdef DEBUG
+  assertIsLockedByCurrentThread();
+#endif
 
   mozilla::MallocSizeOf mallocSizeOf = stats->mallocSizeOf_;
   JS::HelperThreadStats& htStats = stats->helperThread;
@@ -2543,6 +2545,23 @@ bool GlobalHelperThreadState::submitTask(PromiseHelperTask* task) {
 
 void GlobalHelperThreadState::trace(JSTracer* trc) {
   AutoLockHelperThreadState lock;
+
+#ifdef DEBUG
+  // Since we hold the helper thread lock here we must disable GCMarker's
+  // checking of the atom marking bitmap since that also relies on taking the
+  // lock.
+  GCMarker* marker = nullptr;
+  if (trc->isMarkingTracer()) {
+    marker = GCMarker::fromTracer(trc);
+    marker->setCheckAtomMarking(false);
+  }
+  auto reenableAtomMarkingCheck = mozilla::MakeScopeExit([marker] {
+    if (marker) {
+      marker->setCheckAtomMarking(true);
+    }
+  });
+#endif
+
   for (auto task : ionWorklist(lock)) {
     task->alloc().lifoAlloc()->setReadWrite();
     task->trace(trc);

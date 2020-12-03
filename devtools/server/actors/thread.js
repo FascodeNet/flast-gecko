@@ -498,7 +498,13 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     ) {
       const reason = this._priorPause.why.type;
       await this.pauseOverlay.isReady;
-      this.pauseOverlay.show(null, { reason });
+
+      // we might not be paused anymore.
+      if (!this.isPaused()) {
+        return;
+      }
+
+      this.pauseOverlay.show(reason);
     }
   },
 
@@ -1486,9 +1492,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     // overhead of an RDP packet for every source right now. Let the default
     // timeout flush the buffered packets.
 
-    return {
-      sources: this.sourcesManager.iter().map(s => s.form()),
-    };
+    return this.sourcesManager.iter().map(s => s.form());
   },
 
   /**

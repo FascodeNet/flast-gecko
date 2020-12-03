@@ -580,7 +580,7 @@ inline bool JSONParserBase::finishObject(MutableHandleValue vp,
                                          PropertyVector& properties) {
   MOZ_ASSERT(&properties == &stack.back().properties());
 
-  JSObject* obj = ObjectGroup::newPlainObject(
+  JSObject* obj = NewPlainObjectWithProperties(
       cx, properties.begin(), properties.length(), GenericObject);
   if (!obj) {
     return false;
@@ -598,8 +598,8 @@ inline bool JSONParserBase::finishArray(MutableHandleValue vp,
                                         ElementVector& elements) {
   MOZ_ASSERT(&elements == &stack.back().elements());
 
-  ArrayObject* obj = ObjectGroup::newArrayObject(
-      cx, elements.begin(), elements.length(), GenericObject);
+  ArrayObject* obj =
+      NewDenseCopiedArray(cx, elements.length(), elements.begin());
   if (!obj) {
     return false;
   }

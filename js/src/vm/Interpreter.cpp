@@ -388,7 +388,16 @@ static bool MaybeCreateThisForConstructor(JSContext* cx, const CallArgs& args) {
   RootedFunction callee(cx, &args.callee().as<JSFunction>());
   RootedObject newTarget(cx, &args.newTarget().toObject());
 
-  return CreateThis(cx, callee, newTarget, GenericObject, args.mutableThisv());
+  MOZ_ASSERT(callee->hasBytecode());
+
+  if (!CreateThis(cx, callee, newTarget, GenericObject, args.mutableThisv())) {
+    return false;
+  }
+
+  // Ensure the callee still has a non-lazy script. We normally don't relazify
+  // in active compartments, but the .prototype lookup might have called the
+  // relazifyFunctions testing function that doesn't have this restriction.
+  return JSFunction::getOrCreateScript(cx, callee);
 }
 
 static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
@@ -544,7 +553,6 @@ MOZ_ALWAYS_INLINE bool CallJSNativeConstructor(JSContext* cx, Native native,
 bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
                                  MaybeConstruct construct, CallReason reason) {
   MOZ_ASSERT(args.length() <= ARGS_LENGTH_MAX);
-  MOZ_ASSERT(!cx->zone()->types.activeAnalysis);
 
   unsigned skipForCallee = args.length() + 1 + (construct == CONSTRUCT);
   if (args.calleev().isPrimitive()) {
@@ -2072,7 +2080,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
   JS_END_MACRO
 
   gc::MaybeVerifyBarriers(cx, true);
-  MOZ_ASSERT(!cx->zone()->types.activeAnalysis);
 
   InterpreterFrame* entryFrame = state.pushInterpreterFrame(cx);
   if (!entryFrame) {
@@ -5122,56 +5129,22 @@ bool js::OptimizeSpreadCall(JSContext* cx, HandleValue arg, bool* optimized) {
   return stubChain->tryOptimizeArray(cx, obj.as<ArrayObject>(), optimized);
 }
 
+// TODO(no-TI): clean up. Remove JSOp::NewObjectWithGroup.
 JSObject* js::NewObjectOperation(JSContext* cx, HandleScript script,
                                  jsbytecode* pc,
                                  NewObjectKind newKind /* = GenericObject */) {
   MOZ_ASSERT(newKind != SingletonObject);
   bool withTemplate =
       (JSOp(*pc) == JSOp::NewObject || JSOp(*pc) == JSOp::NewObjectWithGroup);
-  bool withTemplateGroup = (JSOp(*pc) == JSOp::NewObjectWithGroup);
 
-  RootedObjectGroup group(cx);
-  RootedPlainObject baseObject(cx);
-
-  // Extract the template object, if one exists.
+  // Extract the template object, if one exists, and copy it.
   if (withTemplate) {
-    baseObject = &script->getObject(pc)->as<PlainObject>();
+    RootedPlainObject baseObject(cx, &script->getObject(pc)->as<PlainObject>());
+    return CopyInitializerObject(cx, baseObject, newKind);
   }
 
-  // Choose the group. Three cases:
-  // - JSOp::NewObjectWithGroup explicitly indicates that we should use the
-  //   same group as the template object's group.
-  // - otherwise, if some heuristics indicate that we should use a singleton,
-  //   we set the allocation-kind to ensure this.
-  // - otherwise, we look up a group based on the allocation site, i.e., the
-  //   (script, pc) tuple.
-  if (withTemplateGroup) {
-    group = baseObject->getGroup(cx, baseObject);
-  } else {
-    group = ObjectGroup::allocationSiteGroup(cx, script, pc, JSProto_Object);
-    if (!group) {
-      return nullptr;
-    }
-  }
-
-  RootedPlainObject obj(cx);
-
-  // Actually allocate the object.
-  if (withTemplate) {
-    obj = CopyInitializerObject(cx, baseObject, newKind);
-  } else {
-    MOZ_ASSERT(JSOp(*pc) == JSOp::NewInit);
-    obj = NewBuiltinClassInstanceWithKind<PlainObject>(cx, newKind);
-  }
-
-  if (!obj) {
-    return nullptr;
-  }
-
-  // TODO(no-TI): clean up. Remove JSOp::NewObjectWithGroup.
-  obj->setGroup(group);
-
-  return obj;
+  MOZ_ASSERT(JSOp(*pc) == JSOp::NewInit);
+  return NewBuiltinClassInstanceWithKind<PlainObject>(cx, newKind);
 }
 
 JSObject* js::NewObjectOperationWithTemplate(JSContext* cx,
@@ -5233,15 +5206,7 @@ ArrayObject* js::NewArrayOperationWithTemplate(JSContext* cx,
 ArrayObject* js::NewArrayCopyOnWriteOperation(JSContext* cx,
                                               HandleScript script,
                                               jsbytecode* pc) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::NewArrayCopyOnWrite);
-
-  RootedArrayObject baseobj(
-      cx, ObjectGroup::getOrFixupCopyOnWriteObject(cx, script, pc));
-  if (!baseobj) {
-    return nullptr;
-  }
-
-  return NewDenseCopyOnWriteArray(cx, baseobj);
+  MOZ_CRASH("TODO(no-TI): remove");
 }
 
 void js::ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber,

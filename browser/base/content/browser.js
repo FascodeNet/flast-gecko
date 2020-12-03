@@ -552,6 +552,16 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gProton",
+  "browser.proton.enabled",
+  false,
+  (pref, oldValue, newValue) => {
+    document.documentElement.toggleAttribute("proton", newValue);
+  }
+);
+
 customElements.setElementCreationCallback("translation-notification", () => {
   Services.scriptloader.loadSubScript(
     "chrome://browser/content/translation-notification.js",
@@ -1697,6 +1707,8 @@ var gBrowserInit = {
     ) {
       document.documentElement.setAttribute("icon", "main-window");
     }
+
+    document.documentElement.toggleAttribute("proton", gProton);
 
     // Call this after we set attributes that might change toolbars' computed
     // text color.
@@ -6308,15 +6320,6 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
     if (toolbar.id == "PersonalToolbar" && gBookmarksToolbar2h2020) {
       let menu = BookmarkingUI.buildBookmarksToolbarSubmenu(toolbar);
       popup.insertBefore(menu, firstMenuItem);
-
-      // Insert Show Otherbookmarks menu item.
-      let otherBookmarksMenuItem = BookmarkingUI.buildShowOtherBookmarksMenuItem();
-
-      if (!otherBookmarksMenuItem) {
-        continue;
-      }
-
-      popup.insertBefore(otherBookmarksMenuItem, menu.nextElementSibling);
     } else {
       let menuItem = document.createXULElement("menuitem");
       menuItem.setAttribute("id", "toggle_" + toolbar.id);
@@ -7324,31 +7327,6 @@ var gPageStyleMenu = {
     sheetData.filteredStyleSheets.push(...styleSheets.filteredStyleSheets);
     sheetData.preferredStyleSheetSet =
       sheetData.preferredStyleSheetSet || styleSheets.preferredStyleSheetSet;
-  },
-
-  /**
-   * Return an array of Objects representing stylesheets in a
-   * browser. Note that the pageshow event needs to fire in content
-   * before this information will be available.
-   *
-   * @param browser (optional)
-   *        The <xul:browser> to search for stylesheets. If omitted, this
-   *        defaults to the currently selected tab's browser.
-   * @returns Array
-   *        An Array of Objects representing stylesheets in the browser.
-   *        See the documentation for gPageStyleMenu for a description
-   *        of the Object structure.
-   */
-  getBrowserStyleSheets(browser) {
-    if (!browser) {
-      browser = gBrowser.selectedBrowser;
-    }
-
-    let data = this._pageStyleSheets.get(browser.permanentKey);
-    if (!data) {
-      return [];
-    }
-    return data.filteredStyleSheets;
   },
 
   clearBrowserStyleSheets(permanentKey) {

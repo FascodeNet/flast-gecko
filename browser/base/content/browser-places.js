@@ -19,6 +19,15 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "browser.newtabpage.enabled",
   false
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "SHOW_OTHER_BOOKMARKS",
+  "browser.toolbars.bookmarks.showOtherBookmarks",
+  true,
+  (aPref, aPrevVal, aNewVal) => {
+    BookmarkingUI.maybeShowOtherBookmarksFolder();
+  }
+);
 ChromeUtils.defineModuleGetter(
   this,
   "PanelMultiView",
@@ -1656,17 +1665,17 @@ var BookmarkingUI = {
     let menuItems = [
       [
         showOnNewTabMenuItem,
-        "toolbar-context-menu-bookmarks-toolbar-on-new-tab",
+        "toolbar-context-menu-bookmarks-toolbar-on-new-tab-2",
         "newtab",
       ],
       [
         alwaysShowMenuItem,
-        "toolbar-context-menu-bookmarks-toolbar-always-show",
+        "toolbar-context-menu-bookmarks-toolbar-always-show-2",
         "always",
       ],
       [
         alwaysHideMenuItem,
-        "toolbar-context-menu-bookmarks-toolbar-never-show",
+        "toolbar-context-menu-bookmarks-toolbar-never-show-2",
         "never",
       ],
     ];
@@ -1711,6 +1720,7 @@ var BookmarkingUI = {
     // to ensure the toolbar has height.
     if (!this.toolbar.hasAttribute("initialized")) {
       emptyMsg.hidden = false;
+      emptyMsg.setAttribute("nowidth", "");
       return;
     }
 
@@ -1738,6 +1748,7 @@ var BookmarkingUI = {
           ));
     }
     emptyMsg.hidden = hasVisibleChildren;
+    emptyMsg.toggleAttribute("nowidth", !hasVisibleChildren);
   },
 
   openLibraryIfLinkClicked(event) {
@@ -2413,14 +2424,10 @@ var BookmarkingUI = {
     let unfiledGuid = PlacesUtils.bookmarks.unfiledGuid;
     let numberOfBookmarks = PlacesUtils.getChildCountForFolder(unfiledGuid);
     let placement = CustomizableUI.getPlacementOfWidget("personal-bookmarks");
-    let showOtherBookmarksEnabled = Services.prefs.getBoolPref(
-      "browser.toolbars.bookmarks.showOtherBookmarks",
-      true
-    );
 
     if (
       numberOfBookmarks > 0 &&
-      showOtherBookmarksEnabled &&
+      SHOW_OTHER_BOOKMARKS &&
       placement?.area == CustomizableUI.AREA_BOOKMARKS
     ) {
       let otherBookmarksPopup = document.getElementById("OtherBookmarksPopup");
@@ -2443,17 +2450,12 @@ var BookmarkingUI = {
       return null;
     }
 
-    let showOtherBookmarksMenuItem = Services.prefs.getBoolPref(
-      "browser.toolbars.bookmarks.showOtherBookmarks",
-      true
-    );
-
     let menuItem = document.createXULElement("menuitem");
 
     menuItem.setAttribute("id", "show-other-bookmarks_PersonalToolbar");
     menuItem.setAttribute("toolbarId", "PersonalToolbar");
     menuItem.setAttribute("type", "checkbox");
-    menuItem.setAttribute("checked", showOtherBookmarksMenuItem);
+    menuItem.setAttribute("checked", SHOW_OTHER_BOOKMARKS);
     menuItem.setAttribute("selectiontype", "none|single");
 
     MozXULElement.insertFTLIfNeeded("browser/toolbarContextMenu.ftl");
@@ -2464,10 +2466,8 @@ var BookmarkingUI = {
     menuItem.addEventListener("command", () => {
       Services.prefs.setBoolPref(
         "browser.toolbars.bookmarks.showOtherBookmarks",
-        !showOtherBookmarksMenuItem
+        !SHOW_OTHER_BOOKMARKS
       );
-
-      BookmarkingUI.maybeShowOtherBookmarksFolder();
     });
 
     return menuItem;

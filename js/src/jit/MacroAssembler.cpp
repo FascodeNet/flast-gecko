@@ -47,7 +47,6 @@
 #include "jit/TemplateObject-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -839,7 +838,6 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
         templateObj.asNativeTemplateObject();
     MOZ_ASSERT_IF(!ntemplate.denseElementsAreCopyOnWrite(),
                   !ntemplate.hasDynamicElements());
-    MOZ_ASSERT_IF(ntemplate.convertDoubleElements(), ntemplate.isArrayObject());
 
     // If the object has dynamic slots, the slots member has already been
     // filled in.
@@ -866,9 +864,7 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
                                ObjectElements::offsetOfInitializedLength()));
       store32(Imm32(ntemplate.getArrayLength()),
               Address(obj, elementsOffset + ObjectElements::offsetOfLength()));
-      store32(Imm32(ntemplate.convertDoubleElements()
-                        ? ObjectElements::CONVERT_DOUBLE_ELEMENTS
-                        : 0),
+      store32(Imm32(0),
               Address(obj, elementsOffset + ObjectElements::offsetOfFlags()));
       MOZ_ASSERT(!ntemplate.hasPrivate());
     } else if (ntemplate.isArgumentsObject()) {
@@ -3283,6 +3279,17 @@ void MacroAssembler::branchIfNonNativeObj(Register obj, Register scratch,
                Imm32(JSClass::NON_NATIVE), label);
 }
 
+void MacroAssembler::branchIfObjectNotExtensible(Register obj, Register scratch,
+                                                 Label* label) {
+  loadPtr(Address(obj, JSObject::offsetOfShape()), scratch);
+  loadPtr(Address(scratch, Shape::offsetOfBaseShape()), scratch);
+
+  // Spectre-style checks are not needed here because we do not interpret data
+  // based on this check.
+  branchTest32(Assembler::NonZero, Address(scratch, BaseShape::offsetOfFlags()),
+               Imm32(js::BaseShape::NOT_EXTENSIBLE), label);
+}
+
 void MacroAssembler::copyObjGroupNoPreBarrier(Register sourceObj,
                                               Register destObj,
                                               Register scratch) {
@@ -3803,7 +3810,7 @@ void MacroAssembler::packedArrayPop(Register array, ValueOperand output,
 
   // Check flags.
   static constexpr uint32_t UnhandledFlags =
-      ObjectElements::Flags::NON_PACKED | ObjectElements::Flags::COPY_ON_WRITE |
+      ObjectElements::Flags::NON_PACKED |
       ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH |
       ObjectElements::Flags::NOT_EXTENSIBLE |
       ObjectElements::Flags::MAYBE_IN_ITERATION;
@@ -3850,7 +3857,7 @@ void MacroAssembler::packedArrayShift(Register array, ValueOperand output,
 
   // Check flags.
   static constexpr uint32_t UnhandledFlags =
-      ObjectElements::Flags::NON_PACKED | ObjectElements::Flags::COPY_ON_WRITE |
+      ObjectElements::Flags::NON_PACKED |
       ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH |
       ObjectElements::Flags::NOT_EXTENSIBLE |
       ObjectElements::Flags::MAYBE_IN_ITERATION;

@@ -50,6 +50,8 @@ class CacheQuotaClient final : public quota::Client {
   virtual void AbortOperationsForProcess(
       ContentParentId aContentParentId) override;
 
+  virtual void AbortAllOperations() override;
+
   virtual void StartIdleMaintenance() override;
 
   virtual void StopIdleMaintenance() override;
@@ -132,8 +134,8 @@ class CacheQuotaClient final : public quota::Client {
 
   void InitiateShutdown() override;
   bool IsShutdownCompleted() const override;
+  nsCString GetShutdownStatus() const override;
   void ForceKillActors() override;
-  void ShutdownTimedOut() override;
   void FinalizeShutdown() override;
 
   Result<UsageInfo, nsresult> GetUsageForOriginInternal(

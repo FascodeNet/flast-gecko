@@ -18,6 +18,7 @@
 #include "mozilla/dom/FileSystemUtils.h"
 #include "mozilla/dom/GetFilesHelper.h"
 #include "mozilla/dom/HTMLFormSubmission.h"
+#include "mozilla/dom/WindowContext.h"
 #include "mozilla/dom/InputType.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/MutationEventBinding.h"
@@ -663,19 +664,20 @@ nsColorPickerShownCallback::Done(const nsAString& aColor) {
 
 NS_IMPL_ISUPPORTS(nsColorPickerShownCallback, nsIColorPickerShownCallback)
 
-bool HTMLInputElement::IsPopupBlocked() const {
-  nsCOMPtr<nsPIDOMWindowOuter> win = OwnerDoc()->GetWindow();
-  MOZ_ASSERT(win, "window should not be null");
-  if (!win) {
-    return true;
+static bool IsPopupBlocked(Document* aDoc) {
+  if (aDoc->ConsumeTransientUserGestureActivation()) {
+    return false;
   }
 
-  // Check if page can open a popup without abuse regardless of allowed events
-  if (PopupBlocker::GetPopupControlState() <= PopupBlocker::openBlocked) {
-    return !PopupBlocker::TryUsePopupOpeningToken(OwnerDoc()->NodePrincipal());
+  WindowContext* wc = aDoc->GetWindowContext();
+  if (wc && wc->CanShowPopup()) {
+    return false;
   }
 
-  return !PopupBlocker::CanShowPopupByPermission(OwnerDoc()->NodePrincipal());
+  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns, aDoc,
+                                  nsContentUtils::eDOM_PROPERTIES,
+                                  "InputPickerBlockedNoUserActivation");
+  return true;
 }
 
 nsresult HTMLInputElement::InitColorPicker() {
@@ -691,7 +693,7 @@ nsresult HTMLInputElement::InitColorPicker() {
     return NS_ERROR_FAILURE;
   }
 
-  if (IsPopupBlocked()) {
+  if (IsPopupBlocked(doc)) {
     return NS_OK;
   }
 
@@ -736,7 +738,7 @@ nsresult HTMLInputElement::InitFilePicker(FilePickerType aType) {
     return NS_ERROR_FAILURE;
   }
 
-  if (IsPopupBlocked()) {
+  if (IsPopupBlocked(doc)) {
     return NS_OK;
   }
 
@@ -2639,10 +2641,14 @@ nsresult HTMLInputElement::SetValueInternal(const nsAString& aValue,
 
   // We want to remember if the SetValueInternal() call is being made for a XUL
   // element.  We do that by looking at the parent node here, and if that node
-  // is a XUL node, we consider our control a XUL control.
-  nsIContent* parent = GetParent();
-  if (parent && parent->IsXULElement()) {
-    aFlags |= TextControlState::eSetValue_ForXUL;
+  // is a XUL node, we consider our control a XUL control. XUL controls preserve
+  // edit history across value setters.
+  //
+  // TODO(emilio): Rather than doing this maybe add an attribute instead and
+  // read it only on chrome docs or something? That'd allow front-end code to
+  // move away from xul without weird side-effects.
+  if (mParent && mParent->IsXULElement()) {
+    aFlags |= TextControlState::eSetValue_PreserveHistory;
   }
 
   switch (GetValueMode()) {
@@ -3014,17 +3020,11 @@ void HTMLInputElement::Select() {
     return;
   }
 
-  // XXX Bug?  We have to give the input focus before contents can be
-  // selected
+  TextControlState* state = GetEditorState();
+  MOZ_ASSERT(state, "Single line text controls are expected to have a state");
 
-  FocusTristate state = FocusState();
-  if (state == eUnfocusable) {
-    return;
-  }
-
-  TextControlState* tes = GetEditorState();
-  if (tes) {
-    RefPtr<nsFrameSelection> fs = tes->GetConstFrameSelection();
+  if (FocusState() != eUnfocusable) {
+    RefPtr<nsFrameSelection> fs = state->GetConstFrameSelection();
     if (fs && fs->MouseDownRecorded()) {
       // This means that we're being called while the frame selection has a
       // mouse down event recorded to adjust the caret during the mouse up
@@ -3033,27 +3033,24 @@ void HTMLInputElement::Select() {
       // select() call takes effect.
       fs->SetDelayedCaretData(nullptr);
     }
-  }
 
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+    if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
+      fm->SetFocus(this, nsIFocusManager::FLAG_NOSCROLL);
 
-  RefPtr<nsPresContext> presContext = GetPresContext(eForComposedDoc);
-  if (state == eInactiveWindow) {
-    if (fm) fm->SetFocus(this, nsIFocusManager::FLAG_NOSCROLL);
-    SelectAll(presContext);
-    return;
-  }
-
-  DispatchSelectEvent(presContext);
-  if (fm) {
-    fm->SetFocus(this, nsIFocusManager::FLAG_NOSCROLL);
-
-    // ensure that the element is actually focused
-    if (this == fm->GetFocusedElement()) {
-      // Now Select all the text!
-      SelectAll(presContext);
+      // A focus event handler may change the type attribute, which will destroy
+      // the previous state object.
+      state = GetEditorState();
+      if (!state) {
+        return;
+      }
     }
   }
+
+  // Directly call TextControlState::SetSelectionRange because
+  // HTMLInputElement::SetSelectionRange only applies to fewer types
+  state->SetSelectionRange(0, UINT32_MAX,
+                           nsITextControlFrame::SelectionDirection::eNone,
+                           IgnoredErrorResult());
 }
 
 void HTMLInputElement::DispatchSelectEvent(nsPresContext* aPresContext) {

@@ -18,8 +18,6 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/AddonManager.jsm"
 );
 
-var gViewDefault = "addons://discover/";
-
 document.addEventListener("load", initialize, true);
 window.addEventListener("unload", shutdown);
 
@@ -30,10 +28,6 @@ Object.defineProperty(this, "gIsInitializing", {
 
 function initialize(event) {
   document.removeEventListener("load", initialize, true);
-
-  if (!isDiscoverEnabled()) {
-    gViewDefault = "addons://list/extension";
-  }
 
   // Support focusing the search bar from the XUL document.
   document.addEventListener("keypress", e => {
@@ -53,8 +47,8 @@ function initialize(event) {
   }
 
   // If there is a history state to restore then use that
-  if (window.history.state) {
-    gViewController.updateState(window.history.state);
+  if (history.state) {
+    gViewController.updateState(history.state);
   }
 }
 
@@ -72,7 +66,6 @@ function notifyInitialized() {
 }
 
 function shutdown() {
-  gViewController.shutdown();
   Services.obs.removeObserver(sendEMPong, "EM-ping");
 }
 
@@ -115,182 +108,32 @@ function loadView(aViewId) {
   }
 }
 
-/**
- * A wrapper around the HTML5 session history service that allows the browser
- * back/forward controls to work within the manager
- */
-var HTML5History = {
-  get index() {
-    return window.docShell.QueryInterface(Ci.nsIWebNavigation).sessionHistory
-      .index;
-  },
-
-  get canGoBack() {
-    return window.docShell.QueryInterface(Ci.nsIWebNavigation).canGoBack;
-  },
-
-  get canGoForward() {
-    return window.docShell.QueryInterface(Ci.nsIWebNavigation).canGoForward;
-  },
-
-  back() {
-    window.history.back();
-  },
-
-  forward() {
-    window.history.forward();
-  },
-
-  pushState(aState) {
-    window.history.pushState(aState, document.title);
-  },
-
-  replaceState(aState) {
-    window.history.replaceState(aState, document.title);
-  },
-
-  popState() {
-    function onStatePopped(aEvent) {
-      window.removeEventListener("popstate", onStatePopped, true);
-      // TODO To ensure we can't go forward again we put an additional entry
-      // for the current state into the history. Ideally we would just strip
-      // the history but there doesn't seem to be a way to do that. Bug 590661
-      window.history.pushState(aEvent.state, document.title);
-    }
-    window.addEventListener("popstate", onStatePopped, true);
-    window.history.back();
-  },
-};
-
-/**
- * A wrapper around a fake history service
- */
-var FakeHistory = {
-  pos: 0,
-  states: [null],
-
-  get index() {
-    return this.pos;
-  },
-
-  get canGoBack() {
-    return this.pos > 0;
-  },
-
-  get canGoForward() {
-    return this.pos + 1 < this.states.length;
-  },
-
-  back() {
-    if (this.pos == 0) {
-      throw Components.Exception("Cannot go back from this point");
-    }
-
-    this.pos--;
-    gViewController.updateState(this.states[this.pos]);
-  },
-
-  forward() {
-    if (this.pos + 1 >= this.states.length) {
-      throw Components.Exception("Cannot go forward from this point");
-    }
-
-    this.pos++;
-    gViewController.updateState(this.states[this.pos]);
-  },
-
-  pushState(aState) {
-    this.pos++;
-    this.states.splice(this.pos, this.states.length);
-    this.states.push(aState);
-  },
-
-  replaceState(aState) {
-    this.states[this.pos] = aState;
-  },
-
-  popState() {
-    if (this.pos == 0) {
-      throw Components.Exception("Cannot popState from this view");
-    }
-
-    this.states.splice(this.pos, this.states.length);
-    this.pos--;
-
-    gViewController.updateState(this.states[this.pos]);
-  },
-};
-
-// If the window has a session history then use the HTML5 History wrapper
-// otherwise use our fake history implementation
-if (window.docShell.QueryInterface(Ci.nsIWebNavigation).sessionHistory) {
-  var gHistory = HTML5History;
-} else {
-  gHistory = FakeHistory;
-}
-
 var gViewController = {
+  defaultViewId: "addons://discover/",
   currentViewId: "",
-  currentViewObj: null,
-  currentViewRequest: 0,
   isLoading: true,
   // All historyEntryId values must be unique within one session, because the
   // IDs are used to map history entries to page state. It is not possible to
   // see whether a historyEntryId was used in history entries before this page
   // was loaded, so start counting from a random value to avoid collisions.
+  // This is used for scroll offsets in aboutaddons.js
   nextHistoryEntryId: Math.floor(Math.random() * 2 ** 32),
-  viewObjects: {},
   initialViewSelected: false,
-  lastHistoryIndex: -1,
 
   initialize() {
-    this.viewObjects.shortcuts = htmlView("shortcuts");
-    this.viewObjects.list = htmlView("list");
-    this.viewObjects.detail = htmlView("detail");
-    this.viewObjects.updates = htmlView("updates");
-    this.viewObjects.discover = htmlView("discover");
-
-    for (let type in this.viewObjects) {
-      let view = this.viewObjects[type];
-      view.initialize();
+    if (!isDiscoverEnabled()) {
+      this.defaultViewId = "addons://list/extension";
     }
 
     gCategories.initialize();
 
-    window.controllers.appendController(this);
-
-    window.addEventListener("popstate", function(e) {
-      gViewController.updateState(e.state);
+    window.addEventListener("popstate", e => {
+      this.updateState(e.state);
     });
   },
 
-  shutdown() {
-    if (this.currentViewObj) {
-      this.currentViewObj.hide();
-    }
-    this.currentViewRequest = 0;
-
-    window.controllers.removeController(this);
-  },
-
   updateState(state) {
-    try {
-      this.loadViewInternal(state.view, state.previousView, state);
-      this.lastHistoryIndex = gHistory.index;
-    } catch (e) {
-      // The attempt to load the view failed, try moving further along history
-      if (this.lastHistoryIndex > gHistory.index) {
-        if (gHistory.canGoBack) {
-          gHistory.back();
-        } else {
-          gViewController.replaceView(gViewDefault);
-        }
-      } else if (gHistory.canGoForward) {
-        gHistory.forward();
-      } else {
-        gViewController.replaceView(gViewDefault);
-      }
-    }
+    this.loadViewInternal(state.view, state.previousView, state);
   },
 
   parseViewId(aViewId) {
@@ -300,18 +143,8 @@ var gViewController = {
   },
 
   loadView(aViewId) {
-    var isRefresh = false;
     if (aViewId == this.currentViewId) {
-      if (this.isLoading) {
-        return;
-      }
-      if (!("refresh" in this.currentViewObj)) {
-        return;
-      }
-      if (!this.currentViewObj.canRefresh()) {
-        return;
-      }
-      isRefresh = true;
+      return;
     }
 
     var state = {
@@ -319,10 +152,7 @@ var gViewController = {
       previousView: this.currentViewId,
       historyEntryId: ++this.nextHistoryEntryId,
     };
-    if (!isRefresh) {
-      gHistory.pushState(state);
-      this.lastHistoryIndex = gHistory.index;
-    }
+    history.pushState(state, "");
     this.loadViewInternal(aViewId, this.currentViewId, state);
   },
 
@@ -338,7 +168,7 @@ var gViewController = {
       previousView: null,
       historyEntryId: ++this.nextHistoryEntryId,
     };
-    gHistory.replaceState(state);
+    history.replaceState(state, "");
     this.loadViewInternal(aViewId, null, state);
   },
 
@@ -348,68 +178,47 @@ var gViewController = {
       previousView: null,
       historyEntryId: ++this.nextHistoryEntryId,
     };
-    gHistory.replaceState(state);
+    history.replaceState(state, "");
 
     this.loadViewInternal(aViewId, null, state);
     notifyInitialized();
   },
 
-  loadViewInternal(aViewId, aPreviousView, aState, aEvent) {
-    var view = this.parseViewId(aViewId);
+  loadViewInternal(aViewId, aPreviousView, aState) {
+    const view = this.parseViewId(aViewId);
+    const viewTypes = ["shortcuts", "list", "detail", "updates", "discover"];
 
-    if (!view.type || !(view.type in this.viewObjects)) {
+    if (!view.type || !viewTypes.includes(view.type)) {
       throw Components.Exception("Invalid view: " + view.type);
     }
 
-    var viewObj = this.viewObjects[view.type];
-    if (!viewObj.node) {
-      throw Components.Exception(
-        "Root node doesn't exist for '" + view.type + "' view"
-      );
-    }
-
-    if (this.currentViewObj && aViewId != aPreviousView) {
-      try {
-        let canHide = this.currentViewObj.hide();
-        if (canHide === false) {
-          return;
-        }
-        this.isLoading = false;
-      } catch (e) {
-        // this shouldn't be fatal
-        Cu.reportError(e);
-      }
+    if (aViewId != aPreviousView) {
+      promiseHtmlBrowserLoaded()
+        .then(browser => browser.contentWindow.hide())
+        .catch(err => Cu.reportError(err));
     }
 
     this.currentViewId = aViewId;
-    this.currentViewObj = viewObj;
-
     this.isLoading = true;
 
     recordViewTelemetry(view.param);
 
-    if (aViewId == aPreviousView) {
-      this.currentViewObj.refresh(
-        view.param,
-        ++this.currentViewRequest,
-        aState
-      );
-    } else {
-      this.currentViewObj.show(view.param, ++this.currentViewRequest, aState);
+    if (aViewId != aPreviousView) {
+      promiseHtmlBrowserLoaded()
+        .then(browser =>
+          browser.contentWindow.show(view.type, view.param, aState)
+        )
+        .then(() => {
+          this.isLoading = false;
+
+          var event = document.createEvent("Events");
+          event.initEvent("ViewChanged", true, true);
+          document.dispatchEvent(event);
+        });
     }
 
     this.initialViewSelected = true;
   },
-
-  notifyViewChanged() {
-    this.isLoading = false;
-
-    var event = document.createEvent("Events");
-    event.initEvent("ViewChanged", true, true);
-    this.currentViewObj.node.dispatchEvent(event);
-  },
-
-  onEvent() {},
 };
 
 var gCategories = {
@@ -433,7 +242,7 @@ const htmlViewOpts = {
     gViewController.loadInitialView(viewId);
   },
   replaceWithDefaultViewFn() {
-    gViewController.replaceView(gViewDefault);
+    gViewController.replaceView(gViewController.defaultViewId);
   },
   get shouldLoadInitialView() {
     // Let the HTML document load the view if `loadView` hasn't been called
@@ -476,31 +285,6 @@ async function promiseHtmlBrowserLoaded() {
   let browser = getHtmlBrowser();
   await _htmlBrowserLoaded;
   return browser;
-}
-
-function htmlView(type) {
-  return {
-    node: null,
-
-    initialize() {
-      this.node = getHtmlBrowser();
-    },
-
-    async show(param, request, state) {
-      await promiseHtmlBrowserLoaded();
-      await this.node.contentWindow.show(type, param, state);
-      gViewController.notifyViewChanged();
-    },
-
-    async hide() {
-      await promiseHtmlBrowserLoaded();
-      return this.node.contentWindow.hide();
-    },
-
-    getSelectedAddon() {
-      return null;
-    },
-  };
 }
 
 // Helper method exported into the about:addons global, used to open the

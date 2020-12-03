@@ -207,9 +207,6 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   template <typename T>
   void emitStoreElementHoleV(T* lir);
 
-  void emitArrayPopShift(LInstruction* lir, const MArrayPopShift* mir,
-                         Register obj, Register elementsTemp,
-                         Register lengthTemp, TypedOrValueRegister out);
   void emitArrayPush(LInstruction* lir, Register obj,
                      const ConstantOrRegister& value, Register elementsTemp,
                      Register length, Register spectreTemp);
@@ -240,8 +237,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void addGetPropertyCache(LInstruction* ins, LiveRegisterSet liveRegs,
                            TypedOrValueRegister value,
-                           const ConstantOrRegister& id,
-                           TypedOrValueRegister output, Register maybeTemp);
+                           const ConstantOrRegister& id, ValueOperand output);
   void addSetPropertyCache(LInstruction* ins, LiveRegisterSet liveRegs,
                            Register objReg, Register temp,
                            const ConstantOrRegister& id,

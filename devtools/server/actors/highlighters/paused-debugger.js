@@ -201,16 +201,15 @@ PausedDebuggerOverlay.prototype = {
     return this.markup.getElement(this.ID_CLASS_PREFIX + id);
   },
 
-  show(node, options = {}) {
-    if (this.env.isXUL || !options.reason) {
+  show(reason) {
+    if (this.env.isXUL || !reason) {
       return false;
     }
 
-    let reason;
     try {
-      reason = L10N.getStr(`whyPaused.${options.reason}`);
+      reason = L10N.getStr(`whyPaused.${reason}`);
     } catch (e) {
-      // This is a temporary workaround to be uplifted to Firefox 71.
+      // @backward-compat { version 71 } This is a temporary workaround.
       // This actors relies on a client side properties file. This file will not
       // be available when debugging Firefox for Android / Gecko View.
       // The highlighter also shows buttons that use client only images and are

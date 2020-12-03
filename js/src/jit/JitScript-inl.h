@@ -11,9 +11,9 @@
 
 #include "mozilla/BinarySearch.h"
 
+#include "jit/JitZone.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSScript.h"
-#include "vm/TypeInference.h"
 
 #include "vm/JSContext-inl.h"
 
@@ -21,13 +21,13 @@ namespace js {
 namespace jit {
 
 inline AutoKeepJitScripts::AutoKeepJitScripts(JSContext* cx)
-    : zone_(cx->zone()->types), prev_(zone_.keepJitScripts) {
-  zone_.keepJitScripts = true;
+    : zone_(cx->zone()->jitZone()), prev_(zone_->keepJitScripts()) {
+  zone_->setKeepJitScripts(true);
 }
 
 inline AutoKeepJitScripts::~AutoKeepJitScripts() {
-  MOZ_ASSERT(zone_.keepJitScripts);
-  zone_.keepJitScripts = prev_;
+  MOZ_ASSERT(zone_->keepJitScripts());
+  zone_->setKeepJitScripts(prev_);
 }
 
 }  // namespace jit

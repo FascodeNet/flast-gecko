@@ -3223,7 +3223,6 @@ static void WarnIfSandboxIneffective(nsIDocShell* aDocShell,
   if (aSandboxFlags != SANDBOXED_NONE &&
       !(aSandboxFlags & SANDBOXED_TOPLEVEL_NAVIGATION) &&
       !(aSandboxFlags & SANDBOXED_TOPLEVEL_NAVIGATION_USER_ACTIVATION)) {
-    nsCOMPtr<nsIURI> iframeUri;
     nsContentUtils::ReportToConsole(
         nsIScriptError::warningFlag, "Iframe Sandbox"_ns,
         aDocShell->GetDocument(), nsContentUtils::eSECURITY_PROPERTIES,
@@ -3697,7 +3696,12 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
 
   if (needNewNullPrincipal) {
     principal = NullPrincipal::CreateWithInheritedAttributes(principal);
-    SetPrincipals(principal, principal);
+    // Skip setting the content blocking allowlist principal to NullPrincipal.
+    // The principal is only used to enable/disable trackingprotection via
+    // permission and can be shared with the top level sandboxed site.
+    // See Bug 1654546.
+    SetPrincipals(principal, principal,
+                  /* aSetContentBlockingAllowListPrincipal = */ false);
   }
 
   ApplySettingsFromCSP(false);
@@ -3997,7 +4001,8 @@ void Document::RemoveFromIdTable(Element* aElement, nsAtom* aId) {
 }
 
 void Document::SetPrincipals(nsIPrincipal* aNewPrincipal,
-                             nsIPrincipal* aNewPartitionedPrincipal) {
+                             nsIPrincipal* aNewPartitionedPrincipal,
+                             bool aSetContentBlockingAllowListPrincipal) {
   MOZ_ASSERT(!!aNewPrincipal == !!aNewPartitionedPrincipal);
   if (aNewPrincipal && mAllowDNSPrefetch &&
       StaticPrefs::network_dns_disablePrefetchFromHTTPS()) {
@@ -4013,8 +4018,10 @@ void Document::SetPrincipals(nsIPrincipal* aNewPrincipal,
 
   mCSSLoader->RegisterInSheetCache();
 
-  ContentBlockingAllowList::ComputePrincipal(
-      aNewPrincipal, getter_AddRefs(mContentBlockingAllowListPrincipal));
+  if (aSetContentBlockingAllowListPrincipal) {
+    ContentBlockingAllowList::ComputePrincipal(
+        aNewPrincipal, getter_AddRefs(mContentBlockingAllowListPrincipal));
+  }
 
 #ifdef DEBUG
   // Validate that the docgroup is set correctly by calling its getter and

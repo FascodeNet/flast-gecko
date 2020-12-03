@@ -504,8 +504,6 @@ void CycleCollectedJSContext::IsIdleGCTaskNeeded() const {
       }
       return NS_OK;
     }
-
-    nsresult Cancel() override { return NS_OK; }
   };
 
   if (Runtime()->IsIdleGCTaskNeeded()) {
@@ -757,7 +755,7 @@ class FinalizationRegistryCleanup::CleanupRunnable : public CancelableRunnable {
   // MOZ_CAN_RUN_SCRIPT_BOUNDARY until Runnable::Run is MOZ_CAN_RUN_SCRIPT.  See
   // bug 1535398.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  NS_IMETHODIMP Run() {
+  NS_IMETHOD Run() override {
     mCleanupWork->DoCleanup();
     return NS_OK;
   }

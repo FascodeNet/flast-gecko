@@ -19,11 +19,10 @@
 #include "vm/JSContext.h"     // JSContext
 #include "vm/NativeObject.h"  // js::NativeObject
 
-#include "vm/Compartment-inl.h"    // JS::Compartment::wrap
-#include "vm/JSObject-inl.h"       // js::NewObjectWithGivenProto
-#include "vm/NativeObject-inl.h"   // js::NativeObject::*
-#include "vm/Realm-inl.h"          // js::AutoRealm
-#include "vm/TypeInference-inl.h"  // js::MarkObjectGroupUnknownProperties
+#include "vm/Compartment-inl.h"   // JS::Compartment::wrap
+#include "vm/JSObject-inl.h"      // js::NewObjectWithGivenProto
+#include "vm/NativeObject-inl.h"  // js::NativeObject::*
+#include "vm/Realm-inl.h"         // js::AutoRealm
 
 inline /* static */ js::ListObject* js::ListObject::create(JSContext* cx) {
   return NewObjectWithGivenProto<ListObject>(cx, nullptr);
@@ -36,9 +35,7 @@ inline bool js::ListObject::append(JSContext* cx, JS::Handle<JS::Value> value) {
     return false;
   }
 
-  // Note: we can use setDenseElement instead of setDenseElementWithType because
-  // ListObject::create gave the object unknown properties.
-  ensureDenseInitializedLength(cx, len, 1);
+  ensureDenseInitializedLength(len, 1);
   setDenseElement(len, value);
   return true;
 }
@@ -52,9 +49,7 @@ inline bool js::ListObject::appendValueAndSize(JSContext* cx,
     return false;
   }
 
-  // Note: we can use setDenseElement instead of setDenseElementWithType because
-  // ListObject::create gave the object unknown properties.
-  ensureDenseInitializedLength(cx, len, 2);
+  ensureDenseInitializedLength(len, 2);
   setDenseElement(len, value);
   setDenseElement(len + 1, JS::DoubleValue(size));
   return true;

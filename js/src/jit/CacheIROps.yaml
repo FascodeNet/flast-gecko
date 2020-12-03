@@ -360,14 +360,14 @@
 
 - name: GuardIsExtensible
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
 
 - name: GuardIsNativeObject
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -539,7 +539,7 @@
 
 - name: GuardIndexIsNonNegative
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     index: Int32Id
@@ -554,7 +554,7 @@
 
 - name: GuardIndexIsValidUpdateOrAdd
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -562,7 +562,7 @@
 
 - name: GuardIndexGreaterThanDenseInitLength
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
@@ -1489,7 +1489,7 @@
 
 - name: CallAddOrUpdateSparseElementHelper
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
@@ -1648,7 +1648,7 @@
 
 - name: CallGetSparseElementResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId
@@ -1672,7 +1672,7 @@
 
 - name: LoadDenseElementHoleExistsResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     obj: ObjId
@@ -1945,7 +1945,7 @@
 
 - name: CallObjectHasSparseElementResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 4
   args:
     obj: ObjId
@@ -1953,7 +1953,7 @@
 
 - name: CallNativeGetElementResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 5
   args:
     obj: ObjId

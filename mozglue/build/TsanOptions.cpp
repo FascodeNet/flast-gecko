@@ -239,10 +239,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1607138
          "race:gXPCOMThreadsShutDown\n"
 
-         // Bug 1607446
-         "race:nsJARChannel::Suspend\n"
-         "race:nsJARChannel::Resume\n"
-
          // Bug 1608462
          "deadlock:ScriptPreloader::OffThreadDecodeCallback\n"
 
@@ -305,6 +301,10 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1674835
          "race:nsHttpTransaction::ReadSegments\n"
          "race:nsHttpTransaction::SecurityInfo\n"
+
+         // Bug 1680285
+         "race:style::traversal::note_children\n"
+         "race:style::matching::MatchMethods::apply_selector_flags\n"
 
       // End of suppressions.
       ;  // Please keep this semicolon.

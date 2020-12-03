@@ -676,11 +676,6 @@
   value: 500
   mirror: always
 
-- name: apz.relative-update.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
 #---------------------------------------------------------------------------
 # Prefs starting with "beacon."
 #---------------------------------------------------------------------------
@@ -1590,11 +1585,17 @@
   value: false
   mirror: always
 
-# Any how many seconds we allow external protocol URLs in iframe when not in
+# After how many seconds we allow external protocol URLs in iframe when not in
 # single events
 - name: dom.delay.block_external_protocol_in_iframes
   type: uint32_t
   value: 10   # in seconds
+  mirror: always
+
+# Whether the above pref has any effect at all.
+- name: dom.delay.block_external_protocol_in_iframes.enabled
+  type: bool
+  value: @IS_NOT_NIGHTLY_BUILD@
   mirror: always
 
 # HTML <dialog> element
@@ -6063,13 +6064,6 @@
   value: false
   mirror: always
 
-# Is support for CSS conic-gradient enabled?
-- name: layout.css.conic-gradient.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
-
 # Should stray control characters be rendered visibly?
 - name: layout.css.control-characters.visible
   type: RelaxedAtomicBool
@@ -7856,7 +7850,11 @@
   # acceleration for decoding.
 -   name: media.navigator.mediadatadecoder_vpx_enabled
     type: RelaxedAtomicBool
+#if defined(NIGHTLY_BUILD)
     value: true
+#else
+    value: false
+#endif
     mirror: always
 
   # Use MediaDataDecoder API for H264 in WebRTC. This includes hardware
@@ -9032,6 +9030,12 @@
 - name: print.tab_modal.enabled
   type: RelaxedAtomicBool
   value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+
+# Whether the pages per sheet print setting is enabled.
+- name: print.pages_per_sheet.enabled
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 # Whether we allow the print progress dialog to show up.
