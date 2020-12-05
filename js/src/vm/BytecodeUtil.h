@@ -536,9 +536,7 @@ inline bool IsCheckSloppyOp(JSOp op) {
 
 inline bool IsAtomOp(JSOp op) { return JOF_OPTYPE(op) == JOF_ATOM; }
 
-inline bool IsGetPropOp(JSOp op) {
-  return op == JSOp::Length || op == JSOp::GetProp || op == JSOp::CallProp;
-}
+inline bool IsGetPropOp(JSOp op) { return op == JSOp::GetProp; }
 
 inline bool IsGetPropPC(const jsbytecode* pc) { return IsGetPropOp(JSOp(*pc)); }
 
@@ -563,9 +561,7 @@ inline bool IsSetPropOp(JSOp op) {
 
 inline bool IsSetPropPC(const jsbytecode* pc) { return IsSetPropOp(JSOp(*pc)); }
 
-inline bool IsGetElemOp(JSOp op) {
-  return op == JSOp::GetElem || op == JSOp::CallElem;
-}
+inline bool IsGetElemOp(JSOp op) { return op == JSOp::GetElem; }
 
 inline bool IsGetElemPC(const jsbytecode* pc) { return IsGetElemOp(JSOp(*pc)); }
 

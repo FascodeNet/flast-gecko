@@ -3403,7 +3403,15 @@ void nsIFrame::BuildDisplayListForStackingContext(
 
     CheckForApzAwareEventHandlers(aBuilder, this);
 
-    if (usingMask) {
+    // If we have a mask, compute a clip to bound the masked content.
+    // This is necessary in case the content moves with an ancestor
+    // ASR of the mask.
+    // Don't do this if we also have a filter, because then the clip
+    // would be applied before the filter, violating
+    // https://www.w3.org/TR/filter-effects-1/#placement.
+    // Filters are a containing block for fixed and absolute descendants,
+    // so the masked content cannot move with an ancestor ASR.
+    if (usingMask && !usingFilter) {
       clipForMask = ComputeClipForMaskItem(aBuilder, this);
       if (clipForMask) {
         aBuilder->IntersectDirtyRect(*clipForMask);

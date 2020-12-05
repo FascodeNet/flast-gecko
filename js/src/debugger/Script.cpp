@@ -1456,10 +1456,8 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::PopN:
     case JSOp::DupAt:
     case JSOp::NewArray:
-    case JSOp::NewArrayCopyOnWrite:
     case JSOp::NewInit:
     case JSOp::NewObject:
-    case JSOp::NewObjectWithGroup:
     case JSOp::InitElem:
     case JSOp::InitHiddenElem:
     case JSOp::InitLockedElem:
@@ -1506,8 +1504,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Int32:
     case JSOp::LoopHead:
     case JSOp::GetElem:
-    case JSOp::CallElem:
-    case JSOp::Length:
     case JSOp::Not:
     case JSOp::FunctionThis:
     case JSOp::GlobalThis:
@@ -1517,7 +1513,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::GetPropSuper:
     case JSOp::GetElemSuper:
     case JSOp::GetProp:
-    case JSOp::CallProp:
     case JSOp::RegExp:
     case JSOp::CallSiteObj:
     case JSOp::Object:
@@ -1526,7 +1521,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::TypeofExpr:
     case JSOp::ToAsyncIter:
     case JSOp::ToPropertyKey:
-    case JSOp::IterNext:
     case JSOp::Lambda:
     case JSOp::LambdaArrow:
     case JSOp::PushLexicalEnv:

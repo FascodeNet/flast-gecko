@@ -196,7 +196,7 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
     }
   } else {
     MOZ_ASSERT(ic->kind() == CacheKind::GetElem);
-    if (!GetElementOperation(cx, JSOp(*ic->pc()), val, idVal, res)) {
+    if (!GetElementOperation(cx, val, idVal, res)) {
       return false;
     }
   }
@@ -257,10 +257,9 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
 
   if (ic->state().canAttachStub()) {
     oldShape = obj->shape();
-    oldGroup = JSObject::getGroup(cx, obj);
-    if (!oldGroup) {
-      return false;
-    }
+
+    // TODO(no-TI): remove.
+    oldGroup = obj->group();
 
     RootedValue objv(cx, ObjectValue(*obj));
     RootedScript script(cx, ic->script());

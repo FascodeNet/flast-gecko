@@ -174,7 +174,8 @@ nsresult nsJSUtils::ModuleInstantiate(JSContext* aCx,
 }
 
 nsresult nsJSUtils::ModuleEvaluate(JSContext* aCx,
-                                   JS::Handle<JSObject*> aModule) {
+                                   JS::Handle<JSObject*> aModule,
+                                   JS::MutableHandle<JS::Value> aResult) {
   AUTO_PROFILER_LABEL("nsJSUtils::ModuleEvaluate", JS);
 
   MOZ_ASSERT(aCx == nsContentUtils::GetCurrentJSContext());
@@ -184,7 +185,7 @@ nsresult nsJSUtils::ModuleEvaluate(JSContext* aCx,
 
   NS_ENSURE_TRUE(xpc::Scriptability::Get(aModule).Allowed(), NS_OK);
 
-  if (!JS::ModuleEvaluate(aCx, aModule)) {
+  if (!JS::ModuleEvaluate(aCx, aModule, aResult)) {
     return NS_ERROR_FAILURE;
   }
 

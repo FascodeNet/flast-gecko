@@ -272,7 +272,6 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
         break;
       }
       case JSOp::NewObject:
-      case JSOp::NewObjectWithGroup:
       case JSOp::NewInit: {
         ICStub* stub = alloc.newStub<ICNewObject_Fallback>(Kind::NewObject);
         if (!addIC(loc, stub)) {
@@ -310,8 +309,6 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
         break;
       }
       case JSOp::GetProp:
-      case JSOp::CallProp:
-      case JSOp::Length:
       case JSOp::GetBoundName: {
         ICStub* stub = alloc.newStub<ICGetProp_Fallback>(Kind::GetProp);
         if (!addIC(loc, stub)) {
@@ -326,8 +323,7 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
         }
         break;
       }
-      case JSOp::GetElem:
-      case JSOp::CallElem: {
+      case JSOp::GetElem: {
         ICStub* stub = alloc.newStub<ICGetElem_Fallback>(Kind::GetElem);
         if (!addIC(loc, stub)) {
           return false;
@@ -908,13 +904,12 @@ bool DoGetElemFallback(JSContext* cx, BaselineFrame* frame,
                        HandleValue rhs, MutableHandleValue res) {
   stub->incrementEnteredCount();
 
-  RootedScript script(cx, frame->script());
+  FallbackICSpew(cx, stub, "GetElem");
+
+#ifdef DEBUG
   jsbytecode* pc = stub->icEntry()->pc(frame->script());
-
-  JSOp op = JSOp(*pc);
-  FallbackICSpew(cx, stub, "GetElem(%s)", CodeName(op));
-
-  MOZ_ASSERT(op == JSOp::GetElem || op == JSOp::CallElem);
+  MOZ_ASSERT(JSOp(*pc) == JSOp::GetElem);
+#endif
 
   // Don't pass lhs directly, we need it when generating stubs.
   RootedValue lhsCopy(cx, lhs);
@@ -932,7 +927,7 @@ bool DoGetElemFallback(JSContext* cx, BaselineFrame* frame,
                        lhs);
 
   if (!isOptimizedArgs) {
-    if (!GetElementOperation(cx, op, lhsCopy, rhs, res)) {
+    if (!GetElementOperation(cx, lhsCopy, rhs, res)) {
       return false;
     }
   }
@@ -1061,10 +1056,9 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
   }
 
   RootedShape oldShape(cx, obj->shape());
-  RootedObjectGroup oldGroup(cx, JSObject::getGroup(cx, obj));
-  if (!oldGroup) {
-    return false;
-  }
+
+  // TODO(no-TI): remove.
+  RootedObjectGroup oldGroup(cx, obj->group());
 
   // We cannot attach a stub if the operation executed after the stub
   // is attached may throw.
@@ -1502,7 +1496,7 @@ static bool ComputeGetPropResult(JSContext* cx, BaselineFrame* frame, JSOp op,
   // Handle arguments.length and arguments.callee on optimized arguments, as
   // it is not an object.
   if (val.isMagic(JS_OPTIMIZED_ARGUMENTS) && IsOptimizedArguments(frame, val)) {
-    if (op == JSOp::Length) {
+    if (name == cx->names().length) {
       res.setInt32(frame->numActualArgs());
     } else {
       MOZ_ASSERT(name == cx->names().callee);
@@ -1517,8 +1511,7 @@ static bool ComputeGetPropResult(JSContext* cx, BaselineFrame* frame, JSOp op,
         return false;
       }
     } else {
-      MOZ_ASSERT(op == JSOp::GetProp || op == JSOp::CallProp ||
-                 op == JSOp::Length);
+      MOZ_ASSERT(op == JSOp::GetProp);
       if (!GetProperty(cx, val, name, res)) {
         return false;
       }
@@ -1538,8 +1531,7 @@ bool DoGetPropFallback(JSContext* cx, BaselineFrame* frame,
   JSOp op = JSOp(*pc);
   FallbackICSpew(cx, stub, "GetProp(%s)", CodeName(op));
 
-  MOZ_ASSERT(op == JSOp::GetProp || op == JSOp::CallProp ||
-             op == JSOp::Length || op == JSOp::GetBoundName);
+  MOZ_ASSERT(op == JSOp::GetProp || op == JSOp::GetBoundName);
 
   RootedPropertyName name(cx, script->getName(pc));
   RootedValue idVal(cx, StringValue(name));
@@ -1672,10 +1664,9 @@ bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
     return false;
   }
   RootedShape oldShape(cx, obj->shape());
-  RootedObjectGroup oldGroup(cx, JSObject::getGroup(cx, obj));
-  if (!oldGroup) {
-    return false;
-  }
+
+  // TODO(no-TI): remove.
+  RootedObjectGroup oldGroup(cx, obj->group());
 
   DeferType deferType = DeferType::None;
   bool attached = false;

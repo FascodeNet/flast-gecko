@@ -2637,39 +2637,6 @@
     "bug_numbers": [1296288, 1654309],
     "releaseChannelCollection": "opt-out"
   },
-  "ESNI_KEYS_RECORD_FETCH_DELAYS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "70",
-    "kind": "exponential",
-    "high": 60000,
-    "n_buckets": 100,
-    "description": "Added delays caused the esni keys fetching.(ms)",
-    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1473736],
-    "releaseChannelCollection": "opt-out"
-  },
-  "ESNI_KEYS_RECORDS_FOUND": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "70",
-    "kind": "boolean",
-    "description": "ESNI Keys found rate.",
-    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1473736],
-    "releaseChannelCollection": "opt-out"
-  },
-  "ESNI_NOESNI_TLS_SUCCESS_RATE": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "70",
-    "kind": "categorical",
-    "labels": ["EsniTLSSucceeded", "EsniTLSFailed", "NoEsniTLSSucceeded", "NoEsniTLSFailed"],
-    "description": "TLS handshake with and without esni success rate.",
-    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1473736],
-    "releaseChannelCollection": "opt-out"
-  },
   "SSL_HANDSHAKE_VERSION": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -6811,10 +6778,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the application update doorhanger type that was displayed.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_BADGE_SHOWN": {
     "record_in_processes": ["main"],
@@ -6822,10 +6789,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1365204, 1521427],
+    "bug_numbers": [893505, 1365204, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the application update badge type that was displayed.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_DISMISSED": {
     "record_in_processes": ["main"],
@@ -6833,10 +6800,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the dismiss action was executed for this application update doorhanger type.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_MAIN_ACTION_DOORHANGER": {
     "record_in_processes": ["main"],
@@ -6844,10 +6811,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the main update action was initiated for this application update doorhanger type.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_MAIN_ACTION_MENU": {
     "record_in_processes": ["main"],
@@ -6855,10 +6822,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the update action was initiated from the PanelUI application update menu item.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_CAN_USE_BITS_EXTERNAL": {
     "record_in_processes": ["main"],

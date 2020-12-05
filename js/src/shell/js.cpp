@@ -145,6 +145,7 @@
 #include "threading/LockGuard.h"
 #include "threading/Thread.h"
 #include "util/CompleteFile.h"  // js::FileContents, js::ReadCompleteFile
+#include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "util/Windows.h"
@@ -531,6 +532,7 @@ bool shell::enablePropertyErrorMessageFix = false;
 bool shell::enableIteratorHelpers = false;
 bool shell::enablePrivateClassFields = false;
 bool shell::enablePrivateClassMethods = false;
+bool shell::enableTopLevelAwait = false;
 bool shell::useOffThreadParseGlobal = true;
 #ifdef JS_GC_ZEAL
 uint32_t shell::gZealBits = 0;
@@ -2880,11 +2882,11 @@ static bool Help(JSContext* cx, unsigned argc, Value* vp);
 static bool Quit(JSContext* cx, unsigned argc, Value* vp) {
   ShellContext* sc = GetShellContext(cx);
 
-#ifdef JS_MORE_DETERMINISTIC
-  // Print a message to stderr in more-deterministic builds to help jsfunfuzz
+  // Print a message to stderr in differential testing to help jsfunfuzz
   // find uncatchable-exception bugs.
-  fprintf(stderr, "quit called\n");
-#endif
+  if (js::SupportDifferentialTesting()) {
+    fprintf(stderr, "quit called\n");
+  }
 
   CallArgs args = CallArgsFromVp(argc, vp);
   int32_t code;
@@ -4464,10 +4466,7 @@ static bool GroupOf(JSContext* cx, unsigned argc, JS::Value* vp) {
     return false;
   }
   RootedObject obj(cx, &args[0].toObject());
-  ObjectGroup* group = JSObject::getGroup(cx, obj);
-  if (!group) {
-    return false;
-  }
+  ObjectGroup* group = obj->group();
   args.rval().set(JS_NumberValue(double(uintptr_t(group) >> 3)));
   return true;
 }
@@ -5589,6 +5588,14 @@ static bool DumpStencil(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
+  // Parse returns local scope information with variables ordered
+  // differently, depending on the underlying JIT implementation.
+  if (js::SupportDifferentialTesting()) {
+    JS_ReportErrorASCII(cx,
+                        "Function not available in differential testing mode.");
+    return false;
+  }
+
   return FrontendTest(cx, argc, vp, "parse", DumpType::ParseNode);
 }
 
@@ -7727,6 +7734,12 @@ static bool DumpScopeChain(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   RootedObject callee(cx, &args.callee());
 
+  if (js::SupportDifferentialTesting()) {
+    ReportUsageErrorASCII(
+        cx, callee, "Function not available in differential testing mode.");
+    return false;
+  }
+
   if (args.length() != 1) {
     ReportUsageErrorASCII(cx, callee, "Wrong number of arguments");
     return false;
@@ -7761,11 +7774,7 @@ static bool DumpScopeChain(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-#ifndef JS_MORE_DETERMINISTIC
-  // Don't dump anything in more-deterministic builds because the output
-  // includes pointer values.
   script->bodyScope()->dump();
-#endif
 
   args.rval().setUndefined();
   return true;
@@ -10419,6 +10428,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enablePrivateClassFields = op.getBoolOption("enable-private-fields") ||
                              op.getBoolOption("enable-private-methods");
   enablePrivateClassMethods = op.getBoolOption("enable-private-methods");
+  enableTopLevelAwait = op.getBoolOption("enable-top-level-await");
   useOffThreadParseGlobal = !op.getBoolOption("no-off-thread-parse-global");
 
   JS::ContextOptionsRef(cx)
@@ -10450,7 +10460,8 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
       .setAsyncStack(enableAsyncStacks)
       .setAsyncStackCaptureDebuggeeOnly(enableAsyncStackCaptureDebuggeeOnly)
       .setPrivateClassFields(enablePrivateClassFields)
-      .setPrivateClassMethods(enablePrivateClassMethods);
+      .setPrivateClassMethods(enablePrivateClassMethods)
+      .setTopLevelAwait(enableTopLevelAwait);
 
   JS::SetUseOffThreadParseGlobal(useOffThreadParseGlobal);
 
@@ -11003,6 +11014,12 @@ static int Shell(JSContext* cx, OptionParser* op, char** envp) {
         (getenv("MOZ_FUZZING_SAFE") && getenv("MOZ_FUZZING_SAFE")[0] != '0');
   }
 
+#ifdef DEBUG
+  if (op->getBoolOption("differential-testing")) {
+    JS::SetSupportDifferentialTesting(true);
+  }
+#endif
+
   if (op->getBoolOption("disable-oom-functions")) {
     disableOOMFunctions = true;
   }
@@ -11312,6 +11329,8 @@ int main(int argc, char** argv, char** envp) {
                         "Enable private class fields") ||
       !op.addBoolOption('\0', "enable-private-methods",
                         "Enable private class methods") ||
+      !op.addBoolOption('\0', "enable-top-level-await",
+                        "Enable top-level await") ||
       !op.addBoolOption('\0', "no-off-thread-parse-global",
                         "Do not use parseGlobal in off-thread compilation and "
                         "instead instantiate stencil in main-thread") ||
@@ -11455,6 +11474,11 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "fuzzing-safe",
                         "Don't expose functions that aren't safe for "
                         "fuzzers to call") ||
+#ifdef DEBUG
+      !op.addBoolOption('\0', "differential-testing",
+                        "Avoid random/undefined behavior that disturbs "
+                        "differential testing (correctness fuzzing)") ||
+#endif
       !op.addBoolOption('\0', "disable-oom-functions",
                         "Disable functions that cause "
                         "artificial OOMs") ||

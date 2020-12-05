@@ -1709,17 +1709,6 @@ bool WarpBuilder::build_Iter(BytecodeLocation loc) {
   return buildIC(loc, CacheKind::GetIterator, {obj});
 }
 
-bool WarpBuilder::build_IterNext(BytecodeLocation) {
-  // TODO(post-Warp): IterNext was added as hint to prevent IonBuilder/TI loop
-  // restarts. Once IonBuilder is gone this op should probably just be removed.
-  MDefinition* def = current->pop();
-  MInstruction* unbox =
-      MUnbox::New(alloc(), def, MIRType::String, MUnbox::Infallible);
-  current->add(unbox);
-  current->push(unbox);
-  return true;
-}
-
 bool WarpBuilder::build_MoreIter(BytecodeLocation loc) {
   MDefinition* iter = current->peek(-1);
   MInstruction* ins = MIteratorMore::New(alloc(), iter);
@@ -1932,22 +1921,10 @@ bool WarpBuilder::build_GetProp(BytecodeLocation loc) {
   return buildIC(loc, CacheKind::GetProp, {val});
 }
 
-bool WarpBuilder::build_CallProp(BytecodeLocation loc) {
-  return build_GetProp(loc);
-}
-
-bool WarpBuilder::build_Length(BytecodeLocation loc) {
-  return build_GetProp(loc);
-}
-
 bool WarpBuilder::build_GetElem(BytecodeLocation loc) {
   MDefinition* id = current->pop();
   MDefinition* val = current->pop();
   return buildIC(loc, CacheKind::GetElem, {val, id});
-}
-
-bool WarpBuilder::build_CallElem(BytecodeLocation loc) {
-  return build_GetElem(loc);
 }
 
 bool WarpBuilder::build_SetProp(BytecodeLocation loc) {
@@ -2272,22 +2249,6 @@ bool WarpBuilder::build_NewArray(BytecodeLocation loc) {
   return true;
 }
 
-bool WarpBuilder::build_NewArrayCopyOnWrite(BytecodeLocation loc) {
-  MOZ_CRASH("Bug 1626854: COW arrays disabled without TI for now");
-
-  ArrayObject* templateObject = &loc.getObject(script_)->as<ArrayObject>();
-
-  // TODO: pre-tenuring.
-  gc::InitialHeap heap = gc::DefaultHeap;
-  MConstant* templateConst = MConstant::NewObject(alloc(), templateObject);
-  current->add(templateConst);
-
-  auto* ins = MNewArrayCopyOnWrite::New(alloc(), templateConst, heap);
-  current->add(ins);
-  current->push(ins);
-  return true;
-}
-
 bool WarpBuilder::build_NewObject(BytecodeLocation loc) {
   // TODO: support pre-tenuring.
   gc::InitialHeap heap = gc::DefaultHeap;
@@ -2305,10 +2266,6 @@ bool WarpBuilder::build_NewObject(BytecodeLocation loc) {
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins, loc);
-}
-
-bool WarpBuilder::build_NewObjectWithGroup(BytecodeLocation loc) {
-  return build_NewObject(loc);
 }
 
 bool WarpBuilder::build_NewInit(BytecodeLocation loc) {

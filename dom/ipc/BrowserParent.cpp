@@ -1082,7 +1082,9 @@ void BrowserParent::UpdateDimensions(const nsIntRect& rect,
   hal::GetCurrentScreenConfiguration(&config);
   hal::ScreenOrientation orientation = config.orientation();
   LayoutDeviceIntPoint clientOffset = GetClientOffset();
-  LayoutDeviceIntPoint chromeOffset = -GetChildProcessOffset();
+  LayoutDeviceIntPoint chromeOffset = !GetBrowserBridgeParent()
+                                          ? -GetChildProcessOffset()
+                                          : LayoutDeviceIntPoint();
 
   if (!mUpdatedDimensions || mOrientation != orientation ||
       mDimensions != size || !mRect.IsEqualEdges(rect) ||
@@ -2016,12 +2018,9 @@ bool BrowserParent::SendHandleTap(TapType aType,
     return false;
   }
   if ((aType == TapType::eSingleTap || aType == TapType::eSecondTap)) {
-    nsFocusManager* fm = nsFocusManager::GetFocusManager();
-    if (fm) {
-      RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
-      if (frameLoader) {
-        RefPtr<Element> element = frameLoader->GetOwnerContent();
-        if (element) {
+    if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
+      if (RefPtr<nsFrameLoader> frameLoader = GetFrameLoader()) {
+        if (RefPtr<Element> element = frameLoader->GetOwnerContent()) {
           fm->SetFocus(element, nsIFocusManager::FLAG_BYMOUSE |
                                     nsIFocusManager::FLAG_BYTOUCH |
                                     nsIFocusManager::FLAG_NOSCROLL);

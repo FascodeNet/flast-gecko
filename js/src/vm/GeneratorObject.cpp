@@ -33,6 +33,10 @@ JSObject* AbstractGeneratorObject::create(JSContext* cx,
   MOZ_ASSERT(frame.isGeneratorFrame());
   MOZ_ASSERT(!frame.isConstructing());
 
+  if (frame.isModuleFrame()) {
+    return createModuleGenerator(cx, frame);
+  }
+
   RootedFunction fun(cx, frame.callee());
 
   Rooted<AbstractGeneratorObject*> genObj(cx);
@@ -52,6 +56,39 @@ JSObject* AbstractGeneratorObject::create(JSContext* cx,
   if (frame.script()->needsArgsObj()) {
     genObj->setArgsObj(frame.argsObj());
   }
+  genObj->clearStackStorage();
+
+  if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
+    return nullptr;
+  }
+
+  return genObj;
+}
+
+JSObject* AbstractGeneratorObject::createModuleGenerator(
+    JSContext* cx, AbstractFramePtr frame) {
+  Rooted<ModuleObject*> module(cx, frame.script()->module());
+  Rooted<AbstractGeneratorObject*> genObj(cx);
+  genObj = AsyncFunctionGeneratorObject::create(cx, module);
+  if (!genObj) {
+    return nullptr;
+  }
+
+  // Create a handler function to wrap the module's script. This way
+  // we can access it later and restore the state.
+  HandlePropertyName funName = cx->names().empty;
+  RootedFunction handlerFun(
+      cx, NewFunctionWithProto(cx, nullptr, 0,
+                               FunctionFlags::INTERPRETED_GENERATOR_OR_ASYNC,
+                               nullptr, funName, nullptr,
+                               gc::AllocKind::FUNCTION, GenericObject));
+  if (!handlerFun) {
+    return nullptr;
+  }
+  handlerFun->initScript(module->script());
+
+  genObj->setCallee(*handlerFun);
+  genObj->setEnvironmentChain(*frame.environmentChain());
   genObj->clearStackStorage();
 
   if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
@@ -268,15 +305,14 @@ static const JSFunctionSpec generator_methods[] = {
     JS_SELF_HOSTED_FN("throw", "GeneratorThrow", 1, 0),
     JS_SELF_HOSTED_FN("return", "GeneratorReturn", 1, 0), JS_FS_END};
 
-JSObject* js::NewSingletonObjectWithFunctionPrototype(
+JSObject* js::NewTenuredObjectWithFunctionPrototype(
     JSContext* cx, Handle<GlobalObject*> global) {
   RootedObject proto(cx,
                      GlobalObject::getOrCreateFunctionPrototype(cx, global));
   if (!proto) {
     return nullptr;
   }
-  RootedObject obj(cx,
-                   NewSingletonObjectWithGivenProto<PlainObject>(cx, proto));
+  RootedObject obj(cx, NewTenuredObjectWithGivenProto<PlainObject>(cx, proto));
   if (!obj) {
     return nullptr;
   }
@@ -296,12 +332,12 @@ static JSObject* CreateGeneratorFunction(JSContext* cx, JSProtoKey key) {
   HandlePropertyName name = cx->names().GeneratorFunction;
   return NewFunctionWithProto(cx, Generator, 1, FunctionFlags::NATIVE_CTOR,
                               nullptr, name, proto, gc::AllocKind::FUNCTION,
-                              SingletonObject);
+                              TenuredObject);
 }
 
 static JSObject* CreateGeneratorFunctionPrototype(JSContext* cx,
                                                   JSProtoKey key) {
-  return NewSingletonObjectWithFunctionPrototype(cx, cx->global());
+  return NewTenuredObjectWithFunctionPrototype(cx, cx->global());
 }
 
 static bool GeneratorFunctionClassFinish(JSContext* cx,

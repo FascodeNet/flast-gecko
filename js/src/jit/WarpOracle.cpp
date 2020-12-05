@@ -386,11 +386,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         break;
       }
 
-      case JSOp::NewArrayCopyOnWrite: {
-        MOZ_CRASH("Bug 1626854: COW arrays disabled without TI for now");
-        break;
-      }
-
       case JSOp::GetImport: {
         PropertyName* name = loc.getPropertyName(script_);
         if (!AddWarpGetImport(alloc_, opSnapshots, offset, script_, name)) {
@@ -501,7 +496,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       }
 
       case JSOp::NewObject:
-      case JSOp::NewObjectWithGroup:
       case JSOp::NewInit: {
         const ICEntry& entry = getICEntry(loc);
         auto* stub = entry.fallbackStub()->toNewObject_Fallback();
@@ -531,10 +525,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::GetName:
       case JSOp::GetGName:
       case JSOp::GetProp:
-      case JSOp::CallProp:
-      case JSOp::Length:
       case JSOp::GetElem:
-      case JSOp::CallElem:
       case JSOp::SetProp:
       case JSOp::StrictSetProp:
       case JSOp::Call:
@@ -666,7 +657,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::SetAliasedVar:
       case JSOp::InitAliasedLexical:
       case JSOp::EnvCallee:
-      case JSOp::IterNext:
       case JSOp::MoreIter:
       case JSOp::EndIter:
       case JSOp::IsNoIter:

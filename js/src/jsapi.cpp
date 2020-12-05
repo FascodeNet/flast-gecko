@@ -76,6 +76,7 @@
 #include "js/Wrapper.h"
 #include "proxy/DOMProxy.h"
 #include "util/CompleteFile.h"
+#include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/AsyncFunction.h"
@@ -523,7 +524,7 @@ JS_PUBLIC_API JSErrorInterceptor* JS_GetErrorInterceptorCallback(
     JSRuntime* rt) {
 #if defined(NIGHTLY_BUILD)
   return rt->errorInterception.interceptor;
-#else   // !NIGHTLY_BUILD
+#else  // !NIGHTLY_BUILD
   return nullptr;
 #endif  // defined(NIGHTLY_BUILD)
 }
@@ -3461,6 +3462,7 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   nonSyntacticScope = rhs.nonSyntacticScope;
   privateClassFields = rhs.privateClassFields;
   privateClassMethods = rhs.privateClassMethods;
+  topLevelAwait = rhs.topLevelAwait;
   useStencilXDR = rhs.useStencilXDR;
   useOffThreadParseGlobal = rhs.useOffThreadParseGlobal;
 };
@@ -3556,6 +3558,7 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
       cx->options().throwOnAsmJSValidationFailure();
   privateClassFields = cx->options().privateClassFields();
   privateClassMethods = cx->options().privateClassMethods();
+  topLevelAwait = cx->options().topLevelAwait();
 
   useStencilXDR = !UseOffThreadParseGlobal();
   useOffThreadParseGlobal = UseOffThreadParseGlobal();
@@ -5955,4 +5958,16 @@ JS_PUBLIC_API void NoteIntentionalCrash() {
 #endif
 }
 
+#ifdef DEBUG
+bool gSupportDifferentialTesting = false;
+#endif  // DEBUG
+
 }  // namespace js
+
+#ifdef DEBUG
+
+JS_PUBLIC_API void JS::SetSupportDifferentialTesting(bool value) {
+  js::gSupportDifferentialTesting = value;
+}
+
+#endif  // DEBUG
