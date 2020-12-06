@@ -6,6 +6,8 @@
 
 #include "QuotaCommon.h"
 
+#include "mozIStorageConnection.h"
+#include "mozIStorageStatement.h"
 #include "mozilla/Logging.h"
 #include "mozilla/TextUtils.h"
 #include "nsIConsoleService.h"
@@ -154,6 +156,60 @@ Result<nsCOMPtr<nsIFile>, nsresult> CloneFileAndAppend(
 
   return resultFile;
 }
+
+Result<nsCOMPtr<mozIStorageStatement>, nsresult> CreateStatement(
+    mozIStorageConnection& aConnection, const nsACString& aStatementString) {
+  QM_TRY_RETURN(MOZ_TO_RESULT_INVOKE_TYPED(nsCOMPtr<mozIStorageStatement>,
+                                           aConnection, CreateStatement,
+                                           aStatementString));
+}
+
+template <SingleStepResult ResultHandling>
+Result<SingleStepSuccessType<ResultHandling>, nsresult> ExecuteSingleStep(
+    nsCOMPtr<mozIStorageStatement>&& aStatement) {
+  QM_TRY_INSPECT(const bool& hasResult,
+                 MOZ_TO_RESULT_INVOKE(aStatement, ExecuteStep));
+
+  if constexpr (ResultHandling == SingleStepResult::AssertHasResult) {
+    MOZ_ASSERT(hasResult);
+    (void)hasResult;
+
+    return WrapNotNullUnchecked(std::move(aStatement));
+  } else {
+    return hasResult ? std::move(aStatement) : nullptr;
+  }
+}
+
+template Result<SingleStepSuccessType<SingleStepResult::AssertHasResult>,
+                nsresult>
+ExecuteSingleStep<SingleStepResult::AssertHasResult>(
+    nsCOMPtr<mozIStorageStatement>&&);
+
+template Result<SingleStepSuccessType<SingleStepResult::ReturnNullIfNoResult>,
+                nsresult>
+ExecuteSingleStep<SingleStepResult::ReturnNullIfNoResult>(
+    nsCOMPtr<mozIStorageStatement>&&);
+
+template <SingleStepResult ResultHandling>
+Result<SingleStepSuccessType<ResultHandling>, nsresult>
+CreateAndExecuteSingleStepStatement(mozIStorageConnection& aConnection,
+                                    const nsACString& aStatementString) {
+  QM_TRY_UNWRAP(auto stmt, MOZ_TO_RESULT_INVOKE_TYPED(
+                               nsCOMPtr<mozIStorageStatement>, aConnection,
+                               CreateStatement, aStatementString));
+
+  return ExecuteSingleStep<ResultHandling>(std::move(stmt));
+}
+
+template Result<SingleStepSuccessType<SingleStepResult::AssertHasResult>,
+                nsresult>
+CreateAndExecuteSingleStepStatement<SingleStepResult::AssertHasResult>(
+    mozIStorageConnection& aConnection, const nsACString& aStatementString);
+
+template Result<SingleStepSuccessType<SingleStepResult::ReturnNullIfNoResult>,
+                nsresult>
+CreateAndExecuteSingleStepStatement<SingleStepResult::ReturnNullIfNoResult>(
+    mozIStorageConnection& aConnection, const nsACString& aStatementString);
 
 #ifdef QM_ENABLE_SCOPED_LOG_EXTRA_INFO
 MOZ_THREAD_LOCAL(const nsACString*) ScopedLogExtraInfo::sQueryValue;

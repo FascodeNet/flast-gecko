@@ -2031,6 +2031,45 @@ static bool DecodeMemoryLimits(Decoder& d, ModuleEnvironment* env) {
   return true;
 }
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+static bool EventIsJSCompatible(Decoder& d, ResultType type) {
+  for (uint32_t i = 0; i < type.length(); i++) {
+    if (type[i].isTypeIndex()) {
+      return d.fail("cannot expose indexed reference type");
+    }
+  }
+
+  return true;
+}
+
+static bool DecodeEvent(Decoder& d, ModuleEnvironment* env,
+                        EventKind* eventKind, uint32_t* funcTypeIndex) {
+  uint32_t eventCode;
+  if (!d.readVarU32(&eventCode)) {
+    return d.fail("expected event kind");
+  }
+
+  if (EventKind(eventCode) != EventKind::Exception) {
+    return d.fail("illegal event kind");
+  }
+  *eventKind = EventKind(eventCode);
+
+  if (!d.readVarU32(funcTypeIndex)) {
+    return d.fail("expected function index in event");
+  }
+  if (*funcTypeIndex >= env->numTypes()) {
+    return d.fail("function type index in event out of bounds");
+  }
+  if (!env->types[*funcTypeIndex].isFuncType()) {
+    return d.fail("function type index must index a function type");
+  }
+  if (env->types[*funcTypeIndex].funcType().results().length() != 0) {
+    return d.fail("exception function types must not return anything");
+  }
+  return true;
+}
+#endif
+
 static bool DecodeImport(Decoder& d, ModuleEnvironment* env) {
   UniqueChars moduleName = DecodeName(d);
   if (!moduleName) {
@@ -2103,6 +2142,29 @@ static bool DecodeImport(Decoder& d, ModuleEnvironment* env) {
       }
       break;
     }
+#ifdef ENABLE_WASM_EXCEPTIONS
+    case DefinitionKind::Event: {
+      EventKind eventKind;
+      uint32_t funcTypeIndex;
+      if (!DecodeEvent(d, env, &eventKind, &funcTypeIndex)) {
+        return false;
+      }
+      ResultType args =
+          ResultType::Vector(env->types[funcTypeIndex].funcType().args());
+#  ifdef WASM_PRIVATE_REFTYPES
+      if (!EventIsJSCompatible(d, args)) {
+        return false;
+      }
+#  endif
+      if (!env->events.append(EventDesc(eventKind, args))) {
+        return false;
+      }
+      if (env->events.length() > MaxEvents) {
+        return d.fail("too many events");
+      }
+      break;
+    }
+#endif
     default:
       return d.fail("unsupported import kind");
   }
@@ -2421,6 +2483,46 @@ static bool DecodeGlobalSection(Decoder& d, ModuleEnvironment* env) {
   return d.finishSection(*range, "global");
 }
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+static bool DecodeEventSection(Decoder& d, ModuleEnvironment* env) {
+  MaybeSectionRange range;
+  if (!d.startSection(SectionId::Event, env, &range, "event")) {
+    return false;
+  }
+  if (!range) {
+    return true;
+  }
+
+  uint32_t numDefs;
+  if (!d.readVarU32(&numDefs)) {
+    return d.fail("expected number of events");
+  }
+
+  CheckedInt<uint32_t> numEvents = env->events.length();
+  numEvents += numDefs;
+  if (!numEvents.isValid() || numEvents.value() > MaxEvents) {
+    return d.fail("too many events");
+  }
+
+  if (!env->events.reserve(numEvents.value())) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < numDefs; i++) {
+    EventKind eventKind;
+    uint32_t funcTypeIndex;
+    if (!DecodeEvent(d, env, &eventKind, &funcTypeIndex)) {
+      return false;
+    }
+    ResultType args =
+        ResultType::Vector(env->types[funcTypeIndex].funcType().args());
+    env->events.infallibleAppend(EventDesc(eventKind, args));
+  }
+
+  return d.finishSection(*range, "event");
+}
+#endif
+
 typedef HashSet<const char*, mozilla::CStringHasher, SystemAllocPolicy>
     CStringSet;
 
@@ -2521,6 +2623,27 @@ static bool DecodeExport(Decoder& d, ModuleEnvironment* env,
       return env->exports.emplaceBack(std::move(fieldName), globalIndex,
                                       DefinitionKind::Global);
     }
+#ifdef ENABLE_WASM_EXCEPTIONS
+    case DefinitionKind::Event: {
+      uint32_t eventIndex;
+      if (!d.readVarU32(&eventIndex)) {
+        return d.fail("expected event index");
+      }
+      if (eventIndex >= env->events.length()) {
+        return d.fail("exported event index out of bounds");
+      }
+
+#  ifdef WASM_PRIVATE_REFTYPES
+      if (!EventIsJSCompatible(d, env->events[eventIndex].type)) {
+        return false;
+      }
+#  endif
+
+      env->events[eventIndex].isExport = true;
+      return env->exports.emplaceBack(std::move(fieldName), eventIndex,
+                                      DefinitionKind::Event);
+    }
+#endif
     default:
       return d.fail("unexpected export kind");
   }
@@ -2891,6 +3014,12 @@ bool wasm::DecodeModuleEnvironment(Decoder& d, ModuleEnvironment* env) {
   if (!DecodeMemorySection(d, env)) {
     return false;
   }
+
+#ifdef ENABLE_WASM_EXCEPTIONS
+  if (!DecodeEventSection(d, env)) {
+    return false;
+  }
+#endif
 
   if (!DecodeGlobalSection(d, env)) {
     return false;

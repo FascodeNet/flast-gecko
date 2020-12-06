@@ -2069,17 +2069,6 @@ void TextControlState::SetSelectionRange(
   bool changed = false;
   nsresult rv = NS_OK;  // For the ScrollSelectionIntoView() return value.
   if (IsSelectionCached()) {
-    nsAutoString value;
-    // XXXbz is "false" the right thing to pass here?  Hard to tell, given the
-    // various mismatches between our impl and the spec.
-    GetValue(value, false);
-    uint32_t length = value.Length();
-    if (aStart > length) {
-      aStart = length;
-    }
-    if (aEnd > length) {
-      aEnd = length;
-    }
     SelectionProperties& props = GetSelectionProperties();
     changed = props.GetStart() != aStart || props.GetEnd() != aEnd ||
               props.GetDirection() != aDirection;
@@ -2203,7 +2192,7 @@ DirectionStringToSelectionDirection(const nsAString& aDirection) {
     return nsITextControlFrame::eBackward;
   }
 
-  // We don't support directionless selections.
+  // We don't support directionless selections, see bug 1541454.
   return nsITextControlFrame::eForward;
 }
 
@@ -2393,6 +2382,7 @@ void TextControlState::UnbindFromFrame(nsTextControlFrame* aFrame) {
         GetSelectionDirection(IgnoreErrors());
 
     SelectionProperties& props = GetSelectionProperties();
+    props.SetMaxLength(value.Length());
     props.SetStart(start);
     props.SetEnd(end);
     props.SetDirection(direction);
@@ -2893,6 +2883,7 @@ bool TextControlState::SetValueWithoutTextEditor(
             aHandlingSetValue.GetSetValueFlags()));
 
         SelectionProperties& props = GetSelectionProperties();
+        props.SetMaxLength(aHandlingSetValue.GetSettingValue().Length());
         if (aHandlingSetValue.GetSetValueFlags() &
             eSetValue_MoveCursorToEndIfValueChanged) {
           props.SetStart(aHandlingSetValue.GetSettingValue().Length());
@@ -2903,13 +2894,6 @@ bool TextControlState::SetValueWithoutTextEditor(
           props.SetStart(0);
           props.SetEnd(0);
           props.SetDirection(nsITextControlFrame::eForward);
-        } else {
-          // Make sure our cached selection position is not outside the new
-          // value.
-          props.SetStart(std::min(
-              props.GetStart(), aHandlingSetValue.GetSettingValue().Length()));
-          props.SetEnd(std::min(props.GetEnd(),
-                                aHandlingSetValue.GetSettingValue().Length()));
         }
       }
 

@@ -85,6 +85,11 @@ typedef GCVector<WasmGlobalObject*, 0, SystemAllocPolicy>
     WasmGlobalObjectVector;
 using RootedWasmGlobalObject = Rooted<WasmGlobalObject*>;
 
+class WasmExceptionObject;
+typedef GCVector<WasmExceptionObject*, 0, SystemAllocPolicy>
+    WasmExceptionObjectVector;
+using RootedWasmExceptionObject = Rooted<WasmExceptionObject*>;
+
 class StructTypeDescr;
 typedef GCVector<HeapPtr<StructTypeDescr*>, 0, SystemAllocPolicy>
     StructTypeDescrVector;
@@ -960,6 +965,21 @@ using MutableHandleFuncRef = MutableHandle<FuncRef>;
 // Given any FuncRef, unbox it as a JS Value -- always a JSFunction*.
 
 Value UnboxFuncRef(FuncRef val);
+
+// Exception tags are used to uniquely identify exceptions. They are stored
+// in a vector in Instances and used by both WebAssembly.Exception for import
+// and export, and by the representation of thrown exceptions.
+//
+// Since an exception tag is a (trivial) substructure of AtomicRefCounted, the
+// RefPtr SharedExceptionTag can have many instances/modules referencing a
+// single constant exception tag.
+
+struct ExceptionTag : AtomicRefCounted<ExceptionTag> {
+  ExceptionTag() = default;
+};
+using SharedExceptionTag = RefPtr<ExceptionTag>;
+typedef Vector<SharedExceptionTag, 0, SystemAllocPolicy>
+    SharedExceptionTagVector;
 
 // Code can be compiled either with the Baseline compiler or the Ion compiler,
 // and tier-variant data are tagged with the Tier value.
@@ -1839,6 +1859,9 @@ class Export {
 
   DefinitionKind kind() const { return pod.kind_; }
   uint32_t funcIndex() const;
+#ifdef ENABLE_WASM_EXCEPTIONS
+  uint32_t eventIndex() const;
+#endif
   uint32_t globalIndex() const;
   uint32_t tableIndex() const;
 
@@ -1977,6 +2000,22 @@ class GlobalDesc {
 };
 
 typedef Vector<GlobalDesc, 0, SystemAllocPolicy> GlobalDescVector;
+
+// An EventDesc describes a single event for non-local control flow, such as
+// for exceptions.
+
+#ifdef ENABLE_WASM_EXCEPTIONS
+struct EventDesc {
+  EventKind kind;
+  ResultType type;
+  bool isExport;
+
+  EventDesc(EventKind kind, ResultType type, bool isExport = false)
+      : kind(kind), type(type), isExport(isExport) {}
+};
+
+typedef Vector<EventDesc, 0, SystemAllocPolicy> EventDescVector;
+#endif
 
 // When a ElemSegment is "passive" it is shared between a wasm::Module and its
 // wasm::Instances. To allow each segment to be released as soon as the last

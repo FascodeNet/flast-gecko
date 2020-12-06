@@ -156,6 +156,14 @@ static inline bool WasmThreadsFlag(JSContext* cx) {
          cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
 }
 
+static inline bool WasmExceptionsFlag(JSContext* cx) {
+#ifdef ENABLE_WASM_EXCEPTIONS
+  return cx->options().wasmExceptions();
+#else
+  return false;
+#endif
+}
+
 static inline bool WasmDebuggerActive(JSContext* cx) {
   if (IsFuzzingIon(cx) || IsFuzzingCranelift(cx)) {
     return false;
@@ -291,6 +299,7 @@ bool wasm::IonDisabledByFeatures(JSContext* cx, bool* isDisabled,
   bool debug = WasmDebuggerActive(cx);
   bool functionReferences = WasmFunctionReferencesFlag(cx);
   bool gc = WasmGcFlag(cx);
+  bool exn = WasmExceptionsFlag(cx);
   if (reason) {
     char sep = 0;
     if (debug && !Append(reason, "debug", &sep)) {
@@ -302,8 +311,11 @@ bool wasm::IonDisabledByFeatures(JSContext* cx, bool* isDisabled,
     if (gc && !Append(reason, "gc", &sep)) {
       return false;
     }
+    if (exn && !Append(reason, "exceptions", &sep)) {
+      return false;
+    }
   }
-  *isDisabled = debug || functionReferences || gc;
+  *isDisabled = debug || functionReferences || gc || exn;
   return true;
 }
 
@@ -318,7 +330,8 @@ bool wasm::CraneliftAvailable(JSContext* cx) {
 
 bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
                                        JSStringBuilder* reason) {
-  // Cranelift has no debugging support, no gc support, no simd.
+  // Cranelift has no debugging support, no gc support, no simd, and
+  // no exceptions support.
   bool debug = WasmDebuggerActive(cx);
   bool functionReferences = WasmFunctionReferencesFlag(cx);
   bool gc = WasmGcFlag(cx);
@@ -328,6 +341,7 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
 #else
   bool simdOnNonAarch64 = WasmSimdFlag(cx);
 #endif
+  bool exn = WasmExceptionsFlag(cx);
   if (reason) {
     char sep = 0;
     if (debug && !Append(reason, "debug", &sep)) {
@@ -342,8 +356,11 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
     if (simdOnNonAarch64 && !Append(reason, "simd", &sep)) {
       return false;
     }
+    if (exn && !Append(reason, "exceptions", &sep)) {
+      return false;
+    }
   }
-  *isDisabled = debug || functionReferences || gc || simdOnNonAarch64;
+  *isDisabled = debug || functionReferences || gc || simdOnNonAarch64 || exn;
   return true;
 }
 
@@ -386,6 +403,13 @@ bool wasm::SimdAvailable(JSContext* cx) {
 
 bool wasm::ThreadsAvailable(JSContext* cx) {
   return WasmThreadsFlag(cx) && AnyCompilerAvailable(cx);
+}
+
+bool wasm::ExceptionsAvailable(JSContext* cx) {
+  // Ion & Cranelift do not support Exceptions (for now).
+  // Exceptions require multi-value.
+  return WasmExceptionsFlag(cx) && MultiValuesAvailable(cx) &&
+         BaselineAvailable(cx);
 }
 
 bool wasm::HasPlatformSupport(JSContext* cx) {
@@ -651,6 +675,10 @@ bool js::wasm::GetImports(JSContext* cx, const Module& module,
 
   const Metadata& metadata = module.metadata();
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+  uint32_t eventIndex = 0;
+  const EventDescVector& events = metadata.events;
+#endif
   uint32_t globalIndex = 0;
   const GlobalDescVector& globals = metadata.globals;
   uint32_t tableIndex = 0;
@@ -712,6 +740,33 @@ bool js::wasm::GetImports(JSContext* cx, const Module& module,
         imports->memory = &v.toObject().as<WasmMemoryObject>();
         break;
       }
+#ifdef ENABLE_WASM_EXCEPTIONS
+      case DefinitionKind::Event: {
+        const uint32_t index = eventIndex++;
+        if (!v.isObject() || !v.toObject().is<WasmExceptionObject>()) {
+          return ThrowBadImportType(cx, import.field.get(), "Exception");
+        }
+
+        RootedWasmExceptionObject obj(cx,
+                                      &v.toObject().as<WasmExceptionObject>());
+
+        // Checks whether the signature of the imported exception object matches
+        // the signature declared in the exception import's EventDesc.
+        ResultType args = ResultType::Vector(obj->valueTypes());
+        if (args != events[index].type) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_BAD_EXN_SIG, import.module.get(),
+                                   import.field.get());
+          return false;
+        }
+
+        if (!imports->exceptionObjs.append(obj)) {
+          ReportOutOfMemory(cx);
+          return false;
+        }
+        break;
+      }
+#endif
       case DefinitionKind::Global: {
         const uint32_t index = globalIndex++;
         const GlobalDesc& global = globals[index];
@@ -1202,10 +1257,11 @@ struct KindNames {
   RootedPropertyName kind;
   RootedPropertyName table;
   RootedPropertyName memory;
+  RootedPropertyName event;
   RootedPropertyName signature;
 
   explicit KindNames(JSContext* cx)
-      : kind(cx), table(cx), memory(cx), signature(cx) {}
+      : kind(cx), table(cx), memory(cx), event(cx), signature(cx) {}
 };
 
 static bool InitKindNames(JSContext* cx, KindNames* names) {
@@ -1227,6 +1283,14 @@ static bool InitKindNames(JSContext* cx, KindNames* names) {
   }
   names->memory = memory->asPropertyName();
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+  JSAtom* event = Atomize(cx, "event", strlen("event"));
+  if (!event) {
+    return false;
+  }
+  names->event = event->asPropertyName();
+#endif
+
   JSAtom* signature = Atomize(cx, "signature", strlen("signature"));
   if (!signature) {
     return false;
@@ -1247,6 +1311,10 @@ static JSString* KindToString(JSContext* cx, const KindNames& names,
       return names.memory;
     case DefinitionKind::Global:
       return cx->names().global;
+#ifdef ENABLE_WASM_EXCEPTIONS
+    case DefinitionKind::Event:
+      return names.event;
+#endif
   }
 
   MOZ_CRASH("invalid kind");
@@ -1776,8 +1844,8 @@ void WasmInstanceObject::trace(JSTracer* trc, JSObject* obj) {
 WasmInstanceObject* WasmInstanceObject::create(
     JSContext* cx, SharedCode code, const DataSegmentVector& dataSegments,
     const ElemSegmentVector& elemSegments, UniqueTlsData tlsData,
-    HandleWasmMemoryObject memory, SharedTableVector&& tables,
-    StructTypeDescrVector&& structTypeDescrs,
+    HandleWasmMemoryObject memory, SharedExceptionTagVector&& exceptionTags,
+    SharedTableVector&& tables, StructTypeDescrVector&& structTypeDescrs,
     const JSFunctionVector& funcImports, const GlobalDescVector& globals,
     const ValVector& globalImportValues,
     const WasmGlobalObjectVector& globalObjs, HandleObject proto,
@@ -1851,8 +1919,8 @@ WasmInstanceObject* WasmInstanceObject::create(
 
     // Root the Instance via WasmInstanceObject before any possible GC.
     instance = cx->new_<Instance>(
-        cx, obj, code, std::move(tlsData), memory, std::move(tables),
-        std::move(structTypeDescrs), std::move(maybeDebug));
+        cx, obj, code, std::move(tlsData), memory, std::move(exceptionTags),
+        std::move(tables), std::move(structTypeDescrs), std::move(maybeDebug));
     if (!instance) {
       return nullptr;
     }
@@ -3599,6 +3667,123 @@ WasmGlobalObject::Cell* WasmGlobalObject::cell() const {
 }
 
 // ============================================================================
+// WebAssembly.Exception class and methods
+
+const JSClassOps WasmExceptionObject::classOps_ = {
+    nullptr,                        // addProperty
+    nullptr,                        // delProperty
+    nullptr,                        // enumerate
+    nullptr,                        // newEnumerate
+    nullptr,                        // resolve
+    nullptr,                        // mayResolve
+    WasmExceptionObject::finalize,  // finalize
+    nullptr,                        // call
+    nullptr,                        // hasInstance
+    nullptr,                        // construct
+    nullptr,                        // trace
+};
+
+const JSClass WasmExceptionObject::class_ = {
+    "WebAssembly.Exception",
+    JSCLASS_HAS_RESERVED_SLOTS(WasmExceptionObject::RESERVED_SLOTS) |
+        JSCLASS_FOREGROUND_FINALIZE,
+    &WasmExceptionObject::classOps_, &WasmExceptionObject::classSpec_};
+
+const JSClass& WasmExceptionObject::protoClass_ = PlainObject::class_;
+
+static constexpr char WasmExceptionName[] = "Exception";
+
+const ClassSpec WasmExceptionObject::classSpec_ = {
+    CreateWasmConstructor<WasmExceptionObject, WasmExceptionName>,
+    GenericCreatePrototype<WasmExceptionObject>,
+    WasmExceptionObject::static_methods,
+    nullptr,
+    WasmExceptionObject::methods,
+    WasmExceptionObject::properties,
+    nullptr,
+    ClassSpec::DontDefineConstructor};
+
+/* static */
+void WasmExceptionObject::finalize(JSFreeOp* fop, JSObject* obj) {
+  WasmExceptionObject& exnObj = obj->as<WasmExceptionObject>();
+  if (!exnObj.isNewborn()) {
+    fop->release(obj, &exnObj.tag(), MemoryUse::WasmExceptionTag);
+    fop->delete_(obj, &exnObj.valueTypes(), MemoryUse::WasmExceptionType);
+  }
+}
+
+bool WasmExceptionObject::construct(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!ThrowIfNotConstructing(cx, args, "Exception")) {
+    return false;
+  }
+
+  // FIXME: The JS API is not finalized and may specify a different behavior
+  // here.
+  //        For now, we implement the same behavior as V8 and error when called.
+  JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                           JSMSG_WASM_EXN_CONSTRUCTOR);
+
+  return false;
+}
+
+/* static */
+WasmExceptionObject* WasmExceptionObject::create(JSContext* cx, ResultType type,
+                                                 HandleObject proto) {
+  AutoSetNewObjectMetadata metadata(cx);
+  RootedWasmExceptionObject obj(
+      cx, NewObjectWithGivenProto<WasmExceptionObject>(cx, proto));
+  if (!obj) {
+    return nullptr;
+  }
+
+  MOZ_ASSERT(obj->isNewborn());
+
+  SharedExceptionTag tag = SharedExceptionTag(cx->new_<ExceptionTag>());
+  if (!tag) {
+    ReportOutOfMemory(cx);
+    return nullptr;
+  }
+
+  InitReservedSlot(obj, TAG_SLOT, tag.forget().take(),
+                   MemoryUse::WasmExceptionTag);
+
+  wasm::ValTypeVector* newValueTypes = js_new<ValTypeVector>();
+  for (uint32_t i = 0; i < type.length(); i++) {
+    if (!newValueTypes->append(type[i])) {
+      return nullptr;
+    }
+  }
+  InitReservedSlot(obj, TYPE_SLOT, newValueTypes, MemoryUse::WasmExceptionType);
+
+  MOZ_ASSERT(!obj->isNewborn());
+
+  return obj;
+}
+
+bool WasmExceptionObject::isNewborn() const {
+  MOZ_ASSERT(is<WasmExceptionObject>());
+  return getReservedSlot(TYPE_SLOT).isUndefined();
+}
+
+const JSPropertySpec WasmExceptionObject::properties[] = {
+    JS_STRING_SYM_PS(toStringTag, "WebAssembly.Exception", JSPROP_READONLY),
+    JS_PS_END};
+
+const JSFunctionSpec WasmExceptionObject::methods[] = {JS_FS_END};
+
+const JSFunctionSpec WasmExceptionObject::static_methods[] = {JS_FS_END};
+
+wasm::ValTypeVector& WasmExceptionObject::valueTypes() const {
+  return *(ValTypeVector*)getFixedSlot(TYPE_SLOT).toPrivate();
+};
+
+ExceptionTag& WasmExceptionObject::tag() const {
+  return *(ExceptionTag*)getReservedSlot(TAG_SLOT).toPrivate();
+}
+
+// ============================================================================
 // WebAssembly class and static methods
 
 static bool WebAssembly_toSource(JSContext* cx, unsigned argc, Value* vp) {
@@ -4575,6 +4760,9 @@ static bool WebAssemblyClassFinish(JSContext* cx, HandleObject object,
       {"Memory", JSProto_WasmMemory},
       {"Table", JSProto_WasmTable},
       {"Global", JSProto_WasmGlobal},
+#ifdef ENABLE_WASM_EXCEPTIONS
+      {"Exception", JSProto_WasmException},
+#endif
       {"CompileError", GetExceptionProtoKey(JSEXN_WASMCOMPILEERROR)},
       {"LinkError", GetExceptionProtoKey(JSEXN_WASMLINKERROR)},
       {"RuntimeError", GetExceptionProtoKey(JSEXN_WASMRUNTIMEERROR)},

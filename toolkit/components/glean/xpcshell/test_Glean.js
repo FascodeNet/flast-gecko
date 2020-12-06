@@ -10,7 +10,53 @@
 "use strict";
 
 Cu.importGlobalProperties(["Glean"]);
+const { MockRegistrar } = ChromeUtils.import(
+  "resource://testing-common/MockRegistrar.jsm"
+);
 const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+
+/**
+ * Mock the SysInfo object used to read System data in Gecko.
+ */
+var SysInfo = {
+  overrides: {},
+
+  /**
+   * Checks if overrides are present and return them.
+   *
+   * @returns the overridden value or undefined if not present.
+   */
+  _getOverridden(name) {
+    if (name in this.overrides) {
+      return this.overrides[name];
+    }
+
+    return undefined;
+  },
+
+  // To support nsIPropertyBag.
+  getProperty(name) {
+    let override = this._getOverridden(name);
+    return override !== undefined
+      ? override
+      : this._genuine.QueryInterface(Ci.nsIPropertyBag).getProperty(name);
+  },
+
+  // To support nsIPropertyBag2.
+  get(name) {
+    let override = this._getOverridden(name);
+    return override !== undefined
+      ? override
+      : this._genuine.QueryInterface(Ci.nsIPropertyBag2).get(name);
+  },
+
+  // To support nsIPropertyBag2.
+  getPropertyAsACString(name) {
+    return this.get(name);
+  },
+
+  QueryInterface: ChromeUtils.generateQI(["nsIPropertyBag2", "nsISystemInfo"]),
+};
 
 function sleep(ms) {
   /* eslint-disable mozilla/no-arbitrary-setTimeout */
@@ -21,9 +67,23 @@ add_task(function test_setup() {
   // FOG needs a profile directory to put its data in.
   do_get_profile();
 
+  // Mock SysInfo.
+  SysInfo.overrides = {
+    version: "1.2.3",
+    arc: "x64",
+  };
+  MockRegistrar.register("@mozilla.org/system-info;1", SysInfo);
+
   // We need to initialize it once, otherwise operations will be stuck in the pre-init queue.
   let FOG = Cc["@mozilla.org/toolkit/glean;1"].createInstance(Ci.nsIFOG);
   FOG.initializeFOG();
+});
+
+add_task(function test_osversion_is_set() {
+  Assert.equal(
+    "1.2.3",
+    Glean.fog_validation.os_version.testGetValue("fog-validation")
+  );
 });
 
 add_task(function test_fog_counter_works() {
@@ -71,4 +131,10 @@ add_task({ skip_if: () => true }, function test_fog_datetime_works() {
 
   const received = Glean.test_only.what_a_date.testGetValue("test-ping");
   Assert.ok(received.startsWith("2020-06-11T12:00:00"));
+});
+
+add_task(function test_fog_boolean_works() {
+  Glean.test_only.can_we_flag_it.set(false);
+  Assert.ok(Glean.test_only.can_we_flag_it.testHasValue("test-ping"));
+  Assert.equal(false, Glean.test_only.can_we_flag_it.testGetValue("test-ping"));
 });

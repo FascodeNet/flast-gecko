@@ -856,23 +856,12 @@ nsresult SetShadowJournalMode(mozIStorageConnection* aConnection) {
   constexpr auto journalModeQueryStart = "PRAGMA journal_mode = "_ns;
   constexpr auto journalModeWAL = "wal"_ns;
 
-  nsCOMPtr<mozIStorageStatement> stmt;
-  nsresult rv = aConnection->CreateStatement(
-      journalModeQueryStart + journalModeWAL, getter_AddRefs(stmt));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  bool hasResult;
-  rv = stmt->ExecuteStep(&hasResult);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  MOZ_ASSERT(hasResult);
+  LS_TRY_INSPECT(const auto& stmt,
+                 CreateAndExecuteSingleStepStatement(
+                     *aConnection, journalModeQueryStart + journalModeWAL));
 
   nsCString journalMode;
-  rv = stmt->GetUTF8String(0, journalMode);
+  nsresult rv = stmt->GetUTF8String(0, journalMode);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -882,19 +871,8 @@ nsresult SetShadowJournalMode(mozIStorageConnection* aConnection) {
 
     // Set the threshold for auto-checkpointing the WAL. We don't want giant
     // logs slowing down us.
-    rv = aConnection->CreateStatement("PRAGMA page_size;"_ns,
-                                      getter_AddRefs(stmt));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
-    bool hasResult;
-    rv = stmt->ExecuteStep(&hasResult);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
-    MOZ_ASSERT(hasResult);
+    LS_TRY_INSPECT(const auto& stmt, CreateAndExecuteSingleStepStatement(
+                                         *aConnection, "PRAGMA page_size;"_ns));
 
     int32_t pageSize;
     rv = stmt->GetInt32(0, &pageSize);
@@ -3058,36 +3036,31 @@ Result<int64_t, nsresult> GetUsage(mozIStorageConnection& aConnection,
                                    ArchivedOriginScope* aArchivedOriginScope) {
   AssertIsOnIOThread();
 
-  // XXX This could use CreateAndExecuteSingleStepStatement from dom/indexedDB
   LS_TRY_INSPECT(
       const auto& stmt,
       ([aArchivedOriginScope,
         &aConnection]() -> Result<nsCOMPtr<mozIStorageStatement>, nsresult> {
         if (aArchivedOriginScope) {
-          LS_TRY_UNWRAP(
-              const auto stmt,
-              MOZ_TO_RESULT_INVOKE_TYPED(
-                  nsCOMPtr<mozIStorageStatement>, aConnection, CreateStatement,
-                  "SELECT "
-                  "total(utf16Length(key) + utf16Length(value)) "
-                  "FROM webappsstore2 "
-                  "WHERE originKey = :originKey "
-                  "AND originAttributes = :originAttributes;"_ns));
-
-          LS_TRY(aArchivedOriginScope->BindToStatement(stmt));
-
-          return stmt;
+          LS_TRY_RETURN(CreateAndExecuteSingleStepStatement<
+                        SingleStepResult::ReturnNullIfNoResult>(
+              aConnection,
+              "SELECT "
+              "total(utf16Length(key) + utf16Length(value)) "
+              "FROM webappsstore2 "
+              "WHERE originKey = :originKey "
+              "AND originAttributes = :originAttributes;"_ns,
+              [aArchivedOriginScope](auto& stmt) -> Result<Ok, nsresult> {
+                LS_TRY(aArchivedOriginScope->BindToStatement(&stmt));
+                return Ok{};
+              }));
         }
 
-        LS_TRY_RETURN(MOZ_TO_RESULT_INVOKE_TYPED(
-            nsCOMPtr<mozIStorageStatement>, aConnection, CreateStatement,
-            "SELECT usage FROM database"_ns));
+        LS_TRY_RETURN(CreateAndExecuteSingleStepStatement<
+                      SingleStepResult::ReturnNullIfNoResult>(
+            aConnection, "SELECT usage FROM database"_ns));
       }()));
 
-  LS_TRY_INSPECT(const bool& hasResult,
-                 MOZ_TO_RESULT_INVOKE(stmt, ExecuteStep));
-
-  LS_TRY(OkIf(hasResult), Err(NS_ERROR_FAILURE));
+  LS_TRY(OkIf(stmt), Err(NS_ERROR_FAILURE));
 
   LS_TRY_RETURN(MOZ_TO_RESULT_INVOKE(stmt, GetInt64, 0));
 }
@@ -3792,30 +3765,24 @@ nsresult ConnectionWriteOptimizer::Perform(Connection* aConnection,
     return rv;
   }
 
-  rv = aConnection->GetCachedStatement(nsLiteralCString("SELECT usage "
-                                                        "FROM database"),
-                                       &stmt);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+  {
+    LS_TRY_INSPECT(const auto& stmt,
+                   CreateAndExecuteSingleStepStatement<
+                       SingleStepResult::ReturnNullIfNoResult>(
+                       *aConnection->StorageConnection(),
+                       "SELECT usage FROM database"_ns));
+
+    LS_TRY(OkIf(stmt), NS_ERROR_FAILURE);
+
+    int64_t usage;
+    rv = stmt->GetInt64(0, &usage);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    aOutUsage = usage;
   }
 
-  bool hasResult;
-  rv = stmt->ExecuteStep(&hasResult);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  if (NS_WARN_IF(!hasResult)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  int64_t usage;
-  rv = stmt->GetInt64(0, &usage);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  aOutUsage = usage;
   return NS_OK;
 }
 
@@ -7703,26 +7670,15 @@ nsresult PrepareDatastoreOp::VerifyDatabaseInformation(
   AssertIsOnIOThread();
   MOZ_ASSERT(aConnection);
 
-  nsCOMPtr<mozIStorageStatement> stmt;
-  nsresult rv = aConnection->CreateStatement(nsLiteralCString("SELECT origin "
-                                                              "FROM database"),
-                                             getter_AddRefs(stmt));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  LS_TRY_INSPECT(const auto& stmt,
+                 CreateAndExecuteSingleStepStatement<
+                     SingleStepResult::ReturnNullIfNoResult>(
+                     *aConnection, "SELECT origin FROM database"_ns));
 
-  bool hasResult;
-  rv = stmt->ExecuteStep(&hasResult);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  if (NS_WARN_IF(!hasResult)) {
-    return NS_ERROR_FILE_CORRUPTED;
-  }
+  LS_TRY(OkIf(stmt), NS_ERROR_FILE_CORRUPTED);
 
   nsCString origin;
-  rv = stmt->GetUTF8String(0, origin);
+  nsresult rv = stmt->GetUTF8String(0, origin);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
