@@ -228,6 +228,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   already_AddRefed<nsHttpConnectionInfo> PrepareFastFallbackConnInfo(
       bool aEchConfigUsed);
 
+  void MaybeReportFailedSVCDomain(nsresult aReason,
+                                  nsHttpConnectionInfo* aFailedConnInfo);
+
   already_AddRefed<Http2PushedStreamWrapper> TakePushedStreamById(
       uint32_t aStreamId);
 
@@ -499,7 +502,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
 
   HttpTrafficCategory mTrafficCategory;
   bool mThroughCaptivePortal;
-  int32_t mProxyConnectResponseCode;
+  Atomic<int32_t> mProxyConnectResponseCode;
 
   OnPushCallback mOnPushCallback;
   nsDataHashtable<nsUint32HashKey, RefPtr<Http2PushedStreamWrapper>>

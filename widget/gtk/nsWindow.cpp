@@ -13,6 +13,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_ui.h"
 #include "mozilla/TextEvents.h"
@@ -5388,6 +5389,10 @@ static void SubtractTitlebarCorners(cairo_region_t* aRegion, int aX, int aY,
 }
 
 void nsWindow::UpdateTopLevelOpaqueRegion(void) {
+  if (!mCompositedScreen) {
+    return;
+  }
+
   GdkWindow* window =
       (mDrawToContainer) ? gtk_widget_get_window(mShell) : mGdkWindow;
   if (!window) {
@@ -5397,9 +5402,9 @@ void nsWindow::UpdateTopLevelOpaqueRegion(void) {
 
   int x = 0;
   int y = 0;
-  if (!mIsX11Display || mDrawInTitlebar) {
-    x = DevicePixelsToGdkCoordRoundDown(mClientOffset.x);
-    y = DevicePixelsToGdkCoordRoundDown(mClientOffset.y);
+
+  if (mDrawToContainer) {
+    gdk_window_get_position(mGdkWindow, &x, &y);
   }
 
   int width = DevicePixelsToGdkCoordRoundDown(mBounds.width);
@@ -7907,14 +7912,14 @@ bool nsWindow::TitlebarUseShapeMask() {
       return false;
     }
 
-    // We use shape masks on Mutter/X.org as we can't resize Firefox window
-    // there (Bug 1530252).
+    // We can'y use shape masks on Mutter/X.org as we can't resize Firefox
+    // window there (Bug 1530252).
     const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
     if (currentDesktop) {
       if (strstr(currentDesktop, "GNOME") != nullptr) {
         const char* sessionType = getenv("XDG_SESSION_TYPE");
-        if (sessionType) {
-          return (strstr(sessionType, "x11") == nullptr);
+        if (sessionType && strstr(sessionType, "x11") != nullptr) {
+          return false;
         }
       }
     }

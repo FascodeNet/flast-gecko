@@ -16,6 +16,7 @@
 #include "TCPFastOpenLayer.h"
 #include "TunnelUtils.h"
 #include "base/basictypes.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "nsCRT.h"
@@ -63,11 +64,6 @@ static NS_DEFINE_CID(kMultiplexInputStream, NS_MULTIPLEXINPUTSTREAM_CID);
 // Place a limit on how much non-compliant HTTP can be skipped while
 // looking for a response header
 #define MAX_INVALID_RESPONSE_BODY_SIZE (1024 * 128)
-
-// TODO: These values should be removed when bug 1654332 is landed.
-#define MOCK_SSL_ERROR_ECH_RETRY_WITH_ECH (SSL_ERROR_BASE + 188)
-#define MOCK_SSL_ERROR_ECH_RETRY_WITHOUT_ECH (SSL_ERROR_BASE + 189)
-#define MOCK_SSL_ERROR_ECH_FAILED (SSL_ERROR_BASE + 190)
 
 using namespace mozilla::net;
 
@@ -818,7 +814,10 @@ nsresult nsHttpTransaction::ReadSegments(nsAHttpSegmentReader* reader,
 
   if (!mConnected && !m0RTTInProgress) {
     mConnected = true;
-    mConnection->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+    nsCOMPtr<nsISupports> info;
+    mConnection->GetSecurityInfo(getter_AddRefs(info));
+    MutexAutoLock lock(mLock);
+    mSecurityInfo = std::move(info);
   }
 
   mDeferredSendProgress = false;
@@ -1057,7 +1056,10 @@ bool nsHttpTransaction::ProxyConnectFailed() { return mProxyConnectFailed; }
 
 bool nsHttpTransaction::DataSentToChildProcess() { return false; }
 
-nsISupports* nsHttpTransaction::SecurityInfo() { return mSecurityInfo; }
+already_AddRefed<nsISupports> nsHttpTransaction::SecurityInfo() {
+  MutexAutoLock lock(mLock);
+  return do_AddRef(mSecurityInfo);
+}
 
 bool nsHttpTransaction::HasStickyConnection() const {
   return mCaps & NS_HTTP_STICKY_CONNECTION;
@@ -1256,8 +1258,7 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
     }
   });
 
-  if (aReason ==
-      psm::GetXPCOMFromNSSError(MOCK_SSL_ERROR_ECH_RETRY_WITHOUT_ECH)) {
+  if (aReason == psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_RETRY_WITHOUT_ECH)) {
     LOG((" Got SSL_ERROR_ECH_RETRY_WITHOUT_ECH, use empty echConfig to retry"));
     failedConnInfo->SetEchConfig(EmptyCString());
     failedConnInfo.swap(mConnInfo);
@@ -1265,8 +1266,8 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
     return;
   }
 
-  if (aReason == psm::GetXPCOMFromNSSError(MOCK_SSL_ERROR_ECH_RETRY_WITH_ECH)) {
-    LOG((" Got SSL_ERROR_ECH_RETRY_WITHOUT_ECH, use retry echConfig"));
+  if (aReason == psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_RETRY_WITH_ECH)) {
+    LOG((" Got SSL_ERROR_ECH_RETRY_WITH_ECH, use retry echConfig"));
     MOZ_ASSERT(mConnection);
 
     nsCOMPtr<nsISupports> secInfo;
@@ -1291,10 +1292,10 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
 
   // Note that we retry the connection not only for SSL_ERROR_ECH_FAILED, but
   // also for all failure cases.
-  if (aReason == psm::GetXPCOMFromNSSError(MOCK_SSL_ERROR_ECH_FAILED) ||
+  if (aReason == psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_FAILED) ||
       NS_FAILED(aReason)) {
     LOG((" Got SSL_ERROR_ECH_FAILED, try other records"));
-    if (aReason == psm::GetXPCOMFromNSSError(MOCK_SSL_ERROR_ECH_FAILED)) {
+    if (aReason == psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_FAILED)) {
       id = Telemetry::TRANSACTION_ECH_RETRY_ECH_FAILED_COUNT;
     }
     if (mRecordsForRetry.IsEmpty()) {
@@ -1338,6 +1339,28 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
     RefPtr<nsISVCBRecord> recordsForRetry =
         mRecordsForRetry.PopLastElement().forget();
     mConnInfo = mOrigConnInfo->CloneAndAdoptHTTPSSVCRecord(recordsForRetry);
+  }
+}
+
+void nsHttpTransaction::MaybeReportFailedSVCDomain(
+    nsresult aReason, nsHttpConnectionInfo* aFailedConnInfo) {
+  if (aReason == psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_RETRY_WITHOUT_ECH) ||
+      aReason != psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_RETRY_WITH_ECH)) {
+    return;
+  }
+
+  Telemetry::Accumulate(Telemetry::DNS_HTTPSSVC_CONNECTION_FAILED_REASON,
+                        ErrorCodeToFailedReason(aReason));
+
+  nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
+  if (dns) {
+    const nsCString& failedHost = aFailedConnInfo->GetRoutedHost().IsEmpty()
+                                      ? aFailedConnInfo->GetOrigin()
+                                      : aFailedConnInfo->GetRoutedHost();
+    LOG(("add failed domain name [%s] -> [%s] to exclusion list",
+         aFailedConnInfo->GetOrigin().get(), failedHost.get()));
+    Unused << dns->ReportFailedSVCDomainName(aFailedConnInfo->GetOrigin(),
+                                             failedHost);
   }
 }
 
@@ -1506,16 +1529,7 @@ void nsHttpTransaction::Close(nsresult reason) {
                             !reallySentData || connReused)) ||
         restartToFallbackConnInfo) {
       if (restartToFallbackConnInfo) {
-        Telemetry::Accumulate(Telemetry::DNS_HTTPSSVC_CONNECTION_FAILED_REASON,
-                              ErrorCodeToFailedReason(reason));
-        nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
-        if (dns) {
-          LOG(("add failed domain name [%s] -> [%s] to exclusion list",
-               mConnInfo->GetOrigin().get(), mConnInfo->GetRoutedHost().get()));
-          Unused << dns->ReportFailedSVCDomainName(mConnInfo->GetOrigin(),
-                                                   mConnInfo->GetRoutedHost());
-        }
-
+        MaybeReportFailedSVCDomain(reason, mConnInfo);
         PrepareConnInfoForRetry(reason);
         mDontRetryWithDirectRoute = true;
         LOG(
@@ -1755,7 +1769,11 @@ nsresult nsHttpTransaction::Restart() {
   if (seekable) seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
 
   // clear old connection state...
-  mSecurityInfo = nullptr;
+  {
+    MutexAutoLock lock(mLock);
+    mSecurityInfo = nullptr;
+  }
+
   if (mConnection) {
     if (!mReuseOnRestart) {
       mConnection->DontReuse();
@@ -2880,7 +2898,10 @@ nsresult nsHttpTransaction::Finish0RTT(bool aRestart,
   } else if (!mConnected) {
     // this is code that was skipped in ::ReadSegments while in 0RTT
     mConnected = true;
-    mConnection->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+    nsCOMPtr<nsISupports> info;
+    mConnection->GetSecurityInfo(getter_AddRefs(info));
+    MutexAutoLock lock(mLock);
+    mSecurityInfo = std::move(info);
   }
   return NS_OK;
 }
@@ -2901,7 +2922,10 @@ nsresult nsHttpTransaction::RestartOnFastOpenError() {
   nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mRequestStream);
   if (seekable) seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
   // clear old connection state...
-  mSecurityInfo = nullptr;
+  {
+    MutexAutoLock lock(mLock);
+    mSecurityInfo = nullptr;
+  }
 
   if (!mConnInfo->GetRoutedHost().IsEmpty()) {
     RefPtr<nsHttpConnectionInfo> ci;
@@ -3007,12 +3031,10 @@ void nsHttpTransaction::OnProxyConnectComplete(int32_t aResponseCode) {
   LOG(("nsHttpTransaction::OnProxyConnectComplete %p aResponseCode=%d", this,
        aResponseCode));
 
-  MutexAutoLock lock(mLock);
   mProxyConnectResponseCode = aResponseCode;
 }
 
 int32_t nsHttpTransaction::GetProxyConnectResponseCode() {
-  MutexAutoLock lock(mLock);
   return mProxyConnectResponseCode;
 }
 
@@ -3279,8 +3301,8 @@ void nsHttpTransaction::HandleFallback(
   LOG(("nsHttpTransaction %p HandleFallback to connInfo[%s]", this,
        aFallbackConnInfo->HashKey().get()));
 
-  bool foundInPendingQ = gHttpHandler->ConnMgr()->MoveTransToNewConnEntry(
-      this, aFallbackConnInfo, true);
+  bool foundInPendingQ =
+      gHttpHandler->ConnMgr()->MoveTransToNewConnEntry(this, aFallbackConnInfo);
   if (!foundInPendingQ) {
     MOZ_ASSERT(false, "transaction not in entry");
     return;

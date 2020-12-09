@@ -1990,7 +1990,18 @@ Element* nsFocusManager::FlushAndCheckIfFocusable(Element* aElement,
       if (BrowsingContext* bc = flo->GetExtantBrowsingContext()) {
         // This call may create a contentViewer-created about:blank.
         // That's intentional, so we can move focus there.
-        if (!bc->GetDocument()) {
+        Document* subdoc = bc->GetDocument();
+        if (!subdoc) {
+          return aElement;
+        }
+        nsIPrincipal* framerPrincipal = doc->GetPrincipal();
+        nsIPrincipal* frameePrincipal = subdoc->GetPrincipal();
+        if (framerPrincipal && frameePrincipal &&
+            !framerPrincipal->Equals(frameePrincipal)) {
+          // Assume focusability of different-origin iframes even in the
+          // in-process case for consistency with the OOP case.
+          // This is likely already the case anyway, but in case not,
+          // this makes it explicitly so.
           return aElement;
         }
       }
@@ -2827,6 +2838,17 @@ void nsFocusManager::RaiseWindow(nsPIDOMWindowOuter* aWindow,
           self->WindowRaised(window, aActionId);
         }));
     return;
+  }
+
+  if (XRE_IsContentProcess()) {
+    BrowsingContext* bc = aWindow->GetBrowsingContext();
+    if (!bc->IsTop()) {
+      // Assume the raise below will succeed and run the raising synchronously
+      // in this process to make the focus event that is observable in this
+      // process fire in the right order relative to mouseup when we are here
+      // thanks to a mousedown.
+      WindowRaised(aWindow, aActionId);
+    }
   }
 
 #if defined(XP_WIN)

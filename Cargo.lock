@@ -525,7 +525,7 @@ dependencies = [
  "nserror",
  "nsstring",
  "rental",
- "rkv 0.15.0",
+ "rkv 0.16.0",
  "rust_cascade",
  "sha2",
  "storage_variant",
@@ -765,7 +765,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 dependencies = [
  "cranelift-entity 0.68.0",
 ]
@@ -773,7 +773,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 dependencies = [
  "byteorder",
  "cranelift-bforest",
@@ -790,7 +790,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 dependencies = [
  "cranelift-codegen-shared",
  "cranelift-entity 0.68.0",
@@ -799,7 +799,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 
 [[package]]
 name = "cranelift-entity"
@@ -809,12 +809,12 @@ source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a6
 [[package]]
 name = "cranelift-entity"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 
 [[package]]
 name = "cranelift-frontend"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "cranelift-wasm"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=ac58a436ed84d1a88b4ff24367c5972cf8d3d405#ac58a436ed84d1a88b4ff24367c5972cf8d3d405"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
 dependencies = [
  "cranelift-codegen",
  "cranelift-entity 0.68.0",
@@ -939,22 +939,12 @@ dependencies = [
 
 [[package]]
 name = "cstr"
-version = "0.1.3"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6557bdb1dc9647eae1cf7f5601b14cd45fc3c7ccf2df618387416fe542da6ea"
+checksum = "c11a39d776a3b35896711da8a04dc1835169dcd36f710878187637314e47941b"
 dependencies = [
- "cstr-macros",
- "procedural-masquerade",
-]
-
-[[package]]
-name = "cstr-macros"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd670e5ff58768ef624207fb95709ce63b8d05573fb9a05165f0eef471ea6a3a"
-dependencies = [
- "procedural-masquerade",
- "syn",
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -2070,9 +2060,9 @@ dependencies = [
 
 [[package]]
 name = "glean"
-version = "33.5.0"
+version = "33.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1d5556ec294a763121f57384cf09be9b7f8eebbfc075040f9120b84f6a1160b"
+checksum = "e0e7205a286c281745f3cdd47142273820705be14bf19b44c6fa2e90871783ba"
 dependencies = [
  "crossbeam-channel",
  "glean-core",
@@ -2082,14 +2072,15 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "time",
  "uuid",
 ]
 
 [[package]]
 name = "glean-core"
-version = "33.5.0"
+version = "33.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "657786648aaf8df52b059cb5cedff3be250df149bd8f6364919166e9d02a398d"
+checksum = "6ec2f7fc35371e74c86a91658ea02d44c0d3c069a2ee135cee91576a75db3bd8"
 dependencies = [
  "bincode",
  "chrono",
@@ -2097,7 +2088,7 @@ dependencies = [
  "flate2",
  "log",
  "once_cell",
- "rkv 0.15.0",
+ "rkv 0.16.0",
  "serde",
  "serde_json",
  "uuid",
@@ -2412,9 +2403,9 @@ dependencies = [
 
 [[package]]
 name = "inherent"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2db418475edf9eb55fec92b7527be6d9a7b880bff6651cb0c0345af57f1cadf"
+checksum = "f3a1325a022293a53274277a7c5c3c5bc73405cb443bb96cc2ce20ff4121e995"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2660,12 +2651,11 @@ dependencies = [
  "failure",
  "lazy_static",
  "libc",
- "lmdb-rkv",
  "log",
  "moz_task",
  "nserror",
  "nsstring",
- "rkv 0.15.0",
+ "rkv 0.16.0",
  "storage_variant",
  "tempfile",
  "thin-vec",
@@ -3933,12 +3923,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "procedural-masquerade"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f566249236c6ca4340f7ca78968271f0ed2b0f234007a61b66f9ecd0af09260"
-
-[[package]]
 name = "processtools"
 version = "0.1.0"
 dependencies = [
@@ -4283,9 +4267,9 @@ dependencies = [
 
 [[package]]
 name = "rkv"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e97d1b6321740ce36d77d67d22ff84ac8a996cf69dbd0727b8bcae52f1c98aaa"
+checksum = "e7a845aee216ee2be8a02ea265d70563d1ed7bd852c04f709a8f11979079b2ac"
 dependencies = [
  "arrayref",
  "bincode",
@@ -6075,13 +6059,12 @@ dependencies = [
  "cstr",
  "failure",
  "libc",
- "lmdb-rkv",
  "log",
  "moz_task",
  "nserror",
  "nsstring",
  "once_cell",
- "rkv 0.10.4",
+ "rkv 0.16.0",
  "serde_json",
  "tempfile",
  "xpcom",

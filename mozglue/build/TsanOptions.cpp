@@ -196,11 +196,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // These should all still be fixed because the compiler is incentivized
          // to combine/cache these accesses without proper atomic annotations.
 
-         // No Bug
-         "race:WalkDiskCacheRunnable::Run\n"
-         // No Bug - Modifying `mResolveAgain` while reading `mGetTtl`
-         "race:RemoveOrRefresh\n"
-         "race:nsHostResolver::ThreadFunc\n"
          // Bug 1614697
          "race:nsHttpChannel::OnCacheEntryCheck\n"
          "race:~AutoCacheWaitFlags\n"
@@ -233,6 +228,9 @@ extern "C" const char* __tsan_default_suppressions() {
 
          // Bug 1606800
          "race:CallInitFunc\n"
+
+         // Bug 1606803
+         "race:ipv6_is_present\n"
 
          // Bug 1606864
          "race:nsSocketTransport::Close\n"

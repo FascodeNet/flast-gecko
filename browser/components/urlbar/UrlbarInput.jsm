@@ -475,6 +475,12 @@ class UrlbarInput {
     let result = this.view.getResultFromElement(element);
     let openParams = oneOffParams?.openParams || {};
 
+    // If the value was submitted during composition, the result may not have
+    // been updated yet, because the input event happens after composition end.
+    // We can't trust element nor _resultForCurrentValue targets in that case,
+    // so we'always generate a new heuristic to load.
+    let isComposing = this.editor.composing;
+
     // Use the selected element if we have one; this is usually the case
     // when the view is open.
     let selectedPrivateResult =
@@ -483,7 +489,11 @@ class UrlbarInput {
       result.payload.inPrivateWindow;
     let selectedPrivateEngineResult =
       selectedPrivateResult && result.payload.isPrivateEngine;
-    if (element && (!oneOffParams?.engine || selectedPrivateEngineResult)) {
+    if (
+      !isComposing &&
+      element &&
+      (!oneOffParams?.engine || selectedPrivateEngineResult)
+    ) {
       this.pickElement(element, event);
       return;
     }
@@ -577,7 +587,7 @@ class UrlbarInput {
     // make a difference if the search string is the same.
 
     // If we have a result for the current value, we can just use it.
-    if (this._resultForCurrentValue) {
+    if (!isComposing && this._resultForCurrentValue) {
       this.pickResult(this._resultForCurrentValue, event);
       return;
     }
@@ -2255,7 +2265,18 @@ class UrlbarInput {
     } else {
       value = value + suffix;
     }
-    value = "http://www." + value;
+
+    try {
+      const info = Services.uriFixup.getFixupURIInfo(
+        value,
+        Ci.nsIURIFixup.FIXUP_FLAGS_MAKE_ALTERNATE_URI
+      );
+      value = info.fixedURI.spec;
+    } catch (ex) {
+      Cu.reportError(
+        `An error occured while trying to fixup "${value}": ${ex}`
+      );
+    }
 
     this.value = value;
     return value;
@@ -2895,6 +2916,8 @@ class UrlbarInput {
     let value = this.value;
     this.valueIsTyped = true;
     this._untrimmedValue = value;
+    this._resultForCurrentValue = null;
+
     this.window.gBrowser.userTypedValue = value;
     // Unset userSelectionBehavior because the user is modifying the search
     // string, thus there's no valid selection. This is also used by the view
@@ -2945,9 +2968,10 @@ class UrlbarInput {
     // We should do nothing during composition or if composition was canceled
     // and we didn't close the popup on composition start.
     if (
-      compositionState == UrlbarUtils.COMPOSITION.COMPOSING ||
-      (compositionState == UrlbarUtils.COMPOSITION.CANCELED &&
-        !compositionClosedPopup)
+      UrlbarPrefs.get("imeCompositionClosesPanel") &&
+      (compositionState == UrlbarUtils.COMPOSITION.COMPOSING ||
+        (compositionState == UrlbarUtils.COMPOSITION.CANCELED &&
+          !compositionClosedPopup))
     ) {
       return;
     }
@@ -3108,11 +3132,13 @@ class UrlbarInput {
           // Make sure the domain name stays visible for spoof protection and usability.
           this.selectionStart = this.selectionEnd = 0;
         }
+        this._keyDownEnterDeferred = null;
       } catch (ex) {
         // Not all the Enter actions in the urlbar will cause a navigation, then it
         // is normal for this to be rejected.
+        // If _keyDownEnterDeferred was rejected on keydown, we don't nullify it here
+        // to ensure not overwriting the new value created by keydown.
       }
-      this._keyDownEnterDeferred = null;
       return;
     } else if (event.keyCode === KeyEvent.DOM_VK_CONTROL) {
       this._isKeyDownWithCtrl = false;
@@ -3127,8 +3153,24 @@ class UrlbarInput {
     }
     this._compositionState = UrlbarUtils.COMPOSITION.COMPOSING;
 
+    if (!UrlbarPrefs.get("imeCompositionClosesPanel")) {
+      return;
+    }
+
     // Close the view. This will also stop searching.
     if (this.view.isOpen) {
+      // We're closing the view, but we want to retain search mode if the
+      // selected result was previewing it.
+      if (this.searchMode) {
+        // If we entered search mode with an empty string, clear userTypedValue,
+        // otherwise confirmSearchMode may try to set it as value.
+        // This can happen for example if we entered search mode typing a
+        // a partial engine domain and selecting a tab-to-search result.
+        if (!this.value) {
+          this.window.gBrowser.userTypedValue = null;
+        }
+        this.confirmSearchMode();
+      }
       this._compositionClosedPopup = true;
       this.view.close();
     } else {
@@ -3139,6 +3181,14 @@ class UrlbarInput {
   _on_compositionend(event) {
     if (this._compositionState != UrlbarUtils.COMPOSITION.COMPOSING) {
       throw new Error("Trying to stop a non existing composition?");
+    }
+
+    if (UrlbarPrefs.get("imeCompositionClosesPanel")) {
+      // Clear the selection and the cached result, since they refer to the
+      // state before this composition. A new input even will be generated
+      // after this.
+      this.view.clearSelection();
+      this._resultForCurrentValue = null;
     }
 
     // We can't yet retrieve the committed value from the editor, since it isn't

@@ -137,6 +137,19 @@ const IGNORABLE_EVENTS = new WeakMap();
 
 const KNOWN_ADDONS = [];
 
+// Buttons that, when clicked, set a preference to true. The convention
+// is that the preference is named:
+//
+// browser.engagement.<button id>.has-used
+//
+// and is defaulted to false.
+const SET_USAGE_PREF_BUTTONS = [
+  "downloads-button",
+  "fxa-toolbar-menu-button",
+  "home-button",
+  "sidebar-button",
+];
+
 function telemetryId(widgetId, obscureAddons = true) {
   // Add-on IDs need to be obscured.
   function addonId(id) {
@@ -1131,8 +1144,11 @@ let BrowserUsageTelemetry = {
 
     if (item && source) {
       let scalar = `browser.ui.interaction.${source.replace("-", "_")}`;
-      console.log("UI Interaction", scalar, telemetryId(item));
       Services.telemetry.keyedScalarAdd(scalar, telemetryId(item), 1);
+
+      if (SET_USAGE_PREF_BUTTONS.includes(item)) {
+        Services.prefs.setBoolPref(`browser.engagement.${item}.has-used`, true);
+      }
     }
   },
 
@@ -1232,7 +1248,6 @@ let BrowserUsageTelemetry = {
 
     let key = `${telemetryId(widgetId, false)}_${action}_${oldPos ??
       "na"}_${newPos ?? "na"}_${reason}`;
-    console.log("Browser UI change", key);
     Services.telemetry.keyedScalarAdd("browser.ui.customized_widgets", key, 1);
 
     if (newPos) {
