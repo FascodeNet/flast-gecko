@@ -512,17 +512,14 @@ static MOZ_ALWAYS_INLINE bool GetPrimitiveElementOperation(
   return true;
 }
 
-static MOZ_ALWAYS_INLINE bool GetElemOptimizedArguments(
+static MOZ_ALWAYS_INLINE bool MaybeGetElemOptimizedArguments(
     JSContext* cx, AbstractFramePtr frame, MutableHandleValue lref,
-    HandleValue rref, MutableHandleValue res, bool* done) {
-  MOZ_ASSERT(!*done);
-
+    HandleValue rref, MutableHandleValue res) {
   if (IsOptimizedArguments(frame, lref)) {
     if (rref.isInt32()) {
       int32_t i = rref.toInt32();
       if (i >= 0 && uint32_t(i) < frame.numActualArgs()) {
         res.set(frame.unaliasedActual(i));
-        *done = true;
         return true;
       }
     }
@@ -533,7 +530,7 @@ static MOZ_ALWAYS_INLINE bool GetElemOptimizedArguments(
     lref.set(ObjectValue(frame.argsObj()));
   }
 
-  return true;
+  return false;
 }
 
 static MOZ_ALWAYS_INLINE bool GetElementOperationWithStackIndex(
@@ -625,22 +622,9 @@ static MOZ_ALWAYS_INLINE bool CheckPrivateFieldOperation(JSContext* cx,
   return false;
 }
 
-static MOZ_ALWAYS_INLINE bool InitArrayElemOperation(JSContext* cx,
-                                                     jsbytecode* pc,
-                                                     HandleArrayObject arr,
-                                                     uint32_t index,
-                                                     HandleValue val) {
-  JSOp op = JSOp(*pc);
-  MOZ_ASSERT(op == JSOp::InitElemArray || op == JSOp::InitElemInc);
-
-  // The JITs depend on InitElemArray's index not exceeding the dense element
-  // capacity. Furthermore, the dense elements must have been initialized up to
-  // that index.
-  MOZ_ASSERT_IF(op == JSOp::InitElemArray, index < arr->getDenseCapacity());
-  MOZ_ASSERT_IF(op == JSOp::InitElemArray,
-                index == arr->getDenseInitializedLength());
-
-  if (op == JSOp::InitElemInc && index == INT32_MAX) {
+inline bool InitElemIncOperation(JSContext* cx, HandleArrayObject arr,
+                                 uint32_t index, HandleValue val) {
+  if (index == INT32_MAX) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_SPREAD_TOO_LARGE);
     return false;
@@ -648,22 +632,10 @@ static MOZ_ALWAYS_INLINE bool InitArrayElemOperation(JSContext* cx,
 
   // If val is a hole, do not call DefineDataElement.
   if (val.isMagic(JS_ELEMENTS_HOLE)) {
-    if (op == JSOp::InitElemInc) {
-      // Always call SetLengthProperty even if this is not the last element
-      // initialiser, because this may be followed by a SpreadElement loop,
-      // which will not set the array length if nothing is spread.
-      return SetLengthProperty(cx, arr, index + 1);
-    }
-
-    MOZ_ASSERT(op == JSOp::InitElemArray);
-
-    // The length will have already been set by the earlier JSOp::NewArray;
-    // JSOp::InitElemArray cannot follow SpreadElements. Bump the initialized
-    // length and store the hole value to ensure the index == initLength
-    // invariant holds for later InitArrayElem ops.
-    arr->ensureDenseInitializedLength(index, 1);
-    arr->setDenseElementHole(index);
-    return true;
+    // Always call SetLengthProperty even if this is not the last element
+    // initialiser, because this may be followed by a SpreadElement loop,
+    // which will not set the array length if nothing is spread.
+    return SetLengthProperty(cx, arr, index + 1);
   }
 
   return DefineDataElement(cx, arr, index, val, JSPROP_ENUMERATE);

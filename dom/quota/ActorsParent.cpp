@@ -748,6 +748,7 @@ class DirectoryLockImpl final : public DirectoryLock {
   const bool mShouldUpdateLockIdTable;
 
   bool mRegistered;
+  FlippedOnce<true> mPending;
   FlippedOnce<false> mInvalidated;
 
  public:
@@ -781,6 +782,8 @@ class DirectoryLockImpl final : public DirectoryLock {
   bool IsInternal() const { return mInternal; }
 
   void SetRegistered(bool aRegistered) { mRegistered = aRegistered; }
+
+  bool IsPending() const { return mPending; }
 
   // Ideally, we would have just one table (instead of these two:
   // QuotaManager::mDirectoryLocks and QuotaManager::mDirectoryLockIdTable) for
@@ -2947,6 +2950,8 @@ void DirectoryLockImpl::NotifyOpenListener() {
   mOpenListener.destroy();
 
   mQuotaManager->RemovePendingDirectoryLock(*this);
+
+  mPending.Flip();
 }
 
 already_AddRefed<DirectoryLock> DirectoryLockImpl::Specialize(
@@ -3166,6 +3171,8 @@ QuotaManager::Observer::Observe(nsISupports* aSubject, const char* aTopic,
       return NS_OK;
     }
 
+    Telemetry::SetEventRecordingEnabled("dom.quota.try"_ns, true);
+
     gBasePath = new nsString();
 
     nsCOMPtr<nsIFile> baseDir;
@@ -3241,6 +3248,8 @@ QuotaManager::Observer::Observe(nsISupports* aSubject, const char* aTopic,
     gStorageName = nullptr;
 
     gBuildId = nullptr;
+
+    Telemetry::SetEventRecordingEnabled("dom.quota.try"_ns, false);
 
     return NS_OK;
   }
@@ -6372,6 +6381,9 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
       Initialization::Storage,
       [&self = *this] { return static_cast<bool>(self.mStorageConnection); });
 
+  const auto contextLogExtraInfo = ScopedLogExtraInfo{
+      ScopedLogExtraInfo::kTagContext, "Initialization::Storage"_ns};
+
   QM_TRY_UNWRAP(auto storageFile, QM_NewLocalFile(mBasePath));
 
   QM_TRY(storageFile->Append(mStorageName + kSQLiteSuffix));
@@ -6693,9 +6705,8 @@ already_AddRefed<DirectoryLock> QuotaManager::OpenDirectoryInternal(
 
   // All the locks that block this new exclusive lock need to be invalidated.
   // We also need to notify clients to abort operations for them.
-  AutoTArray<UniquePtr<nsTHashtable<nsCStringHashKey>>, Client::TYPE_MAX>
-      origins;
-  origins.SetLength(Client::TypeMax());
+  AutoTArray<Client::DirectoryLockIdTable, Client::TYPE_MAX> lockIds;
+  lockIds.SetLength(Client::TypeMax());
 
   const auto& blockedOnLocks = lock->GetBlockedOnLocks();
 
@@ -6703,21 +6714,20 @@ already_AddRefed<DirectoryLock> QuotaManager::OpenDirectoryInternal(
     if (!blockedOnLock->IsInternal()) {
       blockedOnLock->Invalidate();
 
-      auto& clientOrigins = origins[blockedOnLock->ClientType()];
-      if (!clientOrigins) {
-        clientOrigins = MakeUnique<nsTHashtable<nsCStringHashKey>>();
+      // Clients don't have to handle pending locks. Invalidation is sufficient
+      // in that case (once a lock is ready and the listener needs to be
+      // notified, we will call DirectoryLockFailed instead of
+      // DirectoryLockAcquired which should release any remaining references to
+      // the lock).
+      if (!blockedOnLock->IsPending()) {
+        lockIds[blockedOnLock->ClientType()].Put(blockedOnLock->Id());
       }
-      clientOrigins->PutEntry(blockedOnLock->Origin());
     }
   }
 
   for (Client::Type type : AllClientTypes()) {
-    if (origins[type]) {
-      for (auto iter = origins[type]->Iter(); !iter.Done(); iter.Next()) {
-        MOZ_ASSERT(mClients[type]);
-
-        mClients[type]->AbortOperations(iter.Get()->GetKey());
-      }
+    if (lockIds[type].Filled()) {
+      mClients[type]->AbortOperationsForLocks(lockIds[type]);
     }
   }
 
@@ -6840,6 +6850,9 @@ nsresult QuotaManager::EnsureTemporaryStorageIsInitialized() {
   const auto autoRecord = mInitializationInfo.RecordFirstInitializationAttempt(
       Initialization::TemporaryStorage,
       [&self = *this] { return self.mTemporaryStorageInitialized; });
+
+  const auto contextLogExtraInfo = ScopedLogExtraInfo{
+      ScopedLogExtraInfo::kTagContext, "Initialization::TemporaryStorage"_ns};
 
   nsresult rv;
 

@@ -359,7 +359,6 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
       case JSOp::InitElem:
       case JSOp::InitHiddenElem:
       case JSOp::InitLockedElem:
-      case JSOp::InitElemArray:
       case JSOp::InitElemInc:
       case JSOp::SetElem:
       case JSOp::StrictSetElem: {
@@ -984,10 +983,8 @@ bool DoGetElemFallback(JSContext* cx, BaselineFrame* frame,
   bool isOptimizedArgs = false;
   if (lhs.isMagic(JS_OPTIMIZED_ARGUMENTS)) {
     // Handle optimized arguments[i] access.
-    if (!GetElemOptimizedArguments(cx, frame, &lhsCopy, rhs, res,
-                                   &isOptimizedArgs)) {
-      return false;
-    }
+    isOptimizedArgs =
+        MaybeGetElemOptimizedArguments(cx, frame, &lhsCopy, rhs, res);
   }
 
   TryAttachGetPropStub("GetElem", cx, frame, stub, CacheKind::GetElem, lhs, rhs,
@@ -1112,8 +1109,7 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
 
   MOZ_ASSERT(op == JSOp::SetElem || op == JSOp::StrictSetElem ||
              op == JSOp::InitElem || op == JSOp::InitHiddenElem ||
-             op == JSOp::InitLockedElem || op == JSOp::InitElemArray ||
-             op == JSOp::InitElemInc);
+             op == JSOp::InitLockedElem || op == JSOp::InitElemInc);
 
   int objvIndex = -3;
   RootedObject obj(
@@ -1169,19 +1165,9 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
     if (!InitElemOperation(cx, pc, obj, index, rhs)) {
       return false;
     }
-  } else if (op == JSOp::InitElemArray) {
-    MOZ_ASSERT(uint32_t(index.toInt32()) <= INT32_MAX,
-               "the bytecode emitter must fail to compile code that would "
-               "produce JSOp::InitElemArray with an index exceeding "
-               "int32_t range");
-    MOZ_ASSERT(uint32_t(index.toInt32()) == GET_UINT32(pc));
-    if (!InitArrayElemOperation(cx, pc, obj.as<ArrayObject>(), index.toInt32(),
-                                rhs)) {
-      return false;
-    }
   } else if (op == JSOp::InitElemInc) {
-    if (!InitArrayElemOperation(cx, pc, obj.as<ArrayObject>(), index.toInt32(),
-                                rhs)) {
+    if (!InitElemIncOperation(cx, obj.as<ArrayObject>(), index.toInt32(),
+                              rhs)) {
       return false;
     }
   } else {
@@ -1931,7 +1917,6 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
 
   bool canAttachStub = stub->state().canAttachStub();
   bool handled = false;
-  bool deferred = false;
 
   // Only bother to try optimizing JSOp::Call with CacheIR if the chain is still
   // allowed to attach stubs.
@@ -1956,7 +1941,10 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
         handled = true;
         break;
       case AttachDecision::Deferred:
-        deferred = true;
+        MOZ_CRASH("No deferred Call stubs");
+    }
+    if (!handled) {
+      stub->trackNotAttached(cx, frame->invalidationScript());
     }
   }
 
@@ -1988,39 +1976,6 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
     res.set(callArgs.rval());
   }
 
-  // Try to transition again in case we called this IC recursively.
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
-  canAttachStub = stub->state().canAttachStub();
-
-  if (deferred && canAttachStub) {
-    HandleValueArray args = HandleValueArray::fromMarkedLocation(argc, vp + 2);
-    bool isFirstStub = stub->newStubIsFirstStub();
-    CallIRGenerator gen(cx, script, pc, op, stub->state().mode(), isFirstStub,
-                        argc, callee, callArgs.thisv(), newTarget, args);
-    switch (gen.tryAttachDeferredStub(res)) {
-      case AttachDecision::Attach: {
-        ICScript* icScript = frame->icScript();
-        ICStub* newStub = AttachBaselineCacheIRStub(
-            cx, gen.writerRef(), gen.cacheKind(),
-            BaselineCacheIRStubKind::Regular, script, icScript, stub, &handled);
-        if (newStub) {
-          JitSpew(JitSpew_BaselineIC, "  Attached Call CacheIR stub");
-        }
-      } break;
-      case AttachDecision::NoAction:
-        break;
-      case AttachDecision::TemporarilyUnoptimizable:
-      case AttachDecision::Deferred:
-        MOZ_ASSERT_UNREACHABLE("Impossible attach decision");
-        break;
-    }
-  }
-
-  if (!handled && canAttachStub) {
-    stub->trackNotAttached(cx, frame->invalidationScript());
-  }
   return true;
 }
 

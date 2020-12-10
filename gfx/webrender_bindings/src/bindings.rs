@@ -35,10 +35,10 @@ use swgl_bindings::SwCompositor;
 use tracy_rs::register_thread_with_profiler;
 use webrender::{
     api::units::*, api::*, render_api::*, set_profiler_hooks, AsyncPropertySampler, AsyncScreenshotHandle, Compositor,
-    CompositorCapabilities, CompositorConfig, CompositorSurfaceTransform, DebugFlags, Device, FastHashMap,
-    NativeSurfaceId, NativeSurfaceInfo, NativeTileId, PartialPresentCompositor, PipelineInfo, ProfilerHooks,
-    RecordedFrameHandle, Renderer, RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders,
-    ThreadListener, UploadMethod, WrShaders, ONE_TIME_USAGE_HINT,
+    CompositorCapabilities, CompositorConfig, CompositorSurfaceTransform, DebugFlags, Device, NativeSurfaceId,
+    NativeSurfaceInfo, NativeTileId, PartialPresentCompositor, PipelineInfo, ProfilerHooks, RecordedFrameHandle,
+    Renderer, RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener,
+    UploadMethod, WrShaders, ONE_TIME_USAGE_HINT,
 };
 use wr_malloc_size_of::MallocSizeOfOps;
 
@@ -797,8 +797,6 @@ impl<'a> From<(&WrPipelineId, &WrEpoch)> for WrPipelineIdAndEpoch {
     }
 }
 
-type WrPipelineIdEpochs = ThinVec<WrPipelineIdAndEpoch>;
-
 #[repr(C)]
 pub struct WrRemovedPipeline {
     pipeline_id: WrPipelineId,
@@ -915,11 +913,7 @@ extern "C" {
     // These callbacks are invoked from the render backend thread (aka the APZ
     // sampler thread)
     fn apz_register_sampler(window_id: WrWindowId);
-    fn apz_sample_transforms(
-        window_id: WrWindowId,
-        transaction: &mut Transaction,
-        epochs_being_rendered: &WrPipelineIdEpochs,
-    );
+    fn apz_sample_transforms(window_id: WrWindowId, generated_frame_id: *const u64, transaction: &mut Transaction);
     fn apz_deregister_sampler(window_id: WrWindowId);
 
     fn omta_register_sampler(window_id: WrWindowId);
@@ -1011,21 +1005,21 @@ impl AsyncPropertySampler for SamplerCallback {
         }
     }
 
-    fn sample(
-        &self,
-        _document_id: DocumentId,
-        epochs_being_rendered: &FastHashMap<PipelineId, Epoch>,
-    ) -> Vec<FrameMsg> {
+    fn sample(&self, _document_id: DocumentId, generated_frame_id: Option<u64>) -> Vec<FrameMsg> {
+        let generated_frame_id_value;
+        let generated_frame_id: *const u64 = match generated_frame_id {
+            Some(id) => {
+                generated_frame_id_value = id;
+                &generated_frame_id_value
+            }
+            None => ptr::null_mut(),
+        };
         let mut transaction = Transaction::new();
         unsafe {
             // XXX: When we implement scroll-linked animations, we will probably
             // need to call apz_sample_transforms prior to omta_sample.
             omta_sample(self.window_id, &mut transaction);
-            apz_sample_transforms(
-                self.window_id,
-                &mut transaction,
-                &epochs_being_rendered.iter().map(WrPipelineIdAndEpoch::from).collect(),
-            )
+            apz_sample_transforms(self.window_id, generated_frame_id, &mut transaction)
         };
         transaction.get_frame_ops()
     }
@@ -1823,8 +1817,8 @@ pub extern "C" fn wr_transaction_set_document_view(txn: &mut Transaction, doc_re
 }
 
 #[no_mangle]
-pub extern "C" fn wr_transaction_generate_frame(txn: &mut Transaction) {
-    txn.generate_frame();
+pub extern "C" fn wr_transaction_generate_frame(txn: &mut Transaction, id: u64) {
+    txn.generate_frame(id);
 }
 
 #[no_mangle]

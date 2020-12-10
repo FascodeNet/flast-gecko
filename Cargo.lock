@@ -525,7 +525,7 @@ dependencies = [
  "nserror",
  "nsstring",
  "rental",
- "rkv 0.16.0",
+ "rkv 0.16.1",
  "rust_cascade",
  "sha2",
  "storage_variant",
@@ -765,7 +765,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 dependencies = [
  "cranelift-entity 0.68.0",
 ]
@@ -773,7 +773,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 dependencies = [
  "byteorder",
  "cranelift-bforest",
@@ -790,7 +790,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 dependencies = [
  "cranelift-codegen-shared",
  "cranelift-entity 0.68.0",
@@ -799,22 +799,22 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 
 [[package]]
 name = "cranelift-entity"
 version = "0.41.0"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a64705a9d3fbcce9de92f4988558525#477d8fc53a64705a9d3fbcce9de92f4988558525"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=cd07861d1c92147b35b538e6f94fde7d1986f9ad#cd07861d1c92147b35b538e6f94fde7d1986f9ad"
 
 [[package]]
 name = "cranelift-entity"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 
 [[package]]
 name = "cranelift-frontend"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "cranelift-wasm"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3bbadf8a2152984cf3d327d0c5a2677f37a93801#3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
 dependencies = [
  "cranelift-codegen",
  "cranelift-entity 0.68.0",
@@ -2088,7 +2088,7 @@ dependencies = [
  "flate2",
  "log",
  "once_cell",
- "rkv 0.16.0",
+ "rkv 0.16.1",
  "serde",
  "serde_json",
  "uuid",
@@ -2512,7 +2512,7 @@ dependencies = [
 [[package]]
 name = "jsparagus"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "jsparagus-ast",
  "jsparagus-emitter",
@@ -2526,7 +2526,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-ast"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "bumpalo",
  "indexmap",
@@ -2535,7 +2535,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-emitter"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "bumpalo",
  "byteorder",
@@ -2548,7 +2548,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-generated-parser"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "bumpalo",
  "jsparagus-ast",
@@ -2558,12 +2558,12 @@ dependencies = [
 [[package]]
 name = "jsparagus-json-log"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 
 [[package]]
 name = "jsparagus-parser"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "arrayvec",
  "bumpalo",
@@ -2575,7 +2575,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-scope"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "indexmap",
  "jsparagus-ast",
@@ -2585,7 +2585,7 @@ dependencies = [
 [[package]]
 name = "jsparagus-stencil"
 version = "0.1.0"
-source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=1dc60327164a3f64f87180147b1f3a2a9cc74276#1dc60327164a3f64f87180147b1f3a2a9cc74276"
+source = "git+https://github.com/mozilla-spidermonkey/jsparagus?rev=d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24#d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 dependencies = [
  "jsparagus-ast",
 ]
@@ -2655,7 +2655,7 @@ dependencies = [
  "moz_task",
  "nserror",
  "nsstring",
- "rkv 0.16.0",
+ "rkv 0.16.1",
  "storage_variant",
  "tempfile",
  "thin-vec",
@@ -2832,7 +2832,7 @@ dependencies = [
 [[package]]
 name = "lucet-module-wasmsbx"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a64705a9d3fbcce9de92f4988558525#477d8fc53a64705a9d3fbcce9de92f4988558525"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=cd07861d1c92147b35b538e6f94fde7d1986f9ad#cd07861d1c92147b35b538e6f94fde7d1986f9ad"
 dependencies = [
  "bincode",
  "byteorder",
@@ -2848,7 +2848,7 @@ dependencies = [
 [[package]]
 name = "lucet-runtime-internals-wasmsbx"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a64705a9d3fbcce9de92f4988558525#477d8fc53a64705a9d3fbcce9de92f4988558525"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=cd07861d1c92147b35b538e6f94fde7d1986f9ad#cd07861d1c92147b35b538e6f94fde7d1986f9ad"
 dependencies = [
  "bincode",
  "bitflags",
@@ -2870,7 +2870,7 @@ dependencies = [
 [[package]]
 name = "lucet-runtime-wasmsbx"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a64705a9d3fbcce9de92f4988558525#477d8fc53a64705a9d3fbcce9de92f4988558525"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=cd07861d1c92147b35b538e6f94fde7d1986f9ad#cd07861d1c92147b35b538e6f94fde7d1986f9ad"
 dependencies = [
  "cc",
  "libc",
@@ -2883,10 +2883,11 @@ dependencies = [
 [[package]]
 name = "lucet-wasi-wasmsbx"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=477d8fc53a64705a9d3fbcce9de92f4988558525#477d8fc53a64705a9d3fbcce9de92f4988558525"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=cd07861d1c92147b35b538e6f94fde7d1986f9ad#cd07861d1c92147b35b538e6f94fde7d1986f9ad"
 dependencies = [
  "cast",
  "failure",
+ "lazy_static",
  "libc",
  "lucet-module-wasmsbx",
  "lucet-runtime-internals-wasmsbx",
@@ -4267,9 +4268,9 @@ dependencies = [
 
 [[package]]
 name = "rkv"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7a845aee216ee2be8a02ea265d70563d1ed7bd852c04f709a8f11979079b2ac"
+checksum = "917d7a01f8c1ae46226e9d8dd24314279be7b04dfd0b24340d420e6927c2e687"
 dependencies = [
  "arrayref",
  "bincode",
@@ -4291,7 +4292,7 @@ dependencies = [
 [[package]]
 name = "rlbox_lucet_sandbox"
 version = "0.1.0"
-source = "git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=ed8bac8812e9f335d5fadd0f4ece96981aba88a3#ed8bac8812e9f335d5fadd0f4ece96981aba88a3"
+source = "git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=f3cace4fb8b53db0849c62af4fa62bade5a620f7#f3cace4fb8b53db0849c62af4fa62bade5a620f7"
 dependencies = [
  "failure",
  "goblin",
@@ -6064,7 +6065,7 @@ dependencies = [
  "nserror",
  "nsstring",
  "once_cell",
- "rkv 0.16.0",
+ "rkv 0.16.1",
  "serde_json",
  "tempfile",
  "xpcom",

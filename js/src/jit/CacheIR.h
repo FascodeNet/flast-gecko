@@ -1609,7 +1609,6 @@ class MOZ_RAII OptimizeSpreadCallIRGenerator : public IRGenerator {
 enum class StringChar { CodeAt, At };
 enum class ScriptedThisResult {
   NoAction,
-  TemporarilyUnoptimizable,
   UninitializedThis,
   TemplateObject
 };
@@ -1761,8 +1760,6 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
                   HandleValue newTarget, HandleValueArray args);
 
   AttachDecision tryAttachStub();
-
-  AttachDecision tryAttachDeferredStub(HandleValue result);
 };
 
 class MOZ_RAII CompareIRGenerator : public IRGenerator {

@@ -105,8 +105,11 @@
  *    hidden.
  */
 #PersonalToolbar[collapsed=false] > #personal-toolbar-empty[nowidth] > #personal-toolbar-empty-description {
+  margin-inline: 0;
   width: 0;
   white-space: nowrap;
+  position: relative;
+  z-index: 1;
 }
 
 #PersonalToolbar[collapsed=true].instant {

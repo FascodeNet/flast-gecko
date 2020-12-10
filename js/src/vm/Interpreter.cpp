@@ -1872,6 +1872,29 @@ static MOZ_ALWAYS_INLINE bool SetObjectElementOperation(
          result.checkStrictModeError(cx, obj, id, strict);
 }
 
+static MOZ_ALWAYS_INLINE void InitElemArrayOperation(JSContext* cx,
+                                                     jsbytecode* pc,
+                                                     HandleArrayObject arr,
+                                                     HandleValue val) {
+  MOZ_ASSERT(JSOp(*pc) == JSOp::InitElemArray);
+
+  // The dense elements must have been initialized up to this index. The JIT
+  // implementation also depends on this.
+  uint32_t index = GET_UINT32(pc);
+  MOZ_ASSERT(index < arr->getDenseCapacity());
+  MOZ_ASSERT(index == arr->getDenseInitializedLength());
+
+  // Bump the initialized length even for hole values to ensure the
+  // index == initLength invariant holds for later InitElemArray ops.
+  arr->setDenseInitializedLength(index + 1);
+
+  if (val.isMagic(JS_ELEMENTS_HOLE)) {
+    arr->initDenseElementHole(index);
+  } else {
+    arr->initDenseElement(index, val);
+  }
+}
+
 /*
  * As an optimization, the interpreter creates a handful of reserved Rooted<T>
  * variables at the beginning, thus inserting them into the Rooted list once
@@ -3086,10 +3109,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       HandleValue rval = REGS.stackHandleAt(-1);
       MutableHandleValue res = REGS.stackHandleAt(-2);
 
-      bool done = false;
-      if (!GetElemOptimizedArguments(cx, REGS.fp(), lval, rval, res, &done)) {
-        goto error;
-      }
+      bool done =
+          MaybeGetElemOptimizedArguments(cx, REGS.fp(), lval, rval, res);
 
       if (!done) {
         if (!GetElementOperationWithStackIndex(cx, lval, lvalIndex, rval,
@@ -3968,15 +3989,9 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     CASE(InitElemArray) {
       MOZ_ASSERT(REGS.stackDepth() >= 2);
       HandleValue val = REGS.stackHandleAt(-1);
-
       ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-2].toObject());
 
-      uint32_t index = GET_UINT32(REGS.pc);
-      if (!InitArrayElemOperation(cx, REGS.pc, obj.as<ArrayObject>(), index,
-                                  val)) {
-        goto error;
-      }
-
+      InitElemArrayOperation(cx, REGS.pc, obj.as<ArrayObject>(), val);
       REGS.sp--;
     }
     END_CASE(InitElemArray)
@@ -3988,8 +4003,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-3].toObject());
 
       uint32_t index = REGS.sp[-2].toInt32();
-      if (!InitArrayElemOperation(cx, REGS.pc, obj.as<ArrayObject>(), index,
-                                  val)) {
+      if (!InitElemIncOperation(cx, obj.as<ArrayObject>(), index, val)) {
         goto error;
       }
 
@@ -4787,11 +4801,6 @@ bool js::SetObjectElementWithReceiver(JSContext* cx, HandleObject obj,
     return false;
   }
   return SetObjectElementOperation(cx, obj, id, value, receiver, strict);
-}
-
-bool js::InitElementArray(JSContext* cx, jsbytecode* pc, HandleArrayObject arr,
-                          uint32_t index, HandleValue value) {
-  return InitArrayElemOperation(cx, pc, arr, index, value);
 }
 
 bool js::AddValues(JSContext* cx, MutableHandleValue lhs,

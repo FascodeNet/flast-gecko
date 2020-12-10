@@ -73,7 +73,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
   SaveToPocket: "chrome://pocket/content/SaveToPocket.jsm",
-  SearchTelemetry: "resource:///modules/SearchTelemetry.jsm",
+  SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
@@ -637,12 +637,12 @@ let JSWINDOWACTORS = {
     enablePreference: "accessibility.blockautorefresh",
   },
 
-  SearchTelemetry: {
+  SearchSERPTelemetry: {
     parent: {
-      moduleURI: "resource:///actors/SearchTelemetryParent.jsm",
+      moduleURI: "resource:///actors/SearchSERPTelemetryParent.jsm",
     },
     child: {
-      moduleURI: "resource:///actors/SearchTelemetryChild.jsm",
+      moduleURI: "resource:///actors/SearchSERPTelemetryChild.jsm",
       events: {
         DOMContentLoaded: {},
         pageshow: { mozSystemGroup: true },
@@ -2114,7 +2114,7 @@ BrowserGlue.prototype = {
     }
 
     BrowserUsageTelemetry.uninit();
-    SearchTelemetry.uninit();
+    SearchSERPTelemetry.uninit();
     PageThumbs.uninit();
     NewTabUtils.uninit();
 
@@ -2309,7 +2309,7 @@ BrowserGlue.prototype = {
     this._windowsWereRestored = true;
 
     BrowserUsageTelemetry.init();
-    SearchTelemetry.init();
+    SearchSERPTelemetry.init();
 
     ExtensionsUI.init();
 
@@ -4180,6 +4180,7 @@ var ContentBlockingCategoriesPrefs = {
         "privacy.trackingprotection.socialtracking.enabled": null,
         "privacy.trackingprotection.fingerprinting.enabled": null,
         "privacy.trackingprotection.cryptomining.enabled": null,
+        "privacy.annotate_channels.strict_list.enabled": null,
       },
       standard: {
         "network.cookie.cookieBehavior": null,
@@ -4188,6 +4189,7 @@ var ContentBlockingCategoriesPrefs = {
         "privacy.trackingprotection.socialtracking.enabled": null,
         "privacy.trackingprotection.fingerprinting.enabled": null,
         "privacy.trackingprotection.cryptomining.enabled": null,
+        "privacy.annotate_channels.strict_list.enabled": null,
       },
     };
     let type = "strict";
@@ -4244,6 +4246,16 @@ var ContentBlockingCategoriesPrefs = {
         case "-stp":
           this.CATEGORY_PREFS[type][
             "privacy.trackingprotection.socialtracking.enabled"
+          ] = false;
+          break;
+        case "lvl2":
+          this.CATEGORY_PREFS[type][
+            "privacy.annotate_channels.strict_list.enabled"
+          ] = true;
+          break;
+        case "-lvl2":
+          this.CATEGORY_PREFS[type][
+            "privacy.annotate_channels.strict_list.enabled"
           ] = false;
           break;
         case "cookieBehavior0":

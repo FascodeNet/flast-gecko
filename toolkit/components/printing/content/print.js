@@ -114,7 +114,6 @@ var PrintEventHandler = {
   allPaperSizes: {},
   previewIsEmpty: false,
   _delayedChanges: {},
-  _nonFlaggedChangedSettings: {},
   _userChangedSettings: {},
   settingFlags: {
     margins: Ci.nsIPrintSettings.kInitSaveMargins,
@@ -145,6 +144,7 @@ var PrintEventHandler = {
   // These settings do not have an associated pref value or flag, but
   // changing them requires us to update the print preview.
   _nonFlaggedUpdatePreviewSettings: new Set(["pageRanges", "numPagesPerSheet"]),
+  _noPreviewUpdateSettings: new Set(["numCopies", "printDuplex"]),
 
   async init() {
     Services.telemetry.scalarAdd("printing.preview_opened_tm", 1);
@@ -387,6 +387,7 @@ var PrintEventHandler = {
   },
 
   async refreshSettings(printerName) {
+    this.currentPrinterName = printerName;
     let currentPrinter;
     try {
       currentPrinter = await PrintSettingsViewProxy.resolvePropertiesForPrinter(
@@ -396,6 +397,12 @@ var PrintEventHandler = {
       this.reportPrintingError("PRINTER_PROPERTIES");
       throw e;
     }
+    if (this.currentPrinterName != printerName) {
+      // Refresh settings could take a while, if the destination has changed
+      // then we don't want to update the settings after all.
+      return {};
+    }
+
     this.settings = currentPrinter.settings;
     this.defaultSettings = currentPrinter.defaultSettings;
 
@@ -534,6 +541,7 @@ var PrintEventHandler = {
   },
 
   async onUserSettingsChange(changedSettings = {}) {
+    let previewableChange = false;
     for (let [setting, value] of Object.entries(changedSettings)) {
       Services.telemetry.keyedScalarAdd(
         "printing.settings_changed",
@@ -543,23 +551,36 @@ var PrintEventHandler = {
       // Update the list of user-changed settings, which we attempt to maintain
       // across printer changes.
       this._userChangedSettings[setting] = value;
+      if (!this._noPreviewUpdateSettings.has(setting)) {
+        previewableChange = true;
+      }
     }
     if (changedSettings.printerName) {
       logger.debug(
         "onUserSettingsChange, changing to printerName:",
         changedSettings.printerName
       );
+      this.printForm.printerChanging = true;
+      this.printForm.disable(el => el.id != "printer-picker");
+      let { printerName } = changedSettings;
       // Treat a printerName change separately, because it involves a settings
       // object switch and we don't want to set the new name on the old settings.
-      changedSettings = await this.refreshSettings(changedSettings.printerName);
+      changedSettings = await this.refreshSettings(printerName);
+      if (printerName != this.currentPrinterName) {
+        // Don't continue this update if the printer changed again.
+        return;
+      }
+      this.printForm.printerChanging = false;
+      this.printForm.enable();
     } else {
       changedSettings = this.getSettingsToUpdate();
     }
 
-    let shouldPreviewUpdate = await this.updateSettings(
-      changedSettings,
-      !!changedSettings.printerName
-    );
+    let shouldPreviewUpdate =
+      (await this.updateSettings(
+        changedSettings,
+        !!changedSettings.printerName
+      )) && previewableChange;
 
     if (shouldPreviewUpdate && !printPending) {
       // We do not need to arm the preview task if the user has already printed
@@ -757,6 +778,7 @@ var PrintEventHandler = {
         detail: { sheetCount, totalPages: totalPageCount },
       })
     );
+    this.previewBrowser.setAttribute("sheet-count", sheetCount);
 
     this._hideRenderingIndicator();
 
@@ -1332,6 +1354,10 @@ var PrintSettingsViewProxy = {
         break;
       }
 
+      case "printerName":
+        // Can't set printerName, settings objects belong to a specific printer.
+        break;
+
       case "printBackgrounds":
         target.printBGImages = value;
         target.printBGColors = value;
@@ -1408,7 +1434,7 @@ function PrintUIControlMixin(superClass) {
         this.update(settings);
       });
 
-      this.addEventListener("change", this);
+      this.addEventListener("input", this);
     }
 
     render() {}
@@ -1492,7 +1518,7 @@ class PrintSettingSelect extends PrintUIControlMixin(HTMLSelectElement) {
   }
 
   handleEvent(e) {
-    if (e.type == "change" && this.settingName) {
+    if (e.type == "input" && this.settingName) {
       this.dispatchSettingsChange({
         [this.settingName]: e.target.value,
       });
@@ -1546,7 +1572,7 @@ class ColorModePicker extends PrintSettingSelect {
   }
 
   handleEvent(e) {
-    if (e.type == "change") {
+    if (e.type == "input") {
       // turn our string value into the expected boolean
       this.dispatchSettingsChange({
         [this.settingName]: this.value == "color",
@@ -1598,7 +1624,6 @@ customElements.define("orientation-input", OrientationInput);
 class CopiesInput extends PrintUIControlMixin(HTMLInputElement) {
   initialize() {
     super.initialize();
-    this.addEventListener("input", this);
     this.addEventListener("keypress", this);
     this.addEventListener("paste", this);
   }
@@ -1632,10 +1657,8 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
   initialize() {
     super.initialize();
 
-    this.addEventListener("change", this);
     this.addEventListener("submit", this);
     this.addEventListener("click", this);
-    this.addEventListener("input", this);
     this.addEventListener("revalidate", this);
 
     this._printerDestination = this.querySelector("#destination");
@@ -1717,8 +1740,11 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
     }
   }
 
-  disable() {
+  disable(filterFn) {
     for (let element of this.elements) {
+      if (filterFn && !filterFn(element)) {
+        continue;
+      }
       element.disabled = element.name != "cancel";
     }
   }
@@ -1735,9 +1761,8 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
         this.dispatchEvent(new Event("print", { bubbles: true }));
       }
     } else if (
-      e.type == "change" ||
-      e.type == "input" ||
-      e.type == "revalidate"
+      (e.type == "input" || e.type == "revalidate") &&
+      !this.printerChanging
     ) {
       this.enable();
     }
@@ -1758,10 +1783,8 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
     this._scaleChoice = this.querySelector("#percent-scale-choice");
     this._scaleError = this.querySelector("#error-invalid-scale");
 
-    this._percentScale.addEventListener("input", this);
     this._percentScale.addEventListener("keypress", this);
     this._percentScale.addEventListener("paste", this);
-    this.addEventListener("input", this);
   }
 
   updateScale() {
@@ -1802,11 +1825,6 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
   }
 
   handleEvent(e) {
-    if (e.type == "change") {
-      // We listen to input events, no need for change too.
-      return;
-    }
-
     if (e.type == "keypress") {
       this.handleKeypress(e);
       return;
@@ -1862,7 +1880,6 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
 
     this._pagesSet = new Set();
 
-    this.addEventListener("input", this);
     this.addEventListener("keypress", this);
     this.addEventListener("paste", this);
     document.addEventListener("page-count", this);
@@ -2060,12 +2077,6 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
   }
 
   handleEvent(e) {
-    if (e.type == "change") {
-      // We handle input events rather than change events, make sure we only
-      // dispatch one settings change per user change.
-      return;
-    }
-
     if (e.type == "keypress") {
       if (e.target == this._rangeInput) {
         this.handleKeypress(e);
@@ -2120,7 +2131,6 @@ class MarginsPicker extends PrintUIControlMixin(HTMLElement) {
     this._customRightMargin = this.querySelector("#custom-margin-right");
     this._marginError = this.querySelector("#error-invalid-margin");
 
-    this.addEventListener("input", this);
     this.addEventListener("keypress", this);
     this.addEventListener("paste", this);
   }
@@ -2239,12 +2249,6 @@ class MarginsPicker extends PrintUIControlMixin(HTMLElement) {
   }
 
   handleEvent(e) {
-    if (e.type == "change") {
-      // We handle input events rather than change events, make sure we only
-      // dispatch one settings change per user change.
-      return;
-    }
-
     if (e.type == "keypress") {
       this.handleKeypress(e);
       return;

@@ -161,6 +161,8 @@ browser.engagement:
     description: >
       The count of maximum number of pinned tabs open during a subsession. This
       includes private windows and the ones opened when starting the browser.
+      Starting Firefox 85 this includes number of restored pinned tabs at
+      startup.
     expires: never
     kind: uint
     notification_emails:
@@ -1178,55 +1180,6 @@ extensions.updates:
     record_in_processes:
       - main
 
-identity.fxaccounts:
-  missed_commands_fetched:
-    bug_numbers:
-      - 1644598
-    description: >
-      The number of missed FxA commands we have recovered.
-    expires: "85"
-    kind: uint
-    keyed: false
-    notification_emails:
-      - sync-team@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
-  push_state_command_target:
-    bug_numbers:
-      - 1644598
-    description: >
-      The push state of the device we are sending a command to.
-    expires: "85"
-    kind: uint
-    keyed: true
-    keys: ["ok", "expiredCallback", "noCallback"]
-    notification_emails:
-      - sync-team@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
-  push_state_this_device:
-    bug_numbers:
-      - 1644598
-    description: >
-      The reason why the push state for this device is in a bad shape.
-    expires: "85"
-    kind: uint
-    keyed: true
-    keys: ["expiredCallback", "noCallback"]
-    notification_emails:
-      - sync-team@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
-
 security:
   webauthn_used:
     bug_numbers:
@@ -1253,13 +1206,13 @@ security:
     bug_numbers:
       - 1519273
       - 1553550
+      - 1678206
     description: >
       Number of intermediate certificates pre-loaded.
-    expires: "86"
+    expires: "92"
     kind: uint
     notification_emails:
       - seceng-telemetry@mozilla.com
-      - jjones@mozilla.com
       - dkeeler@mozilla.com
     products:
       - 'firefox'
@@ -1269,13 +1222,13 @@ security:
     bug_numbers:
       - 1519273
       - 1553550
+      - 1678206
     description: >
       Number of intermediate certificates pending pre-load.
-    expires: "86"
+    expires: "92"
     kind: uint
     notification_emails:
       - seceng-telemetry@mozilla.com
-      - jjones@mozilla.com
       - dkeeler@mozilla.com
     products:
       - 'firefox'
@@ -1424,13 +1377,13 @@ contentblocking:
       - 1577030
       - 1610894
       - 1645088
+      - 1678209
     description: >
       A count of the number of tracking events blocked.
-    expires: "86"
+    expires: never
     kind: uint
     notification_emails:
       - ewright@mozilla.com
-      - chsiang@mozilla.com
       - seceng-telemetry@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -1889,12 +1842,11 @@ pictureinpicture:
     description: >
       The number of times a Picture-in-Picture window was opened, per trigger
       mechanism (e.g.: the video toggle, the context menu).
-    expires: "87"
+    expires: "92"
     kind: uint
     keyed: true
     notification_emails:
       - mconley@mozilla.com
-      - astevenson@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -1908,12 +1860,11 @@ pictureinpicture:
       The number of times a Picture-in-Picture window was closed, per trigger
       mechanism (e.g.: the close button, the unpip button, originating tab going away,
       process shutdown, etc).
-    expires: "87"
+    expires: "92"
     kind: uint
     keyed: true
     notification_emails:
       - mconley@mozilla.com
-      - astevenson@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -1925,11 +1876,10 @@ pictureinpicture:
     description: >
       The number of times a Picture-in-Picture toggle was presented to the user when
       they hovered the video with the mouse pointer.
-    expires: "87"
+    expires: "92"
     kind: uint
     notification_emails:
       - mconley@mozilla.com
-      - astevenson@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'

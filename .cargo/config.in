@@ -25,7 +25,7 @@ rev = "8a576fbe79199fa8664f64285524017f74ebcc5f"
 [source."https://github.com/mozilla-spidermonkey/wasmtime"]
 git = "https://github.com/mozilla-spidermonkey/wasmtime"
 replace-with = "vendored-sources"
-rev = "3bbadf8a2152984cf3d327d0c5a2677f37a93801"
+rev = "3b01b4b850bafb981a04383198c0b50d041dc5ef"
 
 [source."https://github.com/mozilla-spidermonkey/wasm-tools"]
 git = "https://github.com/mozilla-spidermonkey/wasm-tools"
@@ -40,7 +40,7 @@ rev = "fc5d1d33317b0fbd36725757f80a95127eff5109"
 [source."https://github.com/mozilla-spidermonkey/jsparagus"]
 git = "https://github.com/mozilla-spidermonkey/jsparagus"
 replace-with = "vendored-sources"
-rev = "1dc60327164a3f64f87180147b1f3a2a9cc74276"
+rev = "d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
 
 [source."https://github.com/kvark/spirv_cross"]
 branch = "wgpu4"
@@ -85,12 +85,12 @@ rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5"
 [source."https://github.com/PLSysSec/rlbox_lucet_sandbox/"]
 git = "https://github.com/PLSysSec/rlbox_lucet_sandbox/"
 replace-with = "vendored-sources"
-rev = "ed8bac8812e9f335d5fadd0f4ece96981aba88a3"
+rev = "f3cace4fb8b53db0849c62af4fa62bade5a620f7"
 
 [source."https://github.com/PLSysSec/lucet_sandbox_compiler"]
 git = "https://github.com/PLSysSec/lucet_sandbox_compiler"
 replace-with = "vendored-sources"
-rev = "477d8fc53a64705a9d3fbcce9de92f4988558525"
+rev = "cd07861d1c92147b35b538e6f94fde7d1986f9ad"
 
 [source."https://github.com/ChunMinChang/cubeb-coreaudio-rs"]
 git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs"
