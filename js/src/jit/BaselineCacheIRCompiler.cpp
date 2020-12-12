@@ -52,13 +52,12 @@ BaseValueIndex CacheRegisterAllocator::addressOf(MacroAssembler& masm,
 }
 
 // BaselineCacheIRCompiler compiles CacheIR to BaselineIC native code.
-BaselineCacheIRCompiler::BaselineCacheIRCompiler(
-    JSContext* cx, const CacheIRWriter& writer, uint32_t stubDataOffset,
-    BaselineCacheIRStubKind stubKind)
+BaselineCacheIRCompiler::BaselineCacheIRCompiler(JSContext* cx,
+                                                 const CacheIRWriter& writer,
+                                                 uint32_t stubDataOffset)
     : CacheIRCompiler(cx, writer, stubDataOffset, Mode::Baseline,
                       StubFieldPolicy::Address),
-      makesGCCalls_(false),
-      kind_(stubKind) {}
+      makesGCCalls_(false) {}
 
 // AutoStubFrame methods
 AutoStubFrame::AutoStubFrame(BaselineCacheIRCompiler& compiler)
@@ -136,14 +135,6 @@ void BaselineCacheIRCompiler::tailCallVMInternal(MacroAssembler& masm,
   EmitBaselineTailCallVM(code, masm, argSize);
 }
 
-static size_t GetEnteredOffset(BaselineCacheIRStubKind kind) {
-  switch (kind) {
-    case BaselineCacheIRStubKind::Regular:
-      return ICCacheIR_Regular::offsetOfEnteredCount();
-  }
-  MOZ_CRASH("unhandled BaselineCacheIRStubKind");
-}
-
 JitCode* BaselineCacheIRCompiler::compile() {
 #ifndef JS_USE_LINK_REGISTER
   // The first value contains the return addres,
@@ -155,7 +146,7 @@ JitCode* BaselineCacheIRCompiler::compile() {
 #endif
   // Count stub entries: We count entries rather than successes as it much
   // easier to ensure ICStubReg is valid at entry than at exit.
-  Address enteredCount(ICStubReg, GetEnteredOffset(kind_));
+  Address enteredCount(ICStubReg, ICCacheIRStub::offsetOfEnteredCount());
   masm.add32(Imm32(1), enteredCount);
 
   CacheIRReader reader(writer_);
@@ -856,40 +847,20 @@ bool BaselineCacheIRCompiler::emitCompareStringResult(JSOp op,
   return true;
 }
 
-bool BaselineCacheIRCompiler::callTypeUpdateIC(
-    Register obj, ValueOperand val, Register scratch,
-    LiveGeneralRegisterSet saveRegs) {
-  // Ensure the stack is empty for the VM call below.
-  allocator.discardStack(masm);
-
-  // TODO(no-TI): clean up.
-  return true;
-}
-
 bool BaselineCacheIRCompiler::emitStoreSlotShared(bool isFixed,
                                                   ObjOperandId objId,
                                                   uint32_t offsetOffset,
                                                   ValOperandId rhsId) {
-  Address offsetAddr = stubAddress(offsetOffset);
-
-  // Allocate the fixed registers first. These need to be fixed for
-  // callTypeUpdateIC.
-  AutoScratchRegister scratch1(allocator, masm, R1.scratchReg());
-  ValueOperand val = allocator.useFixedValueRegister(masm, rhsId, R0);
-
   Register obj = allocator.useRegister(masm, objId);
+  ValueOperand val = allocator.useValueRegister(masm, rhsId);
+
+  AutoScratchRegister scratch1(allocator, masm);
   Maybe<AutoScratchRegister> scratch2;
   if (!isFixed) {
     scratch2.emplace(allocator, masm);
   }
 
-  LiveGeneralRegisterSet saveRegs;
-  saveRegs.add(obj);
-  saveRegs.add(val);
-  if (!callTypeUpdateIC(obj, val, scratch1, saveRegs)) {
-    return false;
-  }
-
+  Address offsetAddr = stubAddress(offsetOffset);
   masm.load32(offsetAddr, scratch1);
 
   if (isFixed) {
@@ -923,27 +894,20 @@ bool BaselineCacheIRCompiler::emitStoreDynamicSlot(ObjOperandId objId,
 
 bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
     CacheOp op, ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-    bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset,
-    Maybe<uint32_t> numNewSlotsOffset) {
-  Address offsetAddr = stubAddress(offsetOffset);
-
-  // Allocate the fixed registers first. These need to be fixed for
-  // callTypeUpdateIC.
-  AutoScratchRegister scratch1(allocator, masm, R1.scratchReg());
-  ValueOperand val = allocator.useFixedValueRegister(masm, rhsId, R0);
-
+    uint32_t newShapeOffset, Maybe<uint32_t> numNewSlotsOffset) {
   Register obj = allocator.useRegister(masm, objId);
+  ValueOperand val = allocator.useValueRegister(masm, rhsId);
+
+  AutoScratchRegister scratch1(allocator, masm);
   AutoScratchRegister scratch2(allocator, masm);
 
-  Address newGroupAddr = stubAddress(newGroupOffset);
   Address newShapeAddr = stubAddress(newShapeOffset);
+  Address offsetAddr = stubAddress(offsetOffset);
 
   if (op == CacheOp::AllocateAndStoreDynamicSlot) {
     // We have to (re)allocate dynamic slots. Do this first, as it's the
-    // only fallible operation here. This simplifies the callTypeUpdateIC
-    // call below: it does not have to worry about saving registers used by
-    // failure paths. Note that growSlotsPure is fallible but does
-    // not GC.
+    // only fallible operation here. Note that growSlotsPure is fallible but
+    // does not GC.
     Address numNewSlotsAddr = stubAddress(*numNewSlotsOffset);
 
     FailurePath* failure;
@@ -970,30 +934,6 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
     masm.PopRegsInMaskIgnore(save, ignore);
 
     masm.branchIfFalseBool(scratch1, failure->label());
-  }
-
-  LiveGeneralRegisterSet saveRegs;
-  saveRegs.add(obj);
-  saveRegs.add(val);
-  if (!callTypeUpdateIC(obj, val, scratch1, saveRegs)) {
-    return false;
-  }
-
-  if (changeGroup) {
-    // Changing object's group from a partially to fully initialized group,
-    // per the acquired properties analysis. Only change the group if the
-    // old group still has a newScript. This only applies to PlainObjects.
-    Label noGroupChange;
-    masm.branchIfObjGroupHasNoAddendum(obj, scratch1, &noGroupChange);
-
-    // Update the object's group.
-    masm.loadPtr(newGroupAddr, scratch1);
-    masm.storeObjGroup(scratch1, obj,
-                       [](MacroAssembler& masm, const Address& addr) {
-                         EmitPreBarrier(masm, addr, MIRType::ObjectGroup);
-                       });
-
-    masm.bind(&noGroupChange);
   }
 
   // Update the object's shape.
@@ -1023,32 +963,30 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
 
 bool BaselineCacheIRCompiler::emitAddAndStoreFixedSlot(
     ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-    bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset) {
+    uint32_t newShapeOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Maybe<uint32_t> numNewSlotsOffset = mozilla::Nothing();
-  return emitAddAndStoreSlotShared(
-      CacheOp::AddAndStoreFixedSlot, objId, offsetOffset, rhsId, changeGroup,
-      newGroupOffset, newShapeOffset, numNewSlotsOffset);
+  return emitAddAndStoreSlotShared(CacheOp::AddAndStoreFixedSlot, objId,
+                                   offsetOffset, rhsId, newShapeOffset,
+                                   numNewSlotsOffset);
 }
 
 bool BaselineCacheIRCompiler::emitAddAndStoreDynamicSlot(
     ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-    bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset) {
+    uint32_t newShapeOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Maybe<uint32_t> numNewSlotsOffset = mozilla::Nothing();
-  return emitAddAndStoreSlotShared(
-      CacheOp::AddAndStoreDynamicSlot, objId, offsetOffset, rhsId, changeGroup,
-      newGroupOffset, newShapeOffset, numNewSlotsOffset);
+  return emitAddAndStoreSlotShared(CacheOp::AddAndStoreDynamicSlot, objId,
+                                   offsetOffset, rhsId, newShapeOffset,
+                                   numNewSlotsOffset);
 }
 
 bool BaselineCacheIRCompiler::emitAllocateAndStoreDynamicSlot(
     ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-    bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset,
-    uint32_t numNewSlotsOffset) {
+    uint32_t newShapeOffset, uint32_t numNewSlotsOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   return emitAddAndStoreSlotShared(CacheOp::AllocateAndStoreDynamicSlot, objId,
-                                   offsetOffset, rhsId, changeGroup,
-                                   newGroupOffset, newShapeOffset,
+                                   offsetOffset, rhsId, newShapeOffset,
                                    mozilla::Some(numNewSlotsOffset));
 }
 
@@ -1057,13 +995,11 @@ bool BaselineCacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
                                                     ValOperandId rhsId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
-  // Allocate the fixed registers first. These need to be fixed for
-  // callTypeUpdateIC.
-  AutoScratchRegister scratch(allocator, masm, R1.scratchReg());
-  ValueOperand val = allocator.useFixedValueRegister(masm, rhsId, R0);
-
   Register obj = allocator.useRegister(masm, objId);
   Register index = allocator.useRegister(masm, indexId);
+  ValueOperand val = allocator.useValueRegister(masm, rhsId);
+
+  AutoScratchRegister scratch(allocator, masm);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -1083,19 +1019,7 @@ bool BaselineCacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
   BaseObjectElementIndex element(scratch, index);
   masm.branchTestMagic(Assembler::Equal, element, failure->label());
 
-  // Call the type update IC. After this everything must be infallible as we
-  // don't save all registers here.
-  LiveGeneralRegisterSet saveRegs;
-  saveRegs.add(obj);
-  saveRegs.add(index);
-  saveRegs.add(val);
-  if (!callTypeUpdateIC(obj, val, scratch, saveRegs)) {
-    return false;
-  }
-
-  // Perform the store. Reload obj->elements because callTypeUpdateIC
-  // used the scratch register.
-  masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
+  // Perform the store.
   EmitPreBarrier(masm, element, MIRType::Value);
   masm.storeValue(val, element);
 
@@ -1130,19 +1054,18 @@ static void EmitAssertWritableArrayLengthElements(MacroAssembler& masm,
 #endif
 }
 
+// TODO(no-TI): try to merge with IonCacheIRCompiler version
 bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
                                                         Int32OperandId indexId,
                                                         ValOperandId rhsId,
                                                         bool handleAdd) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
-  // Allocate the fixed registers first. These need to be fixed for
-  // callTypeUpdateIC.
-  AutoScratchRegister scratch(allocator, masm, R1.scratchReg());
-  ValueOperand val = allocator.useFixedValueRegister(masm, rhsId, R0);
-
   Register obj = allocator.useRegister(masm, objId);
   Register index = allocator.useRegister(masm, indexId);
+  ValueOperand val = allocator.useValueRegister(masm, rhsId);
+
+  AutoScratchRegister scratch(allocator, masm);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -1165,11 +1088,12 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
   // slightly less efficient code on x86.
   Register spectreTemp = InvalidReg;
 
+  Label storeSkipPreBarrier;
   if (handleAdd) {
     // Bounds check.
-    Label capacityOk, outOfBounds;
+    Label inBounds, outOfBounds;
     masm.spectreBoundsCheck32(index, initLength, spectreTemp, &outOfBounds);
-    masm.jump(&capacityOk);
+    masm.jump(&inBounds);
 
     // If we're out-of-bounds, only handle the index == initLength case.
     masm.bind(&outOfBounds);
@@ -1177,10 +1101,10 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
 
     // If index < capacity, we can add a dense element inline. If not we
     // need to allocate more elements.
-    Label allocElement;
+    Label allocElement, addNewElement;
     Address capacity(scratch, ObjectElements::offsetOfCapacity());
     masm.spectreBoundsCheck32(index, capacity, spectreTemp, &allocElement);
-    masm.jump(&capacityOk);
+    masm.jump(&addNewElement);
 
     masm.bind(&allocElement);
 
@@ -1203,33 +1127,7 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
     // Load the reallocated elements pointer.
     masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
 
-    masm.bind(&capacityOk);
-
-    // We increment initLength after the callTypeUpdateIC call, to ensure
-    // the type update code doesn't read uninitialized memory.
-  } else {
-    // Fail if index >= initLength.
-    masm.spectreBoundsCheck32(index, initLength, spectreTemp, failure->label());
-  }
-
-  // Call the type update IC. After this everything must be infallible as we
-  // don't save all registers here.
-  LiveGeneralRegisterSet saveRegs;
-  saveRegs.add(obj);
-  saveRegs.add(index);
-  saveRegs.add(val);
-  if (!callTypeUpdateIC(obj, val, scratch, saveRegs)) {
-    return false;
-  }
-
-  // Reload obj->elements as callTypeUpdateIC used the scratch register.
-  masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
-
-  Label doStore;
-  if (handleAdd) {
-    // If index == initLength, increment initLength.
-    Label inBounds;
-    masm.branch32(Assembler::NotEqual, initLength, index, &inBounds);
+    masm.bind(&addNewElement);
 
     // Increment initLength.
     masm.add32(Imm32(1), initLength);
@@ -1242,14 +1140,17 @@ bool BaselineCacheIRCompiler::emitStoreDenseElementHole(ObjOperandId objId,
     masm.bind(&skipIncrementLength);
 
     // Skip EmitPreBarrier as the memory is uninitialized.
-    masm.jump(&doStore);
+    masm.jump(&storeSkipPreBarrier);
 
     masm.bind(&inBounds);
+  } else {
+    // Fail if index >= initLength.
+    masm.spectreBoundsCheck32(index, initLength, spectreTemp, failure->label());
   }
 
   EmitPreBarrier(masm, element, MIRType::Value);
 
-  masm.bind(&doStore);
+  masm.bind(&storeSkipPreBarrier);
   masm.storeValue(val, element);
 
   emitPostBarrierElement(obj, val, scratch, index);
@@ -1260,13 +1161,12 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
                                             ValOperandId rhsId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
-  // Allocate the fixed registers first. These need to be fixed for
-  // callTypeUpdateIC.
-  AutoScratchRegister scratch(allocator, masm, R1.scratchReg());
-  ValueOperand val = allocator.useFixedValueRegister(masm, rhsId, R0);
-
+  AutoOutputRegister output(*this);
   Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratchLength(allocator, masm);
+  ValueOperand val = allocator.useValueRegister(masm, rhsId);
+
+  AutoScratchRegisterMaybeOutput scratchLength(allocator, masm, output);
+  AutoScratchRegisterMaybeOutputType scratch(allocator, masm, output);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -1291,10 +1191,10 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
 
   // If scratchLength < capacity, we can add a dense element inline. If not we
   // need to allocate more elements.
-  Label capacityOk, allocElement;
+  Label allocElement, addNewElement;
   Address capacity(scratch, ObjectElements::offsetOfCapacity());
   masm.spectreBoundsCheck32(scratchLength, capacity, InvalidReg, &allocElement);
-  masm.jump(&capacityOk);
+  masm.jump(&addNewElement);
 
   masm.bind(&allocElement);
 
@@ -1316,23 +1216,10 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
   // Load the reallocated elements pointer.
   masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
 
-  masm.bind(&capacityOk);
-
-  // Call the type update IC. After this everything must be infallible as we
-  // don't save all registers here.
-  LiveGeneralRegisterSet saveRegs;
-  saveRegs.add(obj);
-  saveRegs.add(val);
-  if (!callTypeUpdateIC(obj, val, scratch, saveRegs)) {
-    return false;
-  }
-
-  // Reload obj->elements as callTypeUpdateIC used the scratch register.
-  masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), scratch);
+  masm.bind(&addNewElement);
 
   // Increment initLength and length.
   masm.add32(Imm32(1), elementsInitLength);
-  masm.load32(elementsLength, scratchLength);
   masm.add32(Imm32(1), elementsLength);
 
   // Store the value.
@@ -1342,7 +1229,7 @@ bool BaselineCacheIRCompiler::emitArrayPush(ObjOperandId objId,
 
   // Return value is new length.
   masm.add32(Imm32(1), scratchLength);
-  masm.tagValue(JSVAL_TYPE_INT32, scratchLength, val);
+  masm.tagValue(JSVAL_TYPE_INT32, scratchLength, output.valueReg());
 
   return true;
 }
@@ -2321,14 +2208,8 @@ bool BaselineCacheIRCompiler::init(CacheKind kind) {
 }
 
 static void ResetEnteredCounts(ICFallbackStub* stub) {
-  for (ICStubIterator iter = stub->beginChain(); !iter.atEnd(); iter++) {
-    switch (iter->kind()) {
-      case ICStub::CacheIR_Regular:
-        iter->toCacheIR_Regular()->resetEnteredCount();
-        break;
-      default:
-        break;
-    }
+  for (ICStubIterator iter = stub->beginChain(); *iter != stub; iter++) {
+    iter->toCacheIRStub()->resetEnteredCount();
   }
   stub->resetEnteredCount();
 }
@@ -2343,8 +2224,8 @@ static ICStubSpace* StubSpaceForStub(bool makesGCCalls, JSScript* script,
 
 ICStub* js::jit::AttachBaselineCacheIRStub(
     JSContext* cx, const CacheIRWriter& writer, CacheKind kind,
-    BaselineCacheIRStubKind stubKind, JSScript* outerScript, ICScript* icScript,
-    ICFallbackStub* stub, bool* attached) {
+    JSScript* outerScript, ICScript* icScript, ICFallbackStub* stub,
+    bool* attached) {
   // We shouldn't GC or report OOM (or any other exception) here.
   AutoAssertNoPendingException aanpe(cx);
   JS::AutoCheckCannotGC nogc;
@@ -2362,13 +2243,7 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
   MOZ_ASSERT(stub->numOptimizedStubs() < MaxOptimizedCacheIRStubs);
 #endif
 
-  // TODO(no-TI): remove stubKind argument.
-  uint32_t stubDataOffset = 0;
-  switch (stubKind) {
-    case BaselineCacheIRStubKind::Regular:
-      stubDataOffset = sizeof(ICCacheIR_Regular);
-      break;
-  }
+  uint32_t stubDataOffset = sizeof(ICCacheIRStub);
 
   JitZone* jitZone = cx->zone()->jitZone();
 
@@ -2385,7 +2260,7 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
   if (!code) {
     // We have to generate stub code.
     JitContext jctx(cx, nullptr);
-    BaselineCacheIRCompiler comp(cx, writer, stubDataOffset, stubKind);
+    BaselineCacheIRCompiler comp(cx, writer, stubDataOffset);
     if (!comp.init(kind)) {
       return nullptr;
     }
@@ -2420,22 +2295,14 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
   // Ensure we don't attach duplicate stubs. This can happen if a stub failed
   // for some reason and the IR generator doesn't check for exactly the same
   // conditions.
-  for (ICStubConstIterator iter = stub->beginChainConst(); !iter.atEnd();
+  for (ICStubConstIterator iter = stub->beginChainConst(); *iter != stub;
        iter++) {
-    switch (stubKind) {
-      case BaselineCacheIRStubKind::Regular: {
-        if (!iter->isCacheIR_Regular()) {
-          continue;
-        }
-        auto otherStub = iter->toCacheIR_Regular();
-        if (otherStub->stubInfo() != stubInfo) {
-          continue;
-        }
-        if (!writer.stubDataEquals(otherStub->stubDataStart())) {
-          continue;
-        }
-        break;
-      }
+    auto otherStub = iter->toCacheIRStub();
+    if (otherStub->stubInfo() != stubInfo) {
+      continue;
+    }
+    if (!writer.stubDataEquals(otherStub->stubDataStart())) {
+      continue;
     }
 
     // We found a stub that's exactly the same as the stub we're about to
@@ -2477,20 +2344,14 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
       break;
   }
 
-  switch (stubKind) {
-    case BaselineCacheIRStubKind::Regular: {
-      auto newStub = new (newStubMem) ICCacheIR_Regular(code, stubInfo);
-      writer.copyStubData(newStub->stubDataStart());
-      stub->addNewStub(newStub);
-      *attached = true;
-      return newStub;
-    }
-  }
-
-  MOZ_CRASH("Invalid kind");
+  auto newStub = new (newStubMem) ICCacheIRStub(code, stubInfo);
+  writer.copyStubData(newStub->stubDataStart());
+  stub->addNewStub(newStub);
+  *attached = true;
+  return newStub;
 }
 
-uint8_t* ICCacheIR_Regular::stubDataStart() {
+uint8_t* ICCacheIRStub::stubDataStart() {
   return reinterpret_cast<uint8_t*>(this) + stubInfo_->stubDataOffset();
 }
 

@@ -58,10 +58,6 @@ class InspectorFront extends FrontClassWithSpec(inspectorSpec) {
     );
     this.walker = await this.getWalker({
       showAllAnonymousContent,
-      // @backward-compat { version 74 } getWalker() now uses a single boolean flag to
-      // drive the display of both anonymous content and user-agent shadow roots.
-      // Older servers used separate flags. See Bug 1613773.
-      showUserAgentShadowRoots: showAllAnonymousContent,
     });
 
     // We need to reparent the RootNode of remote iframe Walkers
@@ -176,14 +172,6 @@ class InspectorFront extends FrontClassWithSpec(inspectorSpec) {
    *                                    if the NodeFront couldn't be created/retrieved.
    */
   async getNodeFrontFromNodeGrip(grip) {
-    // @backward-compat { version 71 } If the grip does not have a contentDomReference,
-    // we can't know in which browsing context id the node lives.
-    // We fall back on gripToNodeFront that might retrieve the expected nodeFront.
-    const gripHasContentDomReference = "contentDomReference" in grip;
-    if (!gripHasContentDomReference) {
-      return this.walker.gripToNodeFront(grip);
-    }
-
     return this.getNodeActorFromContentDomReference(grip.contentDomReference);
   }
 

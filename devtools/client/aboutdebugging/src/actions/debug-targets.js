@@ -172,16 +172,11 @@ function requestTabs() {
         runtime.runtimeDetails.info.type,
         DEBUG_TARGET_PANE.TAB
       );
-      const tabs = isSupported
-        ? await clientWrapper.listTabs({
-            // @backward-compat { version 75 } This is only used for older servers.
-            favicons: true,
-          })
-        : [];
+      const tabs = isSupported ? await clientWrapper.listTabs() : [];
 
-      // Fetch the missing information for all tabs.
+      // Fetch the favicon for all tabs.
       await Promise.all(
-        tabs.map(descriptorFront => descriptorFront.retrieveAsyncFormData())
+        tabs.map(descriptorFront => descriptorFront.retrieveFavicon())
       );
 
       dispatch({ type: REQUEST_TABS_SUCCESS, tabs });
@@ -270,15 +265,8 @@ function requestWorkers() {
           continue;
         }
 
-        try {
-          const subscription = await registrationFront.getPushSubscription();
-          serviceWorker.subscription = subscription;
-        } catch (e) {
-          // @backward-compat { version 78 } See Bug 1637687.
-          // On older GeckoView, some PushSubscription methods were not implemented and
-          // getPushSubscription would throw.
-          console.error("Failed to retrieve service worker subscription", e);
-        }
+        const subscription = await registrationFront.getPushSubscription();
+        serviceWorker.subscription = subscription;
       }
 
       dispatch({

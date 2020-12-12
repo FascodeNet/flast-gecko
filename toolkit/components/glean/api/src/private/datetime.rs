@@ -78,6 +78,8 @@ impl DatetimeMetric {
     /// * `nano` - the nanosecond fraction to the last whole second.
     /// * `offset_seconds` - the timezone difference, in seconds, for the Eastern
     ///   Hemisphere. Negative seconds mean Western Hemisphere.
+    #[cfg_attr(not(feature = "with-gecko"), allow(dead_code))]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_with_details(
         &self,
         year: i32,
@@ -132,7 +134,7 @@ impl DatetimeMetric {
     /// ## Return value
     ///
     /// Returns the stored value or `None` if nothing stored.
-    pub fn test_get_value(&self, storage_name: &str) -> Option<String> {
+    pub fn test_get_value<'a, S: Into<Option<&'a str>>>(&self, storage_name: S) -> Option<String> {
         match self {
             DatetimeMetric::Parent(p) => {
                 dispatcher::block_on_queue();
@@ -155,6 +157,7 @@ impl DatetimeMetricImpl {
         crate::with_glean(move |glean| self.0.set(glean, value))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_with_details(
         &self,
         year: i32,
@@ -181,8 +184,10 @@ impl DatetimeMetricImpl {
         })
     }
 
-    pub fn test_get_value(&self, storage_name: &str) -> Option<String> {
-        crate::with_glean(move |glean| self.0.test_get_value_as_string(glean, storage_name))
+    fn test_get_value<'a, S: Into<Option<&'a str>>>(&self, storage_name: S) -> Option<String> {
+        // FIXME(bug 1677448): This hack goes away when the type is implemented in RLB.
+        let storage = storage_name.into().expect("storage name required.");
+        crate::with_glean(move |glean| self.0.test_get_value_as_string(glean, storage))
     }
 }
 

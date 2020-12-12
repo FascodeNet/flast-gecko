@@ -41,6 +41,7 @@
 #include "vm/TraceLogging.h"
 #include "vm/TypedArrayObject.h"
 #include "wasm/WasmTypes.h"
+#include "wasm/WasmValidate.h"
 
 #include "gc/Nursery-inl.h"
 #include "jit/ABIFunctionList-inl.h"
@@ -1556,12 +1557,6 @@ void MacroAssembler::loadJitActivation(Register dest) {
   loadPtr(Address(dest, offsetof(JSContext, activation_)), dest);
 }
 
-void MacroAssembler::guardGroupHasUnanalyzedNewScript(Register group,
-                                                      Register scratch,
-                                                      Label* fail) {
-  MOZ_CRASH("TODO(no-TI): remove");
-}
-
 void MacroAssembler::guardSpecificAtom(Register str, JSAtom* atom,
                                        Register scratch,
                                        const LiveRegisterSet& volatileRegs,
@@ -2402,7 +2397,8 @@ void MacroAssembler::alignJitStackBasedOnNArgs(uint32_t argc) {
 // ===============================================================
 
 MacroAssembler::MacroAssembler(JSContext* cx)
-    : framePushed_(0),
+    : wasmMaxOffsetGuardLimit_(0),
+      framePushed_(0),
 #ifdef DEBUG
       inCall_(false),
 #endif
@@ -2421,7 +2417,8 @@ MacroAssembler::MacroAssembler(JSContext* cx)
 }
 
 MacroAssembler::MacroAssembler()
-    : framePushed_(0),
+    : wasmMaxOffsetGuardLimit_(0),
+      framePushed_(0),
 #ifdef DEBUG
       inCall_(false),
 #endif
@@ -2447,7 +2444,8 @@ MacroAssembler::MacroAssembler()
 }
 
 MacroAssembler::MacroAssembler(WasmToken, TempAllocator& alloc)
-    : framePushed_(0),
+    : wasmMaxOffsetGuardLimit_(0),
+      framePushed_(0),
 #ifdef DEBUG
       inCall_(false),
 #endif
@@ -2465,6 +2463,24 @@ MacroAssembler::MacroAssembler(WasmToken, TempAllocator& alloc)
   SetStackPointer64(sp);
   armbuffer_.id = 0;
 #endif
+}
+
+WasmMacroAssembler::WasmMacroAssembler(TempAllocator& alloc, bool limitedSize)
+    : MacroAssembler(WasmToken(), alloc) {
+  if (!limitedSize) {
+    setUnlimitedBuffer();
+  }
+}
+
+WasmMacroAssembler::WasmMacroAssembler(TempAllocator& alloc,
+                                       const wasm::ModuleEnvironment& env,
+                                       bool limitedSize)
+    : MacroAssembler(WasmToken(), alloc) {
+  setWasmMaxOffsetGuardLimit(
+      wasm::GetMaxOffsetGuardLimit(env.hugeMemoryEnabled()));
+  if (!limitedSize) {
+    setUnlimitedBuffer();
+  }
 }
 
 bool MacroAssembler::icBuildOOLFakeExitFrame(void* fakeReturnAddr,
@@ -3215,12 +3231,6 @@ void MacroAssembler::branchTestObjCompartment(
   loadPtr(Address(scratch, ObjectGroup::offsetOfRealm()), scratch);
   loadPtr(Address(scratch, Realm::offsetOfCompartment()), scratch);
   branchPtr(cond, scratch, ImmPtr(compartment), label);
-}
-
-void MacroAssembler::branchIfObjGroupHasNoAddendum(Register obj,
-                                                   Register scratch,
-                                                   Label* label) {
-  MOZ_CRASH("TODO(no-TI): remove");
 }
 
 void MacroAssembler::branchIfPretenuredGroup(const ObjectGroup* group,

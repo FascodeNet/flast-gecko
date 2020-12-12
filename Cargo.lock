@@ -765,7 +765,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 dependencies = [
  "cranelift-entity 0.68.0",
 ]
@@ -773,7 +773,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 dependencies = [
  "byteorder",
  "cranelift-bforest",
@@ -790,7 +790,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 dependencies = [
  "cranelift-codegen-shared",
  "cranelift-entity 0.68.0",
@@ -799,7 +799,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 
 [[package]]
 name = "cranelift-entity"
@@ -809,12 +809,12 @@ source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=cd07861d1c9
 [[package]]
 name = "cranelift-entity"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 
 [[package]]
 name = "cranelift-frontend"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "cranelift-wasm"
 version = "0.68.0"
-source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3b01b4b850bafb981a04383198c0b50d041dc5ef#3b01b4b850bafb981a04383198c0b50d041dc5ef"
+source = "git+https://github.com/mozilla-spidermonkey/wasmtime?rev=3334d92350da40b90d2529c147db3ea44918b558#3334d92350da40b90d2529c147db3ea44918b558"
 dependencies = [
  "cranelift-codegen",
  "cranelift-entity 0.68.0",
@@ -1192,9 +1192,9 @@ checksum = "09c3753c3db574d215cba4ea76018483895d7bff25a31b49ba45db21c48e50ab"
 
 [[package]]
 name = "dtoa-short"
-version = "0.3.1"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "068d4026697c1a18f0b0bb8cfcad1b0c151b90d8edb9bf4c235ad68128920d1d"
+checksum = "bde03329ae10e79ede66c9ce4dc930aa8599043b0743008548680f25b91502d6"
 dependencies = [
  "dtoa",
 ]
@@ -1523,7 +1523,6 @@ dependencies = [
  "bincode",
  "chrono",
  "crossbeam-channel",
- "ffi-support",
  "glean",
  "glean-core",
  "inherent",
@@ -1532,6 +1531,7 @@ dependencies = [
  "once_cell",
  "serde",
  "tempfile",
+ "thin-vec",
  "thiserror",
  "uuid",
  "xpcom",
@@ -2060,9 +2060,9 @@ dependencies = [
 
 [[package]]
 name = "glean"
-version = "33.7.0"
+version = "33.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0e7205a286c281745f3cdd47142273820705be14bf19b44c6fa2e90871783ba"
+checksum = "b91b0b03e572ce70d06cf92ca899bdab8679e4ca07a2877928df028c848a1e9a"
 dependencies = [
  "crossbeam-channel",
  "glean-core",
@@ -2078,9 +2078,9 @@ dependencies = [
 
 [[package]]
 name = "glean-core"
-version = "33.7.0"
+version = "33.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ec2f7fc35371e74c86a91658ea02d44c0d3c069a2ee135cee91576a75db3bd8"
+checksum = "440d35335296536f0cf46ca79b6edc4f93b3cfdaef2ce8696b7f7e6ee3d7b69f"
 dependencies = [
  "bincode",
  "chrono",
@@ -4684,9 +4684,9 @@ checksum = "797a4eaffb90d896f29698d45676f9f940a71936d7574996a7df54593ba209fa"
 
 [[package]]
 name = "smallvec"
-version = "1.3.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05720e22615919e4734f6a99ceae50d00226c3c5aca406e102ebc33298214e0a"
+checksum = "ae524f056d7d770e174287294f562e95044c68e88dec909a00d2094805db9d75"
 dependencies = [
  "serde",
 ]

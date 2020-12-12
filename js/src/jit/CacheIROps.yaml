@@ -530,13 +530,6 @@
     obj: ObjId
     shape: ShapeField
 
-- name: GuardGroupHasUnanalyzedNewScript
-  shared: true
-  transpile: false
-  cost_estimate: 1
-  args:
-    group: GroupField
-
 - name: GuardIndexIsNonNegative
   shared: true
   transpile: true
@@ -839,8 +832,6 @@
     obj: ObjId
     offset: RawInt32Field
     rhs: ValId
-    changeGroup: BoolImm
-    newGroup: GroupField
     newShape: ShapeField
 
 - name: AddAndStoreDynamicSlot
@@ -851,8 +842,6 @@
     obj: ObjId
     offset: RawInt32Field
     rhs: ValId
-    changeGroup: BoolImm
-    newGroup: GroupField
     newShape: ShapeField
 
 - name: AllocateAndStoreDynamicSlot
@@ -863,8 +852,6 @@
     obj: ObjId
     offset: RawInt32Field
     rhs: ValId
-    changeGroup: BoolImm
-    newGroup: GroupField
     newShape: ShapeField
     numNewSlots: RawInt32Field
 
@@ -1541,6 +1528,14 @@
     flags: CallFlagsImm
     funcExport: RawPointerField
     instance: ObjectField
+
+- name: GuardWasmArg
+  shared: true
+  transpile: true
+  cost_estimate: 2
+  args:
+    arg: ValId
+    type: WasmValTypeImm
 
 - name: CallNativeFunction
   shared: false

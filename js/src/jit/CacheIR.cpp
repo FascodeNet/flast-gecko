@@ -4364,8 +4364,7 @@ bool SetPropIRGenerator::canAttachAddSlotStub(HandleObject obj, HandleId id) {
   return true;
 }
 
-AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
-    HandleObjectGroup oldGroup, HandleShape oldShape) {
+AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(HandleShape oldShape) {
   ValOperandId objValId(writer.setInputOperandId(0));
   ValOperandId rhsValId;
   if (cacheKind_ == CacheKind::SetProp) {
@@ -4426,9 +4425,6 @@ AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
   ObjOperandId objId = writer.guardToObject(objValId);
   maybeEmitIdGuard(id);
 
-  // TODO(no-TI): remove GuardGroupHasUnanalyzedNewScript, group-changing code
-  // from AddAndStore* ops.
-
   // Shape guard the object.
   writer.guardShape(objId, oldShape);
 
@@ -4441,30 +4437,21 @@ AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
 
   ShapeGuardProtoChain(writer, obj, objId);
 
-  ObjectGroup* newGroup = obj->group();
-
-  // Check if we have to change the object's group. We only have to change from
-  // a partially to fully initialized group if the object is a PlainObject.
-  bool changeGroup = oldGroup != newGroup;
-  MOZ_ASSERT_IF(changeGroup, obj->is<PlainObject>());
-
   if (holder->isFixedSlot(propShape->slot())) {
     size_t offset = NativeObject::getFixedSlotOffset(propShape->slot());
-    writer.addAndStoreFixedSlot(objId, offset, rhsValId, changeGroup, newGroup,
-                                propShape);
+    writer.addAndStoreFixedSlot(objId, offset, rhsValId, propShape);
     trackAttached("AddSlot");
   } else {
     size_t offset = holder->dynamicSlotIndex(propShape->slot()) * sizeof(Value);
     uint32_t numOldSlots = NativeObject::calculateDynamicSlots(oldShape);
     uint32_t numNewSlots = holder->numDynamicSlots();
     if (numOldSlots == numNewSlots) {
-      writer.addAndStoreDynamicSlot(objId, offset, rhsValId, changeGroup,
-                                    newGroup, propShape);
+      writer.addAndStoreDynamicSlot(objId, offset, rhsValId, propShape);
       trackAttached("AddSlot");
     } else {
       MOZ_ASSERT(numNewSlots > numOldSlots);
-      writer.allocateAndStoreDynamicSlot(objId, offset, rhsValId, changeGroup,
-                                         newGroup, propShape, numNewSlots);
+      writer.allocateAndStoreDynamicSlot(objId, offset, rhsValId, propShape,
+                                         numNewSlots);
       trackAttached("AllocateSlot");
     }
   }
@@ -8244,6 +8231,7 @@ AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
 
   // If there are too many arguments, don't optimize (we won't be able to store
   // the arguments in the LIR node).
+  static_assert(wasm::MaxArgsForJitInlineCall <= ArgumentKindArgIndexLimit);
   if (sig.args().length() > wasm::MaxArgsForJitInlineCall) {
     return AttachDecision::NoAction;
   }
@@ -8279,8 +8267,6 @@ AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
 
   // Check that all arguments can be converted to the Wasm type in Warp code
   // without bailing out.
-  // TODO(post-Warp): we should emit CacheIR instructions to check this to
-  // prevent bailout loops.
   for (size_t i = 0; i < sig.args().length(); i++) {
     Value argVal = i < argc_ ? args_[i] : UndefinedValue();
     switch (sig.args()[i].kind()) {
@@ -8293,7 +8279,7 @@ AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
         }
         break;
       case wasm::ValType::I64:
-        if (!argVal.isBigInt() && !argVal.isString()) {
+        if (!argVal.isBigInt() && !argVal.isBoolean() && !argVal.isString()) {
           return AttachDecision::NoAction;
         }
         break;
@@ -8301,6 +8287,8 @@ AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
         MOZ_CRASH("Function should not have a Wasm JitEntry");
       case wasm::ValType::Ref:
         // All values can be boxed as AnyRef.
+        MOZ_ASSERT(sig.args()[i].refTypeKind() == wasm::RefType::Extern,
+                   "Unexpected type for Wasm JitEntry");
         break;
     }
   }
@@ -8313,11 +8301,19 @@ AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
 
   // Load the callee and ensure it is an object
   ValOperandId calleeValId =
-      writer.loadArgumentDynamicSlot(ArgumentKind::Callee, argcId, flags);
+      writer.loadArgumentFixedSlot(ArgumentKind::Callee, argc_, flags);
   ObjOperandId calleeObjId = writer.guardToObject(calleeValId);
 
   // Ensure the callee is this Wasm function.
   emitCalleeGuard(calleeObjId, calleeFunc);
+
+  // Guard the argument types.
+  uint32_t guardedArgs = std::min<uint32_t>(sig.args().length(), argc_);
+  for (uint32_t i = 0; i < guardedArgs; i++) {
+    ArgumentKind argKind = ArgumentKindForArgIndex(i);
+    ValOperandId argId = writer.loadArgumentFixedSlot(argKind, argc_, flags);
+    writer.guardWasmArg(argId, sig.args()[i].kind());
+  }
 
   writer.callWasmFunction(calleeObjId, argcId, flags, &funcExport,
                           inst.object());

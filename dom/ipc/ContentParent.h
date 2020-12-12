@@ -1078,8 +1078,7 @@ class ContentParent final
   // MOZ_CAN_RUN_SCRIPT_BOUNDARY because we don't have MOZ_CAN_RUN_SCRIPT bits
   // in IPC code yet.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  mozilla::ipc::IPCResult RecvAddGeolocationListener(
-      const IPC::Principal& aPrincipal, const bool& aHighAccuracy);
+  mozilla::ipc::IPCResult RecvAddGeolocationListener(const bool& aHighAccuracy);
   mozilla::ipc::IPCResult RecvRemoveGeolocationListener();
 
   // MOZ_CAN_RUN_SCRIPT_BOUNDARY because we don't have MOZ_CAN_RUN_SCRIPT bits
@@ -1134,9 +1133,8 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvDeviceReset();
 
-  mozilla::ipc::IPCResult RecvCopyFavicon(
-      nsIURI* aOldURI, nsIURI* aNewURI, const IPC::Principal& aLoadingPrincipal,
-      const bool& aInPrivateBrowsing);
+  mozilla::ipc::IPCResult RecvCopyFavicon(nsIURI* aOldURI, nsIURI* aNewURI,
+                                          const bool& aInPrivateBrowsing);
 
   virtual void ProcessingError(Result aCode, const char* aMsgName) override;
 

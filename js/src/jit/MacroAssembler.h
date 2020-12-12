@@ -221,6 +221,8 @@ class CallSiteDesc;
 class BytecodeOffset;
 class MemoryAccessDesc;
 
+struct ModuleEnvironment;
+
 enum class FailureMode : uint8_t;
 enum class SimdOp;
 enum class SymbolicAddress;
@@ -369,6 +371,16 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // given width must be scalarized on the current architecture.
   static bool MustScalarizeShiftSimd128(wasm::SimdOp op, Imm32 imm);
 #endif
+
+ private:
+  // The value returned by GetMaxOffsetGuardLimit() in WasmTypes.h
+  uint32_t wasmMaxOffsetGuardLimit_;
+
+ public:
+  uint32_t wasmMaxOffsetGuardLimit() const { return wasmMaxOffsetGuardLimit_; }
+  void setWasmMaxOffsetGuardLimit(uint32_t limit) {
+    wasmMaxOffsetGuardLimit_ = limit;
+  }
 
   //{{{ check_macroassembler_decl_style
  public:
@@ -1564,8 +1576,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void branchTestObjCompartment(Condition cond, Register obj,
                                 const JS::Compartment* compartment,
                                 Register scratch, Label* label);
-  void branchIfObjGroupHasNoAddendum(Register obj, Register scratch,
-                                     Label* label);
   void branchIfPretenuredGroup(Register group, Label* label);
   void branchIfPretenuredGroup(const ObjectGroup* group, Register scratch,
                                Label* label);
@@ -2955,24 +2965,38 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void wasmStoreI64(const wasm::MemoryAccessDesc& access, Register64 value,
                     Operand dstAddr) DEFINED_ON(x86);
 
-  // For all the ARM and ARM64 wasmLoad and wasmStore functions, `ptr` MUST
-  // equal `ptrScratch`, and that register will be updated based on conditions
-  // listed below (where it is only mentioned as `ptr`).
+  // For all the ARM/MIPS wasmLoad and wasmStore functions below, `ptr`
+  // MUST equal `ptrScratch`, and that register will be updated based on
+  // conditions listed below (where it is only mentioned as `ptr`).
 
   // `ptr` will be updated if access.offset() != 0 or access.type() ==
   // Scalar::Int64.
   void wasmLoad(const wasm::MemoryAccessDesc& access, Register memoryBase,
                 Register ptr, Register ptrScratch, AnyRegister output)
-      DEFINED_ON(arm, arm64, mips_shared);
+      DEFINED_ON(arm, mips_shared);
   void wasmLoadI64(const wasm::MemoryAccessDesc& access, Register memoryBase,
                    Register ptr, Register ptrScratch, Register64 output)
-      DEFINED_ON(arm, arm64, mips32, mips64);
+      DEFINED_ON(arm, mips32, mips64);
   void wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value,
                  Register memoryBase, Register ptr, Register ptrScratch)
-      DEFINED_ON(arm, arm64, mips_shared);
+      DEFINED_ON(arm, mips_shared);
   void wasmStoreI64(const wasm::MemoryAccessDesc& access, Register64 value,
                     Register memoryBase, Register ptr, Register ptrScratch)
-      DEFINED_ON(arm, arm64, mips32, mips64);
+      DEFINED_ON(arm, mips32, mips64);
+
+  // These accept general memoryBase + ptr + offset (in `access`); the offset is
+  // always smaller than the guard region.  They will insert an additional add
+  // if the offset is nonzero, and of course that add may require a temporary
+  // register for the offset if the offset is large, and instructions to set it
+  // up.
+  void wasmLoad(const wasm::MemoryAccessDesc& access, Register memoryBase,
+                Register ptr, AnyRegister output) DEFINED_ON(arm64);
+  void wasmLoadI64(const wasm::MemoryAccessDesc& access, Register memoryBase,
+                   Register ptr, Register64 output) DEFINED_ON(arm64);
+  void wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value,
+                 Register memoryBase, Register ptr) DEFINED_ON(arm64);
+  void wasmStoreI64(const wasm::MemoryAccessDesc& access, Register64 value,
+                    Register memoryBase, Register ptr) DEFINED_ON(arm64);
 
   // `ptr` will always be updated.
   void wasmUnalignedLoad(const wasm::MemoryAccessDesc& access,
@@ -3577,12 +3601,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   }
 
   template <typename EmitPreBarrier>
-  inline void storeObjGroup(Register group, Register obj,
-                            EmitPreBarrier emitPreBarrier);
-  template <typename EmitPreBarrier>
-  inline void storeObjGroup(ObjectGroup* group, Register obj,
-                            EmitPreBarrier emitPreBarrier);
-  template <typename EmitPreBarrier>
   inline void storeObjShape(Register shape, Register obj,
                             EmitPreBarrier emitPreBarrier);
   template <typename EmitPreBarrier>
@@ -3695,9 +3713,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void debugAssertContextRealm(const void* realm, Register scratch);
 
   void loadJitActivation(Register dest);
-
-  void guardGroupHasUnanalyzedNewScript(Register group, Register scratch,
-                                        Label* fail);
 
   void guardSpecificAtom(Register str, JSAtom* atom, Register scratch,
                          const LiveRegisterSet& volatileRegs, Label* fail);
@@ -4351,12 +4366,10 @@ class MOZ_RAII StackMacroAssembler : public MacroAssembler {
 // checking StackMacroAssembler has.
 class MOZ_RAII WasmMacroAssembler : public MacroAssembler {
  public:
-  explicit WasmMacroAssembler(TempAllocator& alloc, bool limitedSize = true)
-      : MacroAssembler(WasmToken(), alloc) {
-    if (!limitedSize) {
-      setUnlimitedBuffer();
-    }
-  }
+  explicit WasmMacroAssembler(TempAllocator& alloc, bool limitedSize = true);
+  explicit WasmMacroAssembler(TempAllocator& alloc,
+                              const wasm::ModuleEnvironment& env,
+                              bool limitedSize = true);
   ~WasmMacroAssembler() { assertNoGCThings(); }
 };
 

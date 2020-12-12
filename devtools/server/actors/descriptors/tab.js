@@ -60,12 +60,7 @@ const TabDescriptorActor = ActorClassWithSpec(tabDescriptorSpec, {
       selected: this.selected,
       title: this._getTitle(),
       traits: {
-        // @backward-compat { version 76 }
-        getFavicon: true,
-        // @backward-compat { version 77 } This trait indicates that meta data such as
-        // title, url and outerWindowID are directly available on the TabDescriptor.
-        hasTabInfo: true,
-        // @backward-compat { version 77 }
+        // Supports the Watcher actor. Can be removed as part of Bug 1680280.
         watcher: true,
       },
       url: this._getUrl(),

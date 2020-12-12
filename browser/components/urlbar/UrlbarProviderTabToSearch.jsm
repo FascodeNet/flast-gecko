@@ -135,7 +135,7 @@ class ProviderTabToSearch extends UrlbarProvider {
       queryContext.tokens.length == 1 &&
       !queryContext.searchMode &&
       UrlbarPrefs.get("update2") &&
-      UrlbarPrefs.get("update2.tabToComplete")
+      UrlbarPrefs.get("suggest.engines")
     );
   }
 
@@ -314,6 +314,7 @@ class ProviderTabToSearch extends UrlbarProvider {
     // Add all matching engines.
     let engines = await UrlbarSearchUtils.enginesForDomainPrefix(searchStr, {
       matchAllDomainLevels: true,
+      onlyEnabled: true,
     });
     if (!engines.length) {
       return;

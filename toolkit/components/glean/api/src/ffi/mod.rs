@@ -2,37 +2,66 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-#[macro_use]
-mod macros;
+#![cfg(feature = "with_gecko")]
 
-use ffi_support::FfiStr;
-#[cfg(feature = "with_gecko")]
 use {nsstring::nsACString, uuid::Uuid};
 
-define_metric_ffi!(COUNTER_MAP {
-    test_has -> fog_counter_test_has_value,
-    test_get -> fog_counter_test_get_value: i32,
-    add -> fog_counter_add(amount: i32),
-});
-
-define_metric_ffi!(TIMESPAN_MAP {
-    test_has -> fog_timespan_test_has_value,
-    test_get -> fog_timespan_test_get_value: u64,
-    start -> fog_timespan_start(),
-    stop -> fog_timespan_stop(),
-});
-
-define_metric_ffi!(BOOLEAN_MAP {
-    test_has -> fog_boolean_test_has_value,
-    test_get -> fog_boolean_test_get_value: u8,
-});
+#[macro_use]
+mod macros;
+mod event;
 
 #[no_mangle]
-pub extern "C" fn fog_boolean_set(id: u32, value: u8) {
-    match crate::metrics::__glean_metric_maps::BOOLEAN_MAP.get(&id.into()) {
-        Some(metric) => metric.set(value != 0),
-        None => panic!("No metric for id {}", id),
-    }
+pub unsafe extern "C" fn fog_counter_add(id: u32, amount: i32) {
+    let metric = metric_get!(COUNTER_MAP, id);
+    metric.add(amount);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_counter_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(COUNTER_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_counter_test_get_value(id: u32, storage_name: &nsACString) -> i32 {
+    test_get!(COUNTER_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_timespan_start(id: u32) {
+    let metric = metric_get!(TIMESPAN_MAP, id);
+    metric.start();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_timespan_stop(id: u32) {
+    let metric = metric_get!(TIMESPAN_MAP, id);
+    metric.stop();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_timespan_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(TIMESPAN_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_timespan_test_get_value(id: u32, storage_name: &nsACString) -> u64 {
+    test_get!(TIMESPAN_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_boolean_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(BOOLEAN_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fog_boolean_test_get_value(id: u32, storage_name: &nsACString) -> bool {
+    test_get!(BOOLEAN_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub extern "C" fn fog_boolean_set(id: u32, value: bool) {
+    let metric = metric_get!(BOOLEAN_MAP, id);
+    metric.set(value);
 }
 
 // The String functions are custom because test_get needs to use an outparam.
@@ -40,31 +69,24 @@ pub extern "C" fn fog_boolean_set(id: u32, value: u8) {
 // generate the rest of the functions, or something.
 
 #[no_mangle]
-pub extern "C" fn fog_string_test_has_value(id: u32, storage_name: FfiStr) -> u8 {
-    match crate::metrics::__glean_metric_maps::STRING_MAP.get(&id.into()) {
-        Some(metric) => metric.test_get_value(storage_name.as_str()).is_some() as u8,
-        None => panic!("No metric for id {}", id),
-    }
+pub extern "C" fn fog_string_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(STRING_MAP, id, storage_name)
 }
 
-#[cfg(feature = "with_gecko")]
 #[no_mangle]
-pub extern "C" fn fog_string_test_get_value(id: u32, storage_name: FfiStr, value: &mut nsACString) {
-    match crate::metrics::__glean_metric_maps::STRING_MAP.get(&id.into()) {
-        Some(metric) => {
-            value.assign(&metric.test_get_value(storage_name.as_str()).unwrap());
-        }
-        None => panic!("No metric for id {}", id),
-    }
+pub extern "C" fn fog_string_test_get_value(
+    id: u32,
+    storage_name: &nsACString,
+    value: &mut nsACString,
+) {
+    let val = test_get!(STRING_MAP, id, storage_name);
+    value.assign(&val);
 }
 
-#[cfg(feature = "with_gecko")]
 #[no_mangle]
 pub extern "C" fn fog_string_set(id: u32, value: &nsACString) {
-    match crate::metrics::__glean_metric_maps::STRING_MAP.get(&id.into()) {
-        Some(metric) => metric.set(value.to_utf8()),
-        None => panic!("No metric for id {}", id),
-    }
+    let metric = metric_get!(STRING_MAP, id);
+    metric.set(value.to_utf8());
 }
 
 // The Uuid functions are custom because test_get needs to use an outparam.
@@ -72,71 +94,47 @@ pub extern "C" fn fog_string_set(id: u32, value: &nsACString) {
 // generate the rest of the functions, or something.
 
 #[no_mangle]
-pub extern "C" fn fog_uuid_test_has_value(id: u32, storage_name: FfiStr) -> u8 {
-    match crate::metrics::__glean_metric_maps::UUID_MAP.get(&id.into()) {
-        Some(metric) => metric.test_get_value(storage_name.as_str()).is_some() as u8,
-        None => panic!("No metric for id {}", id),
-    }
+pub extern "C" fn fog_uuid_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(UUID_MAP, id, storage_name)
 }
 
-#[cfg(feature = "with_gecko")]
 #[no_mangle]
-pub extern "C" fn fog_uuid_test_get_value(id: u32, storage_name: FfiStr, value: &mut nsACString) {
-    match crate::metrics::__glean_metric_maps::UUID_MAP.get(&id.into()) {
-        Some(uuid) => {
-            value.assign(
-                &uuid
-                    .test_get_value(storage_name.as_str())
-                    .unwrap()
-                    .to_string(),
-            );
-        }
-        None => panic!("No metric for id {}", id),
-    }
+pub extern "C" fn fog_uuid_test_get_value(
+    id: u32,
+    storage_name: &nsACString,
+    value: &mut nsACString,
+) {
+    let uuid = test_get!(UUID_MAP, id, storage_name).to_string();
+    value.assign(&uuid);
 }
 
-#[cfg(feature = "with_gecko")]
 #[no_mangle]
 pub extern "C" fn fog_uuid_set(id: u32, value: &nsACString) {
     if let Ok(uuid) = Uuid::parse_str(&value.to_utf8()) {
-        match crate::metrics::__glean_metric_maps::UUID_MAP.get(&id.into()) {
-            Some(metric) => metric.set(uuid),
-            None => panic!("No metric for id {}", id),
-        }
+        let metric = metric_get!(UUID_MAP, id);
+        metric.set(uuid);
     }
 }
 
 #[no_mangle]
 pub extern "C" fn fog_uuid_generate_and_set(id: u32) {
-    match crate::metrics::__glean_metric_maps::UUID_MAP.get(&id.into()) {
-        Some(metric) => {
-            metric.generate_and_set();
-        }
-        None => panic!("No metric for id {}", id),
-    }
+    let metric = metric_get!(UUID_MAP, id);
+    metric.generate_and_set();
 }
 
 #[no_mangle]
-pub extern "C" fn fog_datetime_test_has_value(id: u32, storage_name: FfiStr) -> u8 {
-    match crate::metrics::__glean_metric_maps::DATETIME_MAP.get(&id.into()) {
-        Some(metric) => metric.test_get_value(storage_name.as_str()).is_some() as u8,
-        None => panic!("No metric for id {}", id),
-    }
+pub extern "C" fn fog_datetime_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(DATETIME_MAP, id, storage_name)
 }
 
-#[cfg(feature = "with_gecko")]
 #[no_mangle]
 pub extern "C" fn fog_datetime_test_get_value(
     id: u32,
-    storage_name: FfiStr,
+    storage_name: &nsACString,
     value: &mut nsACString,
 ) {
-    match crate::metrics::__glean_metric_maps::DATETIME_MAP.get(&id.into()) {
-        Some(metric) => {
-            value.assign(&metric.test_get_value(storage_name.as_str()).unwrap());
-        }
-        None => panic!("No metric for id {}", id),
-    }
+    let val = test_get!(DATETIME_MAP, id, storage_name);
+    value.assign(&val);
 }
 
 #[no_mangle]
@@ -151,10 +149,6 @@ pub extern "C" fn fog_datetime_set(
     nano: u32,
     offset_seconds: i32,
 ) {
-    match crate::metrics::__glean_metric_maps::DATETIME_MAP.get(&id.into()) {
-        Some(metric) => {
-            metric.set_with_details(year, month, day, hour, minute, second, nano, offset_seconds);
-        }
-        None => panic!("No metric for id {}", id),
-    }
+    let metric = metric_get!(DATETIME_MAP, id);
+    metric.set_with_details(year, month, day, hour, minute, second, nano, offset_seconds);
 }

@@ -6529,7 +6529,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
 
     uint32_t offsetGuardLimit =
-        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     if ((bceSafe_ & (BCESet(1) << local)) &&
         access->offset() < offsetGuardLimit) {
@@ -6551,7 +6551,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   void prepareMemoryAccess(MemoryAccessDesc* access, AccessCheck* check,
                            RegI32 tls, RegI32 ptr) {
     uint32_t offsetGuardLimit =
-        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     // Fold offset if necessary for further computations.
     if (access->offset() >= offsetGuardLimit ||
@@ -6720,9 +6720,9 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
 #elif defined(JS_CODEGEN_ARM64)
     if (dest.tag == AnyReg::I64) {
-      masm.wasmLoadI64(*access, HeapReg, ptr, ptr, dest.i64());
+      masm.wasmLoadI64(*access, HeapReg, ptr, dest.i64());
     } else {
-      masm.wasmLoad(*access, HeapReg, ptr, ptr, dest.any());
+      masm.wasmLoad(*access, HeapReg, ptr, dest.any());
     }
 #else
     MOZ_CRASH("BaseCompiler platform hook: load");
@@ -6843,9 +6843,9 @@ class BaseCompiler final : public BaseCompilerInterface {
 #elif defined(JS_CODEGEN_ARM64)
     MOZ_ASSERT(temp.isInvalid());
     if (access->type() == Scalar::Int64) {
-      masm.wasmStoreI64(*access, src.i64(), HeapReg, ptr, ptr);
+      masm.wasmStoreI64(*access, src.i64(), HeapReg, ptr);
     } else {
-      masm.wasmStore(*access, src.any(), HeapReg, ptr, ptr);
+      masm.wasmStore(*access, src.any(), HeapReg, ptr);
     }
 #else
     MOZ_CRASH("BaseCompiler platform hook: store");
@@ -11062,7 +11062,7 @@ RegI32 BaseCompiler::popMemoryAccess(MemoryAccessDesc* access,
     uint32_t addr = addrTemp;
 
     uint32_t offsetGuardLimit =
-        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     uint64_t ea = uint64_t(addr) + uint64_t(access->offset());
     uint64_t limit = moduleEnv_.minMemoryLength + offsetGuardLimit;
@@ -14209,10 +14209,19 @@ bool BaseCompiler::emitBody() {
         CHECK_NEXT(emitElse());
 #ifdef ENABLE_WASM_EXCEPTIONS
       case uint16_t(Op::Try):
+        if (!moduleEnv_.exceptionsEnabled()) {
+          return iter_.unrecognizedOpcode(&op);
+        }
         CHECK_NEXT(emitTry());
       case uint16_t(Op::Catch):
+        if (!moduleEnv_.exceptionsEnabled()) {
+          return iter_.unrecognizedOpcode(&op);
+        }
         CHECK_NEXT(emitCatch());
       case uint16_t(Op::Throw):
+        if (!moduleEnv_.exceptionsEnabled()) {
+          return iter_.unrecognizedOpcode(&op);
+        }
         CHECK_NEXT(emitThrow());
 #endif
       case uint16_t(Op::Br):
@@ -15690,7 +15699,7 @@ bool js::wasm::BaselineCompileFunctions(const ModuleEnvironment& moduleEnv,
   TempAllocator alloc(&lifo);
   JitContext jitContext(&alloc);
   MOZ_ASSERT(IsCompilingWasm());
-  WasmMacroAssembler masm(alloc);
+  WasmMacroAssembler masm(alloc, moduleEnv);
 
   // Swap in already-allocated empty vectors to avoid malloc/free.
   MOZ_ASSERT(code->empty());
