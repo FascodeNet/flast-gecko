@@ -3278,8 +3278,12 @@ class BaseCompiler final : public BaseCompilerInterface {
   MOZ_MUST_USE bool emitFunction();
   void emitInitStackLocals();
 
-  const FuncTypeWithId& funcType() const {
-    return *moduleEnv_.funcTypes[func_.index];
+  const FuncType& funcType() const {
+    return *moduleEnv_.funcs[func_.index].type;
+  }
+
+  const TypeIdDesc& funcTypeId() const {
+    return *moduleEnv_.funcs[func_.index].typeId;
   }
 
   // Used by some of the ScratchRegister implementations.
@@ -5280,7 +5284,7 @@ class BaseCompiler final : public BaseCompilerInterface {
       }
     }
 
-    GenerateFunctionPrologue(masm, moduleEnv_.funcTypes[func_.index]->id,
+    GenerateFunctionPrologue(masm, *moduleEnv_.funcs[func_.index].typeId,
                              compilerEnv_.mode() == CompileMode::Tier1
                                  ? Some(func_.index)
                                  : Nothing(),
@@ -5899,15 +5903,15 @@ class BaseCompiler final : public BaseCompilerInterface {
 
   CodeOffset callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
                           const Stk& indexVal, const FunctionCall& call) {
-    const FuncTypeWithId& funcType = moduleEnv_.types[funcTypeIndex].funcType();
-    MOZ_ASSERT(funcType.id.kind() != FuncTypeIdDescKind::None);
+    const TypeIdDesc& funcTypeId = moduleEnv_.typeIds[funcTypeIndex];
+    MOZ_ASSERT(funcTypeId.kind() != TypeIdDescKind::None);
 
     const TableDesc& table = moduleEnv_.tables[tableIndex];
 
     loadI32(indexVal, RegI32(WasmTableCallIndexReg));
 
     CallSiteDesc desc(call.lineOrBytecode, CallSiteDesc::Dynamic);
-    CalleeDesc callee = CalleeDesc::wasmTable(table, funcType.id);
+    CalleeDesc callee = CalleeDesc::wasmTable(table, funcTypeId);
     return masm.wasmCallIndirect(desc, callee, NeedsBoundsCheck(true));
   }
 
@@ -10361,7 +10365,7 @@ bool BaseCompiler::emitCall() {
 
   sync();
 
-  const FuncType& funcType = *moduleEnv_.funcTypes[funcIndex];
+  const FuncType& funcType = *moduleEnv_.funcs[funcIndex].type;
   bool import = moduleEnv_.funcIsImport(funcIndex);
 
   uint32_t numArgs = funcType.args().length();
@@ -10423,7 +10427,7 @@ bool BaseCompiler::emitCallIndirect() {
 
   sync();
 
-  const FuncTypeWithId& funcType = moduleEnv_.types[funcTypeIndex].funcType();
+  const FuncType& funcType = moduleEnv_.types[funcTypeIndex].funcType();
 
   // Stack: ... arg1 .. argn callee
 
@@ -12588,8 +12592,12 @@ bool BaseCompiler::emitStructNew() {
   // Returns null on OOM.
 
   const StructType& structType = moduleEnv_.types[typeIndex].structType();
+  const TypeIdDesc& structTypeId = moduleEnv_.typeIds[typeIndex];
+  RegPtr rst = needRef();
+  fr.loadTlsPtr(WasmTlsReg);
+  masm.loadWasmGlobalPtr(structTypeId.globalDataOffset(), rst);
+  pushRef(rst);
 
-  pushI32(structType.moduleIndex_);
   if (!emitInstanceCall(lineOrBytecode, SASigStructNew)) {
     return false;
   }
@@ -12614,7 +12622,7 @@ bool BaseCompiler::emitStructNew() {
 
   uint32_t fieldNo = structType.fields_.length();
   while (fieldNo-- > 0) {
-    uint32_t offs = structType.fields_[fieldNo].offset;
+    uint32_t offs = structType.objectBaseFieldOffset(fieldNo);
     switch (structType.fields_[fieldNo].type.kind()) {
       case ValType::I32: {
         RegI32 r = popI32();
@@ -12728,7 +12736,7 @@ bool BaseCompiler::emitStructGet() {
     masm.loadPtr(Address(rp, OutlineTypedObject::offsetOfData()), rp);
   }
 
-  uint32_t offs = structType.fields_[fieldIndex].offset;
+  uint32_t offs = structType.objectBaseFieldOffset(fieldIndex);
   switch (structType.fields_[fieldIndex].type.kind()) {
     case ValType::I32: {
       RegI32 r = needI32();
@@ -12829,7 +12837,7 @@ bool BaseCompiler::emitStructSet() {
     masm.loadPtr(Address(rp, OutlineTypedObject::offsetOfData()), rp);
   }
 
-  uint32_t offs = structType.fields_[fieldIndex].offset;
+  uint32_t offs = structType.objectBaseFieldOffset(fieldIndex);
   switch (structType.fields_[fieldIndex].type.kind()) {
     case ValType::I32: {
       masm.store32(ri, Address(rp, offs));
@@ -12892,8 +12900,10 @@ bool BaseCompiler::emitStructNarrow() {
 
   // struct.narrow validation ensures that these hold.
 
-  MOZ_ASSERT(inputType.isEqRef() || moduleEnv_.isStructType(inputType));
-  MOZ_ASSERT(outputType.isEqRef() || moduleEnv_.isStructType(outputType));
+  MOZ_ASSERT(inputType.isEqRef() ||
+             moduleEnv_.types.isStructType(inputType.refType()));
+  MOZ_ASSERT(outputType.isEqRef() ||
+             moduleEnv_.types.isStructType(outputType.refType()));
   MOZ_ASSERT_IF(outputType.isEqRef(), inputType.isEqRef());
 
   // EqRef -> EqRef is a no-op, just leave the value on the stack.
@@ -12905,10 +12915,13 @@ bool BaseCompiler::emitStructNarrow() {
   RegPtr rp = popRef();
 
   // Dynamic downcast eqref|(optref T) -> (optref U), leaves rp or null
-  const StructType& outputStruct =
-      moduleEnv_.types[outputType.refType().typeIndex()].structType();
+  const TypeIdDesc& outputStructTypeId =
+      moduleEnv_.typeIds[outputType.refType().typeIndex()];
+  RegPtr rst = needRef();
+  fr.loadTlsPtr(WasmTlsReg);
+  masm.loadWasmGlobalPtr(outputStructTypeId.globalDataOffset(), rst);
+  pushRef(rst);
 
-  pushI32(outputStruct.moduleIndex_);
   pushRef(rp);
   return emitInstanceCall(lineOrBytecode, SASigStructNarrow);
 }
@@ -15726,7 +15739,7 @@ bool js::wasm::BaselineCompileFunctions(const ModuleEnvironment& moduleEnv,
     // Build the local types vector.
 
     ValTypeVector locals;
-    if (!locals.appendAll(moduleEnv.funcTypes[func.index]->args())) {
+    if (!locals.appendAll(moduleEnv.funcs[func.index].type->args())) {
       return false;
     }
     if (!DecodeLocalEntries(d, moduleEnv.types, moduleEnv.features, &locals)) {

@@ -154,9 +154,6 @@ class Module : public JS::WasmModule {
                     HandleWasmMemoryObject memory,
                     const ValVector& globalImportValues) const;
   SharedCode getDebugEnabledCode() const;
-  bool makeStructTypeDescrs(
-      JSContext* cx,
-      MutableHandle<StructTypeDescrVector> structTypeDescrs) const;
 
   class Tier2GeneratorTaskImpl;
 
@@ -195,7 +192,6 @@ class Module : public JS::WasmModule {
   const CustomSectionVector& customSections() const { return customSections_; }
   const Bytes& debugBytecode() const { return debugBytecode_->bytes; }
   uint32_t codeLength(Tier t) const { return code_->segment(t).length(); }
-  const StructTypeVector& structTypes() const { return code_->structTypes(); }
 
   // Instantiate this module with the given imports:
 

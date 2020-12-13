@@ -1038,14 +1038,12 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
 
   GenerateJitEntryLoadTls(masm, frameSize);
 
-#ifdef ENABLE_WASM_SIMD
-  if (fe.funcType().hasV128ArgOrRet()) {
+  if (fe.funcType().hasUnexposableArgOrRet()) {
     CallSymbolicAddress(masm, !fe.hasEagerStubs(),
                         SymbolicAddress::ReportV128JSCall);
     GenerateJitEntryThrow(masm, frameSize);
     return FinishOffsets(masm, offsets);
   }
-#endif
 
   FloatRegister scratchF = ABINonArgDoubleReg;
   Register scratchG = ScratchIonEntry;
@@ -1199,7 +1197,7 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
         break;
       }
       case ValType::V128: {
-        // Guarded against by hasV128ArgOrRet()
+        // Guarded against by hasUnexposableArgOrRet()
         MOZ_CRASH("unexpected argument type when calling from the jit");
       }
       default: {
@@ -1375,7 +1373,7 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
                                     JSReturnOperand, WasmJitEntryReturnScratch);
             break;
           case RefType::TypeIndex:
-            MOZ_CRASH("returning reference in jitentry NYI");
+            MOZ_CRASH("unexpected return type when calling from ion to wasm");
         }
         break;
       }
@@ -1950,8 +1948,7 @@ static void FillArgumentArrayForExit(
 //  - normal entries, so that, if the import is re-exported, an entry stub can
 //    be generated and called without any special cases
 static bool GenerateImportFunction(jit::MacroAssembler& masm,
-                                   const FuncImport& fi,
-                                   FuncTypeIdDesc funcTypeId,
+                                   const FuncImport& fi, TypeIdDesc funcTypeId,
                                    FuncOffsets* offsets) {
   AssertExpectedSP(masm);
 
@@ -2020,7 +2017,7 @@ bool wasm::GenerateImportFunctions(const ModuleEnvironment& env,
     const FuncImport& fi = imports[funcIndex];
 
     FuncOffsets offsets;
-    if (!GenerateImportFunction(masm, fi, env.funcTypes[funcIndex]->id,
+    if (!GenerateImportFunction(masm, fi, *env.funcs[funcIndex].typeId,
                                 &offsets)) {
       return false;
     }
@@ -2877,12 +2874,10 @@ bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
     return true;
   }
 
-#ifdef ENABLE_WASM_SIMD
   // SIMD spec requires JS calls to exports with V128 in the signature to throw.
-  if (fe.funcType().hasV128ArgOrRet()) {
+  if (fe.funcType().hasUnexposableArgOrRet()) {
     return true;
   }
-#endif
 
   // Returning multiple values to JS JIT code not yet implemented (see
   // bug 1595031).
@@ -2929,13 +2924,11 @@ bool wasm::GenerateStubs(const ModuleEnvironment& env,
       return false;
     }
 
-#ifdef ENABLE_WASM_SIMD
     // SIMD spec requires calls to JS functions with V128 in the signature to
     // throw.
-    if (fi.funcType().hasV128ArgOrRet()) {
+    if (fi.funcType().hasUnexposableArgOrRet()) {
       continue;
     }
-#endif
 
     if (fi.funcType().temporarilyUnsupportedReftypeForExit()) {
       continue;

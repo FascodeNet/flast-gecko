@@ -97,13 +97,9 @@ static StaticRefPtr<IdleTaskRunner> sCCRunner;
 static nsITimer* sFullGCTimer;
 static StaticRefPtr<IdleTaskRunner> sInterSliceGCRunner;
 
-static TimeStamp sCurrentGCStartTime;
-
 static JS::GCSliceCallback sPrevGCSliceCallback;
 
 static bool sIncrementalCC = false;
-
-static TimeStamp sFirstCollectionTime;
 
 static bool sIsInitialized;
 static bool sShuttingDown;
@@ -272,6 +268,7 @@ void FindExceptionStackForConsoleReport(nsPIDOMWindowInner* win,
 } /* namespace xpc */
 
 static TimeDuration GetCollectionTimeDelta() {
+  static TimeStamp sFirstCollectionTime;
   TimeStamp now = TimeStamp::Now();
   if (sFirstCollectionTime) {
     return now - sFirstCollectionTime;
@@ -1163,6 +1160,12 @@ static void FireForgetSkippable(uint32_t aSuspected, bool aRemoveChildless,
   }
 }
 
+MOZ_ALWAYS_INLINE
+static TimeDuration TimeBetween(TimeStamp aStart, TimeStamp aEnd) {
+  MOZ_ASSERT(aEnd >= aStart);
+  return aEnd - aStart;
+}
+
 static TimeDuration TimeUntilNow(TimeStamp start) {
   if (start.IsNull()) {
     return TimeDuration();
@@ -1519,7 +1522,7 @@ void nsJSContext::EndCycleCollectionCallback(CycleCollectorResults& aResults) {
                    kMaxICCDuration.ToMilliseconds(),
                "A max duration ICC shouldn't reduce GC delay to 0");
 
-    PokeGC(JS::GCReason::CC_WAITING, nullptr,
+    PokeGC(JS::GCReason::CC_FINISHED, nullptr,
            StaticPrefs::javascript_options_gc_delay() -
                std::min(ccNowDuration, kMaxICCDuration).ToMilliseconds());
   }
@@ -1616,17 +1619,13 @@ void ShrinkingGCTimerFired(nsITimer* aTimer, void* aClosure) {
 static bool CCRunnerFired(TimeStamp aDeadline) {
   bool didDoWork = false;
 
-  using CCRunnerAction = CCGCScheduler::CCRunnerAction;
-  using CCRunnerStep = CCGCScheduler::CCRunnerStep;
-
   // The CC/GC scheduler (sScheduler) decides what action(s) to take during
   // this invocation of the CC runner.
   //
   // This may be zero, one, or multiple actions. (Zero is when CC is blocked by
   // incremental GC, or when the scheduler determined that a CC is no longer
-  // needed.) Loop until an action is requested that finishes this invocation,
-  // or the scheduler decides that this invocation should finish by returning
-  // `Yield`.
+  // needed.) Loop until the scheduler finishes this invocation by returning
+  // `Yield` in step.mYield.
   CCRunnerStep step;
   do {
     uint32_t suspected = nsCycleCollector_suspectedCount();
@@ -1665,7 +1664,7 @@ static bool CCRunnerFired(TimeStamp aDeadline) {
     if (step.mAction != CCRunnerAction::None) {
       didDoWork = true;
     }
-  } while (step.mYield == CCGCScheduler::CCRunnerYield::Continue);
+  } while (step.mYield == CCRunnerYield::Continue);
 
   return didDoWork;
 }
@@ -1803,7 +1802,7 @@ void nsJSContext::PokeGC(JS::GCReason aReason, JSObject* aObj,
   if (aObj) {
     JS::Zone* zone = JS::GetObjectZone(aObj);
     CycleCollectedJSRuntime::Get()->AddZoneWaitingForGC(zone);
-  } else if (aReason != JS::GCReason::CC_WAITING) {
+  } else if (aReason != JS::GCReason::CC_FINISHED) {
     sScheduler.SetNeedsFullGC();
   }
 
@@ -1905,6 +1904,8 @@ static void DOMGCSliceCallback(JSContext* aCx, JS::GCProgress aProgress,
                                const JS::GCDescription& aDesc) {
   NS_ASSERTION(NS_IsMainThread(), "GCs must run on the main thread");
 
+  static TimeStamp sCurrentGCStartTime;
+
   switch (aProgress) {
     case JS::GC_CYCLE_BEGIN: {
       // Prevent cycle collections and shrinking during incremental GC.
@@ -1948,14 +1949,11 @@ static void DOMGCSliceCallback(JSContext* aCx, JS::GCProgress aProgress,
         }
       } else {
         nsJSContext::KillFullGCTimer();
+        sScheduler.SetNeedsFullGC(false);
       }
 
       if (sScheduler.IsCCNeeded(nsCycleCollector_suspectedCount())) {
         nsCycleCollector_dispatchDeferredDeletion();
-      }
-
-      if (!aDesc.isZone_) {
-        sScheduler.SetNeedsFullGC(false);
       }
 
       Telemetry::Accumulate(Telemetry::GC_IN_PROGRESS_MS,

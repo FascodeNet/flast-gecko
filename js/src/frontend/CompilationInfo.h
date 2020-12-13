@@ -91,13 +91,16 @@ struct ScopeContext {
 };
 
 struct CompilationAtomCache {
+ public:
+  using AtomCacheVector = JS::GCVector<JSAtom*, 0, js::SystemAllocPolicy>;
+
  private:
   // Atoms lowered into or converted from CompilationStencil.parserAtomData.
   //
   // This field is here instead of in CompilationGCOutput because atoms lowered
   // from JSAtom is part of input (enclosing scope bindings, lazy function name,
   // etc), and having 2 vectors in both input/output is error prone.
-  JS::GCVector<JSAtom*, 0, js::SystemAllocPolicy> atoms_;
+  AtomCacheVector atoms_;
 
  public:
   JSAtom* getExistingAtomAt(ParserAtomIndex index) const;
@@ -107,6 +110,9 @@ struct CompilationAtomCache {
   bool hasAtomAt(ParserAtomIndex index) const;
   bool setAtomAt(JSContext* cx, ParserAtomIndex index, JSAtom* atom);
   bool allocate(JSContext* cx, size_t length);
+
+  void stealBuffer(AtomCacheVector& atoms);
+  void returnBuffer(AtomCacheVector& atoms);
 
   void trace(JSTracer* trc);
 } JS_HAZ_GC_POINTER;
@@ -202,7 +208,7 @@ struct CompilationInput {
   void trace(JSTracer* trc);
 } JS_HAZ_GC_POINTER;
 
-struct CompilationStencil;
+struct CompilationInfo;
 
 struct MOZ_RAII CompilationState {
   // Until we have dealt with Atoms in the front end, we need to hold
@@ -219,16 +225,13 @@ struct MOZ_RAII CompilationState {
 
   CompilationState(JSContext* cx, LifoAllocScope& frontendAllocScope,
                    const JS::ReadOnlyCompileOptions& options,
-                   CompilationStencil& stencil, Scope* enclosingScope = nullptr,
+                   CompilationInfo& compilationInfo,
+                   Scope* enclosingScope = nullptr,
                    JSObject* enclosingEnv = nullptr);
 };
 
 // The top level struct of stencil.
 struct CompilationStencil {
-  // This holds allocations that do not require destructors to be run but are
-  // live until the stencil is released.
-  LifoAlloc alloc;
-
   // Hold onto the RegExpStencil, BigIntStencil, and ObjLiteralStencil that are
   // allocated during parse to ensure correct destruction.
   Vector<RegExpStencil, 0, js::SystemAllocPolicy> regExpData;
@@ -264,26 +267,10 @@ struct CompilationStencil {
   // was generated in original parse but not used by stencil.
   ParserAtomVector parserAtomData;
 
-  // Parameterized chunk size to use for LifoAlloc.
-  static constexpr size_t LifoAllocChunkSize = 512;
+  CompilationStencil() = default;
 
-  CompilationStencil() : alloc(LifoAllocChunkSize) {}
-
-  // We need a move-constructor to work with Rooted, but must be explicit in
-  // order to steal the LifoAlloc data.
-  CompilationStencil(CompilationStencil&& other) noexcept
-      : alloc(LifoAllocChunkSize),
-        regExpData(std::move(other.regExpData)),
-        bigIntData(std::move(other.bigIntData)),
-        objLiteralData(std::move(other.objLiteralData)),
-        scriptData(std::move(other.scriptData)),
-        scopeData(std::move(other.scopeData)),
-        moduleMetadata(std::move(other.moduleMetadata)),
-        asmJS(std::move(other.asmJS)),
-        parserAtomData(std::move(other.parserAtomData)) {
-    // Steal the data from the LifoAlloc.
-    alloc.steal(&other.alloc);
-  }
+  // We need a move-constructor to work with Rooted.
+  CompilationStencil(CompilationStencil&& other) = default;
 
   const ParserAtom* getParserAtomAt(JSContext* cx,
                                     TaggedParserAtomIndex taggedIndex) const;
@@ -343,19 +330,19 @@ class ScriptStencilIterable {
     Iterator(const CompilationStencil& stencil, CompilationGCOutput& gcOutput,
              size_t index)
         : index_(index), stencil_(stencil), gcOutput_(gcOutput) {
-      skipNonFunctions();
+      MOZ_ASSERT(index == stencil.scriptData.length());
     }
 
    public:
     explicit Iterator(const CompilationStencil& stencil,
                       CompilationGCOutput& gcOutput)
         : stencil_(stencil), gcOutput_(gcOutput) {
-      skipNonFunctions();
+      skipTopLevelNonFunction();
     }
 
     Iterator operator++() {
       next();
-      skipNonFunctions();
+      assertFunction();
       return *this;
     }
 
@@ -364,14 +351,19 @@ class ScriptStencilIterable {
       index_++;
     }
 
-    void skipNonFunctions() {
-      size_t length = stencil_.scriptData.length();
-      while (index_ < length) {
-        if (stencil_.scriptData[index_].isFunction()) {
-          return;
-        }
+    void assertFunction() {
+      if (index_ < stencil_.scriptData.length()) {
+        MOZ_ASSERT(stencil_.scriptData[index_].isFunction());
+      }
+    }
 
-        index_++;
+    void skipTopLevelNonFunction() {
+      MOZ_ASSERT(index_ == 0);
+      if (stencil_.scriptData.length()) {
+        if (!stencil_.scriptData[0].isFunction()) {
+          next();
+          assertFunction();
+        }
       }
     }
 
@@ -409,6 +401,13 @@ class ScriptStencilIterable {
 struct CompilationInfo {
   static constexpr FunctionIndex TopLevelIndex = FunctionIndex(0);
 
+  // This holds allocations that do not require destructors to be run but are
+  // live until the stencil is released.
+  LifoAlloc alloc;
+
+  // Parameterized chunk size to use for LifoAlloc.
+  static constexpr size_t LifoAllocChunkSize = 512;
+
   CompilationInput input;
   CompilationStencil stencil;
 
@@ -429,31 +428,44 @@ struct CompilationInfo {
 
   // Construct a CompilationInfo
   CompilationInfo(JSContext* cx, const JS::ReadOnlyCompileOptions& options)
-      : input(options) {}
+      : alloc(LifoAllocChunkSize), input(options) {}
 
-  MOZ_MUST_USE bool prepareInputAndStencilForInstantiate(JSContext* cx);
-  MOZ_MUST_USE bool prepareGCOutputForInstantiate(
-      JSContext* cx, CompilationGCOutput& gcOutput);
+  static MOZ_MUST_USE bool prepareInputAndStencilForInstantiate(
+      JSContext* cx, CompilationInput& input, CompilationStencil& stencil);
+  static MOZ_MUST_USE bool prepareGCOutputForInstantiate(
+      JSContext* cx, CompilationStencil& stencil,
+      CompilationGCOutput& gcOutput);
 
-  MOZ_MUST_USE bool prepareForInstantiate(JSContext* cx,
-                                          CompilationGCOutput& gcOutput);
-  MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
-                                        CompilationGCOutput& gcOutput);
-  MOZ_MUST_USE bool instantiateStencilsAfterPreparation(
-      JSContext* cx, CompilationGCOutput& gcOutput);
+  static MOZ_MUST_USE bool prepareForInstantiate(
+      JSContext* cx, CompilationInfo& compilationInfo,
+      CompilationGCOutput& gcOutput);
+  static MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
+                                               CompilationInfo& compilationInfo,
+                                               CompilationGCOutput& gcOutput);
+  static MOZ_MUST_USE bool instantiateStencilsAfterPreparation(
+      JSContext* cx, CompilationInput& input, CompilationStencil& stencil,
+      CompilationGCOutput& gcOutput);
 
   MOZ_MUST_USE bool serializeStencils(JSContext* cx, JS::TranscodeBuffer& buf,
                                       bool* succeededOut = nullptr);
 
-  // Move constructor is necessary to use Rooted.
-  CompilationInfo(CompilationInfo&&) = default;
+  // Move constructor is necessary to use Rooted, but must be explicit in
+  // order to steal the LifoAlloc data
+  CompilationInfo(CompilationInfo&& other) noexcept
+      : alloc(LifoAllocChunkSize),
+        input(std::move(other.input)),
+        stencil(std::move(other.stencil)) {
+    // Steal the data from the LifoAlloc.
+    alloc.steal(&other.alloc);
+  }
 
   // To avoid any misuses, make sure this is neither copyable or assignable.
   CompilationInfo(const CompilationInfo&) = delete;
   CompilationInfo& operator=(const CompilationInfo&) = delete;
   CompilationInfo& operator=(CompilationInfo&&) = delete;
 
-  ScriptStencilIterable functionScriptStencils(CompilationGCOutput& gcOutput) {
+  static ScriptStencilIterable functionScriptStencils(
+      CompilationStencil& stencil, CompilationGCOutput& gcOutput) {
     return ScriptStencilIterable(stencil, gcOutput);
   }
 
@@ -473,29 +485,44 @@ struct CompilationInfoVector {
 
   MOZ_MUST_USE bool buildDelazificationIndices(JSContext* cx);
 
+  // Parameterized chunk size to use for LifoAlloc.
+  static constexpr size_t LifoAllocChunkSize = 512;
+
  public:
-  frontend::CompilationInfo initial;
-  GCVector<frontend::CompilationInfo, 0, js::SystemAllocPolicy> delazifications;
+  CompilationInfo initial;
+  LifoAlloc allocForDelazifications;
+  Vector<CompilationStencil, 0, js::SystemAllocPolicy> delazifications;
   FunctionIndexVector delazificationIndices;
+  CompilationAtomCache::AtomCacheVector delazificationAtomCache;
 
   CompilationInfoVector(JSContext* cx,
                         const JS::ReadOnlyCompileOptions& options)
-      : initial(cx, options) {}
+      : initial(cx, options), allocForDelazifications(LifoAllocChunkSize) {}
 
   // Move constructor is necessary to use Rooted.
-  CompilationInfoVector(CompilationInfoVector&&) = default;
+  CompilationInfoVector(CompilationInfoVector&& other) noexcept
+      : initial(std::move(other.initial)),
+        allocForDelazifications(LifoAllocChunkSize),
+        delazifications(std::move(other.delazifications)),
+        delazificationAtomCache(std::move(other.delazificationAtomCache)) {
+    // Steal the data from the LifoAlloc.
+    allocForDelazifications.steal(&other.allocForDelazifications);
+  }
 
   // To avoid any misuses, make sure this is neither copyable or assignable.
   CompilationInfoVector(const CompilationInfoVector&) = delete;
   CompilationInfoVector& operator=(const CompilationInfoVector&) = delete;
   CompilationInfoVector& operator=(CompilationInfoVector&&) = delete;
 
-  MOZ_MUST_USE bool prepareForInstantiate(JSContext* cx,
-                                          CompilationGCOutput& gcOutput);
-  MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
-                                        CompilationGCOutput& gcOutput);
+  MOZ_MUST_USE bool prepareForInstantiate(
+      JSContext* cx, CompilationGCOutput& gcOutput,
+      CompilationGCOutput& gcOutputForDelazification);
+  MOZ_MUST_USE bool instantiateStencils(
+      JSContext* cx, CompilationGCOutput& gcOutput,
+      CompilationGCOutput& gcOutputForDelazification);
   MOZ_MUST_USE bool instantiateStencilsAfterPreparation(
-      JSContext* cx, CompilationGCOutput& gcOutput);
+      JSContext* cx, CompilationGCOutput& gcOutput,
+      CompilationGCOutput& gcOutputForDelazification);
 
   MOZ_MUST_USE bool deserializeStencils(JSContext* cx,
                                         const JS::TranscodeRange& range,

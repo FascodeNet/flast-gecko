@@ -1958,6 +1958,7 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
 
   funbox->finishScriptFlags();
   funbox->copyFunctionFields(script);
+  funbox->copyScriptFields(script);
 
   return true;
 }
@@ -2007,7 +2008,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
 
   // Allocate the `stencilThings` array without initializing it yet.
   mozilla::Span<TaggedScriptThingIndex> stencilThings =
-      NewScriptThingSpanUninitialized(cx_, compilationInfo_.stencil.alloc,
+      NewScriptThingSpanUninitialized(cx_, compilationInfo_.alloc,
                                       ngcthings.value());
   if (stencilThings.empty()) {
     return false;

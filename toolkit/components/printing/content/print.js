@@ -20,6 +20,7 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/DeferredTask.jsm"
 );
 
+const PDF_JS_URI = "resource://pdf.js/web/viewer.html";
 const INPUT_DELAY_MS = Cu.isInAutomation ? 100 : 500;
 const MM_PER_POINT = 25.4 / 72;
 const INCHES_PER_POINT = 1 / 72;
@@ -171,12 +172,20 @@ var PrintEventHandler = {
       existingBrowser.remove();
     }
 
+    let sourcePrincipal =
+      sourceBrowsingContext.currentWindowGlobal.documentPrincipal;
+    let sourceIsPdf =
+      !sourcePrincipal.isNullPrincipal && sourcePrincipal.spec == PDF_JS_URI;
     this.originalSourceContentTitle =
       sourceBrowsingContext.currentWindowContext.documentTitle;
     this.originalSourceCurrentURI =
       sourceBrowsingContext.currentWindowContext.documentURI.spec;
 
+    this.printProgressIndicator = document.getElementById("print-progress");
     this.printForm = document.getElementById("print");
+    if (sourceIsPdf) {
+      this.printForm.removeNonPdfSettings();
+    }
 
     // Let the dialog appear before doing any potential main thread work.
     await ourBrowser._dialogReady;
@@ -257,7 +266,7 @@ var PrintEventHandler = {
         this.settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER
           ? PrintUtils.getPrintSettings(this.viewSettings.defaultSystemPrinter)
           : this.settings.clone();
-      settings.showPrintProgress = true;
+      settings.showPrintProgress = false;
       // We set the title so that if the user chooses save-to-PDF from the
       // system dialog the title will be used to generate the prepopulated
       // filename in the file picker.
@@ -368,10 +377,10 @@ var PrintEventHandler = {
     Services.prefs.setStringPref("print_printer", settings.printerName);
 
     try {
-      // The print progress dialog is causing an uncaught exception in tests.
-      // Only show it to users.
-      this.settings.showPrintProgress = !Cu.isInAutomation;
+      // We'll provide our own progress indicator.
+      this.settings.showPrintProgress = false;
       let bc = this.previewBrowser.browsingContext;
+      this.printProgressIndicator.hidden = false;
       await this._doPrint(bc, settings);
     } catch (e) {
       Cu.reportError(e);
@@ -1672,6 +1681,17 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
       "print.pages_per_sheet.enabled",
       false
     );
+  }
+
+  removeNonPdfSettings() {
+    let selectors = ["#margins", "#headers-footers", "#backgrounds"];
+    for (let selector of selectors) {
+      this.querySelector(selector).remove();
+    }
+    let moreSettings = this.querySelector("#more-settings-options");
+    if (moreSettings.children.length <= 1) {
+      moreSettings.remove();
+    }
   }
 
   requestPrint() {

@@ -3748,8 +3748,19 @@ static int clip_side(int nump, Point3D* p, Interpolants* interp, Point3D* outP,
         assert(numClip < nump + 2);
         float prevDist = prevCoord - prevSide * prev.w;
         float curDist = curCoord - prevSide * cur.w;
+        // It may happen that after we interpolate by the weight k that due to
+        // floating point rounding we've underestimated the value necessary to
+        // push it over the clipping boundary. Just in case, nudge the mantissa
+        // by a single increment so that we essentially round it up and move it
+        // further inside the clipping boundary. We use nextafter to do this in
+        // a portable fashion.
         float k = prevDist / (prevDist - curDist);
-        outP[numClip] = prev + (cur - prev) * k;
+        Point3D clipped = prev + (cur - prev) * k;
+        if (prevSide * clipped.select(AXIS) > clipped.w) {
+            k = nextafterf(k, 1.0f);
+            clipped = prev + (cur - prev) * k;
+        }
+        outP[numClip] = clipped;
         outInterp[numClip] = prevInterp + (curInterp - prevInterp) * k;
         numClip++;
       }
@@ -3760,8 +3771,17 @@ static int clip_side(int nump, Point3D* p, Interpolants* interp, Point3D* outP,
         assert(numClip < nump + 2);
         float prevDist = prevCoord - curSide * prev.w;
         float curDist = curCoord - curSide * cur.w;
+        // Calculate interpolation weight k and the nudge it inside clipping
+        // boundary with nextafter. Note that since we were previously inside
+        // and now crossing outside, we have to flip the nudge direction for
+        // the weight towards 0 instead of 1.
         float k = prevDist / (prevDist - curDist);
-        outP[numClip] = prev + (cur - prev) * k;
+        Point3D clipped = prev + (cur - prev) * k;
+        if (curSide * clipped.select(AXIS) > clipped.w) {
+            k = nextafterf(k, 0.0f);
+            clipped = prev + (cur - prev) * k;
+        }
+        outP[numClip] = clipped;
         outInterp[numClip] = prevInterp + (curInterp - prevInterp) * k;
         numClip++;
       }

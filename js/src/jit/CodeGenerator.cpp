@@ -10471,9 +10471,6 @@ void CodeGenerator::visitArraySlice(LArraySlice* lir) {
   masm.createGCObject(temp1, temp2, templateObject, lir->mir()->initialHeap(),
                       &fail);
 
-  // Fixup the group of the result in case it doesn't match the template object.
-  masm.copyObjGroupNoPreBarrier(object, temp1, temp2);
-
   masm.jump(&call);
   {
     masm.bind(&fail);
@@ -10821,7 +10818,7 @@ static bool CreateStackMapFromLSafepoint(LSafepoint& safepoint,
   return true;
 }
 
-bool CodeGenerator::generateWasm(wasm::FuncTypeIdDesc funcTypeId,
+bool CodeGenerator::generateWasm(wasm::TypeIdDesc funcTypeId,
                                  wasm::BytecodeOffset trapOffset,
                                  const wasm::ArgTypeVector& argTypes,
                                  const MachineState& trapExitLayout,
