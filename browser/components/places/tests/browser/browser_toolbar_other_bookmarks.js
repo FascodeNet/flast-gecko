@@ -49,6 +49,15 @@ add_task(async function testShowingOtherBookmarksInToolbar() {
     set: [[BOOKMARKS_H2_2020_PREF, true]],
   });
 
+  info("Check the initial state of the Other Bookmarks folder.");
+  let win = await BrowserTestUtils.openNewBrowserWindow();
+  await setupBookmarksToolbar(win);
+  ok(
+    !win.document.getElementById("OtherBookmarks"),
+    "Shouldn't have an Other Bookmarks button."
+  );
+  await BrowserTestUtils.closeWindow(win);
+
   info("Check visibility of an empty Other Bookmarks folder.");
   await testIsOtherBookmarksHidden(true);
 
@@ -156,6 +165,17 @@ add_task(async function testFolderPopup() {
 });
 
 add_task(async function testOnlyShowOtherFolderInBookmarksToolbar() {
+  await setupBookmarksToolbar();
+
+  await SpecialPowers.pushPrefEnv({
+    set: [[BOOKMARKS_H2_2020_PREF, true]],
+  });
+
+  await PlacesUtils.bookmarks.insertTree({
+    guid: PlacesUtils.bookmarks.unfiledGuid,
+    children: bookmarksInfo,
+  });
+
   await testIsOtherBookmarksHidden(false);
 
   // Test that moving the personal-bookmarks widget out of the
@@ -181,6 +201,8 @@ add_task(async function testDeletingMenuItems() {
     guid: PlacesUtils.bookmarks.unfiledGuid,
     children: bookmarksInfo,
   });
+
+  await testIsOtherBookmarksHidden(false);
 
   await openMenuPopup("#OtherBookmarksPopup", "#OtherBookmarks");
   testNumberOfMenuPopupChildren("#OtherBookmarksPopup", 3);
@@ -215,7 +237,7 @@ add_task(async function no_errors_when_bookmarks_placed_in_palette() {
 
   let errorListener = {
     observe(error) {
-      ok(false, error.message);
+      ok(false, `${error.message}, ${error.stack}, ${JSON.stringify(error)}`);
       consoleErrors++;
     },
   };
@@ -279,7 +301,7 @@ add_task(async function testShowingOtherBookmarksContextMenuItem() {
 
   await TestUtils.waitForCondition(() => {
     let otherBookmarks = newWin.document.getElementById("OtherBookmarks");
-    return !otherBookmarks.hidden;
+    return otherBookmarks && !otherBookmarks.hidden;
   }, "Other Bookmarks folder failed to show in other window.");
 
   info("Hide the Other Bookmarks folder from the original window.");
@@ -287,7 +309,7 @@ add_task(async function testShowingOtherBookmarksContextMenuItem() {
 
   await TestUtils.waitForCondition(() => {
     let otherBookmarks = newWin.document.getElementById("OtherBookmarks");
-    return otherBookmarks.hidden;
+    return !otherBookmarks || otherBookmarks.hidden;
   }, "Other Bookmarks folder failed to be hidden in other window.");
   ok(true, "Other Bookmarks was successfully hidden in other window.");
 
@@ -296,7 +318,7 @@ add_task(async function testShowingOtherBookmarksContextMenuItem() {
 
   await TestUtils.waitForCondition(() => {
     let otherBookmarks = newWin.document.getElementById("OtherBookmarks");
-    return !otherBookmarks.hidden;
+    return otherBookmarks && !otherBookmarks.hidden;
   }, "Other Bookmarks folder failed to be shown in other window.");
   ok(true, "Other Bookmarks was successfully shown in other window.");
 
@@ -362,6 +384,12 @@ add_task(async function testOtherBookmarksToolbarOverFlow() {
 
 /**
  * Tests whether or not the "Other Bookmarks" folder is visible.
+ *
+ * @param {Boolean} expected
+ *        The expected state of the Other Bookmarks folder. There are 3:
+ *        - the folder node isn't initialized and is therefore not visible,
+ *        - the folder node is initialized and is hidden
+ *        - the folder node is initialized and is visible
  */
 async function testIsOtherBookmarksHidden(expected) {
   info("Test whether or not the 'Other Bookmarks' folder is visible.");
@@ -370,9 +398,12 @@ async function testIsOtherBookmarksHidden(expected) {
   let toolbar = document.getElementById("PersonalToolbar");
   await promiseSetToolbarVisibility(toolbar, true);
 
+  let otherBookmarks = document.getElementById("OtherBookmarks");
+
   await TestUtils.waitForCondition(() => {
-    let otherBookmarks = document.getElementById("OtherBookmarks");
-    return otherBookmarks.hidden === expected;
+    otherBookmarks = document.getElementById("OtherBookmarks");
+    let isHidden = !otherBookmarks || otherBookmarks.hidden;
+    return isHidden === expected;
   }, "Other Bookmarks folder failed to change hidden state.");
 
   ok(true, `Other Bookmarks folder "hidden" state should be ${expected}.`);
@@ -519,8 +550,8 @@ async function closeToolbarContextMenu() {
  * of a task will always have the bookmark toolbar in a state that makes the
  * Other Bookmarks folder testable.
  */
-async function setupBookmarksToolbar() {
-  let toolbar = document.getElementById("PersonalToolbar");
+async function setupBookmarksToolbar(win = window) {
+  let toolbar = win.document.getElementById("PersonalToolbar");
   let wasCollapsed = toolbar.collapsed;
 
   // Uncollapse the personal toolbar if needed.

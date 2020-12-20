@@ -182,23 +182,9 @@ extern "C" const char* __tsan_default_suppressions() {
          // Probably a false-positive from crossbeam's deque not being
          // understood by tsan.
          "race:crossbeam_deque::Worker*::resize\n"
-
-
-
-
-
-         // Benign read/write races on bitfields
-         //
-         // WARNING: Bitfield races are only benign if one of the concurrent
-         // accesses is a read. Write/write races on different parts of a
-         // bitfield can have severe side-effects.
-         //
-         // These should all still be fixed because the compiler is incentivized
-         // to combine/cache these accesses without proper atomic annotations.
-
-         // Bug 1614697
-         "race:nsHttpChannel::OnCacheEntryCheck\n"
-         "race:~AutoCacheWaitFlags\n"
+         "race:crossbeam_deque::Worker*::push\n"
+         "race:crossbeam_deque::Buffer*::write\n"
+         "race:crossbeam_deque::Buffer*::read\n"
 
 
 
@@ -214,10 +200,6 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:SkRasterPipelineBlitter\n"
          "race:Clamp_S32_D32_nofilter_trans_shaderproc\n"
          "race:SkSpriteBlitter_Memcpy\n"
-
-         // Bug 1601632
-         "race:ScriptPreloader::MaybeFinishOffThreadDecode\n"
-         "race:ScriptPreloader::DoFinishOffThreadDecode\n"
 
          // Bug 1606651
          "race:nsPluginTag::nsPluginTag\n"
@@ -237,9 +219,6 @@ extern "C" const char* __tsan_default_suppressions() {
 
          // Bug 1607138
          "race:gXPCOMThreadsShutDown\n"
-
-         // Bug 1608462
-         "deadlock:ScriptPreloader::OffThreadDecodeCallback\n"
 
          // Bug 1615017
          "race:CacheFileMetadata::SetHash\n"

@@ -99,7 +99,7 @@ select {
   padding: 0;
 }
 
-select:not([size]):not([multiple])[iconic] {
+select:not([size], [multiple])[iconic] {
   padding-inline-start: 28px;
 }
 
@@ -120,10 +120,6 @@ select:not([size]):not([multiple])[iconic] {
 
 input[type="checkbox"] {
   margin-inline-end: 8px;
-}
-
-input[type="checkbox"]:checked {
-  fill: #3485ff !important;
 }
 
 input[type="radio"] {

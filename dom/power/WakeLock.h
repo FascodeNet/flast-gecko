@@ -21,8 +21,7 @@ namespace mozilla {
 class ErrorResult;
 
 namespace dom {
-
-class ContentParent;
+class Document;
 
 class WakeLock final : public nsIDOMEventListener,
                        public nsIObserver,
@@ -47,11 +46,6 @@ class WakeLock final : public nsIDOMEventListener,
   // invisible.
   nsresult Init(const nsAString& aTopic, nsPIDOMWindowInner* aWindow);
 
-  // Initialize this wake lock on behalf of the given process.  If the process
-  // dies, the lock is released.  A wake lock initialized via this method is
-  // always considered visible.
-  nsresult Init(const nsAString& aTopic, ContentParent* aContentParent);
-
   // WebIDL methods
 
   nsPIDOMWindowInner* GetParentObject() const;
@@ -67,6 +61,9 @@ class WakeLock final : public nsIDOMEventListener,
   void DoLock();
   void AttachEventListener();
   void DetachEventListener();
+
+  // Return true if all parts of the given document are regarded as invisible.
+  bool IsDocumentInvisible(const Document& aDocument) const;
 
   bool mLocked;
   bool mHidden;

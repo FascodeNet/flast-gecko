@@ -377,6 +377,30 @@ browser.engagement:
     record_in_processes:
       - 'main'
 
+  sessionrestore_interstitial:
+    bug_numbers:
+      - 1671271
+    description: >
+      Whether we show about:sessionrestore or not. Split by key, which indicates
+      why we showed the item or not. Specifically, 'deferred_restore' means we
+      didn't autorestore and thus didn't show the interstitial; 'autorestore'
+      indicates we autorestored without showing the interstitial.
+      'shown_old_session', 'shown_only_about_welcomeback',
+      'shown_many_crashes', 'shown_many_crashes_old_session' all indicate we did
+      show the interstitial because of a crash, and the text after 'shown'
+      indicates what secondary reason there was to show this page (as we don't
+      show it for 'just' one crash).
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - gijs@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 # The following section contains the browser engagement scalars.
 browser.engagement.navigation:
   urlbar:
@@ -1253,22 +1277,6 @@ security:
       - 'fennec'
     record_in_processes:
       - main
-  tls_delegated_credentials_txn:
-    bug_numbers:
-      - 1564179
-      - 1645082
-    description: >-
-      Count of how many transactions used delegated credentials (ietf-draft-tls-subcerts)
-    expires: "86"
-    kind: uint
-    notification_emails:
-      - seceng-telemetry@mozilla.com
-      - kjacobs@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
   https_only_mode_enabled:
     bug_numbers:
       - 1620244
@@ -1918,16 +1926,16 @@ preferences:
   prefs_file_was_invalid:
     bug_numbers:
       - 1367813
+      - 1682571
     description: >-
       Set to true if a failure occurred reading profile/prefs.js.
-    expires: "62"
+    expires: never
     kind: boolean
     notification_emails:
-      - bsmedberg@mozilla.com
+      - kwright@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
-      - 'fennec'
     record_in_processes:
       - main
   read_user_js:
@@ -4036,9 +4044,10 @@ pdf.viewer:
   fallback_shown:
     bug_numbers:
       - 1566882
+      - 1666979
     description: >
       How many times PDF Viewer fallback bar was shown.
-    expires: "84"
+    expires: "88"
     kind: uint
     notification_emails:
       - bdahl@mozilla.com
@@ -4051,9 +4060,10 @@ pdf.viewer:
   print:
     bug_numbers:
       - 1566882
+      - 1666979
     description: >
       How many times PDF Viewer print functionality was used.
-    expires: "84"
+    expires: "88"
     kind: uint
     notification_emails:
       - bdahl@mozilla.com
@@ -4726,6 +4736,28 @@ update:
       - main
     operating_systems:
       - windows
+
+  move_result:
+    bug_numbers:
+      - 353804
+    description: >
+      Firefox keeps downloading updates in a different place from updates that
+      are ready to install. Once the download completes, the resulting file has
+      to be moved from the downloading update directory to the ready update
+      directory. This probe counts the results that we get when attempting to
+      perform this file move. Valid values for the keys for this probe are
+      stored in the MOVE_RESULT_* values in UpdateTelemetry.jsm.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - application-update-telemetry-alerts@mozilla.com
+      - bytesized@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
 
 # The following section contains search counters.
 browser.search:

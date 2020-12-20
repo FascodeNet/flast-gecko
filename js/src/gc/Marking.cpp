@@ -1389,7 +1389,6 @@ static inline void TraceNullableBindingNames(JSTracer* trc, BindingName* names,
     }
   }
 };
-template <>
 void AbstractBindingName<JSAtom>::trace(JSTracer* trc) {
   if (JSAtom* atom = name()) {
     TraceManuallyBarrieredEdge(trc, &atom, "binding name");
@@ -2429,7 +2428,10 @@ void GCMarker::stop() {
   MOZ_ASSERT(isDrained());
   MOZ_ASSERT(!delayedMarkingList);
   MOZ_ASSERT(markLaterArenas == 0);
-  MOZ_ASSERT(state != MarkingState::NotActive);
+
+  if (state == MarkingState::NotActive) {
+    return;
+  }
   state = MarkingState::NotActive;
 
   stack.clear();
@@ -3399,7 +3401,6 @@ JSString* js::TenuringTracer::moveToTenured(JSString* src) {
 
   AllocKind dstKind = src->getAllocKind();
   Zone* zone = src->nurseryZone();
-  zone->tenuredStrings++;
 
   // If this string is in the StringToAtomCache, try to deduplicate it by using
   // the atom. Don't do this for dependent strings because they're more
@@ -3447,6 +3448,7 @@ JSString* js::TenuringTracer::moveToTenured(JSString* src) {
     if (auto p = nursery().stringDeDupSet->lookup(src)) {
       // Deduplicate to the looked-up string!
       dst = *p;
+      zone->stringStats.ref().noteDeduplicated(src->length(), src->allocSize());
       StringRelocationOverlay::forwardCell(src, dst);
       gcprobes::PromoteToTenured(src, dst);
       return dst;
@@ -3463,6 +3465,8 @@ JSString* js::TenuringTracer::moveToTenured(JSString* src) {
     dst = allocTenuredString(src, zone, dstKind);
     dst->clearNonDeduplicatable();
   }
+
+  zone->stringStats.ref().noteTenured(src->allocSize());
 
   auto* overlay = StringRelocationOverlay::forwardCell(src, dst);
   MOZ_ASSERT(dst->isDeduplicatable());
@@ -3729,7 +3733,8 @@ static inline bool ShouldCheckMarkState(JSRuntime* rt, T** thingp) {
 
   TenuredCell& thing = (*thingp)->asTenured();
   Zone* zone = thing.zoneFromAnyThread();
-  if (!zone->isCollectingFromAnyThread() || zone->isGCFinished()) {
+
+  if (zone->gcState() <= Zone::Prepare || zone->isGCFinished()) {
     return false;
   }
 
@@ -3996,12 +4001,18 @@ void UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
   }
 
   TenuredCell& tenured = cell->asTenured();
+  Zone* zone = tenured.zone();
+
+  // If the cell is in a zone whose mark bits are being cleared, then it will
+  // end up white.
+  if (zone->isGCPreparing()) {
+    return;
+  }
 
   // If the cell is in a zone that we're currently marking, then it's possible
   // that it is currently white but will end up gray. To handle this case, push
   // any cells in zones that are currently being marked onto the mark stack and
   // they will eventually get marked black.
-  Zone* zone = tenured.zone();
   if (zone->isGCMarking()) {
     if (!cell->isMarkedBlack()) {
       Cell* tmp = cell;
@@ -4061,6 +4072,11 @@ JS_FRIEND_API bool JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr thing) {
   MOZ_ASSERT(!JS::RuntimeHeapIsCycleCollecting());
 
   JSRuntime* rt = thing.asCell()->runtimeFromMainThread();
+  if (thing.asCell()->zone()->isGCPreparing()) {
+    // Mark bits are being cleared in preparation for GC.
+    return false;
+  }
+
   gcstats::AutoPhase outerPhase(rt->gc.stats(), gcstats::PhaseKind::BARRIER);
   gcstats::AutoPhase innerPhase(rt->gc.stats(),
                                 gcstats::PhaseKind::UNMARK_GRAY);

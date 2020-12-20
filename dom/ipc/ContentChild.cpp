@@ -111,6 +111,7 @@
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/plugins/PluginModuleParent.h"
+#include "mozilla/widget/RemoteLookAndFeel.h"
 #include "mozilla/widget/ScreenManager.h"
 #include "mozilla/widget/WidgetMessageUtils.h"
 #include "nsBaseDragService.h"
@@ -602,7 +603,7 @@ NS_INTERFACE_MAP_END
 
 mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
     XPCOMInitData&& aXPCOMInit, const StructuredCloneData& aInitialData,
-    LookAndFeelCache&& aLookAndFeelCache,
+    LookAndFeelData&& aLookAndFeelData,
     nsTArray<SystemFontListEntry>&& aFontList,
     const Maybe<SharedMemoryHandle>& aSharedUASheetHandle,
     const uintptr_t& aSharedUASheetAddress,
@@ -611,7 +612,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
     return IPC_OK();
   }
 
-  mLookAndFeelCache = std::move(aLookAndFeelCache);
+  mLookAndFeelData = std::move(aLookAndFeelData);
   mFontList = std::move(aFontList);
   mSharedFontListBlocks = std::move(aSharedFontListBlocks);
 #ifdef XP_WIN
@@ -1639,7 +1640,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetProcessSandbox(
       CrashReporter::Annotation::ContentSandboxCapabilities,
       static_cast<int>(SandboxInfo::Get().AsInteger()));
 #  endif /* XP_LINUX && !OS_ANDROID */
-#endif   /* MOZ_SANDBOX */
+#endif /* MOZ_SANDBOX */
 
   return IPC_OK();
 }
@@ -1751,7 +1752,8 @@ mozilla::ipc::IPCResult ContentChild::RecvConstructBrowser(
   return IPC_OK();
 }
 
-void ContentChild::GetAvailableDictionaries(nsTArray<nsString>& aDictionaries) {
+void ContentChild::GetAvailableDictionaries(
+    nsTArray<nsCString>& aDictionaries) {
   aDictionaries = mAvailableDictionaries.Clone();
 }
 
@@ -2158,7 +2160,7 @@ void ContentChild::ActorDestroy(ActorDestroyReason why) {
   CrashReporterClient::DestroySingleton();
 
   XRE_ShutdownChildProcess();
-#endif    // NS_FREE_PERMANENT_DATA
+#endif  // NS_FREE_PERMANENT_DATA
 }
 
 void ContentChild::ProcessingError(Result aCode, const char* aReason) {
@@ -2286,8 +2288,17 @@ mozilla::ipc::IPCResult ContentChild::RecvNotifyVisited(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvThemeChanged(
-    LookAndFeelCache&& aLookAndFeelCache, widget::ThemeChangeKind aKind) {
-  LookAndFeel::SetCache(aLookAndFeelCache);
+    LookAndFeelData&& aLookAndFeelData, widget::ThemeChangeKind aKind) {
+  switch (aLookAndFeelData.type()) {
+    case LookAndFeelData::TLookAndFeelCache:
+      LookAndFeel::SetCache(aLookAndFeelData.get_LookAndFeelCache());
+      break;
+    case LookAndFeelData::TFullLookAndFeel:
+      LookAndFeel::SetData(std::move(aLookAndFeelData.get_FullLookAndFeel()));
+      break;
+    default:
+      MOZ_ASSERT(false, "unreachable");
+  }
   LookAndFeel::NotifyChangedAllWindows(aKind);
   return IPC_OK();
 }
@@ -2388,7 +2399,7 @@ mozilla::ipc::IPCResult ContentChild::RecvGeolocationError(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvUpdateDictionaryList(
-    nsTArray<nsString>&& aDictionaries) {
+    nsTArray<nsCString>&& aDictionaries) {
   mAvailableDictionaries = std::move(aDictionaries);
   mozInlineSpellChecker::UpdateCanEnableInlineSpellChecking();
   return IPC_OK();

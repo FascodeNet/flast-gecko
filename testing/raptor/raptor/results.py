@@ -6,6 +6,7 @@
 # received from the raptor control server
 from __future__ import absolute_import
 
+import six
 import json
 import os
 
@@ -24,10 +25,9 @@ KNOWN_TEST_MODIFIERS = [
 ]
 
 
+@six.add_metaclass(ABCMeta)
 class PerftestResultsHandler(object):
     """Abstract base class to handle perftest results"""
-
-    __metaclass__ = ABCMeta
 
     def __init__(
         self,
@@ -791,7 +791,9 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
                             item
                         ):
                             # add page cycle custom measurements to the existing results
-                            for measurement in new_result["measurements"].iteritems():
+                            for measurement in six.iteritems(
+                                new_result["measurements"]
+                            ):
                                 self.results[i]["measurements"][measurement[0]].extend(
                                     measurement[1]
                                 )

@@ -18,7 +18,6 @@
 #include "jit/CompileInfo.h"
 #include "jit/LIR.h"
 #include "jit/MIR.h"
-#include "jit/MIRBuilderShared.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "jit/WarpBuilder.h"
@@ -620,12 +619,9 @@ bool WarpCacheIRTranspiler::emitGuardDOMExpandoMissingOrGuardShape(
 }
 
 bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
-                                                          uint32_t nameOffset,
-                                                          bool handleMissing) {
+                                                          uint32_t nameOffset) {
   MDefinition* obj = getOperand(objId);
   PropertyName* name = stringStubField(nameOffset)->asAtom().asPropertyName();
-
-  MOZ_ASSERT(handleMissing);
 
   auto* ins = MMegamorphicLoadSlot::New(alloc(), obj, name);
   add(ins);
@@ -635,11 +631,9 @@ bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
 }
 
 bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotByValueResult(
-    ObjOperandId objId, ValOperandId idId, bool handleMissing) {
+    ObjOperandId objId, ValOperandId idId) {
   MDefinition* obj = getOperand(objId);
   MDefinition* id = getOperand(idId);
-
-  MOZ_ASSERT(handleMissing);
 
   auto* ins = MMegamorphicLoadSlotByValue::New(alloc(), obj, id);
   add(ins);
@@ -650,13 +644,10 @@ bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotByValueResult(
 
 bool WarpCacheIRTranspiler::emitMegamorphicStoreSlot(ObjOperandId objId,
                                                      uint32_t nameOffset,
-                                                     ValOperandId rhsId,
-                                                     bool needsTypeBarrier) {
+                                                     ValOperandId rhsId) {
   MDefinition* obj = getOperand(objId);
   PropertyName* name = stringStubField(nameOffset)->asAtom().asPropertyName();
   MDefinition* rhs = getOperand(rhsId);
-
-  MOZ_ASSERT(!needsTypeBarrier);
 
   auto* ins = MMegamorphicStoreSlot::New(alloc(), obj, name, rhs);
   addEffectful(ins);
@@ -1083,6 +1074,16 @@ bool WarpCacheIRTranspiler::emitGuardBooleanToInt32(ValOperandId inputId,
 }
 
 bool WarpCacheIRTranspiler::emitGuardIsNumber(ValOperandId inputId) {
+  // Prefer MToDouble because it gets further optimizations downstream.
+  MDefinition* def = getOperand(inputId);
+  if (def->type() == MIRType::Int32) {
+    auto* ins = MToDouble::New(alloc(), def);
+    add(ins);
+
+    setOperand(inputId, ins);
+    return true;
+  }
+
   // MIRType::Double also implies int32 in Ion.
   return emitGuardTo(inputId, MIRType::Double);
 }
@@ -4306,13 +4307,8 @@ bool WarpCacheIRTranspiler::emitCallNativeSetter(ObjOperandId receiverId,
 }
 
 // TODO(post-Warp): rename the MetaTwoByte op when IonBuilder is gone.
-bool WarpCacheIRTranspiler::emitMetaTwoByte(MetaTwoByteKind kind,
-                                            uint32_t functionObjectOffset,
+bool WarpCacheIRTranspiler::emitMetaTwoByte(uint32_t functionObjectOffset,
                                             uint32_t templateObjectOffset) {
-  if (kind != MetaTwoByteKind::ScriptedTemplateObject) {
-    return true;
-  }
-
   JSObject* templateObj = tenuredObjectStubField(templateObjectOffset);
   MConstant* templateConst = constant(ObjectValue(*templateObj));
 

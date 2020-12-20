@@ -1088,6 +1088,7 @@ struct FeatureArgs {
         multiValue(false),
         v128(false),
         hugeMemory(false),
+        simdWormhole(false),
         exceptions(false) {}
   FeatureArgs(const FeatureArgs&) = default;
   FeatureArgs& operator=(const FeatureArgs&) = default;
@@ -1108,6 +1109,7 @@ struct FeatureArgs {
   bool multiValue;
   bool v128;
   bool hugeMemory;
+  bool simdWormhole;
   bool exceptions;
 };
 
@@ -2242,11 +2244,13 @@ typedef Vector<GlobalDesc, 0, SystemAllocPolicy> GlobalDescVector;
 #ifdef ENABLE_WASM_EXCEPTIONS
 struct EventDesc {
   EventKind kind;
-  ResultType type;
+  ValTypeVector type;
   bool isExport;
 
-  EventDesc(EventKind kind, ResultType type, bool isExport = false)
-      : kind(kind), type(type), isExport(isExport) {}
+  EventDesc(EventKind kind, ValTypeVector&& type, bool isExport = false)
+      : kind(kind), type(std::move(type)), isExport(isExport) {}
+
+  ResultType resultType() const { return ResultType::Vector(type); }
 };
 
 typedef Vector<EventDesc, 0, SystemAllocPolicy> EventDescVector;

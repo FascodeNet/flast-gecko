@@ -1332,8 +1332,17 @@ void FrameIsDebuggeeCheck(BaselineFrame* frame) {
   }
 }
 
-JSObject* CreateGenerator(JSContext* cx, BaselineFrame* frame) {
-  return AbstractGeneratorObject::create(cx, frame);
+JSObject* CreateGeneratorFromFrame(JSContext* cx, BaselineFrame* frame) {
+  return AbstractGeneratorObject::createFromFrame(cx, frame);
+}
+
+JSObject* CreateGenerator(JSContext* cx, HandleFunction callee,
+                          HandleScript script, HandleObject environmentChain,
+                          HandleObject args) {
+  Rooted<ArgumentsObject*> argsObj(
+      cx, args ? &args->as<ArgumentsObject>() : nullptr);
+  return AbstractGeneratorObject::create(cx, callee, script, environmentChain,
+                                         argsObj);
 }
 
 bool NormalSuspend(JSContext* cx, HandleObject obj, BaselineFrame* frame,
@@ -1931,7 +1940,6 @@ static bool MaybeTypedArrayIndexString(jsid id) {
   return false;
 }
 
-template <bool HandleMissing>
 static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
                                                         NativeObject* obj,
                                                         jsid id, Value* vp) {
@@ -1969,11 +1977,8 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
 
     JSObject* proto = obj->staticPrototype();
     if (!proto) {
-      if (HandleMissing) {
-        vp->setUndefined();
-        return true;
-      }
-      return false;
+      vp->setUndefined();
+      return true;
     }
 
     if (!proto->isNative()) {
@@ -1983,20 +1988,13 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
   }
 }
 
-template <bool HandleMissing>
 bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* vp) {
   // Condition checked by caller.
   MOZ_ASSERT(obj->isNative());
-  return GetNativeDataPropertyPure<HandleMissing>(cx, &obj->as<NativeObject>(),
-                                                  NameToId(name), vp);
+  return GetNativeDataPropertyPure(cx, &obj->as<NativeObject>(), NameToId(name),
+                                   vp);
 }
-
-template bool GetNativeDataPropertyPure<true>(JSContext* cx, JSObject* obj,
-                                              PropertyName* name, Value* vp);
-
-template bool GetNativeDataPropertyPure<false>(JSContext* cx, JSObject* obj,
-                                               PropertyName* name, Value* vp);
 
 static MOZ_ALWAYS_INLINE bool ValueToAtomOrSymbolPure(JSContext* cx,
                                                       Value& idVal, jsid* id) {
@@ -2031,7 +2029,6 @@ static MOZ_ALWAYS_INLINE bool ValueToAtomOrSymbolPure(JSContext* cx,
   return true;
 }
 
-template <bool HandleMissing>
 bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
@@ -2046,18 +2043,9 @@ bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp) {
   }
 
   Value* res = vp + 1;
-  return GetNativeDataPropertyPure<HandleMissing>(cx, &obj->as<NativeObject>(),
-                                                  id, res);
+  return GetNativeDataPropertyPure(cx, &obj->as<NativeObject>(), id, res);
 }
 
-template bool GetNativeDataPropertyByValuePure<true>(JSContext* cx,
-                                                     JSObject* obj, Value* vp);
-
-template bool GetNativeDataPropertyByValuePure<false>(JSContext* cx,
-                                                      JSObject* obj, Value* vp);
-
-// TODO(no-TI): remove NeedsTypeBarrier.
-template <bool NeedsTypeBarrier>
 bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* val) {
   AutoUnsafeCallWithABI unsafe;
@@ -2075,12 +2063,6 @@ bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
   nobj->setSlot(shape->slot(), *val);
   return true;
 }
-
-template bool SetNativeDataPropertyPure<true>(JSContext* cx, JSObject* obj,
-                                              PropertyName* name, Value* val);
-
-template bool SetNativeDataPropertyPure<false>(JSContext* cx, JSObject* obj,
-                                               PropertyName* name, Value* val);
 
 bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg,
                                Shape* propShape) {
@@ -2333,20 +2315,6 @@ bool DoConcatStringObject(JSContext* cx, HandleValue lhs, HandleValue rhs,
   }
 
   res.setString(str);
-  return true;
-}
-
-MOZ_MUST_USE bool TrySkipAwait(JSContext* cx, HandleValue val,
-                               MutableHandleValue resolved) {
-  bool canSkip;
-  if (!TrySkipAwait(cx, val, &canSkip, resolved)) {
-    return false;
-  }
-
-  if (!canSkip) {
-    resolved.setMagic(JS_CANNOT_SKIP_AWAIT);
-  }
-
   return true;
 }
 

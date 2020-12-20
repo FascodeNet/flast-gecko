@@ -28,8 +28,41 @@
 
 using namespace js;
 
-JSObject* AbstractGeneratorObject::create(JSContext* cx,
-                                          AbstractFramePtr frame) {
+AbstractGeneratorObject* AbstractGeneratorObject::create(
+    JSContext* cx, HandleFunction callee, HandleScript script,
+    HandleObject environmentChain, Handle<ArgumentsObject*> argsObject) {
+  Rooted<AbstractGeneratorObject*> genObj(cx);
+  if (!callee->isAsync()) {
+    genObj = GeneratorObject::create(cx, callee);
+  } else if (callee->isGenerator()) {
+    genObj = AsyncGeneratorObject::create(cx, callee);
+  } else {
+    genObj = AsyncFunctionGeneratorObject::create(cx, callee);
+  }
+  if (!genObj) {
+    return nullptr;
+  }
+
+  genObj->setCallee(*callee);
+  genObj->setEnvironmentChain(*environmentChain);
+  if (argsObject) {
+    genObj->setArgsObj(*argsObject.get());
+  }
+
+  ArrayObject* stack = NewDenseFullyAllocatedArray(cx, script->nslots());
+  if (!stack) {
+    return nullptr;
+  }
+
+  genObj->setStackStorage(*stack);
+
+  // Note: This assumes that a Warp frame cannot be the target of
+  //       the debugger, as we do not call OnNewGenerator.
+  return genObj;
+}
+
+JSObject* AbstractGeneratorObject::createFromFrame(JSContext* cx,
+                                                   AbstractFramePtr frame) {
   MOZ_ASSERT(frame.isGeneratorFrame());
   MOZ_ASSERT(!frame.isConstructing());
 
@@ -38,25 +71,17 @@ JSObject* AbstractGeneratorObject::create(JSContext* cx,
   }
 
   RootedFunction fun(cx, frame.callee());
+  Rooted<ArgumentsObject*> maybeArgs(
+      cx, frame.script()->needsArgsObj() ? &frame.argsObj() : nullptr);
+  RootedObject environmentChain(cx, frame.environmentChain());
 
-  Rooted<AbstractGeneratorObject*> genObj(cx);
-  if (!fun->isAsync()) {
-    genObj = GeneratorObject::create(cx, fun);
-  } else if (fun->isGenerator()) {
-    genObj = AsyncGeneratorObject::create(cx, fun);
-  } else {
-    genObj = AsyncFunctionGeneratorObject::create(cx, fun);
-  }
+  RootedScript script(cx, frame.script());
+  Rooted<AbstractGeneratorObject*> genObj(
+      cx, AbstractGeneratorObject::create(cx, fun, script, environmentChain,
+                                          maybeArgs));
   if (!genObj) {
     return nullptr;
   }
-
-  genObj->setCallee(*frame.callee());
-  genObj->setEnvironmentChain(*frame.environmentChain());
-  if (frame.script()->needsArgsObj()) {
-    genObj->setArgsObj(frame.argsObj());
-  }
-  genObj->clearStackStorage();
 
   if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
     return nullptr;
@@ -89,7 +114,14 @@ JSObject* AbstractGeneratorObject::createModuleGenerator(
 
   genObj->setCallee(*handlerFun);
   genObj->setEnvironmentChain(*frame.environmentChain());
-  genObj->clearStackStorage();
+
+  ArrayObject* stack =
+      NewDenseFullyAllocatedArray(cx, module->script()->nslots());
+  if (!stack) {
+    return nullptr;
+  }
+
+  genObj->setStackStorage(*stack);
 
   if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
     return nullptr;
@@ -115,15 +147,9 @@ bool AbstractGeneratorObject::suspend(JSContext* cx, HandleObject obj,
 
   if (nvalues > 0) {
     ArrayObject* stack = nullptr;
-    if (genObj->hasStackStorage()) {
-      stack = &genObj->stackStorage();
-    } else {
-      stack = NewDenseEmptyArray(cx);
-      if (!stack) {
-        return false;
-      }
-      genObj->setStackStorage(*stack);
-    }
+    MOZ_ASSERT(genObj->hasStackStorage());
+    stack = &genObj->stackStorage();
+    MOZ_ASSERT(stack->getDenseCapacity() >= nvalues);
     if (!frame.saveGeneratorSlots(cx, nvalues, stack)) {
       return false;
     }

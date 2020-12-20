@@ -17,6 +17,7 @@
 #include "gc/FindSCCs.h"
 #include "gc/GCMarker.h"
 #include "gc/NurseryAwareHashMap.h"
+#include "gc/Statistics.h"
 #include "gc/ZoneAllocator.h"
 #include "js/GCHashTable.h"
 #include "vm/AtomsTable.h"
@@ -178,10 +179,6 @@ namespace JS {
 // to delete the last compartment in a live zone.
 class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
  private:
-  js::WriteOnceData<bool> isAtomsZone_;
-  js::WriteOnceData<bool> isSelfHostingZone_;
-  js::WriteOnceData<bool> isSystemZone_;
-
   enum class HelperThreadUse : uint32_t { None, Pending, Active };
   mozilla::Atomic<HelperThreadUse, mozilla::SequentiallyConsistent>
       helperThreadUse_;
@@ -196,7 +193,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   // Per-zone data for use by an embedder.
   js::ZoneData<void*> data;
 
-  js::ZoneData<uint32_t> tenuredStrings;
   js::ZoneData<uint32_t> tenuredBigInts;
 
   js::ZoneOrIonCompileData<uint64_t> nurseryAllocatedStrings;
@@ -227,6 +223,12 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
 #ifdef MOZ_VTUNE
   js::UniquePtr<js::ScriptVTuneIdMap> scriptVTuneIdMap;
 #endif
+#ifdef JS_CACHEIR_SPEW
+  js::UniquePtr<js::ScriptFinalWarmUpCountMap> scriptFinalWarmUpCountMap;
+#endif
+
+  js::ZoneData<js::StringStats> previousGCStringStats;
+  js::ZoneData<js::StringStats> stringStats;
 
 #ifdef DEBUG
   js::MainThreadData<unsigned> gcSweepGroupIndex;
@@ -350,7 +352,7 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
     return static_cast<Zone*>(zoneAlloc);
   }
 
-  explicit Zone(JSRuntime* rt);
+  explicit Zone(JSRuntime* rt, Kind kind = NormalZone);
   ~Zone();
 
   MOZ_MUST_USE bool init();
@@ -476,14 +478,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
     return jitZone_ ? jitZone_ : createJitZone(cx);
   }
   js::jit::JitZone* jitZone() { return jitZone_; }
-
-  bool isAtomsZone() const { return isAtomsZone_; }
-  bool isSelfHostingZone() const { return isSelfHostingZone_; }
-  bool isSystemZone() const { return isSystemZone_; }
-
-  void setIsAtomsZone();
-  void setIsSelfHostingZone();
-  void setIsSystemZone();
 
   void prepareForCompacting();
 

@@ -133,6 +133,15 @@ class TaggedParserAtomIndex {
   static TaggedParserAtomIndex star() {
     return TaggedParserAtomIndex(StaticParserString1('*'));
   }
+  static TaggedParserAtomIndex arguments() {
+    return TaggedParserAtomIndex(WellKnownAtomId::arguments);
+  }
+  static TaggedParserAtomIndex dotThis() {
+    return TaggedParserAtomIndex(WellKnownAtomId::dotThis);
+  }
+  static TaggedParserAtomIndex dotGenerator() {
+    return TaggedParserAtomIndex(WellKnownAtomId::dotGenerator);
+  }
   static TaggedParserAtomIndex null() { return TaggedParserAtomIndex(); }
 
 #ifdef DEBUG
@@ -206,6 +215,10 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
 
   static const uint16_t MAX_LATIN1_CHAR = 0xff;
 
+  // Bit flags inside flags_.
+  static constexpr uint32_t HasTwoByteCharsFlag = 1 << 0;
+  static constexpr uint32_t UsedByStencilFlag = 1 << 1;
+
   // Helper routine to read some sequence of two-byte chars, and write them
   // into a target buffer of a particular character width.
   //
@@ -237,24 +250,21 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
 
   TaggedParserAtomIndex index_;
 
-  // Encoding type.
-  bool hasTwoByteChars_ = false;
-
-  // Mutable flags.
-  bool usedByStencil_ = false;
+  uint32_t flags_ = 0;
 
   // End of fields.
 
   static const uint32_t MAX_LENGTH = JSString::MAX_LENGTH;
 
   ParserAtomEntry(uint32_t length, HashNumber hash, bool hasTwoByteChars)
-      : hash_(hash), length_(length), hasTwoByteChars_(hasTwoByteChars) {}
-
- protected:
-  // The constexpr constructor is used by StaticParserAtomEntry.
-  constexpr ParserAtomEntry() = default;
+      : hash_(hash),
+        length_(length),
+        flags_(hasTwoByteChars ? HasTwoByteCharsFlag : 0) {}
 
  public:
+  // The constexpr constructor is used by StaticParserAtomEntry and XDR
+  constexpr ParserAtomEntry() = default;
+
   // ParserAtomEntries may own their content buffers in variant_, and thus
   // cannot be copy-constructed - as a new chars would need to be allocated.
   ParserAtomEntry(const ParserAtomEntry&) = delete;
@@ -265,6 +275,10 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
                                    InflatedChar16Sequence<SeqCharT> seq,
                                    uint32_t length, HashNumber hash);
 
+  static ParserAtomEntry* allocateRaw(JSContext* cx, LifoAlloc& alloc,
+                                      const uint8_t* srcRaw,
+                                      size_t totalLength);
+
   ParserAtom* asAtom() { return reinterpret_cast<ParserAtom*>(this); }
   const ParserAtom* asAtom() const {
     return reinterpret_cast<const ParserAtom*>(this);
@@ -273,8 +287,8 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
   inline ParserName* asName();
   inline const ParserName* asName() const;
 
-  bool hasLatin1Chars() const { return !hasTwoByteChars_; }
-  bool hasTwoByteChars() const { return hasTwoByteChars_; }
+  bool hasLatin1Chars() const { return !(flags_ & HasTwoByteCharsFlag); }
+  bool hasTwoByteChars() const { return flags_ & HasTwoByteCharsFlag; }
 
   template <typename CharT>
   const CharT* chars() const {
@@ -318,12 +332,12 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
   HashNumber hash() const { return hash_; }
   uint32_t length() const { return length_; }
 
-  bool isUsedByStencil() const { return usedByStencil_; }
+  bool isUsedByStencil() const { return flags_ & UsedByStencilFlag; }
   void markUsedByStencil() const {
     if (isParserAtomIndex()) {
       // Use const method + const_cast here to avoid marking static strings'
       // field mutable.
-      const_cast<ParserAtomEntry*>(this)->usedByStencil_ = true;
+      const_cast<ParserAtomEntry*>(this)->flags_ |= UsedByStencilFlag;
     }
   }
 
@@ -366,11 +380,9 @@ class alignas(alignof(uint32_t)) ParserAtomEntry {
   constexpr void setStaticParserString2(StaticParserString2 s) {
     index_ = TaggedParserAtomIndex(s);
   }
-  constexpr void setHashAndLength(HashNumber hash, uint32_t length,
-                                  bool hasTwoByteChars = false) {
+  constexpr void setHashAndLength(HashNumber hash, uint32_t length) {
     hash_ = hash;
     length_ = length;
-    hasTwoByteChars_ = hasTwoByteChars;
   }
 
  public:
@@ -720,30 +732,17 @@ class ParserAtomsTable {
 class ParserAtomVectorBuilder {
  private:
   const WellKnownParserAtoms& wellKnownTable_;
-  LifoAlloc* alloc_;
   ParserAtomVector& entries_;
 
  public:
-  ParserAtomVectorBuilder(JSRuntime* rt, LifoAlloc& alloc,
-                          ParserAtomVector& entries);
+  ParserAtomVectorBuilder(JSRuntime* rt, ParserAtomVector& entries);
 
   bool resize(JSContext* cx, size_t count);
   size_t length() const { return entries_.length(); }
 
-  const ParserAtom* internLatin1At(JSContext* cx,
-                                   const JS::Latin1Char* latin1Ptr,
-                                   HashNumber hash, uint32_t length,
-                                   ParserAtomIndex index);
-
-  const ParserAtom* internChar16At(JSContext* cx,
-                                   const LittleEndianChars twoByteLE,
-                                   HashNumber hash, uint32_t length,
-                                   ParserAtomIndex index);
-
- private:
-  template <typename CharT, typename SeqCharT, typename InputCharsT>
-  const ParserAtom* internAt(JSContext* cx, InputCharsT chars, HashNumber hash,
-                             uint32_t length, ParserAtomIndex index);
+  void set(ParserAtomIndex index, const ParserAtomEntry* atom) {
+    entries_[index] = const_cast<ParserAtomEntry*>(atom);
+  }
 
  public:
   const ParserAtom* getWellKnown(WellKnownAtomId atomId) const;

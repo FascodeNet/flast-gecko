@@ -200,11 +200,6 @@ void nsNSSSocketInfo::NoteTimeUntilReady() {
   // This will include TCP and proxy tunnel wait time
   Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_READY,
                                  mSocketCreationTimestamp, TimeStamp::Now());
-  if (mIsDelegatedCredential) {
-    Telemetry::AccumulateTimeDelta(
-        Telemetry::TLS_DELEGATED_CREDENTIALS_TIME_UNTIL_READY_MS,
-        mSocketCreationTimestamp, TimeStamp::Now());
-  }
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
           ("[%p] nsNSSSocketInfo::NoteTimeUntilReady\n", mFd));
 }
@@ -1603,14 +1598,7 @@ void nsSSLIOLayerHelpers::setInsecureFallbackSites(const nsCString& str) {
 
   mInsecureFallbackSites.Clear();
 
-  if (str.IsEmpty()) {
-    return;
-  }
-
-  nsCCharSeparatedTokenizer toker(str, ',');
-
-  while (toker.hasMoreTokens()) {
-    const nsACString& host = toker.nextToken();
+  for (const nsACString& host : nsCCharSeparatedTokenizer(str, ',').ToRange()) {
     if (!host.IsEmpty()) {
       mInsecureFallbackSites.PutEntry(host);
     }
@@ -1644,10 +1632,9 @@ FallbackPrefRemover::Run() {
   MOZ_ASSERT(NS_IsMainThread());
   nsAutoCString oldValue;
   Preferences::GetCString("security.tls.insecure_fallback_hosts", oldValue);
-  nsCCharSeparatedTokenizer toker(oldValue, ',');
   nsCString newValue;
-  while (toker.hasMoreTokens()) {
-    const nsACString& host = toker.nextToken();
+  for (const nsACString& host :
+       nsCCharSeparatedTokenizer(oldValue, ',').ToRange()) {
     if (host.Equals(mHost)) {
       continue;
     }

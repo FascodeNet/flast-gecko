@@ -4,12 +4,14 @@
 
 #include "gtest/gtest.h"
 #include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/GleanPings.h"
 #include "mozilla/glean/fog_ffi_generated.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Tuple.h"
 #include "nsTArray.h"
 
 #include "mozilla/Preferences.h"
+#include "mozilla/Unused.h"
 #include "nsString.h"
 #include "prtime.h"
 
@@ -61,6 +63,8 @@ TEST(FOG, TestCppCounterWorks)
   ASSERT_EQ(
       42,
       mozilla::glean::test_only::bad_code.TestGetValue("test-ping"_ns).value());
+  // And test that the ping name's optional, while you're at it:
+  ASSERT_EQ(42, test_only::bad_code.TestGetValue().value());
 }
 
 TEST(FOG, TestCppStringWorks)
@@ -136,4 +140,32 @@ TEST(FOG, TestCppEventWorks)
 
   test_only_ipc::an_event.Record(std::move(extra));
   ASSERT_TRUE(test_only_ipc::an_event.TestGetValue("store1"_ns).isSome());
+}
+
+TEST(FOG, TestCppMemoryDistWorks)
+{
+  test_only::do_you_remember.Accumulate(7);
+  test_only::do_you_remember.Accumulate(17);
+
+  DistributionData data =
+      test_only::do_you_remember.TestGetValue("test-ping"_ns).ref();
+  // Sum is in bytes, test_only::do_you_remember is in megabytes. So
+  // multiplication ahoy!
+  ASSERT_EQ(data.sum, 24UL * 1024 * 1024);
+  for (auto iter = data.values.Iter(); !iter.Done(); iter.Next()) {
+    const uint64_t bucket = iter.Key();
+    const uint64_t count = iter.UserData();
+    ASSERT_TRUE(count == 0 ||
+                (count == 1 && (bucket == 17520006 || bucket == 7053950)))
+    << "Only two occupied buckets";
+  }
+}
+
+TEST(FOG, TestCppPings)
+{
+  auto ping = mozilla::glean_pings::OnePingOnly;
+  mozilla::Unused << ping;
+  // That's it. That's the test. It will fail to compile if it's missing.
+  // For a test that actually submits the ping, we have integration tests.
+  // See also bug 1681742.
 }

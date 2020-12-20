@@ -487,9 +487,8 @@ nsresult CSP_AppendCSPFromHeader(nsIContentSecurityPolicy* aCsp,
   // concatenated into one comma-separated list of policies.
   // See RFC2616 section 4.2 (last paragraph)
   nsresult rv = NS_OK;
-  nsCharSeparatedTokenizer tokenizer(aHeaderValue, ',');
-  while (tokenizer.hasMoreTokens()) {
-    const nsAString& policy = tokenizer.nextToken();
+  for (const nsAString& policy :
+       nsCharSeparatedTokenizer(aHeaderValue, ',').ToRange()) {
     rv = aCsp->AppendPolicy(policy, aReportOnly, false);
     NS_ENSURE_SUCCESS(rv, rv);
     {
@@ -1086,13 +1085,10 @@ void nsCSPDirective::toString(nsAString& outStr) const {
   outStr.AppendLiteral(" ");
 
   // Append srcs
-  uint32_t length = mSrcs.Length();
-  for (uint32_t i = 0; i < length; i++) {
-    mSrcs[i]->toString(outStr);
-    if (i != (length - 1)) {
-      outStr.AppendLiteral(" ");
-    }
-  }
+  StringJoinAppend(outStr, u" "_ns, mSrcs,
+                   [](nsAString& dest, nsCSPBaseSrc* cspBaseSrc) {
+                     cspBaseSrc->toString(dest);
+                   });
 }
 
 void nsCSPDirective::toDomCSPStruct(mozilla::dom::CSP& outCSP) const {
@@ -1475,13 +1471,10 @@ bool nsCSPPolicy::allows(nsContentPolicyType aContentType,
 }
 
 void nsCSPPolicy::toString(nsAString& outStr) const {
-  uint32_t length = mDirectives.Length();
-  for (uint32_t i = 0; i < length; ++i) {
-    mDirectives[i]->toString(outStr);
-    if (i != (length - 1)) {
-      outStr.AppendLiteral("; ");
-    }
-  }
+  StringJoinAppend(outStr, u"; "_ns, mDirectives,
+                   [](nsAString& dest, nsCSPDirective* cspDirective) {
+                     cspDirective->toString(dest);
+                   });
 }
 
 void nsCSPPolicy::toDomCSPStruct(mozilla::dom::CSP& outCSP) const {

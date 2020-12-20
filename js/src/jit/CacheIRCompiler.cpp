@@ -1047,7 +1047,8 @@ uintptr_t CacheIRStubInfo::getStubRawWord(const uint8_t* stubData,
   return *reinterpret_cast<const uintptr_t*>(stubData + offset);
 }
 
-uintptr_t CacheIRStubInfo::getStubRawWord(ICStub* stub, uint32_t offset) const {
+uintptr_t CacheIRStubInfo::getStubRawWord(ICCacheIRStub* stub,
+                                          uint32_t offset) const {
   uint8_t* stubData = (uint8_t*)stub + stubDataOffset_;
   return getStubRawWord(stubData, offset);
 }
@@ -1058,7 +1059,8 @@ int64_t CacheIRStubInfo::getStubRawInt64(const uint8_t* stubData,
   return *reinterpret_cast<const int64_t*>(stubData + offset);
 }
 
-int64_t CacheIRStubInfo::getStubRawInt64(ICStub* stub, uint32_t offset) const {
+int64_t CacheIRStubInfo::getStubRawInt64(ICCacheIRStub* stub,
+                                         uint32_t offset) const {
   uint8_t* stubData = (uint8_t*)stub + stubDataOffset_;
   return getStubRawInt64(stubData, offset);
 }
@@ -1080,26 +1082,26 @@ GCPtr<T>& CacheIRStubInfo::getStubField(Stub* stub, uint32_t offset) const {
   return *AsGCPtr<T>((uintptr_t*)(stubData + offset));
 }
 
-template GCPtr<Shape*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<ObjectGroup*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<JSObject*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<JSString*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<JSFunction*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<JS::Symbol*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<JS::Value>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<jsid>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<JSClass*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
-template GCPtr<ArrayObject*>& CacheIRStubInfo::getStubField<ICStub>(
-    ICStub* stub, uint32_t offset) const;
+template GCPtr<Shape*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<ObjectGroup*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<JSObject*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<JSString*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<JSFunction*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<JS::Symbol*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<JS::Value>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<jsid>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<JSClass*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<ArrayObject*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
 
 template <typename T, typename V>
 static void InitGCPtr(uintptr_t* ptr, V val) {
@@ -1204,7 +1206,7 @@ void jit::TraceCacheIRStub(JSTracer* trc, T* stub,
   }
 }
 
-template void jit::TraceCacheIRStub(JSTracer* trc, ICStub* stub,
+template void jit::TraceCacheIRStub(JSTracer* trc, ICCacheIRStub* stub,
                                     const CacheIRStubInfo* stubInfo);
 
 template void jit::TraceCacheIRStub(JSTracer* trc, IonICStub* stub,
@@ -3553,22 +3555,6 @@ bool CacheIRCompiler::emitGuardNoAllocationMetadataBuilder() {
                  AbsoluteAddress(cx_->realm()->addressOfMetadataBuilder()),
                  ImmWord(0), failure->label());
 
-  return true;
-}
-
-bool CacheIRCompiler::emitGuardObjectGroupNotPretenured(uint32_t groupOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoScratchRegister scratch(allocator, masm);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  StubFieldOffset group(groupOffset, StubField::Type::ObjectGroup);
-  emitLoadStubField(group, scratch);
-
-  masm.branchIfPretenuredGroup(scratch, failure->label());
   return true;
 }
 
@@ -6517,8 +6503,7 @@ bool CacheIRCompiler::emitWrapResult() {
 }
 
 bool CacheIRCompiler::emitMegamorphicLoadSlotByValueResult(ObjOperandId objId,
-                                                           ValOperandId idId,
-                                                           bool handleMissing) {
+                                                           ValOperandId idId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
 
@@ -6552,11 +6537,8 @@ bool CacheIRCompiler::emitMegamorphicLoadSlotByValueResult(ObjOperandId objId,
   masm.passABIArg(scratch);
   masm.passABIArg(obj);
   masm.passABIArg(idVal.scratchReg());
-  if (handleMissing) {
-    masm.callWithABI<Fn, GetNativeDataPropertyByValuePure<true>>();
-  } else {
-    masm.callWithABI<Fn, GetNativeDataPropertyByValuePure<false>>();
-  }
+  masm.callWithABI<Fn, GetNativeDataPropertyByValuePure>();
+
   masm.mov(ReturnReg, scratch);
   masm.PopRegsInMask(volatileRegs);
 
@@ -6811,8 +6793,7 @@ bool CacheIRCompiler::emitLoadInstanceOfObjectResult(ValOperandId lhsId,
 }
 
 bool CacheIRCompiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
-                                                    uint32_t nameOffset,
-                                                    bool handleMissing) {
+                                                    uint32_t nameOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
 
@@ -6850,11 +6831,8 @@ bool CacheIRCompiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
   emitLoadStubField(name, scratch2);
   masm.passABIArg(scratch2);
   masm.passABIArg(scratch3);
-  if (handleMissing) {
-    masm.callWithABI<Fn, GetNativeDataPropertyPure<true>>();
-  } else {
-    masm.callWithABI<Fn, GetNativeDataPropertyPure<false>>();
-  }
+  masm.callWithABI<Fn, GetNativeDataPropertyPure>();
+
   masm.mov(ReturnReg, scratch2);
   masm.PopRegsInMask(volatileRegs);
 
@@ -6871,8 +6849,7 @@ bool CacheIRCompiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
 
 bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
                                                uint32_t nameOffset,
-                                               ValOperandId rhsId,
-                                               bool needsTypeBarrier) {
+                                               ValOperandId rhsId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   Register obj = allocator.useRegister(masm, objId);
   StubFieldOffset name(nameOffset, StubField::Type::String);
@@ -6905,11 +6882,8 @@ bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
   emitLoadStubField(name, scratch2);
   masm.passABIArg(scratch2);
   masm.passABIArg(val.scratchReg());
-  if (needsTypeBarrier) {
-    masm.callWithABI<Fn, SetNativeDataPropertyPure<true>>();
-  } else {
-    masm.callWithABI<Fn, SetNativeDataPropertyPure<false>>();
-  }
+  masm.callWithABI<Fn, SetNativeDataPropertyPure>();
+
   masm.mov(ReturnReg, scratch1);
   masm.PopRegsInMask(volatileRegs);
 
@@ -7187,10 +7161,8 @@ bool CacheIRCompiler::emitCallIsSuspendedGeneratorResult(ValOperandId valId) {
   return true;
 }
 
-// This op generates no code. It is consumed by BaselineInspector.
-bool CacheIRCompiler::emitMetaTwoByte(MetaTwoByteKind, uint32_t, uint32_t) {
-  return true;
-}
+// This op generates no code. It is consumed by the transpiler.
+bool CacheIRCompiler::emitMetaTwoByte(uint32_t, uint32_t) { return true; }
 
 bool CacheIRCompiler::emitCallNativeGetElementResult(ObjOperandId objId,
                                                      Int32OperandId indexId) {

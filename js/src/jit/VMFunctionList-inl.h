@@ -77,6 +77,7 @@ namespace jit {
   _(CallDOMSetter, js::jit::CallDOMSetter)                                     \
   _(CallNativeGetter, js::jit::CallNativeGetter)                               \
   _(CallNativeSetter, js::jit::CallNativeSetter)                               \
+  _(CanSkipAwait, js::CanSkipAwait)                                            \
   _(CharCodeAt, js::jit::CharCodeAt)                                           \
   _(CheckClassHeritageOperation, js::CheckClassHeritageOperation)              \
   _(CheckOverRecursed, js::jit::CheckOverRecursed)                             \
@@ -89,6 +90,7 @@ namespace jit {
   _(CreateBigIntFromInt64, js::jit::CreateBigIntFromInt64)                     \
   _(CreateBigIntFromUint64, js::jit::CreateBigIntFromUint64)                   \
   _(CreateGenerator, js::jit::CreateGenerator)                                 \
+  _(CreateGeneratorFromFrame, js::jit::CreateGeneratorFromFrame)               \
   _(CreateThisForFunctionWithProto, js::CreateThisForFunctionWithProto)        \
   _(CreateThisFromIC, js::jit::CreateThisFromIC)                               \
   _(CreateThisFromIon, js::jit::CreateThisFromIon)                             \
@@ -113,6 +115,7 @@ namespace jit {
   _(DoStringToInt64, js::jit::DoStringToInt64)                                 \
   _(DoTrialInlining, js::jit::DoTrialInlining)                                 \
   _(EnterWith, js::jit::EnterWith)                                             \
+  _(ExtractAwaitValue, js::ExtractAwaitValue)                                  \
   _(FinalSuspend, js::jit::FinalSuspend)                                       \
   _(FinishBoundFunctionInit, JSFunction::finishBoundFunctionInit)              \
   _(FreshenLexicalEnv, js::jit::FreshenLexicalEnv)                             \
@@ -258,8 +261,7 @@ namespace jit {
   _(ThrowUninitializedThis, js::ThrowUninitializedThis)                        \
   _(ToBigInt, js::ToBigInt)                                                    \
   _(ToObjectSlow, js::ToObjectSlow)                                            \
-  _(ToStringSlow, js::ToStringSlow<CanGC>)                                     \
-  _(TrySkipAwait, js::jit::TrySkipAwait)
+  _(ToStringSlow, js::ToStringSlow<CanGC>)
 
 // The list below is for tail calls. The third argument specifies the number of
 // non-argument Values the VM wrapper should pop from the stack. This is used

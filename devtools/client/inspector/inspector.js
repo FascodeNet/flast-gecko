@@ -303,10 +303,6 @@ Inspector.prototype = {
     return this._highlighters;
   },
 
-  get isHighlighterReady() {
-    return !!this._highlighters;
-  },
-
   get is3PaneModeEnabled() {
     if (this.currentTarget.chrome) {
       if (!this._is3PaneModeChromeEnabled) {
@@ -1676,7 +1672,6 @@ Inspector.prototype = {
 
     if (this._highlighters) {
       this._highlighters.destroy();
-      this._highlighters = null;
     }
 
     if (this._markupFrame) {

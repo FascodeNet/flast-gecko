@@ -792,6 +792,7 @@ WebRenderMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
         helper.ReportTexture(aReport.texture_upload_pbos,
                              "texture-upload-pbos");
         helper.ReportTexture(aReport.swap_chain, "swap-chains");
+        helper.ReportTexture(aReport.render_texture_hosts, "render-texture-hosts");
 
         FinishAsyncMemoryReport();
       },
@@ -832,18 +833,6 @@ void gfxPlatform::Init() {
   if (XRE_IsParentProcess()) {
     GPUProcessManager::Initialize();
     RDDProcessManager::Initialize();
-
-    if (Preferences::GetBool("media.wmf.skip-blacklist")) {
-      gfxVars::SetPDMWMFDisableD3D11Dlls(nsCString());
-      gfxVars::SetPDMWMFDisableD3D9Dlls(nsCString());
-    } else {
-      nsAutoCString d3d11;
-      Preferences::GetCString("media.wmf.disable-d3d11-for-dlls", d3d11);
-      gfxVars::SetPDMWMFDisableD3D11Dlls(d3d11);
-      nsAutoCString d3d9;
-      Preferences::GetCString("media.wmf.disable-d3d9-for-dlls", d3d9);
-      gfxVars::SetPDMWMFDisableD3D9Dlls(d3d9);
-    }
 
     nsCOMPtr<nsIFile> file;
     nsresult rv = NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(file));
@@ -2686,6 +2675,14 @@ bool gfxPlatform::WebRenderEnvvarDisabled() {
   return (env && *env == '0');
 }
 
+/* static */ const char* gfxPlatform::WebRenderResourcePathOverride() {
+  const char* resourcePath = PR_GetEnv("WR_RESOURCE_PATH");
+  if (!resourcePath || resourcePath[0] == '\0') {
+    return nullptr;
+  }
+  return resourcePath;
+}
+
 void gfxPlatform::InitWebRenderConfig() {
   bool prefEnabled = WebRenderPrefEnabled();
   bool envvarEnabled = WebRenderEnvvarEnabled();
@@ -2767,6 +2764,11 @@ void gfxPlatform::InitWebRenderConfig() {
         WebRenderBatchingPrefChangeCallback,
         nsDependentCString(
             StaticPrefs::GetPrefName_gfx_webrender_batching_lookback()));
+
+    if (WebRenderResourcePathOverride()) {
+      CrashReporter::AnnotateCrashReport(
+          CrashReporter::Annotation::IsWebRenderResourcePathOverridden, true);
+    }
 
     UpdateForceSubpixelAAWherePossible();
   }

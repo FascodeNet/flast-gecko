@@ -139,15 +139,18 @@ def executor_kwargs(logger, test_type, server_config, cache_manager, run_info_da
             options["prefs"].update({pref: Preferences.cast(value)})
         capabilities["moz:firefoxOptions"] = options
 
-        environ = get_environ(logger,
-                              kwargs["binary"],
-                              kwargs["debug_info"],
-                              kwargs["stylo_threads"],
-                              kwargs["headless"],
-                              kwargs["enable_webrender"],
-                              kwargs["chaos_mode_flags"])
+        # This gets reused for firefox_android, but the environment setup
+        # isn't required in that case
+        if kwargs["binary"]:
+            environ = get_environ(logger,
+                                  kwargs["binary"],
+                                  kwargs["debug_info"],
+                                  kwargs["stylo_threads"],
+                                  kwargs["headless"],
+                                  kwargs["enable_webrender"],
+                                  kwargs["chaos_mode_flags"])
 
-        executor_kwargs["environ"] = environ
+            executor_kwargs["environ"] = environ
     if kwargs["certutil_binary"] is None:
         capabilities["acceptInsecureCerts"] = True
     if capabilities:
@@ -189,7 +192,8 @@ def run_info_extras(**kwargs):
           "verify": kwargs["verify"],
           "headless": kwargs.get("headless", False) or "MOZ_HEADLESS" in os.environ,
           "sw-e10s": True,
-          "fission": kwargs.get("enable_fission") or get_bool_pref("fission.autostart")}
+          "fission": kwargs.get("enable_fission") or get_bool_pref("fission.autostart"),
+          "sessionHistoryInParent": kwargs.get("enable_fission") or get_bool_pref("fission.autostart") or get_bool_pref("fission.sessionHistoryInParent")}
 
     # The value of `sw-e10s` defaults to whether the "parent_intercept"
     # implementation is enabled for the current build. This value, however,

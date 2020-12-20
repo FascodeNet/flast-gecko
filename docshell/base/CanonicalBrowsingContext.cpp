@@ -469,7 +469,9 @@ void CanonicalBrowsingContext::CallOnAllTopDescendants(
 
 void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
                                                     const nsID& aChangeID,
-                                                    uint32_t aLoadType) {
+                                                    uint32_t aLoadType,
+                                                    bool aPersist,
+                                                    bool aCloneEntryChildren) {
   MOZ_LOG(gSHLog, LogLevel::Verbose,
           ("CanonicalBrowsingContext::SessionHistoryCommit %p %" PRIu64, this,
            aLoadId));
@@ -523,7 +525,7 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
           }
 
           if (addEntry) {
-            shistory->AddEntry(mActiveEntry, mActiveEntry->GetPersist());
+            shistory->AddEntry(mActiveEntry, aPersist);
           }
         }
       } else {
@@ -552,9 +554,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
             } else {
               // AddChildSHEntryHelper does update the index of the session
               // history!
-              // FIXME Need to figure out the right value for aCloneChildren.
               shistory->AddChildSHEntryHelper(mActiveEntry, newActiveEntry,
-                                              Top(), true);
+                                              Top(), aCloneEntryChildren);
               mActiveEntry = newActiveEntry;
             }
           } else {
@@ -577,6 +578,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
       ResetSHEntryHasUserInteractionCache();
 
       HistoryCommitIndexAndLength(aChangeID, caller);
+
+      shistory->LogHistory();
 
       return;
     }
@@ -696,6 +699,8 @@ void CanonicalBrowsingContext::SetActiveSessionHistoryEntry(
 
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
   HistoryCommitIndexAndLength(aChangeID, caller);
+
+  static_cast<nsSHistory*>(shistory)->LogHistory();
 }
 
 void CanonicalBrowsingContext::ReplaceActiveSessionHistoryEntry(

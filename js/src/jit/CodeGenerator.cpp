@@ -3800,8 +3800,12 @@ void CodeGenerator::visitReturn(LReturn* lir) {
   DebugOnly<LAllocation*> result = lir->getOperand(0);
   MOZ_ASSERT(ToRegister(result) == JSReturnReg);
 #endif
-  // Don't emit a jump to the return label if this is the last block.
-  if (current->mir() != *gen->graph().poBegin()) {
+  // Don't emit a jump to the return label if this is the last block, as
+  // it'll fall through to the epilogue.
+  //
+  // This is -not- true however for a Generator-return, which may appear in the
+  // middle of the last block, so we should always emit the jump there.
+  if (current->mir() != *gen->graph().poBegin() || lir->isGenerator()) {
     masm.jump(&returnLabel_);
   }
 }
@@ -3999,8 +4003,6 @@ void CodeGenerator::visitPointer(LPointer* lir) {
 }
 
 void CodeGenerator::visitNurseryObject(LNurseryObject* lir) {
-  MOZ_ASSERT(JitOptions.warpBuilder);
-
   Register output = ToRegister(lir->output());
   uint32_t nurseryIndex = lir->mir()->nurseryIndex();
 
@@ -4458,7 +4460,7 @@ void CodeGenerator::visitMegamorphicLoadSlot(LMegamorphicLoadSlot* lir) {
   masm.passABIArg(temp2);
   masm.passABIArg(temp3);
 
-  masm.callWithABI<Fn, GetNativeDataPropertyPure<true>>();
+  masm.callWithABI<Fn, GetNativeDataPropertyPure>();
 
   MOZ_ASSERT(!output.aliases(ReturnReg));
   masm.popValue(output);
@@ -4494,7 +4496,7 @@ void CodeGenerator::visitMegamorphicLoadSlotByValue(
   masm.passABIArg(temp2);
   masm.passABIArg(obj);
   masm.passABIArg(temp1);
-  masm.callWithABI<Fn, GetNativeDataPropertyByValuePure<true>>();
+  masm.callWithABI<Fn, GetNativeDataPropertyByValuePure>();
 
   MOZ_ASSERT(!idVal.aliases(temp1));
   masm.mov(ReturnReg, temp1);
@@ -4533,7 +4535,7 @@ void CodeGenerator::visitMegamorphicStoreSlot(LMegamorphicStoreSlot* lir) {
   masm.movePtr(ImmGCPtr(lir->mir()->name()), temp3);
   masm.passABIArg(temp3);
   masm.passABIArg(temp1);
-  masm.callWithABI<Fn, SetNativeDataPropertyPure<false>>();
+  masm.callWithABI<Fn, SetNativeDataPropertyPure>();
 
   MOZ_ASSERT(!rhs.aliases(temp1));
   masm.mov(ReturnReg, temp1);
@@ -7808,13 +7810,10 @@ void CodeGenerator::visitArrayLength(LArrayLength* lir) {
   Address length(elements, ObjectElements::offsetOfLength());
   masm.load32(length, output);
 
-  // IonBuilder relies on TI knowing the length fits in int32, but Warp needs to
-  // check this dynamically.
-  if (JitOptions.warpBuilder) {
-    Label bail;
-    masm.branchTest32(Assembler::Signed, output, output, &bail);
-    bailoutFrom(&bail, lir->snapshot());
-  }
+  // Bail out if the length doesn't fit in int32.
+  Label bail;
+  masm.branchTest32(Assembler::Signed, output, output, &bail);
+  bailoutFrom(&bail, lir->snapshot());
 }
 
 static void SetLengthFromIndex(MacroAssembler& masm, const LAllocation* index,
@@ -10459,12 +10458,9 @@ void CodeGenerator::visitArraySlice(LArraySlice* lir) {
 
   Label call, fail;
 
-  if (JitOptions.warpBuilder) {
-    Label bail;
-    masm.branchArrayIsNotPacked(object, temp1, temp2, &bail);
-
-    bailoutFrom(&bail, lir->snapshot());
-  }
+  Label bail;
+  masm.branchArrayIsNotPacked(object, temp1, temp2, &bail);
+  bailoutFrom(&bail, lir->snapshot());
 
   // Try to allocate an object.
   TemplateObject templateObject(lir->mir()->templateObj());
@@ -11103,10 +11099,7 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     return false;
   }
 
-  size_t numNurseryObjects = 0;
-  if (JitOptions.warpBuilder) {
-    numNurseryObjects = snapshot->nurseryObjects().length();
-  }
+  size_t numNurseryObjects = snapshot->nurseryObjects().length();
 
   IonScript* ionScript = IonScript::New(
       cx, compilationId, graph.totalSlotCount(), argumentSlots, scriptFrameSize,
@@ -11321,11 +11314,9 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
   // Copy the list of nursery objects. Note that the store buffer can add
   // HeapPtr edges that must be cleared in IonScript::Destroy. See the
   // infallibility warning above.
-  if (JitOptions.warpBuilder) {
-    const auto& nurseryObjects = snapshot->nurseryObjects();
-    for (size_t i = 0; i < nurseryObjects.length(); i++) {
-      ionScript->nurseryObjects()[i].init(nurseryObjects[i]);
-    }
+  const auto& nurseryObjects = snapshot->nurseryObjects();
+  for (size_t i = 0; i < nurseryObjects.length(); i++) {
+    ionScript->nurseryObjects()[i].init(nurseryObjects[i]);
   }
 
   // Transfer ownership of the IonScript to the JitScript. At this point enough
@@ -14011,6 +14002,33 @@ void CodeGenerator::visitWasmLoadTls(LWasmLoadTls* ins) {
   }
 }
 
+void CodeGenerator::incrementWarmUpCounter(AbsoluteAddress warmUpCount,
+                                           JSScript* script, Register tmp) {
+  // The code depends on the JitScript* not being discarded without also
+  // invalidating Ion code. Assert this.
+#ifdef DEBUG
+  Label ok;
+  masm.movePtr(ImmGCPtr(script), tmp);
+  masm.loadJitScript(tmp, tmp);
+  masm.branchPtr(Assembler::Equal, tmp, ImmPtr(script->jitScript()), &ok);
+  masm.assumeUnreachable("Didn't find JitScript?");
+  masm.bind(&ok);
+#endif
+
+  masm.load32(warmUpCount, tmp);
+  masm.add32(Imm32(1), tmp);
+  masm.store32(tmp, warmUpCount);
+}
+
+void CodeGenerator::visitIncrementWarmUpCounter(LIncrementWarmUpCounter* ins) {
+  Register tmp = ToRegister(ins->scratch());
+
+  AbsoluteAddress warmUpCount =
+      AbsoluteAddress(ins->mir()->script()->jitScript())
+          .offset(JitScript::offsetOfWarmUpCount());
+  incrementWarmUpCounter(warmUpCount, ins->mir()->script(), tmp);
+}
+
 void CodeGenerator::visitRecompileCheck(LRecompileCheck* ins) {
   Label done;
   Register tmp = ToRegister(ins->scratch());
@@ -14028,28 +14046,15 @@ void CodeGenerator::visitRecompileCheck(LRecompileCheck* ins) {
     }
   }
 
-  JitScript* jitScript = ins->mir()->script()->jitScript();
-
-  // The code depends on the JitScript* not being discarded without also
-  // invalidating Ion code. Assert this.
-#ifdef DEBUG
-  Label ok;
-  masm.movePtr(ImmGCPtr(ins->mir()->script()), tmp);
-  masm.loadJitScript(tmp, tmp);
-  masm.branchPtr(Assembler::Equal, tmp, ImmPtr(jitScript), &ok);
-  masm.assumeUnreachable("Didn't find JitScript?");
-  masm.bind(&ok);
-#endif
-
-  // Check if warm-up counter is high enough.
   AbsoluteAddress warmUpCount =
-      AbsoluteAddress(jitScript).offset(JitScript::offsetOfWarmUpCount());
+      AbsoluteAddress(ins->mir()->script()->jitScript())
+          .offset(JitScript::offsetOfWarmUpCount());
   if (ins->mir()->increaseWarmUpCounter()) {
-    masm.load32(warmUpCount, tmp);
-    masm.add32(Imm32(1), tmp);
-    masm.store32(tmp, warmUpCount);
+    incrementWarmUpCounter(warmUpCount, ins->mir()->script(), tmp);
+
+    // Check if warm-up counter is high enough.
     if (ins->mir()->checkCounter()) {
-      masm.branch32(Assembler::BelowOrEqual, tmp,
+      masm.branch32(Assembler::BelowOrEqual, warmUpCount,
                     Imm32(ins->mir()->recompileThreshold()), &done);
     }
   } else {
@@ -14083,6 +14088,13 @@ void CodeGenerator::visitThrowRuntimeLexicalError(
 
   using Fn = bool (*)(JSContext*, unsigned);
   callVM<Fn, jit::ThrowRuntimeLexicalError>(ins);
+}
+
+void CodeGenerator::visitThrowMsg(LThrowMsg* ins) {
+  pushArg(Imm32(static_cast<int32_t>(ins->mir()->throwMsgKind())));
+
+  using Fn = bool (*)(JSContext*, unsigned);
+  callVM<Fn, js::ThrowMsgOperation>(ins);
 }
 
 void CodeGenerator::visitGlobalDeclInstantiation(
@@ -14232,6 +14244,77 @@ void CodeGenerator::visitCheckThisReinit(LCheckThisReinit* ins) {
       oolCallVM<Fn, ThrowInitializedThis>(ins, ArgList(), StoreNothing());
   masm.branchTestMagic(Assembler::NotEqual, thisValue, ool->entry());
   masm.bind(ool->rejoin());
+}
+
+void CodeGenerator::visitGenerator(LGenerator* lir) {
+  Register callee = ToRegister(lir->callee());
+  Register environmentChain = ToRegister(lir->environmentChain());
+  Register argsObject = ToRegister(lir->argsObject());
+
+  pushArg(argsObject);
+  pushArg(environmentChain);
+  pushArg(ImmGCPtr(current->mir()->info().script()));
+  pushArg(callee);
+
+  using Fn = JSObject* (*)(JSContext * cx, HandleFunction, HandleScript,
+                           HandleObject, HandleObject);
+  callVM<Fn, CreateGenerator>(lir);
+}
+
+void CodeGenerator::visitAsyncResolve(LAsyncResolve* lir) {
+  Register generator = ToRegister(lir->generator());
+  ValueOperand valueOrReason = ToValue(lir, LAsyncResolve::ValueOrReasonInput);
+  AsyncFunctionResolveKind resolveKind = lir->mir()->resolveKind();
+
+  pushArg(Imm32(static_cast<int32_t>(resolveKind)));
+  pushArg(valueOrReason);
+  pushArg(generator);
+
+  using Fn = JSObject* (*)(JSContext*, Handle<AsyncFunctionGeneratorObject*>,
+                           HandleValue, AsyncFunctionResolveKind);
+  callVM<Fn, js::AsyncFunctionResolve>(lir);
+}
+
+void CodeGenerator::visitAsyncAwait(LAsyncAwait* lir) {
+  ValueOperand value = ToValue(lir, LAsyncAwait::ValueInput);
+  Register generator = ToRegister(lir->generator());
+
+  pushArg(value);
+  pushArg(generator);
+
+  using Fn = JSObject* (*)(JSContext * cx,
+                           Handle<AsyncFunctionGeneratorObject*> genObj,
+                           HandleValue value);
+  callVM<Fn, js::AsyncFunctionAwait>(lir);
+}
+
+void CodeGenerator::visitCanSkipAwait(LCanSkipAwait* lir) {
+  ValueOperand value = ToValue(lir, LCanSkipAwait::ValueInput);
+
+  pushArg(value);
+
+  using Fn = bool (*)(JSContext*, HandleValue, bool* canSkip);
+  callVM<Fn, js::CanSkipAwait>(lir);
+}
+
+void CodeGenerator::visitMaybeExtractAwaitValue(LMaybeExtractAwaitValue* lir) {
+  ValueOperand value = ToValue(lir, LMaybeExtractAwaitValue::ValueInput);
+  ValueOperand output = ToOutValue(lir);
+  Register canSkip = ToRegister(lir->canSkip());
+
+  Label cantExtract, finished;
+  masm.branchIfFalseBool(canSkip, &cantExtract);
+
+  pushArg(value);
+
+  using Fn = bool (*)(JSContext*, HandleValue, MutableHandleValue);
+  callVM<Fn, js::ExtractAwaitValue>(lir);
+  masm.jump(&finished);
+  masm.bind(&cantExtract);
+
+  masm.moveValue(value, output);
+
+  masm.bind(&finished);
 }
 
 void CodeGenerator::visitDebugCheckSelfHosted(LDebugCheckSelfHosted* ins) {

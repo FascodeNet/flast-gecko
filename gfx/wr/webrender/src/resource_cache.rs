@@ -28,7 +28,7 @@ use crate::gpu_types::UvRectKind;
 use crate::internal_types::{CacheTextureId, FastHashMap, FastHashSet, TextureSource, ResourceUpdateList};
 use crate::profiler::{self, TransactionProfile, bytes_to_mb};
 use crate::render_backend::{FrameId, FrameStamp};
-use crate::render_task_graph::{RenderTaskGraph, RenderTaskId};
+use crate::render_task_graph::{RenderTaskId, RenderTaskGraphBuilder};
 use crate::render_task_cache::{RenderTaskCache, RenderTaskCacheKey};
 use crate::render_task_cache::{RenderTaskCacheEntry, RenderTaskCacheEntryHandle};
 use euclid::point2;
@@ -425,7 +425,6 @@ pub struct BlobImageRasterizerEpoch(usize);
 /// Internal information about allocated render targets in the pool
 struct RenderTarget {
     size: DeviceIntSize,
-    num_layers: usize,
     format: ImageFormat,
     texture_id: CacheTextureId,
     /// If true, this is currently leant out, and not available to other passes
@@ -436,7 +435,7 @@ struct RenderTarget {
 impl RenderTarget {
     fn size_in_bytes(&self) -> usize {
         let bpp = self.format.bytes_per_pixel() as usize;
-        self.num_layers * (self.size.width * self.size.height) as usize * bpp
+        (self.size.width * self.size.height) as usize * bpp
     }
 
     /// Returns true if this texture was used within `threshold` frames of
@@ -557,19 +556,19 @@ impl ResourceCache {
         &mut self,
         key: RenderTaskCacheKey,
         gpu_cache: &mut GpuCache,
-        render_tasks: &mut RenderTaskGraph,
+        rg_builder: &mut RenderTaskGraphBuilder,
         user_data: Option<[f32; 3]>,
         is_opaque: bool,
         f: F,
     ) -> RenderTaskCacheEntryHandle
     where
-        F: FnOnce(&mut RenderTaskGraph) -> RenderTaskId,
+        F: FnOnce(&mut RenderTaskGraphBuilder) -> RenderTaskId,
     {
         self.cached_render_tasks.request_render_task(
             key,
             &mut self.texture_cache,
             gpu_cache,
-            render_tasks,
+            rg_builder,
             user_data,
             is_opaque,
             |render_graph| Ok(f(render_graph))
@@ -1030,7 +1029,6 @@ impl ResourceCache {
         mut font: FontInstance,
         glyph_keys: &[GlyphKey],
         gpu_cache: &mut GpuCache,
-        render_task_tree: &mut RenderTaskGraph,
     ) {
         debug_assert_eq!(self.state, State::AddResources);
 
@@ -1041,8 +1039,6 @@ impl ResourceCache {
             glyph_keys,
             &mut self.texture_cache,
             gpu_cache,
-            &mut self.cached_render_tasks,
-            render_task_tree,
         );
     }
 
@@ -1578,12 +1574,10 @@ impl ResourceCache {
     pub fn get_or_create_render_target_from_pool(
         &mut self,
         size: DeviceIntSize,
-        num_layers: usize,
         format: ImageFormat,
     ) -> CacheTextureId {
         for target in &mut self.render_target_pool {
             if target.size == size &&
-               target.num_layers == num_layers &&
                target.format == format &&
                !target.is_active {
                 // Found a target that's not currently in use which matches. Update
@@ -1598,13 +1592,11 @@ impl ResourceCache {
 
         let texture_id = self.texture_cache.alloc_render_target(
             size,
-            num_layers,
             format,
         );
 
         self.render_target_pool.push(RenderTarget {
             size,
-            num_layers,
             format,
             texture_id,
             is_active: true,
@@ -1946,6 +1938,7 @@ impl ResourceCache {
         config: &CaptureConfig,
     ) -> Vec<PlainExternalImage> {
         use std::{fs, path::Path};
+        use crate::texture_cache::TextureCacheConfig;
 
         info!("loading resource cache");
         //TODO: instead of filling the local path to Arc<data> map as we process
@@ -1972,6 +1965,7 @@ impl ResourceCache {
                     self.texture_cache.default_picture_tile_size(),
                     self.texture_cache.color_formats(),
                     self.texture_cache.swizzle_settings(),
+                    &TextureCacheConfig::DEFAULT,
                 );
             }
         }

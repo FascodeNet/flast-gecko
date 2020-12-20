@@ -6,7 +6,7 @@
 Runs the Mochitest test harness.
 """
 
-from __future__ import with_statement
+from __future__ import absolute_import, division, print_function, with_statement
 import os
 import sys
 
@@ -357,6 +357,7 @@ class MessageLogger(object):
 
         last_timestamp = None
         for buf in dumped_messages:
+            # pylint --py3k W1619
             timestamp = datetime.fromtimestamp(buf["time"] / 1000).strftime("%H:%M:%S")
             if timestamp != last_timestamp:
                 self.logger.info("Buffered messages logged at {}".format(timestamp))
@@ -2837,6 +2838,10 @@ toolbar#nav-bar {
                 "serviceworker_e10s": self.extraPrefs.get(
                     "dom.serviceWorkers.parent_intercept", True
                 ),
+                "sessionHistoryInParent": self.extraPrefs.get(
+                    "fission.sessionHistoryInParent", False
+                )
+                or self.extraPrefs.get("fission.autostart", False),
                 "socketprocess_e10s": self.extraPrefs.get(
                     "network.process.enabled", False
                 ),

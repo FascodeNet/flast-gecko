@@ -645,10 +645,14 @@ class nsDocShell final : public nsDocLoader,
   void SetHistoryEntryAndUpdateBC(const mozilla::Maybe<nsISHEntry*>& aLSHE,
                                   const mozilla::Maybe<nsISHEntry*>& aOSHE);
 
+  // If aNotifiedBeforeUnloadListeners is true, "beforeunload" event listeners
+  // were notified by the caller and given the chance to abort the navigation,
+  // and should not be notified again.
   static nsresult ReloadDocument(
       nsDocShell* aDocShell, mozilla::dom::Document* aDocument,
       uint32_t aLoadType, mozilla::dom::BrowsingContext* aBrowsingContext,
-      nsIURI* aCurrentURI, nsIReferrerInfo* aReferrerInfo);
+      nsIURI* aCurrentURI, nsIReferrerInfo* aReferrerInfo,
+      bool aNotifiedBeforeUnloadListeners = false);
 
   //
   // URI Load
@@ -960,8 +964,8 @@ class nsDocShell final : public nsDocLoader,
   nsresult EnsureCommandHandler();
   nsresult RefreshURIFromQueue();
   nsresult Embed(nsIContentViewer* aContentViewer,
-                 mozilla::dom::WindowGlobalChild* aWindowActor = nullptr,
-                 bool aIsTransientAboutBlank = false);
+                 mozilla::dom::WindowGlobalChild* aWindowActor,
+                 bool aIsTransientAboutBlank, bool aPersist);
   nsPresContext* GetEldestPresContext();
   nsresult CheckLoadingPermissions();
   nsresult LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType);
@@ -999,7 +1003,7 @@ class nsDocShell final : public nsDocLoader,
   // nsIContentPolicy::TYPE_INTERNAL_IFRAME, or
   // nsIContentPolicy::TYPE_INTERNAL_FRAME depending on who is responsible for
   // this docshell.
-  uint32_t DetermineContentType();
+  nsContentPolicyType DetermineContentType();
 
   // If this is an iframe, and the embedder is OOP, then notifes the
   // embedder that loading has finished and we shouldn't be blocking
@@ -1047,10 +1051,9 @@ class nsDocShell final : public nsDocLoader,
   nsresult LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating,
                    bool aContinueHandlingSubframeHistory);
 
-  // Sets the active entry to the current loading entry. If aCommit is true then
-  // SessionHistoryCommit will be called on the CanonicalBrowsingContext
-  // (directly or over IPC).
-  void MoveLoadingToActiveEntry();
+  // Sets the active entry to the current loading entry. aPersist is used in the
+  // case a new session history entry is added to the session history.
+  void MoveLoadingToActiveEntry(bool aPersist);
 
   void ActivenessMaybeChanged();
 

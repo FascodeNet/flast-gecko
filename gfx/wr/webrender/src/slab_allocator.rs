@@ -2,14 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use euclid::{point2, size2, default::Box2D};
-use api::units::{DeviceIntPoint, DeviceIntRect, DeviceIntSize};
-use std::cmp;
+#![deny(unconditional_recursion)]
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct AllocId(u32);
+use crate::atlas_allocator::{AtlasAllocator, AllocId};
+use api::units::{DeviceIntPoint, DeviceIntRect, DeviceIntSize};
+use euclid::{point2, size2, default::Box2D};
+use std::cmp;
 
 fn pack_alloc_id(region_index: usize, location: TextureLocation) -> AllocId {
     AllocId(
@@ -29,23 +27,23 @@ fn unpack_alloc_id(id: AllocId) -> (usize, TextureLocation) {
     )
 }
 
-#[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
-pub enum SlabSizes {
-    Default,
-    Glyphs,
+#[derive(Copy, Clone, PartialEq)]
+struct SlabSize {
+    width: i32,
+    height: i32,
 }
 
-impl SlabSizes {
-    fn get(&self, requested_size: DeviceIntSize) -> SlabSize {
-        match *self {
-            SlabSizes::Default => Self::default_slab_size(requested_size),
-            SlabSizes::Glyphs => Self::glyphs_slab_size(requested_size),
+impl SlabSize {
+    fn invalid() -> SlabSize {
+        SlabSize {
+            width: 0,
+            height: 0,
         }
     }
 
-    fn default_slab_size(size: DeviceIntSize) -> SlabSize {
+    fn get(size: DeviceIntSize) -> SlabSize {
         fn quantize_dimension(size: i32) -> i32 {
             match size {
                 0 => unreachable!(),
@@ -82,58 +80,6 @@ impl SlabSizes {
         SlabSize {
             width,
             height,
-        }
-    }
-
-    fn glyphs_slab_size(size: DeviceIntSize) -> SlabSize {
-        fn quantize_dimension(size: i32) -> i32 {
-            match size {
-                0 => unreachable!(),
-                1..=8 => 8,
-                9..=16 => 16,
-                17..=32 => 32,
-                33..=64 => 64,
-                65..=128 => 128,
-                _ => panic!("Invalid dimensions for cache!"),
-            }
-        }
-
-
-        let x_size = quantize_dimension(size.width);
-        let y_size = quantize_dimension(size.height);
-
-        let (width, height) = match (x_size, y_size) {
-            // Special cased rectangular slab pages.
-            (8, 16) => (8, 16),
-            (16, 32) => (16, 32),
-
-            // If none of those fit, use a square slab size.
-            (x_size, y_size) => {
-                let square_size = cmp::max(x_size, y_size);
-                (square_size, square_size)
-            }
-        };
-
-        SlabSize {
-            width,
-            height,
-        }
-    }
-}
-
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Copy, Clone, PartialEq)]
-struct SlabSize {
-    width: i32,
-    height: i32,
-}
-
-impl SlabSize {
-    fn invalid() -> SlabSize {
-        SlabSize {
-            width: 0,
-            height: 0,
         }
     }
 }
@@ -231,6 +177,12 @@ impl TextureRegion {
     }
 }
 
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct SlabAllocatorParameters {
+    pub region_size: i32,
+}
+
 /// A 2D texture divided into regions.
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -239,20 +191,20 @@ pub struct SlabAllocator {
     size: i32,
     region_size: i32,
     empty_regions: usize,
-    slab_sizes: SlabSizes,
+    allocated_space: i32,
 }
 
 impl SlabAllocator {
-    pub fn new(size: i32, region_size: i32, slab_sizes: SlabSizes) -> Self {
-        let regions_per_row = size / region_size;
+    pub fn new(size: i32, options: &SlabAllocatorParameters) -> Self {
+        let regions_per_row = size / options.region_size;
         let num_regions = (regions_per_row * regions_per_row) as usize;
 
         let mut regions = Vec::with_capacity(num_regions);
 
         for index in 0..num_regions {
             let offset = point2(
-                (index as i32 % regions_per_row) * region_size,
-                (index as i32 / regions_per_row) * region_size,
+                (index as i32 % regions_per_row) * options.region_size,
+                (index as i32 / regions_per_row) * options.region_size,
             );
 
             regions.push(TextureRegion::new(index, offset));
@@ -260,10 +212,10 @@ impl SlabAllocator {
 
         SlabAllocator {
             regions,
-            region_size,
             size,
+            region_size: options.region_size,
             empty_regions: num_regions,
-            slab_sizes,
+            allocated_space: 0,
         }
     }
 
@@ -271,9 +223,13 @@ impl SlabAllocator {
         self.empty_regions == self.regions.len()
     }
 
+    pub fn allocated_space(&self) -> i32 {
+        self.allocated_space
+    }
+
     // Returns the region index and allocated rect.
     pub fn allocate(&mut self, size: DeviceIntSize) -> Option<(AllocId, DeviceIntRect)> {
-        let slab_size = self.slab_sizes.get(size);
+        let slab_size = SlabSize::get(size);
 
         // Keep track of the location of an empty region,
         // in case we need to select a new empty region
@@ -317,22 +273,16 @@ impl SlabAllocator {
         None
     }
 
-    pub fn deallocate(&mut self, id: AllocId) -> DeviceIntSize {
+    pub fn deallocate(&mut self, id: AllocId) {
         let (region_index, location) = unpack_alloc_id(id);
 
         let region = &mut self.regions[region_index];
-        let size = size2(region.slab_size.width, region.slab_size.height);
-
         region.free(location, &mut self.empty_regions);
 
-        size
+        self.allocated_space -= region.slab_size.width * region.slab_size.height;
     }
 
-    pub fn num_regions(&self) -> usize {
-        self.regions.len()
-    }
-
-    pub fn dump_as_svg(&self, rect: &Box2D<f32>, output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    pub fn dump_into_svg(&self, rect: &Box2D<f32>, output: &mut dyn std::io::Write) -> std::io::Result<()> {
         use svg_fmt::*;
 
         let region_spacing = 5.0;
@@ -374,5 +324,33 @@ impl SlabAllocator {
         }
 
         Ok(())
+    }
+}
+
+impl AtlasAllocator for SlabAllocator {
+    type Parameters = SlabAllocatorParameters;
+
+    fn new(size: i32, options: &Self::Parameters) -> Self {
+        SlabAllocator::new(size, options)
+    }
+
+    fn allocate(&mut self, size: DeviceIntSize) -> Option<(AllocId, DeviceIntRect)> {
+        self.allocate(size)
+    }
+
+    fn deallocate(&mut self, id: AllocId) {
+        self.deallocate(id);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn allocated_space(&self) -> i32 {
+        self.allocated_space()
+    }
+
+    fn dump_into_svg(&self, rect: &Box2D<f32>, output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        self.dump_into_svg(rect, output)
     }
 }

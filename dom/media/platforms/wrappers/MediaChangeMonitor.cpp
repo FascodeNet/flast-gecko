@@ -131,8 +131,6 @@ class H264ChangeMonitor : public MediaChangeMonitor::CodecChangeMonitor {
       mCurrentConfig.mImage.height = spsdata.pic_height;
       mCurrentConfig.mDisplay.width = spsdata.display_width;
       mCurrentConfig.mDisplay.height = spsdata.display_height;
-      mCurrentConfig.SetImageRect(
-          gfx::IntRect(0, 0, spsdata.pic_width, spsdata.pic_height));
       mCurrentConfig.mColorDepth = spsdata.ColorDepth();
       mCurrentConfig.mColorSpace = spsdata.ColorSpace();
       mCurrentConfig.mColorRange = spsdata.video_full_range_flag
@@ -172,17 +170,17 @@ class VPXChangeMonitor : public MediaChangeMonitor::CodecChangeMonitor {
     if (aSample->mCrypto.IsEncrypted()) {
       return NS_OK;
     }
-    // For both VP8 and VP9, we only look for resolution changes
-    // on keyframes. Other resolution changes are invalid.
-    if (!aSample->mKeyframe) {
-      return NS_OK;
-    }
-
     auto dataSpan = Span<const uint8_t>(aSample->Data(), aSample->Size());
 
+    // We don't trust the keyframe flag as set on the MediaRawData.
     VPXDecoder::VPXStreamInfo info;
     if (!VPXDecoder::GetStreamInfo(dataSpan, info, mCodec)) {
       return NS_ERROR_DOM_MEDIA_DECODE_ERR;
+    }
+    // For both VP8 and VP9, we only look for resolution changes
+    // on keyframes. Other resolution changes are invalid.
+    if (!info.mKeyFrame) {
+      return NS_OK;
     }
 
     nsresult rv = NS_OK;
@@ -190,21 +188,25 @@ class VPXChangeMonitor : public MediaChangeMonitor::CodecChangeMonitor {
       if (mInfo.ref().IsCompatible(info)) {
         return rv;
       }
-      mCurrentConfig.mImage = info.mImage;
-      mCurrentConfig.mDisplay = info.mDisplay;
-      mCurrentConfig.SetImageRect(
-          gfx::IntRect(0, 0, info.mImage.width, info.mImage.height));
-
+      // We can't properly determine the image rect once we've had a resolution
+      // change.
+      mCurrentConfig.ResetImageRect();
       PROFILER_MARKER_TEXT(
           "VPX Stream Change", MEDIA_PLAYBACK, {},
           "VPXChangeMonitor::CheckForChange has detected a change in the "
           "stream and will request a new decoder");
       rv = NS_ERROR_DOM_MEDIA_NEED_NEW_DECODER;
+    } else if (mCurrentConfig.mImage != info.mImage ||
+               mCurrentConfig.mDisplay != info.mDisplay) {
+      PROFILER_MARKER_TEXT("VPX Stream Init Discrepancy", MEDIA_PLAYBACK, {},
+                           "VPXChangeMonitor::CheckForChange has detected a "
+                           "discrepancy between initialization data and stream "
+                           "content and will request a new decoder");
+      rv = NS_ERROR_DOM_MEDIA_NEED_NEW_DECODER;
     }
     mInfo = Some(info);
-    // For the first frame, we leave the mDisplay/mImage untouched as they
-    // contain aspect ratio (AR) information set by the demuxer.
-    // The AR data isn't found in the VP8/VP9 bytestream.
+    mCurrentConfig.mImage = info.mImage;
+    mCurrentConfig.mDisplay = info.mDisplay;
     mCurrentConfig.mColorDepth = gfx::ColorDepthForBitDepth(info.mBitDepth);
     mCurrentConfig.mColorSpace = info.ColorSpace();
     mCurrentConfig.mColorRange = info.ColorRange();

@@ -54,10 +54,12 @@ class RegExpStencil;
 class BigIntStencil;
 class StencilXDR;
 
-using BaseParserScopeData = AbstractBaseScopeData<const ParserAtom>;
+using BaseParserScopeData = AbstractBaseScopeData<TaggedParserAtomIndex>;
+using ParserBindingName = AbstractBindingName<TaggedParserAtomIndex>;
 
 template <typename Scope>
-using ParserScopeData = typename Scope::template AbstractData<const ParserAtom>;
+using ParserScopeData =
+    typename Scope::template AbstractData<TaggedParserAtomIndex>;
 using ParserGlobalScopeData = ParserScopeData<GlobalScope>;
 using ParserEvalScopeData = ParserScopeData<EvalScope>;
 using ParserLexicalScopeData = ParserScopeData<LexicalScope>;
@@ -65,7 +67,7 @@ using ParserFunctionScopeData = ParserScopeData<FunctionScope>;
 using ParserModuleScopeData = ParserScopeData<ModuleScope>;
 using ParserVarScopeData = ParserScopeData<VarScope>;
 
-using ParserBindingIter = AbstractBindingIter<const ParserAtom>;
+using ParserBindingIter = AbstractBindingIter<TaggedParserAtomIndex>;
 
 // [SMDOC] Script Stencil (Frontend Representation)
 //
@@ -93,13 +95,16 @@ class RegExpStencil {
   friend class StencilXDR;
 
   TaggedParserAtomIndex atom_;
-  JS::RegExpFlags flags_;
+  // Use uint32_t to make this struct fully-packed.
+  uint32_t flags_;
 
  public:
   RegExpStencil() = default;
 
   RegExpStencil(TaggedParserAtomIndex atom, JS::RegExpFlags flags)
-      : atom_(atom), flags_(flags) {}
+      : atom_(atom), flags_(flags.value()) {}
+
+  JS::RegExpFlags flags() const { return JS::RegExpFlags(flags_); }
 
   RegExpObject* createRegExp(JSContext* cx,
                              CompilationAtomCache& atomCache) const;
@@ -269,17 +274,17 @@ class ScopeStencil {
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump();
-  void dump(JSONPrinter& json);
-  void dumpFields(JSONPrinter& json);
+  void dump(JSONPrinter& json, CompilationStencil* compilationStencil);
+  void dumpFields(JSONPrinter& json, CompilationStencil* compilationStencil);
 #endif
 
  private:
   // Non owning reference to data
   template <typename SpecificScopeType>
-  typename SpecificScopeType::template AbstractData<const ParserAtom>& data()
-      const {
-    using Data =
-        typename SpecificScopeType ::template AbstractData<const ParserAtom>;
+  typename SpecificScopeType::template AbstractData<TaggedParserAtomIndex>&
+  data() const {
+    using Data = typename SpecificScopeType ::template AbstractData<
+        TaggedParserAtomIndex>;
 
     MOZ_ASSERT(data_);
     return *static_cast<Data*>(data_);
@@ -568,9 +573,6 @@ class ScriptStencil {
   mozilla::Maybe<MemberInitializers> memberInitializers;
   mozilla::Span<TaggedScriptThingIndex> gcThings;
 
-  // See `BaseScript::sharedData_`.
-  RefPtr<js::SharedImmutableScriptData> sharedData = {};
-
   // The location of this script in the source.
   SourceExtent extent = {};
 
@@ -609,9 +611,14 @@ class ScriptStencil {
   // False otherwise.
   bool allowRelazify : 1;
 
+  // True if this is non-lazy script and shared data is created.
+  // The shared data is stored into CompilationStencil.sharedData.
+  bool hasSharedData : 1;
+
   // End of fields.
 
-  ScriptStencil() : wasFunctionEmitted(false), allowRelazify(false) {}
+  ScriptStencil()
+      : wasFunctionEmitted(false), allowRelazify(false), hasSharedData(false) {}
 
   bool isFunction() const {
     bool result = functionFlags.toRaw() != 0x0000;

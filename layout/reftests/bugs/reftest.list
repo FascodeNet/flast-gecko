@@ -1261,7 +1261,7 @@ fuzzy-if(skiaContent,0-1,0-5) == 474472-1.html 474472-1-ref.html
 == 476598-1b.html 476598-1-ref2.html
 != 476598-1-ref.html about:blank
 == 476856-1.html 476856-1-ref.html
-pref(layout.css.xul-tree-pseudos.content.enabled,true) random-if(d2d) == chrome://reftest/content/bugs/478377-1.xhtml chrome://reftest/content/bugs/478377-1-ref.xhtml
+random-if(d2d) == chrome://reftest/content/bugs/478377-1.xhtml chrome://reftest/content/bugs/478377-1-ref.xhtml
 == 478614-1.html 478614-1-ref.html
 == 478614-2.html 478614-1-ref.html
 == 478614-3.html 478614-3-ref.html
@@ -1546,7 +1546,7 @@ asserts(1-2) == 582146-1.html about:blank
 == 582476-1.svg 582476-1-ref.svg
 == 584400-dash-length.svg 584400-dash-length-ref.svg
 == 584699-1.html 584699-1-ref.html
-fuzzy-if(Android,0-2,0-48) == 585598-2.xhtml 585598-2-ref.xhtml
+fuzzy(0-2,0-48) fuzzy-if(webrender&&winWidget,0-1,0-33) == 585598-2.xhtml 585598-2-ref.xhtml
 == 586400-1.html 586400-1-ref.html
 fuzzy-if(d2d,0-52,0-1051) == 586683-1.html 586683-1-ref.html
 == 589615-1a.xhtml 589615-1-ref.html
@@ -1655,11 +1655,11 @@ fuzzy-if(skiaContent,0-1,0-65536) == 654950-1.html 654950-1-ref.html # Quartz al
 != 656875.html about:blank
 == 658952.html 658952-ref.html
 fuzzy-if(skiaContent,0-10,0-919) fuzzy-if(webrender&&cocoaWidget,2-2,4-4) == 660682-1.html 660682-1-ref.html
-pref(layout.css.xul-tree-pseudos.content.enabled,true) fuzzy-if(d2d,0-1,0-256) fuzzy-if(skiaContent,0-1,0-68000) == chrome://reftest/content/bugs/664127-1.xhtml chrome://reftest/content/bugs/664127-1-ref.xhtml
+fuzzy-if(d2d,0-1,0-256) fuzzy-if(skiaContent,0-1,0-68000) == chrome://reftest/content/bugs/664127-1.xhtml chrome://reftest/content/bugs/664127-1-ref.xhtml
 == 665597-1.html 665597-1-ref.html
 == 665597-2.html 665597-2-ref.html
 == 667079-1.html 667079-1-ref.html
-pref(layout.css.xul-tree-pseudos.content.enabled,true) == chrome://reftest/content/bugs/668319-1.xhtml about:blank
+== chrome://reftest/content/bugs/668319-1.xhtml about:blank
 != chrome://reftest/content/bugs/669015-1.xhtml chrome://reftest/content/bugs/669015-1-notref.xhtml
 skip-if(azureSkiaGL) == 670442-1.html 670442-1-ref.html
 == 670467-1.html 670467-1-ref.html
@@ -1782,7 +1782,7 @@ fuzzy-if(skiaContent,0-1,0-5) == 956513-1.svg 956513-1-ref.svg
 == 957770-1.svg 957770-1-ref.svg
 == 960277-1.html 960277-1-ref.html
 fuzzy-if(skiaContent,0-1,0-80) == 961887-1.html 961887-1-ref.html
-fuzzy-if(webrender&&swgl,1-1,42-42) == 961887-2.html 961887-2-ref.html
+== 961887-2.html 961887-2-ref.html
 == 961887-3.html 961887-3-ref.html
 pref(layout.css.overflow-clip-box.enabled,true) fuzzy(0-50,0-145) fuzzy-if(asyncPan&&!layersGPUAccelerated,0-102,0-3712) fuzzy-if(webrender,0-255,0-180) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == 966992-1.html 966992-1-ref.html # Bug 1392106
 == 966510-1.html 966510-1-ref.html

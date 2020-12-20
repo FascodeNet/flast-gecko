@@ -61,6 +61,7 @@
 #include "js/UniquePtr.h"
 #include "util/Memory.h"
 #include "util/Windows.h"
+#include "vm/BytecodeIterator.h"
 #include "vm/HelperThreadState.h"
 #include "vm/Realm.h"
 #include "vm/TraceLogging.h"
@@ -74,6 +75,7 @@
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SafepointIndex-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
+#include "vm/BytecodeIterator-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSObject-inl.h"
@@ -1554,9 +1556,7 @@ CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot) {
   AutoEnterIonBackend enter;
   AutoSpewEndFunction spewEndFunction(mir);
 
-  MOZ_ASSERT(!!snapshot == JitOptions.warpBuilder);
-
-  if (snapshot) {
+  {
     WarpCompilation comp(mir->alloc());
     WarpBuilder builder(*snapshot, *mir, &comp);
     if (!builder.build()) {
@@ -1720,12 +1720,6 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
       return AbortReason::Alloc;
     }
 
-    if (!JitOptions.warpBuilder) {
-      if (!CreateMIRRootList(*task)) {
-        return AbortReason::Alloc;
-      }
-    }
-
     AutoLockHelperThreadState lock;
     if (!StartOffThreadIonCompile(task, lock)) {
       JitSpew(JitSpew_IonAbort, "Unable to start off-thread ion compilation.");
@@ -1769,8 +1763,6 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
 }
 
 static bool CheckFrame(JSContext* cx, BaselineFrame* frame) {
-  MOZ_ASSERT(!frame->script()->isGenerator());
-  MOZ_ASSERT(!frame->script()->isAsync());
   MOZ_ASSERT(!frame->isDebuggerEvalFrame());
   MOZ_ASSERT(!frame->isEvalFrame());
 
@@ -1800,13 +1792,21 @@ static bool CanIonCompileOrInlineScript(JSScript* script, const char** reason) {
     return false;
   }
 
-  if (script->isGenerator()) {
+  if (script->isGenerator() && !JitOptions.warpGenerator) {
     *reason = "generator script";
     return false;
   }
+
   if (script->isAsync()) {
-    *reason = "async script";
-    return false;
+    if (!JitOptions.warpAsync) {
+      *reason = "async script";
+      return false;
+    }
+
+    if (script->isModule()) {
+      *reason = "async module";
+      return false;
+    }
   }
 
   if (script->hasNonSyntacticScope() && !script->function()) {
@@ -1827,7 +1827,7 @@ static bool CanIonCompileOrInlineScript(JSScript* script, const char** reason) {
   }
 
   return true;
-}
+}  // namespace jit
 
 static bool ScriptIsTooLarge(JSContext* cx, JSScript* script) {
   if (!JitOptions.limitScriptSize) {
@@ -2147,6 +2147,7 @@ static MethodStatus BaselineCanEnterAtBranch(JSContext* cx, HandleScript script,
         !JitOptions.eagerIonCompilation()) {
       return Method_Skipped;
     }
+    JitSpew(JitSpew_IonScripts, "Forcing OSR Mismatch Compilation");
     force = true;
   }
 

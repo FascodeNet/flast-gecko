@@ -740,12 +740,12 @@ nsresult nsDNSService::ReadPrefs(const char* name) {
     Preferences::GetCString(kPrefDnsLocalDomains, localDomains);
     MutexAutoLock lock(mLock);
     mLocalDomains.Clear();
-    if (!localDomains.IsEmpty()) {
-      nsCCharSeparatedTokenizer tokenizer(
-          localDomains, ',', nsCCharSeparatedTokenizer::SEPARATOR_OPTIONAL);
-      while (tokenizer.hasMoreTokens()) {
-        mLocalDomains.PutEntry(tokenizer.nextToken());
-      }
+    for (const auto& token :
+         nsCCharSeparatedTokenizerTemplate<NS_IsAsciiWhitespace,
+                                           nsTokenizerFlags::SeparatorOptional>(
+             localDomains, ',')
+             .ToRange()) {
+      mLocalDomains.PutEntry(token);
     }
   }
   if (!name || !strcmp(name, kPrefDnsForceResolve)) {

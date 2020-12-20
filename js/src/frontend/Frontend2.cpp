@@ -85,8 +85,9 @@ void CopyBindingNames(JSContext* cx, CVec<SmooshBindingName>& from,
   size_t numBindings = from.len;
   for (size_t i = 0; i < numBindings; i++) {
     SmooshBindingName& name = from.data[i];
-    new (mozilla::KnownNotNull, &to[i]) ParserBindingName(
-        allAtoms[name.name], name.is_closed_over, name.is_top_level_function);
+    new (mozilla::KnownNotNull, &to[i])
+        ParserBindingName(allAtoms[name.name]->toIndex(), name.is_closed_over,
+                          name.is_top_level_function);
   }
 }
 
@@ -101,11 +102,12 @@ void CopyBindingNames(JSContext* cx, CVec<COption<SmooshBindingName>>& from,
     COption<SmooshBindingName>& maybeName = from.data[i];
     if (maybeName.IsSome()) {
       SmooshBindingName& name = maybeName.AsSome();
-      new (mozilla::KnownNotNull, &to[i]) ParserBindingName(
-          allAtoms[name.name], name.is_closed_over, name.is_top_level_function);
+      new (mozilla::KnownNotNull, &to[i])
+          ParserBindingName(allAtoms[name.name]->toIndex(), name.is_closed_over,
+                            name.is_top_level_function);
     } else {
       new (mozilla::KnownNotNull, &to[i])
-          ParserBindingName(nullptr, false, false);
+          ParserBindingName(TaggedParserAtomIndex::null(), false, false);
     }
   }
 }
@@ -419,7 +421,7 @@ bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
                           const SmooshScriptStencil& smooshScript,
                           Vector<const ParserAtom*>& allAtoms,
                           CompilationInfo& compilationInfo,
-                          ScriptStencil& script) {
+                          ScriptStencil& script, FunctionIndex functionIndex) {
   using ImmutableFlags = js::ImmutableScriptFlagsEnum;
 
   const JS::ReadOnlyCompileOptions& options = compilationInfo.input.options;
@@ -450,14 +452,19 @@ bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
     if (!immutableScriptData) {
       return false;
     }
-    script.sharedData = SharedImmutableScriptData::createWith(
+
+    auto sharedData = SharedImmutableScriptData::createWith(
         cx, std::move(immutableScriptData));
-    if (!script.sharedData) {
+    if (!sharedData) {
       return false;
     }
-    if (!SharedImmutableScriptData::shareScriptData(cx, script.sharedData)) {
+
+    if (!compilationInfo.stencil.sharedData.addAndShare(cx, functionIndex,
+                                                        sharedData)) {
       return false;
     }
+
+    script.hasSharedData = true;
   }
 
   script.extent.sourceStart = smooshScript.extent.source_start;
@@ -595,12 +602,26 @@ bool Smoosh::compileGlobalScriptToStencil(JSContext* cx,
     return false;
   }
 
+  // NOTE: Currently we don't support delazification or standalone function.
+  //       Once we support, fix the following loop to include 0-th item
+  //       and check if it's function.
+  MOZ_ASSERT_IF(result.scripts.len > 0, result.scripts.data[0].fun_flags == 0);
+  for (size_t i = 1; i < result.scripts.len; i++) {
+    auto& script = result.scripts.data[i];
+    if (script.immutable_script_data.IsSome()) {
+      compilationState.nonLazyFunctionCount++;
+    }
+  }
+
+  compilationInfo.stencil.prepareStorageFor(
+      cx, compilationState.nonLazyFunctionCount);
+
   for (size_t i = 0; i < result.scripts.len; i++) {
     compilationInfo.stencil.scriptData.infallibleEmplaceBack();
 
-    if (!ConvertScriptStencil(cx, result, result.scripts.data[i], allAtoms,
-                              compilationInfo,
-                              compilationInfo.stencil.scriptData[i])) {
+    if (!ConvertScriptStencil(
+            cx, result, result.scripts.data[i], allAtoms, compilationInfo,
+            compilationInfo.stencil.scriptData[i], FunctionIndex(i))) {
       return false;
     }
   }

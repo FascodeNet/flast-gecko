@@ -357,9 +357,8 @@ bool nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(nsIURI* aURI) {
 
   nsAutoCString allowlist;
   GetSecureContextAllowList(allowlist);
-  nsCCharSeparatedTokenizer tokenizer(allowlist, ',');
-  while (tokenizer.hasMoreTokens()) {
-    const nsACString& allowedHost = tokenizer.nextToken();
+  for (const nsACString& allowedHost :
+       nsCCharSeparatedTokenizer(allowlist, ',').ToRange()) {
     if (host.Equals(allowedHost)) {
       return true;
     }
@@ -396,7 +395,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
             ("  - contentLocation: %s", asciiUrl.get()));
   }
 
-  uint32_t contentType = aLoadInfo->InternalContentPolicyType();
+  nsContentPolicyType contentType = aLoadInfo->InternalContentPolicyType();
   nsCOMPtr<nsIPrincipal> loadingPrincipal = aLoadInfo->GetLoadingPrincipal();
   nsCOMPtr<nsIPrincipal> triggeringPrincipal = aLoadInfo->TriggeringPrincipal();
 

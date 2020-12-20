@@ -10,6 +10,7 @@
 #include "js/Class.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayObject.h"
+#include "vm/BytecodeUtil.h"
 #include "vm/GeneratorResumeKind.h"  // GeneratorResumeKind
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
@@ -53,7 +54,11 @@ class AbstractGeneratorObject : public NativeObject {
   static JSObject* createModuleGenerator(JSContext* cx, AbstractFramePtr frame);
 
  public:
-  static JSObject* create(JSContext* cx, AbstractFramePtr frame);
+  static JSObject* createFromFrame(JSContext* cx, AbstractFramePtr frame);
+  static AbstractGeneratorObject* create(JSContext* cx, HandleFunction callee,
+                                         HandleScript script,
+                                         HandleObject environmentChain,
+                                         Handle<ArgumentsObject*> argsObject);
 
   static bool resume(JSContext* cx, InterpreterActivation& activation,
                      Handle<AbstractGeneratorObject*> genObj, HandleValue arg,
@@ -98,7 +103,6 @@ class AbstractGeneratorObject : public NativeObject {
   void setStackStorage(ArrayObject& stackStorage) {
     setFixedSlot(STACK_STORAGE_SLOT, ObjectValue(stackStorage));
   }
-  void clearStackStorage() { setFixedSlot(STACK_STORAGE_SLOT, NullValue()); }
 
   // The resumeIndex slot is abused for a few purposes.  It's undefined if
   // it hasn't been set yet (before the initial yield), and null if the
@@ -180,6 +184,12 @@ class AbstractGeneratorObject : public NativeObject {
     return getFixedSlotOffset(STACK_STORAGE_SLOT);
   }
 
+  static size_t calleeSlot() { return CALLEE_SLOT; }
+  static size_t envChainSlot() { return ENV_CHAIN_SLOT; }
+  static size_t argsObjectSlot() { return ARGS_OBJ_SLOT; }
+  static size_t stackStorageSlot() { return STACK_STORAGE_SLOT; }
+  static size_t resumeIndexSlot() { return RESUME_INDEX_SLOT; }
+
 #ifdef DEBUG
   void dump() const;
 #endif
@@ -215,16 +225,6 @@ bool GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
  */
 AbstractGeneratorObject* GetGeneratorObjectForFrame(JSContext* cx,
                                                     AbstractFramePtr frame);
-
-inline GeneratorResumeKind IntToResumeKind(int32_t value) {
-  MOZ_ASSERT(uint32_t(value) <= uint32_t(GeneratorResumeKind::Return));
-  return static_cast<GeneratorResumeKind>(value);
-}
-
-inline GeneratorResumeKind ResumeKindFromPC(jsbytecode* pc) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::ResumeKind);
-  return IntToResumeKind(GET_UINT8(pc));
-}
 
 GeneratorResumeKind ParserAtomToResumeKind(JSContext* cx,
                                            const frontend::ParserAtom* atom);

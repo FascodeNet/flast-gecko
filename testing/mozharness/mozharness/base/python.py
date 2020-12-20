@@ -7,6 +7,7 @@
 """Python usage, esp. virtualenv.
 """
 
+from __future__ import absolute_import, division
 import errno
 import json
 import os
@@ -235,8 +236,9 @@ class VirtualenvMixin(object):
         """
         Return whether the package is installed
         """
-        packages = self.package_versions(error_level=error_level).keys()
-        return package_name.lower() in [package.lower() for package in packages]
+        # pylint --py3k W1655
+        package_versions = self.package_versions(error_level=error_level)
+        return package_name.lower() in [package.lower() for package in package_versions]
 
     def install_module(
         self,
@@ -700,6 +702,7 @@ class ResourceMonitoringMixin(PerfherderResourceOptionsMixin):
             # being fed into a 'f' formatter. This will help diagnose the
             # issue.
             if cpu_percent:
+                # pylint: disable=W1633
                 cpu_percent_str = str(round(cpu_percent)) + "%"
             else:
                 cpu_percent_str = "Can't collect data"
@@ -835,6 +838,7 @@ class ResourceMonitoringMixin(PerfherderResourceOptionsMixin):
         for attr in cpu_attrs:
             value = getattr(cpu_times, attr)
             # cpu_total can be 0.0. Guard against division by 0.
+            # pylint --py3k W1619
             percent = value / cpu_total * 100.0 if cpu_total else 0.0
 
             if percent > 1.00:

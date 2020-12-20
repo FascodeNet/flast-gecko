@@ -174,6 +174,12 @@ using ScriptLCovMap = HashMap<BaseScript*, ScriptLCovEntry,
 using ScriptVTuneIdMap = HashMap<BaseScript*, uint32_t,
                                  DefaultHasher<BaseScript*>, SystemAllocPolicy>;
 #endif
+#ifdef JS_CACHEIR_SPEW
+using ScriptFinalWarmUpCountEntry = mozilla::Tuple<uint32_t, char*>;
+using ScriptFinalWarmUpCountMap =
+    HashMap<BaseScript*, ScriptFinalWarmUpCountEntry,
+            DefaultHasher<BaseScript*>, SystemAllocPolicy>;
+#endif
 
 using UniqueDebugScript = js::UniquePtr<DebugScript, JS::FreePolicy>;
 using DebugScriptMap = HashMap<BaseScript*, UniqueDebugScript,
@@ -1691,6 +1697,7 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   // NeedsArgsObj: custom logic below.
   MUTABLE_FLAG_GETTER_SETTER(allowRelazify, AllowRelazify)
   MUTABLE_FLAG_GETTER_SETTER(spewEnabled, SpewEnabled)
+  MUTABLE_FLAG_GETTER_SETTER(needsFinalWarmUpCount, NeedsFinalWarmUpCount)
   MUTABLE_FLAG_GETTER_SETTER(failedBoundsCheck, FailedBoundsCheck)
   MUTABLE_FLAG_GETTER_SETTER(failedShapeGuard, FailedShapeGuard)
   MUTABLE_FLAG_GETTER_SETTER(hadLICMInvalidation, HadLICMInvalidation)
@@ -1927,7 +1934,7 @@ class JSScript : public js::BaseScript {
       js::frontend::CompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput, js::HandleScript script,
       const js::frontend::ScriptStencil& scriptStencil,
-      js::HandleFunction function);
+      js::SharedImmutableScriptData* sharedData, js::HandleFunction function);
 
   // Allocate a JSScript and initialize it with bytecode. This consumes
   // allocations within the stencil.
@@ -1936,6 +1943,7 @@ class JSScript : public js::BaseScript {
                                js::frontend::CompilationStencil& stencil,
                                js::frontend::CompilationGCOutput& gcOutput,
                                const js::frontend::ScriptStencil& scriptStencil,
+                               js::SharedImmutableScriptData* sharedData,
                                js::HandleFunction function);
 
 #ifdef DEBUG
@@ -2433,6 +2441,11 @@ extern const js::SrcNote* GetSrcNote(JSContext* cx, JSScript* script,
 extern jsbytecode* LineNumberToPC(JSScript* script, unsigned lineno);
 
 extern JS_FRIEND_API unsigned GetScriptLineExtent(JSScript* script);
+
+#ifdef JS_CACHEIR_SPEW
+void maybeUpdateWarmUpCount(JSScript* script);
+void maybeSpewScriptFinalWarmUpCount(JSScript* script);
+#endif
 
 } /* namespace js */
 

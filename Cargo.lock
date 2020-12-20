@@ -217,7 +217,7 @@ dependencies = [
  "bindgen",
  "cranelift-codegen",
  "cranelift-wasm",
- "env_logger",
+ "env_logger 0.8.2",
  "log",
  "smallvec",
 ]
@@ -269,13 +269,12 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.53.2"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bb26d6a69a335b8cb0e7c7e9775cd5666611dc50a37177c3f2cedcfc040e8c8"
+checksum = "2da379dbebc0b76ef63ca68d8fc6e71c0f13e59432e0987e508c1820e6ab5239"
 dependencies = [
  "bitflags",
  "cexpr",
- "cfg-if 0.1.10",
  "clang-sys",
  "lazy_static",
  "lazycell",
@@ -595,13 +594,13 @@ dependencies = [
 
 [[package]]
 name = "clang-sys"
-version = "0.29.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f92986241798376849e1a007827041fed9bb36195822c2049d18e174420e0534"
+checksum = "0659001ab56b791be01d4b729c44376edc6718cf389a502e579b77b758f3296c"
 dependencies = [
  "glob",
  "libc",
- "libloading 0.5.2",
+ "libloading 0.6.2",
 ]
 
 [[package]]
@@ -643,12 +642,10 @@ dependencies = [
 
 [[package]]
 name = "comedy"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d4f03fbb05a4df3523a44cda10340e6ae6bea03ee9d01240a1a2c1ef6c73e95"
+checksum = "74428ae4f7f05f32f4448e9f42d371538196919c4834979f4f96d1fdebffcb47"
 dependencies = [
- "failure",
- "failure_derive",
  "winapi 0.3.9",
 ]
 
@@ -728,9 +725,9 @@ dependencies = [
 
 [[package]]
 name = "coreaudio-sys"
-version = "0.2.4"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e81f1c165c33ffab90a03077ac3b03462b34d5947145dfa48102e063d581502c"
+checksum = "2b7e3347be6a09b46aba228d6608386739fb70beff4f61e07422da87b0bb31fa"
 dependencies = [
  "bindgen",
 ]
@@ -1278,12 +1275,25 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
+dependencies = [
+ "atty",
+ "humantime 1.3.0",
+ "log",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
+name = "env_logger"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f26ecb66b4bdca6c1409b40fb255eefc2bd4f6d135dab3c3124f80ffa2a9661e"
 dependencies = [
  "atty",
- "humantime",
+ "humantime 2.0.1",
  "log",
  "regex",
  "termcolor",
@@ -1301,6 +1311,17 @@ version = "0.1.0"
 source = "git+https://github.com/mozilla/application-services?rev=8a576fbe79199fa8664f64285524017f74ebcc5f#8a576fbe79199fa8664f64285524017f74ebcc5f"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "etagere"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08b0c1a67320904a4d6e37931945c17447eb94057c8ebcc8d3ffd2789b6fb7b"
+dependencies = [
+ "euclid",
+ "serde",
+ "svg_fmt",
 ]
 
 [[package]]
@@ -1360,9 +1381,9 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fallible_collections"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bda4d04bca84e2331f0ff2ee8300064df3f467e37743d87788c1487a6dd903b"
+checksum = "9599e8ccc571becb62700174680e54e5c50fc5b4d34c1c56d8915e0325650fea"
 dependencies = [
  "hashbrown",
 ]
@@ -1379,9 +1400,9 @@ dependencies = [
 
 [[package]]
 name = "filetime_win"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c37abd4a58e0cb794bcae4a7dc4f02fff376949d8d1066d4c729e97bfb38ec"
+checksum = "b12c2c8d7d9f04d7952cc33bac89b7425fb3cf4c44773b06ea49ac3df259ac57"
 dependencies = [
  "comedy",
  "winapi 0.3.9",
@@ -1564,9 +1585,18 @@ dependencies = [
 
 [[package]]
 name = "foreign-types"
-version = "0.3.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ebc04f19019fff1f2d627b5581574ead502f80c48c88900575a46e0840fe5d0"
+checksum = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
+dependencies = [
+ "foreign-types-shared",
+]
+
+[[package]]
+name = "foreign-types-shared"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "freetype"
@@ -1721,7 +1751,7 @@ name = "gecko_logger"
 version = "0.1.0"
 dependencies = [
  "app_services_logger",
- "env_logger",
+ "env_logger 0.8.2",
  "lazy_static",
  "log",
 ]
@@ -1794,9 +1824,8 @@ dependencies = [
 
 [[package]]
 name = "gfx-auxil"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07cd956b592970f08545b9325b87580eb95a51843b6f39da27b8667fec1a1216"
+version = "0.5.0"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "fxhash",
  "gfx-hal",
@@ -1805,9 +1834,8 @@ dependencies = [
 
 [[package]]
 name = "gfx-backend-dx11"
-version = "0.6.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52b0c3b8b2e0a60c1380a7c27652cd86b791e5d8312fb9592a7a59bd437e9532"
+version = "0.6.0"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "arrayvec",
  "bitflags",
@@ -1827,9 +1855,8 @@ dependencies = [
 
 [[package]]
 name = "gfx-backend-dx12"
-version = "0.6.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf8bc6329ebac49722b66a2b87d5d769bba1de584f51ffbf0cd31701d01050b0"
+version = "0.6.2"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -1838,6 +1865,7 @@ dependencies = [
  "gfx-auxil",
  "gfx-hal",
  "log",
+ "parking_lot",
  "range-alloc",
  "raw-window-handle",
  "smallvec",
@@ -1848,8 +1876,7 @@ dependencies = [
 [[package]]
 name = "gfx-backend-empty"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2085227c12b78f6657a900c829f2d0deb46a9be3eaf86844fde263cdc218f77c"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "gfx-hal",
  "log",
@@ -1858,9 +1885,8 @@ dependencies = [
 
 [[package]]
 name = "gfx-backend-metal"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60ba1c77c112e7d35786dbd49ed26f2a76ce53a44bc09fe964935e4e35ed7f2b"
+version = "0.6.0"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "arrayvec",
  "bitflags",
@@ -1877,7 +1903,6 @@ dependencies = [
  "parking_lot",
  "range-alloc",
  "raw-window-handle",
- "smallvec",
  "spirv_cross",
  "storage-map",
 ]
@@ -1885,8 +1910,7 @@ dependencies = [
 [[package]]
 name = "gfx-backend-vulkan"
 version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a3a63cf61067a09b7d1ac480af3cb2ae0c5ede5bed294607bbd814cb1666c45"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "arrayvec",
  "ash",
@@ -1903,38 +1927,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfx-descriptor"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd8c7afcd000f279d541a490e27117e61037537279b9342279abf4938fe60c6b"
-dependencies = [
- "arrayvec",
- "fxhash",
- "gfx-hal",
- "log",
-]
-
-[[package]]
 name = "gfx-hal"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d0754f5b7a43915fd7466883b2d1bb0800d7cc4609178d0b27bf143b9e5123"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 dependencies = [
  "bitflags",
  "raw-window-handle",
-]
-
-[[package]]
-name = "gfx-memory"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dccdda5d2b39412f4ca2cb15c70b5a82783a86b0606f5e985342754c8ed88f05"
-dependencies = [
- "bit-set",
- "fxhash",
- "gfx-hal",
- "log",
- "slab",
 ]
 
 [[package]]
@@ -2060,10 +2058,11 @@ dependencies = [
 
 [[package]]
 name = "glean"
-version = "33.8.0"
+version = "33.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91b0b03e572ce70d06cf92ca899bdab8679e4ca07a2877928df028c848a1e9a"
+checksum = "120a2f092bcf0b8fa0ec864e1a063426638f7084671eddfd138b5571e1e2c6fd"
 dependencies = [
+ "chrono",
  "crossbeam-channel",
  "glean-core",
  "inherent",
@@ -2078,9 +2077,9 @@ dependencies = [
 
 [[package]]
 name = "glean-core"
-version = "33.8.0"
+version = "33.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "440d35335296536f0cf46ca79b6edc4f93b3cfdaef2ce8696b7f7e6ee3d7b69f"
+checksum = "b2c8e087b69c8392fca868214b4675230e36832f231cc6045d08caed0d33e3c1"
 dependencies = [
  "bincode",
  "chrono",
@@ -2155,10 +2154,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "guid_win"
+name = "gpu-alloc"
+version = "0.2.1"
+source = "git+https://github.com/zakarumych/gpu-alloc?rev=d07be73f9439a37c89f5b72f2500cbf0eb4ff613#d07be73f9439a37c89f5b72f2500cbf0eb4ff613"
+dependencies = [
+ "bitflags",
+ "gpu-alloc-types",
+]
+
+[[package]]
+name = "gpu-alloc-types"
 version = "0.1.0"
+source = "git+https://github.com/zakarumych/gpu-alloc?rev=d07be73f9439a37c89f5b72f2500cbf0eb4ff613#d07be73f9439a37c89f5b72f2500cbf0eb4ff613"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
+name = "gpu-descriptor"
+version = "0.1.0"
+source = "git+https://github.com/zakarumych/gpu-descriptor?rev=831460c4b5120d9a74744d542f39a95b9816b5ab#831460c4b5120d9a74744d542f39a95b9816b5ab"
+dependencies = [
+ "bitflags",
+ "gpu-descriptor-types",
+ "hashbrown",
+]
+
+[[package]]
+name = "gpu-descriptor-types"
+version = "0.1.0"
+source = "git+https://github.com/zakarumych/gpu-descriptor?rev=831460c4b5120d9a74744d542f39a95b9816b5ab#831460c4b5120d9a74744d542f39a95b9816b5ab"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
+name = "guid_win"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87261686cc5e35b6584f4c2a430c2b153d8a92ab1ef820c16be34c1df8f5f58b"
+checksum = "d87f4be87a557b98b4e4316f2009834f4448652938a950c1e8b33ae25f6f183b"
 dependencies = [
  "comedy",
  "winapi 0.3.9",
@@ -2314,6 +2348,15 @@ name = "httparse"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8734b0cfd3bc3e101ec59100e101c2eecd19282202e87808b3037b442777a83"
+
+[[package]]
+name = "humantime"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df004cfca50ef23c36850aaaa59ad52cc70d0e90243c3c7737a4dd32dc7a3c4f"
+dependencies = [
+ "quick-error",
+]
 
 [[package]]
 name = "humantime"
@@ -2500,7 +2543,7 @@ version = "0.1.4"
 dependencies = [
  "bindgen",
  "cmake",
- "env_logger",
+ "env_logger 0.8.2",
  "glob",
  "lazy_static",
  "libc",
@@ -3235,10 +3278,11 @@ dependencies = [
 [[package]]
 name = "mp4parse"
 version = "0.11.4"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=f7c35a30ff25521bebe64c19d3f306569ecb5385#f7c35a30ff25521bebe64c19d3f306569ecb5385"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=3d9efdc868ce8c5767cea28708fa6512c0ab6d17#3d9efdc868ce8c5767cea28708fa6512c0ab6d17"
 dependencies = [
  "bitreader",
  "byteorder",
+ "env_logger 0.7.1",
  "fallible_collections",
  "hashbrown",
  "log",
@@ -3253,7 +3297,7 @@ version = "0.1.0"
 [[package]]
 name = "mp4parse_capi"
 version = "0.11.4"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=f7c35a30ff25521bebe64c19d3f306569ecb5385#f7c35a30ff25521bebe64c19d3f306569ecb5385"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=3d9efdc868ce8c5767cea28708fa6512c0ab6d17#3d9efdc868ce8c5767cea28708fa6512c0ab6d17"
 dependencies = [
  "byteorder",
  "fallible_collections",
@@ -3281,7 +3325,7 @@ checksum = "a2983372caf4480544083767bf2d27defafe32af49ab4df3a0b7fc90793a3664"
 [[package]]
 name = "naga"
 version = "0.2.0"
-source = "git+https://github.com/gfx-rs/naga?rev=4d4e1cd4cbfad2b81264a7239a336b6ec1346611#4d4e1cd4cbfad2b81264a7239a336b6ec1346611"
+source = "git+https://github.com/gfx-rs/naga?rev=96c80738650822de35f77ab6a589f309460c8f39#96c80738650822de35f77ab6a589f309460c8f39"
 dependencies = [
  "bitflags",
  "fxhash",
@@ -3294,11 +3338,11 @@ dependencies = [
 
 [[package]]
 name = "neqo-common"
-version = "0.4.16"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.16#1b0664a1e2b3ac59a5c919d32ddc284dc57634e6"
+version = "0.4.18"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.18#b4a1dc52b7dcb689a8369b0f529260cadda224c3"
 dependencies = [
  "chrono",
- "env_logger",
+ "env_logger 0.8.2",
  "lazy_static",
  "log",
  "qlog",
@@ -3306,8 +3350,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-crypto"
-version = "0.4.16"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.16#1b0664a1e2b3ac59a5c919d32ddc284dc57634e6"
+version = "0.4.18"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.18#b4a1dc52b7dcb689a8369b0f529260cadda224c3"
 dependencies = [
  "bindgen",
  "log",
@@ -3319,8 +3363,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-http3"
-version = "0.4.16"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.16#1b0664a1e2b3ac59a5c919d32ddc284dc57634e6"
+version = "0.4.18"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.18#b4a1dc52b7dcb689a8369b0f529260cadda224c3"
 dependencies = [
  "log",
  "neqo-common",
@@ -3333,8 +3377,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-qpack"
-version = "0.4.16"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.16#1b0664a1e2b3ac59a5c919d32ddc284dc57634e6"
+version = "0.4.18"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.18#b4a1dc52b7dcb689a8369b0f529260cadda224c3"
 dependencies = [
  "lazy_static",
  "log",
@@ -3347,8 +3391,8 @@ dependencies = [
 
 [[package]]
 name = "neqo-transport"
-version = "0.4.16"
-source = "git+https://github.com/mozilla/neqo?tag=v0.4.16#1b0664a1e2b3ac59a5c919d32ddc284dc57634e6"
+version = "0.4.18"
+source = "git+https://github.com/mozilla/neqo?tag=v0.4.18#b4a1dc52b7dcb689a8369b0f529260cadda224c3"
 dependencies = [
  "indexmap",
  "lazy_static",
@@ -3614,7 +3658,7 @@ version = "0.1.4"
 dependencies = [
  "byteorder",
  "core-foundation",
- "env_logger",
+ "env_logger 0.8.2",
  "lazy_static",
  "libloading 0.5.2",
  "log",
@@ -3862,7 +3906,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50ce7c785e06e3a9e6f546c1a30d3d59111a31a21bc294fb1496241a572c9a00"
 dependencies = [
  "base64 0.10.1",
- "humantime",
+ "humantime 2.0.1",
  "indexmap",
  "line-wrap",
  "serde",
@@ -4083,8 +4127,7 @@ dependencies = [
 [[package]]
 name = "range-alloc"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a871f1e45a3a3f0c73fb60343c811238bb5143a81642e27c2ac7aac27ff01a63"
+source = "git+https://github.com/gfx-rs/gfx?rev=1d14789011cb892f4c1a205d3f8a87d479c2e354#1d14789011cb892f4c1a205d3f8a87d479c2e354"
 
 [[package]]
 name = "raw-cpuid"
@@ -4099,9 +4142,9 @@ dependencies = [
 
 [[package]]
 name = "raw-window-handle"
-version = "0.3.0"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e815b85b31e4d397ca9dd8eb1d692e9cb458b9f6ae8ac2232c995dca8236f87"
+checksum = "0a441a7a6c80ad6473bd4b74ec1c9a4c951794285bf941c2126f607c72e48211"
 dependencies = [
  "libc",
 ]
@@ -4676,7 +4719,7 @@ name = "smoosh"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
- "env_logger",
+ "env_logger 0.8.2",
  "jsparagus",
  "log",
 ]
@@ -4876,7 +4919,7 @@ dependencies = [
  "atomic_refcell",
  "cssparser",
  "cstr",
- "env_logger",
+ "env_logger 0.8.2",
  "geckoservo",
  "libc",
  "log",
@@ -5495,26 +5538,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "updateagent"
-version = "0.1.0"
-dependencies = [
- "bits_client",
- "cfg-if 0.1.10",
- "chrono",
- "comedy",
- "failure",
- "log",
- "percent-encoding",
- "prefs_parser",
- "raw-cpuid",
- "rust-ini",
- "winapi 0.3.9",
- "wineventlog",
- "wio",
- "xml-rs",
-]
-
-[[package]]
 name = "url"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5578,12 +5601,13 @@ checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
 name = "walkdir"
-version = "2.1.4"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63636bd0eb3d00ccb8b9036381b526efac53caf112b7783b730ab3f8e44da369"
+checksum = "777182bc735b6424e1a57516d35ed72cb8019d85c8c9bf536dccb3445c1a2f7d"
 dependencies = [
  "same-file",
  "winapi 0.3.9",
+ "winapi-util",
 ]
 
 [[package]]
@@ -5639,18 +5663,18 @@ source = "git+https://github.com/mozilla-spidermonkey/wasm-tools?rev=1b7763faa48
 
 [[package]]
 name = "wast"
-version = "26.0.1"
+version = "29.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3f174eed73e885ede6c8fcc3fbea8c3757afa521840676496cde56bb742ddab"
+checksum = "dcf2268937131d63c3d833242bf5e075406f9ed868b4265f3280e15dac29ac18"
 dependencies = [
  "leb128",
 ]
 
 [[package]]
 name = "wat"
-version = "1.0.27"
+version = "1.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b2dccbce4d0e14875091846e110a2369267b18ddd0d6423479b88dad914d71"
+checksum = "0d11a88d953b298172d218d18f22853f4e6e12873b62755d05617b864d312c68"
 dependencies = [
  "wast",
 ]
@@ -5732,6 +5756,7 @@ dependencies = [
  "cstr",
  "derive_more",
  "dwrote",
+ "etagere",
  "euclid",
  "freetype",
  "fxhash",
@@ -5840,9 +5865,9 @@ dependencies = [
  "gfx-backend-empty",
  "gfx-backend-metal",
  "gfx-backend-vulkan",
- "gfx-descriptor",
  "gfx-hal",
- "gfx-memory",
+ "gpu-alloc",
+ "gpu-descriptor",
  "naga",
  "parking_lot",
  "ron",

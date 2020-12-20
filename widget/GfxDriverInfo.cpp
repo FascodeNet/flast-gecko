@@ -167,6 +167,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
     case DeviceFamily::ParallelsAll:
     case DeviceFamily::QualcommAll:
     case DeviceFamily::AppleAll:
+    case DeviceFamily::AmazonAll:
       return nullptr;
     default:
       break;
@@ -533,6 +534,15 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0122);
       APPEND_DEVICE(0x0126);
 
+#ifdef EARLY_BETA_OR_EARLIER
+      // ivybridge gen7 baytrail
+      APPEND_DEVICE(0x0f30);
+      APPEND_DEVICE(0x0f31);
+      APPEND_DEVICE(0x0f33);
+      APPEND_DEVICE(0x0155);
+      APPEND_DEVICE(0x0157);
+#endif
+
       // ivybridge gen7 gt1
       APPEND_DEVICE(0x0152);
       APPEND_DEVICE(0x0156);
@@ -772,7 +782,6 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       // Carrizo
       APPEND_RANGE(0x9870, 0x9877);
 
-#ifdef EARLY_BETA_OR_EARLIER
       // Kaveri
       APPEND_RANGE(0x1304, 0x131d);
 
@@ -780,7 +789,6 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x9440, 0x949f);
       APPEND_RANGE(0x94a0, 0x94b9);
       APPEND_RANGE(0x9540, 0x955f);
-#endif
 
       break;
     // This should never happen, but we get a warning if we don't handle this.
@@ -793,6 +801,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
     case DeviceFamily::ParallelsAll:
     case DeviceFamily::QualcommAll:
     case DeviceFamily::AppleAll:
+    case DeviceFamily::AmazonAll:
       NS_WARNING("Invalid DeviceFamily id");
       break;
   }
@@ -937,6 +946,9 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceFamily id) {
     case DeviceFamily::AppleAll:
       vendor = DeviceVendor::Apple;
       break;
+    case DeviceFamily::AmazonAll:
+      vendor = DeviceVendor::Amazon;
+      break;
     case DeviceFamily::QualcommAll:
       // Choose an arbitrary Qualcomm PCI VENdor ID for now.
       // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
@@ -975,6 +987,7 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceVendor id) {
     DECLARE_VENDOR_ID(VMWare, "0x15ad");
     DECLARE_VENDOR_ID(VirtualBox, "0x80ee");
     DECLARE_VENDOR_ID(Apple, "0x106b");
+    DECLARE_VENDOR_ID(Amazon, "0x1d0f");
     // Choose an arbitrary Qualcomm PCI VENdor ID for now.
     // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
     DECLARE_VENDOR_ID(Qualcomm, "0x5143");

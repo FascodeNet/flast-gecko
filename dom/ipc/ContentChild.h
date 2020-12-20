@@ -308,7 +308,8 @@ class ContentChild final : public PContentChild,
                                                  const bool& haveBidiKeyboards);
 
   mozilla::ipc::IPCResult RecvNotifyVisited(nsTArray<VisitedQueryResult>&&);
-  mozilla::ipc::IPCResult RecvThemeChanged(LookAndFeelCache&& aLookAndFeelCache,
+
+  mozilla::ipc::IPCResult RecvThemeChanged(LookAndFeelData&& aLookAndFeelData,
                                            widget::ThemeChangeKind);
 
   mozilla::ipc::IPCResult RecvUpdateSystemParameters(
@@ -361,7 +362,7 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvGeolocationError(const uint16_t& errorCode);
 
   mozilla::ipc::IPCResult RecvUpdateDictionaryList(
-      nsTArray<nsString>&& aDictionaries);
+      nsTArray<nsCString>&& aDictionaries);
 
   mozilla::ipc::IPCResult RecvUpdateFontList(
       nsTArray<SystemFontListEntry>&& aFontList);
@@ -504,7 +505,7 @@ class ContentChild final : public PContentChild,
 
   FORWARD_SHMEM_ALLOCATOR_TO(PContentChild)
 
-  void GetAvailableDictionaries(nsTArray<nsString>& aDictionaries);
+  void GetAvailableDictionaries(nsTArray<nsCString>& aDictionaries);
 
   PWebrtcGlobalChild* AllocPWebrtcGlobalChild();
 
@@ -546,7 +547,7 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvSetXPCOMProcessAttributes(
       XPCOMInitData&& aXPCOMInit, const StructuredCloneData& aInitialData,
-      LookAndFeelCache&& aLookAndFeelCache,
+      LookAndFeelData&& aLookAndFeelData,
       nsTArray<SystemFontListEntry>&& aFontList,
       const Maybe<base::SharedMemoryHandle>& aSharedUASheetHandle,
       const uintptr_t& aSharedUASheetAddress,
@@ -611,7 +612,7 @@ class ContentChild final : public PContentChild,
   bool DeallocPSessionStorageObserverChild(
       PSessionStorageObserverChild* aActor);
 
-  LookAndFeelCache& BorrowLookAndFeelCache() { return mLookAndFeelCache; }
+  LookAndFeelData& BorrowLookAndFeelData() { return mLookAndFeelData; }
 
   /**
    * Helper function for protocols that use the GPU process when available.
@@ -850,14 +851,14 @@ class ContentChild final : public PContentChild,
 
   nsTHashtable<nsPtrHashKey<nsIObserver>> mIdleObservers;
 
-  nsTArray<nsString> mAvailableDictionaries;
+  nsTArray<nsCString> mAvailableDictionaries;
 
   // Temporary storage for a list of available fonts, passed from the
   // parent process and used to initialize gfx in the child. Currently used
   // only on MacOSX and Linux.
   nsTArray<mozilla::dom::SystemFontListEntry> mFontList;
-  // Temporary storage for nsXPLookAndFeel cache info.
-  LookAndFeelCache mLookAndFeelCache;
+  // Temporary storage for look and feel data.
+  LookAndFeelData mLookAndFeelData;
   // Temporary storage for list of shared-fontlist memory blocks.
   nsTArray<base::SharedMemoryHandle> mSharedFontListBlocks;
 

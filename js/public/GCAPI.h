@@ -391,6 +391,16 @@ typedef enum JSGCParamKey {
    * string will be allocated in nursery.
    */
   JSGC_STOP_PRETENURE_STRING_THRESHOLD = 43,
+
+  /**
+   * A number that is incremented on every major GC slice.
+   */
+  JSGC_MAJOR_GC_NUMBER = 44,
+
+  /**
+   * A number that is incremented on every minor GC.
+   */
+  JSGC_MINOR_GC_NUMBER = 45,
 } JSGCParamKey;
 
 /*
@@ -579,7 +589,7 @@ extern JS_PUBLIC_API bool InternalGCReason(JS::GCReason reason);
 /**
  * Schedule the given zone to be collected as part of the next GC.
  */
-extern JS_PUBLIC_API void PrepareZoneForGC(Zone* zone);
+extern JS_PUBLIC_API void PrepareZoneForGC(JSContext* cx, Zone* zone);
 
 /**
  * Schedule all zones to be collected in the next GC.
@@ -603,7 +613,7 @@ extern JS_PUBLIC_API bool IsGCScheduled(JSContext* cx);
  * Undoes the effect of the Prepare methods above. The given zone will not be
  * collected in the next GC.
  */
-extern JS_PUBLIC_API void SkipZoneForGC(Zone* zone);
+extern JS_PUBLIC_API void SkipZoneForGC(JSContext* cx, Zone* zone);
 
 /*
  * Non-Incremental GC:

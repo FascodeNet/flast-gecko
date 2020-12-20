@@ -516,6 +516,9 @@ bool shell::enableWasmMultiValue = true;
 #ifdef ENABLE_WASM_SIMD
 bool shell::enableWasmSimd = true;
 #endif
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+bool shell::enableWasmSimdWormhole = false;
+#endif
 bool shell::enableWasmVerbose = false;
 bool shell::enableTestWasmAwaitTier2 = false;
 bool shell::enableSourcePragmas = true;
@@ -1964,6 +1967,13 @@ static bool ParseCompileOptions(JSContext* cx, CompileOptions& options,
   }
   if (v.isBoolean()) {
     options.setSourceIsLazy(v.toBoolean());
+  }
+
+  if (!JS_GetProperty(cx, opts, "forceFullParse", &v)) {
+    return false;
+  }
+  if (v.isBoolean() && v.toBoolean()) {
+    options.setForceFullParse();
   }
 
   return true;
@@ -3796,7 +3806,7 @@ static bool RateMyCacheIR(JSContext* cx, unsigned argc, Value* vp) {
       }
 
       script = base->asJSScript();
-      cih.rateMyCacheIR(cx, script);
+      cih.rateScript(cx, script, js::jit::SpewContext::Shell);
     }
   } else {
     RootedValue value(cx, args.get(0));
@@ -3811,7 +3821,7 @@ static bool RateMyCacheIR(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
-    cih.rateMyCacheIR(cx, script);
+    cih.rateScript(cx, script, js::jit::SpewContext::Shell);
   }
 
   args.rval().setUndefined();
@@ -5380,6 +5390,7 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
 #ifdef JS_ENABLE_SMOOSH
   bool smoosh = false;
 #endif
+  bool forceFullParse = false;
 
   if (args.length() >= 2) {
     if (!args[1].isObject()) {
@@ -5404,6 +5415,16 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
       JS_ReportErrorASCII(cx, "option `module` should be a boolean, got %s",
                           typeName);
       return false;
+    }
+
+    RootedValue forceFullParseValue(cx);
+    if (!JS_GetProperty(cx, objOptions, "forceFullParse",
+                        &forceFullParseValue)) {
+      return false;
+    }
+
+    if (forceFullParseValue.isBoolean() && forceFullParseValue.toBoolean()) {
+      forceFullParse = true;
     }
 
 #ifdef JS_ENABLE_SMOOSH
@@ -5489,6 +5510,10 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
       .setFileAndLine("<string>", 1)
       .setIsRunOnce(true)
       .setNoScriptRval(true);
+
+  if (forceFullParse) {
+    options.setForceFullParse();
+  }
 
   if (goal == frontend::ParseGoal::Module) {
     // See frontend::CompileModule.
@@ -8647,6 +8672,7 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "      sourceIsLazy: if present and true, indicates that, after compilation, \n"
 "          script source should not be cached by the JS engine and should be \n"
 "          lazily loaded from the embedding as-needed.\n"
+"      forceFullParse: if present and true, disable syntax-parse.\n"
 "      loadBytecode: if true, and if the source is a CacheEntryObject,\n"
 "         the bytecode would be loaded and decoded from the cache entry instead\n"
 "         of being parsed, then it would be executed as usual.\n"
@@ -8856,12 +8882,17 @@ JS_FN_HELP("rateMyCacheIR", RateMyCacheIR, 0, 0,
 "  |specifier| will resolve to |module|.  Returns |module|."),
 
     JS_FN_HELP("dumpStencil", DumpStencil, 1, 0,
-"dumpStencil(code)",
-"  Parses a string and returns string that represents stencil."),
+"dumpStencil(code, [options])",
+"  Parses a string and returns string that represents stencil.\n"
+"  See parse function's help for options"),
 
     JS_FN_HELP("parse", Parse, 1, 0,
-"parse(code)",
-"  Parses a string, potentially throwing."),
+"parse(code, [options])",
+"  Parses a string, potentially throwing. If present, |options| may\n"
+"  have properties saying how the code should be compiled:\n"
+"      module: if present and true, compile the source as module.\n"
+"      forceFullParse: if present and true, disable syntax-parse.\n"
+"      smoosh: if present and true, use SmooshMonkey."),
 
     JS_FN_HELP("syntaxParse", SyntaxParse, 1, 0,
 "syntaxParse(code)",
@@ -10412,6 +10443,9 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 #ifdef ENABLE_WASM_SIMD
   enableWasmSimd = !op.getBoolOption("no-wasm-simd");
 #endif
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+  enableWasmSimdWormhole = op.getBoolOption("wasm-simd-wormhole");
+#endif
 #ifdef ENABLE_WASM_EXCEPTIONS
   enableWasmExceptions = op.getBoolOption("wasm-exceptions");
 #endif
@@ -10459,6 +10493,9 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 #endif
 #ifdef ENABLE_WASM_SIMD
       .setWasmSimd(enableWasmSimd)
+#endif
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+      .setWasmSimdWormhole(enableWasmSimdWormhole)
 #endif
 #ifdef ENABLE_WASM_EXCEPTIONS
       .setWasmExceptions(enableWasmExceptions)
@@ -10697,6 +10734,22 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     jit::JitOptions.baselineJit = false;
   }
 
+  if (op.getBoolOption("no-warp-async")) {
+    jit::JitOptions.warpAsync = false;
+  }
+
+  if (op.getBoolOption("no-warp-generator")) {
+    jit::JitOptions.warpGenerator = false;
+  }
+
+  if (op.getBoolOption("warp-async")) {
+    jit::JitOptions.warpAsync = true;
+  }
+
+  if (op.getBoolOption("warp-generator")) {
+    jit::JitOptions.warpGenerator = true;
+  }
+
   if (op.getBoolOption("no-ion")) {
     jit::JitOptions.ion = false;
   }
@@ -10851,6 +10904,9 @@ static void SetWorkerContextOptions(JSContext* cx) {
 #endif
 #ifdef ENABLE_WASM_SIMD
       .setWasmSimd(enableWasmSimd)
+#endif
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+      .setWasmSimdWormhole(enableWasmSimdWormhole)
 #endif
 #ifdef ENABLE_WASM_EXCEPTIONS
       .setWasmExceptions(enableWasmExceptions)
@@ -11300,6 +11356,12 @@ int main(int argc, char** argv, char** envp) {
 #else
       !op.addBoolOption('\0', "no-wasm-simd", "No-op") ||
 #endif
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+      !op.addBoolOption('\0', "wasm-simd-wormhole",
+                        "Enable wasm SIMD wormhole (UTSL)") ||
+#else
+      !op.addBoolOption('\0', "wasm-simd-wormhole", "No-op") ||
+#endif
 #ifdef ENABLE_WASM_EXCEPTIONS
       !op.addBoolOption('\0', "wasm-exceptions",
                         "Enable wasm exceptions features") ||
@@ -11440,6 +11502,13 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "baseline",
                         "Enable baseline compiler (default)") ||
       !op.addBoolOption('\0', "no-baseline", "Disable baseline compiler") ||
+      !op.addBoolOption('\0', "no-warp-async",
+                        "Don't Warp compile Async Functions") ||
+      !op.addBoolOption('\0', "no-warp-generator",
+                        "Warp compile Generator Functions") ||
+      !op.addBoolOption('\0', "warp-async", "Warp compile Async Functions") ||
+      !op.addBoolOption('\0', "warp-generator",
+                        "Don't Warp compile Generator Functions") ||
       !op.addBoolOption('\0', "baseline-eager",
                         "Always baseline-compile methods") ||
       !op.addIntOption(

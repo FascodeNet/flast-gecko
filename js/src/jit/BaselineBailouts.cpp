@@ -422,6 +422,14 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
       return nullptr;
     }
 
+    // If the previous frame is BaselineJS, with no intervening
+    // BaselineStubFrame, then the caller is responsible for recomputing
+    // BaselineFramePointer from the descriptor when returning. This currently
+    // only happens in frames constructed by emit_Resume().
+    if (type == FrameType::BaselineJS) {
+      return nullptr;
+    }
+
     // BaselineStub - Baseline calling into Ion.
     //  PrevFramePtr needs to point to the BaselineStubFrame's saved frame
     //  pointer.
@@ -544,28 +552,15 @@ bool BaselineStackBuilder::initFrame() {
                             : script_->offsetToPC(iter_.pcOffset());
   op_ = JSOp(*pc_);
 
-  // When pgo is enabled, increment the counter of the block in which we
-  // resume, as Ion does not keep track of the code coverage.
-  //
-  // We need to do that when pgo is enabled, as after a specific number of
-  // FirstExecution bailouts, we invalidate and recompile the script with
-  // IonMonkey. Failing to increment the counter of the current basic block
-  // might lead to repeated bailouts and invalidations.
-  if (!JitOptions.disablePgo && script_->hasScriptCounts()) {
-    script_->incHitCount(pc_);
-  }
-
   return true;
 }
 
 void BaselineStackBuilder::setNextCallee(JSFunction* nextCallee) {
   nextCallee_ = nextCallee;
 
-  if (JitOptions.warpBuilder) {
-    // Update icScript_ to point to the icScript of nextCallee
-    const uint32_t pcOff = script_->pcToOffset(pc_);
-    icScript_ = icScript_->findInlinedChild(pcOff);
-  }
+  // Update icScript_ to point to the icScript of nextCallee
+  const uint32_t pcOff = script_->pcToOffset(pc_);
+  icScript_ = icScript_->findInlinedChild(pcOff);
 }
 
 bool BaselineStackBuilder::done() {
@@ -1576,6 +1571,7 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
   //      BaselineStub - Baseline calling into Ion.
   //      Entry / WasmToJSJit - Interpreter or other (wasm) calling into Ion.
   //      Rectifier - Arguments rectifier calling into Ion.
+  //      BaselineJS - Resume'd Baseline, then likely OSR'd into Ion.
   MOZ_ASSERT(iter.isBailoutJS());
 #if defined(DEBUG) || defined(JS_JITSPEW)
   FrameType prevFrameType = iter.prevType();
@@ -1583,7 +1579,8 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
              prevFrameType == FrameType::IonJS ||
              prevFrameType == FrameType::BaselineStub ||
              prevFrameType == FrameType::Rectifier ||
-             prevFrameType == FrameType::IonICCall);
+             prevFrameType == FrameType::IonICCall ||
+             prevFrameType == FrameType::BaselineJS);
 #endif
 
   // All incoming frames are going to look like this:

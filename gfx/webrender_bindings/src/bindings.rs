@@ -38,7 +38,7 @@ use webrender::{
     CompositorCapabilities, CompositorConfig, CompositorSurfaceTransform, DebugFlags, Device, NativeSurfaceId,
     NativeSurfaceInfo, NativeTileId, PartialPresentCompositor, PipelineInfo, ProfilerHooks, RecordedFrameHandle,
     Renderer, RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener,
-    UploadMethod, WrShaders, ONE_TIME_USAGE_HINT,
+    UploadMethod, WrShaders, ONE_TIME_USAGE_HINT, TextureCacheConfig,
 };
 use wr_malloc_size_of::MallocSizeOfOps;
 
@@ -531,6 +531,8 @@ extern "C" {
     fn gfx_critical_error(msg: *const c_char);
     fn gfx_critical_note(msg: *const c_char);
     fn record_telemetry_time(probe: TelemetryProbe, time_ns: u64);
+    fn gfx_wr_set_crash_annotation(annotation: CrashAnnotation, value: *const c_char);
+    fn gfx_wr_clear_crash_annotation(annotation: CrashAnnotation);
 }
 
 struct CppNotifier {
@@ -540,7 +542,7 @@ struct CppNotifier {
 unsafe impl Send for CppNotifier {}
 
 extern "C" {
-    fn wr_notifier_wake_up(window_id: WrWindowId);
+    fn wr_notifier_wake_up(window_id: WrWindowId, composite_needed: bool);
     fn wr_notifier_new_frame_ready(window_id: WrWindowId);
     fn wr_notifier_nop_frame_done(window_id: WrWindowId);
     fn wr_notifier_external_event(window_id: WrWindowId, raw_event: usize);
@@ -558,9 +560,9 @@ impl RenderNotifier for CppNotifier {
         })
     }
 
-    fn wake_up(&self, _composite_needed: bool) {
+    fn wake_up(&self, composite_needed: bool) {
         unsafe {
-            wr_notifier_wake_up(self.window_id);
+            wr_notifier_wake_up(self.window_id, composite_needed);
         }
     }
 
@@ -581,6 +583,29 @@ impl RenderNotifier for CppNotifier {
         unsafe {
             wr_notifier_external_event(self.window_id, event.unwrap());
         }
+    }
+}
+
+struct MozCrashAnnotator;
+
+unsafe impl Send for MozCrashAnnotator {}
+
+impl CrashAnnotator for MozCrashAnnotator {
+    fn set(&self, annotation: CrashAnnotation, value: &str) {
+        let value = CString::new(value).unwrap();
+        unsafe {
+            gfx_wr_set_crash_annotation(annotation, value.as_ptr());
+        }
+    }
+
+    fn clear(&self, annotation: CrashAnnotation) {
+        unsafe {
+            gfx_wr_clear_crash_annotation(annotation);
+        }
+    }
+
+    fn box_clone(&self) -> Box<dyn CrashAnnotator> {
+        Box::new(MozCrashAnnotator)
     }
 }
 
@@ -1183,6 +1208,7 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>) -> De
 
     Device::new(
         gl,
+        Some(Box::new(MozCrashAnnotator)),
         resource_override_path,
         use_optimized_shaders,
         upload_method,
@@ -1430,6 +1456,7 @@ pub extern "C" fn wr_window_new(
     window_id: WrWindowId,
     window_width: i32,
     window_height: i32,
+    is_main_window: bool,
     support_low_priority_transactions: bool,
     support_low_priority_threadpool: bool,
     allow_texture_swizzling: bool,
@@ -1554,6 +1581,18 @@ pub extern "C" fn wr_window_new(
         None
     };
 
+    let texture_cache_config = if is_main_window {
+        TextureCacheConfig::DEFAULT
+    } else {
+        TextureCacheConfig {
+            color8_linear_texture_size: 512,
+            color8_nearest_texture_size: 512,
+            color8_glyph_texture_size: 512,
+            alpha8_texture_size: 512,
+            alpha16_texture_size: 512,
+        }
+    };
+
     let opts = RendererOptions {
         enable_aa: true,
         force_subpixel_aa: false,
@@ -1564,6 +1603,7 @@ pub extern "C" fn wr_window_new(
             workers.clone(),
             workers_low_priority,
         ))),
+        crash_annotator: Some(Box::new(MozCrashAnnotator)),
         workers: Some(workers),
         thread_listener: Some(Box::new(GeckoProfilerThreadListener::new())),
         size_of_op: Some(size_of_op),
@@ -1598,6 +1638,7 @@ pub extern "C" fn wr_window_new(
         enable_gpu_markers,
         panic_on_gl_error,
         picture_tile_size,
+        texture_cache_config,
         ..Default::default()
     };
 
@@ -2710,7 +2751,7 @@ pub extern "C" fn wr_dp_define_scroll_layer(
 
     let space_and_clip = state.frame_builder.dl_builder.define_scroll_frame(
         &parent.to_webrender(state.pipeline_id),
-        Some(ExternalScrollId(external_scroll_id, state.pipeline_id)),
+        ExternalScrollId(external_scroll_id, state.pipeline_id),
         content_rect,
         clip_rect,
         ScrollSensitivity::Script,

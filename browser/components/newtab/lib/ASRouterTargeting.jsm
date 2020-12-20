@@ -458,7 +458,7 @@ const TargetingGetters = {
     return new Promise(resolve => {
       // Note: calling init ensures this code is only executed after Search has been initialized
       Services.search
-        .getDefaultEngines()
+        .getAppProvidedEngines()
         .then(engines => {
           resolve({
             current: Services.search.defaultEngine.identifier,
@@ -661,9 +661,8 @@ this.ASRouterTargeting = {
         candidateMessageTrigger.params.includes(trigger.param.host)) ||
       (candidateMessageTrigger.params &&
         trigger.param.type &&
-        candidateMessageTrigger.params.filter(
-          t => (t & trigger.param.type) === t
-        ).length) ||
+        candidateMessageTrigger.params.filter(t => t === trigger.param.type)
+          .length) ||
       (candidateMessageTrigger.patterns &&
         trigger.param.url &&
         new MatchPatternSet(candidateMessageTrigger.patterns).matches(

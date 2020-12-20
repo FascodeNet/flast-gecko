@@ -488,6 +488,7 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
     {APPLICATION_GZIP2, "gz", "gzip"},
     {"application/x-arj", "arj", "ARJ file"},
     {"application/rtf", "rtf", "Rich Text Format File"},
+    {APPLICATION_ZIP, "zip", "ZIP Archive"},
     {APPLICATION_XPINSTALL, "xpi", "XPInstall Install"},
     {APPLICATION_PDF, "pdf", "Portable Document Format"},
     {APPLICATION_POSTSCRIPT, "ps,eps,ai", "Postscript File"},
@@ -545,6 +546,7 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
      "Extensible HyperText Markup Language"},
     {APPLICATION_MATHML_XML, "mml", "Mathematical Markup Language"},
     {APPLICATION_RDF, "rdf", "Resource Description Framework"},
+    {"text/csv", "csv", "CSV File"},
     {TEXT_XML, "xml,xsl,xbl", "Extensible Markup Language"},
     {TEXT_CSS, "css", "Style Sheet"},
     {TEXT_VCARD, "vcf,vcard", "Contact Information"},
@@ -1676,15 +1678,12 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
 
   mDownloadClassification =
       nsContentSecurityUtils::ClassifyDownload(aChannel, MIMEType);
-  if (mDownloadClassification != nsITransfer::DOWNLOAD_ACCEPTABLE) {
+
+  if (mDownloadClassification == nsITransfer::DOWNLOAD_FORBIDDEN) {
     // If the download is rated as forbidden,
-    // we need to silently cancel the request to make sure
-    // it wont show up in the download ui.
+    // cancel the request so no ui knows about this.
     mCanceled = true;
     request->Cancel(NS_ERROR_ABORT);
-    if (mDownloadClassification != nsITransfer::DOWNLOAD_FORBIDDEN) {
-      CreateFailedTransfer();
-    }
     return NS_OK;
   }
 
@@ -1917,7 +1916,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
       rv = PromptForSaveDestination();
     }
   }
-
   return NS_OK;
 }
 
@@ -2264,6 +2262,13 @@ nsresult nsExternalAppHandler::CreateTransfer() {
   mDialog = nullptr;
   if (!mDialogProgressListener) {
     NS_WARNING("The dialog should nullify the dialog progress listener");
+  }
+  // In case of a non acceptable download, we need to cancel the request and
+  // pass a FailedTransfer for the Download UI.
+  if (mDownloadClassification != nsITransfer::DOWNLOAD_ACCEPTABLE) {
+    mCanceled = true;
+    mRequest->Cancel(NS_ERROR_ABORT);
+    return CreateFailedTransfer();
   }
   nsresult rv;
 

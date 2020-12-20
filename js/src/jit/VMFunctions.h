@@ -444,7 +444,9 @@ MOZ_MUST_USE bool DebugEpilogueOnBaselineReturn(JSContext* cx,
                                                 jsbytecode* pc);
 void FrameIsDebuggeeCheck(BaselineFrame* frame);
 
-JSObject* CreateGenerator(JSContext* cx, BaselineFrame* frame);
+JSObject* CreateGeneratorFromFrame(JSContext* cx, BaselineFrame* frame);
+JSObject* CreateGenerator(JSContext* cx, HandleFunction, HandleScript,
+                          HandleObject, HandleObject);
 
 MOZ_MUST_USE bool NormalSuspend(JSContext* cx, HandleObject obj,
                                 BaselineFrame* frame, uint32_t frameSize,
@@ -561,11 +563,9 @@ MOZ_MUST_USE bool EqualStringsHelperPure(JSString* str1, JSString* str2);
 void HandleCodeCoverageAtPC(BaselineFrame* frame, jsbytecode* pc);
 void HandleCodeCoverageAtPrologue(BaselineFrame* frame);
 
-template <bool HandleMissing>
 bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* vp);
 
-template <bool HandleMissing>
 bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp);
 
 template <bool HasOwn>
@@ -574,7 +574,6 @@ bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp);
 bool HasNativeElementPure(JSContext* cx, NativeObject* obj, int32_t index,
                           Value* vp);
 
-template <bool NeedsTypeBarrier>
 bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* val);
 
@@ -587,13 +586,6 @@ bool GetPrototypeOf(JSContext* cx, HandleObject target,
 
 bool DoConcatStringObject(JSContext* cx, HandleValue lhs, HandleValue rhs,
                           MutableHandleValue res);
-
-// Wrapper for js::TrySkipAwait.
-// If the await operation can be skipped and the resolution value for `val` can
-// be acquired, stored the resolved value to `resolved`.  Otherwise, stores
-// the JS_CANNOT_SKIP_AWAIT magic value to `resolved`.
-MOZ_MUST_USE bool TrySkipAwait(JSContext* cx, HandleValue val,
-                               MutableHandleValue resolved);
 
 bool IsPossiblyWrappedTypedArray(JSContext* cx, JSObject* obj, bool* result);
 

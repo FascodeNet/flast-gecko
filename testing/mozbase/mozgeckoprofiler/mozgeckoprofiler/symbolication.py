@@ -1,7 +1,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import
+from __future__ import absolute_import, division
 
 import hashlib
 import os
@@ -312,6 +312,7 @@ class ProfileSymbolicator:
         left = 0
         right = len(libs) - 1
         while left <= right:
+            # pylint --py3k W1619
             mid = (left + right) / 2
             if address >= libs[mid]["end"]:
                 left = mid + 1
@@ -330,6 +331,7 @@ class ProfileSymbolicator:
             if lib["start"] not in libs_with_symbols:
                 libs_with_symbols[lib["start"]] = {"library": lib, "symbols": set()}
             libs_with_symbols[lib["start"]]["symbols"].add(address)
+        # pylint: disable=W1656
         return libs_with_symbols.values()
 
     def _resolve_symbols(self, symbols_to_resolve):

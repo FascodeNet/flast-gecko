@@ -152,6 +152,9 @@ bool ThreadsAvailable(JSContext* cx);
 // SIMD data and operations.
 bool SimdAvailable(JSContext* cx);
 
+// Very experimental SIMD operations.
+bool SimdWormholeAvailable(JSContext* cx);
+
 #if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
 // Report the result of a Simd simplification to the testing infrastructure.
 void ReportSimdAnalysis(const char* data);
@@ -202,7 +205,6 @@ WasmInstanceObject* ExportedFunctionToInstanceObject(JSFunction* fun);
 uint32_t ExportedFunctionToFuncIndex(JSFunction* fun);
 
 bool IsSharedWasmMemoryObject(JSObject* obj);
-
 
 // Abstractions that clarify that we are working on a 32-bit memory and check
 // that the buffer length does not exceed that's memory's fixed limits.
@@ -492,11 +494,13 @@ class WasmExceptionObject : public NativeObject {
   static const JSFunctionSpec static_methods[];
   static bool construct(JSContext*, unsigned, Value*);
 
-  static WasmExceptionObject* create(JSContext* cx, wasm::ResultType type,
+  static WasmExceptionObject* create(JSContext* cx,
+                                     const wasm::ValTypeVector& type,
                                      HandleObject proto);
   bool isNewborn() const;
 
   wasm::ValTypeVector& valueTypes() const;
+  wasm::ResultType resultType() const;
   wasm::ExceptionTag& tag() const;
 };
 

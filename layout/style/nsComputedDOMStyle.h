@@ -58,9 +58,6 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   using StyleGeometryBox = mozilla::StyleGeometryBox;
   using Element = mozilla::dom::Element;
   using Document = mozilla::dom::Document;
-  using StyleFlexBasis = mozilla::StyleFlexBasis;
-  using StyleSize = mozilla::StyleSize;
-  using StyleMaxSize = mozilla::StyleMaxSize;
   using LengthPercentage = mozilla::LengthPercentage;
   using LengthPercentageOrAuto = mozilla::LengthPercentageOrAuto;
   using StyleExtremumLength = mozilla::StyleExtremumLength;
@@ -73,7 +70,7 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
 
   NS_DECL_NSIDOMCSSSTYLEDECLARATION_HELPER
   nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
-                            nsAString& aValue) override;
+                            nsACString& aValue) override;
   void SetPropertyValue(const nsCSSPropertyID aPropID, const nsACString& aValue,
                         nsIPrincipal* aSubjectPrincipal,
                         mozilla::ErrorResult& aRv) override;
@@ -139,7 +136,7 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
  private:
   nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
                             const nsACString& aMaybeCustomPropertyNme,
-                            nsAString& aValue);
+                            nsACString& aValue);
 
   virtual ~nsComputedDOMStyle();
 
@@ -295,7 +292,8 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
                                   const LengthPercentage&,
                                   bool aClampNegativeCalc);
 
-  void SetValueToMaxSize(nsROCSSPrimitiveValue* aValue, const StyleMaxSize&);
+  void SetValueToMaxSize(nsROCSSPrimitiveValue* aValue,
+                         const mozilla::StyleMaxSize&);
 
   void SetValueToExtremumLength(nsROCSSPrimitiveValue* aValue,
                                 StyleExtremumLength);

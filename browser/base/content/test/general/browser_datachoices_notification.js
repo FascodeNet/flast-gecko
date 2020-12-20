@@ -25,6 +25,8 @@ const PREF_ACCEPTED_POLICY_VERSION =
 const PREF_ACCEPTED_POLICY_DATE =
   PREF_BRANCH + "dataSubmissionPolicyNotifiedTime";
 
+const PREF_TELEMETRY_LOG_LEVEL = "toolkit.telemetry.log.level";
+
 const TEST_POLICY_VERSION = 37;
 
 function fakeShowPolicyTimeout(set, clear) {
@@ -124,6 +126,7 @@ add_task(async function setup() {
     Preferences.set(PREF_FIRST_RUN, isFirstRun);
     Preferences.set(PREF_BYPASS_NOTIFICATION, bypassNotification);
     Preferences.set(PREF_CURRENT_POLICY_VERSION, currentPolicyVersion);
+    Preferences.reset(PREF_TELEMETRY_LOG_LEVEL);
 
     return closeAllNotifications();
   });
@@ -221,13 +224,12 @@ add_task(async function test_single_window() {
   );
 });
 
+/* See bug 1571932
 add_task(async function test_multiple_windows() {
   clearAcceptedPolicy();
-  assertCoherentInitialState(); // bug 1571932
 
   // Close all the notifications, then try to trigger the data choices infobar.
   await closeAllNotifications();
-  assertCoherentInitialState(); // bug 1571932
 
   // Ensure we see the notification on all windows and that action on one window
   // results in dismiss on every window.
@@ -287,4 +289,4 @@ add_task(async function test_multiple_windows() {
     -1,
     "Date pref set."
   );
-});
+});*/

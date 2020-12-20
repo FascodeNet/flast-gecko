@@ -3993,10 +3993,19 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
     bool forceReload = IsForceReloadType(loadType);
     if (!XRE_IsParentProcess()) {
       RefPtr<nsDocShell> docShell(this);
+      nsCOMPtr<nsIContentViewer> cv(mContentViewer);
+
+      bool okToUnload = true;
+      MOZ_TRY(cv->PermitUnload(&okToUnload));
+      if (!okToUnload) {
+        return NS_OK;
+      }
+
       RefPtr<Document> doc(GetDocument());
       RefPtr<BrowsingContext> browsingContext(mBrowsingContext);
       nsCOMPtr<nsIURI> currentURI(mCurrentURI);
       nsCOMPtr<nsIReferrerInfo> referrerInfo(mReferrerInfo);
+
       ContentChild::GetSingleton()->SendNotifyOnHistoryReload(
           mBrowsingContext, forceReload,
           [docShell, doc, loadType, browsingContext, currentURI, referrerInfo](
@@ -4016,16 +4025,18 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
               MOZ_LOG(
                   gSHLog, LogLevel::Debug,
                   ("nsDocShell %p Reload - LoadHistoryEntry", docShell.get()));
+              loadState.ref()->SetNotifiedBeforeUnloadListeners(true);
               docShell->LoadHistoryEntry(loadState.ref(), loadType,
                                          reloadingActiveEntry.ref());
             } else {
               MOZ_LOG(gSHLog, LogLevel::Debug,
                       ("nsDocShell %p ReloadDocument", docShell.get()));
               ReloadDocument(docShell, doc, loadType, browsingContext,
-                             currentURI, referrerInfo);
+                             currentURI, referrerInfo,
+                             /* aNotifiedBeforeUnloadListeners */ true);
             }
           },
-          [](ResponseRejectReason) {});
+          [](mozilla::ipc::ResponseRejectReason) {});
     } else {
       // Parent process
       bool canReload = false;
@@ -4079,7 +4090,8 @@ nsresult nsDocShell::ReloadDocument(nsDocShell* aDocShell, Document* aDocument,
                                     uint32_t aLoadType,
                                     BrowsingContext* aBrowsingContext,
                                     nsIURI* aCurrentURI,
-                                    nsIReferrerInfo* aReferrerInfo) {
+                                    nsIReferrerInfo* aReferrerInfo,
+                                    bool aNotifiedBeforeUnloadListeners) {
   if (!aDocument) {
     return NS_OK;
   }
@@ -4152,6 +4164,7 @@ nsresult nsDocShell::ReloadDocument(nsDocShell* aDocShell, Document* aDocument,
   loadState->SetBaseURI(baseURI);
   loadState->SetHasValidUserGestureActivation(
       context && context->HasValidTransientUserGestureActivation());
+  loadState->SetNotifiedBeforeUnloadListeners(aNotifiedBeforeUnloadListeners);
   return aDocShell->InternalLoad(loadState);
 }
 
@@ -4814,6 +4827,10 @@ void nsDocShell::ActivenessMaybeChanged() {
     } else {
       SuspendRefreshURIs();
     }
+  }
+
+  if (InputTaskManager::CanSuspendInputEvent()) {
+    mBrowsingContext->Group()->UpdateInputTaskManagerIfNeeded(isActive);
   }
 }
 
@@ -5606,7 +5623,7 @@ nsresult nsDocShell::RefreshURIFromQueue() {
 
 nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
                            WindowGlobalChild* aWindowActor,
-                           bool aIsTransientAboutBlank) {
+                           bool aIsTransientAboutBlank, bool aPersist) {
   // Save the LayoutHistoryState of the previous document, before
   // setting up new document
   PersistLayoutHistoryState();
@@ -5632,7 +5649,7 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
 
   if (!aIsTransientAboutBlank && mozilla::SessionHistoryInParent()) {
     MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Embed", this));
-    MoveLoadingToActiveEntry();
+    MoveLoadingToActiveEntry(aPersist);
   }
 
   bool updateHistory = true;
@@ -6679,7 +6696,7 @@ nsresult nsDocShell::CreateAboutBlankContentViewer(
       // hook 'em up
       if (viewer) {
         viewer->SetContainer(this);
-        rv = Embed(viewer, aActor, true);
+        rv = Embed(viewer, aActor, true, false);
         NS_ENSURE_SUCCESS(rv, rv);
 
         SetCurrentURI(blankDoc->GetDocumentURI(), nullptr, true, 0);
@@ -7916,7 +7933,9 @@ nsresult nsDocShell::CreateContentViewer(const nsACString& aContentType,
     }
   }
 
-  NS_ENSURE_SUCCESS(Embed(viewer), NS_ERROR_FAILURE);
+  NS_ENSURE_SUCCESS(Embed(viewer, nullptr, false,
+                          ShouldAddToSessionHistory(finalURI, aOpenedChannel)),
+                    NS_ERROR_FAILURE);
 
   if (!mBrowsingContext->GetHasLoadedNonInitialDocument()) {
     MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetHasLoadedNonInitialDocument(true));
@@ -8293,7 +8312,7 @@ bool nsDocShell::JustStartedNetworkLoad() {
 //
 // This return value will be used when we call NS_CheckContentLoadPolicy, and
 // later when we call DoURILoad.
-uint32_t nsDocShell::DetermineContentType() {
+nsContentPolicyType nsDocShell::DetermineContentType() {
   if (!IsFrame()) {
     return nsIContentPolicy::TYPE_DOCUMENT;
   }
@@ -8841,24 +8860,10 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
           ("Moving the loading entry to the active entry on nsDocShell %p to "
            "%s",
            this, mLoadingEntry->mInfo.GetURI()->GetSpecOrDefault().get()));
+      bool hadActiveEntry = !!mActiveEntry;
       mActiveEntry = MakeUnique<SessionHistoryInfo>(mLoadingEntry->mInfo);
-      nsID changeID = {};
-      if (XRE_IsParentProcess()) {
-        mBrowsingContext->Canonical()->SessionHistoryCommit(
-            mLoadingEntry->mLoadId, changeID, mLoadType);
-      } else {
-        RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
-        if (rootSH) {
-          // This is a load from session history, so we can update
-          // index and length immediately.
-          rootSH->SetIndexAndLength(mLoadingEntry->mRequestedIndex,
-                                    mLoadingEntry->mSessionHistoryLength,
-                                    changeID);
-        }
-        ContentChild* cc = ContentChild::GetSingleton();
-        mozilla::Unused << cc->SendHistoryCommit(
-            mBrowsingContext, mLoadingEntry->mLoadId, changeID, mLoadType);
-      }
+      mBrowsingContext->SessionHistoryCommit(*mLoadingEntry, mLoadType,
+                                             hadActiveEntry, true , true);
       // FIXME Need to set postdata.
       SetCacheKeyOnHistoryEntry(nullptr, cacheKey);
 
@@ -9187,7 +9192,8 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
   }
   // Check if the page doesn't want to be unloaded. The javascript:
   // protocol handler deals with this for javascript: URLs.
-  if (!isJavaScript && isNotDownload && mContentViewer) {
+  if (!isJavaScript && isNotDownload &&
+      !aLoadState->NotifiedBeforeUnloadListeners() && mContentViewer) {
     bool okToUnload;
     rv = mContentViewer->PermitUnload(&okToUnload);
 
@@ -9892,7 +9898,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   }
 
   nsresult rv;
-  uint32_t contentPolicyType = DetermineContentType();
+  nsContentPolicyType contentPolicyType = DetermineContentType();
 
   if (IsFrame()) {
     MOZ_ASSERT(contentPolicyType == nsIContentPolicy::TYPE_INTERNAL_IFRAME ||
@@ -13231,7 +13237,7 @@ void nsDocShell::SetLoadingSessionHistoryInfo(
   mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(aLoadingInfo);
 }
 
-void nsDocShell::MoveLoadingToActiveEntry() {
+void nsDocShell::MoveLoadingToActiveEntry(bool aPersist) {
   MOZ_ASSERT(mozilla::SessionHistoryInParent());
 
   MOZ_LOG(gSHLog, LogLevel::Debug,
@@ -13253,40 +13259,9 @@ void nsDocShell::MoveLoadingToActiveEntry() {
 
   if (mActiveEntry) {
     MOZ_ASSERT(loadingEntry);
-    nsID changeID = {};
     uint32_t loadType =
         mLoadType == LOAD_ERROR_PAGE ? mFailedLoadType : mLoadType;
-    if (XRE_IsParentProcess()) {
-      mBrowsingContext->Canonical()->SessionHistoryCommit(loadingEntry->mLoadId,
-                                                          changeID, loadType);
-    } else {
-      RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
-      if (rootSH) {
-        if (!loadingEntry->mLoadIsFromSessionHistory) {
-          // We try to mimic as closely as possible what will happen in
-          // CanonicalBrowsingContext::SessionHistoryCommit. We'll be
-          // incrementing the session history length if we're not replacing,
-          // this is a top-level load or it's not the initial load in an iframe,
-          // and ShouldUpdateSessionHistory(loadType) returns true.
-          // It is possible that this leads to wrong length temporarily, but
-          // so would not having the check for replace.
-          if (!LOAD_TYPE_HAS_FLAGS(
-                  mLoadType, nsIWebNavigation::LOAD_FLAGS_REPLACE_HISTORY) &&
-              (mBrowsingContext->IsTop() || hadActiveEntry) &&
-              mBrowsingContext->ShouldUpdateSessionHistory(loadType)) {
-            changeID = rootSH->AddPendingHistoryChange();
-          }
-        } else {
-          // This is a load from session history, so we can update
-          // index and length immediately.
-          rootSH->SetIndexAndLength(loadingEntry->mRequestedIndex,
-                                    loadingEntry->mSessionHistoryLength,
-                                    changeID);
-        }
-      }
-      ContentChild* cc = ContentChild::GetSingleton();
-      mozilla::Unused << cc->SendHistoryCommit(
-          mBrowsingContext, loadingEntry->mLoadId, changeID, loadType);
-    }
+    mBrowsingContext->SessionHistoryCommit(*loadingEntry, loadType,
+                                           hadActiveEntry, aPersist, false);
   }
 }

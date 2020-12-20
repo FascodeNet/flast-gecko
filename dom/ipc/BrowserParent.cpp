@@ -610,6 +610,7 @@ void BrowserParent::DestroyInternal() {
   UnsetLastMouseRemoteTarget(this);
   UnsetPointerLockedRemoteTarget(this);
   PointerEventHandler::ReleasePointerCaptureRemoteTarget(this);
+  PresShell::ReleaseCapturingRemoteTarget(this);
 
   RemoveWindowListeners();
 
@@ -693,6 +694,7 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
   BrowserParent::UnsetLastMouseRemoteTarget(this);
   BrowserParent::UnsetPointerLockedRemoteTarget(this);
   PointerEventHandler::ReleasePointerCaptureRemoteTarget(this);
+  PresShell::ReleaseCapturingRemoteTarget(this);
 
   if (why == AbnormalShutdown) {
     // dom_reporting_header must also be enabled for the report to be sent.
@@ -3001,10 +3003,10 @@ bool BrowserParent::SendSelectionEvent(WidgetSelectionEvent& aEvent) {
   return true;
 }
 
-bool BrowserParent::SendPasteTransferable(const IPCDataTransfer& aDataTransfer,
-                                          const bool& aIsPrivateData,
-                                          nsIPrincipal* aRequestingPrincipal,
-                                          const uint32_t& aContentPolicyType) {
+bool BrowserParent::SendPasteTransferable(
+    const IPCDataTransfer& aDataTransfer, const bool& aIsPrivateData,
+    nsIPrincipal* aRequestingPrincipal,
+    const nsContentPolicyType& aContentPolicyType) {
   return PBrowserParent::SendPasteTransferable(
       aDataTransfer, aIsPrivateData, aRequestingPrincipal, aContentPolicyType);
 }

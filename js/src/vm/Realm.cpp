@@ -601,7 +601,7 @@ void Realm::updateDebuggerObservesCoverage() {
   runtime_->decrementNumDebuggeeRealmsObservingCoverage();
 
   // If code coverage is enabled by any other means, keep it.
-  if (collectCoverage()) {
+  if (collectCoverageForDebug()) {
     return;
   }
 
@@ -614,18 +614,6 @@ coverage::LCovRealm* Realm::lcovRealm() {
     lcovRealm_ = js::MakeUnique<coverage::LCovRealm>(this);
   }
   return lcovRealm_.get();
-}
-
-bool Realm::collectCoverage() const {
-  return collectCoverageForPGO() || collectCoverageForDebug();
-}
-
-bool Realm::collectCoverageForPGO() const {
-  if (jit::JitOptions.warpBuilder) {
-    // Warp inserts bailouts based on the Baseline IC counters.
-    return false;
-  }
-  return !jit::JitOptions.disablePgo;
 }
 
 bool Realm::collectCoverageForDebug() const {

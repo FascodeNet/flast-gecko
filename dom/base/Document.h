@@ -2471,7 +2471,7 @@ class Document : public nsINode,
    * Support for window.matchMedia()
    */
 
-  already_AddRefed<MediaQueryList> MatchMedia(const nsAString& aMediaQueryList,
+  already_AddRefed<MediaQueryList> MatchMedia(const nsACString& aMediaQueryList,
                                               CallerType aCallerType);
 
   LinkedList<MediaQueryList>& MediaQueryLists() { return mDOMMediaQueryLists; }
@@ -5221,14 +5221,19 @@ class MOZ_STACK_CLASS mozAutoSubtreeModified {
   RefPtr<Document> mSubtreeOwner;
 };
 
+enum class SyncOperationBehavior { eSuspendInput, eAllowInput };
+
 class MOZ_STACK_CLASS nsAutoSyncOperation {
  public:
-  explicit nsAutoSyncOperation(Document* aDocument);
+  explicit nsAutoSyncOperation(Document* aDocument,
+                               SyncOperationBehavior aSyncBehavior);
   ~nsAutoSyncOperation();
 
  private:
   nsTArray<RefPtr<Document>> mDocuments;
   uint32_t mMicroTaskLevel;
+  const SyncOperationBehavior mSyncBehavior;
+  RefPtr<BrowsingContext> mBrowsingContext;
 };
 
 class MOZ_RAII AutoSetThrowOnDynamicMarkupInsertionCounter final {

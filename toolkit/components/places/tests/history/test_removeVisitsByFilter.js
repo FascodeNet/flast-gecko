@@ -148,11 +148,6 @@ add_task(async function test_removeVisitsByFilter() {
       deferred: PromiseUtils.defer(),
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onTitleChanged(uri) {
-        this.deferred.reject(
-          new Error("Unexpected call to onTitleChanged " + uri.spec)
-        );
-      },
       onClearHistory() {
         this.deferred.reject("Unexpected call to onClearHistory");
       },
@@ -179,6 +174,20 @@ add_task(async function test_removeVisitsByFilter() {
       },
     };
     PlacesUtils.history.addObserver(observer);
+
+    const placesEventListener = events => {
+      for (const event of events) {
+        switch (event.type) {
+          case "page-title-changed": {
+            this.deferred.reject(
+              "Unexpected page-title-changed event happens on " + event.url
+            );
+            break;
+          }
+        }
+      }
+    };
+    PlacesObservers.addListener(["page-title-changed"], placesEventListener);
 
     let cbarg;
     if (options.useCallback) {
@@ -256,6 +265,7 @@ add_task(async function test_removeVisitsByFilter() {
     info("Checking frecency change promises.");
     await Promise.all(Array.from(frecencyChangePromises.values()));
     PlacesUtils.history.removeObserver(observer);
+    PlacesObservers.removeListener(["page-title-changed"], placesEventListener);
   };
 
   let size = 20;

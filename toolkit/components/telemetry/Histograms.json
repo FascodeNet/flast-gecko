@@ -1595,7 +1595,9 @@
       "size_overflow",
       "out_of_memory",
       "pipe_init_error",
-      "write_buffer_error"
+      "write_buffer_error",
+      "alpha_y_sz_mismatch",
+      "alpha_y_bpc_mismatch"
     ],
     "description": "Decode result of AVIF image",
     "bug_numbers": [1670827]
@@ -6304,6 +6306,16 @@
     "bug_numbers": [1137447],
     "description": "Update: count of no updates were found for a background update check (timer initiated)"
   },
+  "UPDATE_CHECK_NO_UPDATE_SUBSEQUENT" : {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: count of no updates were found for a background update check (timer initiated)"
+  },
   "UPDATE_CHECK_CODE_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6325,6 +6337,17 @@
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1137447],
     "description": "Update: background update check result code except for no updates found (timer initiated)"
+  },
+  "UPDATE_CHECK_CODE_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 50,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: background update check result code except for no updates found (after we already have an update ready). Possible codes are enumerated by constants starting with CHK_ in toolkit/mozapps/update/UpdateTelemetry.jsm"
   },
   "UPDATE_CHECK_EXTENDED_ERROR_EXTERNAL": {
     "record_in_processes": ["main"],
@@ -6348,6 +6371,17 @@
     "bug_numbers": [1137447],
     "description": "Update: keyed count (key names are prefixed with AUS_CHECK_EX_ERR_) of background update check extended error code (timer initiated)"
   },
+  "UPDATE_CHECK_EXTENDED_ERROR_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "keyed": true,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: keyed count (key names are prefixed with AUS_CHECK_EX_ERR_) of background update check extended error code (timer initiated)"
+  },
   "UPDATE_INVALID_LASTUPDATETIME_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6366,6 +6400,16 @@
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1137447],
+    "description": "Update: count of systems that have a last update time greater than the current time (timer initiated)"
+  },
+  "UPDATE_INVALID_LASTUPDATETIME_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
     "description": "Update: count of systems that have a last update time greater than the current time (timer initiated)"
   },
   "UPDATE_LAST_NOTIFY_INTERVAL_DAYS_EXTERNAL": {
@@ -6392,6 +6436,18 @@
     "bug_numbers": [1137447],
     "description": "Update: interval in days since the last background update check (timer initiated)"
   },
+  "UPDATE_LAST_NOTIFY_INTERVAL_DAYS_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "n_buckets": 30,
+    "high": 180,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: interval in days since the last background update check (after we already have an update ready)"
+  },
   "UPDATE_PING_COUNT_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6410,6 +6466,16 @@
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1151267],
+    "description": "Update: count of systems for this ping for comparison with other pings (timer initiated)"
+  },
+  "UPDATE_PING_COUNT_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox", "fennec"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
     "description": "Update: count of systems for this ping for comparison with other pings (timer initiated)"
   },
   "UPDATE_SERVICE_INSTALLED_EXTERNAL": {
@@ -6432,6 +6498,16 @@
     "bug_numbers": [1137447],
     "description": "Update: whether the service is installed (timer initiated)"
   },
+  "UPDATE_SERVICE_INSTALLED_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: whether the service is installed (after we already have an update ready)"
+  },
   "UPDATE_SERVICE_MANUALLY_UNINSTALLED_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6450,6 +6526,16 @@
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1137447],
+    "description": "Update: count of systems that manually uninstalled the service (timer initiated)"
+  },
+  "UPDATE_SERVICE_MANUALLY_UNINSTALLED_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
     "description": "Update: count of systems that manually uninstalled the service (timer initiated)"
   },
   "UPDATE_UNABLE_TO_APPLY_EXTERNAL": {
@@ -6472,6 +6558,16 @@
     "bug_numbers": [1151267],
     "description": "Update: count of systems that cannot apply updates (timer initiated)"
   },
+  "UPDATE_UNABLE_TO_APPLY_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: count of systems that cannot apply updates (timer initiated)"
+  },
   "UPDATE_CANNOT_STAGE_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6490,6 +6586,16 @@
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1137447],
+    "description": "Update: count of systems that cannot stage updates (timer initiated)"
+  },
+  "UPDATE_CANNOT_STAGE_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
     "description": "Update: count of systems that cannot stage updates (timer initiated)"
   },
   "UPDATE_PREF_UPDATE_CANCELATIONS_EXTERNAL": {
@@ -6514,6 +6620,17 @@
     "bug_numbers": [1137447],
     "description": "Update: number of sequential update elevation request cancelations greater than 0 (timer initiated)"
   },
+  "UPDATE_PREF_UPDATE_CANCELATIONS_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 100,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: number of sequential update elevation request cancelations greater than 0 (after we already have an update ready)"
+  },
   "UPDATE_PREF_SERVICE_ERRORS_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6536,6 +6653,17 @@
     "bug_numbers": [1137447],
     "description": "Update: number of sequential update service errors greater than 0 (timer initiated)"
   },
+  "UPDATE_PREF_SERVICE_ERRORS_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 30,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: number of sequential update service errors greater than 0 (after we already have an update ready)"
+  },
   "UPDATE_NOT_PREF_UPDATE_AUTO_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6554,6 +6682,16 @@
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1137447],
+    "description": "Update: count of when getAppUpdateAutoEnabled from UpdateUtils.jsm does not return the default value of true (true values are not submitted)"
+  },
+  "UPDATE_NOT_PREF_UPDATE_AUTO_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
     "description": "Update: count of when getAppUpdateAutoEnabled from UpdateUtils.jsm does not return the default value of true (true values are not submitted)"
   },
   "UPDATE_NOT_PREF_UPDATE_STAGING_ENABLED_EXTERNAL": {
@@ -6576,6 +6714,16 @@
     "bug_numbers": [1137447],
     "description": "Update: count of when the app.update.staging.enabled boolean preference is not the default value of true (true values are not submitted)"
   },
+  "UPDATE_NOT_PREF_UPDATE_STAGING_ENABLED_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
+    "description": "Update: count of when the app.update.staging.enabled boolean preference is not the default value of true (true values are not submitted)"
+  },
   "UPDATE_NOT_PREF_UPDATE_SERVICE_ENABLED_EXTERNAL": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -6594,6 +6742,16 @@
     "kind": "count",
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1137447],
+    "description": "Update: count of when the app.update.service.enabled boolean preference is not the default value of true (true values are not submitted)"
+  },
+  "UPDATE_NOT_PREF_UPDATE_SERVICE_ENABLED_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "count",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [353804],
     "description": "Update: count of when the app.update.service.enabled boolean preference is not the default value of true (true values are not submitted)"
   },
   "UPDATE_DOWNLOAD_CODE_COMPLETE": {
@@ -6778,10 +6936,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the application update doorhanger type that was displayed.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_BADGE_SHOWN": {
     "record_in_processes": ["main"],
@@ -6789,10 +6947,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1365204, 1521427],
+    "bug_numbers": [893505, 1365204, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the application update badge type that was displayed.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_DISMISSED": {
     "record_in_processes": ["main"],
@@ -6800,10 +6958,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the dismiss action was executed for this application update doorhanger type.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_MAIN_ACTION_DOORHANGER": {
     "record_in_processes": ["main"],
@@ -6811,10 +6969,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the main update action was initiated for this application update doorhanger type.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_NOTIFICATION_MAIN_ACTION_MENU": {
     "record_in_processes": ["main"],
@@ -6822,10 +6980,10 @@
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
     "expires_in_version": "never",
     "kind": "categorical",
-    "bug_numbers": [893505, 1521427],
+    "bug_numbers": [893505, 1521427, 1553982],
     "releaseChannelCollection": "opt-out",
     "description": "Update: the update action was initiated from the PanelUI application update menu item.",
-    "labels": ["restart", "available", "manual", "unsupported"]
+    "labels": ["restart", "available", "manual", "unsupported", "otherinstance"]
   },
   "UPDATE_CAN_USE_BITS_EXTERNAL": {
     "record_in_processes": ["main"],
@@ -6862,6 +7020,24 @@
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1343669, 1540193, 1520321],
     "description": "Update: Whether BITS could be used to download updates (timer initiated)"
+  },
+  "UPDATE_CAN_USE_BITS_SUBSEQUENT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["application-update-telemetry-alerts@mozilla.com", "bytesized@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "categorical",
+    "labels": [
+      "CanUseBits",
+      "NoBits_NotWindows",
+      "NoBits_FeatureOff",
+      "NoBits_Pref",
+      "NoBits_Proxy",
+      "NoBits_OtherUser"
+    ],
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1343669, 1540193, 1520321, 353804],
+    "description": "Update: Whether BITS could be used to download updates (after we already have an update ready)"
   },
   "UPDATE_BITS_RESULT_COMPLETE": {
     "record_in_processes": ["main"],
@@ -9489,10 +9665,10 @@
   "PDF_VIEWER_DOCUMENT_VERSION_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "categorical",
     "labels": ["other", "v1_0", "v1_1", "v1_2", "v1_3", "v1_4", "v1_5", "v1_6", "v1_7", "v1_8", "v1_9", "v2_0", "v2_1", "v2_2", "v2_3"],
     "description": "The PDF document version (1.1, 1.2, etc.)"
@@ -9500,10 +9676,10 @@
   "PDF_VIEWER_DOCUMENT_GENERATOR_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "categorical",
     "labels": ["acrobat_distiller", "acrobat_pdfwriter", "adobe_livecycle", "adobe_pdf_library", "adobe_photoshop", "ghostscript", "tcpdf", "cairo", "dvipdfm", "dvips", "pdftex", "pdfkit", "itext", "prince", "quarkxpress", "mac_os_x", "microsoft", "openoffice", "oracle", "luradocument", "pdf_xchange", "antenna_house", "aspose_cells", "fpdf", "other"],
     "description": "The PDF document generator"
@@ -9511,10 +9687,10 @@
   "PDF_VIEWER_DOCUMENT_SIZE_KB": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "exponential",
     "low": 2,
     "high": 65536,
@@ -9524,10 +9700,10 @@
   "PDF_VIEWER_FONT_TYPES_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "categorical",
     "labels": ["UNKNOWN", "TYPE1", "TYPE1C", "CIDFONTTYPE0", "CIDFONTTYPE0C", "TRUETYPE", "CIDFONTTYPE2", "TYPE3", "OPENTYPE", "TYPE0", "MMTYPE1"],
     "description": "The PDF document font types used"
@@ -9535,10 +9711,10 @@
   "PDF_VIEWER_EMBED_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "categorical",
     "labels": ["object_embed", "iframe"],
     "description": "A PDF document was embedded using OBJECT/EMBED and or an IFRAME"
@@ -9546,10 +9722,10 @@
   "PDF_VIEWER_FORM_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "categorical",
     "labels": ["acroform", "xfa"],
     "description": "If a form was used, its type."
@@ -9557,10 +9733,10 @@
   "PDF_VIEWER_STREAM_TYPES_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882],
+    "bug_numbers": [1566882, 1666979],
     "kind": "categorical",
     "labels": ["UNKNOWN", "FLATE", "LZW", "DCT", "JPX", "JBIG", "A85", "AHX", "CCF", "RLX"],
     "description": "The PDF document compression stream types used"
@@ -9580,10 +9756,10 @@
   "PDF_VIEWER_FALLBACK_REASON": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1630844],
+    "bug_numbers": [1630844, 1666979],
     "kind": "categorical",
     "labels": ["unknown", "forms", "javaScript", "smask", "shadingPattern", "font", "errorTilingPattern", "errorExtGState", "errorXObject", "errorFontLoadType3", "errorFontState", "errorFontMissing", "errorFontTranslate", "errorColorSpace", "errorOperatorList", "errorFontToUnicode", "errorFontLoadNative", "errorFontGetPath"],
     "description": "The reason the fallback bar was shown."
@@ -9591,10 +9767,10 @@
   "PDF_VIEWER_FALLBACK_ERROR": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "84",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1643402],
+    "bug_numbers": [1643402, 1666979],
     "kind": "categorical",
     "labels": ["unknown", "forms", "javaScript", "smask", "shadingPattern", "font", "errorTilingPattern", "errorExtGState", "errorXObject", "errorFontLoadType3", "errorFontState", "errorFontMissing", "errorFontTranslate", "errorColorSpace", "errorOperatorList", "errorFontToUnicode", "errorFontLoadNative", "errorFontGetPath"],
     "description": "All errors that could trigger the fallback bar, even after the bar is shown."
@@ -9602,10 +9778,10 @@
   "PDF_VIEWER_TAGGED": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
-    "expires_in_version": "87",
+    "expires_in_version": "88",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1673128],
+    "bug_numbers": [1673128, 1666979],
     "kind": "boolean",
     "description": "If a PDF is tagged."
   },
@@ -9955,10 +10131,10 @@
       "pulse",
       "pulse_rust",
       "sndio",
-      "sun"
+      "sunaudio"
     ],
     "description": "The operating system audio backend",
-    "bug_numbers": [1671714]
+    "bug_numbers": [1671714, 1679745]
   },
   "WEBRTC_DTLS_CIPHER": {
     "record_in_processes": ["content", "socket"],
@@ -15688,18 +15864,6 @@
     "kind": "boolean",
     "description": "Whether TLS 1.3 client authentication uses PHA (true) or regular in-handshake authentication (false)"
   },
-  "TLS_DELEGATED_CREDENTIALS_TIME_UNTIL_READY_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["seceng-telemetry@mozilla.com", "kjacobs@mozilla.com"],
-    "expires_in_version": "86",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 2000,
-    "n_buckets": 100,
-    "bug_numbers": [1564179, 1645082],
-    "description": "milliseconds to complete a TLS handshake that used delegated credentials"
-  },
   "PRESSHELL_LAYOUT_TOTAL_MS_PER_TICK": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -16072,9 +16236,9 @@
     "expires_in_version": "87",
     "kind": "categorical",
     "releaseChannelCollection": "opt-out",
-    "description": "Counts how often the external protocol handler dialog is shown. Labelled by protocol scheme. Keyed by whether the navigation came from the top level browser, an iframe or a cross origin iframe, or a null principal.",
+    "description": "Counts how often the external protocol handler dialog is shown. Labelled by protocol scheme. Keyed by the kind of browsing context the navigation was triggered from: TOPLEVEL: Top browser, SUB_SAMEORIGIN: Same origin iframe, SUB_CROSSORIGIN: Cross origin iframe, SUB_SANDBOX_ALLOW: Sandboxed iframe with relevant allow flags, SUB_SANDBOX_NOALLOW: Sandboxed iframe without relevant allow flags",
     "keyed": true,
-    "keys": ["TOPLEVEL", "SUB_SAMEORIGIN", "SUB_CROSSORIGIN", "NULLPRINCIPAL", "UNKNOWN"],
+    "keys": ["TOPLEVEL", "SUB_SAMEORIGIN", "SUB_CROSSORIGIN", "SUB_SANDBOX_ALLOW", "SUB_SANDBOX_NOALLOW", "UNKNOWN"],
     "labels": [
       "APPLE",
       "APPLE_FINDMY",

@@ -481,7 +481,7 @@ bool FunctionScriptEmitter::emitExtraBodyVarScope() {
   const ParserAtom* name = nullptr;
   for (ParserBindingIter bi(*funbox_->functionScopeBindings(), true); bi;
        bi++) {
-    name = bi.name();
+    name = bce_->compilationInfo.stencil.getParserAtomAt(bce_->cx, bi.name());
 
     // There may not be a var binding of the same name.
     if (!bce_->locationOfNameBoundInScope(name,
@@ -671,7 +671,7 @@ bool FunctionScriptEmitter::emitEndBody() {
 bool FunctionScriptEmitter::intoStencil() {
   MOZ_ASSERT(state_ == State::EndBody);
 
-  if (!bce_->intoScriptStencil(&funbox_->functionStencil())) {
+  if (!bce_->intoScriptStencil(&funbox_->functionStencil(), funbox_->index())) {
     return false;
   }
 

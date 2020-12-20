@@ -129,13 +129,12 @@ SizeComputationInput::SizeComputationInput(
 ReflowInput::ReflowInput(nsPresContext* aPresContext, nsIFrame* aFrame,
                          gfxContext* aRenderingContext,
                          const LogicalSize& aAvailableSpace, InitFlags aFlags)
-    : SizeComputationInput(aFrame, aRenderingContext) {
+    : SizeComputationInput(aFrame, aRenderingContext),
+      mAvailableSize(aAvailableSpace) {
   MOZ_ASSERT(aRenderingContext, "no rendering context");
   MOZ_ASSERT(aPresContext, "no pres context");
   MOZ_ASSERT(aFrame, "no frame");
   MOZ_ASSERT(aPresContext == aFrame->PresContext(), "wrong pres context");
-  AvailableISize() = aAvailableSpace.ISize(mWritingMode);
-  AvailableBSize() = aAvailableSpace.BSize(mWritingMode);
 
   if (aFlags.contains(InitFlag::DummyParentReflowInput)) {
     mFlags.mDummyParentReflowInput = true;
@@ -170,15 +169,13 @@ ReflowInput::ReflowInput(nsPresContext* aPresContext,
               : nullptr),
       mFlags(aParentReflowInput.mFlags),
       mComputeSizeFlags(aComputeSizeFlags),
-      mReflowDepth(aParentReflowInput.mReflowDepth + 1) {
+      mReflowDepth(aParentReflowInput.mReflowDepth + 1),
+      mAvailableSize(aAvailableSpace) {
   MOZ_ASSERT(aPresContext, "no pres context");
   MOZ_ASSERT(aFrame, "no frame");
   MOZ_ASSERT(aPresContext == aFrame->PresContext(), "wrong pres context");
   MOZ_ASSERT(!mFlags.mSpecialBSizeReflow || !aFrame->IsSubtreeDirty(),
              "frame should be clean when getting special bsize reflow");
-
-  AvailableISize() = aAvailableSpace.ISize(mWritingMode);
-  AvailableBSize() = aAvailableSpace.BSize(mWritingMode);
 
   if (mWritingMode.IsOrthogonalTo(aParentReflowInput.GetWritingMode())) {
     // If we're setting up for an orthogonal flow, and the parent reflow input
@@ -266,12 +263,12 @@ bool ReflowInput::ShouldReflowAllKids() const {
           mFrame->HasAnyStateBits(NS_FRAME_CONTAINS_RELATIVE_BSIZE));
 }
 
-void ReflowInput::SetComputedWidth(nscoord aComputedWidth) {
+void ReflowInput::SetComputedISize(nscoord aComputedISize) {
   NS_ASSERTION(mFrame, "Must have a frame!");
   // It'd be nice to assert that |frame| is not in reflow, but this fails for
   // two reasons:
   //
-  // 1) Viewport frames reset the computed width on a copy of their reflow
+  // 1) Viewport frames reset the computed isize on a copy of their reflow
   //    input when reflowing fixed-pos kids.  In that case we actually don't
   //    want to mess with the resize flags, because comparing the frame's rect
   //    to the munged computed width is pointless.
@@ -281,18 +278,17 @@ void ReflowInput::SetComputedWidth(nscoord aComputedWidth) {
   //    (like a text control, for example), we'll end up creating a reflow
   //    input for the parent while the parent is reflowing.
 
-  MOZ_ASSERT(aComputedWidth >= 0, "Invalid computed width");
-  if (ComputedWidth() != aComputedWidth) {
-    ComputedWidth() = aComputedWidth;
-    LayoutFrameType frameType = mFrame->Type();
-    if (frameType != LayoutFrameType::Viewport ||  // Or check GetParent()?
-        mWritingMode.IsVertical()) {
+  MOZ_ASSERT(aComputedISize >= 0, "Invalid computed inline-size!");
+  if (ComputedISize() != aComputedISize) {
+    ComputedISize() = aComputedISize;
+    const LayoutFrameType frameType = mFrame->Type();
+    if (frameType != LayoutFrameType::Viewport) {
       InitResizeFlags(mFrame->PresContext(), frameType);
     }
   }
 }
 
-void ReflowInput::SetComputedHeight(nscoord aComputedHeight) {
+void ReflowInput::SetComputedBSize(nscoord aComputedBSize) {
   NS_ASSERTION(mFrame, "Must have a frame!");
   // It'd be nice to assert that |frame| is not in reflow, but this fails
   // because:
@@ -303,13 +299,10 @@ void ReflowInput::SetComputedHeight(nscoord aComputedHeight) {
   //    (like a text control, for example), we'll end up creating a reflow
   //    input for the parent while the parent is reflowing.
 
-  MOZ_ASSERT(aComputedHeight >= 0, "Invalid computed height");
-  if (ComputedHeight() != aComputedHeight) {
-    ComputedHeight() = aComputedHeight;
-    LayoutFrameType frameType = mFrame->Type();
-    if (frameType != LayoutFrameType::Viewport || !mWritingMode.IsVertical()) {
-      InitResizeFlags(mFrame->PresContext(), frameType);
-    }
+  MOZ_ASSERT(aComputedBSize >= 0, "Invalid computed block-size!");
+  if (ComputedBSize() != aComputedBSize) {
+    ComputedBSize() = aComputedBSize;
+    InitResizeFlags(mFrame->PresContext(), mFrame->Type());
   }
 }
 
@@ -2196,8 +2189,8 @@ void ReflowInput::InitConstraints(
       ComputedBSize() = NS_UNCONSTRAINEDSIZE;
     }
 
-    ComputedMinWidth() = ComputedMinHeight() = 0;
-    ComputedMaxWidth() = ComputedMaxHeight() = NS_UNCONSTRAINEDSIZE;
+    ComputedMinISize() = ComputedMinBSize() = 0;
+    ComputedMaxBSize() = ComputedMaxBSize() = NS_UNCONSTRAINEDSIZE;
   } else {
     // Get the containing block reflow input
     const ReflowInput* cbri = mCBReflowInput;
@@ -2351,8 +2344,8 @@ void ReflowInput::InitConstraints(
       }
 
       // Doesn't apply to internal table elements
-      ComputedMinWidth() = ComputedMinHeight() = 0;
-      ComputedMaxWidth() = ComputedMaxHeight() = NS_UNCONSTRAINEDSIZE;
+      ComputedMinISize() = ComputedMinBSize() = 0;
+      ComputedMaxISize() = ComputedMaxBSize() = NS_UNCONSTRAINEDSIZE;
     } else if (NS_FRAME_GET_TYPE(mFrameType) == NS_CSS_FRAME_TYPE_ABSOLUTE) {
       // XXX not sure if this belongs here or somewhere else - cwk
       InitAbsoluteConstraints(aPresContext, cbri,
@@ -2516,9 +2509,12 @@ void SizeComputationInput::InitOffsets(WritingMode aCBWM, nscoord aPercentBasis,
     needPaddingProp = false;
   } else if (aPadding) {  // padding is an input arg
     SetComputedLogicalPadding(wm, *aPadding);
-    needPaddingProp = mFrame->StylePadding()->IsWidthDependent() ||
-                      mFrame->HasAnyStateBits(NS_FRAME_REFLOW_ROOT |
-                                              NS_FRAME_DYNAMIC_REFLOW_ROOT);
+    nsMargin stylePadding;
+    // If the caller passes a padding that doesn't match our style (like
+    // nsTextControlFrame might due due to theming), then we also need a
+    // padding prop.
+    needPaddingProp = !mFrame->StylePadding()->GetPadding(stylePadding) ||
+                      aPadding->GetPhysicalMargin(wm) != stylePadding;
   } else {
     needPaddingProp = ComputePadding(aCBWM, aPercentBasis, aFrameType);
   }

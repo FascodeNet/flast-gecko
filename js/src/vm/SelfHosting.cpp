@@ -2257,6 +2257,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("std_Math_max", math_max, 2, 0, MathMax),
     JS_INLINABLE_FN("std_Math_min", math_min, 2, 0, MathMin),
     JS_INLINABLE_FN("std_Math_abs", math_abs, 1, 0, MathAbs),
+    JS_INLINABLE_FN("std_Math_trunc", math_trunc, 1, 0, MathTrunc),
 
     JS_FN("std_Map_entries", MapObject::entries, 0, 0),
 
@@ -2720,7 +2721,7 @@ GlobalObject* JSRuntime::createSelfHostingGlobal(JSContext* cx) {
   MOZ_ASSERT(!cx->realm());
 
   JS::RealmOptions options;
-  options.creationOptions().setNewCompartmentAndZone();
+  options.creationOptions().setNewCompartmentInSelfHostingZone();
   // Debugging the selfHosted zone is not supported because CCWs are not
   // allowed in that zone.
   options.creationOptions().setInvisibleToDebugger(true);
@@ -2755,7 +2756,7 @@ GlobalObject* JSRuntime::createSelfHostingGlobal(JSContext* cx) {
   }
 
   cx->runtime()->selfHostingGlobal_ = shg;
-  realm->zone()->setIsSelfHostingZone();
+  MOZ_ASSERT(realm->zone()->isSelfHostingZone());
   realm->setIsSelfHostingRealm();
 
   if (!GlobalObject::initSelfHostingBuiltins(cx, shg, intrinsic_functions)) {

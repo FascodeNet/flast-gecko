@@ -53,6 +53,7 @@
 #include "jit/InlinableNatives.h"
 #include "jit/Invalidation.h"
 #include "jit/Ion.h"
+#include "jit/JitOptions.h"
 #include "jit/JitRuntime.h"
 #include "jit/TrialInlining.h"
 #include "js/Array.h"        // JS::NewArrayObject
@@ -506,10 +507,6 @@ static bool TrialInline(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setUndefined();
 
-  if (!jit::JitOptions.warpBuilder) {
-    return true;
-  }
-
   FrameIter iter(cx);
   if (iter.done() || !iter.isBaseline() || iter.realm() != cx->realm()) {
     return true;
@@ -558,7 +555,7 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
     } else if (arg.isObject()) {
-      PrepareZoneForGC(UncheckedUnwrap(&arg.toObject())->zone());
+      PrepareZoneForGC(cx, UncheckedUnwrap(&arg.toObject())->zone());
       zone = true;
     }
   }
@@ -624,6 +621,8 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
   _("gcBytes", JSGC_BYTES, false)                                          \
   _("nurseryBytes", JSGC_NURSERY_BYTES, false)                             \
   _("gcNumber", JSGC_NUMBER, false)                                        \
+  _("majorGCNumber", JSGC_MAJOR_GC_NUMBER, false)                          \
+  _("minorGCNumber", JSGC_MINOR_GC_NUMBER, false)                          \
   _("mode", JSGC_MODE, true)                                               \
   _("unusedChunks", JSGC_UNUSED_CHUNKS, false)                             \
   _("totalChunks", JSGC_TOTAL_CHUNKS, false)                               \
@@ -879,6 +878,12 @@ static bool WasmSimdExperimentalEnabled(JSContext* cx, unsigned argc,
 #else
   args.rval().setBoolean(false);
 #endif
+  return true;
+}
+
+static bool WasmSimdWormholeEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(wasm::SimdWormholeAvailable(cx));
   return true;
 }
 
@@ -1757,7 +1762,7 @@ static bool ScheduleZoneForGC(JSContext* cx, unsigned argc, Value* vp) {
   if (args[0].isObject()) {
     // Ensure that |zone| is collected during the next GC.
     Zone* zone = UncheckedUnwrap(&args[0].toObject())->zone();
-    PrepareZoneForGC(zone);
+    PrepareZoneForGC(cx, zone);
   } else if (args[0].isString()) {
     // This allows us to schedule the atoms zone for GC.
     Zone* zone = args[0].toString()->zoneFromAnyThread();
@@ -1766,7 +1771,7 @@ static bool ScheduleZoneForGC(JSContext* cx, unsigned argc, Value* vp) {
       ReportUsageErrorASCII(cx, callee, "Specified zone not accessible for GC");
       return false;
     }
-    PrepareZoneForGC(zone);
+    PrepareZoneForGC(cx, zone);
   } else {
     RootedObject callee(cx, &args.callee());
     ReportUsageErrorASCII(cx, callee,
@@ -6289,6 +6294,36 @@ static bool GetICUOptions(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool IsSmallFunction(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  if (!args.requireAtLeast(cx, "IsSmallFunction", 1)) {
+    return false;
+  }
+
+  HandleValue arg = args[0];
+  if (!arg.isObject() || !arg.toObject().is<JSFunction>()) {
+    ReportUsageErrorASCII(cx, callee, "First argument must be a function");
+    return false;
+  }
+
+  RootedFunction fun(cx, &args[0].toObject().as<JSFunction>());
+  if (!fun->isInterpreted()) {
+    ReportUsageErrorASCII(cx, callee,
+                          "First argument must be an interpreted function");
+    return false;
+  }
+
+  JSScript* script = JSFunction::getOrCreateScript(cx, fun);
+  if (!script) {
+    return false;
+  }
+
+  args.rval().setBoolean(jit::JitOptions.isSmallFunction(script));
+  return true;
+}
+
 static bool PCCountProfiling_Start(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -6801,6 +6836,11 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether WebAssembly SIMD experimental instructions\n"
 "  are supported by the compilers and runtime."),
 
+    JS_FN_HELP("wasmSimdWormholeEnabled", WasmSimdWormholeEnabled, 0, 0,
+"wasmSimdWormholeEnabled()",
+"  Returns a boolean indicating whether WebAssembly SIMD wormhole instructions\n"
+"  are supported by the compilers and runtime."),
+
     JS_FN_HELP("wasmReftypesEnabled", WasmReftypesEnabled, 1, 0,
 "wasmReftypesEnabled()",
 "  Returns a boolean indicating whether the WebAssembly reftypes proposal is enabled."),
@@ -7289,6 +7329,10 @@ JS_FN_HELP("getICUOptions", GetICUOptions, 0, 0,
 "    tzdata: a string containing the tzdata version number, e.g. '2020a'\n"
 "    timezone: the ICU default time zone, e.g. 'America/Los_Angeles'\n"
 "    host-timezone: the host time zone, e.g. 'America/Los_Angeles'"),
+
+JS_FN_HELP("isSmallFunction", IsSmallFunction, 1, 0,
+"isSmallFunction(fun)",
+"  Returns true if a scripted function is small enough to be inlinable."),
 
     JS_FS_HELP_END
 };

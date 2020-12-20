@@ -569,7 +569,7 @@
 
 - name: apz.popups.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 # Whether to print the APZC tree for debugging.
@@ -1015,6 +1015,22 @@
 - name: browser.enable_click_image_resizing
   type: bool
   value: @IS_NOT_ANDROID@
+  mirror: always
+
+# The max url length we'll store in history.
+#
+# The default value is mostly a guess based on various facts:
+#
+# * IE didn't support urls longer than 2083 chars
+# * Sitemaps protocol used to support a maximum of 2048 chars
+# * Various SEO guides suggest to not go over 2000 chars
+# * Various apps/services are known to have issues over 2000 chars
+# * RFC 2616 - HTTP/1.1 suggests being cautious about depending
+#   on URI lengths above 255 bytes
+#
+- name: browser.history.maxUrlLength
+  type: uint32_t
+  value: 2000
   mirror: always
 
 # Render animations and videos as a solid color
@@ -1950,6 +1966,12 @@
   type: bool
   value: true
   mirror: always
+
+# Whether we allow BrowsingContextGroup to suspend input events
+- name: dom.input_events.canSuspendInBCG.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: once
 
 # Enable not moving the cursor to end when a text input or textarea has .value
 # set to the value it already has.  By default, enabled.
@@ -4099,7 +4121,7 @@
 
 - name: gfx.canvas.remote
   type: RelaxedAtomicBool
-#if defined(XP_WIN)
+#if defined(XP_WIN) && defined(EARLY_BETA_OR_EARLIER)
   value: true
 #else
   value: false
@@ -5260,8 +5282,17 @@
   #else
   value: false
   #endif
-#endif
   mirror: always
+#endif
+
+#if defined(ENABLE_WASM_SIMD_WORMHOLE)
+# This is x64-only nightly-only and it would break unified macOS builds if
+# it were in all.js
+- name: javascript.options.wasm_simd_wormhole
+  type: bool
+  value: false
+  mirror: always
+#endif
 
 #---------------------------------------------------------------------------
 # Prefs starting with "layers."
@@ -5984,13 +6015,6 @@
   mirror: always
   rust: true
 
-# Whether :-moz-any is an alias of the :is selector.
-- name: layout.css.moz-any-is-is.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
-
 # Whether the `no-preference` value for `prefers-color-scheme` is parsed.
 #
 # It never matches regardless.
@@ -6008,6 +6032,13 @@
 - name: layout.css.focus-visible.enabled
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+  rust: true
+
+# Whether the `:autofill` pseudo-class is exposed to content.
+- name: layout.css.autofill.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
   rust: true
 
@@ -6044,30 +6075,6 @@
 - name: layout.css.devPixelsPerPx
   type: AtomicFloat
   value: -1.0f
-  mirror: always
-
-# text underline offset
-- name: layout.css.text-underline-offset.enabled
-  type: bool
-  value: true
-  mirror: always
-
-# text underline position
-- name: layout.css.text-underline-position.enabled
-  type: bool
-  value: true
-  mirror: always
-
-# text decoration thickness
-- name: layout.css.text-decoration-thickness.enabled
-  type: bool
-  value: true
-  mirror: always
-
-# text decoration skip ink
-- name: layout.css.text-decoration-skip-ink.enabled
-  type: bool
-  value: true
   mirror: always
 
 # Is support for CSS backdrop-filter enabled?
@@ -6455,14 +6462,6 @@
   mirror: always
   rust: true
 
-# Pref to control whether XUL ::-tree-* pseudo-elements are parsed in content
-# pages.
-- name: layout.css.xul-tree-pseudos.content.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-  rust: true
-
 # Whether to block large cursors intersecting UI.
 - name: layout.cursor.block.enabled
   type: bool
@@ -6691,12 +6690,6 @@
 
 # Are shared memory User Agent style sheets enabled?
 - name: layout.css.shared-memory-ua-sheets.enabled
-  type: bool
-  value: true
-  mirror: always
-
-# Is support for CSS text-justify property enabled?
-- name: layout.css.text-justify.enabled
   type: bool
   value: true
   mirror: always
@@ -7453,11 +7446,6 @@
 -   name: media.wmf.skip-blacklist
     type: RelaxedAtomicBool
     value: false
-    mirror: always
-
--   name: media.wmf.deblacklisting-for-telemetry-in-gpu-process
-    type: RelaxedAtomicBool
-    value: true
     mirror: always
 
 -   name: media.wmf.amd.highres.enabled
@@ -9591,9 +9579,9 @@
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
   # Run content processes in headless mode and disallow connections to
   # the X server.  Experimental; breaks WebGL and Flash, and requires
-  # `widget.disable-native-theme-for-content`.  Changing it requires a
-  # restart because sandbox policy information dependent on it is cached.
-  # See bug 1640345 for details.
+  # `widget.disable-native-theme-for-content` and `widget.remote-look-and-feel`.
+  # Changing it requires a restart because sandbox policy information dependent
+  # on it is cached.  See bug 1640345 for details.
 - name: security.sandbox.content.headless
   type: bool
   value: false
@@ -10428,6 +10416,19 @@
   value: true
   mirror: always
 #endif
+
+# Enable the RemoteLookAndFeel in content processes, which will cause all
+# LookAndFeel values to be queried in the parent process and sent to content
+# processes using IPC.  This is required for widgets to paint and behave
+# correctly when `security.sandbox.content.headless` is enabled.
+- name: widget.remote-look-and-feel
+  type: bool
+#ifdef MOZ_WIDGET_GTK
+  value: false
+#else
+  value: false
+#endif
+  mirror: once
 
 #---------------------------------------------------------------------------
 # Prefs starting with "xul."

@@ -179,9 +179,23 @@
 // after the last event it processes.
 #define DEFAULT_THREAD_TIMEOUT_MS 30000
 
-// The amount of time, in milliseconds, that we will wait for active storage
-// transactions on shutdown before aborting them.
-#define DEFAULT_SHUTDOWN_TIMER_MS 30000
+/**
+ * If shutdown takes this long, kill actors of a quota client, to avoid reaching
+ * the crash timeout.
+ */
+#define SHUTDOWN_FORCE_KILL_TIMEOUT_MS 5000
+
+/**
+ * Automatically crash the browser if shutdown of a quota client takes this
+ * long. We've chosen a value that is long enough that it is unlikely for the
+ * problem to be falsely triggered by slow system I/O.  We've also chosen a
+ * value long enough so that automated tests should time out and fail if
+ * shutdown of a quota client takes too long.  Also, this value is long enough
+ * so that testers can notice the timeout; we want to know about the timeouts,
+ * not hide them. On the other hand this value is less than 60 seconds which is
+ * used by nsTerminator to crash a hung main process.
+ */
+#define SHUTDOWN_FORCE_CRASH_TIMEOUT_MS 45000
 
 // profile-before-change, when we need to shut down quota manager
 #define PROFILE_BEFORE_CHANGE_QM_OBSERVER_ID "profile-before-change-qm"
@@ -1957,24 +1971,24 @@ bool IsTempMetadata(const nsAString& aFileName) {
          aFileName.EqualsLiteral(METADATA_V2_TMP_FILE_NAME);
 }
 
-nsresult MaybeUpdateGroupForOrigin(GroupAndOrigin& aGroupAndOrigin,
-                                   bool& aUpdated) {
+// Return whether the group was actually updated.
+Result<bool, nsresult> MaybeUpdateGroupForOrigin(
+    GroupAndOrigin& aGroupAndOrigin) {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  aUpdated = false;
+  bool updated = false;
 
   if (aGroupAndOrigin.mOrigin.EqualsLiteral(kChromeOrigin)) {
     if (!aGroupAndOrigin.mGroup.EqualsLiteral(kChromeOrigin)) {
       aGroupAndOrigin.mGroup.AssignLiteral(kChromeOrigin);
-      aUpdated = true;
+      updated = true;
     }
   } else {
     OriginAttributes originAttributes;
     nsCString originNoSuffix;
-    if (NS_WARN_IF(!originAttributes.PopulateFromOrigin(aGroupAndOrigin.mOrigin,
-                                                        originNoSuffix))) {
-      return NS_ERROR_FAILURE;
-    }
+    QM_TRY(OkIf(originAttributes.PopulateFromOrigin(aGroupAndOrigin.mOrigin,
+                                                    originNoSuffix)),
+           Err(NS_ERROR_FAILURE));
 
     nsCString suffix;
     originAttributes.CreateSuffix(suffix);
@@ -1983,20 +1997,17 @@ nsresult MaybeUpdateGroupForOrigin(GroupAndOrigin& aGroupAndOrigin,
     nsresult rv = MozURL::Init(getter_AddRefs(url), originNoSuffix);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       QM_WARNING("A URL %s is not recognized by MozURL", originNoSuffix.get());
-      return rv;
+      return Err(rv);
     }
 
     nsCString baseDomain;
-    rv = url->BaseDomain(baseDomain);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+    QM_TRY(url->BaseDomain(baseDomain));
 
     nsCString upToDateGroup = baseDomain + suffix;
 
     if (aGroupAndOrigin.mGroup != upToDateGroup) {
       aGroupAndOrigin.mGroup = upToDateGroup;
-      aUpdated = true;
+      updated = true;
 
 #ifdef QM_PRINCIPALINFO_VERIFICATION_ENABLED
       ContentPrincipalInfo contentPrincipalInfo;
@@ -2016,7 +2027,7 @@ nsresult MaybeUpdateGroupForOrigin(GroupAndOrigin& aGroupAndOrigin,
     }
   }
 
-  return NS_OK;
+  return updated;
 }
 
 }  // namespace
@@ -2202,9 +2213,8 @@ class MOZ_STACK_CLASS OriginParser final {
   enum ResultType { InvalidOrigin, ObsoleteOrigin, ValidOrigin };
 
  private:
-  static bool IgnoreWhitespace(char16_t /* aChar */) { return false; }
-
-  typedef nsCCharSeparatedTokenizerTemplate<IgnoreWhitespace> Tokenizer;
+  using Tokenizer =
+      nsCCharSeparatedTokenizerTemplate<NS_TokenizerIgnoreNothing>;
 
   enum SchemeType { eNone, eFile, eAbout, eChrome };
 
@@ -3662,6 +3672,13 @@ QuotaManager* QuotaManager::Get() {
 }
 
 // static
+QuotaManager& QuotaManager::GetRef() {
+  MOZ_ASSERT(gInstance);
+
+  return *gInstance;
+}
+
+// static
 bool QuotaManager::IsShuttingDown() { return gShutdown; }
 
 // static
@@ -4071,6 +4088,37 @@ nsresult QuotaManager::Init() {
   return NS_OK;
 }
 
+void QuotaManager::MaybeRecordShutdownStep(const Client::Type aClientType,
+                                           const nsACString& aStepDescription) {
+  AssertIsOnBackgroundThread();
+
+  if (!mShutdownStartedAt) {
+    // We are not shutting down yet, we intentionally ignore this here to avoid
+    // that every caller has to make a distinction for shutdown vs. non-shutdown
+    // situations.
+    return;
+  }
+
+  const TimeDuration elapsedSinceShutdownStart =
+      TimeStamp::NowLoRes() - *mShutdownStartedAt;
+
+  const auto stepString =
+      nsPrintfCString("%fs: %s", elapsedSinceShutdownStart.ToSeconds(),
+                      nsPromiseFlatCString(aStepDescription).get());
+
+  mShutdownSteps[aClientType].Append(stepString + "\n"_ns);
+
+#ifdef DEBUG
+  // XXX Probably this isn't the mechanism that should be used here.
+
+  NS_DebugBreak(
+      NS_DEBUG_WARNING,
+      nsAutoCString(Client::TypeToText(aClientType) + " shutdown step"_ns)
+          .get(),
+      stepString.get(), __FILE__, __LINE__);
+#endif
+}
+
 void QuotaManager::Shutdown() {
   AssertIsOnOwningThread();
 
@@ -4082,10 +4130,7 @@ void QuotaManager::Shutdown() {
 
   StopIdleMaintenance();
 
-  // Kick off the shutdown timer.
-  MOZ_ALWAYS_SUCCEEDS(mShutdownTimer->InitWithNamedFuncCallback(
-      &ShutdownTimerCallback, this, DEFAULT_SHUTDOWN_TIMER_MS,
-      nsITimer::TYPE_ONE_SHOT, "QuotaManager::ShutdownTimerCallback"));
+  mShutdownStartedAt.init(TimeStamp::NowLoRes());
 
   const auto& allClientTypes = AllClientTypes();
 
@@ -4095,9 +4140,62 @@ void QuotaManager::Shutdown() {
   }
   needsToWait |= static_cast<bool>(gNormalOriginOps);
 
-  // If any client cannot shutdown immediately, spin the event loop while we
+  // If any clients cannot shutdown immediately, spin the event loop while we
   // wait on all the threads to close. Our timer may fire during that loop.
   if (needsToWait) {
+    MOZ_ALWAYS_SUCCEEDS(mShutdownTimer->InitWithNamedFuncCallback(
+        [](nsITimer* aTimer, void* aClosure) {
+          auto* const quotaManager = static_cast<QuotaManager*>(aClosure);
+
+          for (Client::Type type : quotaManager->AllClientTypes()) {
+            // XXX This is a workaround to unblock shutdown, which ought to be
+            // removed by Bug 1682326.
+            if (type == Client::IDB) {
+              quotaManager->mClients[type]->AbortAllOperations();
+            }
+
+            quotaManager->mClients[type]->ForceKillActors();
+          }
+
+          MOZ_ALWAYS_SUCCEEDS(aTimer->InitWithNamedFuncCallback(
+              [](nsITimer* aTimer, void* aClosure) {
+                auto* const quotaManager = static_cast<QuotaManager*>(aClosure);
+
+                nsCString annotation;
+
+                for (Client::Type type : quotaManager->AllClientTypes()) {
+                  auto& quotaClient = *quotaManager->mClients[type];
+
+                  if (!quotaClient.IsShutdownCompleted()) {
+                    annotation.AppendPrintf(
+                        "%s: %s\nIntermediate steps:\n%s\n\n",
+                        Client::TypeToText(type).get(),
+                        quotaClient.GetShutdownStatus().get(),
+                        quotaManager->mShutdownSteps[type].get());
+                  }
+                }
+
+                if (gNormalOriginOps) {
+                  annotation.AppendPrintf("QM: %zu normal origin ops pending\n",
+                                          gNormalOriginOps->Length());
+                }
+
+                // We expect that at least one quota client didn't complete its
+                // shutdown.
+                MOZ_DIAGNOSTIC_ASSERT(!annotation.IsEmpty());
+
+                CrashReporter::AnnotateCrashReport(
+                    CrashReporter::Annotation::QuotaManagerShutdownTimeout,
+                    annotation);
+
+                MOZ_CRASH("Quota manager shutdown timed out");
+              },
+              aClosure, SHUTDOWN_FORCE_CRASH_TIMEOUT_MS,
+              nsITimer::TYPE_ONE_SHOT, "quota::QuotaManager::ForceCrashTimer"));
+        },
+        this, SHUTDOWN_FORCE_KILL_TIMEOUT_MS, nsITimer::TYPE_ONE_SHOT,
+        "quota::QuotaManager::ForceKillTimer"));
+
     MOZ_ALWAYS_TRUE(SpinEventLoopUntil([this, &allClientTypes] {
       return !gNormalOriginOps &&
              std::all_of(allClientTypes.cbegin(), allClientTypes.cend(),
@@ -4377,145 +4475,103 @@ nsresult QuotaManager::LoadQuota() {
 
     auto autoRemoveQuota = MakeScopeExit([&] { RemoveQuota(); });
 
-    bool hasResult;
-    while (NS_SUCCEEDED((rv = stmt->ExecuteStep(&hasResult))) && hasResult) {
-      int32_t repositoryId;
-      rv = stmt->GetInt32(0, &repositoryId);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+    QM_TRY(quota::CollectWhileHasResult(
+        *stmt, [this](auto& stmt) -> Result<Ok, nsresult> {
+          QM_TRY_INSPECT(const int32_t& repositoryId,
+                         MOZ_TO_RESULT_INVOKE(stmt, GetInt32, 0));
 
-      const auto maybePersistenceType =
-          PersistenceTypeFromInt32(repositoryId, fallible);
-      if (NS_WARN_IF(maybePersistenceType.isNothing())) {
-        return NS_ERROR_FAILURE;
-      }
+          const auto maybePersistenceType =
+              PersistenceTypeFromInt32(repositoryId, fallible);
+          QM_TRY(OkIf(maybePersistenceType.isSome()), Err(NS_ERROR_FAILURE));
 
-      const PersistenceType persistenceType = maybePersistenceType.value();
+          const PersistenceType persistenceType = maybePersistenceType.value();
 
-      GroupAndOrigin groupAndOrigin;
+          GroupAndOrigin groupAndOrigin;
 
-      rv = stmt->GetUTF8String(1, groupAndOrigin.mOrigin);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          QM_TRY_UNWRAP(
+              groupAndOrigin.mOrigin,
+              MOZ_TO_RESULT_INVOKE_TYPED(nsCString, stmt, GetUTF8String, 1));
 
-      rv = stmt->GetUTF8String(2, groupAndOrigin.mGroup);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          QM_TRY_UNWRAP(
+              groupAndOrigin.mGroup,
+              MOZ_TO_RESULT_INVOKE_TYPED(nsCString, stmt, GetUTF8String, 2));
 
-      bool updated;
-      rv = MaybeUpdateGroupForOrigin(groupAndOrigin, updated);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          QM_TRY_INSPECT(const bool& updated,
+                         MaybeUpdateGroupForOrigin(groupAndOrigin));
 
-      // We don't need to update the .metadata-v2 file on disk here,
-      // EnsureTemporaryOriginIsInitialized is responsible for doing that. We
-      // just need to use correct group before initializing quota for the given
-      // origin. (Note that calling GetDirectoryMetadata2WithRestore below
-      // might update the group in the metadata file, but only as a side-effect.
-      // The actual place we ensure consistency is in
-      // EnsureTemporaryOriginIsInitialized.)
+          Unused << updated;
 
-      nsCString clientUsagesText;
-      rv = stmt->GetUTF8String(3, clientUsagesText);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          // We don't need to update the .metadata-v2 file on disk here,
+          // EnsureTemporaryOriginIsInitialized is responsible for doing that.
+          // We just need to use correct group before initializing quota for the
+          // given origin. (Note that calling GetDirectoryMetadata2WithRestore
+          // below might update the group in the metadata file, but only as a
+          // side-effect. The actual place we ensure consistency is in
+          // EnsureTemporaryOriginIsInitialized.)
 
-      ClientUsageArray clientUsages;
-      rv = clientUsages.Deserialize(clientUsagesText);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          QM_TRY_INSPECT(
+              const auto& clientUsagesText,
+              MOZ_TO_RESULT_INVOKE_TYPED(nsCString, stmt, GetUTF8String, 3));
 
-      int64_t usage;
-      rv = stmt->GetInt64(4, &usage);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          ClientUsageArray clientUsages;
+          QM_TRY(clientUsages.Deserialize(clientUsagesText));
 
-      int64_t lastAccessTime;
-      rv = stmt->GetInt64(5, &lastAccessTime);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          QM_TRY_INSPECT(const int64_t& usage,
+                         MOZ_TO_RESULT_INVOKE(stmt, GetInt64, 4));
+          QM_TRY_INSPECT(const int64_t& lastAccessTime,
+                         MOZ_TO_RESULT_INVOKE(stmt, GetInt64, 5));
+          QM_TRY_INSPECT(const int64_t& accessed,
+                         MOZ_TO_RESULT_INVOKE(stmt, GetInt32, 6));
+          QM_TRY_INSPECT(const int64_t& persisted,
+                         MOZ_TO_RESULT_INVOKE(stmt, GetInt32, 7));
 
-      int32_t accessed;
-      rv = stmt->GetInt32(6, &accessed);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+          if (accessed) {
+            QM_TRY_INSPECT(
+                const auto& directory,
+                GetDirectoryForOrigin(persistenceType, groupAndOrigin.mOrigin));
 
-      int32_t persisted;
-      rv = stmt->GetInt32(7, &persisted);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
+            QM_TRY_INSPECT(const bool& exists,
+                           MOZ_TO_RESULT_INVOKE(directory, Exists));
 
-      if (accessed) {
-        QM_TRY_UNWRAP(
-            auto directory,
-            GetDirectoryForOrigin(persistenceType, groupAndOrigin.mOrigin));
+            QM_TRY(OkIf(exists), Err(NS_ERROR_FAILURE));
 
-        bool exists;
-        rv = directory->Exists(&exists);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return rv;
-        }
+            QM_TRY_INSPECT(const bool& isDirectory,
+                           MOZ_TO_RESULT_INVOKE(directory, IsDirectory));
 
-        if (NS_WARN_IF(!exists)) {
-          return NS_ERROR_FAILURE;
-        }
+            QM_TRY(OkIf(isDirectory), Err(NS_ERROR_FAILURE));
 
-        bool isDirectory;
-        rv = directory->IsDirectory(&isDirectory);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return rv;
-        }
+            // Calling GetDirectoryMetadata2WithRestore might update the group
+            // in the metadata file, but only as a side-effect. The actual place
+            // we ensure consistency is in EnsureTemporaryOriginIsInitialized.
 
-        if (NS_WARN_IF(!isDirectory)) {
-          return NS_ERROR_FAILURE;
-        }
+            int64_t metadataLastAccessTime;
+            bool metadataPersisted;
+            QuotaInfo metadataQuotaInfo;
+            QM_TRY(GetDirectoryMetadata2WithRestore(
+                directory, /* aPersistent */ false, &metadataLastAccessTime,
+                &metadataPersisted, metadataQuotaInfo,
+                /* aTelemetry */ false));
 
-        // Calling GetDirectoryMetadata2WithRestore might update the group in
-        // the metadata file, but only as a side-effect. The actual place we
-        // ensure consistency is in EnsureTemporaryOriginIsInitialized.
+            QM_TRY(OkIf(lastAccessTime == metadataLastAccessTime),
+                   Err(NS_ERROR_FAILURE));
 
-        int64_t metadataLastAccessTime;
-        bool metadataPersisted;
-        QuotaInfo metadataQuotaInfo;
-        rv = GetDirectoryMetadata2WithRestore(
-            directory, /* aPersistent */ false, &metadataLastAccessTime,
-            &metadataPersisted, metadataQuotaInfo,
-            /* aTelemetry */ false);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return rv;
-        }
+            QM_TRY(OkIf(persisted == metadataPersisted), Err(NS_ERROR_FAILURE));
 
-        if (NS_WARN_IF(lastAccessTime != metadataLastAccessTime) ||
-            NS_WARN_IF(persisted != metadataPersisted) ||
-            NS_WARN_IF(groupAndOrigin.mGroup != metadataQuotaInfo.mGroup) ||
-            NS_WARN_IF(groupAndOrigin.mOrigin != metadataQuotaInfo.mOrigin)) {
-          return NS_ERROR_FAILURE;
-        }
+            QM_TRY(OkIf(groupAndOrigin.mGroup == metadataQuotaInfo.mGroup),
+                   Err(NS_ERROR_FAILURE));
 
-        rv = InitializeOrigin(persistenceType, groupAndOrigin, lastAccessTime,
-                              persisted, directory);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return rv;
-        }
-      } else {
-        InitQuotaForOrigin(persistenceType, groupAndOrigin, clientUsages, usage,
-                           lastAccessTime, persisted);
-      }
-    }
+            QM_TRY(OkIf(groupAndOrigin.mOrigin == metadataQuotaInfo.mOrigin),
+                   Err(NS_ERROR_FAILURE));
 
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+            QM_TRY(InitializeOrigin(persistenceType, groupAndOrigin,
+                                    lastAccessTime, persisted, directory));
+          } else {
+            InitQuotaForOrigin(persistenceType, groupAndOrigin, clientUsages,
+                               usage, lastAccessTime, persisted);
+          }
+
+          return Ok{};
+        }));
 
     autoRemoveQuota.release();
 
@@ -4975,8 +5031,7 @@ nsresult QuotaManager::GetDirectoryMetadata2(nsIFile* aDirectory,
 
   QM_TRY(binaryStream->Close());
 
-  bool updated;
-  QM_TRY(MaybeUpdateGroupForOrigin(quotaInfo, updated));
+  QM_TRY_INSPECT(const bool& updated, MaybeUpdateGroupForOrigin(quotaInfo));
 
   if (updated) {
     // Only overwriting .metadata-v2 (used to overwrite .metadata too) to reduce
@@ -7632,22 +7687,6 @@ void QuotaManager::FinalizeOriginEviction(
   }
 }
 
-void QuotaManager::ShutdownTimerCallback(nsITimer* aTimer, void* aClosure) {
-  AssertIsOnBackgroundThread();
-
-  auto quotaManager = static_cast<QuotaManager*>(aClosure);
-  MOZ_ASSERT(quotaManager);
-
-  NS_WARNING(
-      "Some storage operations are taking longer than expected "
-      "during shutdown and will be aborted!");
-
-  // Abort all operations.
-  for (RefPtr<Client>& client : quotaManager->mClients) {
-    client->AbortAllOperations();
-  }
-}
-
 auto QuotaManager::GetDirectoryLockTable(PersistenceType aPersistenceType)
     -> DirectoryLockTable& {
   switch (aPersistenceType) {
@@ -7730,17 +7769,12 @@ void ClientUsageArray::Serialize(nsACString& aText) const {
   }
 }
 
-bool TokenizerIgnoreNothing(char16_t /* aChar */) { return false; }
-
 nsresult ClientUsageArray::Deserialize(const nsACString& aText) {
   nsresult rv;
 
-  nsCCharSeparatedTokenizerTemplate<TokenizerIgnoreNothing> tokenizer(aText,
-                                                                      ' ');
-
-  while (tokenizer.hasMoreTokens()) {
-    const nsDependentCSubstring& token = tokenizer.nextToken();
-
+  for (const auto& token :
+       nsCCharSeparatedTokenizerTemplate<NS_TokenizerIgnoreNothing>(aText, ' ')
+           .ToRange()) {
     if (NS_WARN_IF(token.Length() < 2)) {
       return NS_ERROR_FAILURE;
     }

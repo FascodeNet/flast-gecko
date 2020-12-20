@@ -46,7 +46,6 @@
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Services.h"
-#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/StoragePrincipalHelper.h"
@@ -3026,33 +3025,29 @@ nsresult LoadArchivedOrigins() {
 
   auto archivedOrigins = MakeUnique<ArchivedOriginHashtable>();
 
-  bool hasResult;
-  while (NS_SUCCEEDED(rv = stmt->ExecuteStep(&hasResult)) && hasResult) {
-    nsCString originSuffix;
-    rv = stmt->GetUTF8String(0, originSuffix);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  // XXX Actually, this could use a hashtable variant of
+  // CollectElementsWhileHasResult
+  LS_TRY(quota::CollectWhileHasResult(
+      *stmt, [&archivedOrigins](auto& stmt) -> Result<Ok, nsresult> {
+        LS_TRY_INSPECT(
+            const auto& originSuffix,
+            MOZ_TO_RESULT_INVOKE_TYPED(nsCString, stmt, GetUTF8String, 0));
+        LS_TRY_INSPECT(
+            const auto& originNoSuffix,
+            MOZ_TO_RESULT_INVOKE_TYPED(nsCString, stmt, GetUTF8String, 1));
 
-    nsCString originNoSuffix;
-    rv = stmt->GetUTF8String(1, originNoSuffix);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+        const nsCString hashKey =
+            GetArchivedOriginHashKey(originSuffix, originNoSuffix);
 
-    nsCString hashKey = GetArchivedOriginHashKey(originSuffix, originNoSuffix);
+        OriginAttributes originAttributes;
+        LS_TRY(OkIf(originAttributes.PopulateFromSuffix(originSuffix)),
+               Err(NS_ERROR_FAILURE));
 
-    OriginAttributes originAttributes;
-    if (NS_WARN_IF(!originAttributes.PopulateFromSuffix(originSuffix))) {
-      return NS_ERROR_FAILURE;
-    }
+        archivedOrigins->Put(hashKey, MakeUnique<ArchivedOriginInfo>(
+                                          originAttributes, originNoSuffix));
 
-    archivedOrigins->Put(hashKey, MakeUnique<ArchivedOriginInfo>(
-                                      originAttributes, originNoSuffix));
-  }
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+        return Ok{};
+      }));
 
   gArchivedOrigins = archivedOrigins.release();
   return NS_OK;
@@ -4836,15 +4831,8 @@ void Datastore::NoteFinishedPrepareDatastoreOp(
 
   mPrepareDatastoreOps.RemoveEntry(aPrepareDatastoreOp);
 
-  // XXX Can we store a strong reference to the quota client ourselves to avoid
-  // going through mConnection?
-  if (mConnection) {
-    mConnection->GetQuotaClient()->MaybeRecordShutdownStep(
-        "PrepareDatastoreOp finished"_ns);
-  } else {
-    // XXX Bug 1681670 will change reporting to go to the quota manager instead,
-    // which resolves this case.
-  }
+  QuotaManager::GetRef().MaybeRecordShutdownStep(
+      quota::Client::LS, "PrepareDatastoreOp finished"_ns);
 
   MaybeClose();
 }
@@ -4866,15 +4854,8 @@ void Datastore::NoteFinishedPrivateDatastore() {
 
   mHasLivePrivateDatastore = false;
 
-  // XXX Can we store a strong reference to the quota client ourselves to avoid
-  // going through mConnection?
-  if (mConnection) {
-    mConnection->GetQuotaClient()->MaybeRecordShutdownStep(
-        "PrivateDatastore finished"_ns);
-  } else {
-    // XXX Bug 1681670 will change reporting to go to the quota manager instead,
-    // which resolves this case.
-  }
+  QuotaManager::GetRef().MaybeRecordShutdownStep(
+      quota::Client::LS, "PrivateDatastore finished"_ns);
 
   MaybeClose();
 }
@@ -4900,15 +4881,8 @@ void Datastore::NoteFinishedPreparedDatastore(
 
   mPreparedDatastores.RemoveEntry(aPreparedDatastore);
 
-  // XXX Can we store a strong reference to the quota client ourselves to avoid
-  // going through mConnection?
-  if (mConnection) {
-    mConnection->GetQuotaClient()->MaybeRecordShutdownStep(
-        "PreparedDatastore finished"_ns);
-  } else {
-    // XXX Bug 1681670 will change reporting to go to the quota manager instead,
-    // which resolves this case.
-  }
+  QuotaManager::GetRef().MaybeRecordShutdownStep(
+      quota::Client::LS, "PreparedDatastore finished"_ns);
 
   MaybeClose();
 }
@@ -4933,15 +4907,8 @@ void Datastore::NoteFinishedDatabase(Database* aDatabase) {
 
   mDatabases.RemoveEntry(aDatabase);
 
-  // XXX Can we store a strong reference to the quota client ourselves to avoid
-  // going through mConnection?
-  if (mConnection) {
-    mConnection->GetQuotaClient()->MaybeRecordShutdownStep(
-        "Database finished"_ns);
-  } else {
-    // XXX Bug 1681670 will change reporting to go to the quota manager instead,
-    // which resolves this case.
-  }
+  QuotaManager::GetRef().MaybeRecordShutdownStep(quota::Client::LS,
+                                                 "Database finished"_ns);
 
   MaybeClose();
 }
@@ -5602,15 +5569,8 @@ void Datastore::CleanupMetadata() {
   MOZ_ASSERT(gDatastores->Get(mGroupAndOrigin.mOrigin));
   gDatastores->Remove(mGroupAndOrigin.mOrigin);
 
-  // XXX Can we store a strong reference to the quota client ourselves to avoid
-  // going through mConnection?
-  if (mConnection) {
-    mConnection->GetQuotaClient()->MaybeRecordShutdownStep(
-        "Datastore removed"_ns);
-  } else {
-    // XXX Bug 1681670 will change reporting to go to the quota manager instead,
-    // which resolves this case.
-  }
+  QuotaManager::GetRef().MaybeRecordShutdownStep(quota::Client::LS,
+                                                 "Datastore removed"_ns);
 
   if (!gDatastores->Count()) {
     gDatastores = nullptr;
@@ -5809,8 +5769,8 @@ void Database::AllowToClose() {
   MOZ_ASSERT(gLiveDatabases);
   gLiveDatabases->RemoveElement(this);
 
-  // XXX Record removal from gLiveDatabase here as well, once we have an easy
-  // way to record a shutdown step here.
+  QuotaManager::GetRef().MaybeRecordShutdownStep(quota::Client::LS,
+                                                 "Live database removed"_ns);
 
   if (gLiveDatabases->IsEmpty()) {
     gLiveDatabases = nullptr;
@@ -7409,7 +7369,7 @@ nsresult PrepareDatastoreOp::DatabaseWork() {
     MOZ_ASSERT(hasUsage);
 
     // XXX Change type of mUsage to UsageInfo or DatabaseUsageType.
-    mUsage = usageInfo.DatabaseUsage().value();
+    mUsage = usageInfo.DatabaseUsage().valueOr(0);
   } else {
     // The database doesn't exist.
     MOZ_ASSERT(!hasUsage);
@@ -8044,15 +8004,8 @@ void PrepareDatastoreOp::CleanupMetadata() {
   MOZ_ASSERT(gPrepareDatastoreOps);
   gPrepareDatastoreOps->RemoveElement(this);
 
-  // XXX Can we store a strong reference to the quota client ourselves to avoid
-  // going through mConnection?
-  if (mConnection) {
-    mConnection->GetQuotaClient()->MaybeRecordShutdownStep(
-        "PrepareDatastoreOp completed"_ns);
-  } else {
-    // XXX Bug 1681670 will change reporting to go to the quota manager instead,
-    // which resolves this case.
-  }
+  QuotaManager::GetRef().MaybeRecordShutdownStep(
+      quota::Client::LS, "PrepareDatastoreOp completed"_ns);
 
   if (gPrepareDatastoreOps->IsEmpty()) {
     gPrepareDatastoreOps = nullptr;
@@ -8128,33 +8081,27 @@ nsresult PrepareDatastoreOp::LoadDataOp::DoDatastoreWork() {
     return rv;
   }
 
-  bool hasResult;
-  while (NS_SUCCEEDED(rv = stmt->ExecuteStep(&hasResult)) && hasResult) {
-    nsString key;
-    rv = stmt->GetString(0, key);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  LS_TRY(quota::CollectWhileHasResult(
+      *stmt, [this](auto& stmt) -> mozilla::Result<Ok, nsresult> {
+        LS_TRY_UNWRAP(auto key,
+                      MOZ_TO_RESULT_INVOKE_TYPED(nsString, stmt, GetString, 0));
 
-    LSValue value;
-    rv = value.InitFromStatement(stmt, 1);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+        LSValue value;
+        LS_TRY(value.InitFromStatement(&stmt, 1));
 
-    mPrepareDatastoreOp->mValues.Put(key, value);
-    auto item = mPrepareDatastoreOp->mOrderedItems.AppendElement();
-    item->key() = key;
-    item->value() = value;
-    mPrepareDatastoreOp->mSizeOfKeys += key.Length();
-    mPrepareDatastoreOp->mSizeOfItems += key.Length() + value.Length();
+        mPrepareDatastoreOp->mValues.Put(key, value);
+        mPrepareDatastoreOp->mSizeOfKeys += key.Length();
+        mPrepareDatastoreOp->mSizeOfItems += key.Length() + value.Length();
 #ifdef DEBUG
-    mPrepareDatastoreOp->mDEBUGUsage += key.Length() + value.UTF16Length();
+        mPrepareDatastoreOp->mDEBUGUsage += key.Length() + value.UTF16Length();
 #endif
-  }
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+
+        auto item = mPrepareDatastoreOp->mOrderedItems.AppendElement();
+        item->key() = std::move(key);
+        item->value() = std::move(value);
+
+        return Ok{};
+      }));
 
   return NS_OK;
 }

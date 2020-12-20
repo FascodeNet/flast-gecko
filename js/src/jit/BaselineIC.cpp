@@ -22,6 +22,7 @@
 #include "jit/BaselineCacheIRCompiler.h"
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineJIT.h"
+#include "jit/CacheIRHealth.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRealm.h"
@@ -200,7 +201,7 @@ void ICEntry::trace(JSTracer* trc) {
   ICStub* stub = firstStub();
   while (!stub->isFallback()) {
     stub->toCacheIRStub()->trace(trc);
-    stub = stub->next();
+    stub = stub->toCacheIRStub()->next();
   }
   stub->toFallbackStub()->trace(trc);
 }
@@ -552,7 +553,7 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
 
 ICStubConstIterator& ICStubConstIterator::operator++() {
   MOZ_ASSERT(currentStub_ != nullptr);
-  currentStub_ = currentStub_->next();
+  currentStub_ = currentStub_->toCacheIRStub()->next();
   return *this;
 }
 
@@ -564,23 +565,23 @@ ICStubIterator::ICStubIterator(ICFallbackStub* fallbackStub, bool end)
       unlinked_(false) {}
 
 ICStubIterator& ICStubIterator::operator++() {
-  MOZ_ASSERT(currentStub_->next() != nullptr);
+  MOZ_ASSERT(!currentStub_->isFallback());
   if (!unlinked_) {
-    previousStub_ = currentStub_;
+    previousStub_ = currentStub_->toCacheIRStub();
   }
-  currentStub_ = currentStub_->next();
+  currentStub_ = currentStub_->toCacheIRStub()->next();
   unlinked_ = false;
   return *this;
 }
 
 void ICStubIterator::unlink(JSContext* cx, JSScript* script) {
-  MOZ_ASSERT(currentStub_->next() != nullptr);
   MOZ_ASSERT(currentStub_ != fallbackStub_);
+  MOZ_ASSERT(currentStub_->maybeNext() != nullptr);
   MOZ_ASSERT(!unlinked_);
 
   fallbackStub_->maybeInvalidateWarp(cx, script);
   fallbackStub_->unlinkStubDontInvalidateWarp(cx->zone(), previousStub_,
-                                              currentStub_);
+                                              currentStub_->toCacheIRStub());
 
   // Mark the current iterator position as unlinked, so operator++ works
   // properly.
@@ -608,15 +609,6 @@ bool ICStub::makesGCCalls() const {
   }
 }
 
-// TODO(no-TI): move enteredCount_ to base class if it doesn't affect
-// sizeof(ICFallbackStub).
-uint32_t ICStub::getEnteredCount() const {
-  if (isFallback()) {
-    return toFallbackStub()->enteredCount();
-  }
-  return toCacheIRStub()->enteredCount();
-}
-
 void ICFallbackStub::trackNotAttached(JSContext* cx, JSScript* script) {
   maybeInvalidateWarp(cx, script);
   state().trackNotAttached();
@@ -627,7 +619,6 @@ void ICFallbackStub::maybeInvalidateWarp(JSContext* cx, JSScript* script) {
     return;
   }
 
-  MOZ_ASSERT(JitOptions.warpBuilder);
   clearUsedByTranspiler();
 
   if (script->hasIonScript()) {
@@ -641,14 +632,10 @@ void ICCacheIRStub::trace(JSTracer* trc) {
   JitCode* stubJitCode = jitCode();
   TraceManuallyBarrieredEdge(trc, &stubJitCode, "baseline-ic-stub-code");
 
-  TraceCacheIRStub(trc, static_cast<ICStub*>(this), stubInfo());
+  TraceCacheIRStub(trc, this, stubInfo());
 }
 
 void ICFallbackStub::trace(JSTracer* trc) {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-  checkTraceMagic();
-#endif
-
   // Fallback stubs use runtime-wide trampoline code we don't need to trace.
   MOZ_ASSERT(usesTrampolineCode());
 
@@ -677,14 +664,26 @@ void ICFallbackStub::trace(JSTracer* trc) {
   }
 }
 
+static void MaybeTransition(JSContext* cx, BaselineFrame* frame,
+                            ICFallbackStub* stub) {
+  if (stub->state().maybeTransition()) {
+#ifdef JS_CACHEIR_SPEW
+    if (cx->spewer().enabled(cx, frame->script(), SpewChannel::RateMyCacheIR)) {
+      CacheIRHealth cih;
+      RootedScript script(cx, frame->script());
+      cih.rateIC(cx, stub->icEntry(), script, SpewContext::Transition);
+    }
+#endif
+    stub->discardStubs(cx, frame->invalidationScript());
+  }
+}
+
 // This helper handles ICState updates/transitions while attaching CacheIR
 // stubs.
 template <typename IRGenerator, typename... Args>
 static void TryAttachStub(const char* name, JSContext* cx, BaselineFrame* frame,
                           ICFallbackStub* stub, Args&&... args) {
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   if (stub->state().canAttachStub()) {
     RootedScript script(cx, frame->script());
@@ -716,10 +715,9 @@ static void TryAttachStub(const char* name, JSContext* cx, BaselineFrame* frame,
   }
 }
 
-void ICFallbackStub::unlinkStubDontInvalidateWarp(Zone* zone, ICStub* prev,
-                                                  ICStub* stub) {
-  MOZ_ASSERT(stub->next());
-
+void ICFallbackStub::unlinkStubDontInvalidateWarp(Zone* zone,
+                                                  ICCacheIRStub* prev,
+                                                  ICCacheIRStub* stub) {
   if (prev) {
     MOZ_ASSERT(prev->next() == stub);
     prev->setNext(stub->next());
@@ -733,7 +731,7 @@ void ICFallbackStub::unlinkStubDontInvalidateWarp(Zone* zone, ICStub* prev,
   if (zone->needsIncrementalBarrier()) {
     // We are removing edges from ICStub to gcthings. Perform one final trace
     // of the stub for incremental GC, as it must know about those edges.
-    stub->toCacheIRStub()->trace(zone->barrierTracer());
+    stub->trace(zone->barrierTracer());
   }
 
 #ifdef DEBUG
@@ -1058,9 +1056,7 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
   DeferType deferType = DeferType::None;
   bool attached = false;
 
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   if (stub->state().canAttachStub() && !mayThrow) {
     ICScript* icScript = frame->icScript();
@@ -1120,9 +1116,7 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
 
   // The SetObjectElement call might have entered this IC recursively, so try
   // to transition.
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   bool canAttachStub = stub->state().canAttachStub();
 
@@ -1637,9 +1631,7 @@ bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
 
   DeferType deferType = DeferType::None;
   bool attached = false;
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   if (stub->state().canAttachStub()) {
     RootedValue idVal(cx, StringValue(name));
@@ -1707,9 +1699,7 @@ bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
 
   // The SetProperty call might have entered this IC recursively, so try
   // to transition.
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   bool canAttachStub = stub->state().canAttachStub();
 
@@ -1823,9 +1813,7 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
   }
 
   // Transition stub state to megamorphic or generic if warranted.
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   bool canAttachStub = stub->state().canAttachStub();
   bool handled = false;
@@ -1911,9 +1899,7 @@ bool DoSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
   RootedValue newTarget(cx, constructing ? vp[3] : NullValue());
 
   // Transition stub state to megamorphic or generic if warranted.
-  if (stub->state().maybeTransition()) {
-    stub->discardStubs(cx, frame->invalidationScript());
-  }
+  MaybeTransition(cx, frame, stub);
 
   // Try attaching a call stub.
   bool handled = false;
@@ -2783,15 +2769,6 @@ bool JitRuntime::generateBaselineICFallbackCode(JSContext* cx) {
 
   fallbackCode.initCode(code);
   return true;
-}
-
-// TODO(no-TI): no longer need this and cacheIRStubData in base class.
-const CacheIRStubInfo* ICStub::cacheIRStubInfo() const {
-  return toCacheIRStub()->stubInfo();
-}
-
-const uint8_t* ICStub::cacheIRStubData() {
-  return toCacheIRStub()->stubDataStart();
 }
 
 }  // namespace jit

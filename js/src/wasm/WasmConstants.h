@@ -700,7 +700,37 @@ enum class SimdOp {
   F32x4ConvertUI32x4 = 0xfb,
   V128Load32Zero = 0xfc,
   V128Load64Zero = 0xfd,
-  // Unused = 0xfe and up
+// Unused = 0xfe and up
+
+// Mozilla extensions, highly experimental and platform-specific
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+  // The wormhole is a mechanism for injecting experimental, possibly
+  // platform-dependent, opcodes into the generated code.  A wormhole op is
+  // expressed as a two-operation SIMD shuffle op with the pattern <31, 0, 30,
+  // 2, 29, 4, 28, 6, 27, 8, 26, 10, 25, 12, 24, X> where X is the opcode,
+  // 0..31, from the set below.  If an operation uses no operands, the operands
+  // to the shuffle opcode should be const 0.  If an operation uses one operand,
+  // the operands to the shuffle opcode should both be that operand.
+  //
+  // The wormhole must be enabled by a flag and is only supported by ion on x64,
+  // baseline must be disabled.
+  //
+  // The benefit of this mechanism is that it allows experimental opcodes to be
+  // used without updating other tools (compilers, linkers, optimizers).
+  //
+  // These opcodes can be rearranged but the X values associated with them must
+  // remain fixed.
+
+  // X=0, selftest opcode.  No operands.  The result is an 8x16 hex value:
+  // DEADD00DCAFEBABE.
+  MozWHSELFTEST = 0x200,
+
+  // X=1, Intel SSE3 PMADDUBSW instruction. Two operands.
+  MozWHPMADDUBSW = 0x201,
+
+  // X=2, Intel SSE2 PMADDWD instruction. Two operands.
+  MozWHPMADDWD = 0x202,
+#endif
 
   Limit
 };
@@ -887,6 +917,10 @@ enum class FieldFlags { Mutable = 0x01, AllowedMask = 0x01 };
 // requires the size of linear memory to always be a multiple of 64KiB.
 
 static const unsigned PageSize = 64 * 1024;
+static const unsigned PageBits = 16;
+static_assert(PageSize == (1u << PageBits));
+
+static const unsigned PageMask = ((1u << PageBits) - 1);
 
 // These limits are agreed upon with other engines for consistency.
 

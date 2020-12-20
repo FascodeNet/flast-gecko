@@ -1033,51 +1033,6 @@ using CompilerPropertyName = CompilerGCPointer<PropertyName*>;
 using CompilerShape = CompilerGCPointer<Shape*>;
 using CompilerObjectGroup = CompilerGCPointer<ObjectGroup*>;
 
-class MRootList : public TempObject {
- public:
-  using RootVector = Vector<void*, 0, JitAllocPolicy>;
-
- private:
-  mozilla::EnumeratedArray<JS::RootKind, JS::RootKind::Limit,
-                           mozilla::Maybe<RootVector>>
-      roots_;
-
-  MRootList(const MRootList&) = delete;
-  void operator=(const MRootList&) = delete;
-
- public:
-  explicit MRootList(TempAllocator& alloc);
-
-  void trace(JSTracer* trc);
-
-  template <typename T>
-  MOZ_MUST_USE bool append(T ptr) {
-    if (ptr) {
-      return roots_[JS::MapTypeToRootKind<T>::kind]->append(ptr);
-    }
-    return true;
-  }
-
-  MOZ_MUST_USE bool append(jsid id) {
-    if (id.isString()) {
-      return append(id.toString());
-    }
-    if (id.isSymbol()) {
-      return append(id.toSymbol());
-    }
-    MOZ_ASSERT(!id.isGCThing());
-    return true;
-  }
-
-  template <typename T>
-  MOZ_MUST_USE bool append(const CompilerGCPointer<T>& ptr) {
-    return append(static_cast<T>(ptr));
-  }
-  MOZ_MUST_USE bool append(const ReceiverGuard& guard) {
-    return append(guard.getGroup()) && append(guard.getShape());
-  }
-};
-
 // An instruction is an SSA name that is inserted into a basic block's IR
 // stream.
 class MInstruction : public MDefinition, public InlineListNode<MInstruction> {
@@ -1127,10 +1082,6 @@ class MInstruction : public MDefinition, public InlineListNode<MInstruction> {
                               const MDefinitionVector& inputs) const {
     MOZ_CRASH();
   }
-
-  // MIR instructions containing GC pointers should override this to append
-  // these pointers to the root list.
-  virtual bool appendRoots(MRootList& roots) const { return true; }
 
   // Instructions needing to hook into type analysis should return a
   // TypePolicy.
@@ -1604,8 +1555,6 @@ class MConstant : public MNullaryInstruction {
   // as DoubleValue and NaNs are canonicalized. Callers must be careful: not
   // all constants can be represented by js::Value (wasm supports int64).
   Value toJSValue() const;
-
-  bool appendRoots(MRootList& roots) const override;
 };
 
 class MWasmNullConstant : public MNullaryInstruction {
@@ -2099,10 +2048,6 @@ class MNewArrayDynamicLength : public MUnaryInstruction,
     // Throws if length is negative.
     return AliasSet::Store(AliasSet::ExceptionState);
   }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObject_);
-  }
 };
 
 class MNewTypedArray : public MUnaryInstruction, public NoTypePolicy::Data {
@@ -2160,10 +2105,6 @@ class MNewTypedArrayDynamicLength : public MUnaryInstruction,
     // Throws if length is negative.
     return AliasSet::Store(AliasSet::ExceptionState);
   }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObject_);
-  }
 };
 
 // Create a new TypedArray from an Array (or Array-like object) or a TypedArray.
@@ -2189,10 +2130,6 @@ class MNewTypedArrayFromArray : public MUnaryInstruction,
   MDefinition* array() const { return getOperand(0); }
   JSObject* templateObject() const { return templateObject_; }
   gc::InitialHeap initialHeap() const { return initialHeap_; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObject_);
-  }
 
   bool possiblyCalls() const override { return true; }
 };
@@ -2225,10 +2162,6 @@ class MNewTypedArrayFromArrayBuffer
   MDefinition* length() const { return getOperand(2); }
   JSObject* templateObject() const { return templateObject_; }
   gc::InitialHeap initialHeap() const { return initialHeap_; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObject_);
-  }
 
   bool possiblyCalls() const override { return true; }
 };
@@ -2493,10 +2426,6 @@ class MInitPropGetterSetter
   NAMED_OPERANDS((0, object), (1, value))
 
   PropertyName* name() const { return name_; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 };
 
 class MInitElemGetterSetter
@@ -2522,7 +2451,6 @@ class WrappedFunction : public TempObject {
   js::FunctionFlags flags_;
 
  public:
-  explicit WrappedFunction(JSFunction* fun);
   WrappedFunction(JSFunction* nativeFun, uint16_t nargs, FunctionFlags flags);
 
   // Note: When adding new accessors be sure to add consistency asserts
@@ -2551,13 +2479,6 @@ class WrappedFunction : public TempObject {
   }
 
   JSFunction* rawNativeJSFunction() const { return nativeFun_; }
-
-  bool appendRoots(MRootList& roots) const {
-    if (nativeFun_) {
-      return roots.append(nativeFun_);
-    }
-    return true;
-  }
 };
 
 enum class DOMObjectKind : uint8_t { Proxy, Native, Unknown };
@@ -2665,13 +2586,6 @@ class MCall : public MVariadicInstruction, public CallPolicy::Data {
   // depends on the arguments to the call, and those aren't passed to the
   // constructor but are set up later via addArg.
   virtual void computeMovable() {}
-
-  bool appendRoots(MRootList& roots) const override {
-    if (target_) {
-      return target_->appendRoots(roots);
-    }
-    return true;
-  }
 };
 
 class MCallDOMNative : public MCall {
@@ -2753,13 +2667,6 @@ class MApplyArgs : public MTernaryInstruction,
   bool isConstructing() const { return false; }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    if (target_) {
-      return target_->appendRoots(roots);
-    }
-    return true;
-  }
 };
 
 // fun.apply(fn, array)
@@ -2796,13 +2703,6 @@ class MApplyArray : public MTernaryInstruction,
   bool isConstructing() const { return false; }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    if (target_) {
-      return target_->appendRoots(roots);
-    }
-    return true;
-  }
 };
 
 // |new F(...args)| and |super(...args)|.
@@ -2840,13 +2740,6 @@ class MConstructArray
   bool isConstructing() const { return true; }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    if (target_) {
-      return target_->appendRoots(roots);
-    }
-    return true;
-  }
 };
 
 class MBail : public MNullaryInstruction {
@@ -3024,9 +2917,6 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
     // Double compared to Double
     Compare_Double,
 
-    Compare_DoubleMaybeCoerceLHS,
-    Compare_DoubleMaybeCoerceRHS,
-
     // Float compared to Float
     Compare_Float32,
 
@@ -3050,9 +2940,6 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
 
     // Wasm Ref/AnyRef/NullRef compared to Ref/AnyRef/NullRef
     Compare_RefOrNull,
-
-    // Compare 2 values bitwise
-    Compare_Bitwise,
 
     // All other possible compares
     Compare_Unknown
@@ -3111,11 +2998,7 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
            compareType() == Compare_Int32MaybeCoerceLHS ||
            compareType() == Compare_Int32MaybeCoerceRHS;
   }
-  bool isDoubleComparison() const {
-    return compareType() == Compare_Double ||
-           compareType() == Compare_DoubleMaybeCoerceLHS ||
-           compareType() == Compare_DoubleMaybeCoerceRHS;
-  }
+  bool isDoubleComparison() const { return compareType() == Compare_Double; }
   bool isFloat32Comparison() const { return compareType() == Compare_Float32; }
   bool isNumericComparison() const {
     return isInt32Comparison() || isDoubleComparison() || isFloat32Comparison();
@@ -3139,7 +3022,7 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
     if (compareType_ == Compare_Unknown) {
       return AliasSet::Store(AliasSet::Any);
     }
-    MOZ_ASSERT(compareType_ <= Compare_Bitwise);
+    MOZ_ASSERT(compareType_ <= Compare_RefOrNull);
     return AliasSet::None();
   }
 
@@ -3153,9 +3036,6 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
   bool needTruncation(TruncateKind kind) override;
   void truncate() override;
   TruncateKind operandTruncateKind(size_t index) const override;
-
-  static CompareType determineCompareType(JSOp op, MDefinition* left,
-                                          MDefinition* right);
 
 #ifdef DEBUG
   bool isConsistentFloat32Use(MUse* use) const override {
@@ -3202,7 +3082,11 @@ class MSameValue : public MBinaryInstruction, public SameValuePolicy::Data {
 
 // Takes a typed value and returns an untyped value.
 class MBox : public MUnaryInstruction, public NoTypePolicy::Data {
-  MBox(TempAllocator& alloc, MDefinition* ins);
+  MBox(TempAllocator& alloc, MDefinition* ins)
+      : MUnaryInstruction(classOpcode, ins) {
+    setResultType(MIRType::Value);
+    setMovable();
+  }
 
  public:
   INSTRUCTION_HEADER(Box)
@@ -3401,9 +3285,6 @@ class MAssertShape : public MUnaryInstruction, public NoTypePolicy::Data {
 
   const Shape* shape() const { return shape_; }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(shape_);
-  }
 };
 
 // Caller-side allocation of |this| for |new|:
@@ -3504,10 +3385,6 @@ class MCreateArgumentsObject : public MUnaryInstruction,
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObj_);
-  }
 };
 
 class MGetArgumentsObjectArg : public MUnaryInstruction,
@@ -5525,6 +5402,8 @@ class MSub : public MBinaryArithInstruction {
     return ret;
   }
 
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+
   double getIdentity() override { return 0; }
 
   bool isFloat32Commutative() const override { return true; }
@@ -6185,9 +6064,6 @@ class MStringSplit : public MBinaryInstruction,
   MOZ_MUST_USE bool writeRecoverData(
       CompactBufferWriter& writer) const override;
   bool canRecoverOnBailout() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(group_);
-  }
 };
 
 // Returns the object to use as |this| value in a non-strict function. See also
@@ -6216,10 +6092,6 @@ class MBoxNonStrictThis : public MUnaryInstruction, public BoxPolicy<0>::Data {
     // has no effect on existing objects.
     return AliasSet::None();
   }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(globalThis_);
-  }
 };
 
 class MImplicitThis : public MUnaryInstruction,
@@ -6237,10 +6109,6 @@ class MImplicitThis : public MUnaryInstruction,
   NAMED_OPERANDS((0, envChain))
 
   PropertyName* name() const { return name_; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 
   bool possiblyCalls() const override { return true; }
 };
@@ -6394,16 +6262,14 @@ class MPhi final : public MDefinition,
 
   // Use only if capacity has been reserved by reserveLength
   void addInput(MDefinition* ins) {
-    MOZ_ASSERT_IF(JitOptions.warpBuilder && type() != MIRType::Value,
-                  ins->type() == type());
+    MOZ_ASSERT_IF(type() != MIRType::Value, ins->type() == type());
     inputs_.infallibleEmplaceBack(ins, this);
   }
 
   // Appends a new input to the input vector. May perform reallocation.
   // Prefer reserveLength() and addInput() instead, where possible.
   MOZ_MUST_USE bool addInputSlow(MDefinition* ins) {
-    MOZ_ASSERT_IF(JitOptions.warpBuilder && type() != MIRType::Value,
-                  ins->type() == type());
+    MOZ_ASSERT_IF(type() != MIRType::Value, ins->type() == type());
     return inputs_.emplaceBack(ins, this);
   }
 
@@ -6722,6 +6588,27 @@ class MThrowRuntimeLexicalError : public MNullaryInstruction {
   }
 };
 
+// Unconditionally throw a known error number.
+class MThrowMsg : public MNullaryInstruction {
+  const ThrowMsgKind throwMsgKind_;
+
+  explicit MThrowMsg(ThrowMsgKind throwMsgKind)
+      : MNullaryInstruction(classOpcode), throwMsgKind_(throwMsgKind) {
+    setGuard();
+    setResultType(MIRType::None);
+  }
+
+ public:
+  INSTRUCTION_HEADER(ThrowMsg)
+  TRIVIAL_NEW_WRAPPERS
+
+  ThrowMsgKind throwMsgKind() const { return throwMsgKind_; }
+
+  AliasSet getAliasSet() const override {
+    return AliasSet::Store(AliasSet::ExceptionState);
+  }
+};
+
 // In the prologues of global and eval scripts, check for redeclarations and
 // initialize bindings.
 class MGlobalDeclInstantiation : public MNullaryInstruction {
@@ -6751,9 +6638,6 @@ class MRegExp : public MNullaryInstruction {
   RegExpObject* source() const { return source_; }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(source_);
-  }
 };
 
 class MRegExpMatcher : public MTernaryInstruction,
@@ -6997,10 +6881,6 @@ class MModuleMetadata : public MNullaryInstruction {
   TRIVIAL_NEW_WRAPPERS
 
   JSObject* module() const { return module_; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(module_);
-  }
 };
 
 class MDynamicImport : public MUnaryInstruction, public BoxInputsPolicy::Data {
@@ -7048,13 +6928,6 @@ struct LambdaFunctionInfo {
   // delazification on the main thread.
   JSFunction* funUnsafe() const { return fun_; }
 
-  bool appendRoots(MRootList& roots) const {
-    if (!roots.append(fun_)) {
-      return false;
-    }
-    return roots.append(baseScript);
-  }
-
  private:
   void operator=(const LambdaFunctionInfo&) = delete;
 };
@@ -7078,9 +6951,6 @@ class MLambda : public MBinaryInstruction, public SingleObjectPolicy::Data {
   MOZ_MUST_USE bool writeRecoverData(
       CompactBufferWriter& writer) const override;
   bool canRecoverOnBailout() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return info_.appendRoots(roots);
-  }
 };
 
 class MLambdaArrow
@@ -7106,9 +6976,6 @@ class MLambdaArrow
   MOZ_MUST_USE bool writeRecoverData(
       CompactBufferWriter& writer) const override;
   bool canRecoverOnBailout() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return info_.appendRoots(roots);
-  }
 };
 
 class MFunctionWithProto : public MTernaryInstruction,
@@ -7133,9 +7000,6 @@ class MFunctionWithProto : public MTernaryInstruction,
   MOZ_MUST_USE bool writeRecoverData(
       CompactBufferWriter& writer) const override;
   bool canRecoverOnBailout() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(fun_);
-  }
 
   bool possiblyCalls() const override { return true; }
 };
@@ -8104,9 +7968,6 @@ class MArraySlice : public MTernaryInstruction,
   gc::InitialHeap initialHeap() const { return initialHeap_; }
 
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObj_);
-  }
 };
 
 class MArrayJoin : public MBinaryInstruction,
@@ -8741,10 +8602,6 @@ struct PolymorphicEntry {
 
   // The property to load, null for loads from unboxed properties.
   Shape* shape;
-
-  bool appendRoots(MRootList& roots) const {
-    return roots.append(receiver) && roots.append(shape);
-  }
 };
 
 // Emit code to load a value from an object if it matches one of the receivers
@@ -8807,8 +8664,6 @@ class MGetPropertyPolymorphic : public MUnaryInstruction,
   }
 
   AliasType mightAlias(const MDefinition* store) const override;
-
-  bool appendRoots(MRootList& roots) const override;
 };
 
 // Emit code to store a value to an object's slots if its shape/group matches
@@ -8862,7 +8717,6 @@ class MSetPropertyPolymorphic
                            AliasSet::DynamicSlot |
                            (hasUnboxedStore ? AliasSet::UnboxedElement : 0));
   }
-  bool appendRoots(MRootList& roots) const override;
 };
 
 class MBindNameCache : public MUnaryInstruction,
@@ -8929,9 +8783,6 @@ class MGuardShape : public MUnaryInstruction, public SingleObjectPolicy::Data {
   MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
-  }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(shape_);
   }
 };
 
@@ -9097,10 +8948,6 @@ class MProxyGet : public MUnaryInstruction, public SingleObjectPolicy::Data {
   jsid id() const { return id_; }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(id_);
-  }
 };
 
 class MProxyGetByValue : public MBinaryInstruction,
@@ -9154,10 +9001,6 @@ class MProxySet : public MBinaryInstruction,
   bool strict() const { return strict_; }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(id_);
-  }
 };
 
 class MProxySetByValue
@@ -9228,10 +9071,6 @@ class MMegamorphicLoadSlot : public MUnaryInstruction,
   }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 };
 
 class MMegamorphicLoadSlotByValue
@@ -9288,10 +9127,6 @@ class MMegamorphicStoreSlot
   }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 };
 
 class MMegamorphicHasProp
@@ -9641,9 +9476,6 @@ class MGuardFunctionScript : public MUnaryInstruction,
     MOZ_ASSERT(!flags_.isSelfHostedOrIntrinsic());
     return AliasSet::None();
   }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(expected_);
-  }
 };
 
 // Bail if the object's shape or unboxed group is not in the input list.
@@ -9678,8 +9510,6 @@ class MGuardReceiverPolymorphic : public MUnaryInstruction,
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
   }
-
-  bool appendRoots(MRootList& roots) const override;
 };
 
 // Guard on an object's group, inclusively or exclusively.
@@ -9726,9 +9556,6 @@ class MGuardObjectGroup : public MUnaryInstruction,
     }
     return AliasType::MayAlias;
   };
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(group_);
-  }
 };
 
 // Guard on an object's identity, inclusively or exclusively.
@@ -9836,10 +9663,6 @@ class MGuardSpecificAtom : public MUnaryInstruction,
   }
   MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override { return AliasSet::None(); }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(atom_);
-  }
 };
 
 class MGuardSpecificSymbol : public MUnaryInstruction,
@@ -9871,10 +9694,6 @@ class MGuardSpecificSymbol : public MUnaryInstruction,
   }
   MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override { return AliasSet::None(); }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(expected_);
-  }
 };
 
 class MGuardStringToIndex : public MUnaryInstruction,
@@ -10071,9 +9890,6 @@ class MNewLexicalEnvironmentObject : public MUnaryInstruction,
 
   LexicalScope* scope() const { return scope_; }
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(scope_);
-  }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
@@ -10151,10 +9967,6 @@ class MAddAndStoreSlot
                            (kind() == Kind::FixedSlot ? AliasSet::FixedSlot
                                                       : AliasSet::DynamicSlot));
   }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(shape_);
-  }
 };
 
 class MAllocateAndStoreSlot
@@ -10185,9 +9997,6 @@ class MAllocateAndStoreSlot
     return AliasSet::Store(AliasSet::ObjectFields | AliasSet::DynamicSlot);
   }
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(shape_);
-  }
 };
 
 // Store to vp[slot] (slots that are not inline in an object).
@@ -10268,9 +10077,6 @@ class MCallGetIntrinsicValue : public MNullaryInstruction {
   PropertyName* name() const { return name_; }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 };
 
 class MSetPropertyInstruction : public MBinaryInstruction {
@@ -10286,9 +10092,6 @@ class MSetPropertyInstruction : public MBinaryInstruction {
   NAMED_OPERANDS((0, object), (1, value))
   PropertyName* name() const { return name_; }
   bool strict() const { return strict_; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 };
 
 class MSetElementInstruction : public MTernaryInstruction {
@@ -10321,9 +10124,6 @@ class MDeleteProperty : public MUnaryInstruction, public BoxInputsPolicy::Data {
 
   PropertyName* name() const { return name_; }
   bool strict() const { return strict_; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(name_);
-  }
 };
 
 class MDeleteElement : public MBinaryInstruction, public BoxInputsPolicy::Data {
@@ -10685,10 +10485,6 @@ class MGuardDOMExpandoMissingOrGuardShape : public MUnaryInstruction,
   }
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
-  }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(shape_);
   }
 };
 
@@ -11192,9 +10988,6 @@ class MRest : public MUnaryInstruction, public UnboxedInt32Policy<0>::Data {
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObject());
-  }
 };
 
 // Given a value being written to another object, update the generational store
@@ -11268,9 +11061,6 @@ class MNewNamedLambdaObject : public MNullaryInstruction {
 
   LexicalEnvironmentObject* templateObj() { return templateObj_; }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObj_);
-  }
 };
 
 class MNewCallObject : public MUnaryInstruction,
@@ -11309,10 +11099,6 @@ class MNewStringObject : public MUnaryInstruction,
   TRIVIAL_NEW_WRAPPERS
 
   StringObject* templateObj() const;
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(templateObj_);
-  }
 };
 
 // This is an alias for MLoadFixedSlot.
@@ -11505,10 +11291,6 @@ class MIsCallable : public MUnaryInstruction,
                     public BoxExceptPolicy<0, MIRType::Object>::Data {
   explicit MIsCallable(MDefinition* object)
       : MUnaryInstruction(classOpcode, object) {
-    MOZ_ASSERT_IF(
-        !JitOptions.warpBuilder,
-        object->type() == MIRType::Object || object->type() == MIRType::Value);
-
     setResultType(MIRType::Boolean);
     setMovable();
   }
@@ -11772,6 +11554,57 @@ class MCheckThis : public MUnaryInstruction, public BoxInputsPolicy::Data {
   MDefinition* foldsTo(TempAllocator& alloc) override;
 };
 
+class MAsyncResolve : public MBinaryInstruction,
+                      public MixPolicy<ObjectPolicy<0>, BoxPolicy<1>>::Data {
+  AsyncFunctionResolveKind resolveKind_;
+
+  explicit MAsyncResolve(MDefinition* generator, MDefinition* valueOrReason,
+                         AsyncFunctionResolveKind resolveKind)
+      : MBinaryInstruction(classOpcode, generator, valueOrReason),
+        resolveKind_(resolveKind) {
+    setResultType(MIRType::Object);
+  }
+
+ public:
+  INSTRUCTION_HEADER(AsyncResolve)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, generator), (1, valueOrReason))
+
+  AsyncFunctionResolveKind resolveKind() { return resolveKind_; }
+};
+
+// Returns from this function to the previous caller; this looks like a regular
+// Unary instruction and is used to lie to the MIR generator about suspending
+// ops like Yield/Await, which are emitted like returns, but MIR-Build like
+// regular instructions.
+class MGeneratorReturn : public MUnaryInstruction,
+                         public BoxInputsPolicy::Data {
+  explicit MGeneratorReturn(MDefinition* ins)
+      : MUnaryInstruction(classOpcode, ins) {
+    setGuard();
+  }
+
+ public:
+  INSTRUCTION_HEADER(GeneratorReturn)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, input))
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
+class MAsyncAwait : public MBinaryInstruction,
+                    public MixPolicy<BoxPolicy<0>, ObjectPolicy<1>>::Data {
+  explicit MAsyncAwait(MDefinition* value, MDefinition* gen)
+      : MBinaryInstruction(classOpcode, value, gen) {
+    setResultType(MIRType::Object);
+  }
+
+ public:
+  INSTRUCTION_HEADER(AsyncAwait)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, value), (1, generator))
+};
+
 class MCheckThisReinit : public MUnaryInstruction,
                          public BoxInputsPolicy::Data {
   explicit MCheckThisReinit(MDefinition* thisVal)
@@ -11787,6 +11620,62 @@ class MCheckThisReinit : public MUnaryInstruction,
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
   MDefinition* foldsTo(TempAllocator& alloc) override;
+};
+
+// Allocate the generator object for a frame.
+class MGenerator : public MTernaryInstruction,
+                   public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1>>::Data {
+  explicit MGenerator(MDefinition* callee, MDefinition* environmentChain,
+                      MDefinition* argsObject)
+      : MTernaryInstruction(classOpcode, callee, environmentChain, argsObject) {
+    setResultType(MIRType::Object);
+  };
+
+ public:
+  INSTRUCTION_HEADER(Generator)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, callee), (1, environmentChain), (2, argsObject))
+};
+
+class MCanSkipAwait : public MUnaryInstruction, public BoxPolicy<0>::Data {
+  explicit MCanSkipAwait(MDefinition* generator)
+      : MUnaryInstruction(classOpcode, generator) {
+    setResultType(MIRType::Boolean);
+  }
+
+ public:
+  INSTRUCTION_HEADER(CanSkipAwait)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, value))
+};
+
+class MMaybeExtractAwaitValue : public MBinaryInstruction,
+                                public BoxPolicy<0>::Data {
+  explicit MMaybeExtractAwaitValue(MDefinition* value, MDefinition* canSkip)
+      : MBinaryInstruction(classOpcode, value, canSkip) {
+    setResultType(MIRType::Value);
+  }
+
+ public:
+  INSTRUCTION_HEADER(MaybeExtractAwaitValue)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, value), (1, canSkip))
+};
+
+class MIncrementWarmUpCounter : public MNullaryInstruction {
+ private:
+  JSScript* script_;
+
+  explicit MIncrementWarmUpCounter(JSScript* script)
+      : MNullaryInstruction(classOpcode), script_(script) {}
+
+ public:
+  INSTRUCTION_HEADER(IncrementWarmUpCounter)
+  TRIVIAL_NEW_WRAPPERS
+
+  JSScript* script() const { return script_; }
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
 // Increase the warm-up counter of the provided script upon execution and test
@@ -12328,10 +12217,6 @@ class MGuardHasGetterSetter : public MUnaryInstruction,
   }
 
   bool possiblyCalls() const override { return true; }
-
-  bool appendRoots(MRootList& roots) const override {
-    return roots.append(shape_);
-  }
 };
 
 // Guard the object is extensible.
@@ -13948,7 +13833,6 @@ class MIonToWasmCall final : public MVariadicInstruction,
   WasmInstanceObject* instanceObject() const { return instanceObj_; }
   const wasm::FuncExport& funcExport() const { return funcExport_; }
   bool possiblyCalls() const override { return true; }
-  bool appendRoots(MRootList& roots) const override;
 #ifdef DEBUG
   bool isConsistentFloat32Use(MUse* use) const override;
 #endif

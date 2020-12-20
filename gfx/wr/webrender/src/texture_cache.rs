@@ -7,7 +7,6 @@ use api::{DebugFlags, ImageDescriptor};
 use api::units::*;
 #[cfg(test)]
 use api::{DocumentId, IdNamespace};
-use euclid::point2;
 use crate::device::{TextureFilter, TextureFormatPair};
 use crate::freelist::{FreeListHandle, WeakFreeListHandle};
 use crate::gpu_cache::{GpuCache, GpuCacheHandle};
@@ -19,13 +18,16 @@ use crate::internal_types::{
 };
 use crate::lru_cache::LRUCache;
 use crate::profiler::{self, TransactionProfile};
-use crate::render_backend::FrameStamp;
+use crate::render_backend::{FrameStamp, FrameId};
 use crate::resource_cache::{CacheItem, CachedImageData};
+use crate::atlas_allocator::*;
 use crate::slab_allocator::*;
 use smallvec::SmallVec;
 use std::cell::Cell;
-use std::mem;
+use std::{cmp, mem};
 use std::rc::Rc;
+use euclid::size2;
+
 
 /// Information about which shader will use the entry.
 ///
@@ -41,12 +43,6 @@ pub enum TargetShader {
 
 /// The size of each region in shared cache texture arrays.
 pub const TEXTURE_REGION_DIMENSIONS: i32 = 512;
-pub const GLYPH_TEXTURE_REGION_DIMENSIONS: i32 = 128;
-
-const PICTURE_TEXTURE_SLICE_COUNT: usize = 8;
-
-/// The chosen image format for picture tiles.
-const PICTURE_TILE_FORMAT: ImageFormat = ImageFormat::RGBA8;
 
 /// Items in the texture cache can either be standalone textures,
 /// or a sub-rect inside the shared cache.
@@ -59,10 +55,8 @@ enum EntryDetails {
         size_in_bytes: usize,
     },
     Picture {
-        // Index in the picture_textures array
-        texture_index: usize,
-        // Slice in the texture array
-        layer_index: usize,
+        /// Size of the tile (used for debug clears only)
+        size: DeviceIntSize,
     },
     Cache {
         /// Origin within the texture layer where this item exists.
@@ -73,10 +67,11 @@ enum EntryDetails {
 }
 
 impl EntryDetails {
+    // TODO(gw): We can remove LayerIndex from here completely in a follow up
     fn describe(&self) -> (LayerIndex, DeviceIntPoint) {
         match *self {
             EntryDetails::Standalone { .. }  => (0, DeviceIntPoint::zero()),
-            EntryDetails::Picture { layer_index, .. } => (layer_index, DeviceIntPoint::zero()),
+            EntryDetails::Picture { .. } => (0, DeviceIntPoint::zero()),
             EntryDetails::Cache { origin, .. } => (0, origin),
         }
     }
@@ -236,78 +231,106 @@ impl EvictionNotice {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 struct SharedTextures {
-    color8_nearest: TextureUnits,
-    alpha8_linear: TextureUnits,
-    alpha16_linear: TextureUnits,
-    color8_linear: TextureUnits,
-    color8_glyphs: TextureUnits,
+    color8_nearest: AllocatorList<ShelfAllocator, TextureParameters>,
+    alpha8_linear: AllocatorList<ShelfAllocator, TextureParameters>,
+    alpha16_linear: AllocatorList<SlabAllocator, TextureParameters>,
+    color8_linear: AllocatorList<ShelfAllocator, TextureParameters>,
+    color8_glyphs: AllocatorList<BucketedShelfAllocator, TextureParameters>,
 }
 
 impl SharedTextures {
     /// Mints a new set of shared textures.
-    fn new(color_formats: TextureFormatPair<ImageFormat>) -> Self {
+    fn new(color_formats: TextureFormatPair<ImageFormat>, config: &TextureCacheConfig) -> Self {
         Self {
             // Used primarily for cached shadow masks. There can be lots of
             // these on some pages like francine, but most pages don't use it
             // much.
-            alpha8_linear: TextureUnits::new(
-                TextureFormatPair::from(ImageFormat::R8),
-                TextureFilter::Linear,
-                1024,
-                TEXTURE_REGION_DIMENSIONS,
-                SlabSizes::Default,
+            // Most content tends to fit into two 512x512 textures. We are
+            // conservatively using 1024x1024 to fit everything in a single
+            // texture and avoid breaking batches, but it's worth checking
+            // whether it would actually lead to a lot of batch breaks in
+            // practice.
+            alpha8_linear: AllocatorList::new(
+                config.alpha8_texture_size,
+                ShelfAllocatorOptions {
+                    num_columns: 1,
+                    alignment: size2(8, 8),
+                    .. ShelfAllocatorOptions::default()
+                },
+                TextureParameters {
+                    formats: TextureFormatPair::from(ImageFormat::R8),
+                    filter: TextureFilter::Linear,
+                },
             ),
             // Used for experimental hdr yuv texture support, but not used in
             // production Firefox.
-            alpha16_linear: TextureUnits::new(
-                TextureFormatPair::from(ImageFormat::R16),
-                TextureFilter::Linear,
-                TEXTURE_REGION_DIMENSIONS,
-                TEXTURE_REGION_DIMENSIONS,
-                SlabSizes::Default,
+            alpha16_linear: AllocatorList::new(
+                config.alpha16_texture_size,
+                SlabAllocatorParameters {
+                    region_size: TEXTURE_REGION_DIMENSIONS,
+                },
+                TextureParameters {
+                    formats: TextureFormatPair::from(ImageFormat::R16),
+                    filter: TextureFilter::Linear,
+                },
             ),
             // The primary cache for images, etc.
-            color8_linear: TextureUnits::new(
-                color_formats.clone(),
-                TextureFilter::Linear,
-                2048,
-                TEXTURE_REGION_DIMENSIONS,
-                SlabSizes::Default,
+            color8_linear: AllocatorList::new(
+                config.color8_linear_texture_size,
+                ShelfAllocatorOptions {
+                    num_columns: if config.color8_linear_texture_size >= 1024 { 2 } else { 1 },
+                    alignment: size2(16, 16),
+                    .. ShelfAllocatorOptions::default()
+                },
+                TextureParameters {
+                    formats: color_formats.clone(),
+                    filter: TextureFilter::Linear,
+                },
             ),
             // The cache for glyphs (separate to help with batching).
-            color8_glyphs: TextureUnits::new(
-                color_formats.clone(),
-                TextureFilter::Linear,
-                2048,
-                GLYPH_TEXTURE_REGION_DIMENSIONS,
-                SlabSizes::Glyphs,
+            color8_glyphs: AllocatorList::new(
+                config.color8_glyph_texture_size,
+                ShelfAllocatorOptions {
+                    num_columns: if config.color8_glyph_texture_size >= 1024 { 2 } else { 1 },
+                    alignment: size2(4, 8),
+                    .. ShelfAllocatorOptions::default()
+                },
+                TextureParameters {
+                    formats: color_formats.clone(),
+                    filter: TextureFilter::Linear,
+                },
             ),
             // Used for image-rendering: crisp. This is mostly favicons, which
             // are small. Some other images use it too, but those tend to be
             // larger than 512x512 and thus don't use the shared cache anyway.
-            color8_nearest: TextureUnits::new(
-                color_formats,
-                TextureFilter::Nearest,
-                TEXTURE_REGION_DIMENSIONS,
-                TEXTURE_REGION_DIMENSIONS,
-                SlabSizes::Default,
+            color8_nearest: AllocatorList::new(
+                config.color8_nearest_texture_size,
+                ShelfAllocatorOptions::default(),
+                TextureParameters {
+                    formats: color_formats,
+                    filter: TextureFilter::Nearest,
+                }
             ),
         }
     }
 
     /// Clears each texture in the set, with the given set of pending updates.
     fn clear(&mut self, updates: &mut TextureUpdateList) {
-        self.alpha8_linear.clear(updates);
-        self.alpha16_linear.clear(updates);
-        self.color8_linear.clear(updates);
-        self.color8_nearest.clear(updates);
-        self.color8_glyphs.clear(updates);
+        let texture_dealloc_cb = &mut |texture_id| {
+            updates.push_free(texture_id);
+        };
+
+        self.alpha8_linear.clear(texture_dealloc_cb);
+        self.alpha16_linear.clear(texture_dealloc_cb);
+        self.color8_linear.clear(texture_dealloc_cb);
+        self.color8_nearest.clear(texture_dealloc_cb);
+        self.color8_glyphs.clear(texture_dealloc_cb);
     }
 
     /// Returns a mutable borrow for the shared texture array matching the parameters.
     fn select(
-        &mut self, size: DeviceIntSize, external_format: ImageFormat, filter: TextureFilter, shader: TargetShader,
-    ) -> &mut TextureUnits {
+        &mut self, external_format: ImageFormat, filter: TextureFilter, shader: TargetShader,
+    ) -> &mut dyn AtlasAllocatorList<TextureParameters> {
         match external_format {
             ImageFormat::R8 => {
                 assert_eq!(filter, TextureFilter::Linear);
@@ -319,11 +342,8 @@ impl SharedTextures {
             }
             ImageFormat::RGBA8 |
             ImageFormat::BGRA8 => {
-                let max = size.width.max(size.height);
                 match (filter, shader) {
-                    (TextureFilter::Linear, TargetShader::Text) if max <= GLYPH_TEXTURE_REGION_DIMENSIONS => {
-                        &mut self.color8_glyphs
-                    }
+                    (TextureFilter::Linear, TargetShader::Text) => &mut self.color8_glyphs,
                     (TextureFilter::Linear, _) => &mut self.color8_linear,
                     (TextureFilter::Nearest, _) => &mut self.color8_nearest,
                     _ => panic!("Unexpexcted filter {:?}", filter),
@@ -334,12 +354,34 @@ impl SharedTextures {
     }
 }
 
-/// The texture arrays used to hold picture cache tiles.
+/// The textures used to hold picture cache tiles.
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+struct PictureTexture {
+    texture_id: CacheTextureId,
+    size: DeviceIntSize,
+    format: ImageFormat,
+    is_allocated: bool,
+    last_frame_used: FrameId,
+}
+
+impl PictureTexture {
+    fn size_in_bytes(&self) -> usize {
+        let bpp = self.format.bytes_per_pixel() as usize;
+        (self.size.width * self.size.height) as usize * bpp
+    }
+}
+
+/// The textures used to hold picture cache tiles.
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 struct PictureTextures {
-    textures: Vec<WholeTextureArray>,
+    /// Current list of textures in the pool
+    textures: Vec<PictureTexture>,
+    /// Default tile size for content tiles
     default_tile_size: DeviceIntSize,
+    /// Number of currently allocated textures in the pool
+    allocated_texture_count: usize,
 }
 
 impl PictureTextures {
@@ -349,6 +391,7 @@ impl PictureTextures {
         PictureTextures {
             textures: Vec::new(),
             default_tile_size,
+            allocated_texture_count: 0,
         }
     }
 
@@ -359,50 +402,86 @@ impl PictureTextures {
         next_texture_id: &mut CacheTextureId,
         pending_updates: &mut TextureUpdateList,
     ) -> CacheEntry {
-        // Attempt to find an existing texture with matching tile size and
-        // and available slice.
-        for (i, texture) in self.textures.iter_mut().enumerate() {
-            if texture.size == tile_size {
-                if let Some(layer_index) = texture.find_free() {
-                    return texture.occupy(i, layer_index, now);
-                }
+        let mut texture_id = None;
+        self.allocated_texture_count += 1;
+
+        for texture in &mut self.textures {
+            if texture.size == tile_size && !texture.is_allocated {
+                // Found a target that's not currently in use which matches. Update
+                // the last_frame_used for GC purposes.
+                texture.is_allocated = true;
+                texture.last_frame_used = FrameId::INVALID;
+                texture_id = Some(texture.texture_id);
+                break;
             }
         }
 
-        // Allocate a new texture with fixed number of slices.
-        let mut slices = Vec::new();
-        for _ in 0 .. PICTURE_TEXTURE_SLICE_COUNT {
-            slices.push(WholeTextureSlice {
-                uv_rect_handle: None,
+        // Need to create a new render target and add it to the pool
+
+        let texture_id = texture_id.unwrap_or_else(|| {
+            let texture_id = *next_texture_id;
+            next_texture_id.0 += 1;
+
+            // Push a command to allocate device storage of the right size / format.
+            let info = TextureCacheAllocInfo {
+                target: ImageBufferKind::Texture2D,
+                width: tile_size.width,
+                height: tile_size.height,
+                format: ImageFormat::RGBA8,
+                filter: TextureFilter::Nearest,
+                layer_count: 1,
+                is_shared_cache: false,
+                has_depth: true,
+            };
+
+            pending_updates.push_alloc(texture_id, info);
+
+            self.textures.push(PictureTexture {
+                texture_id,
+                is_allocated: true,
+                format: ImageFormat::RGBA8,
+                size: tile_size,
+                last_frame_used: FrameId::INVALID,
             });
-        }
-        let mut texture = WholeTextureArray {
+
+            texture_id
+        });
+
+        CacheEntry {
             size: tile_size,
+            user_data: [0.0; 3],
+            last_access: now,
+            details: EntryDetails::Picture {
+                size: tile_size,
+            },
+            uv_rect_handle: GpuCacheHandle::new(),
+            input_format: ImageFormat::RGBA8,
             filter: TextureFilter::Nearest,
-            format: PICTURE_TILE_FORMAT,
-            texture_id: *next_texture_id,
-            slices,
-            has_depth: true,
-        };
-        next_texture_id.0 += 1;
-
-        // Occupy the first slice of the new texture
-        let entry = texture.occupy(
-            self.textures.len(),
-            0,
-            now,
-        );
-
-        // Push the alloc to render thread pending updates
-        let info = texture.to_info();
-        pending_updates.push_alloc(texture.texture_id, info);
-        self.textures.push(texture);
-
-        entry
+            swizzle: Swizzle::default(),
+            texture_id,
+            eviction_notice: None,
+            uv_rect_kind: UvRectKind::Rect,
+            shader: TargetShader::Default,
+        }
     }
 
-    fn get(&mut self, index: usize) -> &mut WholeTextureArray {
-        &mut self.textures[index]
+    fn free_tile(
+        &mut self,
+        id: CacheTextureId,
+        current_frame_id: FrameId,
+    ) {
+        self.allocated_texture_count -= 1;
+
+        let texture = self.textures
+            .iter_mut()
+            .find(|t| t.texture_id == id)
+            .expect("bug: invalid texture id");
+
+        assert!(texture.is_allocated);
+        texture.is_allocated = false;
+
+        assert_eq!(texture.last_frame_used, FrameId::INVALID);
+        texture.last_frame_used = current_frame_id;
     }
 
     fn clear(&mut self, pending_updates: &mut TextureUpdateList) {
@@ -412,16 +491,55 @@ impl PictureTextures {
     }
 
     fn update_profile(&self, profile: &mut TransactionProfile) {
-        // For now, this profile counter just accumulates the slices and bytes
-        // from all picture cache texture arrays.
-        let mut picture_slices = 0;
+        // For now, this profile counter just accumulates the tiles and bytes
+        // from all picture cache textures.
+        let mut picture_tiles = 0;
         let mut picture_bytes = 0;
         for texture in &self.textures {
-            picture_slices += texture.slices.len();
+            picture_tiles += 1;
             picture_bytes += texture.size_in_bytes();
         }
-        profile.set(profiler::PICTURE_TILES, picture_slices);
+        profile.set(profiler::PICTURE_TILES, picture_tiles);
         profile.set(profiler::PICTURE_TILES_MEM, profiler::bytes_to_mb(picture_bytes));
+    }
+
+    /// Simple garbage collect of picture cache tiles
+    fn gc(
+        &mut self,
+        pending_updates: &mut TextureUpdateList,
+    ) {
+        // Allow the picture cache pool to keep 25% of the current allocated tile count
+        // as free textures to be reused. This ensures the allowed tile count is appropriate
+        // based on current window size.
+        let free_texture_count = self.textures.len() - self.allocated_texture_count;
+        let allowed_retained_count = (self.allocated_texture_count as f32 * 0.25).ceil() as usize;
+        let do_gc = free_texture_count > allowed_retained_count;
+
+        if do_gc {
+            // Sort the current pool by age, so that we remove oldest textures first
+            self.textures.sort_unstable_by_key(|t| cmp::Reverse(t.last_frame_used));
+
+            // We can't just use retain() because `PictureTexture` requires manual cleanup.
+            let mut allocated_targets = SmallVec::<[PictureTexture; 32]>::new();
+            let mut retained_targets = SmallVec::<[PictureTexture; 32]>::new();
+
+            for target in self.textures.drain(..) {
+                if target.is_allocated {
+                    // Allocated targets can't be collected
+                    allocated_targets.push(target);
+                } else if retained_targets.len() < allowed_retained_count {
+                    // Retain the most recently used targets up to the allowed count
+                    retained_targets.push(target);
+                } else {
+                    // The rest of the targets get freed
+                    assert_ne!(target.last_frame_used, FrameId::INVALID);
+                    pending_updates.push_free(target.texture_id);
+                }
+            }
+
+            self.textures.extend(retained_targets);
+            self.textures.extend(allocated_targets);
+        }
     }
 }
 
@@ -432,6 +550,28 @@ struct CacheAllocParams {
     user_data: [f32; 3],
     uv_rect_kind: UvRectKind,
     shader: TargetShader,
+}
+
+/// Startup parameters for the texture cache.
+///
+/// Texture sizes must be at least 512.
+#[derive(Clone)]
+pub struct TextureCacheConfig {
+    pub color8_linear_texture_size: i32,
+    pub color8_nearest_texture_size: i32,
+    pub color8_glyph_texture_size: i32,
+    pub alpha8_texture_size: i32,
+    pub alpha16_texture_size: i32,
+}
+
+impl TextureCacheConfig {
+    pub const DEFAULT: Self = TextureCacheConfig {
+        color8_linear_texture_size: 2048,
+        color8_nearest_texture_size: 512,
+        color8_glyph_texture_size: 2048,
+        alpha8_texture_size: 1024,
+        alpha16_texture_size: 512,
+    };
 }
 
 /// General-purpose manager for images in GPU memory. This includes images,
@@ -518,6 +658,7 @@ impl TextureCache {
         default_picture_tile_size: DeviceIntSize,
         color_formats: TextureFormatPair<ImageFormat>,
         swizzle: Option<SwizzleSettings>,
+        config: &TextureCacheConfig,
     ) -> Self {
         let pending_updates = TextureUpdateList::new();
 
@@ -531,7 +672,7 @@ impl TextureCache {
         let next_texture_id = CacheTextureId(1);
 
         TextureCache {
-            shared_textures: SharedTextures::new(color_formats),
+            shared_textures: SharedTextures::new(color_formats, config),
             picture_textures: PictureTextures::new(
                 default_picture_tile_size,
             ),
@@ -562,6 +703,7 @@ impl TextureCache {
             crate::picture::TILE_SIZE_DEFAULT,
             TextureFormatPair::from(image_format),
             None,
+            &TextureCacheConfig::DEFAULT,
         );
         let mut now = FrameStamp::first(DocumentId::new(IdNamespace(1), 1));
         now.advance();
@@ -620,51 +762,37 @@ impl TextureCache {
     pub fn end_frame(&mut self, profile: &mut TransactionProfile) {
         debug_assert!(self.now.is_valid());
         self.expire_old_picture_cache_tiles();
+        self.picture_textures.gc(
+            &mut self.pending_updates,
+        );
+
+        let updates = &mut self.pending_updates; // To avoid referring to self in the closure.
+        let callback = &mut|texture_id| { updates.push_free(texture_id); };
 
         // Release of empty shared textures is done at the end of the frame. That way, if the
         // eviction at the start of the frame frees up a texture, that is then subsequently
         // used during the frame, we avoid doing a free/alloc for it.
-        self.shared_textures.alpha8_linear.release_empty_textures(&mut self.pending_updates);
-        self.shared_textures.alpha16_linear.release_empty_textures(&mut self.pending_updates);
-        self.shared_textures.color8_linear.release_empty_textures(&mut self.pending_updates);
-        self.shared_textures.color8_nearest.release_empty_textures(&mut self.pending_updates);
-        self.shared_textures.color8_glyphs.release_empty_textures(&mut self.pending_updates);
+        self.shared_textures.alpha8_linear.release_empty_textures(callback);
+        self.shared_textures.alpha16_linear.release_empty_textures(callback);
+        self.shared_textures.color8_linear.release_empty_textures(callback);
+        self.shared_textures.color8_nearest.release_empty_textures(callback);
+        self.shared_textures.color8_glyphs.release_empty_textures(callback);
 
-        self.shared_textures.alpha8_linear.update_profile(
-            profiler::TEXTURE_CACHE_A8_REGIONS,
-            profiler::TEXTURE_CACHE_A8_MEM,
-            profile,
-        );
-        self.shared_textures.alpha16_linear.update_profile(
-            profiler::TEXTURE_CACHE_A16_REGIONS,
-            profiler::TEXTURE_CACHE_A16_MEM,
-            profile,
-        );
-        self.shared_textures.color8_linear.update_profile(
-            profiler::TEXTURE_CACHE_RGBA8_LINEAR_REGIONS,
-            profiler::TEXTURE_CACHE_RGBA8_LINEAR_MEM,
-            profile,
-        );
-        self.shared_textures.color8_nearest.update_profile(
-            profiler::TEXTURE_CACHE_RGBA8_NEAREST_REGIONS,
-            profiler::TEXTURE_CACHE_RGBA8_NEAREST_MEM,
-            profile,
-        );
-        self.shared_textures.color8_glyphs.update_profile(
-            profiler::TEXTURE_CACHE_RGBA8_GLYPHS_REGIONS,
-            profiler::TEXTURE_CACHE_RGBA8_GLYPHS_MEM,
-            profile,
-        );
+        profile.set(profiler::TEXTURE_CACHE_A8_PIXELS, self.shared_textures.alpha8_linear.allocated_space());
+        profile.set(profiler::TEXTURE_CACHE_A8_TEXTURES, self.shared_textures.alpha8_linear.allocated_textures());
+        profile.set(profiler::TEXTURE_CACHE_A16_PIXELS, self.shared_textures.alpha16_linear.allocated_space());
+        profile.set(profiler::TEXTURE_CACHE_A16_TEXTURES, self.shared_textures.alpha16_linear.allocated_textures());
+        profile.set(profiler::TEXTURE_CACHE_RGBA8_LINEAR_PIXELS, self.shared_textures.color8_linear.allocated_space());
+        profile.set(profiler::TEXTURE_CACHE_RGBA8_LINEAR_TEXTURES, self.shared_textures.color8_linear.allocated_textures());
+        profile.set(profiler::TEXTURE_CACHE_RGBA8_NEAREST_PIXELS, self.shared_textures.color8_nearest.allocated_space());
+        profile.set(profiler::TEXTURE_CACHE_RGBA8_NEAREST_TEXTURES, self.shared_textures.color8_nearest.allocated_textures());
+        profile.set(profiler::TEXTURE_CACHE_RGBA8_GLYPHS_PIXELS, self.shared_textures.color8_glyphs.allocated_space());
+        profile.set(profiler::TEXTURE_CACHE_RGBA8_GLYPHS_TEXTURES, self.shared_textures.color8_glyphs.allocated_textures());
+
         self.picture_textures.update_profile(profile);
 
-        profile.set(
-            profiler::TEXTURE_CACHE_SHARED_MEM,
-            profiler::bytes_to_mb(self.shared_bytes_allocated),
-        );
-        profile.set(
-            profiler::TEXTURE_CACHE_STANDALONE_MEM,
-            profiler::bytes_to_mb(self.standalone_bytes_allocated),
-        );
+        profile.set(profiler::TEXTURE_CACHE_SHARED_MEM, profiler::bytes_to_mb(self.shared_bytes_allocated));
+        profile.set(profiler::TEXTURE_CACHE_STANDALONE_MEM, profiler::bytes_to_mb(self.standalone_bytes_allocated));
 
         self.now = FrameStamp::INVALID;
     }
@@ -703,7 +831,7 @@ impl TextureCache {
 
     #[cfg(feature = "replay")]
     pub fn color_formats(&self) -> TextureFormatPair<ImageFormat> {
-        self.shared_textures.color8_linear.formats.clone()
+        self.shared_textures.color8_linear.texture_parameters().formats.clone()
     }
 
     #[cfg(feature = "replay")]
@@ -833,7 +961,6 @@ impl TextureCache {
             uv_rect_handle,
             texture_id: TextureSource::TextureCache(
                 texture_id,
-                ImageBufferKind::Texture2D,
                 swizzle,
             ),
             uv_rect,
@@ -989,9 +1116,8 @@ impl TextureCache {
     // Free a cache entry from the standalone list or shared cache.
     fn free(&mut self, entry: &CacheEntry) {
         match entry.details {
-            EntryDetails::Picture { texture_index, layer_index } => {
-                let picture_texture = self.picture_textures.get(texture_index);
-                picture_texture.slices[layer_index].uv_rect_handle = None;
+            EntryDetails::Picture { size } => {
+                self.picture_textures.free_tile(entry.texture_id, self.now.frame_id());
                 if self.debug_flags.contains(
                     DebugFlags::TEXTURE_CACHE_DBG |
                     DebugFlags::TEXTURE_CACHE_DBG_CLEAR_EVICTED)
@@ -999,9 +1125,9 @@ impl TextureCache {
                     self.pending_updates.push_debug_clear(
                         entry.texture_id,
                         DeviceIntPoint::zero(),
-                        picture_texture.size.width,
-                        picture_texture.size.height,
-                        layer_index,
+                        size.width,
+                        size.height,
+                        0,
                     );
                 }
             }
@@ -1012,21 +1138,20 @@ impl TextureCache {
                 self.pending_updates.push_free(entry.texture_id);
             }
             EntryDetails::Cache { origin, alloc_id, .. } => {
-                // Free the block in the given region.
-                let texture_array = self.shared_textures.select(
-                    entry.size,
+                let allocator_list = self.shared_textures.select(
                     entry.input_format,
                     entry.filter,
                     entry.shader,
                 );
-                let unit = texture_array.units
-                    .iter_mut()
-                    .find(|unit| unit.texture_id == entry.texture_id)
-                    .expect("Unable to find the associated texture array unit");
 
-                let bpp = texture_array.formats.internal.bytes_per_pixel();
-                let slab_size = unit.allocator.deallocate(alloc_id);
-                self.shared_bytes_allocated -= (slab_size.width * slab_size.height * bpp) as usize;
+                allocator_list.deallocate(entry.texture_id, alloc_id);
+
+                let bpp = allocator_list
+                    .texture_parameters()
+                    .formats
+                    .internal
+                    .bytes_per_pixel();
+                self.shared_bytes_allocated -= (entry.size.area() * bpp) as usize;
 
                 if self.debug_flags.contains(
                     DebugFlags::TEXTURE_CACHE_DBG |
@@ -1035,8 +1160,8 @@ impl TextureCache {
                     self.pending_updates.push_debug_clear(
                         entry.texture_id,
                         origin,
-                        slab_size.width,
-                        slab_size.height,
+                        entry.size.width,
+                        entry.size.height,
                         0,
                     );
                 }
@@ -1049,20 +1174,42 @@ impl TextureCache {
         &mut self,
         params: &CacheAllocParams,
     ) -> CacheEntry {
-        let units = self.shared_textures.select(
-            params.descriptor.size,
+        let allocator_list = self.shared_textures.select(
             params.descriptor.format,
             params.filter,
             params.shader,
         );
 
-        let (texture_id, alloc_id, allocated_rect) = units.allocate(
+        // To avoid referring to self in the closure.
+        let next_id = &mut self.next_id;
+        let pending_updates = &mut self.pending_updates;
+
+        let (texture_id, alloc_id, allocated_rect) = allocator_list.allocate(
             params.descriptor.size,
-            &mut self.pending_updates,
-            &mut self.next_id,
+            &mut |size, parameters| {
+                let texture_id = *next_id;
+                next_id.0 += 1;
+                pending_updates.push_alloc(
+                    texture_id,
+                    TextureCacheAllocInfo {
+                        target: ImageBufferKind::Texture2D,
+                        width: size.width,
+                        height: size.height,
+                        format: parameters.formats.internal,
+                        filter: parameters.filter,
+                        layer_count: 1,
+                        is_shared_cache: true,
+                        has_depth: false,
+                    },
+                );
+
+                texture_id
+            },
         );
 
-        let swizzle = if units.formats.external == params.descriptor.format {
+        let formats = &allocator_list.texture_parameters().formats;
+
+        let swizzle = if formats.external == params.descriptor.format {
             Swizzle::default()
         } else {
             match self.swizzle {
@@ -1071,7 +1218,7 @@ impl TextureCache {
             }
         };
 
-        let bpp = units.formats.internal.bytes_per_pixel();
+        let bpp = formats.internal.bytes_per_pixel();
         self.shared_bytes_allocated += (allocated_rect.size.area() * bpp) as usize;
 
         CacheEntry {
@@ -1128,7 +1275,6 @@ impl TextureCache {
     pub fn alloc_render_target(
         &mut self,
         size: DeviceIntSize,
-        num_layers: usize,
         format: ImageFormat,
     ) -> CacheTextureId {
         let texture_id = self.next_id;
@@ -1136,12 +1282,12 @@ impl TextureCache {
 
         // Push a command to allocate device storage of the right size / format.
         let info = TextureCacheAllocInfo {
-            target: ImageBufferKind::Texture2DArray,
+            target: ImageBufferKind::Texture2D,
             width: size.width,
             height: size.height,
             format,
             filter: TextureFilter::Linear,
-            layer_count: num_layers as i32,
+            layer_count: 1,
             is_shared_cache: false,
             has_depth: false,
         };
@@ -1276,11 +1422,11 @@ impl TextureCache {
     }
 
     pub fn shared_alpha_expected_format(&self) -> ImageFormat {
-        self.shared_textures.alpha8_linear.formats.external
+        self.shared_textures.alpha8_linear.texture_parameters().formats.external
     }
 
     pub fn shared_color_expected_format(&self) -> ImageFormat {
-        self.shared_textures.color8_linear.formats.external
+        self.shared_textures.color8_linear.texture_parameters().formats.external
     }
 
 
@@ -1289,268 +1435,12 @@ impl TextureCache {
     }
 }
 
-/// A number of 2D textures (single layer), each with a number of
-/// regions that can act as a slab allocator.
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
-struct TextureUnit {
-    allocator: SlabAllocator,
-    texture_id: CacheTextureId,
+pub struct TextureParameters {
+    pub formats: TextureFormatPair<ImageFormat>,
+    pub filter: TextureFilter,
 }
-
-/// A number of 2D textures (single layer), each with a number of
-/// regions that can act as a slab allocator.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-struct TextureUnits {
-    filter: TextureFilter,
-    formats: TextureFormatPair<ImageFormat>,
-    units: SmallVec<[TextureUnit; 1]>,
-    size: i32,
-    region_size: i32,
-    slab_sizes: SlabSizes,
-}
-
-impl TextureUnits {
-    fn new(
-        formats: TextureFormatPair<ImageFormat>,
-        filter: TextureFilter,
-        size: i32,
-        region_size: i32,
-        slab_sizes: SlabSizes,
-    ) -> Self {
-        TextureUnits {
-            formats,
-            filter,
-            units: SmallVec::new(),
-            size,
-            region_size,
-            slab_sizes,
-        }
-    }
-
-    /// Returns the number of GPU bytes consumed by this texture array.
-    fn size_in_bytes(&self) -> usize {
-        let bpp = self.formats.internal.bytes_per_pixel() as usize;
-        (self.size * self.size) as usize * bpp
-    }
-
-    fn add_texture(&mut self, texture_id: CacheTextureId) -> usize {
-
-        let unit_index = self.units.len();
-        self.units.push(TextureUnit {
-            allocator: SlabAllocator::new(self.size, self.region_size, self.slab_sizes),
-            texture_id,
-        });
-
-        unit_index
-    }
-
-    /// Returns the texture id, region index and allocated rect.
-    ///
-    /// Adds a new texture if there's no spot available.
-    fn allocate(
-        &mut self,
-        requested_size: DeviceIntSize,
-        pending_updates: &mut TextureUpdateList,
-        next_id: &mut CacheTextureId,
-    ) -> (CacheTextureId, AllocId, DeviceIntRect) {
-        let mut allocation = None;
-        for unit in &mut self.units {
-            if let Some((alloc_id, rect)) = unit.allocator.allocate(requested_size) {
-                allocation = Some((unit.texture_id, alloc_id, rect));
-                break;
-            }
-        }
-
-        allocation.unwrap_or_else(|| {
-            let texture_id = *next_id;
-            next_id.0 += 1;
-
-            pending_updates.push_alloc(
-                texture_id,
-                TextureCacheAllocInfo {
-                    target: ImageBufferKind::Texture2D,
-                    width: self.size,
-                    height: self.size,
-                    format: self.formats.internal,
-                    filter: self.filter,
-                    layer_count: 1,
-                    is_shared_cache: true,
-                    has_depth: false,
-                },
-            );
-
-            let unit_index = self.add_texture(texture_id);
-
-            let (alloc_id, rect) = self.units[unit_index]
-                .allocator
-                .allocate(requested_size)
-                .unwrap();
-
-            (texture_id, alloc_id, rect)
-        })
-    }
-
-    fn clear(&mut self, updates: &mut TextureUpdateList) {
-        for unit in self.units.drain(..) {
-            updates.push_free(unit.texture_id);
-        }
-    }
-
-    fn release_empty_textures(&mut self, updates: &mut TextureUpdateList) {
-        self.units.retain(|unit| {
-            if unit.allocator.is_empty() {
-                updates.push_free(unit.texture_id);
-
-                false
-            } else {
-                true
-            }
-        });
-    }
-
-    fn update_profile(&self, count_idx: usize, mem_idx: usize, profile: &mut TransactionProfile) {
-        let num_regions: usize = self.units.iter().map(|u| u.allocator.num_regions()).sum();
-        profile.set(count_idx, num_regions);
-        profile.set(mem_idx, profiler::bytes_to_mb(self.size_in_bytes()));
-    }
-
-    #[allow(dead_code)]
-    pub fn dump_as_svg(&self, output: &mut dyn std::io::Write) -> std::io::Result<()> {
-        use svg_fmt::*;
-        use euclid::default::Box2D;
-
-        let num_arrays = self.units.len() as f32;
-
-        let text_spacing = 15.0;
-        let unit_spacing = 30.0;
-        let texture_size = self.size as f32 / 2.0;
-
-        let svg_w = unit_spacing * 2.0 + texture_size;
-        let svg_h = unit_spacing + num_arrays * (texture_size + text_spacing + unit_spacing);
-
-        writeln!(output, "{}", BeginSvg { w: svg_w, h: svg_h })?;
-
-        // Background.
-        writeln!(output,
-            "    {}",
-            rectangle(0.0, 0.0, svg_w, svg_h)
-                .inflate(1.0, 1.0)
-                .fill(rgb(50, 50, 50))
-        )?;
-
-        let mut y = unit_spacing;
-        for unit in &self.units {
-            writeln!(output, "    {}", text(unit_spacing, y, format!("{:?}", unit.texture_id)).color(rgb(230, 230, 230)))?;
-
-            let rect = Box2D {
-                min: point2(unit_spacing, y),
-                max: point2(unit_spacing + texture_size, y + texture_size),
-            };
-
-            unit.allocator.dump_as_svg(&rect, output)?;
-
-            y += unit_spacing + texture_size + text_spacing;
-        }
-
-        writeln!(output, "{}", EndSvg)  
-    }
-}
-
-
-/// A tracking structure for each slice in `WholeTextureArray`.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Clone, Copy, Debug)]
-struct WholeTextureSlice {
-    uv_rect_handle: Option<GpuCacheHandle>,
-}
-
-/// A texture array that allocates whole slices and doesn't do any region tracking.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-struct WholeTextureArray {
-    size: DeviceIntSize,
-    filter: TextureFilter,
-    format: ImageFormat,
-    texture_id: CacheTextureId,
-    slices: Vec<WholeTextureSlice>,
-    has_depth: bool,
-}
-
-impl WholeTextureArray {
-    fn to_info(&self) -> TextureCacheAllocInfo {
-        TextureCacheAllocInfo {
-            target: ImageBufferKind::Texture2DArray,
-            width: self.size.width,
-            height: self.size.height,
-            format: self.format,
-            filter: self.filter,
-            layer_count: self.slices.len() as i32,
-            is_shared_cache: true, //TODO: reconsider
-            has_depth: self.has_depth,
-        }
-    }
-
-    /// Returns the number of GPU bytes consumed by this texture array.
-    fn size_in_bytes(&self) -> usize {
-        let bpp = self.format.bytes_per_pixel() as usize;
-        self.slices.len() * (self.size.width * self.size.height) as usize * bpp
-    }
-
-    /// Find an free slice.
-    fn find_free(&self) -> Option<LayerIndex> {
-        self.slices.iter().position(|slice| slice.uv_rect_handle.is_none())
-    }
-
-    fn cache_entry_impl(
-        &self,
-        texture_index: usize,
-        layer_index: usize,
-        now: FrameStamp,
-        uv_rect_handle: GpuCacheHandle,
-        texture_id: CacheTextureId,
-    ) -> CacheEntry {
-        CacheEntry {
-            size: self.size,
-            user_data: [0.0; 3],
-            last_access: now,
-            details: EntryDetails::Picture {
-                texture_index,
-                layer_index,
-            },
-            uv_rect_handle,
-            input_format: self.format,
-            filter: self.filter,
-            swizzle: Swizzle::default(),
-            texture_id,
-            eviction_notice: None,
-            uv_rect_kind: UvRectKind::Rect,
-            shader: TargetShader::Default,
-        }
-    }
-
-    /// Occupy a specified slice by a cache entry.
-    fn occupy(
-        &mut self,
-        texture_index: usize,
-        layer_index: usize,
-        now: FrameStamp,
-    ) -> CacheEntry {
-        let uv_rect_handle = GpuCacheHandle::new();
-        assert!(self.slices[layer_index].uv_rect_handle.is_none());
-        self.slices[layer_index].uv_rect_handle = Some(uv_rect_handle);
-        self.cache_entry_impl(
-            texture_index,
-            layer_index,
-            now,
-            uv_rect_handle,
-            self.texture_id,
-        )
-    }
-}
-
 
 impl TextureCacheUpdate {
     // Constructs a TextureCacheUpdate operation to be passed to the

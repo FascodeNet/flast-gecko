@@ -30,7 +30,7 @@
 #include "gc/Rooting.h"
 #include "js/CallArgs.h"
 #include "js/Class.h"
-#include "js/experimental/Intl.h"  // JS::AddMozDateTimeFormatConstructor, JS::AddDisplayNamesConstructor
+#include "js/experimental/Intl.h"  // JS::AddMozDisplayNamesConstructor
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/GCVector.h"
 #include "js/PropertyDescriptor.h"
@@ -223,17 +223,6 @@ void js::DisplayNamesObject::finalize(JSFreeOp* fop, JSObject* obj) {
 
     uldn_close(ldn);
   }
-}
-
-bool JS::AddDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
-  JSObject* ctor =
-      GlobalObject::getOrCreateConstructor(cx, JSProto_DisplayNames);
-  if (!ctor) {
-    return false;
-  }
-
-  RootedValue ctorValue(cx, ObjectValue(*ctor));
-  return DefineDataProperty(cx, intl, cx->names().DisplayNames, ctorValue, 0);
 }
 
 bool JS::AddMozDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
@@ -453,9 +442,10 @@ static JSString* GetScriptDisplayName(JSContext* cx,
       return nullptr;
     }
 
-    // Return the canonicalized input when no localized script name was found.
+    // Return the case-canonicalized input when no localized name was found.
     if (str->empty() && fallback == DisplayNamesFallback::Code) {
-      return NewStringCopy(cx, tag.script().span());
+      script.toTitleCase();
+      return NewStringCopy(cx, script.span());
     }
 
     return str;
@@ -490,9 +480,10 @@ static JSString* GetScriptDisplayName(JSContext* cx,
     return nullptr;
   }
 
-  // Return the canonicalized input when no localized script name was found.
+  // Return the case-canonicalized input when no localized name was found.
   if (str->empty() && fallback == DisplayNamesFallback::Code) {
-    return NewStringCopy(cx, tag.script().span());
+    script.toTitleCase();
+    return NewStringCopy(cx, script.span());
   }
 
   return str;
@@ -551,9 +542,10 @@ static JSString* GetRegionDisplayName(JSContext* cx,
     return nullptr;
   }
 
-  // Return the canonicalized input when no localized region name was found.
+  // Return the case-canonicalized input when no localized name was found.
   if (str->empty() && fallback == DisplayNamesFallback::Code) {
-    return NewStringCopy(cx, tag.region().span());
+    region.toUpperCase();
+    return NewStringCopy(cx, region.span());
   }
 
   return str;

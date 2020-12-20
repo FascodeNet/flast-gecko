@@ -255,6 +255,8 @@ class ContentParent final
 
   static void BroadcastFontListChanged();
 
+  static void BroadcastThemeUpdate(widget::ThemeChangeKind);
+
   const nsACString& GetRemoteType() const override;
 
   virtual void DoGetRemoteType(nsACString& aRemoteType,
@@ -1020,7 +1022,8 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvSetClipboard(
       const IPCDataTransfer& aDataTransfer, const bool& aIsPrivateData,
       const IPC::Principal& aRequestingPrincipal,
-      const uint32_t& aContentPolicyType, const int32_t& aWhichClipboard);
+      const nsContentPolicyType& aContentPolicyType,
+      const int32_t& aWhichClipboard);
 
   mozilla::ipc::IPCResult RecvGetClipboard(nsTArray<nsCString>&& aTypes,
                                            const int32_t& aWhichClipboard,
@@ -1334,7 +1337,8 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvHistoryCommit(
       const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
-      const nsID& aChangeID, const uint32_t& aLoadType);
+      const nsID& aChangeID, const uint32_t& aLoadType, const bool& aPersist,
+      const bool& aCloneEntryChildren);
 
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,

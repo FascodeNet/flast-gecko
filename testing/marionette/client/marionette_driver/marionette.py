@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
+from __future__ import absolute_import, division
 
 import base64
 import datetime
@@ -206,6 +206,10 @@ class HTMLElement(object):
 
     def __eq__(self, other_element):
         return self.id == other_element.id
+
+    def __hash__(self):
+        # pylint --py3k: W1641
+        return hash(self.id)
 
     def find_element(self, method, target):
         """Returns an ``HTMLElement`` instance that matches the specified
@@ -1195,6 +1199,7 @@ class Marionette(object):
 
         timeout = self.session.get("moz:shutdownTimeout")
         if timeout is not None:
+            # pylint --py3k W1619
             self.shutdown_timeout = timeout / 1000 + 10
 
         return self.session

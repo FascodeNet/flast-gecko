@@ -35,6 +35,16 @@ using namespace js::gc;
 
 using mozilla::DebugOnly;
 
+#ifdef DEBUG
+bool js::RuntimeIsVerifyingPreBarriers(JSRuntime* runtime) {
+#  ifdef JS_GC_ZEAL
+  return runtime->gc.isVerifyPreBarriersEnabled();
+#  else
+  return false;
+#  endif
+}
+#endif
+
 #ifdef JS_GC_ZEAL
 
 /*
@@ -306,18 +316,6 @@ void CheckEdgeTracer::onChild(const JS::GCCellPtr& thing) {
   }
 }
 
-void js::gc::AssertSafeToSkipPreWriteBarrier(TenuredCell* thing) {
-#  ifdef DEBUG
-  Zone* zone = thing->zoneFromAnyThread();
-  if (!zone->needsIncrementalBarrier()) {
-    // Barriers are disabled and would be skipped anyway.
-    return;
-  }
-
-  MOZ_ASSERT(zone->isAtomsZone() || zone->isSelfHostingZone());
-#  endif
-}
-
 static bool IsMarkedOrAllocated(const EdgeValue& edge) {
   if (!edge.thing || IsMarkedOrAllocated(&edge.thing.asCell()->asTenured())) {
     return true;
@@ -358,13 +356,6 @@ void gc::GCRuntime::endVerifyPreBarriers() {
 
     zone->setNeedsIncrementalBarrier(false);
   }
-
-  /*
-   * We need to bump gcNumber so that the methodjit knows that jitcode has
-   * been discarded.
-   */
-  MOZ_ASSERT(trc->number == number);
-  number++;
 
   verifyPreData = nullptr;
   MOZ_ASSERT(incrementalState == State::Mark);
@@ -1051,7 +1042,7 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
     if (cell->runtimeFromAnyThread() != mapRuntime) {
       return CellColor::Black;
     }
-    if (cellZone->isGCMarking() || cellZone->isGCSweeping()) {
+    if (cellZone->isGCMarkingOrSweeping()) {
       return cell->color();
     }
     return CellColor::Black;

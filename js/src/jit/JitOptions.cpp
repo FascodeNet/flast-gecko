@@ -130,8 +130,11 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the IonMonkey JIT is enabled.
   SET_DEFAULT(ion, true);
 
-  // Whether Ion uses WarpBuilder as MIR builder.
-  SET_DEFAULT(warpBuilder, true);
+  // Warp compile Async functions
+  SET_DEFAULT(warpAsync, false);
+
+  // Warp compile Generator functions
+  SET_DEFAULT(warpGenerator, false);
 
   // Whether the IonMonkey and Baseline JITs are enabled for Trusted Principals.
   // (Ignored if ion or baselineJit is set to true.)

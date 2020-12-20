@@ -696,6 +696,8 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(JSContext* aCx)
 #ifdef MOZ_JS_DEV_ERROR_INTERCEPTOR
   JS_SetErrorInterceptorCallback(mJSRuntime, &mErrorInterceptor);
 #endif  // MOZ_JS_DEV_ERROR_INTERCEPTOR
+
+  JS_SetDestroyZoneCallback(aCx, OnZoneDestroyed);
 }
 
 #ifdef NS_BUILD_REFCNT_LOGGING
@@ -730,6 +732,8 @@ void CycleCollectedJSRuntime::Shutdown(JSContext* cx) {
 #ifdef DEBUG
   mShutdownCalled = true;
 #endif
+
+  JS_SetDestroyZoneCallback(cx, nullptr);
 }
 
 CycleCollectedJSRuntime::~CycleCollectedJSRuntime() {
@@ -1590,6 +1594,9 @@ void IncrementalFinalizeRunnable::ReleaseNow(bool aLimited) {
     return;
   }
   {
+    AUTO_PROFILER_LABEL("IncrementalFinalizeRunnable::ReleaseNow",
+                        GCCC_Finalize);
+
     mozilla::AutoRestore<bool> ar(mReleasing);
     mReleasing = true;
     MOZ_ASSERT(mDeferredFinalizeFunctions.Length() != 0,
@@ -1639,8 +1646,6 @@ void IncrementalFinalizeRunnable::ReleaseNow(bool aLimited) {
 
 NS_IMETHODIMP
 IncrementalFinalizeRunnable::Run() {
-  AUTO_PROFILER_LABEL("IncrementalFinalizeRunnable::Run", GCCC);
-
   if (!mDeferredFinalizeFunctions.Length()) {
     /* These items were already processed synchronously in JSGC_END. */
     MOZ_ASSERT(!mRuntime);
@@ -1797,10 +1802,19 @@ void CycleCollectedJSRuntime::PrepareWaitingZonesForGC() {
     JS::PrepareForFullGC(cx);
   } else {
     for (auto iter = mZonesWaitingForGC.Iter(); !iter.Done(); iter.Next()) {
-      JS::PrepareZoneForGC(iter.Get()->GetKey());
+      JS::PrepareZoneForGC(cx, iter.Get()->GetKey());
     }
     mZonesWaitingForGC.Clear();
   }
+}
+
+/* static */
+void CycleCollectedJSRuntime::OnZoneDestroyed(JSFreeOp* aFop, JS::Zone* aZone) {
+  // Remove the zone from the set of zones waiting for GC, if present. This can
+  // happen if a zone is added to the set during an incremental GC in which it
+  // is later destroyed.
+  CycleCollectedJSRuntime* runtime = Get();
+  runtime->mZonesWaitingForGC.RemoveEntry(aZone);
 }
 
 void CycleCollectedJSRuntime::EnvironmentPreparer::invoke(

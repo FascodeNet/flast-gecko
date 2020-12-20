@@ -151,6 +151,10 @@ class SearchOneOffs {
     // details.  Summary: On Linux, switching between themes can cause a row
     // of buttons to disappear.
     Services.obs.addObserver(this, "lightweight-theme-changed", true);
+
+    // This defaults to false in the Search Bar, subclasses can change their
+    // default in the constructor.
+    this.disableOneOffsHorizontalKeyNavigation = false;
   }
 
   addEventListener(...args) {
@@ -716,13 +720,13 @@ class SearchOneOffs {
    *
    * @param {event} aEvent
    *        The event that triggered the page load.
-   * @param {boolean} aForceNewTab
+   * @param {boolean} [aForceNewTab]
    *        True to force the load in a new tab.
    * @returns {object} An object { where, params }.  `where` is a string:
    *          "current" or "tab".  `params` is an object further describing how
    *          the page should be loaded.
    */
-  _whereToOpen(aEvent, aForceNewTab) {
+  _whereToOpen(aEvent, aForceNewTab = false) {
     let where = "current";
     let params;
     // Open ctrl/cmd clicks on one-off buttons in a new background tab.

@@ -6,6 +6,7 @@
 #ifndef ScriptPreloader_h
 #define ScriptPreloader_h
 
+#include "mozilla/Atomics.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/LinkedList.h"
@@ -478,7 +479,7 @@ class ScriptPreloader : public nsIObserver,
   void DecodeNextBatch(size_t chunkSize, JS::HandleObject scope = nullptr);
 
   static void OffThreadDecodeCallback(JS::OffThreadToken* token, void* context);
-  void MaybeFinishOffThreadDecode();
+  void FinishOffThreadDecode(JS::OffThreadToken* token);
   void DoFinishOffThreadDecode();
 
   already_AddRefed<nsIAsyncShutdownClient> GetShutdownBarrier();
@@ -523,11 +524,15 @@ class ScriptPreloader : public nsIObserver,
   Vector<CachedScript*> mParsingScripts;
 
   // The token for the completed off-thread decode task.
-  JS::OffThreadToken* mToken = nullptr;
+  Atomic<JS::OffThreadToken*, ReleaseAcquire> mToken{nullptr};
 
   // True if a runnable has been dispatched to the main thread to finish an
-  // off-thread decode operation.
+  // off-thread decode operation. Access only while 'mMonitor' is held.
   bool mFinishDecodeRunnablePending = false;
+
+  // True is main-thread is blocked and we should notify with Monitor. Access
+  // only while `mMonitor` is held.
+  bool mWaitingForDecode = false;
 
   // The process type of the current process.
   static ProcessType sProcessType;

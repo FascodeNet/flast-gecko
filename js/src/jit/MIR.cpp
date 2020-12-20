@@ -1381,13 +1381,6 @@ bool MParameter::congruentTo(const MDefinition* ins) const {
   return ins->toParameter()->index() == index_;
 }
 
-WrappedFunction::WrappedFunction(JSFunction* fun)
-    : nativeFun_(fun->isNativeWithoutJitEntry() ? fun : nullptr),
-      nargs_(fun->nargs()),
-      flags_(fun->flags()) {
-  MOZ_ASSERT(!JitOptions.warpBuilder);
-}
-
 WrappedFunction::WrappedFunction(JSFunction* nativeFun, uint16_t nargs,
                                  FunctionFlags flags)
     : nativeFun_(nativeFun), nargs_(nargs), flags_(flags) {
@@ -1960,16 +1953,15 @@ bool MPhi::updateForReplacement(MDefinition* def) {
   return true;
 }
 
-static void MergeTypes(MIRType* ptype, MIRType newType) {
-  // TODO(no-TI): clean up
-  if (newType != *ptype) {
-    if (IsTypeRepresentableAsDouble(newType) &&
-        IsTypeRepresentableAsDouble(*ptype)) {
-      *ptype = MIRType::Double;
-    } else if (*ptype != MIRType::Value) {
-      *ptype = MIRType::Value;
-    }
+static MIRType MergeTypes(MIRType type, MIRType newType) {
+  if (type == newType) {
+    return type;
   }
+  if (IsTypeRepresentableAsDouble(type) &&
+      IsTypeRepresentableAsDouble(newType)) {
+    return MIRType::Double;
+  }
+  return MIRType::Value;
 }
 
 bool MPhi::specializeType(TempAllocator& alloc) {
@@ -1984,7 +1976,7 @@ bool MPhi::specializeType(TempAllocator& alloc) {
 
   for (size_t i = 1; i < inputs_.length(); i++) {
     MDefinition* def = getOperand(i);
-    MergeTypes(&resultType, def->type());
+    resultType = MergeTypes(resultType, def->type());
   }
 
   setResultType(resultType);
@@ -2040,13 +2032,6 @@ bool MPhi::typeIncludes(MDefinition* def) {
   }
 
   return this->mightBeType(def->type());
-}
-
-MBox::MBox(TempAllocator& alloc, MDefinition* ins)
-    : MUnaryInstruction(classOpcode, ins) {
-  // TODO(no-TI): move to MIR.h
-  setResultType(MIRType::Value);
-  setMovable();
 }
 
 void MCall::addArg(size_t argnum, MDefinition* arg) {
@@ -2867,6 +2852,26 @@ bool MSub::fallible() const {
   return true;
 }
 
+MDefinition* MSub::foldsTo(TempAllocator& alloc) {
+  MDefinition* out = MBinaryArithInstruction::foldsTo(alloc);
+  if (out != this) {
+    return out;
+  }
+
+  if (type() != MIRType::Int32) {
+    return this;
+  }
+
+  // This optimization is only valid for Int32 values. Subtracting a floating
+  // point value from itself returns NaN when the operand is either Infinity
+  // or NaN.
+  if (lhs() == rhs()) {
+    return MConstant::New(alloc, Int32Value(0));
+  }
+
+  return this;
+}
+
 MDefinition* MMul::foldsTo(TempAllocator& alloc) {
   MDefinition* out = MBinaryArithInstruction::foldsTo(alloc);
   if (out != this) {
@@ -2937,21 +2942,12 @@ bool MUrsh::fallible() const {
   return !range() || !range()->hasInt32Bounds();
 }
 
-static bool SafelyCoercesToDouble(MDefinition* op) {
-  // Strings and symbols are unhandled -- visitToDouble() doesn't support
-  // them yet.
-  // Null is unhandled -- ToDouble(null) == 0, but (0 == null) is false.
-  return SimpleArithOperand(op) && !op->mightBeType(MIRType::Null);
-}
-
 MIRType MCompare::inputType() {
   switch (compareType_) {
     case Compare_Undefined:
       return MIRType::Undefined;
     case Compare_Null:
       return MIRType::Null;
-    case Compare_Boolean:
-      return MIRType::Boolean;
     case Compare_UInt32:
     case Compare_Int32:
     case Compare_Int32MaybeCoerceBoth:
@@ -2959,8 +2955,6 @@ MIRType MCompare::inputType() {
     case Compare_Int32MaybeCoerceRHS:
       return MIRType::Int32;
     case Compare_Double:
-    case Compare_DoubleMaybeCoerceLHS:
-    case Compare_DoubleMaybeCoerceRHS:
       return MIRType::Double;
     case Compare_Float32:
       return MIRType::Float32;
@@ -2972,7 +2966,6 @@ MIRType MCompare::inputType() {
     case Compare_Object:
       return MIRType::Object;
     case Compare_Unknown:
-    case Compare_Bitwise:
       return MIRType::Value;
     default:
       MOZ_CRASH("No known conversion");
@@ -3032,88 +3025,6 @@ void MBinaryInstruction::replaceWithUnsignedOperands() {
     getOperand(i)->setImplicitlyUsedUnchecked();
     replaceOperand(i, replace);
   }
-}
-
-MCompare::CompareType MCompare::determineCompareType(JSOp op, MDefinition* left,
-                                                     MDefinition* right) {
-  MIRType lhs = left->type();
-  MIRType rhs = right->type();
-
-  bool looseEq = IsLooseEqualityOp(op);
-  bool strictEq = IsStrictEqualityOp(op);
-  bool relationalEq = !(looseEq || strictEq);
-  MOZ_ASSERT(IsRelationalOp(op) == relationalEq);
-
-  // Comparisons on unsigned integers may be treated as UInt32.
-  if (unsignedOperands(left, right)) {
-    return Compare_UInt32;
-  }
-
-  // Integer to integer or boolean to boolean comparisons may be treated as
-  // Int32.
-  if ((lhs == MIRType::Int32 && rhs == MIRType::Int32) ||
-      (lhs == MIRType::Boolean && rhs == MIRType::Boolean)) {
-    return Compare_Int32MaybeCoerceBoth;
-  }
-
-  // Loose/relational cross-integer/boolean comparisons may be treated as Int32.
-  if (!strictEq && (lhs == MIRType::Int32 || lhs == MIRType::Boolean) &&
-      (rhs == MIRType::Int32 || rhs == MIRType::Boolean)) {
-    return Compare_Int32MaybeCoerceBoth;
-  }
-
-  // Numeric comparisons against a double coerce to double.
-  if (IsTypeRepresentableAsDouble(lhs) && IsTypeRepresentableAsDouble(rhs)) {
-    return Compare_Double;
-  }
-
-  // Any comparison is allowed except strict eq.
-  if (!strictEq && IsFloatingPointType(rhs) && SafelyCoercesToDouble(left)) {
-    return Compare_DoubleMaybeCoerceLHS;
-  }
-  if (!strictEq && IsFloatingPointType(lhs) && SafelyCoercesToDouble(right)) {
-    return Compare_DoubleMaybeCoerceRHS;
-  }
-
-  // Handle object comparison.
-  if (!relationalEq && lhs == MIRType::Object && rhs == MIRType::Object) {
-    return Compare_Object;
-  }
-
-  // Handle string comparisons.
-  if (lhs == MIRType::String && rhs == MIRType::String) {
-    return Compare_String;
-  }
-
-  // Handle symbol comparisons. (Relational compare will throw)
-  if (!relationalEq && lhs == MIRType::Symbol && rhs == MIRType::Symbol) {
-    return Compare_Symbol;
-  }
-
-  // Handle strict string compare.
-  if (strictEq && lhs == MIRType::String) {
-    return Compare_StrictString;
-  }
-  if (strictEq && rhs == MIRType::String) {
-    return Compare_StrictString;
-  }
-
-  // Handle compare with lhs or rhs being Undefined or Null.
-  if (!relationalEq && IsNullOrUndefined(lhs)) {
-    return (lhs == MIRType::Null) ? Compare_Null : Compare_Undefined;
-  }
-  if (!relationalEq && IsNullOrUndefined(rhs)) {
-    return (rhs == MIRType::Null) ? Compare_Null : Compare_Undefined;
-  }
-
-  // Handle strict comparison with lhs/rhs being typed Boolean.
-  if (strictEq && (lhs == MIRType::Boolean || rhs == MIRType::Boolean)) {
-    // bool/bool case got an int32 specialization earlier.
-    MOZ_ASSERT(!(lhs == MIRType::Boolean && rhs == MIRType::Boolean));
-    return Compare_Boolean;
-  }
-
-  return Compare_Unknown;
 }
 
 MDefinition* MBitNot::foldsTo(TempAllocator& alloc) {
@@ -3733,11 +3644,9 @@ bool MCompare::tryFoldEqualOperands(bool* result) {
       compareType_ == Compare_Int32MaybeCoerceLHS ||
       compareType_ == Compare_Int32MaybeCoerceRHS ||
       compareType_ == Compare_UInt32 || compareType_ == Compare_Double ||
-      compareType_ == Compare_DoubleMaybeCoerceLHS ||
-      compareType_ == Compare_DoubleMaybeCoerceRHS ||
       compareType_ == Compare_Float32 || compareType_ == Compare_String ||
       compareType_ == Compare_StrictString || compareType_ == Compare_Object ||
-      compareType_ == Compare_Bitwise || compareType_ == Compare_Symbol);
+      compareType_ == Compare_Symbol);
 
   if (isDoubleComparison() || isFloat32Comparison()) {
     if (!operandsAreNeverNaN()) {
@@ -5061,70 +4970,6 @@ MDefinition::AliasType MGetPropertyPolymorphic::mightAlias(
   return AliasType::NoAlias;
 }
 
-bool MGetPropertyPolymorphic::appendRoots(MRootList& roots) const {
-  if (!roots.append(name_)) {
-    return false;
-  }
-
-  for (const PolymorphicEntry& entry : receivers_) {
-    if (!entry.appendRoots(roots)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool MSetPropertyPolymorphic::appendRoots(MRootList& roots) const {
-  if (!roots.append(name_)) {
-    return false;
-  }
-
-  for (const PolymorphicEntry& entry : receivers_) {
-    if (!entry.appendRoots(roots)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool MGuardReceiverPolymorphic::appendRoots(MRootList& roots) const {
-  for (const ReceiverGuard& guard : receivers_) {
-    if (!roots.append(guard)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool MConstant::appendRoots(MRootList& roots) const {
-  switch (type()) {
-    case MIRType::String:
-      return roots.append(toString());
-    case MIRType::Symbol:
-      return roots.append(toSymbol());
-    case MIRType::BigInt:
-      return roots.append(toBigInt());
-    case MIRType::Object:
-      return roots.append(&toObject());
-    case MIRType::Undefined:
-    case MIRType::Null:
-    case MIRType::Boolean:
-    case MIRType::Int32:
-    case MIRType::Double:
-    case MIRType::Float32:
-    case MIRType::MagicOptimizedArguments:
-    case MIRType::MagicOptimizedOut:
-    case MIRType::MagicHole:
-    case MIRType::MagicIsConstructing:
-    case MIRType::MagicUninitializedLexical:
-      return true;
-    default:
-      MOZ_CRASH("Unexpected type");
-  }
-}
-
 MDefinition* MWasmUnsignedToDouble::foldsTo(TempAllocator& alloc) {
   if (input()->isConstant() && input()->type() == MIRType::Int32) {
     return MConstant::New(
@@ -5816,10 +5661,6 @@ MIonToWasmCall* MIonToWasmCall::New(TempAllocator& alloc,
     return nullptr;
   }
   return ins;
-}
-
-bool MIonToWasmCall::appendRoots(MRootList& roots) const {
-  return roots.append(instanceObj_);
 }
 
 #ifdef DEBUG

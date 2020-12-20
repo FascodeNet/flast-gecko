@@ -459,6 +459,13 @@ JS::ContextOptions& JS::ContextOptions::setWasmSimd(bool flag) {
   return *this;
 }
 
+JS::ContextOptions& JS::ContextOptions::setWasmSimdWormhole(bool flag) {
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+  wasmSimdWormhole_ = flag;
+#endif
+  return *this;
+}
+
 JS::ContextOptions& JS::ContextOptions::setWasmExceptions(bool flag) {
 #ifdef ENABLE_WASM_EXCEPTIONS
   wasmExceptions_ = flag;
@@ -508,6 +515,11 @@ JS_PUBLIC_API bool JS::InitSelfHostedCode(JSContext* cx) {
 
 JS_PUBLIC_API const char* JS_GetImplementationVersion(void) {
   return "JavaScript-C" MOZILLA_VERSION;
+}
+
+JS_PUBLIC_API void JS_SetDestroyZoneCallback(JSContext* cx,
+                                             JSDestroyZoneCallback callback) {
+  cx->runtime()->destroyZoneCallback = callback;
 }
 
 JS_PUBLIC_API void JS_SetDestroyCompartmentCallback(
@@ -1779,6 +1791,13 @@ JS::RealmCreationOptions& JS::RealmCreationOptions::setExistingCompartment(
 
 JS::RealmCreationOptions& JS::RealmCreationOptions::setNewCompartmentAndZone() {
   compSpec_ = CompartmentSpecifier::NewCompartmentAndZone;
+  comp_ = nullptr;
+  return *this;
+}
+
+JS::RealmCreationOptions&
+JS::RealmCreationOptions::setNewCompartmentInSelfHostingZone() {
+  compSpec_ = CompartmentSpecifier::NewCompartmentInSelfHostingZone;
   comp_ = nullptr;
   return *this;
 }

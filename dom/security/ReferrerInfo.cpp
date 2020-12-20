@@ -162,11 +162,8 @@ ReferrerPolicy ReferrerInfo::ReferrerPolicyFromHeaderString(
     const nsAString& aContent) {
   // Multiple headers could be concatenated into one comma-separated
   // list of policies. Need to tokenize the multiple headers.
-  nsCharSeparatedTokenizer tokenizer(aContent, ',');
-  nsAutoString token;
   ReferrerPolicyEnum referrerPolicy = ReferrerPolicy::_empty;
-  while (tokenizer.hasMoreTokens()) {
-    token = tokenizer.nextToken();
+  for (const auto& token : nsCharSeparatedTokenizer(aContent, ',').ToRange()) {
     if (token.IsEmpty()) {
       continue;
     }
@@ -1054,7 +1051,7 @@ ReferrerInfo::CreateFromOtherAndPolicyOverride(
                                   ? aPolicyOverride
                                   : aOther->ReferrerPolicy();
 
-  nsCOMPtr<nsIURI> referrer = aOther->GetOriginalReferrer();
+  nsCOMPtr<nsIURI> referrer = aOther->GetComputedReferrer();
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
       new ReferrerInfo(referrer, policy, aOther->GetSendReferrer());
   return referrerInfo.forget();

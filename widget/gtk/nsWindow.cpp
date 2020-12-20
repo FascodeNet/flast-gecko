@@ -21,6 +21,7 @@
 #include "mozilla/TouchEvents.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/WidgetUtils.h"
+#include "mozilla/X11Util.h"
 #include "mozilla/XREAppData.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/WheelEventBinding.h"
@@ -272,6 +273,13 @@ static SystemTimeConverter<guint32>& TimeConverter() {
 
 nsWindow::CSDSupportLevel nsWindow::sCSDSupportLevel = CSD_SUPPORT_UNKNOWN;
 bool nsWindow::sTransparentMainWindow = false;
+static bool sIgnoreChangedSettings = false;
+
+void nsWindow::WithSettingsChangesIgnored(const std::function<void()>& aFn) {
+  AutoRestore ar(sIgnoreChangedSettings);
+  sIgnoreChangedSettings = true;
+  aFn();
+}
 
 namespace mozilla {
 
@@ -1915,13 +1923,17 @@ static bool GetWindowManagerName(GdkWindow* gdk_window, nsACString& wmName) {
   if (!property || !req_type) {
     return false;
   }
-  result =
-      XGetWindowProperty(xdisplay, wmWindow, property,
-                         0L,         // offset
-                         INT32_MAX,  // length
-                         false,      // delete
-                         req_type, &actual_type_return, &actual_format_return,
-                         &nitems_return, &bytes_after_return, &prop_return);
+  {
+    // Suppress fatal errors for a missing window.
+    ScopedXErrorHandler handler;
+    result =
+        XGetWindowProperty(xdisplay, wmWindow, property,
+                           0L,         // offset
+                           INT32_MAX,  // length
+                           false,      // delete
+                           req_type, &actual_type_return, &actual_format_return,
+                           &nitems_return, &bytes_after_return, &prop_return);
+  }
 
   if (result != Success || bytes_after_return != 0) {
     return false;
@@ -4744,6 +4756,21 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                            G_CALLBACK(settings_changed_cb), this);
     g_signal_connect_after(default_settings, "notify::gtk-xft-dpi",
                            G_CALLBACK(settings_xft_dpi_changed_cb), this);
+    // For remote LookAndFeel, to refresh the content processes' copies:
+    g_signal_connect_after(default_settings, "notify::gtk-cursor-blink-time",
+                           G_CALLBACK(settings_changed_cb), this);
+    g_signal_connect_after(default_settings, "notify::gtk-cursor-blink",
+                           G_CALLBACK(settings_changed_cb), this);
+    g_signal_connect_after(default_settings,
+                           "notify::gtk-entry-select-on-focus",
+                           G_CALLBACK(settings_changed_cb), this);
+    g_signal_connect_after(default_settings,
+                           "notify::gtk-primary-button-warps-slider",
+                           G_CALLBACK(settings_changed_cb), this);
+    g_signal_connect_after(default_settings, "notify::gtk-menu-popup-delay",
+                           G_CALLBACK(settings_changed_cb), this);
+    g_signal_connect_after(default_settings, "notify::gtk-dnd-drag-threshold",
+                           G_CALLBACK(settings_changed_cb), this);
   }
 
   if (mContainer) {
@@ -6874,6 +6901,9 @@ static gboolean window_state_event_cb(GtkWidget* widget,
 
 static void settings_changed_cb(GtkSettings* settings, GParamSpec* pspec,
                                 nsWindow* data) {
+  if (sIgnoreChangedSettings) {
+    return;
+  }
   RefPtr<nsWindow> window = data;
   window->ThemeChanged();
 }
