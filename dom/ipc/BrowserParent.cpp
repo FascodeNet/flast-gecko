@@ -3154,17 +3154,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetPluginFocused(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserParent::RecvSetCandidateWindowForPlugin(
-    const CandidateWindowPosition& aPosition) {
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (!widget) {
-    return IPC_OK();
-  }
-
-  widget->SetCandidateWindowForPlugin(aPosition);
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserParent::RecvEnableIMEForPlugin(
     const bool& aEnable) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -3175,22 +3164,11 @@ mozilla::ipc::IPCResult BrowserParent::RecvEnableIMEForPlugin(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserParent::RecvDefaultProcOfPluginEvent(
-    const WidgetPluginEvent& aEvent) {
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (!widget) {
-    return IPC_OK();
-  }
-
-  widget->DefaultProcOfPluginEvent(aEvent);
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserParent::RecvGetInputContext(
     widget::IMEState* aState) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
-    *aState = widget::IMEState(IMEState::DISABLED,
+    *aState = widget::IMEState(IMEEnabled::Disabled,
                                IMEState::OPEN_STATE_NOT_SUPPORTED);
     return IPC_OK();
   }

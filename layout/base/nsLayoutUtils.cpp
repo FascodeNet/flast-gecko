@@ -1100,7 +1100,7 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
   // TODO: remove the uglyness, see bug 598468.
   NS_ASSERTION(gPreventAssertInCompareTreePosition || parent,
                "no common ancestor at all???");
-#endif  // DEBUG
+#endif            // DEBUG
   if (!parent) {  // different documents??
     return 0;
   }

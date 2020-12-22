@@ -378,6 +378,7 @@ class nsIWidget : public nsISupports {
   typedef mozilla::layers::PLayerTransactionChild PLayerTransactionChild;
   typedef mozilla::layers::ScrollableLayerGuid ScrollableLayerGuid;
   typedef mozilla::layers::ZoomConstraints ZoomConstraints;
+  typedef mozilla::widget::IMEEnabled IMEEnabled;
   typedef mozilla::widget::IMEMessage IMEMessage;
   typedef mozilla::widget::IMENotification IMENotification;
   typedef mozilla::widget::IMENotificationRequests IMENotificationRequests;
@@ -1859,25 +1860,6 @@ class nsIWidget : public nsISupports {
    * aFocused  Whether or not a plugin is focused
    */
   virtual void SetPluginFocused(bool& aFocused) = 0;
-
-  /*
-   * Tell the plugin has focus.  It is unnecessary to use IPC
-   */
-  bool PluginHasFocus() {
-    return GetInputContext().mIMEState.mEnabled == IMEState::PLUGIN;
-  }
-
-  /**
-   * Set IME candidate window position by windowless plugin.
-   */
-  virtual void SetCandidateWindowForPlugin(
-      const mozilla::widget::CandidateWindowPosition& aPosition) = 0;
-
-  /**
-   * Handle default action when PluginEvent isn't handled
-   */
-  virtual void DefaultProcOfPluginEvent(
-      const mozilla::WidgetPluginEvent& aEvent) = 0;
 
   /*
    * Enable or Disable IME by windowless plugin.

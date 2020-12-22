@@ -356,15 +356,10 @@ class nsWindow final : public nsWindowBase {
 
   const IMEContext& DefaultIMC() const { return mDefaultIMC; }
 
-  virtual void SetCandidateWindowForPlugin(
-      const mozilla::widget::CandidateWindowPosition& aPosition) override;
-  virtual void DefaultProcOfPluginEvent(
-      const mozilla::WidgetPluginEvent& aEvent) override;
   virtual void EnableIMEForPlugin(bool aEnable) override;
   virtual nsresult OnWindowedPluginKeyEvent(
       const mozilla::NativeEventData& aKeyEventData,
       nsIKeyEventInPluginCallback* aCallback) override;
-  void DispatchPluginSettingEvents();
 
   void GetCompositorWidgetInitData(
       mozilla::widget::CompositorWidgetInitData* aInitData) override;
@@ -448,7 +443,6 @@ class nsWindow final : public nsWindowBase {
                               LRESULT* aRetValue);
   bool ExternalHandlerProcessMessage(UINT aMessage, WPARAM& aWParam,
                                      LPARAM& aLParam, MSGResult& aResult);
-  bool ProcessMessageForPlugin(MSG aMsg, MSGResult& aResult);
   LRESULT ProcessCharMessage(const MSG& aMsg, bool* aEventDispatched);
   LRESULT ProcessKeyUpMessage(const MSG& aMsg, bool* aEventDispatched);
   LRESULT ProcessKeyDownMessage(const MSG& aMsg, bool* aEventDispatched);
