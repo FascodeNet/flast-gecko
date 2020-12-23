@@ -41,6 +41,7 @@
 #include "wasm/WasmInstance.h"
 
 #include "jit/MacroAssembler-inl.h"
+#include "vm/BytecodeUtil-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
@@ -3978,6 +3979,11 @@ AttachDecision SetPropIRGenerator::tryAttachSetTypedArrayElement(
     return AttachDecision::NoAction;
   }
 
+  // InitElem (DefineProperty) has to throw an exception on out-of-bounds.
+  if (handleOutOfBounds && IsPropertyInitOp(JSOp(*pc_))) {
+    return AttachDecision::NoAction;
+  }
+
   writer.guardShapeForClass(objId, tarr->shape());
 
   OperandId rhsValId = emitNumericGuard(rhsId, elementType);
@@ -4005,6 +4011,11 @@ AttachDecision SetPropIRGenerator::tryAttachSetTypedArrayElementNonInt32Index(
 
   // Don't attach if the input type doesn't match the guard added below.
   if (!ValueIsNumeric(elementType, rhsVal_)) {
+    return AttachDecision::NoAction;
+  }
+
+  // InitElem (DefineProperty) has to throw an exception on out-of-bounds.
+  if (IsPropertyInitOp(JSOp(*pc_))) {
     return AttachDecision::NoAction;
   }
 
@@ -9479,7 +9490,7 @@ AttachDecision CompareIRGenerator::tryAttachBigIntInt32(ValOperandId lhsId,
     Int32OperandId intId = createGuards(lhsVal_, lhsId);
     BigIntOperandId bigIntId = writer.guardToBigInt(rhsId);
 
-    writer.compareInt32BigIntResult(op_, intId, bigIntId);
+    writer.compareBigIntInt32Result(ReverseCompareOp(op_), bigIntId, intId);
   }
   writer.returnFromIC();
 
@@ -9507,7 +9518,7 @@ AttachDecision CompareIRGenerator::tryAttachBigIntNumber(ValOperandId lhsId,
     NumberOperandId numId = writer.guardIsNumber(lhsId);
     BigIntOperandId bigIntId = writer.guardToBigInt(rhsId);
 
-    writer.compareNumberBigIntResult(op_, numId, bigIntId);
+    writer.compareBigIntNumberResult(ReverseCompareOp(op_), bigIntId, numId);
   }
   writer.returnFromIC();
 
@@ -9535,7 +9546,7 @@ AttachDecision CompareIRGenerator::tryAttachBigIntString(ValOperandId lhsId,
     StringOperandId strId = writer.guardToString(lhsId);
     BigIntOperandId bigIntId = writer.guardToBigInt(rhsId);
 
-    writer.compareStringBigIntResult(op_, strId, bigIntId);
+    writer.compareBigIntStringResult(ReverseCompareOp(op_), bigIntId, strId);
   }
   writer.returnFromIC();
 

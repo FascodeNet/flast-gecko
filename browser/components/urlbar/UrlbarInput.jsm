@@ -945,6 +945,9 @@ class UrlbarInput {
       PartnerLinkAttribution.makeRequest({
         targetURL: result.payload.url,
         source: "urlbar",
+        campaignID: Services.prefs.getStringPref(
+          "browser.partnerlink.campaign.topsites"
+        ),
       });
     }
 
@@ -2138,18 +2141,7 @@ class UrlbarInput {
    *   The url this query was triggered with.
    */
   _recordSearch(engine, event, searchActionDetails = {}) {
-    const isOneOff = this.view.oneOffSearchButtons.maybeRecordTelemetry(event);
-    // Infer the type of the event which triggered the search.
-    let eventType = "unknown";
-    if (event instanceof KeyboardEvent) {
-      eventType = "key";
-    } else if (event instanceof MouseEvent) {
-      eventType = "mouse";
-    }
-    // Augment the search action details object.
-    let details = searchActionDetails;
-    details.isOneOff = isOneOff;
-    details.type = eventType;
+    const isOneOff = this.view.oneOffSearchButtons.eventTargetIsAOneOff(event);
 
     BrowserSearchTelemetry.recordSearch(
       this.window.gBrowser,
@@ -2160,7 +2152,7 @@ class UrlbarInput {
       // necessary; the intent is the same regardless of whether the user is
       // in search mode when they do a key-modified click/enter on a one-off.
       this.searchMode && !isOneOff ? "urlbar-searchmode" : "urlbar",
-      details
+      { ...searchActionDetails, isOneOff }
     );
   }
 

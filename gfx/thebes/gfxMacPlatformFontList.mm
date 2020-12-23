@@ -979,6 +979,8 @@ nsresult gfxMacPlatformFontList::InitFontListForPlatform() {
 }
 
 void gfxMacPlatformFontList::InitSharedFontListForPlatform() {
+  nsAutoreleasePool localPool;
+
   InitSystemFontNames();
   if (XRE_IsParentProcess()) {
     CFArrayRef familyNames = CTFontManagerCopyAvailableFontFamilyNames();
@@ -1500,6 +1502,9 @@ bool gfxMacPlatformFontList::FindAndAddFamilies(mozilla::StyleGenericFontFamily 
 void gfxMacPlatformFontList::LookupSystemFont(LookAndFeel::FontID aSystemFontID,
                                               nsACString& aSystemFontName,
                                               gfxFontStyle& aFontStyle) {
+  // Provide a local pool because we may be called from stylo threads.
+  nsAutoreleasePool localPool;
+
   // code moved here from widget/cocoa/nsLookAndFeel.mm
   NSFont* font = nullptr;
   char* systemFontName = nullptr;

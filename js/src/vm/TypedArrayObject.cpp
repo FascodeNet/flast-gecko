@@ -947,8 +947,6 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
   static bool setElement(JSContext* cx, Handle<TypedArrayObject*> obj,
                          uint64_t index, HandleValue v, ObjectOpResult& result);
-  static bool defineElement(JSContext* cx, HandleObject obj, uint64_t index,
-                            HandleValue v, ObjectOpResult& result);
 };
 
 template <typename NativeType>
@@ -1001,67 +999,30 @@ bool TypedArrayObjectTemplate<uint64_t>::convertValue(JSContext* cx,
 }
 
 // https://tc39.github.io/proposal-bigint/#sec-integerindexedelementset
-// 7.8 IntegerIndexedElementSet ( O, index, value )
+// 9.4.5.11 IntegerIndexedElementSet ( O, index, value )
 template <typename NativeType>
 /* static */ bool TypedArrayObjectTemplate<NativeType>::setElement(
     JSContext* cx, Handle<TypedArrayObject*> obj, uint64_t index, HandleValue v,
     ObjectOpResult& result) {
-  // Steps 1-2 are enforced by the caller.
+  MOZ_ASSERT(!obj->hasDetachedBuffer());
+  MOZ_ASSERT(index < obj->length().get());
 
-  // Steps 3-6.
+  // Step 1 is enforced by the caller.
+
+  // Steps 2-3.
   NativeType nativeValue;
   if (!convertValue(cx, v, &nativeValue)) {
     return false;
   }
 
-  // Step 8.
-  if (obj->hasDetachedBuffer()) {
-    return result.failSoft(JSMSG_TYPED_ARRAY_DETACHED);
+  // Step 4.
+  if (index < obj->length().get()) {
+    MOZ_ASSERT(!obj->hasDetachedBuffer(),
+               "detaching an array buffer sets the length to zero");
+    TypedArrayObjectTemplate<NativeType>::setIndex(*obj, index, nativeValue);
   }
 
-  // Steps 9-10 are enforced by the caller.
-
-  // Step 11.
-  size_t length = obj->length().get();
-
-  // Step 12.
-  if (index >= length) {
-    return result.failSoft(JSMSG_BAD_INDEX);
-  }
-
-  // Steps 7, 13-16.
-  TypedArrayObjectTemplate<NativeType>::setIndex(*obj, index, nativeValue);
-
-  // Step 17.
-  return result.succeed();
-}
-
-// Version of IntegerIndexedElementSet with no length check, used in
-// [[DefineOwnProperty]]
-template <typename NativeType>
-/* static */ bool TypedArrayObjectTemplate<NativeType>::defineElement(
-    JSContext* cx, HandleObject obj, uint64_t index, HandleValue v,
-    ObjectOpResult& result) {
-  // Steps 1-2 are enforced by the caller.
-
-  // Steps 3-6.
-  NativeType nativeValue;
-  if (!convertValue(cx, v, &nativeValue)) {
-    return false;
-  }
-
-  // Step 8.
-  if (obj->as<TypedArrayObject>().hasDetachedBuffer()) {
-    return result.fail(JSMSG_TYPED_ARRAY_DETACHED);
-  }
-
-  // Steps 9-12 are enforced by the caller.
-
-  // Steps 7, 13-16.
-  TypedArrayObjectTemplate<NativeType>::setIndex(obj->as<TypedArrayObject>(),
-                                                 index, nativeValue);
-
-  // Step 17.
+  // Step 5.
   return result.succeed();
 }
 
@@ -2472,54 +2433,49 @@ bool js::SetTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
   MOZ_CRASH("Unsupported TypedArray type");
 }
 
-/* ES6 draft rev 34 (2015 Feb 20) 9.4.5.3 [[DefineOwnProperty]] step 3.c. */
-bool js::DefineTypedArrayElement(JSContext* cx, HandleObject obj,
+// ES2021 draft rev b3f9b5089bcc3ddd8486379015cd11eb1427a5eb
+// 9.4.5.3 [[DefineOwnProperty]], step 3.b.
+bool js::DefineTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
                                  uint64_t index,
                                  Handle<PropertyDescriptor> desc,
                                  ObjectOpResult& result) {
-  MOZ_ASSERT(obj->is<TypedArrayObject>());
-
   // These are all substeps of 3.b.
 
-  // Steps i-iii are handled by the caller.
-
-  // Steps iv-v.
-  // We (wrongly) ignore out of range defines with a value.
-  if (index >= obj->as<TypedArrayObject>().length().get()) {
-    if (obj->as<TypedArrayObject>().hasDetachedBuffer()) {
-      return result.failSoft(JSMSG_TYPED_ARRAY_DETACHED);
+  // Step i.
+  if (index >= obj->length().get()) {
+    if (obj->hasDetachedBuffer()) {
+      return result.fail(JSMSG_TYPED_ARRAY_DETACHED);
     }
-    return result.failSoft(JSMSG_BAD_INDEX);
+    return result.fail(JSMSG_DEFINE_BAD_INDEX);
   }
 
-  // Step vi.
+  // Step ii.
   if (desc.isAccessorDescriptor()) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
-  // Step vii.
-  if (desc.hasConfigurable() && desc.configurable()) {
+  // Step iii.
+  if (desc.hasConfigurable() && !desc.configurable()) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
-  // Step viii.
+  // Step iv.
   if (desc.hasEnumerable() && !desc.enumerable()) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
-  // Step ix.
+  // Step v.
   if (desc.hasWritable() && !desc.writable()) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
-  // Step x.
+  // Step vi.
   if (desc.hasValue()) {
-    TypedArrayObject* tobj = &obj->as<TypedArrayObject>();
-    switch (tobj->type()) {
-#define DEFINE_TYPED_ARRAY_ELEMENT(T, N)                              \
-  case Scalar::N:                                                     \
-    return TypedArrayObjectTemplate<T>::defineElement(cx, obj, index, \
-                                                      desc.value(), result);
+    switch (obj->type()) {
+#define DEFINE_TYPED_ARRAY_ELEMENT(T, N)                           \
+  case Scalar::N:                                                  \
+    return TypedArrayObjectTemplate<T>::setElement(cx, obj, index, \
+                                                   desc.value(), result);
       JS_FOR_EACH_TYPED_ARRAY(DEFINE_TYPED_ARRAY_ELEMENT)
 #undef DEFINE_TYPED_ARRAY_ELEMENT
       case Scalar::MaxTypedArrayViewType:
@@ -2531,7 +2487,7 @@ bool js::DefineTypedArrayElement(JSContext* cx, HandleObject obj,
     MOZ_CRASH("Unsupported TypedArray type");
   }
 
-  // Step xii.
+  // Step vii.
   return result.succeed();
 }
 

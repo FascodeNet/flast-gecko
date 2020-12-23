@@ -107,6 +107,10 @@
         "resource://gre/modules/FormHistory.jsm",
         {}
       ).FormHistory;
+      this.SearchSuggestionController = ChromeUtils.import(
+        "resource://gre/modules/SearchSuggestionController.jsm",
+        {}
+      ).SearchSuggestionController;
 
       Services.obs.addObserver(this.observer, "browser-search-engine-modified");
       Services.obs.addObserver(this.observer, "browser-search-service");
@@ -347,7 +351,7 @@
       let textValue = textBox.value;
 
       let selectedIndex = this.telemetrySelectedIndex;
-      let oneOffRecorded = false;
+      let isOneOff = false;
 
       BrowserSearchTelemetry.recordSearchSuggestionSelectionMethod(
         aEvent,
@@ -356,36 +360,9 @@
       );
 
       if (selectedIndex == -1) {
-        oneOffRecorded = this.textbox.popup.oneOffButtons.maybeRecordTelemetry(
+        isOneOff = this.textbox.popup.oneOffButtons.eventTargetIsAOneOff(
           aEvent
         );
-        if (!oneOffRecorded) {
-          let source = "unknown";
-          let type = "unknown";
-          let target = aEvent.originalTarget;
-          if (aEvent instanceof KeyboardEvent) {
-            type = "key";
-          } else if (aEvent instanceof MouseEvent) {
-            type = "mouse";
-            if (
-              target.classList.contains("search-panel-header") ||
-              target.parentNode.classList.contains("search-panel-header")
-            ) {
-              source = "header";
-            }
-          } else if (aEvent instanceof XULCommandEvent) {
-            if (target.getAttribute("anonid") == "paste-and-search") {
-              source = "paste";
-            }
-          }
-          if (!aEngine) {
-            aEngine = this.currentEngine;
-          }
-          BrowserSearchTelemetry.recordSearch(gBrowser, aEngine, source, {
-            type,
-            isOneOff: true,
-          });
-        }
       }
 
       if (aWhere === "tab" && !!aParams.inBackground) {
@@ -401,10 +378,10 @@
       }
 
       // This is a one-off search only if oneOffRecorded is true.
-      this.doSearch(textValue, aWhere, aEngine, aParams, oneOffRecorded);
+      this.doSearch(textValue, aWhere, aEngine, aParams, isOneOff);
     }
 
-    doSearch(aData, aWhere, aEngine, aParams, aOneOff) {
+    doSearch(aData, aWhere, aEngine, aParams, isOneOff = false) {
       let textBox = this._textbox;
       let engine = aEngine || this.currentEngine;
 
@@ -412,7 +389,9 @@
       if (
         aData &&
         !PrivateBrowsingUtils.isWindowPrivate(window) &&
-        this.FormHistory.enabled
+        this.FormHistory.enabled &&
+        aData.length <=
+          this.SearchSuggestionController.SEARCH_HISTORY_MAX_VALUE_LENGTH
       ) {
         this.FormHistory.update(
           {
@@ -435,8 +414,8 @@
 
       // If we hit here, we come either from a one-off, a plain search or a suggestion.
       const details = {
-        isOneOff: aOneOff,
-        isSuggestion: !aOneOff && this.telemetrySelectedIndex != -1,
+        isOneOff,
+        isSuggestion: !isOneOff && this.telemetrySelectedIndex != -1,
         url: submission.uri,
       };
 

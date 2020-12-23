@@ -1562,12 +1562,13 @@ bool js::NativeDefineProperty(JSContext* cx, HandleNativeObject obj,
     }
   } else if (obj->is<TypedArrayObject>()) {
     // 9.4.5.3 step 3. Indexed properties of typed arrays are special.
+    Rooted<TypedArrayObject*> tobj(cx, &obj->as<TypedArrayObject>());
     mozilla::Maybe<uint64_t> index;
     JS_TRY_VAR_OR_RETURN_FALSE(cx, index, IsTypedArrayIndex(cx, id));
 
     if (index) {
       MOZ_ASSERT(!cx->isHelperThreadContext());
-      return DefineTypedArrayElement(cx, obj, index.value(), desc_, result);
+      return DefineTypedArrayElement(cx, tobj, index.value(), desc_, result);
     }
   } else if (obj->is<ArgumentsObject>()) {
     Rooted<ArgumentsObject*> argsobj(cx, &obj->as<ArgumentsObject>());
@@ -1890,24 +1891,21 @@ static bool DefineNonexistentProperty(JSContext* cx, HandleNativeObject obj,
       // means any absent indexed property must be out of range.
       MOZ_ASSERT(index.value() >= obj->as<TypedArrayObject>().length().get());
 
-      // Steps 1-2 are enforced by the caller.
+      // The following steps refer to 9.4.5.11 IntegerIndexedElementSet.
 
-      // Step 3.
+      // Step 1 is enforced by the caller.
+
+      // Steps 2-3.
       // We still need to call ToNumber or ToBigInt, because of its
       // possible side effects.
       if (!obj->as<TypedArrayObject>().convertForSideEffect(cx, v)) {
         return false;
       }
 
-      // Steps 4-5.
-      // ToNumber may have detached the array buffer.
-      if (obj->as<TypedArrayObject>().hasDetachedBuffer()) {
-        return result.failSoft(JSMSG_TYPED_ARRAY_DETACHED);
-      }
+      // Step 4 (nothing to do, the index is out of range).
 
-      // Steps 6-9.
-      // We (wrongly) ignore out of range defines.
-      return result.failSoft(JSMSG_BAD_INDEX);
+      // Step 5.
+      return result.succeed();
     }
   } else if (obj->is<ArgumentsObject>()) {
     // If this method is called with either |length| or |@@iterator|, the
@@ -2670,6 +2668,12 @@ bool js::NativeSetProperty(JSContext* cx, HandleNativeObject obj, HandleId id,
   // This loop isn't explicit in the spec algorithm. See the comment on step
   // 4.c.i below. (There's a very similar loop in the NativeGetProperty
   // implementation, but unfortunately not similar enough to common up.)
+  //
+  // We're intentionally not spec-compliant for TypedArrays:
+  // When |pobj| is a TypedArray and |id| is a TypedArray index, we should
+  // ignore |receiver| and instead always try to set the property on |pobj|.
+  // Bug 1502889 showed that this behavior isn't web-compatible. This issue is
+  // also reported at <https://github.com/tc39/ecma262/issues/1541>.
   for (;;) {
     // Steps 2-3. ('done' is a SpiderMonkey-specific thing, used below.)
     bool done;
@@ -2770,6 +2774,11 @@ bool js::NativeDeleteProperty(JSContext* cx, HandleNativeObject obj,
     return result.failCantDelete();
   }
 
+  // Typed array elements are configurable, but can't be deleted.
+  if (prop.isTypedArrayElement()) {
+    return result.failCantDelete();
+  }
+
   if (!CallJSDeletePropertyOp(cx, obj->getClass()->getDelProperty(), obj, id,
                               result)) {
     return false;
@@ -2777,9 +2786,6 @@ bool js::NativeDeleteProperty(JSContext* cx, HandleNativeObject obj,
   if (!result) {
     return true;
   }
-
-  // Typed array elements are non-configurable.
-  MOZ_ASSERT(!prop.isTypedArrayElement());
 
   // Step 5.
   if (prop.isDenseElement()) {

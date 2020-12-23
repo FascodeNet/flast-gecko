@@ -6643,7 +6643,10 @@ nsresult nsDocShell::CreateAboutBlankContentViewer(
 
   if (docFactory) {
     nsCOMPtr<nsIPrincipal> principal, partitionedPrincipal;
-    uint32_t sandboxFlags = mBrowsingContext->GetSandboxFlags();
+    const uint32_t sandboxFlags =
+        mBrowsingContext->GetHasLoadedNonInitialDocument()
+            ? mBrowsingContext->GetSandboxFlags()
+            : mBrowsingContext->GetInitialSandboxFlags();
     // If we're sandboxed, then create a new null principal. We skip
     // this if we're being created from WindowGlobalChild, since in
     // that case we already have a null principal if required.
@@ -10396,11 +10399,6 @@ nsresult nsDocShell::OpenInitializedChannel(nsIChannel* aChannel,
 
   rv = aURILoader->OpenURI(aChannel, aOpenFlags, this);
   NS_ENSURE_SUCCESS(rv, rv);
-
-  // We're about to load a new page and it may take time before necko
-  // gives back any data, so main thread might have a chance to process a
-  // collector slice
-  nsJSContext::MaybeRunNextCollectorSlice(this, JS::GCReason::DOCSHELL);
 
   // Success.  Keep the initial ClientSource if it exists.
   cleanupInitialClient.release();

@@ -820,9 +820,6 @@ pref("browser.preferences.exposeHTTPSOnly", true);
 
 pref("browser.proton.enabled", false);
 
-pref("browser.download.show_plugins_in_list", true);
-pref("browser.download.hide_plugins_without_extensions", true);
-
 // Backspace and Shift+Backspace behavior
 // 0 goes Back/Forward
 // 1 act like PgUp/PgDown
@@ -1346,7 +1343,10 @@ pref("prompts.defaultModalType", 3);
 
 pref("browser.topsites.useRemoteSetting", false);
 
-pref("browser.partnerlink.attributionURL", "https://topsites.services.mozilla.com/cid/amzn_2020_a1");
+// The base URL for the Quick Suggest anonymizing proxy. To make a request to
+// the proxy, include a campaign ID in the path.
+pref("browser.partnerlink.attributionURL", "https://topsites.services.mozilla.com/cid/");
+pref("browser.partnerlink.campaign.topsites", "amzn_2020_a1");
 
 // Whether to show tab level system prompts opened via nsIPrompt(Service) as
 // SubDialogs in the TabDialogBox (true) or as TabModalPrompt in the

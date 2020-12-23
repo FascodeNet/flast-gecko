@@ -1313,6 +1313,17 @@ static void TestControlledChunkManagerWithLocalLimit() {
   printf("TestControlledChunkManagerWithLocalLimit done\n");
 }
 
+#  define VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(                         \
+      aProfileChunkedBuffer, aStart, aEnd, aPushed, aCleared, aFailed)        \
+    {                                                                         \
+      ProfileChunkedBuffer::State state = (aProfileChunkedBuffer).GetState(); \
+      MOZ_RELEASE_ASSERT(state.mRangeStart == (aStart));                      \
+      MOZ_RELEASE_ASSERT(state.mRangeEnd == (aEnd));                          \
+      MOZ_RELEASE_ASSERT(state.mPushedBlockCount == (aPushed));               \
+      MOZ_RELEASE_ASSERT(state.mClearedBlockCount == (aCleared));             \
+      MOZ_RELEASE_ASSERT(state.mFailedPutBytes == (aFailed));                 \
+    }
+
 static void TestChunkedBuffer() {
   printf("TestChunkedBuffer...\n");
 
@@ -1325,6 +1336,8 @@ static void TestChunkedBuffer() {
 
   MOZ_RELEASE_ASSERT(cb.BufferLength().isNothing());
 
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
+
   int result = 0;
   result = cb.ReserveAndPut(
       []() {
@@ -1333,20 +1346,25 @@ static void TestChunkedBuffer() {
       },
       [](Maybe<ProfileBufferEntryWriter>& aEW) { return aEW ? 2 : 3; });
   MOZ_RELEASE_ASSERT(result == 3);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   result = 0;
   result = cb.Put(
       1, [](Maybe<ProfileBufferEntryWriter>& aEW) { return aEW ? 1 : 2; });
   MOZ_RELEASE_ASSERT(result == 2);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   blockIndex = cb.PutFrom(&result, 1);
   MOZ_RELEASE_ASSERT(!blockIndex);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   blockIndex = cb.PutObjects(123, result, "hello");
   MOZ_RELEASE_ASSERT(!blockIndex);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   blockIndex = cb.PutObject(123);
   MOZ_RELEASE_ASSERT(!blockIndex);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   auto chunks = cb.GetAllChunks();
   static_assert(std::is_same_v<decltype(chunks), UniquePtr<ProfileBufferChunk>>,
@@ -1380,6 +1398,7 @@ static void TestChunkedBuffer() {
   constexpr ProfileChunkedBuffer::Length chunkMinSize = 128;
   ProfileBufferChunkManagerWithLocalLimit cm(bufferMaxSize, chunkMinSize);
   cb.SetChunkManager(cm);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   // Let the chunk manager fulfill the initial request for an extra chunk.
   cm.FulfillChunkRequests();
@@ -1387,6 +1406,7 @@ static void TestChunkedBuffer() {
   MOZ_RELEASE_ASSERT(cm.MaxTotalSize() == bufferMaxSize);
   MOZ_RELEASE_ASSERT(cb.BufferLength().isSome());
   MOZ_RELEASE_ASSERT(*cb.BufferLength() == bufferMaxSize);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1, 1, 0, 0, 0);
 
   // Write an int with the main `ReserveAndPut` function.
   const int test = 123;
@@ -1408,6 +1428,8 @@ static void TestChunkedBuffer() {
   MOZ_RELEASE_ASSERT(ran);
   MOZ_RELEASE_ASSERT(success);
   MOZ_RELEASE_ASSERT(blockIndex.ConvertToProfileBufferIndex() == 1);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cb, 1, 1 + ULEB128Size(sizeof(test)) + sizeof(test), 1, 0, 0);
 
   ran = false;
   result = 0;
@@ -1504,6 +1526,10 @@ static void TestChunkedBuffer() {
   MOZ_RELEASE_ASSERT(result == 6);
   MOZ_RELEASE_ASSERT(read == 1);
 
+  // No changes after reads.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cb, 1, 1 + ULEB128Size(sizeof(test)) + sizeof(test), 1, 0, 0);
+
   // Steal the underlying ProfileBufferChunks from the ProfileChunkedBuffer.
   chunks = cb.GetAllChunks();
   MOZ_RELEASE_ASSERT(!!chunks, "Expected at least one chunk");
@@ -1514,6 +1540,10 @@ static void TestChunkedBuffer() {
   MOZ_RELEASE_ASSERT(chunks->RangeStart() == 1);
   MOZ_RELEASE_ASSERT(chunks->OffsetFirstBlock() == 0);
   MOZ_RELEASE_ASSERT(chunks->OffsetPastLastBlock() == 1 + sizeof(test));
+
+  // GetAllChunks() should have advanced the index one full chunk forward.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1 + chunkActualSize,
+                                             1 + chunkActualSize, 1, 0, 0);
 
   // Nothing more to read from the now-empty ProfileChunkedBuffer.
   cb.ReadEach([](ProfileBufferEntryReader&) { MOZ_RELEASE_ASSERT(false); });
@@ -1541,6 +1571,10 @@ static void TestChunkedBuffer() {
       });
   MOZ_RELEASE_ASSERT(read == 1);
 
+  // No changes after reads.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, 1 + chunkActualSize,
+                                             1 + chunkActualSize, 1, 0, 0);
+
   // Write lots of numbers (by memcpy), which should trigger Chunk destructions.
   ProfileBufferBlockIndex firstBlockIndex;
   MOZ_RELEASE_ASSERT(!firstBlockIndex);
@@ -1557,6 +1591,17 @@ static void TestChunkedBuffer() {
     MOZ_RELEASE_ASSERT(blockIndex > lastBlockIndex);
     lastBlockIndex = blockIndex;
   }
+
+  ProfileChunkedBuffer::State stateAfterPuts = cb.GetState();
+  ProfileBufferIndex startAfterPuts = stateAfterPuts.mRangeStart;
+  MOZ_RELEASE_ASSERT(startAfterPuts > 1 + chunkActualSize);
+  ProfileBufferIndex endAfterPuts = stateAfterPuts.mRangeEnd;
+  MOZ_RELEASE_ASSERT(endAfterPuts > startAfterPuts);
+  uint64_t pushedAfterPuts = stateAfterPuts.mPushedBlockCount;
+  MOZ_RELEASE_ASSERT(pushedAfterPuts > 0);
+  uint64_t clearedAfterPuts = stateAfterPuts.mClearedBlockCount;
+  MOZ_RELEASE_ASSERT(clearedAfterPuts > 0);
+  MOZ_RELEASE_ASSERT(stateAfterPuts.mFailedPutBytes == 0);
 
   // Read extant numbers, which should at least follow each other.
   read = 0;
@@ -1630,6 +1675,10 @@ static void TestChunkedBuffer() {
   } while (blockIndex);
   MOZ_RELEASE_ASSERT(read > 1);
 
+  // No changes after reads.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cb, startAfterPuts, endAfterPuts, pushedAfterPuts, clearedAfterPuts, 0);
+
 #  ifdef DEBUG
   // cb.Dump();
 #  endif
@@ -1639,6 +1688,15 @@ static void TestChunkedBuffer() {
 #  ifdef DEBUG
   // cb.Dump();
 #  endif
+
+  ProfileChunkedBuffer::State stateAfterClear = cb.GetState();
+  ProfileBufferIndex startAfterClear = stateAfterClear.mRangeStart;
+  MOZ_RELEASE_ASSERT(startAfterClear > startAfterPuts);
+  ProfileBufferIndex endAfterClear = stateAfterClear.mRangeEnd;
+  MOZ_RELEASE_ASSERT(endAfterClear == startAfterClear);
+  MOZ_RELEASE_ASSERT(stateAfterClear.mPushedBlockCount == 0);
+  MOZ_RELEASE_ASSERT(stateAfterClear.mClearedBlockCount == 0);
+  MOZ_RELEASE_ASSERT(stateAfterClear.mFailedPutBytes == 0);
 
   // Start writer threads.
   constexpr int ThreadCount = 32;
@@ -1679,8 +1737,26 @@ static void TestChunkedBuffer() {
   // cb.Dump();
 #  endif
 
+  ProfileChunkedBuffer::State stateAfterMTPuts = cb.GetState();
+  ProfileBufferIndex startAfterMTPuts = stateAfterMTPuts.mRangeStart;
+  MOZ_RELEASE_ASSERT(startAfterMTPuts > startAfterClear);
+  ProfileBufferIndex endAfterMTPuts = stateAfterMTPuts.mRangeEnd;
+  MOZ_RELEASE_ASSERT(endAfterMTPuts > startAfterMTPuts);
+  MOZ_RELEASE_ASSERT(stateAfterMTPuts.mPushedBlockCount > 0);
+  MOZ_RELEASE_ASSERT(stateAfterMTPuts.mClearedBlockCount > 0);
+  MOZ_RELEASE_ASSERT(stateAfterMTPuts.mFailedPutBytes == 0);
+
   // Reset to out-of-session.
   cb.ResetChunkManager();
+
+  ProfileChunkedBuffer::State stateAfterReset = cb.GetState();
+  ProfileBufferIndex startAfterReset = stateAfterReset.mRangeStart;
+  MOZ_RELEASE_ASSERT(startAfterReset == endAfterMTPuts);
+  ProfileBufferIndex endAfterReset = stateAfterReset.mRangeEnd;
+  MOZ_RELEASE_ASSERT(endAfterReset == startAfterReset);
+  MOZ_RELEASE_ASSERT(stateAfterReset.mPushedBlockCount == 0);
+  MOZ_RELEASE_ASSERT(stateAfterReset.mClearedBlockCount == 0);
+  MOZ_RELEASE_ASSERT(stateAfterReset.mFailedPutBytes == 0);
 
   success = cb.ReserveAndPut(
       []() {
@@ -1689,30 +1765,46 @@ static void TestChunkedBuffer() {
       },
       [](Maybe<ProfileBufferEntryWriter>& aEW) { return !!aEW; });
   MOZ_RELEASE_ASSERT(!success);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   success =
       cb.Put(1, [](Maybe<ProfileBufferEntryWriter>& aEW) { return !!aEW; });
   MOZ_RELEASE_ASSERT(!success);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   blockIndex = cb.PutFrom(&success, 1);
   MOZ_RELEASE_ASSERT(!blockIndex);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   blockIndex = cb.PutObjects(123, success, "hello");
   MOZ_RELEASE_ASSERT(!blockIndex);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   blockIndex = cb.PutObject(123);
   MOZ_RELEASE_ASSERT(!blockIndex);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   chunks = cb.GetAllChunks();
   MOZ_RELEASE_ASSERT(!chunks, "Expected no chunks when out-of-session");
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   cb.ReadEach([](ProfileBufferEntryReader&) { MOZ_RELEASE_ASSERT(false); });
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   success = cb.ReadAt(nullptr, [](Maybe<ProfileBufferEntryReader>&& er) {
     MOZ_RELEASE_ASSERT(er.isNothing());
     return true;
   });
   MOZ_RELEASE_ASSERT(success);
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cb, startAfterReset, endAfterReset,
+                                             0, 0, 0);
 
   printf("TestChunkedBuffer done\n");
 }
@@ -1730,44 +1822,66 @@ static void TestChunkedBufferSingle() {
       MakeUnique<ProfileBufferChunkManagerSingle>(chunkMinSize));
 
   MOZ_RELEASE_ASSERT(cbSingle.BufferLength().isSome());
-  MOZ_RELEASE_ASSERT(*cbSingle.BufferLength() >= chunkMinSize);
+  const ProfileChunkedBuffer::Length bufferBytes = *cbSingle.BufferLength();
+  MOZ_RELEASE_ASSERT(bufferBytes >= chunkMinSize);
 
-  // Write lots of numbers (as objects), which should trigger the release of our
-  // single Chunk.
-  size_t firstIndexToFail = 0;
-  ProfileBufferBlockIndex lastBlockIndex;
-  for (size_t i = 1; i < 3 * chunkMinSize / (1 + sizeof(int)); ++i) {
-    ProfileBufferBlockIndex blockIndex = cbSingle.PutObject(i);
-    if (blockIndex) {
-      MOZ_RELEASE_ASSERT(
-          firstIndexToFail == 0,
-          "We should successfully write after we have failed once");
-      lastBlockIndex = blockIndex;
-    } else if (firstIndexToFail == 0) {
-      firstIndexToFail = i;
-    }
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cbSingle, 1, 1, 0, 0, 0);
+
+  // We will write this many blocks to fill the chunk.
+  constexpr size_t testBlocks = 4;
+  const ProfileChunkedBuffer::Length blockBytes = bufferBytes / testBlocks;
+  MOZ_RELEASE_ASSERT(ULEB128Size(blockBytes) == 1,
+                     "This test assumes block sizes are small enough so that "
+                     "their ULEB128-encoded size is 1 byte");
+  const ProfileChunkedBuffer::Length entryBytes =
+      blockBytes - ULEB128Size(blockBytes);
+
+  // First buffer-filling test: Try to write a too-big entry at the end of the
+  // chunk.
+
+  // Write all but one block.
+  for (size_t i = 0; i < testBlocks - 1; ++i) {
+    cbSingle.Put(entryBytes, [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+      MOZ_RELEASE_ASSERT(aEW.isSome());
+      while (aEW->RemainingBytes() > 0) {
+        **aEW = '0' + i;
+        ++(*aEW);
+      }
+    });
+    VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+        cbSingle, 1, 1 + blockBytes * (i + 1), i + 1, 0, 0);
   }
-  MOZ_RELEASE_ASSERT(firstIndexToFail != 0,
-                     "There should be at least one failure");
-  MOZ_RELEASE_ASSERT(firstIndexToFail != 1, "We shouldn't fail from the start");
-  MOZ_RELEASE_ASSERT(!!lastBlockIndex, "We shouldn't fail from the start");
 
-  // Read extant numbers, which should go from 1 to firstIndexToFail-1.
+  // Write the last block so that it's too big (by 1 byte) to fit in the chunk,
+  // this should fail.
+  const ProfileChunkedBuffer::Length remainingBytesForLastBlock =
+      bufferBytes - blockBytes * (testBlocks - 1);
+  MOZ_RELEASE_ASSERT(ULEB128Size(remainingBytesForLastBlock) == 1,
+                     "This test assumes block sizes are small enough so that "
+                     "their ULEB128-encoded size is 1 byte");
+  const ProfileChunkedBuffer::Length entryToFitRemainingBytes =
+      remainingBytesForLastBlock - ULEB128Size(remainingBytesForLastBlock);
+  cbSingle.Put(entryToFitRemainingBytes + 1,
+               [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+                 MOZ_RELEASE_ASSERT(aEW.isNothing());
+               });
+  // The buffer state should not have changed, apart from the failed bytes.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cbSingle, 1, 1 + blockBytes * (testBlocks - 1), testBlocks - 1, 0,
+      remainingBytesForLastBlock + 1);
+
   size_t read = 0;
-  cbSingle.ReadEach(
-      [&](ProfileBufferEntryReader& er, ProfileBufferBlockIndex blockIndex) {
-        ++read;
-        MOZ_RELEASE_ASSERT(er.RemainingBytes() == sizeof(size_t));
-        const auto value = er.ReadObject<size_t>();
-        MOZ_RELEASE_ASSERT(value == read);
-        MOZ_RELEASE_ASSERT(er.RemainingBytes() == 0);
-        MOZ_RELEASE_ASSERT(blockIndex <= lastBlockIndex,
-                           "Unexpected block index past the last written one");
-      });
-  MOZ_RELEASE_ASSERT(read == firstIndexToFail - 1,
-                     "We should have read up to before the first failure");
+  cbSingle.ReadEach([&](ProfileBufferEntryReader& aER) {
+    MOZ_RELEASE_ASSERT(aER.RemainingBytes() == entryBytes);
+    while (aER.RemainingBytes() > 0) {
+      MOZ_RELEASE_ASSERT(*aER == '0' + read);
+      ++aER;
+    }
+    ++read;
+  });
+  MOZ_RELEASE_ASSERT(read == testBlocks - 1);
 
-  // Test AppendContent:
+  // ~Interlude~ Test AppendContent:
   // Create another ProfileChunkedBuffer that will use a
   // ProfileBufferChunkManagerWithLocalLimit, which will give away
   // ProfileBufferChunks that can contain 128 bytes, using up to 1KB of memory
@@ -1780,29 +1894,144 @@ static void TestChunkedBufferSingle() {
   // It should start empty.
   cbTarget.ReadEach(
       [](ProfileBufferEntryReader&) { MOZ_RELEASE_ASSERT(false); });
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cbTarget, 1, 1, 0, 0, 0);
 
   // Copy the contents from cbSingle to cbTarget.
   cbTarget.AppendContents(cbSingle);
 
   // And verify that we now have the same contents in cbTarget.
   read = 0;
-  cbTarget.ReadEach(
-      [&](ProfileBufferEntryReader& er, ProfileBufferBlockIndex blockIndex) {
-        ++read;
-        MOZ_RELEASE_ASSERT(er.RemainingBytes() == sizeof(size_t));
-        const auto value = er.ReadObject<size_t>();
-        MOZ_RELEASE_ASSERT(value == read);
-        MOZ_RELEASE_ASSERT(er.RemainingBytes() == 0);
-        MOZ_RELEASE_ASSERT(blockIndex <= lastBlockIndex,
-                           "Unexpected block index past the last written one");
-      });
-  MOZ_RELEASE_ASSERT(read == firstIndexToFail - 1,
-                     "We should have read up to before the first failure");
+  cbTarget.ReadEach([&](ProfileBufferEntryReader& aER) {
+    MOZ_RELEASE_ASSERT(aER.RemainingBytes() == entryBytes);
+    while (aER.RemainingBytes() > 0) {
+      MOZ_RELEASE_ASSERT(*aER == '0' + read);
+      ++aER;
+    }
+    ++read;
+  });
+  MOZ_RELEASE_ASSERT(read == testBlocks - 1);
+  // The state should be the same as the source.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cbTarget, 1, 1 + blockBytes * (testBlocks - 1), testBlocks - 1, 0, 0);
 
 #  ifdef DEBUG
   // cbSingle.Dump();
   // cbTarget.Dump();
 #  endif
+
+  // Because we failed to write a too-big chunk above, the chunk was marked
+  // full, so that entries should be consistently rejected from now on.
+  cbSingle.Put(1, [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+    MOZ_RELEASE_ASSERT(aEW.isNothing());
+  });
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cbSingle, 1, 1 + blockBytes * ((testBlocks - 1)), testBlocks - 1, 0,
+      remainingBytesForLastBlock + 1 + ULEB128Size(1u) + 1);
+
+  // Clear the buffer before the next test.
+
+  cbSingle.Clear();
+  // Clear() should move the index to the next chunk range -- even if it's
+  // really reusing the same chunk.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cbSingle, 1 + bufferBytes,
+                                             1 + bufferBytes, 0, 0, 0);
+  cbSingle.ReadEach(
+      [&](ProfileBufferEntryReader& aER) { MOZ_RELEASE_ASSERT(false); });
+
+  // Second buffer-filling test: Try to write a final entry that just fits at
+  // the end of the chunk.
+
+  // Write all but one block.
+  for (size_t i = 0; i < testBlocks - 1; ++i) {
+    cbSingle.Put(entryBytes, [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+      MOZ_RELEASE_ASSERT(aEW.isSome());
+      while (aEW->RemainingBytes() > 0) {
+        **aEW = 'a' + i;
+        ++(*aEW);
+      }
+    });
+    VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+        cbSingle, 1 + bufferBytes, 1 + bufferBytes + blockBytes * (i + 1),
+        i + 1, 0, 0);
+  }
+
+  read = 0;
+  cbSingle.ReadEach([&](ProfileBufferEntryReader& aER) {
+    MOZ_RELEASE_ASSERT(aER.RemainingBytes() == entryBytes);
+    while (aER.RemainingBytes() > 0) {
+      MOZ_RELEASE_ASSERT(*aER == 'a' + read);
+      ++aER;
+    }
+    ++read;
+  });
+  MOZ_RELEASE_ASSERT(read == testBlocks - 1);
+
+  // Write the last block so that it fits exactly in the chunk.
+  cbSingle.Put(entryToFitRemainingBytes,
+               [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+                 MOZ_RELEASE_ASSERT(aEW.isSome());
+                 while (aEW->RemainingBytes() > 0) {
+                   **aEW = 'a' + (testBlocks - 1);
+                   ++(*aEW);
+                 }
+               });
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cbSingle, 1 + bufferBytes, 1 + bufferBytes + blockBytes * testBlocks,
+      testBlocks, 0, 0);
+
+  read = 0;
+  cbSingle.ReadEach([&](ProfileBufferEntryReader& aER) {
+    MOZ_RELEASE_ASSERT(
+        aER.RemainingBytes() ==
+        ((read < testBlocks) ? entryBytes : entryToFitRemainingBytes));
+    while (aER.RemainingBytes() > 0) {
+      MOZ_RELEASE_ASSERT(*aER == 'a' + read);
+      ++aER;
+    }
+    ++read;
+  });
+  MOZ_RELEASE_ASSERT(read == testBlocks);
+
+  // Because the single chunk has been filled, it shouldn't be possible to write
+  // more entries.
+  cbSingle.Put(1, [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+    MOZ_RELEASE_ASSERT(aEW.isNothing());
+  });
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cbSingle, 1 + bufferBytes, 1 + bufferBytes + blockBytes * testBlocks,
+      testBlocks, 0, ULEB128Size(1u) + 1);
+
+  cbSingle.Clear();
+  // Clear() should move the index to the next chunk range -- even if it's
+  // really reusing the same chunk.
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(cbSingle, 1 + bufferBytes * 2,
+                                             1 + bufferBytes * 2, 0, 0, 0);
+  cbSingle.ReadEach(
+      [&](ProfileBufferEntryReader& aER) { MOZ_RELEASE_ASSERT(false); });
+
+  // Clear() recycles the released chunk, so we should be able to record new
+  // entries.
+  cbSingle.Put(entryBytes, [&](Maybe<ProfileBufferEntryWriter>& aEW) {
+    MOZ_RELEASE_ASSERT(aEW.isSome());
+    while (aEW->RemainingBytes() > 0) {
+      **aEW = 'x';
+      ++(*aEW);
+    }
+  });
+  VERIFY_PCB_START_END_PUSHED_CLEARED_FAILED(
+      cbSingle, 1 + bufferBytes * 2,
+      1 + bufferBytes * 2 + ULEB128Size(entryBytes) + entryBytes, 1, 0, 0);
+  read = 0;
+  cbSingle.ReadEach([&](ProfileBufferEntryReader& aER) {
+    MOZ_RELEASE_ASSERT(read == 0);
+    MOZ_RELEASE_ASSERT(aER.RemainingBytes() == entryBytes);
+    while (aER.RemainingBytes() > 0) {
+      MOZ_RELEASE_ASSERT(*aER == 'x');
+      ++aER;
+    }
+    ++read;
+  });
+  MOZ_RELEASE_ASSERT(read == 1);
 
   printf("TestChunkedBufferSingle done\n");
 }
