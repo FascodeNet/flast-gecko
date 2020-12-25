@@ -65,7 +65,10 @@ add_task(async function test_removeByFilter() {
       PlacesUtils.history.addObserver(observer, false);
     }
     if (placesEventListener) {
-      PlacesObservers.addListener(["page-title-changed"], placesEventListener);
+      PlacesObservers.addListener(
+        ["page-title-changed", "history-cleared"],
+        placesEventListener
+      );
     }
     // Perfom delete operation on database
     let removed = false;
@@ -95,7 +98,7 @@ add_task(async function test_removeByFilter() {
     }
     if (placesEventListener) {
       PlacesObservers.removeListener(
-        ["page-title-changed"],
+        ["page-title-changed", "history-cleared"],
         placesEventListener
       );
     }
@@ -461,9 +464,6 @@ function getObserverPromise(bookmarkedUri) {
     observer = {
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onClearHistory() {
-        reject(new Error("Unexpected call to onClearHistory"));
-      },
       onFrecencyChanged(aURI) {},
       onManyFrecenciesChanged() {},
       onDeleteURI(aURI) {
@@ -500,6 +500,10 @@ function getObserverPromise(bookmarkedUri) {
         switch (event.type) {
           case "page-title-changed": {
             reject(new Error("Unexpected page-title-changed event happens"));
+            break;
+          }
+          case "history-cleared": {
+            reject(new Error("Unexpected history-cleared event happens"));
             break;
           }
         }

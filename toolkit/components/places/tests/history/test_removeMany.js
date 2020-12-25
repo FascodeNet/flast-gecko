@@ -84,9 +84,6 @@ add_task(async function test_remove_many() {
     onVisits(aVisits) {
       Assert.ok(false, "Unexpected call to onVisits " + aVisits.length);
     },
-    onClearHistory() {
-      Assert.ok(false, "Unexpected call to onClearHistory");
-    },
     onFrecencyChanged(aURI) {
       let origin = pages.find(x => x.uri.spec == aURI.spec);
       Assert.ok(origin);
@@ -127,13 +124,28 @@ add_task(async function test_remove_many() {
   };
   PlacesUtils.history.addObserver(observer);
 
-  const pageTitleChangedListener = aEvents => {
-    Assert.ok(
-      false,
-      "Unexpected page-title-changed event happens on " + aEvents[0].url
-    );
+  const placesEventListener = events => {
+    for (const event of events) {
+      switch (event.type) {
+        case "page-title-changed": {
+          Assert.ok(
+            false,
+            "Unexpected page-title-changed event happens on " + event.url
+          );
+          break;
+        }
+        case "history-cleared": {
+          Assert.ok(false, "Unexpected history-cleared event happens");
+          break;
+        }
+      }
+    }
   };
-  PlacesObservers.addListener(["page-title-changed"], pageTitleChangedListener);
+
+  PlacesObservers.addListener(
+    ["page-title-changed", "history-cleared"],
+    placesEventListener
+  );
 
   info("Removing the pages and checking the callbacks");
 
@@ -151,8 +163,8 @@ add_task(async function test_remove_many() {
 
   PlacesUtils.history.removeObserver(observer);
   PlacesObservers.removeListener(
-    ["page-title-changed"],
-    pageTitleChangedListener
+    ["page-title-changed", "history-cleared"],
+    placesEventListener
   );
 
   info("Checking out results");

@@ -118,12 +118,7 @@ CacheIRHealth::Happiness CacheIRHealth::spewHealthForStubsInCacheIREntry(
 CacheIRHealth::Happiness CacheIRHealth::spewJSOpAndCacheIRHealth(
     AutoStructuredSpewer& spew, HandleScript script, jit::ICEntry* entry,
     jsbytecode* pc, JSOp op) {
-  spew->beginObject();
   spew->property("op", CodeName(op));
-
-  if (pc == script->main()) {
-    spew->property("main", true);
-  }
 
   // TODO: If a perf issue arises, look into improving the SrcNotes
   // API call below.
@@ -131,10 +126,7 @@ CacheIRHealth::Happiness CacheIRHealth::spewJSOpAndCacheIRHealth(
   spew->property("lineno", PCToLineNumber(script, pc, &column));
   spew->property("column", column);
 
-  Happiness entryHappiness = spewHealthForStubsInCacheIREntry(spew, entry);
-  spew->endObject();
-
-  return entryHappiness;
+  return spewHealthForStubsInCacheIREntry(spew, entry);
 }
 
 void CacheIRHealth::spewScriptFinalWarmUpCount(JSContext* cx,
@@ -152,14 +144,13 @@ void CacheIRHealth::spewScriptFinalWarmUpCount(JSContext* cx,
   spew->property("finalWarmUpCount", warmUpCount);
 }
 
-static void addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
+static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
   // Create Zone::scriptFilenameMap if necessary.
   JS::Zone* zone = script->zone();
   if (!zone->scriptFinalWarmUpCountMap) {
     auto map = MakeUnique<ScriptFinalWarmUpCountMap>();
     if (!map) {
-      ReportOutOfMemory(cx);
-      return;
+      return false;
     }
 
     zone->scriptFinalWarmUpCountMap = std::move(map);
@@ -167,18 +158,18 @@ static void addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
 
   auto* filename = js_pod_malloc<char>(strlen(script->filename()) + 1);
   if (!filename) {
-    ReportOutOfMemory(cx);
-    return;
+    return false;
   }
   strcpy(filename, script->filename());
 
   if (!zone->scriptFinalWarmUpCountMap->put(
           script, mozilla::MakeTuple(uint32_t(0), filename))) {
-    ReportOutOfMemory(cx);
-    return;
+    js_free(filename);
+    return false;
   }
 
   script->setNeedsFinalWarmUpCount();
+  return true;
 }
 
 void CacheIRHealth::rateIC(JSContext* cx, ICEntry* entry, HandleScript script,
@@ -188,14 +179,16 @@ void CacheIRHealth::rateIC(JSContext* cx, ICEntry* entry, HandleScript script,
     return;
   }
 
-  addScriptToFinalWarmUpCountMap(cx, script);
+  if (!addScriptToFinalWarmUpCountMap(cx, script)) {
+    cx->recoverFromOutOfMemory();
+    return;
+  }
   spew->property("spewContext", uint8_t(context));
 
   jsbytecode* op = entry->pc(script);
   JSOp jsOp = JSOp(*op);
-  spew->property("op", CodeName(jsOp));
 
-  spewHealthForStubsInCacheIREntry(spew, entry);
+  spewJSOpAndCacheIRHealth(spew, script, entry, op, jsOp);
 }
 
 void CacheIRHealth::rateScript(JSContext* cx, HandleScript script,
@@ -210,7 +203,11 @@ void CacheIRHealth::rateScript(JSContext* cx, HandleScript script,
     return;
   }
 
-  addScriptToFinalWarmUpCountMap(cx, script);
+  if (!addScriptToFinalWarmUpCountMap(cx, script)) {
+    cx->recoverFromOutOfMemory();
+    return;
+  }
+
   spew->property("spewContext", uint8_t(context));
 
   jsbytecode* next = script->code();
@@ -235,12 +232,14 @@ void CacheIRHealth::rateScript(JSContext* cx, HandleScript script,
     MOZ_ASSERT(len);
 
     if (entry) {
+      spew->beginObject();
       Happiness entryHappiness =
           spewJSOpAndCacheIRHealth(spew, script, entry, next, op);
 
       if (entryHappiness < scriptHappiness) {
         scriptHappiness = entryHappiness;
       }
+      spew->endObject();
     }
 
     next += len;

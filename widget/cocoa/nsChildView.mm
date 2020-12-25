@@ -52,7 +52,6 @@
 #include "nsMenuUtilsX.h"
 #include "nsMenuBarX.h"
 #include "NativeKeyBindings.h"
-#include "ComplexTextInputPanel.h"
 
 #include "gfxContext.h"
 #include "gfxQuartzSurface.h"
@@ -235,7 +234,6 @@ nsChildView::nsChildView()
       mVisible(false),
       mDrawing(false),
       mIsDispatchPaint(false),
-      mPluginFocused{false},
       mCurrentPanGestureBelongsToSwipe{false} {}
 
 nsChildView::~nsChildView() {
@@ -333,8 +331,6 @@ nsresult nsChildView::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
 
   NS_ASSERTION(!mTextInputHandler, "mTextInputHandler has already existed");
   mTextInputHandler = new TextInputHandler(this, mView);
-
-  mPluginFocused = false;
 
   return NS_OK;
 
@@ -1474,40 +1470,6 @@ bool nsChildView::HasPendingInputEvent() { return DoHasPendingInputEvent(); }
 
 #pragma mark -
 
-nsresult nsChildView::StartPluginIME(const mozilla::WidgetKeyboardEvent& aKeyboardEvent,
-                                     int32_t aPanelX, int32_t aPanelY, nsString& aCommitted) {
-  NS_ENSURE_TRUE(mView, NS_ERROR_NOT_AVAILABLE);
-
-  ComplexTextInputPanel* ctiPanel = ComplexTextInputPanel::GetSharedComplexTextInputPanel();
-
-  ctiPanel->PlacePanel(aPanelX, aPanelY);
-  // We deliberately don't use TextInputHandler::GetCurrentKeyEvent() to
-  // obtain the NSEvent* we pass to InterpretKeyEvent().  This works fine in
-  // non-e10s mode.  But in e10s mode TextInputHandler::HandleKeyDownEvent()
-  // has already returned, so the relevant KeyEventState* (and its NSEvent*)
-  // is already out of scope.  Furthermore we don't *need* to use it.
-  // StartPluginIME() is only ever called to start a new IME session when none
-  // currently exists.  So nested IME should never reach here, and so it should
-  // be fine to use the last key-down event received by -[ChildView keyDown:]
-  // (as we currently do).
-  ctiPanel->InterpretKeyEvent([mView lastKeyDownEvent], aCommitted);
-
-  return NS_OK;
-}
-
-void nsChildView::SetPluginFocused(bool& aFocused) {
-  if (aFocused == mPluginFocused) {
-    return;
-  }
-  if (!aFocused) {
-    ComplexTextInputPanel* ctiPanel = ComplexTextInputPanel::GetSharedComplexTextInputPanel();
-    if (ctiPanel) {
-      ctiPanel->CancelComposition();
-    }
-  }
-  mPluginFocused = aFocused;
-}
-
 void nsChildView::SetInputContext(const InputContext& aContext, const InputContextAction& aAction) {
   NS_ENSURE_TRUE_VOID(mTextInputHandler);
 
@@ -2409,31 +2371,17 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   NS_OBJC_END_TRY_ABORT_BLOCK_NIL;
 }
 
-// ComplexTextInputPanel's interpretKeyEvent hack won't work without this.
-// It makes calls to +[NSTextInputContext currentContext], deep in system
-// code, return the appropriate context.
 - (NSTextInputContext*)inputContext {
-  NSTextInputContext* pluginContext = NULL;
-  if (mGeckoChild && mGeckoChild->IsPluginFocused()) {
-    ComplexTextInputPanel* ctiPanel = ComplexTextInputPanel::GetSharedComplexTextInputPanel();
-    if (ctiPanel) {
-      pluginContext = (NSTextInputContext*)ctiPanel->GetInputContext();
-    }
+  if (!mGeckoChild) {
+    // -[ChildView widgetDestroyed] has been called, but
+    // -[ChildView delayedTearDown] has not yet completed.  Accessing
+    // [super inputContext] now would uselessly recreate a text input context
+    // for us, under which -[ChildView validAttributesForMarkedText] would
+    // be called and the assertion checking for mTextInputHandler would fail.
+    // We return nil to avoid that.
+    return nil;
   }
-  if (pluginContext) {
-    return pluginContext;
-  } else {
-    if (!mGeckoChild) {
-      // -[ChildView widgetDestroyed] has been called, but
-      // -[ChildView delayedTearDown] has not yet completed.  Accessing
-      // [super inputContext] now would uselessly recreate a text input context
-      // for us, under which -[ChildView validAttributesForMarkedText] would
-      // be called and the assertion checking for mTextInputHandler would fail.
-      // We return nil to avoid that.
-      return nil;
-    }
-    return [super inputContext];
-  }
+  return [super inputContext];
 }
 
 - (void)installTextInputHandler:(TextInputHandler*)aHandler {

@@ -25,7 +25,6 @@
 #include "nsCocoaUtils.h"
 #include "WidgetUtils.h"
 #include "nsPrintfCString.h"
-#include "ComplexTextInputPanel.h"
 
 using namespace mozilla;
 using namespace mozilla::widget;
@@ -1751,30 +1750,6 @@ bool TextInputHandler::HandleKeyDownEvent(NSEvent* aNativeEvent, uint32_t aUniqu
   KeyEventState* currentKeyEvent = PushKeyEvent(aNativeEvent, aUniqueId);
   AutoKeyEventStateCleaner remover(this);
 
-  ComplexTextInputPanel* ctiPanel = ComplexTextInputPanel::GetSharedComplexTextInputPanel();
-  if (ctiPanel && ctiPanel->IsInComposition()) {
-    nsAutoString committed;
-    ctiPanel->InterpretKeyEvent(aNativeEvent, committed);
-    if (!committed.IsEmpty()) {
-      nsresult rv = mDispatcher->BeginNativeInputTransaction();
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        MOZ_LOG(gLog, LogLevel::Error,
-                ("%p IMEInputHandler::HandleKeyDownEvent, "
-                 "FAILED, due to BeginNativeInputTransaction() failure "
-                 "at dispatching keydown for ComplexTextInputPanel",
-                 this));
-        return false;
-      }
-
-      WidgetKeyboardEvent imeEvent(true, eKeyDown, widget);
-      currentKeyEvent->InitKeyEvent(this, imeEvent, false);
-      imeEvent.mPluginTextEventString.Assign(committed);
-      nsEventStatus status = nsEventStatus_eIgnore;
-      mDispatcher->DispatchKeyboardEvent(eKeyDown, imeEvent, status, currentKeyEvent);
-    }
-    return true;
-  }
-
   RefPtr<TextInputHandler> kungFuDeathGrip(this);
 
   // When we're already in a composition, we need always to mark the eKeyDown
@@ -1794,7 +1769,7 @@ bool TextInputHandler::HandleKeyDownEvent(NSEvent* aNativeEvent, uint32_t aUniqu
   // Don't call interpretKeyEvents when a plugin has focus.  If we call it,
   // for example, a character is inputted twice during a composition in e10s
   // mode.
-  if (!widget->IsPluginFocused() && (IsIMEEnabled() || IsASCIICapableOnly())) {
+  if (IsIMEEnabled() || IsASCIICapableOnly()) {
     MOZ_LOG(gLog, LogLevel::Info,
             ("%p TextInputHandler::HandleKeyDownEvent, calling interpretKeyEvents", this));
     [mView interpretKeyEvents:[NSArray arrayWithObject:aNativeEvent]];

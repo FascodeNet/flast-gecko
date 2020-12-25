@@ -38,8 +38,8 @@ use crate::{
 };
 use crate::{
     iccread::{qcms_CIE_xyY, qcms_CIE_xyYTRIPLE, qcms_profile, RGB_SIGNATURE},
-    qcms_intent,
     transform_util::clamp_float,
+    Intent,
 };
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::{
@@ -131,6 +131,18 @@ pub enum qcms_data_type {
     DATA_BGRA_8 = 2,
     DATA_GRAY_8 = 3,
     DATA_GRAYA_8 = 4,
+}
+
+impl qcms_data_type {
+    fn bytes_per_pixel(&self) -> usize {
+        match self {
+            DATA_RGB_8 => 3,
+            DATA_RGBA_8 => 4,
+            DATA_BGRA_8 => 4,
+            DATA_GRAY_8 => 1,
+            DATA_GRAYA_8 => 1,
+        }
+    }
 }
 
 use qcms_data_type::*;
@@ -1148,7 +1160,7 @@ pub fn transform_create(
     mut in_type: qcms_data_type,
     mut out: &qcms_profile,
     mut out_type: qcms_data_type,
-    mut intent: qcms_intent,
+    mut intent: Intent,
 ) -> Option<Box<qcms_transform>> {
     // Ensure the requested input and output types make sense.
     let matching_format = match (in_type, out_type) {
@@ -1353,7 +1365,7 @@ pub fn transform_create(
 }
 #[no_mangle]
 pub unsafe extern "C" fn qcms_transform_data(
-    mut transform: *mut qcms_transform,
+    mut transform: &qcms_transform,
     mut src: *const libc::c_void,
     mut dest: *mut libc::c_void,
     mut length: usize,
@@ -1366,6 +1378,36 @@ pub unsafe extern "C" fn qcms_transform_data(
         dest as *mut libc::c_uchar,
         length,
     );
+}
+
+pub struct Transform {
+    ty: qcms_data_type,
+    xfm: Box<qcms_transform>,
+}
+
+impl Transform {
+    pub fn new(
+        input: &qcms_profile,
+        output: &qcms_profile,
+        ty: qcms_data_type,
+        intent: Intent,
+    ) -> Option<Self> {
+        transform_create(input, ty, output, ty, intent).map(|xfm| Transform { ty, xfm })
+    }
+
+    pub fn apply(&self, data: &mut [u8]) {
+        if data.len() % self.ty.bytes_per_pixel() != 0 {
+            panic!("incomplete pixels")
+        }
+        unsafe {
+            qcms_transform_data(
+                &self.xfm,
+                data.as_ptr() as *const libc::c_void,
+                data.as_mut_ptr() as *mut libc::c_void,
+                data.len() / self.ty.bytes_per_pixel(),
+            );
+        }
+    }
 }
 
 #[no_mangle]

@@ -8,11 +8,11 @@ extern crate libc;
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
- use qcms::iccread::{qcms_profile, icSigRgbData, qcms_profile_is_bogus, icSigGrayData};
- use qcms::c_bindings::{qcms_profile_get_color_space, qcms_profile_get_rendering_intent, qcms_profile_from_memory, qcms_profile_release, qcms_profile_sRGB, qcms_transform_create};
- use qcms::transform::{qcms_data_type, qcms_profile_precache_output_transform, qcms_transform_data, qcms_transform_release, qcms_enable_iccv4};
+use qcms::c_bindings::{qcms_profile, icSigRgbData, qcms_profile_is_bogus, icSigGrayData};
+use qcms::c_bindings::{qcms_profile_get_color_space, qcms_profile_get_rendering_intent, qcms_profile_from_memory, qcms_profile_release, qcms_profile_sRGB, qcms_transform_create};
+use qcms::c_bindings::{qcms_profile_precache_output_transform, qcms_transform_data, qcms_transform_release, qcms_enable_iccv4};
 
- use qcms_data_type::*;
+use qcms::DataType::*;
 
  unsafe fn transform(src_profile: *mut qcms_profile, dst_profile: *mut qcms_profile, size: usize)
  {
@@ -62,7 +62,7 @@ extern crate libc;
      src_bytes_per_pixel = 1;
    }
  
-   qcms_transform_data(transform, src.as_ptr() as *const libc::c_void, dst.as_mut_ptr() as *mut libc::c_void, (SRC_SIZE / src_bytes_per_pixel) as usize);
+   qcms_transform_data(&*transform, src.as_ptr() as *const libc::c_void, dst.as_mut_ptr() as *mut libc::c_void, (SRC_SIZE / src_bytes_per_pixel) as usize);
    qcms_transform_release(transform);
  }
  

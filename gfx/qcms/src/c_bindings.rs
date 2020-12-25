@@ -4,14 +4,14 @@ use libc::{fclose, fopen, fread, free, malloc, FILE};
 
 use crate::{
     iccread::*,
-    qcms_intent,
     transform::qcms_data_type,
     transform::{qcms_transform, transform_create},
+    Intent,
 };
 
 #[no_mangle]
 pub extern "C" fn qcms_profile_sRGB() -> *mut qcms_profile {
-    let profile = profile_sRGB();
+    let profile = qcms_profile::new_sRGB();
     match profile {
         Some(profile) => Box::into_raw(profile),
         None => null_mut(),
@@ -30,8 +30,13 @@ pub unsafe extern "C" fn qcms_profile_create_rgb_with_gamma_set(
     mut greenGamma: f32,
     mut blueGamma: f32,
 ) -> *mut qcms_profile {
-    let profile =
-        profile_create_rgb_with_gamma_set(white_point, primaries, redGamma, greenGamma, blueGamma);
+    let profile = qcms_profile::new_rgb_with_gamma_set(
+        white_point,
+        primaries,
+        redGamma,
+        greenGamma,
+        blueGamma,
+    );
     match profile {
         Some(profile) => Box::into_raw(profile),
         None => null_mut(),
@@ -40,7 +45,7 @@ pub unsafe extern "C" fn qcms_profile_create_rgb_with_gamma_set(
 
 #[no_mangle]
 pub unsafe extern "C" fn qcms_profile_create_gray_with_gamma(mut gamma: f32) -> *mut qcms_profile {
-    let profile = profile_create_gray_with_gamma(gamma);
+    let profile = qcms_profile::new_gray_with_gamma(gamma);
     match profile {
         Some(profile) => Box::into_raw(profile),
         None => null_mut(),
@@ -64,7 +69,7 @@ pub unsafe extern "C" fn qcms_profile_create_rgb_with_table(
     mut num_entries: i32,
 ) -> *mut qcms_profile {
     let table = slice::from_raw_parts(table, num_entries as usize);
-    let profile = profile_create_rgb_with_table(white_point, primaries, table);
+    let profile = qcms_profile::new_rgb_with_table(white_point, primaries, table);
     match profile {
         Some(profile) => Box::into_raw(profile),
         None => null_mut(),
@@ -78,7 +83,7 @@ pub unsafe extern "C" fn qcms_profile_from_memory(
     mut size: usize,
 ) -> *mut qcms_profile {
     let mem = slice::from_raw_parts(mem as *const libc::c_uchar, size);
-    let profile = profile_from_slice(mem);
+    let profile = qcms_profile::new_from_slice(mem);
     match profile {
         Some(profile) => Box::into_raw(profile),
         None => null_mut(),
@@ -88,7 +93,7 @@ pub unsafe extern "C" fn qcms_profile_from_memory(
 #[no_mangle]
 pub unsafe extern "C" fn qcms_profile_get_rendering_intent(
     mut profile: *mut qcms_profile,
-) -> qcms_intent {
+) -> Intent {
     return (*profile).rendering_intent;
 }
 #[no_mangle]
@@ -232,7 +237,7 @@ pub extern "C" fn qcms_transform_create(
     mut in_type: qcms_data_type,
     mut out: &qcms_profile,
     mut out_type: qcms_data_type,
-    mut intent: qcms_intent,
+    mut intent: Intent,
 ) -> *mut qcms_transform {
     let transform = transform_create(in_0, in_type, out, out_type, intent);
     match transform {
@@ -240,3 +245,11 @@ pub extern "C" fn qcms_transform_create(
         None => null_mut(),
     }
 }
+
+pub use crate::iccread::qcms_profile;
+pub use crate::iccread::qcms_profile_is_bogus;
+pub use crate::iccread::{icSigGrayData, icSigRgbData};
+pub use crate::transform::{
+    qcms_enable_iccv4, qcms_profile_precache_output_transform, qcms_transform_data,
+    qcms_transform_release,
+};

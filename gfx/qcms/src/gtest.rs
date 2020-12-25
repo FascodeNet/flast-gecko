@@ -2,7 +2,7 @@
 mod test {
     use crate::{
         c_bindings::*, iccread::*, transform::qcms_data_type::*, transform::*,
-        transform_util::lut_inverse_interp16, QCMS_INTENT_DEFAULT, QCMS_INTENT_PERCEPTUAL,
+        transform_util::lut_inverse_interp16, Intent::QCMS_INTENT_PERCEPTUAL,
     };
     use libc::c_void;
     use std::ptr::null_mut;
@@ -189,7 +189,7 @@ mod test {
 
         unsafe {
             qcms_transform_data(
-                transform,
+                &*transform,
                 data.as_ptr() as *const libc::c_void,
                 data.as_mut_ptr() as *mut libc::c_void,
                 data.len() / 3,
@@ -224,7 +224,7 @@ mod test {
         let mut out_data: [u8; 2 * 4] = [0; 8];
         unsafe {
             qcms_transform_data(
-                transform,
+                &*transform,
                 in_data.as_ptr() as *const libc::c_void,
                 out_data.as_mut_ptr() as *mut libc::c_void,
                 in_data.len() / 2,
@@ -320,7 +320,7 @@ mod test {
 
         unsafe {
             qcms_transform_data(
-                transform,
+                &*transform,
                 src.as_ptr() as *const libc::c_void,
                 dst.as_mut_ptr() as *mut libc::c_void,
                 SRC_SIZE,
@@ -558,7 +558,7 @@ mod test {
                 ty,
                 &*self.out_profile,
                 ty,
-                QCMS_INTENT_DEFAULT,
+                QCMS_INTENT_PERCEPTUAL,
             ))
         }
 
@@ -772,7 +772,7 @@ mod test {
             pt.SetBuffers(DATA_RGB_8);
             pt.SetTransformForType(DATA_RGB_8);
             qcms_transform_data(
-                pt.transform,
+                &*pt.transform,
                 pt.input.as_mut_ptr() as *mut c_void,
                 pt.output.as_mut_ptr() as *mut c_void,
                 pt.pixels,
@@ -841,7 +841,7 @@ mod test {
         let mut dst = [0u8, 0, 0];
         unsafe {
             qcms_transform_data(
-                transform,
+                &*transform,
                 src.as_ptr() as *const libc::c_void,
                 dst.as_mut_ptr() as *mut libc::c_void,
                 1,
@@ -853,5 +853,21 @@ mod test {
             qcms_profile_release(input);
             qcms_profile_release(output);
         }
+    }
+
+    #[test]
+    fn identity() {
+        let p1 = crate::Profile::new_sRGB().unwrap();
+        let p2 = crate::Profile::new_sRGB().unwrap();
+        let mut xfm = crate::Transform::new(
+            &p1,
+            &p2,
+            crate::DataType::DATA_RGB_8,
+            crate::Intent::default(),
+        )
+        .unwrap();
+        let mut data = [4, 30, 80];
+        xfm.apply(&mut data);
+        assert_eq!(data, [4, 30, 80]);
     }
 }

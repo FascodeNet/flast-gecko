@@ -15,17 +15,24 @@
 #![feature(raw_ref_op)]
 
 extern crate libc;
+#[repr(u32)]
+#[derive(Clone, Copy)]
+pub enum Intent {
+    QCMS_INTENT_ABSOLUTE_COLORIMETRIC = 3,
+    QCMS_INTENT_SATURATION = 2,
+    QCMS_INTENT_RELATIVE_COLORIMETRIC = 1,
+    QCMS_INTENT_PERCEPTUAL = 0,
+}
 
-pub type qcms_intent = libc::c_uint;
-pub const QCMS_INTENT_DEFAULT: qcms_intent = 0;
-pub const QCMS_INTENT_MAX: qcms_intent = 3;
-pub const QCMS_INTENT_ABSOLUTE_COLORIMETRIC: qcms_intent = 3;
-pub const QCMS_INTENT_SATURATION: qcms_intent = 2;
-pub const QCMS_INTENT_RELATIVE_COLORIMETRIC: qcms_intent = 1;
-pub const QCMS_INTENT_PERCEPTUAL: qcms_intent = 0;
-pub const QCMS_INTENT_MIN: qcms_intent = 0;
+use Intent::*;
 
-pub type s15Fixed16Number = i32;
+impl Default for Intent {
+    fn default() -> Self {
+        QCMS_INTENT_PERCEPTUAL
+    }
+}
+
+pub(crate) type s15Fixed16Number = i32;
 
 /* produces the nearest float to 'a' with a maximum error
  * of 1/1024 which happens for large values like 0x40000040 */
@@ -42,13 +49,18 @@ fn double_to_s15Fixed16Number(mut v: f64) -> s15Fixed16Number {
 pub mod c_bindings;
 mod chain;
 mod gtest;
-pub mod iccread;
-pub mod matrix;
-pub mod transform;
+mod iccread;
+mod matrix;
+mod transform;
+pub use iccread::qcms_CIE_xyY as CIE_xyY;
+pub use iccread::qcms_CIE_xyYTRIPLE as CIE_xyYTRIPLE;
+pub use iccread::qcms_profile as Profile;
+pub use transform::qcms_data_type as DataType;
+pub use transform::Transform;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub mod transform_avx;
+mod transform_avx;
 #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-pub mod transform_neon;
+mod transform_neon;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub mod transform_sse2;
+mod transform_sse2;
 mod transform_util;

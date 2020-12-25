@@ -2324,8 +2324,7 @@ nsNavHistoryQueryResultNode::OnDeleteURI(nsIURI* aURI, const nsACString& aGUID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnClearHistory() {
+nsresult nsNavHistoryQueryResultNode::OnClearHistory() {
   nsresult rv = Refresh();
   NS_ENSURE_SUCCESS(rv, rv);
   return NS_OK;
@@ -3503,7 +3502,7 @@ nsNavHistoryResult::~nsNavHistoryResult() {
 }
 
 void nsNavHistoryResult::StopObserving() {
-  AutoTArray<PlacesEventType, 5> events;
+  AutoTArray<PlacesEventType, 6> events;
   events.AppendElement(PlacesEventType::Favicon_changed);
   if (mIsBookmarksObserver) {
     nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
@@ -3525,6 +3524,7 @@ void nsNavHistoryResult::StopObserving() {
       history->RemoveObserver(this);
       mIsHistoryObserver = false;
     }
+    events.AppendElement(PlacesEventType::History_cleared);
   }
   if (mIsHistoryDetailsObserver) {
     events.AppendElement(PlacesEventType::Page_visited);
@@ -3557,13 +3557,15 @@ void nsNavHistoryResult::AddHistoryObserver(
     NS_ASSERTION(history, "Can't create history service");
     history->AddObserver(this, true);
     mIsHistoryObserver = true;
+
+    AutoTArray<PlacesEventType, 3> events;
+    events.AppendElement(PlacesEventType::History_cleared);
     if (!mIsHistoryDetailsObserver) {
-      AutoTArray<PlacesEventType, 2> events;
       events.AppendElement(PlacesEventType::Page_visited);
       events.AppendElement(PlacesEventType::Page_title_changed);
-      PlacesObservers::AddListener(events, this);
       mIsHistoryDetailsObserver = true;
     }
+    PlacesObservers::AddListener(events, this);
   }
   // Don't add duplicate observers.  In some case we don't unregister when
   // children are cleared (see ClearChildren) and the next FillChildren call
@@ -4209,6 +4211,10 @@ void nsNavHistoryResult::HandlePlacesEvent(const PlacesEventSequence& aEvents) {
             OnTitleChanged(uri, titleEvent->mTitle, titleEvent->mPageGuid));
         break;
       }
+      case PlacesEventType::History_cleared: {
+        ENUMERATE_HISTORY_OBSERVERS(OnClearHistory());
+        break;
+      }
       default: {
         MOZ_ASSERT_UNREACHABLE(
             "Receive notification of a type not subscribed to.");
@@ -4233,12 +4239,6 @@ nsNavHistoryResult::OnDeleteURI(nsIURI* aURI, const nsACString& aGUID,
   NS_ENSURE_ARG(aURI);
 
   ENUMERATE_HISTORY_OBSERVERS(OnDeleteURI(aURI, aGUID, aReason));
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNavHistoryResult::OnClearHistory() {
-  ENUMERATE_HISTORY_OBSERVERS(OnClearHistory());
   return NS_OK;
 }
 

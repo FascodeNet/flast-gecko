@@ -115,9 +115,25 @@ var PageThumbs = {
       this._initialized = true;
       PlacesUtils.history.addObserver(PageThumbsHistoryObserver, true);
 
+      this._placesObserver = new PlacesWeakCallbackWrapper(
+        this.handlePlacesEvents.bind(this)
+      );
+      PlacesObservers.addListener(["history-cleared"], this._placesObserver);
+
       // Migrate the underlying storage, if needed.
       PageThumbsStorageMigrator.migrate();
       PageThumbsExpiration.init();
+    }
+  },
+
+  handlePlacesEvents(events) {
+    for (const event of events) {
+      switch (event.type) {
+        case "history-cleared": {
+          PageThumbsStorage.wipe();
+          break;
+        }
+      }
     }
   },
 
@@ -865,10 +881,6 @@ PageThumbsWorker.ExceptionHandlers["OS.File.Error"] = OS.File.Error.fromMsg;
 var PageThumbsHistoryObserver = {
   onDeleteURI(aURI, aGUID) {
     PageThumbsStorage.remove(aURI.spec);
-  },
-
-  onClearHistory() {
-    PageThumbsStorage.wipe();
   },
 
   onBeginUpdateBatch() {},

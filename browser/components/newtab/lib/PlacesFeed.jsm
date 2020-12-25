@@ -68,13 +68,6 @@ class HistoryObserver extends Observer {
     });
   }
 
-  /**
-   * onClearHistory - Called when the user clears their entire history.
-   */
-  onClearHistory() {
-    this.dispatch({ type: at.PLACES_HISTORY_CLEARED });
-  }
-
   // Empty functions to make xpconnect happy
   onBeginUpdateBatch() {}
 
@@ -118,7 +111,7 @@ class PlacesObserver extends Observer {
   }
 
   handlePlacesEvent(events) {
-    for (let {
+    for (const {
       itemType,
       source,
       dateAdded,
@@ -129,6 +122,9 @@ class PlacesObserver extends Observer {
       type,
     } of events) {
       switch (type) {
+        case "history-cleared":
+          this.dispatch({ type: at.PLACES_HISTORY_CLEARED });
+          break;
         case "bookmark-added":
           // Skips items that are not bookmarks (like folders), about:* pages or
           // default bookmarks, added when the profile is created.
@@ -194,7 +190,7 @@ class PlacesFeed {
       .getService(Ci.nsINavBookmarksService)
       .addObserver(this.bookmarksObserver, true);
     PlacesUtils.observers.addListener(
-      ["bookmark-added", "bookmark-removed"],
+      ["bookmark-added", "bookmark-removed", "history-cleared"],
       this.placesObserver.handlePlacesEvent
     );
 
@@ -238,7 +234,7 @@ class PlacesFeed {
     PlacesUtils.history.removeObserver(this.historyObserver);
     PlacesUtils.bookmarks.removeObserver(this.bookmarksObserver);
     PlacesUtils.observers.removeListener(
-      ["bookmark-added", "bookmark-removed"],
+      ["bookmark-added", "bookmark-removed", "history-cleared"],
       this.placesObserver.handlePlacesEvent
     );
     Services.obs.removeObserver(this, LINK_BLOCKED_EVENT);
