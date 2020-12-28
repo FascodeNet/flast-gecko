@@ -611,10 +611,10 @@ class InitOtherFamilyNamesForStylo : public mozilla::Runnable {
 
 #define OTHERNAMES_TIMEOUT 200
 
-void gfxPlatformFontList::InitOtherFamilyNames(
+bool gfxPlatformFontList::InitOtherFamilyNames(
     bool aDeferOtherFamilyNamesLoading) {
   if (mOtherFamilyNamesInitialized) {
-    return;
+    return true;
   }
 
   if (SharedFontList() && !XRE_IsParentProcess()) {
@@ -626,7 +626,7 @@ void gfxPlatformFontList::InitOtherFamilyNames(
       NS_DispatchToMainThread(
           new InitOtherFamilyNamesForStylo(aDeferOtherFamilyNamesLoading));
     }
-    return;
+    return mOtherFamilyNamesInitialized;
   }
 
   // If the font loader delay has been set to zero, we don't defer loading
@@ -646,6 +646,7 @@ void gfxPlatformFontList::InitOtherFamilyNames(
   } else {
     InitOtherFamilyNamesInternal(false);
   }
+  return mOtherFamilyNamesInitialized;
 }
 
 // time limit for loading facename lists (ms)
@@ -1165,16 +1166,15 @@ bool gfxPlatformFontList::FindAndAddFamilies(
             break;
           }
         }
-        nsAutoCString base(Substring(key, 0, index));
-        if (index > 0 && SharedFontList()->FindFamily(base)) {
-          mayDefer = false;
-        } else {
+        if (index <= 0 ||
+            !SharedFontList()->FindFamily(nsAutoCString(key.get(), index))) {
           triggerLoading = false;
         }
       }
       if (triggerLoading) {
-        InitOtherFamilyNames(mayDefer);
-        family = SharedFontList()->FindFamily(key);
+        if (InitOtherFamilyNames(mayDefer)) {
+          family = SharedFontList()->FindFamily(key);
+        }
       }
       if (!family && !mOtherFamilyNamesInitialized &&
           !(aFlags & FindFamiliesFlags::eNoAddToNamesMissedWhenSearching)) {
@@ -2362,14 +2362,11 @@ void gfxPlatformFontList::InitOtherFamilyNamesInternal(
 
     auto list = SharedFontList();
     if (list) {
-      for (auto& f : mozilla::Range<fontlist::Family>(list->Families(),
-                                                      list->NumFamilies())) {
-        ReadFaceNamesForFamily(&f, false);
-        TimeDuration elapsed = TimeStamp::Now() - start;
-        if (elapsed.ToMilliseconds() > OTHERNAMES_TIMEOUT) {
-          timedOut = true;
-          break;
-        }
+      // If the gfxFontInfoLoader task is not yet running, kick it off now so
+      // that it will load remaining names etc as soon as idle time permits.
+      if (mState == stateInitial || mState == stateTimerOnDelay) {
+        StartLoader(0);
+        timedOut = true;
       }
     } else {
       for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
@@ -2566,17 +2563,17 @@ void gfxPlatformFontList::SetupFamilyCharMap(
   family->SetupFamilyCharMap(list);
 }
 
-void gfxPlatformFontList::InitOtherFamilyNames(uint32_t aGeneration,
+bool gfxPlatformFontList::InitOtherFamilyNames(uint32_t aGeneration,
                                                bool aDefer) {
   auto list = SharedFontList();
   MOZ_ASSERT(list);
   if (!list) {
-    return;
+    return false;
   }
   if (list->GetGeneration() != aGeneration) {
-    return;
+    return false;
   }
-  InitOtherFamilyNames(aDefer);
+  return InitOtherFamilyNames(aDefer);
 }
 
 uint32_t gfxPlatformFontList::GetGeneration() const {
