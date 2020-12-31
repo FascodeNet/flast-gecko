@@ -14,7 +14,6 @@
 #![feature(arm_target_feature)]
 #![feature(raw_ref_op)]
 
-extern crate libc;
 #[repr(u32)]
 #[derive(Clone, Copy)]
 pub enum Intent {
@@ -38,14 +37,17 @@ pub(crate) type s15Fixed16Number = i32;
  * of 1/1024 which happens for large values like 0x40000040 */
 #[inline]
 fn s15Fixed16Number_to_float(mut a: s15Fixed16Number) -> f32 {
-    return a as f32 / 65536.0;
+    a as f32 / 65536.0
 }
 
 #[inline]
 fn double_to_s15Fixed16Number(mut v: f64) -> s15Fixed16Number {
-    return (v * 65536f64) as i32;
+    (v * 65536f64) as i32
 }
 
+#[cfg(feature = "c_bindings")]
+extern crate libc;
+#[cfg(feature = "c_bindings")]
 pub mod c_bindings;
 mod chain;
 mod gtest;
@@ -54,7 +56,7 @@ mod matrix;
 mod transform;
 pub use iccread::qcms_CIE_xyY as CIE_xyY;
 pub use iccread::qcms_CIE_xyYTRIPLE as CIE_xyYTRIPLE;
-pub use iccread::qcms_profile as Profile;
+pub use iccread::Profile;
 pub use transform::qcms_data_type as DataType;
 pub use transform::Transform;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

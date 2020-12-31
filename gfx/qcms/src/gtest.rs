@@ -1,5 +1,5 @@
-#[cfg(test)]
-mod test {
+#[cfg(all(test, feature = "c_bindings"))]
+mod gtest {
     use crate::{
         c_bindings::*, iccread::*, transform::qcms_data_type::*, transform::*,
         transform_util::lut_inverse_interp16, Intent::QCMS_INTENT_PERCEPTUAL,
@@ -497,8 +497,8 @@ mod test {
     }
 
     struct QcmsProfileTest {
-        in_profile: *mut qcms_profile,
-        out_profile: *mut qcms_profile,
+        in_profile: *mut Profile,
+        out_profile: *mut Profile,
         transform: *mut qcms_transform,
 
         input: Vec<u8>,
@@ -549,7 +549,7 @@ mod test {
                 qcms_transform_release(self.transform)
             }
             self.transform = transform;
-            !(self.transform == null_mut())
+            self.transform != null_mut()
         }
 
         unsafe fn SetTransformForType(&mut self, ty: qcms_data_type) -> bool {
@@ -630,16 +630,16 @@ mod test {
 
         unsafe fn VerifyOutput(&self, buf: &[u8]) -> bool {
             match self.storage_type {
-                DATA_RGB_8 => return CmpRgbBuffer(buf, &self.output, self.pixels),
-                DATA_RGBA_8 => return CmpRgbaBuffer(buf, &self.output, self.pixels),
-                DATA_BGRA_8 => return CmpBgraBuffer(buf, &self.output, self.pixels),
+                DATA_RGB_8 => CmpRgbBuffer(buf, &self.output, self.pixels),
+                DATA_RGBA_8 => CmpRgbaBuffer(buf, &self.output, self.pixels),
+                DATA_BGRA_8 => CmpBgraBuffer(buf, &self.output, self.pixels),
                 _ => unreachable!("Unknown type!"),
             }
         }
 
         unsafe fn ProduceVerifyOutput(&mut self, trans_fn: transform_fn_t) -> bool {
             self.ProduceOutput(trans_fn);
-            return self.VerifyOutput(&self.reference);
+            self.VerifyOutput(&self.reference)
         }
 
         unsafe fn PrecacheOutput(&mut self) {
@@ -782,7 +782,7 @@ mod test {
         }
     }
 
-    fn profile_from_path(file: &str) -> *mut qcms_profile {
+    fn profile_from_path(file: &str) -> *mut Profile {
         use std::io::Read;
         let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("profiles");
@@ -854,11 +854,14 @@ mod test {
             qcms_profile_release(output);
         }
     }
+}
 
+#[cfg(test)]
+mod test {
     #[test]
     fn identity() {
-        let p1 = crate::Profile::new_sRGB().unwrap();
-        let p2 = crate::Profile::new_sRGB().unwrap();
+        let p1 = crate::Profile::new_sRGB();
+        let p2 = crate::Profile::new_sRGB();
         let mut xfm = crate::Transform::new(
             &p1,
             &p2,

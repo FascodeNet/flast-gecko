@@ -26,18 +26,12 @@ use std::{
     sync::Arc,
 };
 
-use ::libc;
-use libc::{free, malloc, memset};
-
-use crate::{
-    double_to_s15Fixed16Number,
-    transform::{get_rgb_colorants, precache_output, set_rgb_colorants},
-};
-use crate::{matrix::matrix, s15Fixed16Number, s15Fixed16Number_to_float, Intent, Intent::*};
+use crate::transform::{precache_output, set_rgb_colorants};
+use crate::{matrix::Matrix, s15Fixed16Number, s15Fixed16Number_to_float, Intent, Intent::*};
 
 pub static qcms_supports_iccv4: AtomicBool = AtomicBool::new(false);
 
-pub type icColorSpaceSignature = libc::c_uint;
+pub type icColorSpaceSignature = u32;
 pub const icMaxEnumData: icColorSpaceSignature = 4294967295;
 pub const icSig15colorData: icColorSpaceSignature = 1178815570;
 pub const icSig14colorData: icColorSpaceSignature = 1162038354;
@@ -72,7 +66,7 @@ pub const LAB_SIGNATURE: u32 = 0x4C616220;
 
 #[repr(C)]
 #[derive(Default)]
-pub struct qcms_profile {
+pub struct Profile {
     pub(crate) class_type: u32,
     pub(crate) color_space: u32,
     pub(crate) pcs: u32,
@@ -88,7 +82,7 @@ pub struct qcms_profile {
     pub(crate) B2A0: Option<Box<lutType>>,
     pub(crate) mAB: Option<Box<lutmABType>>,
     pub(crate) mBA: Option<Box<lutmABType>>,
-    pub(crate) chromaticAdaption: matrix,
+    pub(crate) chromaticAdaption: Matrix,
     pub(crate) output_table_r: Option<Arc<precache_output>>,
     pub(crate) output_table_g: Option<Arc<precache_output>>,
     pub(crate) output_table_b: Option<Arc<precache_output>>,
@@ -197,12 +191,12 @@ struct mem_source<'a> {
 pub type uInt8Number = u8;
 #[inline]
 fn uInt8Number_to_float(mut a: uInt8Number) -> f32 {
-    return a as i32 as f32 / 255.0;
+    a as i32 as f32 / 255.0
 }
 
 #[inline]
 fn uInt16Number_to_float(mut a: uInt16Number) -> f32 {
-    return a as i32 as f32 / 65535.0;
+    a as i32 as f32 / 65535.0
 }
 
 fn cpu_to_be32(mut v: u32) -> be32 {
@@ -227,58 +221,54 @@ fn read_u32(mut mem: &mut mem_source, mut offset: usize) -> u32 {
      * mem->size is guaranteed to be > 4 */
     if offset > mem.buf.len() - 4 {
         invalid_source(mem, "Invalid offset");
-        return 0;
+        0
     } else {
-        let k = unsafe {
-            std::ptr::read_unaligned(mem.buf.as_ptr().offset(offset as isize) as *const be32)
-        };
-        return be32_to_cpu(k);
-    };
+        let k = unsafe { std::ptr::read_unaligned(mem.buf.as_ptr().add(offset) as *const be32) };
+        be32_to_cpu(k)
+    }
 }
 fn read_u16(mut mem: &mut mem_source, mut offset: usize) -> u16 {
     if offset > mem.buf.len() - 2 {
         invalid_source(mem, "Invalid offset");
-        return 0u16;
+        0u16
     } else {
-        let k = unsafe {
-            std::ptr::read_unaligned(mem.buf.as_ptr().offset(offset as isize) as *const be16)
-        };
-        return be16_to_cpu(k);
-    };
+        let k = unsafe { std::ptr::read_unaligned(mem.buf.as_ptr().add(offset) as *const be16) };
+        be16_to_cpu(k)
+    }
 }
 fn read_u8(mut mem: &mut mem_source, mut offset: usize) -> u8 {
     if offset > mem.buf.len() - 1 {
         invalid_source(mem, "Invalid offset");
-        return 0u8;
+        0u8
     } else {
-        return unsafe { *(mem.buf.as_ptr().offset(offset as isize) as *mut u8) };
-    };
+        unsafe { *(mem.buf.as_ptr().add(offset) as *mut u8) }
+    }
 }
 fn read_s15Fixed16Number(mut mem: &mut mem_source, mut offset: usize) -> s15Fixed16Number {
-    return read_u32(mem, offset) as s15Fixed16Number;
+    read_u32(mem, offset) as s15Fixed16Number
 }
 fn read_uInt8Number(mut mem: &mut mem_source, mut offset: usize) -> uInt8Number {
-    return read_u8(mem, offset);
+    read_u8(mem, offset)
 }
 fn read_uInt16Number(mut mem: &mut mem_source, mut offset: usize) -> uInt16Number {
-    return read_u16(mem, offset);
+    read_u16(mem, offset)
 }
-fn write_u32(mut mem: &mut [u8], mut offset: usize, mut value: u32) {
+pub fn write_u32(mut mem: &mut [u8], mut offset: usize, mut value: u32) {
     if offset <= mem.len() - std::mem::size_of_val(&value) {
         panic!("OOB");
     }
     let mem = mem.as_mut_ptr();
     unsafe {
-        std::ptr::write_unaligned(mem.offset(offset as isize) as *mut u32, cpu_to_be32(value));
+        std::ptr::write_unaligned(mem.add(offset) as *mut u32, cpu_to_be32(value));
     }
 }
-fn write_u16(mut mem: &mut [u8], mut offset: usize, mut value: u16) {
+pub fn write_u16(mut mem: &mut [u8], mut offset: usize, mut value: u16) {
     if offset <= mem.len() - std::mem::size_of_val(&value) {
         panic!("OOB");
     }
     let mem = mem.as_mut_ptr();
     unsafe {
-        std::ptr::write_unaligned(mem.offset(offset as isize) as *mut u16, cpu_to_be16(value));
+        std::ptr::write_unaligned(mem.add(offset) as *mut u16, cpu_to_be16(value));
     }
 }
 
@@ -311,14 +301,14 @@ fn check_profile_version(mut src: &mut mem_source) {
 }
 
 const INPUT_DEVICE_PROFILE: u32 = 0x73636e72; // 'scnr'
-const DISPLAY_DEVICE_PROFILE: u32 = 0x6d6e7472; // 'mntr'
+pub const DISPLAY_DEVICE_PROFILE: u32 = 0x6d6e7472; // 'mntr'
 const OUTPUT_DEVICE_PROFILE: u32 = 0x70727472; // 'prtr'
 const DEVICE_LINK_PROFILE: u32 = 0x6c696e6b; // 'link'
 const COLOR_SPACE_PROFILE: u32 = 0x73706163; // 'spac'
 const ABSTRACT_PROFILE: u32 = 0x61627374; // 'abst'
 const NAMED_COLOR_PROFILE: u32 = 0x6e6d636c; // 'nmcl'
 
-fn read_class_signature(mut profile: &mut qcms_profile, mut mem: &mut mem_source) {
+fn read_class_signature(mut profile: &mut Profile, mut mem: &mut mem_source) {
     profile.class_type = read_u32(mem, 12);
     match profile.class_type {
         DISPLAY_DEVICE_PROFILE
@@ -330,7 +320,7 @@ fn read_class_signature(mut profile: &mut qcms_profile, mut mem: &mut mem_source
         }
     };
 }
-fn read_color_space(mut profile: &mut qcms_profile, mut mem: &mut mem_source) {
+fn read_color_space(mut profile: &mut Profile, mut mem: &mut mem_source) {
     profile.color_space = read_u32(mem, 16);
     match profile.color_space {
         RGB_SIGNATURE | GRAY_SIGNATURE => {}
@@ -339,7 +329,7 @@ fn read_color_space(mut profile: &mut qcms_profile, mut mem: &mut mem_source) {
         }
     };
 }
-fn read_pcs(mut profile: &mut qcms_profile, mut mem: &mut mem_source) {
+fn read_pcs(mut profile: &mut Profile, mut mem: &mut mem_source) {
     profile.pcs = read_u32(mem, 20);
     match profile.pcs {
         XYZ_SIGNATURE | LAB_SIGNATURE => {}
@@ -348,7 +338,7 @@ fn read_pcs(mut profile: &mut qcms_profile, mut mem: &mut mem_source) {
         }
     };
 }
-fn read_tag_table(mut profile: &mut qcms_profile, mut mem: &mut mem_source) -> Vec<tag> {
+fn read_tag_table(mut profile: &mut Profile, mut mem: &mut mem_source) -> Vec<tag> {
     let count = read_u32(mem, 128);
     if count > MAX_TAG_COUNT {
         invalid_source(mem, "max number of tags exceeded");
@@ -442,7 +432,7 @@ authorization from SunSoft Inc.
 // true if the profile looks bogus and should probably be
 // ignored.
 #[no_mangle]
-pub extern "C" fn qcms_profile_is_bogus(mut profile: &mut qcms_profile) -> bool {
+pub extern "C" fn qcms_profile_is_bogus(mut profile: &mut Profile) -> bool {
     let mut sum: [f32; 3] = [0.; 3];
     let mut target: [f32; 3] = [0.; 3];
     let mut tolerance: [f32; 3] = [0.; 3];
@@ -456,15 +446,15 @@ pub extern "C" fn qcms_profile_is_bogus(mut profile: &mut qcms_profile) -> bool 
     let mut bY: f32;
     let mut bZ: f32;
     let mut negative: bool;
-    let mut i: libc::c_uint;
+    let mut i: u32;
     // We currently only check the bogosity of RGB profiles
     if profile.color_space != RGB_SIGNATURE {
         return false;
     }
-    if !profile.A2B0.is_none()
-        || !profile.B2A0.is_none()
-        || !profile.mAB.is_none()
-        || !profile.mBA.is_none()
+    if profile.A2B0.is_some()
+        || profile.B2A0.is_some()
+        || profile.mAB.is_some()
+        || profile.mBA.is_some()
     {
         return false;
     }
@@ -500,7 +490,7 @@ pub extern "C" fn qcms_profile_is_bogus(mut profile: &mut qcms_profile) -> bool 
         {
             return true;
         }
-        i = i + 1
+        i += 1
     }
     if !cfg!(target_os = "macos") {
         negative = (rX < 0.)
@@ -526,19 +516,19 @@ pub extern "C" fn qcms_profile_is_bogus(mut profile: &mut qcms_profile) -> bool 
         return true;
     }
     // All Good
-    return false;
+    false
 }
 
-const TAG_bXYZ: u32 = 0x6258595a;
-const TAG_gXYZ: u32 = 0x6758595a;
-const TAG_rXYZ: u32 = 0x7258595a;
-const TAG_rTRC: u32 = 0x72545243;
-const TAG_bTRC: u32 = 0x62545243;
-const TAG_gTRC: u32 = 0x67545243;
-const TAG_kTRC: u32 = 0x6b545243;
-const TAG_A2B0: u32 = 0x41324230;
-const TAG_B2A0: u32 = 0x42324130;
-const TAG_CHAD: u32 = 0x63686164;
+pub const TAG_bXYZ: u32 = 0x6258595a;
+pub const TAG_gXYZ: u32 = 0x6758595a;
+pub const TAG_rXYZ: u32 = 0x7258595a;
+pub const TAG_rTRC: u32 = 0x72545243;
+pub const TAG_bTRC: u32 = 0x62545243;
+pub const TAG_gTRC: u32 = 0x67545243;
+pub const TAG_kTRC: u32 = 0x6b545243;
+pub const TAG_A2B0: u32 = 0x41324230;
+pub const TAG_B2A0: u32 = 0x42324130;
+pub const TAG_CHAD: u32 = 0x63686164;
 
 fn find_tag(mut index: &tag_index, mut tag_id: u32) -> Option<&tag> {
     for t in index {
@@ -562,9 +552,9 @@ fn read_tag_s15Fixed16ArrayType(
     mut src: &mut mem_source,
     mut index: &tag_index,
     mut tag_id: u32,
-) -> matrix {
+) -> Matrix {
     let mut tag = find_tag(index, tag_id);
-    let mut matrix: matrix = matrix {
+    let mut matrix: Matrix = Matrix {
         m: [[0.; 3]; 3],
         invalid: false,
     };
@@ -579,16 +569,16 @@ fn read_tag_s15Fixed16ArrayType(
         i = 0u8;
         while (i as i32) < 9 {
             matrix.m[(i as i32 / 3) as usize][(i as i32 % 3) as usize] = s15Fixed16Number_to_float(
-                read_s15Fixed16Number(src, (offset + 8 + (i as i32 * 4) as libc::c_uint) as usize),
+                read_s15Fixed16Number(src, (offset + 8 + (i as i32 * 4) as u32) as usize),
             );
-            i = i + 1
+            i += 1
         }
         matrix.invalid = false
     } else {
         matrix.invalid = true;
         invalid_source(src, "missing sf32tag");
     }
-    return matrix;
+    matrix
 }
 fn read_tag_XYZType(mut src: &mut mem_source, mut index: &tag_index, mut tag_id: u32) -> XYZNumber {
     let mut num: XYZNumber = {
@@ -608,7 +598,7 @@ fn read_tag_XYZType(mut src: &mut mem_source, mut index: &tag_index, mut tag_id:
     } else {
         invalid_source(src, "missing xyztag");
     }
-    return num;
+    num
 }
 // Read the tag at a given offset rather then the tag_index.
 // This method is used when reading mAB tags where nested curveType are
@@ -639,7 +629,7 @@ fn read_curveType(
             table.push(read_u16(src, (offset + 12 + i * 2) as usize));
         }
         *len = 12 + count * 2;
-        return Some(Box::new(curveType::Curve(table)));
+        Some(Box::new(curveType::Curve(table)))
     } else {
         count = read_u16(src, (offset + 8) as usize) as u32;
         if count > 4 {
@@ -661,7 +651,7 @@ fn read_curveType(
                 invalid_source(src, "parametricCurve definition causes division by zero");
             }
         }
-        return Some(Box::new(curveType::Parametric(params)));
+        Some(Box::new(curveType::Parametric(params)))
     }
 }
 fn read_tag_curveType(
@@ -676,7 +666,7 @@ fn read_tag_curveType(
     } else {
         invalid_source(src, "missing curvetag");
     }
-    return None;
+    None
 }
 // arbitrary
 fn read_nested_curveType(
@@ -695,10 +685,10 @@ fn read_nested_curveType(
             invalid_source(src, "invalid nested curveType curve");
             break;
         } else {
-            channel_offset = channel_offset + tag_len;
+            channel_offset += tag_len;
             // 4 byte aligned
             if tag_len % 4 != 0 {
-                channel_offset = channel_offset + (4 - tag_len % 4)
+                channel_offset += 4 - tag_len % 4
             }
             i += 1
         }
@@ -745,36 +735,36 @@ fn read_tag_lutmABType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lu
     // Convert offsets relative to the tag to relative to the profile
     // preserve zero for optional fields
     if a_curve_offset != 0 {
-        a_curve_offset = a_curve_offset + offset
+        a_curve_offset += offset
     }
     if clut_offset != 0 {
-        clut_offset = clut_offset + offset
+        clut_offset += offset
     }
     if m_curve_offset != 0 {
-        m_curve_offset = m_curve_offset + offset
+        m_curve_offset += offset
     }
     if matrix_offset != 0 {
-        matrix_offset = matrix_offset + offset
+        matrix_offset += offset
     }
     if b_curve_offset != 0 {
-        b_curve_offset = b_curve_offset + offset
+        b_curve_offset += offset
     }
     if clut_offset != 0 {
         debug_assert!(num_in_channels as i32 == 3);
         // clut_size can not overflow since lg(256^num_in_channels) = 24 bits.
         i = 0;
-        while i < num_in_channels as libc::c_uint {
-            clut_size = clut_size * read_u8(src, (clut_offset + i) as usize) as libc::c_uint;
+        while i < num_in_channels as u32 {
+            clut_size *= read_u8(src, (clut_offset + i) as usize) as u32;
             if clut_size == 0 {
                 invalid_source(src, "bad clut_size");
             }
-            i = i + 1
+            i += 1
         }
     } else {
         clut_size = 0
     }
     // 24bits * 3 won't overflow either
-    clut_size = clut_size * num_out_channels as libc::c_uint;
+    clut_size *= num_out_channels as u32;
     if clut_size > 500000 {
         return None;
     }
@@ -783,12 +773,12 @@ fn read_tag_lutmABType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lu
 
     if clut_offset != 0 {
         i = 0;
-        while i < num_in_channels as libc::c_uint {
+        while i < num_in_channels as u32 {
             lut.num_grid_points[i as usize] = read_u8(src, (clut_offset + i) as usize);
             if lut.num_grid_points[i as usize] as i32 == 0 {
                 invalid_source(src, "bad grid_points");
             }
-            i = i + 1
+            i += 1
         }
     }
     // Reverse the processing of transformation elements for mBA type.
@@ -797,18 +787,18 @@ fn read_tag_lutmABType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lu
     lut.num_out_channels = num_out_channels;
     if matrix_offset != 0 {
         // read the matrix if we have it
-        lut.e00 = read_s15Fixed16Number(src, (matrix_offset + (4 * 0) as libc::c_uint) as usize); // the caller checks that this doesn't happen
-        lut.e01 = read_s15Fixed16Number(src, (matrix_offset + (4 * 1) as libc::c_uint) as usize);
-        lut.e02 = read_s15Fixed16Number(src, (matrix_offset + (4 * 2) as libc::c_uint) as usize);
-        lut.e10 = read_s15Fixed16Number(src, (matrix_offset + (4 * 3) as libc::c_uint) as usize);
-        lut.e11 = read_s15Fixed16Number(src, (matrix_offset + (4 * 4) as libc::c_uint) as usize);
-        lut.e12 = read_s15Fixed16Number(src, (matrix_offset + (4 * 5) as libc::c_uint) as usize);
-        lut.e20 = read_s15Fixed16Number(src, (matrix_offset + (4 * 6) as libc::c_uint) as usize);
-        lut.e21 = read_s15Fixed16Number(src, (matrix_offset + (4 * 7) as libc::c_uint) as usize);
-        lut.e22 = read_s15Fixed16Number(src, (matrix_offset + (4 * 8) as libc::c_uint) as usize);
-        lut.e03 = read_s15Fixed16Number(src, (matrix_offset + (4 * 9) as libc::c_uint) as usize);
-        lut.e13 = read_s15Fixed16Number(src, (matrix_offset + (4 * 10) as libc::c_uint) as usize);
-        lut.e23 = read_s15Fixed16Number(src, (matrix_offset + (4 * 11) as libc::c_uint) as usize)
+        lut.e00 = read_s15Fixed16Number(src, (matrix_offset + (4 * 0) as u32) as usize); // the caller checks that this doesn't happen
+        lut.e01 = read_s15Fixed16Number(src, (matrix_offset + (4 * 1) as u32) as usize);
+        lut.e02 = read_s15Fixed16Number(src, (matrix_offset + (4 * 2) as u32) as usize);
+        lut.e10 = read_s15Fixed16Number(src, (matrix_offset + (4 * 3) as u32) as usize);
+        lut.e11 = read_s15Fixed16Number(src, (matrix_offset + (4 * 4) as u32) as usize);
+        lut.e12 = read_s15Fixed16Number(src, (matrix_offset + (4 * 5) as u32) as usize);
+        lut.e20 = read_s15Fixed16Number(src, (matrix_offset + (4 * 6) as u32) as usize);
+        lut.e21 = read_s15Fixed16Number(src, (matrix_offset + (4 * 7) as u32) as usize);
+        lut.e22 = read_s15Fixed16Number(src, (matrix_offset + (4 * 8) as u32) as usize);
+        lut.e03 = read_s15Fixed16Number(src, (matrix_offset + (4 * 9) as u32) as usize);
+        lut.e13 = read_s15Fixed16Number(src, (matrix_offset + (4 * 10) as u32) as usize);
+        lut.e23 = read_s15Fixed16Number(src, (matrix_offset + (4 * 11) as u32) as usize)
     }
     if a_curve_offset != 0 {
         read_nested_curveType(src, &mut lut.a_curves, num_in_channels, a_curve_offset);
@@ -847,7 +837,7 @@ fn read_tag_lutmABType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lu
     if !src.valid {
         return None;
     }
-    return Some(lut);
+    Some(lut)
 }
 fn read_tag_lutType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lutType>> {
     let mut offset: u32 = tag.offset;
@@ -982,8 +972,8 @@ fn read_tag_lutType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lutTy
         }
     }
     Some(Box::new(lutType {
-        num_input_table_entries: num_input_table_entries,
-        num_output_table_entries: num_output_table_entries,
+        num_input_table_entries,
+        num_output_table_entries,
         num_input_channels: in_chan,
         num_output_channels: out_chan,
         num_clut_grid_points: grid_points,
@@ -1001,7 +991,7 @@ fn read_tag_lutType(mut src: &mut mem_source, mut tag: &tag) -> Option<Box<lutTy
         output_table,
     }))
 }
-fn read_rendering_intent(mut profile: &mut qcms_profile, mut src: &mut mem_source) {
+fn read_rendering_intent(mut profile: &mut Profile, mut src: &mut mem_source) {
     let intent = read_u32(src, 64);
     profile.rendering_intent = match intent {
         x if x == QCMS_INTENT_PERCEPTUAL as u32 => QCMS_INTENT_PERCEPTUAL,
@@ -1014,8 +1004,8 @@ fn read_rendering_intent(mut profile: &mut qcms_profile, mut src: &mut mem_sourc
         }
     };
 }
-fn profile_create() -> Box<qcms_profile> {
-    Box::new(qcms_profile::default())
+fn profile_create() -> Box<Profile> {
+    Box::new(Profile::default())
 }
 /* build sRGB gamma table */
 /* based on cmsBuildParametricGamma() */
@@ -1056,19 +1046,19 @@ fn build_sRGB_gamma_table(mut num_entries: i32) -> Vec<u16> {
         }
         table.push(output.floor() as u16);
     }
-    return table;
+    table
 }
 fn curve_from_table(mut table: &[u16]) -> Box<curveType> {
-    return Box::new(curveType::Curve(table.to_vec()));
+    Box::new(curveType::Curve(table.to_vec()))
 }
-fn float_to_u8Fixed8Number(mut a: f32) -> u16 {
+pub fn float_to_u8Fixed8Number(mut a: f32) -> u16 {
     if a > 255.0 + 255.0 / 256f32 {
-        return 0xffffu16;
+        0xffffu16
     } else if a < 0.0 {
-        return 0u16;
+        0u16
     } else {
-        return (a * 256.0 + 0.5).floor() as u16;
-    };
+        (a * 256.0 + 0.5).floor() as u16
+    }
 }
 
 fn curve_from_gamma(mut gamma: f32) -> Box<curveType> {
@@ -1125,14 +1115,14 @@ fn white_point_from_temp(mut temp_K: i32) -> qcms_CIE_xyY {
     white_point.x = x;
     white_point.y = y;
     white_point.Y = 1.0f64;
-    return white_point;
+    white_point
 }
 #[no_mangle]
 pub extern "C" fn qcms_white_point_sRGB() -> qcms_CIE_xyY {
-    return white_point_from_temp(6504);
+    white_point_from_temp(6504)
 }
 
-impl qcms_profile {
+impl Profile {
     //XXX: it would be nice if we had a way of ensuring
     // everything in a profile was initialized regardless of how it was created
     //XXX: should this also be taking a black_point?
@@ -1141,7 +1131,7 @@ impl qcms_profile {
         mut white_point: qcms_CIE_xyY,
         mut primaries: qcms_CIE_xyYTRIPLE,
         table: &[u16],
-    ) -> Option<Box<qcms_profile>> {
+    ) -> Option<Box<Profile>> {
         let mut profile = profile_create();
         //XXX: should store the whitepoint
         if !set_rgb_colorants(&mut profile, white_point, primaries) {
@@ -1154,9 +1144,9 @@ impl qcms_profile {
         profile.rendering_intent = QCMS_INTENT_PERCEPTUAL;
         profile.color_space = RGB_SIGNATURE;
         profile.pcs = XYZ_TYPE;
-        return Some(profile);
+        Some(profile)
     }
-    pub fn new_sRGB() -> Option<Box<qcms_profile>> {
+    pub fn new_sRGB() -> Box<Profile> {
         let Rec709Primaries = qcms_CIE_xyYTRIPLE {
             red: {
                 qcms_CIE_xyY {
@@ -1183,10 +1173,10 @@ impl qcms_profile {
         let D65 = qcms_white_point_sRGB();
         let table = build_sRGB_gamma_table(1024);
 
-        qcms_profile::new_rgb_with_table(D65, Rec709Primaries, &table)
+        Profile::new_rgb_with_table(D65, Rec709Primaries, &table).unwrap()
     }
 
-    pub fn new_gray_with_gamma(gamma: f32) -> Option<Box<qcms_profile>> {
+    pub fn new_gray_with_gamma(gamma: f32) -> Box<Profile> {
         let mut profile = profile_create();
 
         profile.grayTRC = Some(curve_from_gamma(gamma));
@@ -1194,7 +1184,7 @@ impl qcms_profile {
         profile.rendering_intent = QCMS_INTENT_PERCEPTUAL;
         profile.color_space = GRAY_SIGNATURE;
         profile.pcs = XYZ_TYPE;
-        Some(profile)
+        profile
     }
 
     pub fn new_rgb_with_gamma_set(
@@ -1203,7 +1193,7 @@ impl qcms_profile {
         mut redGamma: f32,
         mut greenGamma: f32,
         mut blueGamma: f32,
-    ) -> Option<Box<qcms_profile>> {
+    ) -> Option<Box<Profile>> {
         let mut profile = profile_create();
 
         //XXX: should store the whitepoint
@@ -1220,7 +1210,7 @@ impl qcms_profile {
         Some(profile)
     }
 
-    pub fn new_from_slice(mem: &[u8]) -> Option<Box<qcms_profile>> {
+    pub fn new_from_slice(mem: &[u8]) -> Option<Box<Profile>> {
         let mut length: u32;
         let mut source: mem_source = mem_source {
             buf: mem,
@@ -1316,9 +1306,7 @@ impl qcms_profile {
                 }
             } else if profile.color_space == GRAY_SIGNATURE {
                 profile.grayTRC = read_tag_curveType(src, &index, TAG_kTRC);
-                if profile.grayTRC.is_none() {
-                    return None;
-                }
+                profile.grayTRC.as_ref()?;
             } else {
                 debug_assert!(false, "read_color_space protects against entering here");
                 return None;
@@ -1337,115 +1325,4 @@ impl qcms_profile {
     pub fn precache_output_transform(&mut self) {
         crate::transform::qcms_profile_precache_output_transform(self);
     }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn qcms_data_create_rgb_with_gamma(
-    mut white_point: qcms_CIE_xyY,
-    mut primaries: qcms_CIE_xyYTRIPLE,
-    mut gamma: f32,
-    mut mem: *mut *mut libc::c_void,
-    mut size: *mut usize,
-) {
-    let mut length: u32;
-    let mut index: u32;
-    let mut xyz_count: u32;
-    let mut trc_count: u32;
-    let mut tag_table_offset: usize;
-    let mut tag_data_offset: usize;
-    let mut data: *mut libc::c_void;
-    let mut colorants: matrix = matrix {
-        m: [[0.; 3]; 3],
-        invalid: false,
-    };
-    let mut TAG_XYZ: [u32; 3] = [TAG_rXYZ, TAG_gXYZ, TAG_bXYZ];
-    let mut TAG_TRC: [u32; 3] = [TAG_rTRC, TAG_gTRC, TAG_bTRC];
-    if mem.is_null() || size.is_null() {
-        return;
-    }
-    *mem = 0 as *mut libc::c_void;
-    *size = 0;
-    /*
-    	* total length = icc profile header(128) + tag count(4) +
-    	* (tag table item (12) * total tag (6 = 3 rTRC + 3 rXYZ)) + rTRC elements data (3 * 20)
-    	* + rXYZ elements data (3*16), and all tag data elements must start at the 4-byte boundary.
-    	*/
-    xyz_count = 3; // rXYZ, gXYZ, bXYZ
-    trc_count = 3; // rTRC, gTRC, bTRC
-    length =
-        (128 + 4) as libc::c_uint + 12 * (xyz_count + trc_count) + xyz_count * 20 + trc_count * 16;
-    // reserve the total memory.
-    data = malloc(length as usize);
-    if data.is_null() {
-        return;
-    }
-    memset(data, 0, length as usize);
-    // Part1 : write rXYZ, gXYZ and bXYZ
-    if !get_rgb_colorants(&mut colorants, white_point, primaries) {
-        free(data);
-        return;
-    }
-    let data = std::slice::from_raw_parts_mut(data as *mut u8, length as usize);
-    // the position of first tag's signature in tag table
-    tag_table_offset = (128 + 4) as usize; // the start of tag data elements.
-    tag_data_offset = ((128 + 4) as libc::c_uint + 12 * (xyz_count + trc_count)) as usize;
-    index = 0;
-    while index < xyz_count {
-        // tag table
-        write_u32(data, tag_table_offset, TAG_XYZ[index as usize]); // 20 bytes per TAG_(r/g/b)XYZ tag element
-        write_u32(data, tag_table_offset + 4, tag_data_offset as u32);
-        write_u32(data, tag_table_offset + 8, 20);
-        // tag data element
-        write_u32(data, tag_data_offset, XYZ_TYPE);
-        // reserved 4 bytes.
-        write_u32(
-            data,
-            tag_data_offset + 8,
-            double_to_s15Fixed16Number(colorants.m[0][index as usize] as f64) as u32,
-        );
-        write_u32(
-            data,
-            tag_data_offset + 12,
-            double_to_s15Fixed16Number(colorants.m[1][index as usize] as f64) as u32,
-        );
-        write_u32(
-            data,
-            tag_data_offset + 16,
-            double_to_s15Fixed16Number(colorants.m[2][index as usize] as f64) as u32,
-        );
-        tag_table_offset = tag_table_offset + 12;
-        tag_data_offset = tag_data_offset + 20;
-        index = index + 1
-    }
-    // Part2 : write rTRC, gTRC and bTRC
-    index = 0;
-    while index < trc_count {
-        // tag table
-        write_u32(data, tag_table_offset, TAG_TRC[index as usize]); // 14 bytes per TAG_(r/g/b)TRC element
-        write_u32(data, tag_table_offset + 4, tag_data_offset as u32);
-        write_u32(data, tag_table_offset + 8, 14);
-        // tag data element
-        write_u32(data, tag_data_offset, CURVE_TYPE);
-        // reserved 4 bytes.
-        write_u32(data, tag_data_offset + 8, 1); // count
-        write_u16(data, tag_data_offset + 12, float_to_u8Fixed8Number(gamma));
-        tag_table_offset = tag_table_offset + 12;
-        tag_data_offset = tag_data_offset + 16;
-        index = index + 1
-    }
-    /* Part3 : write profile header
-     *
-     * Important header fields are left empty. This generates a profile for internal use only.
-     * We should be generating: Profile version (04300000h), Profile signature (acsp),
-     * PCS illumiant field. Likewise mandatory profile tags are omitted.
-     */
-    write_u32(data, 0, length); // the total length of this memory
-    write_u32(data, 12, DISPLAY_DEVICE_PROFILE); // profile->class_type
-    write_u32(data, 16, RGB_SIGNATURE); // profile->color_space
-    write_u32(data, 20, XYZ_TYPE); // profile->pcs
-    write_u32(data, 64, QCMS_INTENT_PERCEPTUAL as u32); // profile->rendering_intent
-    write_u32(data, 128, 6); // total tag count
-                             // prepare the result
-    *mem = data.as_mut_ptr() as *mut libc::c_void;
-    *size = length as usize;
 }

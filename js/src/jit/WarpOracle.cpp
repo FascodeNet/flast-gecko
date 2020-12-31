@@ -67,9 +67,9 @@ class MOZ_STACK_CLASS WarpScriptOracle {
                                       BytecodeLocation loc, ICCacheIRStub* stub,
                                       ICFallbackStub* fallbackStub,
                                       uint8_t* stubDataCopy);
-  MOZ_MUST_USE bool replaceNurseryPointers(ICCacheIRStub* stub,
-                                           const CacheIRStubInfo* stubInfo,
-                                           uint8_t* stubDataCopy);
+  [[nodiscard]] bool replaceNurseryPointers(ICCacheIRStub* stub,
+                                            const CacheIRStubInfo* stubInfo,
+                                            uint8_t* stubDataCopy);
 
  public:
   WarpScriptOracle(JSContext* cx, WarpOracle* oracle, HandleScript script,
@@ -176,9 +176,9 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
 }
 
 template <typename T, typename... Args>
-static MOZ_MUST_USE bool AddOpSnapshot(TempAllocator& alloc,
-                                       WarpOpSnapshotList& snapshots,
-                                       uint32_t offset, Args&&... args) {
+[[nodiscard]] static bool AddOpSnapshot(TempAllocator& alloc,
+                                        WarpOpSnapshotList& snapshots,
+                                        uint32_t offset, Args&&... args) {
   T* snapshot = new (alloc.fallible()) T(offset, std::forward<Args>(args)...);
   if (!snapshot) {
     return false;
@@ -188,10 +188,10 @@ static MOZ_MUST_USE bool AddOpSnapshot(TempAllocator& alloc,
   return true;
 }
 
-static MOZ_MUST_USE bool AddWarpGetImport(TempAllocator& alloc,
-                                          WarpOpSnapshotList& snapshots,
-                                          uint32_t offset, JSScript* script,
-                                          PropertyName* name) {
+[[nodiscard]] static bool AddWarpGetImport(TempAllocator& alloc,
+                                           WarpOpSnapshotList& snapshots,
+                                           uint32_t offset, JSScript* script,
+                                           PropertyName* name) {
   ModuleEnvironmentObject* env = GetModuleEnvironmentForScript(script);
   MOZ_ASSERT(env);
 

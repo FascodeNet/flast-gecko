@@ -290,9 +290,9 @@ class JitcodeGlobalEntry {
 
     void* canonicalNativeAddrFor(void* ptr) const;
 
-    MOZ_MUST_USE bool callStackAtAddr(void* ptr,
-                                      BytecodeLocationVector& results,
-                                      uint32_t* depth) const;
+    [[nodiscard]] bool callStackAtAddr(void* ptr,
+                                       BytecodeLocationVector& results,
+                                       uint32_t* depth) const;
 
     uint32_t callStackAtAddr(void* ptr, const char** results,
                              uint32_t maxResults) const;
@@ -337,9 +337,9 @@ class JitcodeGlobalEntry {
 
     void* canonicalNativeAddrFor(void* ptr) const;
 
-    MOZ_MUST_USE bool callStackAtAddr(void* ptr,
-                                      BytecodeLocationVector& results,
-                                      uint32_t* depth) const;
+    [[nodiscard]] bool callStackAtAddr(void* ptr,
+                                       BytecodeLocationVector& results,
+                                       uint32_t* depth) const;
 
     uint32_t callStackAtAddr(void* ptr, const char** results,
                              uint32_t maxResults) const;
@@ -361,9 +361,9 @@ class JitcodeGlobalEntry {
 
     void* canonicalNativeAddrFor(void* ptr) const;
 
-    MOZ_MUST_USE bool callStackAtAddr(void* ptr,
-                                      BytecodeLocationVector& results,
-                                      uint32_t* depth) const;
+    [[nodiscard]] bool callStackAtAddr(void* ptr,
+                                       BytecodeLocationVector& results,
+                                       uint32_t* depth) const;
 
     uint32_t callStackAtAddr(void* ptr, const char** results,
                              uint32_t maxResults) const;
@@ -385,9 +385,9 @@ class JitcodeGlobalEntry {
       return nullptr;
     }
 
-    MOZ_MUST_USE bool callStackAtAddr(JSRuntime* rt, void* ptr,
-                                      BytecodeLocationVector& results,
-                                      uint32_t* depth) const {
+    [[nodiscard]] bool callStackAtAddr(JSRuntime* rt, void* ptr,
+                                       BytecodeLocationVector& results,
+                                       uint32_t* depth) const {
       return true;
     }
 
@@ -601,9 +601,9 @@ class JitcodeGlobalEntry {
   // and outermost appended last.
   //
   // Returns false on memory failure.
-  MOZ_MUST_USE bool callStackAtAddr(JSRuntime* rt, void* ptr,
-                                    BytecodeLocationVector& results,
-                                    uint32_t* depth) const {
+  [[nodiscard]] bool callStackAtAddr(JSRuntime* rt, void* ptr,
+                                     BytecodeLocationVector& results,
+                                     uint32_t* depth) const {
     switch (kind()) {
       case Ion:
         return ionEntry().callStackAtAddr(ptr, results, depth);
@@ -782,17 +782,17 @@ class JitcodeGlobalTable {
   const JitcodeGlobalEntry* lookupForSampler(void* ptr, JSRuntime* rt,
                                              uint64_t samplePosInBuffer);
 
-  MOZ_MUST_USE bool addEntry(const JitcodeGlobalEntry::IonEntry& entry) {
+  [[nodiscard]] bool addEntry(const JitcodeGlobalEntry::IonEntry& entry) {
     return addEntry(JitcodeGlobalEntry(entry));
   }
-  MOZ_MUST_USE bool addEntry(const JitcodeGlobalEntry::BaselineEntry& entry) {
+  [[nodiscard]] bool addEntry(const JitcodeGlobalEntry::BaselineEntry& entry) {
     return addEntry(JitcodeGlobalEntry(entry));
   }
-  MOZ_MUST_USE bool addEntry(
+  [[nodiscard]] bool addEntry(
       const JitcodeGlobalEntry::BaselineInterpreterEntry& entry) {
     return addEntry(JitcodeGlobalEntry(entry));
   }
-  MOZ_MUST_USE bool addEntry(const JitcodeGlobalEntry::DummyEntry& entry) {
+  [[nodiscard]] bool addEntry(const JitcodeGlobalEntry::DummyEntry& entry) {
     return addEntry(JitcodeGlobalEntry(entry));
   }
 
@@ -801,11 +801,11 @@ class JitcodeGlobalTable {
                     JSRuntime* rt);
 
   void setAllEntriesAsExpired();
-  MOZ_MUST_USE bool markIteratively(GCMarker* marker);
+  [[nodiscard]] bool markIteratively(GCMarker* marker);
   void traceWeak(JSRuntime* rt, JSTracer* trc);
 
  private:
-  MOZ_MUST_USE bool addEntry(const JitcodeGlobalEntry& entry);
+  [[nodiscard]] bool addEntry(const JitcodeGlobalEntry& entry);
 
   JitcodeGlobalEntry* lookupInternal(void* ptr);
 
@@ -971,10 +971,11 @@ class JitcodeRegionEntry {
 
   // Write a run, starting at the given NativeToBytecode entry, into the given
   // buffer writer.
-  static MOZ_MUST_USE bool WriteRun(CompactBufferWriter& writer,
-                                    JSScript** scriptList,
-                                    uint32_t scriptListSize, uint32_t runLength,
-                                    const NativeToBytecode* entry);
+  [[nodiscard]] static bool WriteRun(CompactBufferWriter& writer,
+                                     JSScript** scriptList,
+                                     uint32_t scriptListSize,
+                                     uint32_t runLength,
+                                     const NativeToBytecode* entry);
 
   // Delta Run entry formats are encoded little-endian:
   //
@@ -1176,9 +1177,9 @@ class JitcodeIonTable {
     }
   }
 
-  MOZ_MUST_USE bool makeIonEntry(JSContext* cx, JitCode* code,
-                                 uint32_t numScripts, JSScript** scripts,
-                                 JitcodeGlobalEntry::IonEntry& out);
+  [[nodiscard]] bool makeIonEntry(JSContext* cx, JitCode* code,
+                                  uint32_t numScripts, JSScript** scripts,
+                                  JitcodeGlobalEntry::IonEntry& out);
 
   uint32_t numRegions() const { return numRegions_; }
 
@@ -1219,13 +1220,13 @@ class JitcodeIonTable {
     return payloadEnd() - regionOffset(0);
   }
 
-  static MOZ_MUST_USE bool WriteIonTable(CompactBufferWriter& writer,
-                                         JSScript** scriptList,
-                                         uint32_t scriptListSize,
-                                         const NativeToBytecode* start,
-                                         const NativeToBytecode* end,
-                                         uint32_t* tableOffsetOut,
-                                         uint32_t* numRegionsOut);
+  [[nodiscard]] static bool WriteIonTable(CompactBufferWriter& writer,
+                                          JSScript** scriptList,
+                                          uint32_t scriptListSize,
+                                          const NativeToBytecode* start,
+                                          const NativeToBytecode* end,
+                                          uint32_t* tableOffsetOut,
+                                          uint32_t* numRegionsOut);
 };
 
 }  // namespace jit

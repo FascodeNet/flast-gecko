@@ -4334,11 +4334,6 @@
   mirror: always
   rust: true
 
-- name: gfx.font_rendering.fallback.async
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
 #  Whether to enable LayerScope tool and default listening port.
 - name: gfx.layerscope.enabled
   type: RelaxedAtomicBool
@@ -10204,7 +10199,7 @@
 
 - name: webgl.disable-fail-if-major-performance-caveat
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 - name: webgl.disable-DOM-blit-uploads

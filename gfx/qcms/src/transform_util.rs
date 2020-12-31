@@ -21,18 +21,11 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use ::libc;
-
 use crate::{
-    iccread::{curveType, qcms_profile},
+    iccread::{curveType, Profile},
     s15Fixed16Number_to_float,
 };
-use crate::{matrix::matrix, transform::PRECACHE_OUTPUT_MAX, transform::PRECACHE_OUTPUT_SIZE};
-
-pub type int32_t = i32;
-
-pub type uint8_t = libc::c_uchar;
-pub type uint16_t = libc::c_ushort;
+use crate::{matrix::Matrix, transform::PRECACHE_OUTPUT_MAX, transform::PRECACHE_OUTPUT_SIZE};
 
 //XXX: could use a bettername
 pub type uint16_fract_t = u16;
@@ -42,7 +35,7 @@ fn u8Fixed8Number_to_float(mut x: u16) -> f32 {
     // 0x0000 = 0.
     // 0x0100 = 1.
     // 0xffff = 255  + 255/256
-    return (x as i32 as f64 / 256.0f64) as f32;
+    (x as i32 as f64 / 256.0f64) as f32
 }
 #[inline]
 pub fn clamp_float(mut a: f32) -> f32 {
@@ -58,19 +51,19 @@ pub fn clamp_float(mut a: f32) -> f32 {
     for most consumers.
     */
     if a > 1. {
-        return 1.;
+        1.
     } else if a >= 0. {
-        return a;
+        a
     } else {
         // a < 0 or a is NaN
-        return 0.;
-    };
+        0.
+    }
 }
 /* value must be a value between 0 and 1 */
 //XXX: is the above a good restriction to have?
 // the output range of this functions is 0..1
 pub fn lut_interp_linear(mut input_value: f64, mut table: &[u16]) -> f32 {
-    input_value = input_value * (table.len() - 1) as f64;
+    input_value *= (table.len() - 1) as f64;
 
     let mut upper: i32 = input_value.ceil() as i32;
     let mut lower: i32 = input_value.floor() as i32;
@@ -78,7 +71,7 @@ pub fn lut_interp_linear(mut input_value: f64, mut table: &[u16]) -> f32 {
         + (table[lower as usize] as f64 * (upper as f64 - input_value)))
         as f32;
     /* scale the value */
-    return value * (1.0 / 65535.0);
+    value * (1.0 / 65535.0)
 }
 /* same as above but takes and returns a uint16_t value representing a range from 0..1 */
 #[no_mangle]
@@ -93,33 +86,32 @@ pub fn lut_interp_linear16(mut input_value: u16, mut table: &[u16]) -> u16 {
     value = (table[upper as usize] as u32 * interp
         + table[lower as usize] as u32 * (65535 - interp))
         / 65535;
-    return value as u16;
+    value as u16
 }
 /* same as above but takes an input_value from 0..PRECACHE_OUTPUT_MAX
  * and returns a uint8_t value representing a range from 0..1 */
 fn lut_interp_linear_precache_output(mut input_value: u32, mut table: &[u16]) -> u8 {
     /* Start scaling input_value to the length of the array: PRECACHE_OUTPUT_MAX*(length-1).
      * We'll divide out the PRECACHE_OUTPUT_MAX next */
-    let mut value: u32 = input_value * (table.len() - 1) as libc::c_uint;
+    let mut value: u32 = input_value * (table.len() - 1) as u32;
     /* equivalent to ceil(value/PRECACHE_OUTPUT_MAX) */
-    let mut upper: u32 =
-        (value + PRECACHE_OUTPUT_MAX as libc::c_uint - 1) / PRECACHE_OUTPUT_MAX as libc::c_uint;
+    let mut upper: u32 = (value + PRECACHE_OUTPUT_MAX as u32 - 1) / PRECACHE_OUTPUT_MAX as u32;
     /* equivalent to floor(value/PRECACHE_OUTPUT_MAX) */
-    let mut lower: u32 = value / PRECACHE_OUTPUT_MAX as libc::c_uint;
+    let mut lower: u32 = value / PRECACHE_OUTPUT_MAX as u32;
     /* interp is the distance from upper to value scaled to 0..PRECACHE_OUTPUT_MAX */
-    let mut interp: u32 = value % PRECACHE_OUTPUT_MAX as libc::c_uint;
+    let mut interp: u32 = value % PRECACHE_OUTPUT_MAX as u32;
     /* the table values range from 0..65535 */
-    value = table[upper as usize] as libc::c_uint * interp
-        + table[lower as usize] as libc::c_uint * (PRECACHE_OUTPUT_MAX as libc::c_uint - interp); // 0..(65535*PRECACHE_OUTPUT_MAX)
-                                                                                                  /* round and scale */
-    value = value + (PRECACHE_OUTPUT_MAX * 65535 / 255 / 2) as libc::c_uint; // scale to 0..255
-    value = value / (PRECACHE_OUTPUT_MAX * 65535 / 255) as libc::c_uint;
-    return value as u8;
+    value = table[upper as usize] as u32 * interp
+        + table[lower as usize] as u32 * (PRECACHE_OUTPUT_MAX as u32 - interp); // 0..(65535*PRECACHE_OUTPUT_MAX)
+                                                                                /* round and scale */
+    value += (PRECACHE_OUTPUT_MAX * 65535 / 255 / 2) as u32; // scale to 0..255
+    value /= (PRECACHE_OUTPUT_MAX * 65535 / 255) as u32;
+    value as u8
 }
 /* value must be a value between 0 and 1 */
 //XXX: is the above a good restriction to have?
 pub fn lut_interp_linear_float(mut value: f32, mut table: &[f32]) -> f32 {
-    value = value * (table.len() - 1) as f32;
+    value *= (table.len() - 1) as f32;
 
     let mut upper: i32 = value.ceil() as i32;
     let mut lower: i32 = value.floor() as i32;
@@ -127,7 +119,7 @@ pub fn lut_interp_linear_float(mut value: f32, mut table: &[f32]) -> f32 {
     value = (table[upper as usize] as f64 * (1.0f64 - (upper as f32 - value) as f64)
         + (table[lower as usize] * (upper as f32 - value)) as f64) as f32;
     /* scale the value */
-    return value;
+    value
 }
 fn compute_curve_gamma_table_type1(mut gamma_table: &mut Vec<f32>, mut gamma: u16) {
     let mut gamma_float: f32 = u8Fixed8Number_to_float(gamma);
@@ -226,21 +218,17 @@ pub(crate) fn build_input_gamma_table(mut TRC: Option<&curveType>) -> Option<Vec
         curveType::Parametric(params) => {
             compute_curve_gamma_table_type_parametric(&mut gamma_table, params)
         }
-        curveType::Curve(data) => {
-            if data.len() == 0 {
-                compute_curve_gamma_table_type0(&mut gamma_table);
-            } else if data.len() == 1 {
-                compute_curve_gamma_table_type1(&mut gamma_table, data[0]);
-            } else {
-                compute_curve_gamma_table_type2(&mut gamma_table, data);
-            }
-        }
+        curveType::Curve(data) => match data.len() {
+            0 => compute_curve_gamma_table_type0(&mut gamma_table),
+            1 => compute_curve_gamma_table_type1(&mut gamma_table, data[0]),
+            _ => compute_curve_gamma_table_type2(&mut gamma_table, data),
+        },
     }
 
-    return Some(gamma_table);
+    Some(gamma_table)
 }
-pub fn build_colorant_matrix(mut p: &qcms_profile) -> matrix {
-    let mut result: matrix = matrix {
+pub fn build_colorant_matrix(mut p: &Profile) -> Matrix {
+    let mut result: Matrix = Matrix {
         m: [[0.; 3]; 3],
         invalid: false,
     };
@@ -254,7 +242,7 @@ pub fn build_colorant_matrix(mut p: &qcms_profile) -> matrix {
     result.m[2][1] = s15Fixed16Number_to_float(p.greenColorant.Z);
     result.m[2][2] = s15Fixed16Number_to_float(p.blueColorant.Z);
     result.invalid = false;
-    return result;
+    result
 }
 /* The following code is copied nearly directly from lcms.
  * I think it could be much better. For example, Argyll seems to have better code in
@@ -348,7 +336,7 @@ pub fn lut_inverse_interp16(mut Value: u16, mut LutTable: &[u16]) -> uint16_frac
     if f >= 65535.0f64 {
         return 0xffffu16;
     }
-    return (f + 0.5f64).floor() as uint16_fract_t;
+    (f + 0.5f64).floor() as uint16_fract_t
 }
 /*
 The number of entries needed to invert a lookup table should not
@@ -372,7 +360,7 @@ fn invert_lut(mut table: &[u16], mut out_length: i32) -> Vec<u16> {
         let mut input: uint16_fract_t = (x + 0.5f64).floor() as uint16_fract_t;
         output.push(lut_inverse_interp16(input, table));
     }
-    return output;
+    output
 }
 fn compute_precache_pow(output: &mut [u8; PRECACHE_OUTPUT_SIZE], mut gamma: f32) {
     let mut v: u32 = 0;
@@ -380,22 +368,22 @@ fn compute_precache_pow(output: &mut [u8; PRECACHE_OUTPUT_SIZE], mut gamma: f32)
         //XXX: don't do integer/float conversion... and round?
         output[v as usize] =
             (255.0f64 * (v as f64 / PRECACHE_OUTPUT_MAX as f64).powf(gamma as f64)) as u8;
-        v = v + 1
+        v += 1
     }
 }
 pub fn compute_precache_lut(mut output: &mut [u8; PRECACHE_OUTPUT_SIZE], mut table: &[u16]) {
     let mut v: u32 = 0;
     while v < PRECACHE_OUTPUT_SIZE as u32 {
         output[v as usize] = lut_interp_linear_precache_output(v, table);
-        v = v + 1
+        v += 1
     }
 }
 pub fn compute_precache_linear(mut output: &mut [u8; PRECACHE_OUTPUT_SIZE]) {
     let mut v: u32 = 0;
     while v < PRECACHE_OUTPUT_SIZE as u32 {
         //XXX: round?
-        output[v as usize] = (v / (PRECACHE_OUTPUT_SIZE / 256) as libc::c_uint) as u8;
-        v = v + 1
+        output[v as usize] = (v / (PRECACHE_OUTPUT_SIZE / 256) as u32) as u8;
+        v += 1
     }
 }
 pub(crate) fn compute_precache(
@@ -412,7 +400,7 @@ pub(crate) fn compute_precache(
             let mut i: u16 = 0u16;
             while (i as i32) < 256 {
                 gamma_table_uint[i as usize] = (gamma_table[i as usize] * 65535f32) as u16;
-                i = i + 1
+                i += 1
             }
             //XXX: the choice of a minimum of 256 here is not backed by any theory,
             //     measurement or data, howeve r it is what lcms uses.
@@ -425,28 +413,25 @@ pub(crate) fn compute_precache(
             compute_precache_lut(output, &inverted);
         }
         curveType::Curve(data) => {
-            if data.len() == 0 {
-                compute_precache_linear(output);
-            } else if data.len() == 1 {
-                compute_precache_pow(
-                    output,
-                    (1.0f64 / u8Fixed8Number_to_float(data[0]) as f64) as f32,
-                );
-            } else {
-                let mut inverted_size_0: i32 = data.len() as i32;
-                //XXX: the choice of a minimum of 256 here is not backed by any theory,
-                //     measurement or data, howeve r it is what lcms uses.
-                //     the maximum number we would need is 65535 because that's the
-                //     accuracy used for computing the pre cache table
-                if inverted_size_0 < 256 {
-                    inverted_size_0 = 256
-                } //XXX turn this conversion into a function
-                let mut inverted_0 = invert_lut(data, inverted_size_0);
-                compute_precache_lut(output, &inverted_0);
+            match data.len() {
+                0 => compute_precache_linear(output),
+                1 => compute_precache_pow(output, 1. / u8Fixed8Number_to_float(data[0])),
+                _ => {
+                    let mut inverted_size = data.len() as i32;
+                    //XXX: the choice of a minimum of 256 here is not backed by any theory,
+                    //     measurement or data, howeve r it is what lcms uses.
+                    //     the maximum number we would need is 65535 because that's the
+                    //     accuracy used for computing the pre cache table
+                    if inverted_size < 256 {
+                        inverted_size = 256
+                    } //XXX turn this conversion into a function
+                    let mut inverted = invert_lut(data, inverted_size);
+                    compute_precache_lut(output, &inverted);
+                }
             }
         }
     }
-    return true;
+    true
 }
 fn build_linear_table(mut length: i32) -> Vec<u16> {
     let mut output = Vec::with_capacity(length as usize);
@@ -455,7 +440,7 @@ fn build_linear_table(mut length: i32) -> Vec<u16> {
         let mut input: uint16_fract_t = (x + 0.5f64).floor() as uint16_fract_t;
         output.push(input);
     }
-    return output;
+    output
 }
 fn build_pow_table(mut gamma: f32, mut length: i32) -> Vec<u16> {
     let mut output = Vec::with_capacity(length as usize);
@@ -465,7 +450,7 @@ fn build_pow_table(mut gamma: f32, mut length: i32) -> Vec<u16> {
         let mut result: uint16_fract_t = (x * 65535.0f64 + 0.5f64).floor() as uint16_fract_t;
         output.push(result);
     }
-    return output;
+    output
 }
 
 pub(crate) fn build_output_lut(mut trc: &curveType) -> Vec<u16> {
@@ -477,22 +462,24 @@ pub(crate) fn build_output_lut(mut trc: &curveType) -> Vec<u16> {
             for i in 0..256 {
                 output.push((gamma_table[i as usize] * 65535f32) as u16);
             }
-            return output;
+            output
         }
         curveType::Curve(data) => {
-            if data.len() == 0 {
-                return build_linear_table(4096);
-            } else if data.len() == 1 {
-                let mut gamma: f32 = (1.0f64 / u8Fixed8Number_to_float(data[0]) as f64) as f32;
-                return build_pow_table(gamma, 4096);
-            } else {
-                //XXX: the choice of a minimum of 256 here is not backed by any theory,
-                //     measurement or data, however it is what lcms uses.
-                let mut output_gamma_lut_length = data.len();
-                if output_gamma_lut_length < 256 {
-                    output_gamma_lut_length = 256
+            match data.len() {
+                0 => build_linear_table(4096),
+                1 => {
+                    let mut gamma = 1. / u8Fixed8Number_to_float(data[0]);
+                    build_pow_table(gamma, 4096)
                 }
-                return invert_lut(data, output_gamma_lut_length as i32);
+                _ => {
+                    //XXX: the choice of a minimum of 256 here is not backed by any theory,
+                    //     measurement or data, however it is what lcms uses.
+                    let mut output_gamma_lut_length = data.len();
+                    if output_gamma_lut_length < 256 {
+                        output_gamma_lut_length = 256
+                    }
+                    invert_lut(data, output_gamma_lut_length as i32)
+                }
             }
         }
     }
