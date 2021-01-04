@@ -1,0 +1,131 @@
+{
+  "extensionName": {
+    "message": "Webseiten übersetzen"
+  },
+  "extensionDescription": {
+    "message": "Übersetzen Sie Ihre Seite in Echtzeit mit Google oder Yandex."
+  },
+  "pageActionTitle": {
+    "message": "Übersetze diese Seite"
+  },
+  "lblTranslate": {
+    "message": "Übersetze diese Seite?"
+  },
+  "lblTranslating": {
+    "message": "Übersetzen ..."
+  },
+  "lblTranslated": {
+    "message": "Übersetzt"
+  },
+  "lblError": {
+    "message": "Diese Seite konnte nicht übersetzt werden"
+  },
+  "lblAlwaysTranslate": {
+    "message": "Immer übersetzen von"
+  },
+  "lblTargetLanguage": {
+    "message": "Zielsprache"
+  },
+  "btnReset": {
+    "message": "Zurücksetzen"
+  },
+  "btnTranslate": {
+    "message": "Übersetzen"
+  },
+  "btnOptions": {
+    "message": "Einstellungen"
+  },
+  "btnRestore": {
+    "message": "Original zeigen"
+  },
+  "btnTryAgain": {
+    "message": "Versuch es noch einmal"
+  },
+  "btnOpenOnGoogleTranslate": {
+    "message": "In Google Übersetzer öffnen"
+  },
+  "btnDonate": {
+    "message": "Spenden"
+  },
+  "btnNeverTranslate": {
+    "message": "Diese Seite nie übersetzen"
+  },
+  "btnChangeLanguages": {
+    "message": "Sprachen wechseln"
+  },
+  "btnMobileOriginal": {
+    "message": "Original"
+  },
+  "btnMobileTranslated": {
+    "message": "Übersetzt"
+  },
+  "btnMobileNeverTranslate": {
+    "message": "Diese Seite nie übersetzen"
+  },
+  "btnMobileDonate": {
+    "message": "Spenden"
+  },
+  "optionsNeverTranslate": {
+    "message": "Übersetzen Sie diese Seiten niemals"
+  },
+  "optionsAlwaysTranslate": {
+    "message": "Übersetzen Sie diese Sprachen automatisch"
+  },
+  "optionPopupConfig": {
+    "message": "Zeigen Sie das mobile Popup an"
+  },
+  "optionPopupAuto": {
+    "message": "Automatisch"
+  },
+  "optionPopupThreeFingers": {
+    "message": "Wenn ich drei Finger auf dem Bildschirm berühre"
+  },
+  "lblTranslationEngine": {
+    "message": "Übersetzungsmaschine"
+  },
+  "msgOpenOnYandexTranslator": {
+    "message": "Öffnen Sie in Yandex übersetzen"
+  },
+  "lblOthers": {
+    "message": "Andere"
+  },
+  "btnMoreOptions": {
+    "message": "Mehr Optionen"
+  },
+  "lblPlsDonate": {
+    "message": "Helfen Sie dem Entwickler mit einer Spende"
+  },
+  "msgTranslateFor": {
+    "message": "Übersetzen ins"
+  },
+  "lblShowContextMenu": {
+    "message": "Zeigen Sie die Option zum Übersetzen der Seite im Kontextmenü an"
+  },
+  "msgYes": {
+    "message": "Ja"
+  },
+  "msgNo": {
+    "message": "Nein"
+  },
+  "lblUseNewAlgorithm": {
+    "message": "Verwenden Sie den neuen Übersetzungsalgorithmus?"
+  },
+  "msgYesRecommended": {
+    "message": "Ja (empfohlen)"
+  },
+  "msgNoUseWidgets": {
+    "message": "Nein (Widgets verwenden)"
+  },
+  "optionsPageTitle": {
+    "message": "Webseiten übersetzen - Optionen"
+  },
+  "optionPopupjustWhenIClickTranlateThisSite": {
+    "message": "Nur wenn ich auf \"Diese Webseite übersetzen\" klicke"
+  },
+  "msgEmptyListNeverTranslateSites": {
+    "message": "Du hast noch keine Webseiten zu dieser Liste hinzugefügt."
+  },
+  "msgEmptyListAlwaysTranslateLanguages": {
+    "message": "Du hast noch keine Sprachen zu dieser Liste hinzugefügt."
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "extensionName": {
+    "message": "वेब पृष्ठों का अनुवाद करें"
+  },
+  "extensionDescription": {
+    "message": "Google या Yandex का उपयोग करके वास्तविक समय में अपने पृष्ठ का अनुवाद करें।"
+  },
+  "pageActionTitle": {
+    "message": "इस पेज का अनुवाद करें"
+  },
+  "lblTranslate": {
+    "message": "इस पेज का अनुवाद करें?"
+  },
+  "lblTranslating": {
+    "message": "अनुवाद हो रहा है ..."
+  },
+  "lblTranslated": {
+    "message": "अनूदित"
+  },
+  "lblError": {
+    "message": "इस पृष्ठ का अनुवाद नहीं किया जा सका"
+  },
+  "lblAlwaysTranslate": {
+    "message": "हमेशा से अनुवाद"
+  },
+  "lblTargetLanguage": {
+    "message": "लक्ष्य भाषा"
+  },
+  "btnReset": {
+    "message": "रीसेट"
+  },
+  "btnTranslate": {
+    "message": "अनुवाद करना"
+  },
+  "btnOptions": {
+    "message": "विकल्प"
+  },
+  "btnRestore": {
+    "message": "मूल दिखाएँ"
+  },
+  "btnTryAgain": {
+    "message": "पुनः प्रयास करें"
+  },
+  "btnOpenOnGoogleTranslate": {
+    "message": "Google अनुवादक में खोलें"
+  },
+  "btnDonate": {
+    "message": "दान करना"
+  },
+  "btnNeverTranslate": {
+    "message": "इस साइट का अनुवाद कभी मत करो"
+  },
+  "btnChangeLanguages": {
+    "message": "भाषाएं बदलें"
+  },
+  "btnMobileOriginal": {
+    "message": "मूल"
+  },
+  "btnMobileTranslated": {
+    "message": "अनूदित"
+  },
+  "btnMobileNeverTranslate": {
+    "message": "इस साइट का अनुवाद कभी मत करो"
+  },
+  "btnMobileDonate": {
+    "message": "दान करना"
+  },
+  "optionsNeverTranslate": {
+    "message": "इन साइटों का अनुवाद कभी न करें"
+  },
+  "optionsAlwaysTranslate": {
+    "message": "इन भाषाओं का स्वचालित रूप से अनुवाद करें"
+  },
+  "optionPopupConfig": {
+    "message": "मोबाइल पॉपअप दिखाएं"
+  },
+  "optionPopupAuto": {
+    "message": "खुद ब खुद"
+  },
+  "optionPopupThreeFingers": {
+    "message": "जब मैं स्क्रीन पर तीन उंगलियां छूता हूं"
+  },
+  "lblTranslationEngine": {
+    "message": "अनुवाद इंजन"
+  },
+  "msgOpenOnYandexTranslator": {
+    "message": "यैंडेक्स अनुवाद में खोलें"
+  },
+  "lblOthers": {
+    "message": "अन्य"
+  },
+  "btnMoreOptions": {
+    "message": "अधिक विकल्प"
+  },
+  "lblPlsDonate": {
+    "message": "एक दान के साथ डेवलपर की मदद करें"
+  },
+  "msgTranslateFor": {
+    "message": "अनुवाद करने के लिए"
+  },
+  "lblShowContextMenu": {
+    "message": "संदर्भ मेनू में पृष्ठ का अनुवाद करने का विकल्प दिखाएं"
+  },
+  "msgYes": {
+    "message": "हाँ"
+  },
+  "msgNo": {
+    "message": "नहीं"
+  },
+  "lblUseNewAlgorithm": {
+    "message": "नए अनुवाद एल्गोरिथ्म का उपयोग करें?"
+  },
+  "msgYesRecommended": {
+    "message": "हाँ (अनुशंसित)"
+  },
+  "msgNoUseWidgets": {
+    "message": "नहीं (विजेट का उपयोग करें)"
+  },
+  "optionsPageTitle": {
+    "message": "वेब पेज का अनुवाद करें - विकल्प"
+  },
+  "optionPopupjustWhenIClickTranlateThisSite": {
+    "message": "Only when I click \"Translate this site\""
+  },
+  "msgEmptyListNeverTranslateSites": {
+    "message": "You have not added any sites to this list."
+  },
+  "msgEmptyListAlwaysTranslateLanguages": {
+    "message": "You have not added any languages to this list."
+  }
+}

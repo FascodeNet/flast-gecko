@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+  <html>
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+        <script src="jquery.qrcode.min.js"></script>
+        
+        <style>
+            :root {
+                --clipboard-img:url("img/content_copy-24px.svg");
+            }
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --clipboard-img:url("img/w-content_copy-24px.svg");
+                }
+            }
+            body{
+                margin: 0;
+                padding: 10px;
+            }
+            .title{
+                width: 320px;
+                font-size: 19px;
+                text-align: center;
+                margin-bottom: 10px;
+                font-weight: 900;
+            }
+            p{
+                margin: 0;
+            }
+            .qr{
+                width:  320px;
+                height: 180px;
+            }
+            .qr canvas{
+                display: inline-block;
+                margin: 5px;
+            }
+
+            .qr::before{
+                display: block;
+                text-align: center;
+                font-size: 14px;
+                content: "短縮URL QR  　非短縮URL QR";
+                font-weight: 900;
+
+            }
+            .m-url,
+            .url{
+                color: var(--main-text);
+                width: 320px;
+                font-size: 16px;
+                text-align: center;
+                overflow: auto;
+                padding: 5px 0;
+                margin: 10px 0;
+                cursor: var(--clipboard-img), pointer;
+            }
+            .m-url::before{
+                display: block;
+                text-align: center;
+                content: "短縮URL";
+                font-weight: 900;
+            }
+            .url::before{
+                display: block;
+                text-align: center;
+                content: "非短縮URL";
+                font-weight: 900;
+            }
+            .share{
+                width: 320px;
+                text-align: center;
+                margin-top: 10px;
+            }
+            .share img{
+                width: 15%;
+                padding: 1.9%;
+            }
+
+            *::-webkit-scrollbar {
+                width: 10px;
+                height: 10px;
+            }
+
+            *::-webkit-scrollbar-track {
+                border-radius: 5px;
+            }
+
+            *::-webkit-scrollbar-thumb {
+                border-radius: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <p class="title">短縮URLを<br>クリップボードに<br>コピーしました</p>
+        <div class="qr"></div>
+        <p class="m-url"></p>
+        <p class="url"></p>
+        <div class="share">
+        </div>
+        <script src="popup.js"></script>
+    </body>
+</html>

@@ -1,0 +1,131 @@
+{
+  "extensionName": {
+    "message": "Přeložit webové stránky"
+  },
+  "extensionDescription": {
+    "message": "Přeložte svou stránku v reálném čase pomocí Google nebo Yandex."
+  },
+  "pageActionTitle": {
+    "message": "Přeložit tuto stránku"
+  },
+  "lblTranslate": {
+    "message": "Přeložit tuto stránku?"
+  },
+  "lblTranslating": {
+    "message": "Překlady ..."
+  },
+  "lblTranslated": {
+    "message": "Přeloženo"
+  },
+  "lblError": {
+    "message": "Tuto stránku nelze přeložit"
+  },
+  "lblAlwaysTranslate": {
+    "message": "Vždy překládat z"
+  },
+  "lblTargetLanguage": {
+    "message": "Cílový jazyk"
+  },
+  "btnReset": {
+    "message": "Resetovat"
+  },
+  "btnTranslate": {
+    "message": "přeložit"
+  },
+  "btnOptions": {
+    "message": "možnosti"
+  },
+  "btnRestore": {
+    "message": "Ukázat originál"
+  },
+  "btnTryAgain": {
+    "message": "Zkus to znovu"
+  },
+  "btnOpenOnGoogleTranslate": {
+    "message": "Otevřít v google překladači"
+  },
+  "btnDonate": {
+    "message": "Darovat"
+  },
+  "btnNeverTranslate": {
+    "message": "Nikdy nepřekládejte tento web"
+  },
+  "btnChangeLanguages": {
+    "message": "Změnit jazyky"
+  },
+  "btnMobileOriginal": {
+    "message": "Originál"
+  },
+  "btnMobileTranslated": {
+    "message": "Přeloženo"
+  },
+  "btnMobileNeverTranslate": {
+    "message": "Nikdy nepřekládejte tento web"
+  },
+  "btnMobileDonate": {
+    "message": "Darovat"
+  },
+  "optionsNeverTranslate": {
+    "message": "Nikdy tyto stránky nepřekládat"
+  },
+  "optionsAlwaysTranslate": {
+    "message": "Automaticky přeložit tyto jazyky"
+  },
+  "optionPopupConfig": {
+    "message": "Zobrazit mobilní vyskakovací okno"
+  },
+  "optionPopupAuto": {
+    "message": "Automaticky"
+  },
+  "optionPopupThreeFingers": {
+    "message": "Když se dotknu tří prstů na obrazovce"
+  },
+  "lblTranslationEngine": {
+    "message": "Překladový motor"
+  },
+  "msgOpenOnYandexTranslator": {
+    "message": "Otevřeno v yandexovém překladu"
+  },
+  "lblOthers": {
+    "message": "Ostatní"
+  },
+  "btnMoreOptions": {
+    "message": "Více možností"
+  },
+  "lblPlsDonate": {
+    "message": "Pomozte vývojáři s darem"
+  },
+  "msgTranslateFor": {
+    "message": "Přeložit do"
+  },
+  "lblShowContextMenu": {
+    "message": "V místní nabídce se zobrazí možnost překladu stránky"
+  },
+  "msgYes": {
+    "message": "Ano"
+  },
+  "msgNo": {
+    "message": "Ne"
+  },
+  "lblUseNewAlgorithm": {
+    "message": "Použít nový překladový algoritmus?"
+  },
+  "msgYesRecommended": {
+    "message": "Ano (doporučeno)"
+  },
+  "msgNoUseWidgets": {
+    "message": "Ne (používat widgety)"
+  },
+  "optionsPageTitle": {
+    "message": "Přeložit webové stránky - možnosti"
+  },
+  "optionPopupjustWhenIClickTranlateThisSite": {
+    "message": "Only when I click \"Translate this site\""
+  },
+  "msgEmptyListNeverTranslateSites": {
+    "message": "You have not added any sites to this list."
+  },
+  "msgEmptyListAlwaysTranslateLanguages": {
+    "message": "You have not added any languages to this list."
+  }
+}

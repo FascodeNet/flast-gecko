@@ -378,8 +378,8 @@ def virtualenv_python3(env_python, virtualenv_name, build_env, mozconfig, help):
         sys.exit(subprocess.call([python] + sys.argv))
 
     # We are now in the virtualenv
-    if not distutils.sysconfig.get_python_lib():
-        die("Could not determine python site packages directory")
+    #if not distutils.sysconfig.get_python_lib():
+    #    die('Could not determine python site packages directory')
 
     # We may have set PYTHONEXECUTABLE above, and that affects python
     # subprocesses we may invoke as part of configure (e.g. hg), so

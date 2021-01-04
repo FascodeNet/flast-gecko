@@ -1,0 +1,98 @@
+{
+
+    "manifest_version": 2,
+    "default_locale": "en",
+    "name": "__MSG_extensionName__",
+    "version": "7.0",
+
+    "description": "__MSG_extensionDescription__",
+
+    "commands": {
+        "toggle-translation": {
+            "suggested_key": {
+                "default": "Alt+T"
+            },
+            "description": "Switch between the translated and the original page."
+        }
+    },
+
+    "icons": {
+        "32": "icons/google-translate-32.png",
+        "64": "icons/google-translate-64.png",
+        "128": "icons/google-translate-128.png"
+    },
+    "applications": {
+      "gecko": {
+        "id": "google-translate@kokkiemouse.github.io",
+        "strict_min_version": "57.0a1"
+      }
+    },
+
+    "permissions": [
+        "<all_urls>",
+        "storage",
+        "activeTab",
+        "contextMenus"
+    ],
+
+    "web_accessible_resources": [
+        "options/options.html",
+        "options/options.css",
+        "options/options.js",
+        "icons/google-translate-32.png",
+        "icons/yandex-translate-32.png",
+        "icons/swap-32.png"
+    ],
+
+    "options_ui": {
+        "page": "options/options.html",
+        "open_in_tab": false,
+        "browser_style": false,
+        "chrome_style": false
+    },
+
+    "browser_action": {
+        "browser_style": false,
+        "chrome_style": false,
+        "default_icon": {
+            "16": "icons/google-translate-16.png",
+            "24": "icons/google-translate-24.png",
+            "32": "icons/google-translate-32.png"
+        },
+        "default_title": "__MSG_pageActionTitle__"
+    },
+
+    "page_action": {
+        "browser_style": false,
+        "default_icon": {
+            "16": "icons/google-translate-16.png",
+            "24": "icons/google-translate-24.png",
+            "32": "icons/google-translate-32.png"
+        },
+        "show_matches": ["<all_urls>"],
+        "default_title": "__MSG_pageActionTitle__",
+        "default_popup": "popup/popup.html"
+    },
+
+    "content_scripts": [{
+            "matches": ["<all_urls>"],
+            "run_at": "document_start",
+            "all_frames": true,
+            "js": ["scripts/backgroundFetch.js"]
+        }, {
+            "matches": ["<all_urls>"],
+            "run_at": "document_end",
+            "all_frames": true,
+            "js": ["scripts/contentScript_google2.js", "scripts/contentScript_yandex2.js"]
+        }, {
+            "matches": ["<all_urls>"],
+            "run_at": "document_end",
+            "all_frames": false,
+            "js": ["scripts/mobile.js"]
+        }
+    ],
+
+    "background": {
+        "scripts": ["languages.js", "background.js"]
+    }
+}

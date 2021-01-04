@@ -1,0 +1,131 @@
+{
+  "extensionName": {
+    "message": "Перевести веб-страницы"
+  },
+  "extensionDescription": {
+    "message": "Переводите страницу в режиме реального времени с помощью Google или Яндекс."
+  },
+  "pageActionTitle": {
+    "message": "Перевести страницу"
+  },
+  "lblTranslate": {
+    "message": "Перевести страницу?"
+  },
+  "lblTranslating": {
+    "message": "Перевод..."
+  },
+  "lblTranslated": {
+    "message": "Переведено"
+  },
+  "lblError": {
+    "message": "Невозможно перевести страницу"
+  },
+  "lblAlwaysTranslate": {
+    "message": "Всегда переводить с"
+  },
+  "lblTargetLanguage": {
+    "message": "Язык перевода"
+  },
+  "btnReset": {
+    "message": "Сброс"
+  },
+  "btnTranslate": {
+    "message": "Перевести"
+  },
+  "btnOptions": {
+    "message": "Параметры"
+  },
+  "btnRestore": {
+    "message": "Показать оригинал"
+  },
+  "btnTryAgain": {
+    "message": "Попробуйте заново"
+  },
+  "btnOpenOnGoogleTranslate": {
+    "message": "Открыть в Google Переводчике"
+  },
+  "btnDonate": {
+    "message": "Пожертвовать"
+  },
+  "btnNeverTranslate": {
+    "message": "Никогда не переводить этот сайт"
+  },
+  "btnChangeLanguages": {
+    "message": "Сменить языки"
+  },
+  "btnMobileOriginal": {
+    "message": "Оригинал"
+  },
+  "btnMobileTranslated": {
+    "message": "Переведено"
+  },
+  "btnMobileNeverTranslate": {
+    "message": "Никогда не переводить этот сайт"
+  },
+  "btnMobileDonate": {
+    "message": "Пожертвовать"
+  },
+  "optionsNeverTranslate": {
+    "message": "Никогда не переводить эти сайты"
+  },
+  "optionsAlwaysTranslate": {
+    "message": "Автоматически переводить эти языки"
+  },
+  "optionPopupConfig": {
+    "message": "Показывать мобильное всплывающее окно"
+  },
+  "optionPopupAuto": {
+    "message": "Автоматически"
+  },
+  "optionPopupThreeFingers": {
+    "message": "Когда я касаюсь экрана тремя пальцами"
+  },
+  "lblTranslationEngine": {
+    "message": "Система перевода"
+  },
+  "msgOpenOnYandexTranslator": {
+    "message": "Открыть в Яндекс.Переводчик"
+  },
+  "lblOthers": {
+    "message": "Прочие"
+  },
+  "btnMoreOptions": {
+    "message": "Дополнительные настройки"
+  },
+  "lblPlsDonate": {
+    "message": "Помочь разработчику пожертвованием"
+  },
+  "msgTranslateFor": {
+    "message": "Перевести на"
+  },
+  "lblShowContextMenu": {
+    "message": "Показать возможность перевода страницы в контекстном меню"
+  },
+  "msgYes": {
+    "message": "Да"
+  },
+  "msgNo": {
+    "message": "Нет"
+  },
+  "lblUseNewAlgorithm": {
+    "message": "Использовать новый алгоритм перевода?"
+  },
+  "msgYesRecommended": {
+    "message": "Да (рекомендуется)"
+  },
+  "msgNoUseWidgets": {
+    "message": "Нет (используйте виджеты)"
+  },
+  "optionsPageTitle": {
+    "message": "Перевести веб-страницы — параметры"
+  },
+  "optionPopupjustWhenIClickTranlateThisSite": {
+    "message": "Только при нажатии \"Перевести этот сайт\""
+  },
+  "msgEmptyListNeverTranslateSites": {
+    "message": "Вы не добавили ни один сайт в этот список."
+  },
+  "msgEmptyListAlwaysTranslateLanguages": {
+    "message": "Вы не добавили ни один язык в этот список."
+  }
+}
