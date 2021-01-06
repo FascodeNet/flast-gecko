@@ -41,7 +41,6 @@ import java.io.InputStream;
 import java.lang.Boolean;
 import java.lang.CharSequence;
 import java.lang.Class;
-import java.lang.Deprecated;
 import java.lang.Double;
 import java.lang.Exception;
 import java.lang.Float;
@@ -71,7 +70,6 @@ import org.mozilla.geckoview.Autofill;
 import org.mozilla.geckoview.CompositorController;
 import org.mozilla.geckoview.ContentBlocking;
 import org.mozilla.geckoview.ContentBlockingController;
-import org.mozilla.geckoview.DeprecationSchedule;
 import org.mozilla.geckoview.GeckoDisplay;
 import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoRuntime;
@@ -463,7 +461,6 @@ package org.mozilla.geckoview {
     field public static final int LOADED_LEVEL_2_TRACKING_CONTENT = 1048576;
     field public static final int LOADED_SOCIALTRACKING_CONTENT = 131072;
     field public static final int REPLACED_TRACKING_CONTENT = 16;
-    field @Deprecated @DeprecationSchedule(version=86,id="unsafe-content") public static final int REPLACED_UNSAFE_CONTENT = 16;
   }
 
   @AnyThread public static class ContentBlockingController.LogEntry {
@@ -697,8 +694,6 @@ package org.mozilla.geckoview {
     method @NonNull @UiThread public GeckoDisplay acquireDisplay();
     method @UiThread public void autofill(@NonNull SparseArray<CharSequence>);
     method @UiThread public void close();
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") @NonNull public static String createDataUri(@NonNull byte[], @Nullable String);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") @NonNull public static String createDataUri(@NonNull String, @Nullable String);
     method @AnyThread public void exitFullScreen();
     method @NonNull @UiThread public SessionAccessibility getAccessibility();
     method @Nullable @UiThread public Autofill.Delegate getAutofillDelegate();
@@ -734,20 +729,7 @@ package org.mozilla.geckoview {
     method @AnyThread public void gotoHistoryIndex(int);
     method @AnyThread public boolean isOpen();
     method @AnyThread public void load(@NonNull GeckoSession.Loader);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadData(@NonNull byte[], @Nullable String);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadString(@NonNull String, @Nullable String);
     method @AnyThread public void loadUri(@NonNull String);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull String, @Nullable Map<String,String>);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull String, int);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull String, @Nullable String, int);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull String, @Nullable String, int, @Nullable Map<String,String>);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull String, @Nullable GeckoSession, int);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull String, @Nullable GeckoSession, int, @Nullable Map<String,String>);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull Uri);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull Uri, @Nullable Map<String,String>);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull Uri, int);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull Uri, @Nullable Uri, int);
-    method @AnyThread @Deprecated @DeprecationSchedule(version=86,id="load-uri-builder") public void loadUri(@NonNull Uri, @Nullable Uri, int, @Nullable Map<String,String>);
     method @UiThread public void open(@NonNull GeckoRuntime);
     method @AnyThread public void purgeHistory();
     method @UiThread public void releaseDisplay(@NonNull GeckoDisplay);

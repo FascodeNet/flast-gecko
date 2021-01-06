@@ -1759,11 +1759,9 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayLength(HandleObject obj,
 
   maybeEmitIdGuard(id);
   // Emit all the normal guards for calling this native, but specialize
-  // callNativeGetterResult. Also store the getter itself to enable
-  // AddCacheIRGetPropFunction to read it from the IC stub, which is needed for
-  // Ion-inlining.
+  // callNativeGetterResult.
   EmitCallGetterResultGuards(writer, obj, holder, shape, objId, mode_);
-  writer.loadTypedArrayLengthResult(objId, &fun);
+  writer.loadTypedArrayLengthResult(objId);
   writer.returnFromIC();
 
   trackAttached("TypedArrayLength");
@@ -6005,12 +6003,6 @@ AttachDecision CallIRGenerator::tryAttachStringSplitString(
   MOZ_ASSERT(args_[0].isString());
   MOZ_ASSERT(args_[1].isString());
 
-  ObjectGroup* group = ObjectGroupRealm::getStringSplitStringGroup(cx_);
-  if (!group) {
-    cx_->clearPendingException();
-    return AttachDecision::NoAction;
-  }
-
   // Initialize the input operand.
   Int32OperandId argcId(writer.setInputOperandId(0));
 
@@ -6022,7 +6014,7 @@ AttachDecision CallIRGenerator::tryAttachStringSplitString(
   ValOperandId arg1Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
   StringOperandId separatorId = writer.guardToString(arg1Id);
 
-  writer.stringSplitStringResult(strId, separatorId, group);
+  writer.stringSplitStringResult(strId, separatorId);
   writer.returnFromIC();
 
   trackAttached("StringSplitString");
@@ -7671,9 +7663,7 @@ AttachDecision CallIRGenerator::tryAttachTypedArrayLength(
     writer.guardIsNotProxy(objArgId);
   }
 
-  // Note: the "getter" argument is a hint for IonBuilder. Just pass |callee|,
-  // the field isn't used for this intrinsic call.
-  writer.loadTypedArrayLengthResult(objArgId, callee);
+  writer.loadTypedArrayLengthResult(objArgId);
   writer.returnFromIC();
 
   trackAttached("TypedArrayLength");

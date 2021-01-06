@@ -324,7 +324,6 @@
   args:
     str: StringId
     separator: StringId
-    group: GroupField
 
 - name: RegExpPrototypeOptimizableResult
   shared: true
@@ -1752,7 +1751,6 @@
   cost_estimate: 1
   args:
     obj: ObjId
-    getter: ObjectField
 
 - name: LoadStringCharResult
   shared: false

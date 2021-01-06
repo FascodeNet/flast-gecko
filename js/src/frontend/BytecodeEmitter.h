@@ -35,6 +35,7 @@
 #include "frontend/NameCollections.h"      // AtomIndexMap
 #include "frontend/ParseNode.h"            // ParseNode and subclasses
 #include "frontend/Parser.h"               // Parser, PropListType
+#include "frontend/ScriptIndex.h"          // ScriptIndex
 #include "frontend/SharedContext.h"        // SharedContext, TopLevelFunction
 #include "frontend/SourceNotes.h"          // SrcNoteType
 #include "frontend/TokenStream.h"          // TokenPos
@@ -305,7 +306,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
                    unsigned errorNumber, ...);
 
   // Fill in a ScriptStencil using this BCE data.
-  bool intoScriptStencil(ScriptStencil* script, FunctionIndex index);
+  bool intoScriptStencil(ScriptIndex scriptIndex);
 
   // If pn contains a useful expression, return true with *answer set to true.
   // If pn contains a useless expression, return true with *answer set to
@@ -352,8 +353,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Emit code for the tree rooted at pn.
   MOZ_MUST_USE bool emitTree(ParseNode* pn,
                              ValueUsage valueUsage = ValueUsage::WantValue,
-                             EmitLineNumberNote emitLineNote = EMIT_LINENOTE,
-                             bool isInner = false);
+                             EmitLineNumberNote emitLineNote = EMIT_LINENOTE);
 
   MOZ_MUST_USE bool emitOptionalTree(
       ParseNode* pn, OptionalEmitter& oe,
@@ -466,8 +466,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
       ShouldInstrument shouldInstrument = ShouldInstrument::No);
 
   MOZ_MUST_USE bool emitArrayLiteral(ListNode* array);
-  MOZ_MUST_USE bool emitArray(ParseNode* arrayHead, uint32_t count,
-                              bool isInner = false);
+  MOZ_MUST_USE bool emitArray(ParseNode* arrayHead, uint32_t count);
 
   MOZ_MUST_USE bool emitInternedScopeOp(GCThingIndex index, JSOp op);
   MOZ_MUST_USE bool emitInternedObjectOp(GCThingIndex index, JSOp op);
@@ -478,8 +477,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_NEVER_INLINE MOZ_MUST_USE bool emitFunction(
       FunctionNode* funNode, bool needsProto = false,
       ListNode* classContentsIfConstructor = nullptr);
-  MOZ_NEVER_INLINE MOZ_MUST_USE bool emitObject(ListNode* objNode,
-                                                bool isInner = false);
+  MOZ_NEVER_INLINE MOZ_MUST_USE bool emitObject(ListNode* objNode);
 
   MOZ_MUST_USE bool emitHoistedFunctionsInList(ListNode* stmtList);
 
@@ -491,7 +489,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   bool isArrayObjLiteralCompatible(ParseNode* arrayHead);
 
   MOZ_MUST_USE bool emitPropertyList(ListNode* obj, PropertyEmitter& pe,
-                                     PropListType type, bool isInner = false);
+                                     PropListType type);
 
   MOZ_MUST_USE bool emitPropertyListObjLiteral(ListNode* obj,
                                                ObjLiteralFlags flags);
@@ -499,7 +497,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitDestructuringRestExclusionSetObjLiteral(
       ListNode* pattern);
 
-  MOZ_MUST_USE bool emitObjLiteralArray(ParseNode* arrayHead, bool isCow);
+  MOZ_MUST_USE bool emitObjLiteralArray(ParseNode* arrayHead);
 
   // Is a field value OBJLITERAL-compatible?
   MOZ_MUST_USE bool isRHSObjLiteralCompatible(ParseNode* value);

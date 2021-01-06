@@ -22,11 +22,12 @@
 #include "frontend/CompilationInfo.h"   // CompilationState, CompilationInfo
 #include "frontend/Parser.h"  // NewEmptyLexicalScopeData, NewEmptyGlobalScopeData, NewEmptyVarScopeData, NewEmptyFunctionScopeData
 #include "frontend/ParserAtom.h"        // ParserAtomsTable
+#include "frontend/ScriptIndex.h"       // ScriptIndex
 #include "frontend/smoosh_generated.h"  // CVec, Smoosh*, smoosh_*
 #include "frontend/SourceNotes.h"       // SrcNote
-#include "frontend/Stencil.h"      // ScopeStencil, RegExpIndex, FunctionIndex
-#include "frontend/TokenStream.h"  // TokenStreamAnyChars
-#include "irregexp/RegExpAPI.h"    // irregexp::CheckPatternSyntax
+#include "frontend/Stencil.h"           // ScopeStencil, RegExpIndex
+#include "frontend/TokenStream.h"       // TokenStreamAnyChars
+#include "irregexp/RegExpAPI.h"         // irregexp::CheckPatternSyntax
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, UTF8CharsToNewTwoByteCharsZ
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/GCAPI.h"                 // JS::AutoCheckCannotGC
@@ -133,7 +134,7 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         auto& global = scopeData.AsGlobal();
 
         size_t numBindings = global.bindings.len;
-        ParserGlobalScopeData* data =
+        GlobalScope::ParserData* data =
             NewEmptyGlobalScopeData(cx, alloc, numBindings);
         if (!data) {
           return false;
@@ -142,9 +143,9 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         CopyBindingNames(cx, global.bindings, allAtoms,
                          data->trailingNames.start());
 
-        data->letStart = global.let_start;
-        data->constStart = global.const_start;
-        data->length = numBindings;
+        data->slotInfo.letStart = global.let_start;
+        data->slotInfo.constStart = global.const_start;
+        data->slotInfo.length = numBindings;
 
         if (!ScopeStencil::createForGlobalScope(
                 cx, compilationInfo, ScopeKind::Global, data, &index)) {
@@ -157,8 +158,8 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
 
         size_t numBindings = var.bindings.len;
 
-        ParserVarScopeData* data = NewEmptyVarScopeData(cx, alloc, numBindings);
-        ;
+        VarScope::ParserData* data =
+            NewEmptyVarScopeData(cx, alloc, numBindings);
         if (!data) {
           return false;
         }
@@ -166,9 +167,10 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         CopyBindingNames(cx, var.bindings, allAtoms,
                          data->trailingNames.start());
 
-        // NOTE: data->nextFrameSlot is set in ScopeStencil::createForVarScope.
+        // NOTE: data->slotInfo.nextFrameSlot is set in
+        // ScopeStencil::createForVarScope.
 
-        data->length = numBindings;
+        data->slotInfo.length = numBindings;
 
         uint32_t firstFrameSlot = var.first_frame_slot;
         ScopeIndex enclosingIndex(var.enclosing);
@@ -184,7 +186,7 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         auto& lexical = scopeData.AsLexical();
 
         size_t numBindings = lexical.bindings.len;
-        ParserLexicalScopeData* data =
+        LexicalScope::ParserData* data =
             NewEmptyLexicalScopeData(cx, alloc, numBindings);
         if (!data) {
           return false;
@@ -193,11 +195,11 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         CopyBindingNames(cx, lexical.bindings, allAtoms,
                          data->trailingNames.start());
 
-        // NOTE: data->nextFrameSlot is set in
+        // NOTE: data->slotInfo.nextFrameSlot is set in
         // ScopeStencil::createForLexicalScope.
 
-        data->constStart = lexical.const_start;
-        data->length = numBindings;
+        data->slotInfo.constStart = lexical.const_start;
+        data->slotInfo.length = numBindings;
 
         uint32_t firstFrameSlot = lexical.first_frame_slot;
         ScopeIndex enclosingIndex(lexical.enclosing);
@@ -212,7 +214,7 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         auto& function = scopeData.AsFunction();
 
         size_t numBindings = function.bindings.len;
-        ParserFunctionScopeData* data =
+        FunctionScope::ParserData* data =
             NewEmptyFunctionScopeData(cx, alloc, numBindings);
         if (!data) {
           return false;
@@ -221,17 +223,20 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         CopyBindingNames(cx, function.bindings, allAtoms,
                          data->trailingNames.start());
 
-        // NOTE: data->nextFrameSlot is set in
+        // NOTE: data->slotInfo.nextFrameSlot is set in
         // ScopeStencil::createForFunctionScope.
 
-        data->hasParameterExprs = function.has_parameter_exprs;
-        data->nonPositionalFormalStart = function.non_positional_formal_start;
-        data->varStart = function.var_start;
-        data->length = numBindings;
+        if (function.has_parameter_exprs) {
+          data->slotInfo.setHasParameterExprs();
+        }
+        data->slotInfo.nonPositionalFormalStart =
+            function.non_positional_formal_start;
+        data->slotInfo.varStart = function.var_start;
+        data->slotInfo.length = numBindings;
 
         bool hasParameterExprs = function.has_parameter_exprs;
         bool needsEnvironment = function.non_positional_formal_start;
-        FunctionIndex functionIndex = FunctionIndex(function.function_index);
+        ScriptIndex functionIndex = ScriptIndex(function.function_index);
         bool isArrow = function.is_arrow;
 
         ScopeIndex enclosingIndex(function.enclosing);
@@ -394,7 +399,7 @@ bool ConvertGCThings(JSContext* cx, const SmooshResult& result,
         break;
       }
       case SmooshGCThing::Tag::Function: {
-        new (raw) TaggedScriptThingIndex(FunctionIndex(item.AsFunction()));
+        new (raw) TaggedScriptThingIndex(ScriptIndex(item.AsFunction()));
         break;
       }
       case SmooshGCThing::Tag::Scope: {
@@ -421,10 +426,12 @@ bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
                           const SmooshScriptStencil& smooshScript,
                           Vector<const ParserAtom*>& allAtoms,
                           CompilationInfo& compilationInfo,
-                          ScriptStencil& script, FunctionIndex functionIndex) {
+                          ScriptIndex scriptIndex) {
   using ImmutableFlags = js::ImmutableScriptFlagsEnum;
 
   const JS::ReadOnlyCompileOptions& options = compilationInfo.input.options;
+
+  ScriptStencil& script = compilationInfo.stencil.scriptData[scriptIndex];
 
   script.immutableFlags = smooshScript.immutable_flags;
 
@@ -459,7 +466,7 @@ bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
       return false;
     }
 
-    if (!compilationInfo.stencil.sharedData.addAndShare(cx, functionIndex,
+    if (!compilationInfo.stencil.sharedData.addAndShare(cx, scriptIndex,
                                                         sharedData)) {
       return false;
     }
@@ -619,9 +626,8 @@ bool Smoosh::compileGlobalScriptToStencil(JSContext* cx,
   for (size_t i = 0; i < result.scripts.len; i++) {
     compilationInfo.stencil.scriptData.infallibleEmplaceBack();
 
-    if (!ConvertScriptStencil(
-            cx, result, result.scripts.data[i], allAtoms, compilationInfo,
-            compilationInfo.stencil.scriptData[i], FunctionIndex(i))) {
+    if (!ConvertScriptStencil(cx, result, result.scripts.data[i], allAtoms,
+                              compilationInfo, ScriptIndex(i))) {
       return false;
     }
   }

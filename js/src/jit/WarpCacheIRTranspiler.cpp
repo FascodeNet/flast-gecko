@@ -199,13 +199,14 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
                                                  BigIntOperandId rhsId);
 
   template <typename T>
-  [[nodiscard]] bool emitBigIntBinaryArithEffectfulResult(BigIntOperandId lhsId,
-                                                          BigIntOperandId rhsId);
+  [[nodiscard]] bool emitBigIntBinaryArithEffectfulResult(
+      BigIntOperandId lhsId, BigIntOperandId rhsId);
 
   template <typename T>
   [[nodiscard]] bool emitBigIntUnaryArithResult(BigIntOperandId inputId);
 
-  [[nodiscard]] bool emitCompareResult(JSOp op, OperandId lhsId, OperandId rhsId,
+  [[nodiscard]] bool emitCompareResult(JSOp op, OperandId lhsId,
+                                       OperandId rhsId,
                                        MCompare::CompareType compareType);
 
   [[nodiscard]] bool emitNewIteratorResult(MNewIterator::Type type,
@@ -1605,8 +1606,7 @@ bool WarpCacheIRTranspiler::emitLoadArrayBufferByteLengthInt32Result(
   return true;
 }
 
-bool WarpCacheIRTranspiler::emitLoadTypedArrayLengthResult(
-    ObjOperandId objId, uint32_t getterOffset) {
+bool WarpCacheIRTranspiler::emitLoadTypedArrayLengthResult(ObjOperandId objId) {
   MDefinition* obj = getOperand(objId);
 
   auto* length = MArrayBufferViewLength::New(alloc(), obj);
@@ -1670,9 +1670,7 @@ bool WarpCacheIRTranspiler::emitLoadDenseElementResult(ObjOperandId objId,
   index = addBoundsCheck(index, length);
 
   bool needsHoleCheck = true;
-  bool loadDouble = false;  // TODO(post-Warp): Ion-only optimization.
-  auto* load =
-      MLoadElement::New(alloc(), elements, index, needsHoleCheck, loadDouble);
+  auto* load = MLoadElement::New(alloc(), elements, index, needsHoleCheck);
   add(load);
 
   pushResult(load);
@@ -2147,7 +2145,7 @@ void WarpCacheIRTranspiler::addDataViewData(MDefinition* obj, Scalar::Type type,
     add(byteSizeMinusOne);
 
     length = MSub::New(alloc(), length, byteSizeMinusOne, MIRType::Int32);
-    length->toSub()->setTruncateKind(MDefinition::Truncate);
+    length->toSub()->setTruncateKind(TruncateKind::Truncate);
     add(length);
 
     // |length| mustn't be negative for MBoundsCheck.
@@ -3152,12 +3150,11 @@ bool WarpCacheIRTranspiler::emitStringReplaceStringResult(
 }
 
 bool WarpCacheIRTranspiler::emitStringSplitStringResult(
-    StringOperandId strId, StringOperandId separatorId, uint32_t groupOffset) {
+    StringOperandId strId, StringOperandId separatorId) {
   MDefinition* str = getOperand(strId);
   MDefinition* separator = getOperand(separatorId);
-  ObjectGroup* group = groupStubField(groupOffset);
 
-  auto* split = MStringSplit::New(alloc(), str, separator, group);
+  auto* split = MStringSplit::New(alloc(), str, separator);
   add(split);
 
   pushResult(split);
@@ -3424,11 +3421,9 @@ bool WarpCacheIRTranspiler::emitNewArrayFromLengthResult(
 
       MNewArray* obj;
       if (len > inlineLength) {
-        obj = MNewArray::NewVM(alloc(), len, templateConst, heap,
-                               loc_.toRawBytecode());
+        obj = MNewArray::NewVM(alloc(), len, templateConst, heap);
       } else {
-        obj = MNewArray::New(alloc(), len, templateConst, heap,
-                             loc_.toRawBytecode());
+        obj = MNewArray::New(alloc(), len, templateConst, heap);
       }
       add(obj);
       pushResult(obj);

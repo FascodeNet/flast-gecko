@@ -59,7 +59,7 @@ static void InterpretObjLiteralValue(JSContext* cx,
 static JSObject* InterpretObjLiteralObj(
     JSContext* cx, frontend::CompilationAtomCache& atomCache,
     const mozilla::Span<const uint8_t> literalInsns, ObjLiteralFlags flags) {
-  bool noValues = flags.contains(ObjLiteralFlag::NoValues);
+  bool singleton = flags.contains(ObjLiteralFlag::Singleton);
 
   ObjLiteralReader reader(literalInsns);
   ObjLiteralInsn insn;
@@ -81,7 +81,7 @@ static JSObject* InterpretObjLiteralObj(
     }
 
     JS::Value propVal;
-    if (!noValues) {
+    if (singleton) {
       InterpretObjLiteralValue(cx, atomCache, insn, &propVal);
     }
 
@@ -90,7 +90,6 @@ static JSObject* InterpretObjLiteralObj(
     }
   }
 
-  // TODO(no-TI): remove SpecificGroup and Singleton from ObjLiteralFlag.
   return NewPlainObjectWithProperties(cx, properties.begin(),
                                       properties.length(), TenuredObject);
 }
@@ -98,7 +97,6 @@ static JSObject* InterpretObjLiteralObj(
 static JSObject* InterpretObjLiteralArray(
     JSContext* cx, frontend::CompilationAtomCache& atomCache,
     const mozilla::Span<const uint8_t> literalInsns, ObjLiteralFlags flags) {
-  // TODO(no-TI): remove ArrayCOW.
   ObjLiteralReader reader(literalInsns);
   ObjLiteralInsn insn;
 
@@ -136,25 +134,9 @@ static void DumpObjLiteralFlagsItems(js::JSONPrinter& json,
     json.value("Array");
     flags -= ObjLiteralFlag::Array;
   }
-  if (flags.contains(ObjLiteralFlag::SpecificGroup)) {
-    json.value("SpecificGroup");
-    flags -= ObjLiteralFlag::SpecificGroup;
-  }
   if (flags.contains(ObjLiteralFlag::Singleton)) {
     json.value("Singleton");
     flags -= ObjLiteralFlag::Singleton;
-  }
-  if (flags.contains(ObjLiteralFlag::ArrayCOW)) {
-    json.value("ArrayCOW");
-    flags -= ObjLiteralFlag::ArrayCOW;
-  }
-  if (flags.contains(ObjLiteralFlag::NoValues)) {
-    json.value("NoValues");
-    flags -= ObjLiteralFlag::NoValues;
-  }
-  if (flags.contains(ObjLiteralFlag::IsInnerSingleton)) {
-    json.value("IsInnerSingleton");
-    flags -= ObjLiteralFlag::IsInnerSingleton;
   }
 
   if (!flags.isEmpty()) {

@@ -16,12 +16,15 @@ async function getPreviewText(previewBrowser) {
 }
 
 add_task(async function print_selection() {
-  // Testing the native print dialog is much harder.
-  await SpecialPowers.pushPrefEnv({
-    set: [["print.tab_modal.enabled", true]],
-  });
-
+  let i = 0;
   for (let source of sources) {
+    // Testing the native print dialog is much harder.
+    // Note we need to do this from here since resetPrintPrefs() below clears
+    // out the pref.
+    await SpecialPowers.pushPrefEnv({
+      set: [["print.tab_modal.enabled", true]],
+    });
+
     is(
       document.querySelector(".printPreviewBrowser"),
       null,
@@ -37,6 +40,8 @@ add_task(async function print_selection() {
           content.focus();
           content.getSelection().selectAllChildren(element);
         });
+
+        let helper = new PrintHelper(browser);
 
         // If you change this, change nsContextMenu.printSelection() too.
         PrintUtils.startPrintWindow(
@@ -63,7 +68,12 @@ add_task(async function print_selection() {
           .contentDocument.querySelector("#print-selection-enabled");
         ok(!printSelect.hidden, "Print selection checkbox is shown");
         ok(printSelect.checked, "Print selection checkbox is checked");
-        // Closing the tab also closes the preview dialog and such.
+
+        let file = helper.mockFilePicker(`browser_print_selection-${i++}.pdf`);
+        await helper.assertPrintToFile(file, () => {
+          helper.click(helper.get("print-button"));
+        });
+        PrintHelper.resetPrintPrefs();
       }
     );
   }

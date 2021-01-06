@@ -178,7 +178,7 @@ static bool CreateLazyScript(JSContext* cx, CompilationInput& input,
 static JSFunction* CreateFunction(JSContext* cx, CompilationInput& input,
                                   CompilationStencil& stencil,
                                   const ScriptStencil& script,
-                                  FunctionIndex functionIndex) {
+                                  ScriptIndex functionIndex) {
   GeneratorKind generatorKind =
       script.immutableFlags.hasFlag(ImmutableScriptFlagsEnum::IsGenerator)
           ? GeneratorKind::Generator
@@ -290,16 +290,15 @@ static bool InstantiateFunctions(JSContext* cx, CompilationInput& input,
                                  CompilationGCOutput& gcOutput) {
   for (auto item : CompilationInfo::functionScriptStencils(stencil, gcOutput)) {
     auto& scriptStencil = item.script;
-    auto functionIndex = item.functionIndex;
+    auto index = item.index;
 
     MOZ_ASSERT(!item.function);
 
-    JSFunction* fun =
-        CreateFunction(cx, input, stencil, scriptStencil, functionIndex);
+    JSFunction* fun = CreateFunction(cx, input, stencil, scriptStencil, index);
     if (!fun) {
       return false;
     }
-    gcOutput.functions[functionIndex] = fun;
+    gcOutput.functions[index] = fun;
   }
 
   return true;
@@ -348,10 +347,8 @@ static bool InstantiateScriptStencils(JSContext* cx, CompilationInput& input,
   for (auto item : CompilationInfo::functionScriptStencils(stencil, gcOutput)) {
     auto& scriptStencil = item.script;
     fun = item.function;
-    auto index = item.functionIndex;
+    auto index = item.index;
     if (scriptStencil.hasSharedData) {
-      auto* sharedData = stencil.sharedData.get(index);
-
       // If the function was not referenced by enclosing script's bytecode, we
       // do not generate a BaseScript for it. For example, `(function(){});`.
       //
@@ -362,8 +359,7 @@ static bool InstantiateScriptStencils(JSContext* cx, CompilationInput& input,
       }
 
       RootedScript script(
-          cx, JSScript::fromStencil(cx, input, stencil, gcOutput, scriptStencil,
-                                    sharedData, fun));
+          cx, JSScript::fromStencil(cx, input, stencil, gcOutput, index));
       if (!script) {
         return false;
       }
@@ -394,25 +390,18 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInput& input,
                                 CompilationGCOutput& gcOutput) {
   const ScriptStencil& scriptStencil =
       stencil.scriptData[CompilationInfo::TopLevelIndex];
-  RootedFunction fun(cx);
-  if (scriptStencil.isFunction()) {
-    fun = gcOutput.functions[CompilationInfo::TopLevelIndex];
-  }
 
   // Top-level asm.js does not generate a JSScript.
   if (scriptStencil.functionFlags.isAsmJSNative()) {
     return true;
   }
 
-  auto* sharedData = stencil.sharedData.get(CompilationInfo::TopLevelIndex);
-  MOZ_ASSERT(sharedData);
-
   if (input.lazy) {
     gcOutput.script = JSScript::CastFromLazy(input.lazy);
 
     Rooted<JSScript*> script(cx, gcOutput.script);
     if (!JSScript::fullyInitFromStencil(cx, input, stencil, gcOutput, script,
-                                        scriptStencil, sharedData, fun)) {
+                                        CompilationInfo::TopLevelIndex)) {
       return false;
     }
 
@@ -425,7 +414,7 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInput& input,
   }
 
   gcOutput.script = JSScript::fromStencil(cx, input, stencil, gcOutput,
-                                          scriptStencil, sharedData, fun);
+                                          CompilationInfo::TopLevelIndex);
   if (!gcOutput.script) {
     return false;
   }
@@ -575,9 +564,9 @@ static void AssertDelazificationFieldsMatch(CompilationStencil& stencil,
                 acceptableDifferenceForFunction));
 
     // Delazification shouldn't delazify inner scripts.
-    MOZ_ASSERT_IF(item.functionIndex == CompilationInfo::TopLevelIndex,
+    MOZ_ASSERT_IF(item.index == CompilationInfo::TopLevelIndex,
                   scriptStencil.hasSharedData);
-    MOZ_ASSERT_IF(item.functionIndex > CompilationInfo::TopLevelIndex,
+    MOZ_ASSERT_IF(item.index > CompilationInfo::TopLevelIndex,
                   !scriptStencil.hasSharedData);
 
     // FIXME: If this function is lazily parsed again, nargs isn't set to
@@ -722,7 +711,7 @@ bool CompilationInfoVector::buildDelazificationIndices(JSContext* cx) {
     if (!ptr) {
       continue;
     }
-    delazificationIndices[ptr->value()] = FunctionIndex(i);
+    delazificationIndices[ptr->value()] = ScriptIndex(i);
   }
 
   return true;
@@ -969,9 +958,9 @@ bool SharedDataContainer::prepareStorageFor(JSContext* cx,
   return true;
 }
 
-js::SharedImmutableScriptData* SharedDataContainer::get(FunctionIndex index) {
+js::SharedImmutableScriptData* SharedDataContainer::get(ScriptIndex index) {
   struct Matcher {
-    FunctionIndex index;
+    ScriptIndex index;
 
     js::SharedImmutableScriptData* operator()(SingleSharedData& ptr) {
       if (index == CompilationInfo::TopLevelIndex) {
@@ -1000,11 +989,11 @@ js::SharedImmutableScriptData* SharedDataContainer::get(FunctionIndex index) {
   return storage.match(m);
 }
 
-bool SharedDataContainer::addAndShare(JSContext* cx, FunctionIndex index,
+bool SharedDataContainer::addAndShare(JSContext* cx, ScriptIndex index,
                                       js::SharedImmutableScriptData* data) {
   struct Matcher {
     JSContext* cx;
-    FunctionIndex index;
+    ScriptIndex index;
     js::SharedImmutableScriptData* data;
 
     bool operator()(SingleSharedData& ptr) {
@@ -1202,7 +1191,7 @@ void ScopeStencil::dumpFields(js::JSONPrinter& json,
 
   if (kind_ == ScopeKind::Function) {
     if (functionIndex_.isSome()) {
-      json.formatProperty("functionIndex", "FunctionIndex(%zu)",
+      json.formatProperty("functionIndex", "ScriptIndex(%zu)",
                           size_t(*functionIndex_));
     } else {
       json.property("functionIndex", "Nothing");
@@ -1218,23 +1207,24 @@ void ScopeStencil::dumpFields(js::JSONPrinter& json,
 
   switch (kind_) {
     case ScopeKind::Function: {
-      auto* data = static_cast<ParserFunctionScopeData*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
-      json.property("hasParameterExprs", data->hasParameterExprs);
-      json.property("nonPositionalFormalStart", data->nonPositionalFormalStart);
-      json.property("varStart", data->varStart);
+      auto* data = static_cast<FunctionScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
+      json.property("hasParameterExprs", data->slotInfo.hasParameterExprs());
+      json.property("nonPositionalFormalStart",
+                    data->slotInfo.nonPositionalFormalStart);
+      json.property("varStart", data->slotInfo.varStart);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
     case ScopeKind::FunctionBodyVar: {
-      auto* data = static_cast<ParserVarScopeData*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
+      auto* data = static_cast<VarScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
@@ -1245,12 +1235,12 @@ void ScopeStencil::dumpFields(js::JSONPrinter& json,
     case ScopeKind::StrictNamedLambda:
     case ScopeKind::FunctionLexical:
     case ScopeKind::ClassBody: {
-      auto* data = static_cast<ParserLexicalScopeData*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
-      json.property("constStart", data->constStart);
+      auto* data = static_cast<LexicalScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
+      json.property("constStart", data->slotInfo.constStart);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
@@ -1260,55 +1250,53 @@ void ScopeStencil::dumpFields(js::JSONPrinter& json,
 
     case ScopeKind::Eval:
     case ScopeKind::StrictEval: {
-      auto* data = static_cast<ParserEvalScopeData*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
+      auto* data = static_cast<EvalScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
     case ScopeKind::Global:
     case ScopeKind::NonSyntactic: {
-      auto* data = static_cast<ParserGlobalScopeData*>(data_);
-      json.property("letStart", data->letStart);
-      json.property("constStart", data->constStart);
+      auto* data = static_cast<GlobalScope::ParserData*>(data_);
+      json.property("letStart", data->slotInfo.letStart);
+      json.property("constStart", data->slotInfo.constStart);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
     case ScopeKind::Module: {
-      auto* data = static_cast<ParserModuleScopeData*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
-      json.property("varStart", data->varStart);
-      json.property("letStart", data->letStart);
-      json.property("constStart", data->constStart);
+      auto* data = static_cast<ModuleScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
+      json.property("varStart", data->slotInfo.varStart);
+      json.property("letStart", data->slotInfo.letStart);
+      json.property("constStart", data->slotInfo.constStart);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
     case ScopeKind::WasmInstance: {
-      auto* data = static_cast<
-          AbstractScopeData<WasmInstanceScope, TaggedParserAtomIndex>*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
-      json.property("globalsStart", data->globalsStart);
+      auto* data = static_cast<WasmInstanceScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
+      json.property("globalsStart", data->slotInfo.globalsStart);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
     case ScopeKind::WasmFunction: {
-      auto* data = static_cast<
-          AbstractScopeData<WasmFunctionScope, TaggedParserAtomIndex>*>(data_);
-      json.property("nextFrameSlot", data->nextFrameSlot);
+      auto* data = static_cast<WasmFunctionScope::ParserData*>(data_);
+      json.property("nextFrameSlot", data->slotInfo.nextFrameSlot);
 
       trailingNames = &data->trailingNames;
-      length = data->length;
+      length = data->slotInfo.length;
       break;
     }
 
@@ -1406,7 +1394,7 @@ void StencilModuleMetadata::dumpFields(js::JSONPrinter& json,
 
   json.beginListProperty("functionDecls");
   for (auto& index : functionDecls) {
-    json.value("FunctionIndex(%zu)", size_t(index));
+    json.value("ScriptIndex(%zu)", size_t(index));
   }
   json.endList();
 
@@ -1618,7 +1606,7 @@ static void DumpScriptThing(js::JSONPrinter& json,
       json.value("ScopeIndex(%zu)", size_t(thing.toScope()));
       break;
     case TaggedScriptThingIndex::Kind::Function:
-      json.value("FunctionIndex(%zu)", size_t(thing.toFunction()));
+      json.value("ScriptIndex(%zu)", size_t(thing.toFunction()));
       break;
     case TaggedScriptThingIndex::Kind::EmptyGlobalScope:
       json.value("EmptyGlobalScope");

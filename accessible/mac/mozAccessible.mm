@@ -949,9 +949,7 @@ struct RoleDescrComparator {
       LayoutDeviceIntPoint(geckoRect.X() + (geckoRect.Width() / 2),
                            geckoRect.Y() + (geckoRect.Height() / 2));
   nsIWidget* widget = [objOrView widget];
-  // XXX: NSRightMouseDown is depreciated in 10.12, should be
-  // changed to NSEventTypeRightMouseDown after refactoring.
-  widget->SynthesizeNativeMouseEvent(p, NSRightMouseDown, 0, nullptr);
+  widget->SynthesizeNativeMouseEvent(p, NSEventTypeRightMouseDown, 0, nullptr);
 }
 
 - (void)moxPerformPress {
@@ -1017,21 +1015,23 @@ struct RoleDescrComparator {
       // reduntant.
       id<MOXTextMarkerSupport> delegate = [self moxTextMarkerDelegate];
       id selectedRange = [delegate moxSelectedTextMarkerRange];
-      id editableAncestor = [self moxEditableAncestor];
-      id textChangeElement = editableAncestor ? editableAncestor : self;
+      BOOL isCollapsed =
+          [static_cast<MOXTextMarkerDelegate*>(delegate) selectionIsCollapsed];
       NSDictionary* userInfo = @{
-        @"AXTextChangeElement" : textChangeElement,
+        @"AXTextChangeElement" : self,
         @"AXSelectedTextMarkerRange" :
-            (selectedRange ? selectedRange : [NSNull null])
+            (selectedRange ? selectedRange : [NSNull null]),
+        @"AXTextStateChangeType" : isCollapsed
+            ? @(AXTextStateChangeTypeSelectionMove)
+            : @(AXTextStateChangeTypeSelectionExtend)
       };
 
       mozAccessible* webArea = [self topWebArea];
       [webArea
           moxPostNotification:NSAccessibilitySelectedTextChangedNotification
                  withUserInfo:userInfo];
-      [textChangeElement
-          moxPostNotification:NSAccessibilitySelectedTextChangedNotification
-                 withUserInfo:userInfo];
+      [self moxPostNotification:NSAccessibilitySelectedTextChangedNotification
+                   withUserInfo:userInfo];
       break;
     }
     case nsIAccessibleEvent::EVENT_LIVE_REGION_ADDED:

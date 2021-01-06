@@ -3618,21 +3618,6 @@ class LValueToObject : public LInstructionHelper<1, BOX_PIECES, 0> {
   static const size_t Input = 0;
 };
 
-// Convert a value to an object or null pointer.
-class LValueToObjectOrNull : public LInstructionHelper<1, BOX_PIECES, 0> {
- public:
-  LIR_HEADER(ValueToObjectOrNull)
-
-  explicit LValueToObjectOrNull(const LBoxAllocation& input)
-      : LInstructionHelper(classOpcode) {
-    setBoxOperand(Input, input);
-  }
-
-  static const size_t Input = 0;
-
-  const MToObjectOrNull* mir() { return mir_->toToObjectOrNull(); }
-};
-
 // Double raised to a half power.
 class LPowHalfD : public LInstructionHelper<1, 1, 0> {
  public:
@@ -4443,9 +4428,7 @@ class LLoadElementT : public LInstructionHelper<1, 2, 0> {
   }
 
   const char* extraName() const {
-    return mir()->needsHoleCheck()
-               ? "HoleCheck"
-               : (mir()->loadDoubles() ? "Doubles" : nullptr);
+    return mir()->needsHoleCheck() ? "HoleCheck" : nullptr;
   }
 
   const MLoadElement* mir() const { return mir_->toLoadElement(); }

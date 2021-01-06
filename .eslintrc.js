@@ -319,22 +319,6 @@ module.exports = {
     },
     {
       files: [
-        "dom/l10n/tests/mochitest/document_l10n/non-system-principal/test.html",
-        "dom/payments/test/test_basiccard.html",
-        "dom/payments/test/test_bug1478740.html",
-        "dom/payments/test/test_canMakePayment.html",
-        "dom/payments/test/test_closePayment.html",
-        "dom/payments/test/test_showPayment.html",
-        "dom/tests/browser/browser_persist_cookies.js",
-        "dom/tests/browser/browser_persist_mixed_content_image.js",
-        "netwerk/test/unit/test_http2-proxy.js",
-      ],
-      rules: {
-        "no-async-promise-executor": "off",
-      },
-    },
-    {
-      files: [
         "testing/mochitest/browser-harness.xhtml",
         "testing/mochitest/chrome/test_chromeGetTestFile.xhtml",
         "testing/mochitest/chrome/test_sanityEventUtils.xhtml",

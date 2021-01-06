@@ -1804,27 +1804,6 @@ void CodeGenerator::visitValueToObject(LValueToObject* lir) {
   masm.bind(ool->rejoin());
 }
 
-void CodeGenerator::visitValueToObjectOrNull(LValueToObjectOrNull* lir) {
-  ValueOperand input = ToValue(lir, LValueToObjectOrNull::Input);
-  Register output = ToRegister(lir->output());
-
-  using Fn = JSObject* (*)(JSContext*, HandleValue, bool);
-  OutOfLineCode* ool = oolCallVM<Fn, ToObjectSlow>(
-      lir, ArgList(input, Imm32(0)), StoreRegisterTo(output));
-
-  Label isObject;
-  masm.branchTestObject(Assembler::Equal, input, &isObject);
-  masm.branchTestNull(Assembler::NotEqual, input, ool->entry());
-
-  masm.movePtr(ImmWord(0), output);
-  masm.jump(ool->rejoin());
-
-  masm.bind(&isObject);
-  masm.unboxObject(input, output);
-
-  masm.bind(ool->rejoin());
-}
-
 using StoreBufferMutationFn = void (*)(js::gc::StoreBuffer*, js::gc::Cell**);
 
 static void EmitStoreBufferMutation(MacroAssembler& masm, Register holder,
@@ -5713,7 +5692,7 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
 
   // Check whether the provided arguments satisfy target argc.
   // We cannot have lowered to LCallGeneric with a known target. Assert that we
-  // didn't add any undefineds in IonBuilder. NB: MCall::numStackArgs includes
+  // didn't add any undefineds in WarpBuilder. NB: MCall::numStackArgs includes
   // |this|.
   DebugOnly<unsigned> numNonArgsOnStack = 1 + call->isConstructing();
   MOZ_ASSERT(call->numActualArgs() ==
@@ -5778,7 +5757,7 @@ void CodeGenerator::visitCallKnown(LCallKnown* call) {
   // Native single targets (except wasm) are handled by LCallNative.
   MOZ_ASSERT(target->hasJitEntry());
 
-  // Missing arguments must have been explicitly appended by the IonBuilder.
+  // Missing arguments must have been explicitly appended by WarpBuilder.
   DebugOnly<unsigned> numNonArgsOnStack = 1 + call->isConstructing();
   MOZ_ASSERT(target->nargs() <=
              call->mir()->numStackArgs() - numNonArgsOnStack);
@@ -6982,11 +6961,8 @@ void CodeGenerator::visitNewArrayCallVM(LNewArray* lir) {
   } else {
     pushArg(Imm32(GenericObject));
     pushArg(Imm32(lir->mir()->length()));
-    pushArg(ImmPtr(lir->mir()->pc()));
-    pushArg(ImmGCPtr(lir->mir()->block()->info().script()));
 
-    using Fn = ArrayObject* (*)(JSContext*, HandleScript, jsbytecode*, uint32_t,
-                                NewObjectKind);
+    using Fn = ArrayObject* (*)(JSContext*, uint32_t, NewObjectKind);
     callVM<Fn, NewArrayOperation>(lir);
   }
 
@@ -10836,10 +10812,8 @@ void CodeGenerator::visitStringSplit(LStringSplit* lir) {
   pushArg(Imm32(INT32_MAX));
   pushArg(ToRegister(lir->separator()));
   pushArg(ToRegister(lir->string()));
-  pushArg(ImmGCPtr(lir->mir()->group()));
 
-  using Fn = ArrayObject* (*)(JSContext*, HandleObjectGroup, HandleString,
-                              HandleString, uint32_t);
+  using Fn = ArrayObject* (*)(JSContext*, HandleString, HandleString, uint32_t);
   callVM<Fn, js::StringSplitString>(lir);
 }
 
@@ -13072,11 +13046,7 @@ void CodeGenerator::emitLoadElementT(LLoadElementT* lir, const T& source) {
   }
 
   AnyRegister output = ToAnyRegister(lir->output());
-  if (lir->mir()->loadDoubles()) {
-    masm.unboxDouble(source, output.fpu());
-  } else {
-    masm.loadUnboxedValue(source, lir->mir()->type(), output);
-  }
+  masm.loadUnboxedValue(source, lir->mir()->type(), output);
 }
 
 void CodeGenerator::visitLoadElementT(LLoadElementT* lir) {

@@ -1441,6 +1441,14 @@
       var browser = this.getBrowserForTab(aTab);
       var title = browser.contentTitle;
 
+      if (aTab.hasAttribute("customizemode")) {
+        let brandBundle = document.getElementById("bundle_brand");
+        let brandShortName = brandBundle.getString("brandShortName");
+        title = gNavigatorBundle.getFormattedString("customizeMode.tabTitle", [
+          brandShortName,
+        ]);
+      }
+
       // Don't replace an initially set label with the URL while the tab
       // is loading.
       if (aTab._labelIsInitialTitle) {
@@ -1450,17 +1458,8 @@
         delete aTab._labelIsInitialTitle;
       }
 
-      let isContentTitle = false;
-      if (title) {
-        isContentTitle = true;
-      } else if (aTab.hasAttribute("customizemode")) {
-        let brandBundle = document.getElementById("bundle_brand");
-        let brandShortName = brandBundle.getString("brandShortName");
-        title = gNavigatorBundle.getFormattedString("customizeMode.tabTitle", [
-          brandShortName,
-        ]);
-        isContentTitle = true;
-      } else {
+      let isContentTitle = !!title;
+      if (!title) {
         // See if we can use the URI as the title.
         if (browser.currentURI.displaySpec) {
           try {
@@ -6203,10 +6202,13 @@
           // Don't clear the favicon if this tab is in the pending
           // state, as SessionStore will have set the icon for us even
           // though we're pointed at an about:blank. Also don't clear it
+          // if the tab is in customize mode, to keep the one set by
+          // gCustomizeMode.setTab (bug 1551239). Also don't clear it
           // if onLocationChange was triggered by a pushState or a
           // replaceState (bug 550565) or a hash change (bug 408415).
           if (
             !this.mTab.hasAttribute("pending") &&
+            !this.mTab.hasAttribute("customizemode") &&
             aWebProgress.isLoadingDocument
           ) {
             // Removing the tab's image here causes flickering, wait until the

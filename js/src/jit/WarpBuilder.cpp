@@ -339,8 +339,10 @@ MInstruction* WarpBuilder::buildNamedLambdaEnv(
   // that moved env/callee to the tenured heap.
   size_t enclosingSlot = NamedLambdaObject::enclosingEnvironmentSlot();
   size_t lambdaSlot = NamedLambdaObject::lambdaSlot();
-  current->add(MStoreFixedSlot::New(alloc(), namedLambda, enclosingSlot, env));
-  current->add(MStoreFixedSlot::New(alloc(), namedLambda, lambdaSlot, callee));
+  current->add(MStoreFixedSlot::NewUnbarriered(alloc(), namedLambda,
+                                               enclosingSlot, env));
+  current->add(MStoreFixedSlot::NewUnbarriered(alloc(), namedLambda, lambdaSlot,
+                                               callee));
 
   return namedLambda;
 }
@@ -357,8 +359,10 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
   // for the same reason as in buildNamedLambdaEnv.
   size_t enclosingSlot = CallObject::enclosingEnvironmentSlot();
   size_t calleeSlot = CallObject::calleeSlot();
-  current->add(MStoreFixedSlot::New(alloc(), callObj, enclosingSlot, env));
-  current->add(MStoreFixedSlot::New(alloc(), callObj, calleeSlot, callee));
+  current->add(
+      MStoreFixedSlot::NewUnbarriered(alloc(), callObj, enclosingSlot, env));
+  current->add(
+      MStoreFixedSlot::NewUnbarriered(alloc(), callObj, calleeSlot, callee));
 
   // Copy closed-over argument slots if there aren't parameter expressions.
   MSlots* slots = nullptr;
@@ -387,9 +391,11 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
         current->add(slots);
       }
       uint32_t dynamicSlot = slot - numFixedSlots;
-      current->add(MStoreDynamicSlot::New(alloc(), slots, dynamicSlot, param));
+      current->add(MStoreDynamicSlot::NewUnbarriered(alloc(), slots,
+                                                     dynamicSlot, param));
     } else {
-      current->add(MStoreFixedSlot::New(alloc(), callObj, slot, param));
+      current->add(
+          MStoreFixedSlot::NewUnbarriered(alloc(), callObj, slot, param));
     }
   }
 
@@ -2144,7 +2150,8 @@ bool WarpBuilder::build_FinalYieldRval(BytecodeLocation loc) {
   MDefinition* gen = current->pop();
 
   auto setSlotNull = [this, gen](size_t slot) {
-    auto* ins = MStoreFixedSlot::New(alloc(), gen, slot, constant(NullValue()));
+    auto* ins = MStoreFixedSlot::NewBarriered(alloc(), gen, slot,
+                                              constant(NullValue()));
     current->add(ins);
   };
 
@@ -2235,11 +2242,25 @@ bool WarpBuilder::build_Yield(BytecodeLocation loc) { return build_Await(loc); }
 
 bool WarpBuilder::buildSuspend(BytecodeLocation loc, MDefinition* gen,
                                MDefinition* retVal) {
+  // If required, unbox the generator object explicitly and infallibly.
+  //
+  // This is done to avoid fuzz-bugs where ApplyTypeInformation does the
+  // unboxing, and generates fallible unboxes which can lead to torn object
+  // state due to `bailAfter`.
+  MDefinition* genObj = gen;
+  if (genObj->type() != MIRType::Object) {
+    auto* unbox =
+        MUnbox::New(alloc(), gen, MIRType::Object, MUnbox::Mode::Infallible);
+    current->add(unbox);
+
+    genObj = unbox;
+  }
+
   int32_t slotsToCopy = current->stackDepth() - info().firstLocalSlot();
   MOZ_ASSERT(slotsToCopy >= 0);
   if (slotsToCopy > 0) {
     auto* arraySlot = MLoadFixedSlot::New(
-        alloc(), gen, AbstractGeneratorObject::stackStorageSlot());
+        alloc(), genObj, AbstractGeneratorObject::stackStorageSlot());
     current->add(arraySlot);
 
     auto* arrayObj = MUnbox::New(alloc(), arraySlot, MIRType::Object,
@@ -2276,12 +2297,20 @@ bool WarpBuilder::buildSuspend(BytecodeLocation loc, MDefinition* gen,
 
   // Update Generator Object state
   uint32_t resumeIndex = loc.getResumeIndex();
-  current->add(MStoreFixedSlot::New(alloc(), gen,
-                                    AbstractGeneratorObject::resumeIndexSlot(),
-                                    constant(Int32Value(resumeIndex))));
-  current->add(MStoreFixedSlot::New(alloc(), gen,
-                                    AbstractGeneratorObject::envChainSlot(),
-                                    current->environmentChain()));
+
+  // This store is unbarriered, as it's only ever storing an integer, and as
+  // such doesn't partake of object tracing.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), genObj, AbstractGeneratorObject::resumeIndexSlot(),
+      constant(Int32Value(resumeIndex))));
+
+  // This store is barriered because it stores an object value.
+  current->add(MStoreFixedSlot::NewBarriered(
+      alloc(), genObj, AbstractGeneratorObject::envChainSlot(),
+      current->environmentChain()));
+
+  current->add(
+      MPostWriteBarrier::New(alloc(), genObj, current->environmentChain()));
 
   // GeneratorReturn will return from the method, however to support MIR
   // generation isn't treated like the end of a block
@@ -2460,11 +2489,9 @@ bool WarpBuilder::build_NewArray(BytecodeLocation loc) {
 
   MNewArray* ins;
   if (useVMCall) {
-    ins = MNewArray::NewVM(alloc(), length, templateConst, heap,
-                           loc.toRawBytecode());
+    ins = MNewArray::NewVM(alloc(), length, templateConst, heap);
   } else {
-    ins = MNewArray::New(alloc(), length, templateConst, heap,
-                         loc.toRawBytecode());
+    ins = MNewArray::New(alloc(), length, templateConst, heap);
   }
   current->add(ins);
   current->push(ins);
@@ -2744,7 +2771,7 @@ bool WarpBuilder::build_InitElemInc(BytecodeLocation loc) {
 
   // Push index + 1.
   MConstant* constOne = constant(Int32Value(1));
-  MAdd* nextIndex = MAdd::New(alloc(), index, constOne, MDefinition::Truncate);
+  MAdd* nextIndex = MAdd::New(alloc(), index, constOne, TruncateKind::Truncate);
   current->add(nextIndex);
   current->push(nextIndex);
 
@@ -2960,11 +2987,9 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
     MConstant* templateConst = constant(ObjectValue(*templateObject));
     MNewArray* newArray;
     if (numRest > snapshot->maxInlineElements()) {
-      newArray = MNewArray::NewVM(alloc(), numRest, templateConst, heap,
-                                  loc.toRawBytecode());
+      newArray = MNewArray::NewVM(alloc(), numRest, templateConst, heap);
     } else {
-      newArray = MNewArray::New(alloc(), numRest, templateConst, heap,
-                                loc.toRawBytecode());
+      newArray = MNewArray::New(alloc(), numRest, templateConst, heap);
     }
     current->add(newArray);
     current->push(newArray);

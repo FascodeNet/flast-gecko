@@ -21,6 +21,11 @@ class nsIReferrerInfo;
 class nsISHistory;
 class nsIURI;
 
+namespace mozilla::ipc {
+template <typename P>
+struct IPDLParamTraits;
+}
+
 namespace mozilla {
 namespace dom {
 
@@ -36,9 +41,7 @@ class SessionHistoryInfo {
   SessionHistoryInfo(const SessionHistoryInfo& aInfo) = default;
   SessionHistoryInfo(nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
   SessionHistoryInfo(const SessionHistoryInfo& aSharedStateFrom, nsIURI* aURI);
-  SessionHistoryInfo(const SessionHistoryInfo* aSharedStateFrom, nsIURI* aURI,
-                     const nsID& aDocShellID,
-                     nsIPrincipal* aTriggeringPrincipal,
+  SessionHistoryInfo(nsIURI* aURI, nsIPrincipal* aTriggeringPrincipal,
                      nsIPrincipal* aPrincipalToInherit,
                      nsIPrincipal* aPartitionedPrincipalToInherit,
                      nsIContentSecurityPolicy* aCsp,

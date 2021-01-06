@@ -453,6 +453,38 @@ class StoreDependency : public TempObject {
   MStoreVector& get() { return all_; }
 };
 
+// When a floating-point value is used by nodes which would prefer to
+// receive integer inputs, we may be able to help by computing our result
+// into an integer directly.
+//
+// A value can be truncated in 4 differents ways:
+//   1. Ignore Infinities (x / 0 --> 0).
+//   2. Ignore overflow (INT_MIN / -1 == (INT_MAX + 1) --> INT_MIN)
+//   3. Ignore negative zeros. (-0 --> 0)
+//   4. Ignore remainder. (3 / 4 --> 0)
+//
+// Indirect truncation is used to represent that we are interested in the
+// truncated result, but only if it can safely flow into operations which
+// are computed modulo 2^32, such as (2) and (3). Infinities are not safe,
+// as they would have absorbed other math operations. Remainders are not
+// safe, as fractions can be scaled up by multiplication.
+//
+// Division is a particularly interesting node here because it covers all 4
+// cases even when its own operands are integers.
+//
+// Note that these enum values are ordered from least value-modifying to
+// most value-modifying, and code relies on this ordering.
+enum class TruncateKind {
+  // No correction.
+  NoTruncate = 0,
+  // An integer is desired, but we can't skip bailout checks.
+  TruncateAfterBailouts = 1,
+  // The value will be truncated after some arithmetic (see above).
+  IndirectTruncate = 2,
+  // Direct and infallible truncation to int32.
+  Truncate = 3
+};
+
 // An MDefinition is an SSA name.
 class MDefinition : public MNode {
   friend class MBasicBlock;
@@ -628,53 +660,6 @@ class MDefinition : public MNode {
   virtual MDefinition* foldsTo(TempAllocator& alloc);
   virtual void analyzeEdgeCasesForward();
   virtual void analyzeEdgeCasesBackward();
-
-  // When a floating-point value is used by nodes which would prefer to
-  // recieve integer inputs, we may be able to help by computing our result
-  // into an integer directly.
-  //
-  // A value can be truncated in 4 differents ways:
-  //   1. Ignore Infinities (x / 0 --> 0).
-  //   2. Ignore overflow (INT_MIN / -1 == (INT_MAX + 1) --> INT_MIN)
-  //   3. Ignore negative zeros. (-0 --> 0)
-  //   4. Ignore remainder. (3 / 4 --> 0)
-  //
-  // Indirect truncation is used to represent that we are interested in the
-  // truncated result, but only if it can safely flow into operations which
-  // are computed modulo 2^32, such as (2) and (3). Infinities are not safe,
-  // as they would have absorbed other math operations. Remainders are not
-  // safe, as fractions can be scaled up by multiplication.
-  //
-  // Division is a particularly interesting node here because it covers all 4
-  // cases even when its own operands are integers.
-  //
-  // Note that these enum values are ordered from least value-modifying to
-  // most value-modifying, and code relies on this ordering.
-  enum TruncateKind {
-    // No correction.
-    NoTruncate = 0,
-    // An integer is desired, but we can't skip bailout checks.
-    TruncateAfterBailouts = 1,
-    // The value will be truncated after some arithmetic (see above).
-    IndirectTruncate = 2,
-    // Direct and infallible truncation to int32.
-    Truncate = 3
-  };
-
-  static const char* TruncateKindString(TruncateKind kind) {
-    switch (kind) {
-      case NoTruncate:
-        return "NoTruncate";
-      case TruncateAfterBailouts:
-        return "TruncateAfterBailouts";
-      case IndirectTruncate:
-        return "IndirectTruncate";
-      case Truncate:
-        return "Truncate";
-      default:
-        MOZ_CRASH("Unknown truncate kind.");
-    }
-  }
 
   // |needTruncation| records the truncation kind of the results, such that it
   // can be used to truncate the operands of this instruction.  If
@@ -1377,7 +1362,7 @@ class MLimitedTruncate : public MUnaryInstruction,
  protected:
   MLimitedTruncate(MDefinition* input, TruncateKind limit)
       : MUnaryInstruction(classOpcode, input),
-        truncate_(NoTruncate),
+        truncate_(TruncateKind::NoTruncate),
         truncateLimit_(limit) {
     setResultType(MIRType::Int32);
     setMovable();
@@ -1976,22 +1961,19 @@ class MNewArray : public MUnaryInstruction, public NoTypePolicy::Data {
   // Heap where the array should be allocated.
   gc::InitialHeap initialHeap_;
 
-  jsbytecode* pc_;
-
   bool vmCall_;
 
-  MNewArray(TempAllocator& alloc, uint32_t length, MConstant* templateConst,
-            gc::InitialHeap initialHeap, jsbytecode* pc, bool vmCall = false);
+  MNewArray(uint32_t length, MConstant* templateConst,
+            gc::InitialHeap initialHeap, bool vmCall = false);
 
  public:
   INSTRUCTION_HEADER(NewArray)
-  TRIVIAL_NEW_WRAPPERS_WITH_ALLOC
+  TRIVIAL_NEW_WRAPPERS
 
   static MNewArray* NewVM(TempAllocator& alloc, uint32_t length,
-                          MConstant* templateConst, gc::InitialHeap initialHeap,
-                          jsbytecode* pc) {
-    return new (alloc)
-        MNewArray(alloc, length, templateConst, initialHeap, pc, true);
+                          MConstant* templateConst,
+                          gc::InitialHeap initialHeap) {
+    return new (alloc) MNewArray(length, templateConst, initialHeap, true);
   }
 
   uint32_t length() const { return length_; }
@@ -2001,8 +1983,6 @@ class MNewArray : public MUnaryInstruction, public NoTypePolicy::Data {
   }
 
   gc::InitialHeap initialHeap() const { return initialHeap_; }
-
-  jsbytecode* pc() const { return pc_; }
 
   bool isVMCall() const { return vmCall_; }
 
@@ -3589,7 +3569,7 @@ class MToDouble : public MToFPInstruction {
   explicit MToDouble(MDefinition* def,
                      ConversionKind conversion = NonStringPrimitives)
       : MToFPInstruction(classOpcode, def, conversion),
-        implicitTruncate_(NoTruncate) {
+        implicitTruncate_(TruncateKind::NoTruncate) {
     setResultType(MIRType::Double);
     setMovable();
 
@@ -4407,27 +4387,6 @@ class MToObject : public MUnaryInstruction, public BoxInputsPolicy::Data {
   ALLOW_CLONE(MToObject)
 };
 
-// Converts any type to an object or null value, throwing on undefined.
-class MToObjectOrNull : public MUnaryInstruction, public BoxInputsPolicy::Data {
-  explicit MToObjectOrNull(MDefinition* def)
-      : MUnaryInstruction(classOpcode, def) {
-    setResultType(MIRType::ObjectOrNull);
-    setMovable();
-  }
-
- public:
-  INSTRUCTION_HEADER(ToObjectOrNull)
-  TRIVIAL_NEW_WRAPPERS
-
-  bool congruentTo(const MDefinition* ins) const override {
-    return congruentIfOperandsEqual(ins);
-  }
-
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
-
-  ALLOW_CLONE(MToObjectOrNull)
-};
-
 class MBitNot : public MUnaryInstruction, public BitwisePolicy::Data {
  protected:
   explicit MBitNot(MDefinition* input) : MUnaryInstruction(classOpcode, input) {
@@ -4824,7 +4783,7 @@ class MBinaryArithInstruction : public MBinaryInstruction,
   MBinaryArithInstruction(Opcode op, MDefinition* left, MDefinition* right,
                           MIRType type)
       : MBinaryInstruction(op, left, right),
-        implicitTruncate_(NoTruncate),
+        implicitTruncate_(TruncateKind::NoTruncate),
         mustPreserveNaN_(false) {
     MOZ_ASSERT(IsNumberType(type));
     setResultType(type);
@@ -4863,7 +4822,9 @@ class MBinaryArithInstruction : public MBinaryInstruction,
   }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
-  bool isTruncated() const { return implicitTruncate_ == Truncate; }
+  bool isTruncated() const {
+    return implicitTruncate_ == TruncateKind::Truncate;
+  }
   TruncateKind truncateKind() const { return implicitTruncate_; }
   void setTruncateKind(TruncateKind kind) {
     implicitTruncate_ = std::max(implicitTruncate_, kind);
@@ -5375,7 +5336,7 @@ class MAdd : public MBinaryArithInstruction {
                        MDefinition* right, MIRType type) {
     auto* ret = new (alloc) MAdd(left, right, type);
     if (type == MIRType::Int32) {
-      ret->setTruncateKind(Truncate);
+      ret->setTruncateKind(TruncateKind::Truncate);
     }
     return ret;
   }
@@ -5410,7 +5371,7 @@ class MSub : public MBinaryArithInstruction {
     auto* ret = new (alloc) MSub(left, right, type);
     ret->setMustPreserveNaN(mustPreserveNaN);
     if (type == MIRType::Int32) {
-      ret->setTruncateKind(Truncate);
+      ret->setTruncateKind(TruncateKind::Truncate);
     }
     return ret;
   }
@@ -5454,7 +5415,7 @@ class MMul : public MBinaryArithInstruction {
       // This implements the required behavior for Math.imul, which
       // can never fail and always truncates its output to int32.
       canBeNegativeZero_ = false;
-      setTruncateKind(Truncate);
+      setTruncateKind(TruncateKind::Truncate);
     }
     MOZ_ASSERT_IF(mode != Integer, mode == Normal);
   }
@@ -5568,7 +5529,7 @@ class MDiv : public MBinaryArithInstruction {
     }
     div->setMustPreserveNaN(mustPreserveNaN);
     if (type == MIRType::Int32) {
-      div->setTruncateKind(Truncate);
+      div->setTruncateKind(TruncateKind::Truncate);
     }
     return div;
   }
@@ -5605,7 +5566,7 @@ class MDiv : public MBinaryArithInstruction {
   bool isUnsigned() const { return unsigned_; }
 
   bool isTruncatedIndirectly() const {
-    return truncateKind() >= IndirectTruncate;
+    return truncateKind() >= TruncateKind::IndirectTruncate;
   }
 
   bool canTruncateInfinities() const { return isTruncated(); }
@@ -5763,7 +5724,7 @@ class MMod : public MBinaryArithInstruction {
       mod->setNotMovable();
     }
     if (type == MIRType::Int32) {
-      mod->setTruncateKind(Truncate);
+      mod->setTruncateKind(TruncateKind::Truncate);
     }
     return mod;
   }
@@ -6413,11 +6374,8 @@ class MStringConvertCase : public MUnaryInstruction,
 
 class MStringSplit : public MBinaryInstruction,
                      public MixPolicy<StringPolicy<0>, StringPolicy<1>>::Data {
-  CompilerObjectGroup group_;
-
-  MStringSplit(TempAllocator& alloc, MDefinition* string, MDefinition* sep,
-               ObjectGroup* group)
-      : MBinaryInstruction(classOpcode, string, sep), group_(group) {
+  MStringSplit(TempAllocator& alloc, MDefinition* string, MDefinition* sep)
+      : MBinaryInstruction(classOpcode, string, sep) {
     setResultType(MIRType::Object);
   }
 
@@ -6426,7 +6384,6 @@ class MStringSplit : public MBinaryInstruction,
   TRIVIAL_NEW_WRAPPERS_WITH_ALLOC
   NAMED_OPERANDS((0, string), (1, separator))
 
-  ObjectGroup* group() const { return group_; }
   bool possiblyCalls() const override { return true; }
   virtual AliasSet getAliasSet() const override {
     // Although this instruction returns a new array, we don't have to mark
@@ -6536,10 +6493,6 @@ class MPhi final : public MDefinition,
 
  protected:
   MUse* getUseFor(size_t index) override {
-    // Note: after the initial IonBuilder pass, it is OK to change phi
-    // operands such that they do not include the type sets of their
-    // operands. This can arise during e.g. value numbering, where
-    // definitions producing the same value may have different type sets.
     MOZ_ASSERT(index < numOperands());
     return &inputs_[index];
   }
@@ -6553,7 +6506,7 @@ class MPhi final : public MDefinition,
   MPhi(TempAllocator& alloc, MIRType resultType)
       : MDefinition(classOpcode),
         inputs_(alloc),
-        truncateKind_(NoTruncate),
+        truncateKind_(TruncateKind::NoTruncate),
         triedToSpecialize_(false),
         isIterator_(false),
         canProduceFloat32_(false),
@@ -7979,13 +7932,10 @@ class MSpectreMaskIndex
 // array is not known to be packed.
 class MLoadElement : public MBinaryInstruction, public NoTypePolicy::Data {
   bool needsHoleCheck_;
-  bool loadDoubles_;
 
-  MLoadElement(MDefinition* elements, MDefinition* index, bool needsHoleCheck,
-               bool loadDoubles)
+  MLoadElement(MDefinition* elements, MDefinition* index, bool needsHoleCheck)
       : MBinaryInstruction(classOpcode, elements, index),
-        needsHoleCheck_(needsHoleCheck),
-        loadDoubles_(loadDoubles) {
+        needsHoleCheck_(needsHoleCheck) {
     if (needsHoleCheck) {
       // Uses may be optimized away based on this instruction's result
       // type. This means it's invalid to DCE this instruction, as we
@@ -8004,7 +7954,6 @@ class MLoadElement : public MBinaryInstruction, public NoTypePolicy::Data {
   NAMED_OPERANDS((0, elements), (1, index))
 
   bool needsHoleCheck() const { return needsHoleCheck_; }
-  bool loadDoubles() const { return loadDoubles_; }
   bool fallible() const { return needsHoleCheck(); }
 
   bool congruentTo(const MDefinition* ins) const override {
@@ -8013,9 +7962,6 @@ class MLoadElement : public MBinaryInstruction, public NoTypePolicy::Data {
     }
     const MLoadElement* other = ins->toLoadElement();
     if (needsHoleCheck() != other->needsHoleCheck()) {
-      return false;
-    }
-    if (loadDoubles() != other->loadDoubles()) {
       return false;
     }
     return congruentIfOperandsEqual(other);
@@ -8898,8 +8844,8 @@ class MStoreFixedSlot
   INSTRUCTION_HEADER(StoreFixedSlot)
   NAMED_OPERANDS((0, object), (1, value))
 
-  static MStoreFixedSlot* New(TempAllocator& alloc, MDefinition* obj,
-                              size_t slot, MDefinition* rval) {
+  static MStoreFixedSlot* NewUnbarriered(TempAllocator& alloc, MDefinition* obj,
+                                         size_t slot, MDefinition* rval) {
     return new (alloc) MStoreFixedSlot(obj, rval, slot, false);
   }
   static MStoreFixedSlot* NewBarriered(TempAllocator& alloc, MDefinition* obj,
@@ -10391,8 +10337,9 @@ class MStoreDynamicSlot : public MBinaryInstruction,
   INSTRUCTION_HEADER(StoreDynamicSlot)
   NAMED_OPERANDS((0, slots), (1, value))
 
-  static MStoreDynamicSlot* New(TempAllocator& alloc, MDefinition* slots,
-                                uint32_t slot, MDefinition* value) {
+  static MStoreDynamicSlot* NewUnbarriered(TempAllocator& alloc,
+                                           MDefinition* slots, uint32_t slot,
+                                           MDefinition* value) {
     return new (alloc) MStoreDynamicSlot(slots, slot, value, false);
   }
   static MStoreDynamicSlot* NewBarriered(TempAllocator& alloc,
@@ -11540,8 +11487,7 @@ class MResumePoint final : public MNode
   friend class MBasicBlock;
   friend void AssertBasicGraphCoherency(MIRGraph& graph, bool force);
 
-  // List of stack slots needed to reconstruct the frame corresponding to the
-  // function which is compiled by IonBuilder.
+  // List of stack slots needed to reconstruct the BaselineFrame.
   FixedList<MUse> operands_;
 
   // List of stores needed to reconstruct the content of objects which are

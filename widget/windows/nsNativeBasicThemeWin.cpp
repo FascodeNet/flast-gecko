@@ -8,25 +8,27 @@
 #include "LookAndFeel.h"
 
 std::pair<sRGBColor, sRGBColor> nsNativeBasicThemeWin::ComputeCheckboxColors(
-    const EventStates& aState) {
+    const EventStates& aState, StyleAppearance aAppearance) {
   if (!LookAndFeel::GetInt(LookAndFeel::IntID::UseAccessibilityTheme, 0)) {
-    return nsNativeBasicTheme::ComputeCheckboxColors(aState);
+    return nsNativeBasicTheme::ComputeCheckboxColors(aState, aAppearance);
   }
 
   bool isDisabled = aState.HasState(NS_EVENT_STATE_DISABLED);
   bool isChecked = aState.HasState(NS_EVENT_STATE_CHECKED);
+  bool isIndeterminate = aAppearance == StyleAppearance::Checkbox &&
+                         aState.HasState(NS_EVENT_STATE_INDETERMINATE);
 
   sRGBColor backgroundColor = sRGBColor::FromABGR(
       LookAndFeel::GetColor(LookAndFeel::ColorID::TextBackground));
   sRGBColor borderColor = sRGBColor::FromABGR(
       LookAndFeel::GetColor(LookAndFeel::ColorID::Buttontext));
-  if (isDisabled && isChecked) {
+  if (isDisabled && (isChecked || isIndeterminate)) {
     backgroundColor = borderColor = sRGBColor::FromABGR(
         LookAndFeel::GetColor(LookAndFeel::ColorID::Graytext));
   } else if (isDisabled) {
     borderColor = sRGBColor::FromABGR(
         LookAndFeel::GetColor(LookAndFeel::ColorID::Graytext));
-  } else if (isChecked) {
+  } else if (isChecked || isIndeterminate) {
     backgroundColor = borderColor = sRGBColor::FromABGR(
         LookAndFeel::GetColor(LookAndFeel::ColorID::Highlight));
   }
@@ -50,7 +52,8 @@ nsNativeBasicThemeWin::ComputeRadioCheckmarkColors(const EventStates& aState) {
     return nsNativeBasicTheme::ComputeRadioCheckmarkColors(aState);
   }
 
-  auto [unusedColor, checkColor] = ComputeCheckboxColors(aState);
+  auto [unusedColor, checkColor] =
+      ComputeCheckboxColors(aState, StyleAppearance::Radio);
   (void)unusedColor;
   sRGBColor backgroundColor = ComputeCheckmarkColor(aState);
 

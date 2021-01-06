@@ -2611,33 +2611,20 @@ bool DoNewArrayFallback(JSContext* cx, BaselineFrame* frame,
   stub->incrementEnteredCount();
   FallbackICSpew(cx, stub, "NewArray");
 
-  RootedObject obj(cx);
-  if (stub->templateObject()) {
-    RootedObject templateObject(cx, stub->templateObject());
-    obj = NewArrayOperationWithTemplate(cx, templateObject);
-    if (!obj) {
+  if (!stub->templateObject()) {
+    ArrayObject* templateObject = NewArrayOperation(cx, length, TenuredObject);
+    if (!templateObject) {
       return false;
     }
-  } else {
-    RootedScript script(cx, frame->script());
-    jsbytecode* pc = stub->icEntry()->pc(script);
-
-    obj = NewArrayOperation(cx, script, pc, length);
-    if (!obj) {
-      return false;
-    }
-
-    if (!obj->isSingleton()) {
-      ArrayObject* templateObject =
-          NewArrayOperation(cx, script, pc, length, TenuredObject);
-      if (!templateObject) {
-        return false;
-      }
-      stub->setTemplateObject(templateObject);
-    }
+    stub->setTemplateObject(templateObject);
   }
 
-  res.setObject(*obj);
+  ArrayObject* arr = NewArrayOperation(cx, length);
+  if (!arr) {
+    return false;
+  }
+
+  res.setObject(*arr);
   return true;
 }
 

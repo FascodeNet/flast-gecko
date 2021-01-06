@@ -2186,3 +2186,99 @@ TEST(GeckoProfiler, BaseProfilerHandOff)
   profiler_stop();
   ASSERT_TRUE(!profiler_is_active());
 }
+
+TEST(GeckoProfiler, CPUUsage)
+{
+  const char* filters[] = {"GeckoMain"};
+
+  ASSERT_TRUE(!profiler_is_active());
+  ASSERT_TRUE(!profiler_callback_after_sampling(
+      [&](SamplingState) { ASSERT_TRUE(false); }));
+
+  profiler_start(PROFILER_DEFAULT_ENTRIES, PROFILER_DEFAULT_INTERVAL,
+                 ProfilerFeature::StackWalk | ProfilerFeature::CPUUtilization,
+                 filters, MOZ_ARRAY_LENGTH(filters), 0);
+  // Grab a few samples.
+  static constexpr unsigned MinSamplings = 10;
+  for (unsigned i = MinSamplings; i != 0; --i) {
+    ASSERT_EQ(WaitForSamplingState(), SamplingState::SamplingCompleted);
+  }
+  UniquePtr<char[]> profile = profiler_get_profile();
+  JSONOutputCheck(profile.get(), [](const Json::Value& aRoot) {
+    // Check that the "cpu" feature is present.
+    GET_JSON(meta, aRoot["meta"], Object);
+    {
+      GET_JSON(configuration, meta["configuration"], Object);
+      {
+        GET_JSON(features, configuration["features"], Array);
+        { EXPECT_JSON_ARRAY_CONTAINS(features, String, "cpu"); }
+      }
+    }
+
+    {
+      GET_JSON(sampleUnits, meta["sampleUnits"], Object);
+      {
+        EXPECT_EQ_JSON(sampleUnits["time"], String, "ms");
+        EXPECT_EQ_JSON(sampleUnits["eventDelay"], String, "ms");
+#if defined(GP_OS_windows) || defined(GP_OS_darwin) || defined(GP_OS_linux) || \
+    defined(GP_OS_android) || defined(GP_OS_freebsd)
+        // Note: The exact string is not important here.
+        EXPECT_TRUE(sampleUnits["threadCPUDelta"].isString())
+            << "There should be a sampleUnits.threadCPUDelta on this platform";
+#else
+        EXPECT_FALSE(sampleUnits.isMember("threadCPUDelta"))
+            << "Unexpected sampleUnits.threadCPUDelta on this platform";;
+#endif
+      }
+    }
+
+    // Check that the sample schema contains "threadCPUDelta".
+    GET_JSON(threads, aRoot["threads"], Array);
+    {
+      GET_JSON(thread0, threads[0], Object);
+      {
+        GET_JSON(samples, thread0["samples"], Object);
+        {
+          Json::ArrayIndex threadCPUDeltaIndex = 0;
+          GET_JSON(schema, samples["schema"], Object);
+          {
+            GET_JSON(index, schema["threadCPUDelta"], UInt);
+            threadCPUDeltaIndex = index.asUInt();
+          }
+
+          unsigned threadCPUDeltaCount = 0;
+          GET_JSON(data, samples["data"], Array);
+          EXPECT_GE(data.size(), MinSamplings);
+          for (const Json::Value& sample : data) {
+            ASSERT_TRUE(sample.isArray());
+            if (sample.isValidIndex(threadCPUDeltaIndex)) {
+              if (!sample[threadCPUDeltaIndex].isNull()) {
+                EXPECT_TRUE(sample[threadCPUDeltaIndex].isUInt64());
+                ++threadCPUDeltaCount;
+              }
+            }
+          }
+
+#if defined(GP_OS_windows) || defined(GP_OS_darwin) || defined(GP_OS_linux) || \
+    defined(GP_OS_android) || defined(GP_OS_freebsd)
+          EXPECT_GE(threadCPUDeltaCount, data.size() - 1u)
+              << "There should be 'threadCPUDelta' values in all but 1 samples";
+#else
+          // All "threadCPUDelta" data should be absent or null on unsupported
+          // platforms.
+          EXPECT_EQ(threadCPUDeltaCount, 0u);
+#endif
+        }
+      }
+    }
+  });
+
+  // Note: There is no non-racy way to test for SamplingState::JustStopped, as
+  // it would require coordination between `profiler_stop()` and another thread
+  // doing `profiler_callback_after_sampling()` at just the right moment.
+
+  profiler_stop();
+  ASSERT_TRUE(!profiler_is_active());
+  ASSERT_TRUE(!profiler_callback_after_sampling(
+      [&](SamplingState) { ASSERT_TRUE(false); }));
+}

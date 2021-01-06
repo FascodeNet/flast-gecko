@@ -118,7 +118,6 @@ NS_IMETHODIMP
 nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
                          nsICSPEventListener* aCSPEventListener,
                          nsIURI* aContentLocation,
-                         const nsACString& aMimeTypeGuess,
                          nsIURI* aOriginalURIIfRedirect,
                          bool aSendViolationReports, const nsAString& aNonce,
                          bool aParserCreated, int16_t* outDecision) {
@@ -131,7 +130,7 @@ nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
   bool isPreload = nsContentUtils::IsPreloadType(aContentType);
 
   // Since we know whether we are dealing with a preload, we have to convert
-  // the internal policytype ot the external policy type before moving on.
+  // the internal policytype to the external policy type before moving on.
   // We still need to know if this is a worker so child-src can handle that
   // case correctly.
   aContentType =

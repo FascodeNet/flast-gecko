@@ -276,7 +276,11 @@ pref("browser.startup.firstrunSkipsHomepage", true);
 // Show a skeleton UI window prior to loading libxul. Only visible for windows
 // users as it is not implemented anywhere else.
 #if defined(XP_WIN)
+#ifdef NIGHTLY_BUILD
+pref("browser.startup.preXulSkeletonUI", true);
+#else
 pref("browser.startup.preXulSkeletonUI", false);
+#endif
 #endif
 
 // Don't create the hidden window during startup on
@@ -1358,6 +1362,7 @@ pref("browser.newtabpage.activity-stream.newNewtabExperience.enabled", false);
 // A preference which allows us to enable the fly out customization overlay
 // on the newtab page.
 pref("browser.newtabpage.activity-stream.customizationMenu.enabled", false);
+pref("browser.newtabpage.activity-stream.newNewtabExperience.colors", "#0090ED,#FF4F5F,#2AC3A2,#FF7139,#A172FF,#FFA437,#FF2A8A,#FFD567");
 
 // Activity Stream prefs that control to which page to redirect
 #ifndef RELEASE_OR_BETA
