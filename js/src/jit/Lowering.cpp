@@ -249,15 +249,6 @@ void LIRGenerator::visitCreateThisWithTemplate(MCreateThisWithTemplate* ins) {
   assignSafepoint(lir, ins);
 }
 
-void LIRGenerator::visitCreateThisWithProto(MCreateThisWithProto* ins) {
-  LCreateThisWithProto* lir = new (alloc())
-      LCreateThisWithProto(useRegisterOrConstantAtStart(ins->getCallee()),
-                           useRegisterOrConstantAtStart(ins->getNewTarget()),
-                           useRegisterOrConstantAtStart(ins->getPrototype()));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
 void LIRGenerator::visitCreateThis(MCreateThis* ins) {
   LCreateThis* lir = new (alloc())
       LCreateThis(useRegisterOrConstantAtStart(ins->getCallee()),
@@ -3561,14 +3552,9 @@ void LIRGenerator::visitArrayJoin(MArrayJoin* ins) {
   MOZ_ASSERT(ins->array()->type() == MIRType::Object);
   MOZ_ASSERT(ins->sep()->type() == MIRType::String);
 
-  LDefinition tempDef = LDefinition::BogusTemp();
-  if (ins->optimizeForArray()) {
-    tempDef = tempFixed(CallTempReg0);
-  }
-
-  LArrayJoin* lir =
-      new (alloc()) LArrayJoin(useRegisterAtStart(ins->array()),
-                               useRegisterAtStart(ins->sep()), tempDef);
+  auto* lir = new (alloc())
+      LArrayJoin(useRegisterAtStart(ins->array()),
+                 useRegisterAtStart(ins->sep()), tempFixed(CallTempReg0));
   defineReturn(lir, ins);
   assignSafepoint(lir, ins);
 }

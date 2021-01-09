@@ -136,6 +136,20 @@ const getAsyncParentFrame = frame => {
 };
 const RESTARTED_FRAMES = new WeakSet();
 
+// Thread actor possible states:
+const STATES = {
+  //  Before ThreadActor.attach is called:
+  DETACHED: "detached",
+  //  After the actor is destroyed:
+  EXITED: "exited",
+
+  // States possible in between DETACHED AND EXITED:
+  // Default state, when the thread isn't paused,
+  RUNNING: "running",
+  // When paused on any type of breakpoint, or, when the client requested an interrupt.
+  PAUSED: "paused",
+};
+
 /**
  * JSD2 actors.
  */
@@ -161,7 +175,7 @@ const RESTARTED_FRAMES = new WeakSet();
 const ThreadActor = ActorClassWithSpec(threadSpec, {
   initialize(parent, global) {
     Actor.prototype.initialize.call(this, parent.conn);
-    this._state = "detached";
+    this._state = STATES.DETACHED;
     this._frameActors = [];
     this._parent = parent;
     this._dbg = null;
@@ -219,13 +233,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     this._firstStatementBreakpoint = null;
     this._debuggerNotificationObserver = new DebuggerNotificationObserver();
-
-    if (Services.obs) {
-      // Set a wrappedJSObject property so |this| can be sent via the observer svc
-      // for the xpcshell harness.
-      this.wrappedJSObject = this;
-      Services.obs.notifyObservers(this, "devtools-thread-instantiated");
-    }
   },
 
   // Used by the ObjectActor to keep track of the depth of grip() calls.
@@ -235,7 +242,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     if (!this._dbg) {
       this._dbg = this._parent.dbg;
       // Keep the debugger disabled until a client attaches.
-      if (this._state === "detached") {
+      if (this._state === STATES.DETACHED) {
         this._dbg.disable();
       } else {
         this._dbg.enable();
@@ -244,16 +251,19 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     return this._dbg;
   },
 
+  // Current state of the thread actor:
+  //  - detached: state, before ThreadActor.attach is called,
+  //  - exited: state, after the actor is destroyed,
+  // States possible in between these two states:
+  //  - running: default state, when the thread isn't paused,
+  //  - paused: state, when paused on any type of breakpoint, or, when the client requested an interrupt.
   get state() {
     return this._state;
   },
 
+  // XXX: soon to be equivalent to !isDestroyed once the thread actor is initialized on target creation.
   get attached() {
-    return (
-      this.state == "attached" ||
-      this.state == "running" ||
-      this.state == "paused"
-    );
+    return this.state == STATES.RUNNING || this.state == STATES.PAUSED;
   },
 
   get threadLifetimePool() {
@@ -281,7 +291,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   get youngestFrame() {
-    if (this.state != "paused") {
+    if (this.state != STATES.PAUSED) {
       return null;
     }
     return this.dbg.getNewestFrame();
@@ -316,7 +326,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   isPaused() {
-    return this._state === "paused";
+    return this._state === STATES.PAUSED;
   },
 
   /**
@@ -337,7 +347,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
    */
   destroy() {
     dumpn("in ThreadActor.prototype.destroy");
-    if (this._state == "paused") {
+    if (this._state == STATES.PAUSED) {
       this.doResume();
     }
 
@@ -367,28 +377,27 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this._threadLifetimePool.destroy();
     this._threadLifetimePool = null;
     this._dbg = null;
-    this._state = "exited";
+    this._state = STATES.EXITED;
 
     Actor.prototype.destroy.call(this);
   },
 
   // Request handlers
   attach(options) {
-    if (this.state === "exited") {
+    if (this.state === STATES.EXITED) {
       throw {
         error: "exited",
         message: "threadActor has exited",
       };
     }
 
-    if (this.state !== "detached") {
+    if (this.state !== STATES.DETACHED) {
       throw {
         error: "wrongState",
         message: "Current state is " + this.state,
       };
     }
 
-    this._state = "attached";
     this.dbg.onDebuggerStatement = this.onDebuggerStatement;
     this.dbg.onNewScript = this.onNewScript;
     this.dbg.onNewDebuggee = this._onNewDebuggee;
@@ -417,42 +426,20 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       this.dbg.allowUnobservedAsmJS = !this._options.observeAsmJS;
     }
 
+    // Set everything up so that breakpoint can work
+    this._setupForBreaking();
+
     // Notify the parent that we've finished attaching. If this is a worker
     // thread which was paused until attaching, this will allow content to
     // begin executing.
     if (this._parent.onThreadAttached) {
       this._parent.onThreadAttached();
     }
-
-    try {
-      // Put ourselves in the paused state.
-      const packet = this._paused();
-      if (!packet) {
-        throw {
-          error: "notAttached",
-          message: "cannot attach, could not create pause packet",
-        };
-      }
-      packet.why = { type: "attached" };
-
-      // Send the response to the attach request now (rather than
-      // returning it), because we're going to start a nested event
-      // loop here.
-      this.conn.send({ from: this.actorID });
-      this.emit("paused", packet);
-
-      // Start a nested event loop.
-      this._pushThreadPause();
-
-      // We already sent a response to this request via this.conn.send(), don't send one now.
-      // There is a hack in protocol/Actor.js's generateRequestHandlers in order
-      // to avoid sending duplicated response packet, just and only for this one method.
-    } catch (e) {
-      reportException("DBG-SERVER", e);
-      throw {
-        error: "notAttached",
-        message: e.toString(),
-      };
+    if (Services.obs) {
+      // Set a wrappedJSObject property so |this| can be sent via the observer service
+      // for the xpcshell harness.
+      this.wrappedJSObject = this;
+      Services.obs.notifyObservers(this, "devtools-thread-ready");
     }
   },
 
@@ -777,7 +764,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   reconfigure(options = {}) {
-    if (this.state == "exited") {
+    if (this.state == STATES.EXITED) {
       throw {
         error: "wrongState",
       };
@@ -797,7 +784,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   _eventBreakpointListener(notification) {
-    if (this._state === "paused" || this._state === "detached") {
+    if (this._state === STATES.PAUSED || this._state === STATES.DETACHED) {
       return;
     }
 
@@ -1248,7 +1235,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
    * Handle a protocol request to resume execution of the debuggee.
    */
   async resume(resumeLimit, frameActorID) {
-    if (this._state !== "paused") {
+    if (this._state !== STATES.PAUSED) {
       return {
         error: "wrongState",
         message:
@@ -1294,29 +1281,30 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     }
   },
 
+  _setupForBreaking() {
+    this.maybePauseOnExceptions();
+    this._state = STATES.RUNNING;
+  },
+
   /**
    * Only resume and notify necessary observers. This should be used in cases
    * when we do not want to notify the front end of a resume, for example when
    * we are shutting down.
    */
   doResume({ resumeLimit } = {}) {
-    this.maybePauseOnExceptions();
-    this._state = "running";
+    this._setupForBreaking();
 
     // Drop the actors in the pause actor pool.
     this._pausePool.destroy();
-
     this._pausePool = null;
+
     this._pauseActor = null;
     this._popThreadPause();
+
     // Tell anyone who cares of the resume (as of now, that's the xpcshell harness and
     // devtools-startup.js when handling the --wait-for-jsdebugger flag)
     this.emit("resumed");
     this.hideOverlay();
-
-    if (Services.obs) {
-      Services.obs.notifyObservers(this, "devtools-thread-resumed");
-    }
   },
 
   /**
@@ -1386,7 +1374,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   frames(start, count) {
-    if (this.state !== "paused") {
+    if (this.state !== STATES.PAUSED) {
       return {
         error: "wrongState",
         message:
@@ -1539,15 +1527,15 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
    * Handle a protocol request to pause the debuggee.
    */
   interrupt(when) {
-    if (this.state == "exited") {
+    if (this.state == STATES.EXITED) {
       return { type: "exited" };
-    } else if (this.state == "paused") {
+    } else if (this.state == STATES.PAUSED) {
       // TODO: return the actual reason for the existing pause.
       this.emit("paused", {
         why: { type: "alreadyPaused" },
       });
       return {};
-    } else if (this.state != "running") {
+    } else if (this.state != STATES.RUNNING) {
       return {
         error: "wrongState",
         message: "Received interrupt request in " + this.state + " state.",
@@ -1600,11 +1588,11 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     // a pause, it should cause the actor to resume (dropping
     // pause-lifetime actors etc) and then repause when complete.
 
-    if (this.state === "paused") {
+    if (this.state === STATES.PAUSED) {
       return undefined;
     }
 
-    this._state = "paused";
+    this._state = STATES.PAUSED;
 
     // Clear stepping hooks.
     this.dbg.onEnterFrame = undefined;
@@ -1789,7 +1777,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   _onWindowReady({ isTopLevel, isBFCache, window }) {
-    if (isTopLevel && this.state != "detached") {
+    if (isTopLevel && this.state != STATES.DETACHED) {
       this.sourcesManager.reset();
       this.clearDebuggees();
       this.dbg.enable();
@@ -1818,7 +1806,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     }
 
     // Proceed normally only if the debuggee is not paused.
-    if (this.state == "paused") {
+    if (this.state == STATES.PAUSED) {
       this.unsafeSynchronize(Promise.resolve(this.doResume()));
       this.dbg.disable();
     }
@@ -1830,7 +1818,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   _onNavigate() {
-    if (this.state == "running") {
+    if (this.state == STATES.RUNNING) {
       this.dbg.enable();
     }
   },

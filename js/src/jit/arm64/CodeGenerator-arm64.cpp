@@ -675,10 +675,10 @@ void CodeGenerator::visitUDivConstantI(LUDivConstantI* ins) {
     masm.Add(output64, lhs64, Operand(output64, vixl::LSR, 32));
 
     // (M * n) >> (32 + shift) is the truncated division answer.
-    masm.Asr(output64, output64, rmc.shiftAmount);
+    masm.Lsr(output64, output64, rmc.shiftAmount);
   } else {
     // (M * n) >> (32 + shift) is the truncated division answer.
-    masm.Asr(output64, output64, 32 + rmc.shiftAmount);
+    masm.Lsr(output64, output64, 32 + rmc.shiftAmount);
   }
 
   // We now have the truncated division value. We are checking whether the
@@ -1675,13 +1675,13 @@ void CodeGenerator::visitNegI(LNegI* ins) {
 
 void CodeGenerator::visitNegD(LNegD* ins) {
   const ARMFPRegister input(ToFloatRegister(ins->input()), 64);
-  const ARMFPRegister output(ToFloatRegister(ins->input()), 64);
+  const ARMFPRegister output(ToFloatRegister(ins->output()), 64);
   masm.Fneg(output, input);
 }
 
 void CodeGenerator::visitNegF(LNegF* ins) {
   const ARMFPRegister input(ToFloatRegister(ins->input()), 32);
-  const ARMFPRegister output(ToFloatRegister(ins->input()), 32);
+  const ARMFPRegister output(ToFloatRegister(ins->output()), 32);
   masm.Fneg(output, input);
 }
 

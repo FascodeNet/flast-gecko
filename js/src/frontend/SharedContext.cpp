@@ -70,29 +70,43 @@ SharedContext::SharedContext(JSContext* cx, Kind kind,
   setFlag(ImmutableFlags::Strict, directives.strict());
 }
 
-void ScopeContext::computeAllowSyntax(Scope* scope) {
+void ScopeContext::computeThisEnvironment(Scope* scope) {
+  uint32_t envCount = 0;
   for (ScopeIter si(scope); si; si++) {
     if (si.kind() == ScopeKind::Function) {
-      FunctionScope* funScope = &si.scope()->as<FunctionScope>();
-      JSFunction* fun = funScope->canonicalFunction();
+      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
 
-      // Arrow function inherit syntax restrictions of enclosing scope.
-      if (fun->isArrow()) {
-        continue;
+      // Arrow function inherit the "this" environment of the enclosing script,
+      // so continue ignore them.
+      if (!fun->isArrow()) {
+        allowNewTarget = true;
+
+        if (fun->allowSuperProperty()) {
+          allowSuperProperty = true;
+          enclosingThisEnvironmentHops = envCount;
+        }
+
+        if (fun->isClassConstructor()) {
+          memberInitializers =
+              mozilla::Some(fun->baseScript()->getMemberInitializers());
+          MOZ_ASSERT(memberInitializers->valid);
+        }
+
+        if (fun->isDerivedClassConstructor()) {
+          allowSuperCall = true;
+        }
+
+        if (fun->isFieldInitializer()) {
+          allowArguments = false;
+        }
+
+        // Found the effective "this" environment, so stop.
+        return;
       }
+    }
 
-      allowNewTarget = true;
-      allowSuperProperty = fun->allowSuperProperty();
-
-      if (fun->isDerivedClassConstructor()) {
-        allowSuperCall = true;
-      }
-
-      if (fun->isFieldInitializer()) {
-        allowArguments = false;
-      }
-
-      return;
+    if (si.scope()->hasEnvironment()) {
+      envCount++;
     }
   }
 }
@@ -129,42 +143,14 @@ void ScopeContext::computeThisBinding(Scope* scope) {
   thisBinding = ThisBinding::Global;
 }
 
-void ScopeContext::computeInWith(Scope* scope) {
-  for (ScopeIter si(scope); si; si++) {
-    if (si.kind() == ScopeKind::With) {
-      inWith = true;
-      break;
-    }
-  }
-}
-
-void ScopeContext::computeInClass(Scope* scope) {
+void ScopeContext::computeInScope(Scope* scope) {
   for (ScopeIter si(scope); si; si++) {
     if (si.kind() == ScopeKind::ClassBody) {
       inClass = true;
-      break;
     }
-  }
-}
 
-void ScopeContext::computeExternalInitializers(Scope* scope) {
-  for (ScopeIter si(scope); si; si++) {
-    if (si.scope()->is<FunctionScope>()) {
-      FunctionScope& funcScope = si.scope()->as<FunctionScope>();
-      JSFunction* fun = funcScope.canonicalFunction();
-
-      // Arrows can call `super()` on behalf on parent so keep searching.
-      if (fun->isArrow()) {
-        continue;
-      }
-
-      if (fun->isClassConstructor()) {
-        memberInitializers =
-            mozilla::Some(fun->baseScript()->getMemberInitializers());
-        MOZ_ASSERT(memberInitializers->valid);
-      }
-
-      break;
+    if (si.kind() == ScopeKind::With) {
+      inWith = true;
     }
   }
 }
@@ -236,12 +222,14 @@ SuspendableContext::SuspendableContext(JSContext* cx, Kind kind,
 
 FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
                          CompilationInfo& compilationInfo,
+                         CompilationState& compilationState,
                          Directives directives, GeneratorKind generatorKind,
                          FunctionAsyncKind asyncKind, const ParserAtom* atom,
                          FunctionFlags flags, ScriptIndex index)
     : SuspendableContext(cx, Kind::FunctionBox, compilationInfo, directives,
                          extent, generatorKind == GeneratorKind::Generator,
                          asyncKind == FunctionAsyncKind::AsyncFunction),
+      compilationState_(compilationState),
       atom_(atom),
       funcDataIndex_(index),
       flags_(FunctionFlags::clearMutableflags(flags)),
@@ -396,7 +384,7 @@ ModuleSharedContext::ModuleSharedContext(JSContext* cx,
 }
 
 ScriptStencil& FunctionBox::functionStencil() const {
-  return compilationInfo_.stencil.scriptData[funcDataIndex_];
+  return compilationState_.scriptData[funcDataIndex_];
 }
 
 void SharedContext::copyScriptFields(ScriptStencil& script) {
@@ -420,7 +408,9 @@ void FunctionBox::copyScriptFields(ScriptStencil& script) {
 
   SharedContext::copyScriptFields(script);
 
-  script.memberInitializers = memberInitializers_;
+  if (memberInitializers_) {
+    script.setMemberInitializers(*memberInitializers_);
+  }
 
   isScriptFieldCopiedToStencil = true;
 }
@@ -435,8 +425,12 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
   }
   script.functionFlags = flags_;
   script.nargs = nargs_;
-  script.lazyFunctionEnclosingScopeIndex_ = enclosingScopeIndex_;
-  script.wasFunctionEmitted = wasEmitted_;
+  if (enclosingScopeIndex_) {
+    script.setLazyFunctionEnclosingScopeIndex(*enclosingScopeIndex_);
+  }
+  if (wasEmitted_) {
+    script.setWasFunctionEmitted();
+  }
 
   isFunctionFieldCopiedToStencil = true;
 }
@@ -453,12 +447,16 @@ void FunctionBox::copyUpdatedExtent() {
 
 void FunctionBox::copyUpdatedMemberInitializers() {
   ScriptStencil& script = functionStencil();
-  script.memberInitializers = memberInitializers_;
+  if (memberInitializers_) {
+    script.setMemberInitializers(*memberInitializers_);
+  }
 }
 
 void FunctionBox::copyUpdatedEnclosingScopeIndex() {
   ScriptStencil& script = functionStencil();
-  script.lazyFunctionEnclosingScopeIndex_ = enclosingScopeIndex_;
+  if (enclosingScopeIndex_) {
+    script.setLazyFunctionEnclosingScopeIndex(*enclosingScopeIndex_);
+  }
 }
 
 void FunctionBox::copyUpdatedAtomAndFlags() {
@@ -472,7 +470,9 @@ void FunctionBox::copyUpdatedAtomAndFlags() {
 
 void FunctionBox::copyUpdatedWasEmitted() {
   ScriptStencil& script = functionStencil();
-  script.wasFunctionEmitted = wasEmitted_;
+  if (wasEmitted_) {
+    script.setWasFunctionEmitted();
+  }
 }
 
 }  // namespace frontend

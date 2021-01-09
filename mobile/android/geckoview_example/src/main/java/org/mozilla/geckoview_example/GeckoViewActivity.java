@@ -336,9 +336,9 @@ class WebExtensionManager implements WebExtension.ActionDelegate,
             return GeckoResult.fromValue(null);
         }
 
-        return mRuntime.getWebExtensionController().update(extension).then((newExtension) -> {
+        return mRuntime.getWebExtensionController().update(extension).map(newExtension -> {
             registerExtension(newExtension);
-            return GeckoResult.fromValue(newExtension);
+            return newExtension;
         });
     }
 
@@ -1316,7 +1316,10 @@ public class GeckoViewActivity
     private void loadFromIntent(final Intent intent) {
         final Uri uri = intent.getData();
         if (uri != null) {
-            mTabSessionManager.getCurrentSession().loadUri(uri.toString());
+            mTabSessionManager.getCurrentSession().load(
+                    new GeckoSession.Loader()
+                        .uri(uri.toString())
+                        .flags(GeckoSession.LOAD_FLAGS_EXTERNAL));
         }
     }
 

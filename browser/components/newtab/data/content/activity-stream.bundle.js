@@ -751,9 +751,21 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
       mayHaveSponsoredTopSites
     } = prefs;
     const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search", showLogo && "visible-logo", newNewtabExperienceEnabled && "newtab-experience"].filter(v => v).join(" ");
-    return react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", null, canShowCustomizationMenu ? react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PersonalizeButton, {
+    return react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", null, canShowCustomizationMenu ? react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("span", null, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PersonalizeButton, {
       onClick: this.openCustomizationMenu
-    }) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
+    }), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(react_transition_group__WEBPACK_IMPORTED_MODULE_11__["CSSTransition"], {
+      timeout: 0,
+      classNames: "customize-animate",
+      in: showCustomizationMenu,
+      appear: true
+    }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
+      onClose: this.closeCustomizationMenu,
+      openPreferences: this.openPreferences,
+      setPref: this.setPref,
+      enabledSections: enabledSections,
+      pocketRegion: pocketRegion,
+      mayHaveSponsoredTopSites: mayHaveSponsoredTopSites
+    }))) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
       onClick: this.openPreferences,
       icon: prefsButtonIcon
     }), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
@@ -774,20 +786,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
       className: "borderless-error"
     }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_DiscoveryStreamBase_DiscoveryStreamBase__WEBPACK_IMPORTED_MODULE_5__["DiscoveryStreamBase"], {
       locale: props.App.locale
-    })) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_10__["Sections"], null)), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))), canShowCustomizationMenu && react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(react_transition_group__WEBPACK_IMPORTED_MODULE_11__["CSSTransition"], {
-      timeout: 0,
-      classNames: "customize-animate",
-      in: showCustomizationMenu,
-      appear: true
-    }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
-      onClose: this.closeCustomizationMenu,
-      openPreferences: this.openPreferences,
-      setPref: this.setPref,
-      enabledSections: enabledSections,
-      pocketRegion: pocketRegion,
-      mayHaveSponsoredTopSites: mayHaveSponsoredTopSites,
-      dispatch: this.props.dispatch
-    })));
+    })) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_10__["Sections"], null)), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))));
   }
 
 }
@@ -3135,8 +3134,6 @@ __webpack_require__.r(__webpack_exports__);
 
 const ALLOWED_CSS_URL_PREFIXES = ["chrome://", "resource://", "https://img-getpocket.cdn.mozilla.net/"];
 const DUMMY_CSS_SELECTOR = "DUMMY#CSS.SELECTOR";
-let rollCache = []; // Cache of random probability values for a spoc position
-
 /**
  * Validate a CSS declaration. The values are assumed to be normalized by CSSOM.
  */
@@ -3342,12 +3339,6 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_13___default.a
     });
   }
 
-  componentWillReceiveProps(oldProps) {
-    if (this.props.DiscoveryStream.layout !== oldProps.DiscoveryStream.layout) {
-      rollCache = [];
-    }
-  }
-
   render() {
     // Select layout render data by adding spocs and position to recommendations
     const {
@@ -3355,7 +3346,6 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_13___default.a
     } = Object(content_src_lib_selectLayoutRender__WEBPACK_IMPORTED_MODULE_15__["selectLayoutRender"])({
       state: this.props.DiscoveryStream,
       prefs: this.props.Prefs.values,
-      rollCache,
       locale: this.props.locale
     });
     const {
@@ -9861,7 +9851,6 @@ __webpack_require__.r(__webpack_exports__);
 const selectLayoutRender = ({
   state = {},
   prefs = {},
-  rollCache = [],
   locale = ""
 }) => {
   const {
@@ -9869,40 +9858,37 @@ const selectLayoutRender = ({
     feeds,
     spocs
   } = state;
-  let spocIndexMap = {};
-  let bufferRollCache = [];
+  let spocIndexPlacementMap = {};
+  /* This function fills spoc positions on a per placement basis with available spocs.
+   * It does this by looping through each position for a placement and replacing a rec with a spoc.
+   * If it runs out of spocs or positions, it stops.
+   * If it sees the same placement again, it remembers the previous spoc index, and continues.
+   * If it sees a blocked spoc, it skips that position leaving in a regular story.
+   */
 
-  function rollForSpocs(data, spocsConfig, spocsData, placementName) {
-    if (!spocIndexMap[placementName] && spocIndexMap[placementName] !== 0) {
-      spocIndexMap[placementName] = 0;
+  function fillSpocPositionsForPlacement(data, spocsConfig, spocsData, placementName) {
+    if (!spocIndexPlacementMap[placementName] && spocIndexPlacementMap[placementName] !== 0) {
+      spocIndexPlacementMap[placementName] = 0;
     }
 
     const results = [...data];
 
     for (let position of spocsConfig.positions) {
-      const spoc = spocsData[spocIndexMap[placementName]];
+      const spoc = spocsData[spocIndexPlacementMap[placementName]]; // If there are no spocs left, we can stop filling positions.
 
       if (!spoc) {
         break;
-      } // Cache random number for a position
+      } // A placement could be used in two sections.
+      // In these cases, we want to maintain the index of the previous section.
+      // If we didn't do this, it might duplicate spocs.
 
 
-      let rickRoll;
+      spocIndexPlacementMap[placementName]++; // A spoc that's blocked is removed from the source for subsequent newtab loads.
+      // If we have a spoc in the source that's blocked, it means it was *just* blocked,
+      // and in this case, we skip this position, and show a regular spoc instead.
 
-      if (!rollCache.length) {
-        rickRoll = Math.random();
-        bufferRollCache.push(rickRoll);
-      } else {
-        rickRoll = rollCache.shift();
-        bufferRollCache.push(rickRoll);
-      }
-
-      if (rickRoll <= spocsConfig.probability) {
-        spocIndexMap[placementName]++;
-
-        if (!spocs.blocked.includes(spoc.url)) {
-          results.splice(position.index, 0, spoc);
-        }
+      if (!spocs.blocked.includes(spoc.url)) {
+        results.splice(position.index, 0, spoc);
       }
     }
 
@@ -9967,7 +9953,7 @@ const selectLayoutRender = ({
       const spocsData = spocs.data[placementName]; // We expect a spoc, spocs are loaded, and the server returned spocs.
 
       if (spocs.loaded && spocsData && spocsData.items && spocsData.items.length) {
-        result = rollForSpocs(result, component.spocs, spocsData.items, placementName);
+        result = fillSpocPositionsForPlacement(result, component.spocs, spocsData.items, placementName);
       }
     }
 
@@ -10073,12 +10059,7 @@ const selectLayoutRender = ({
     return renderedLayoutArray;
   };
 
-  const layoutRender = renderLayout(); // If empty, fill rollCache with random probability values from bufferRollCache
-
-  if (!rollCache.length) {
-    rollCache.push(...bufferRollCache);
-  }
-
+  const layoutRender = renderLayout();
   return {
     layoutRender
   };
@@ -10379,6 +10360,7 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
 
   render() {
     const wrapperClassName = ["search-wrapper", this.props.hide && "search-hidden", this.props.fakeFocus && "fake-focus"].filter(v => v).join(" ");
+    const isNewNewtabExperienceEnabled = this.props.Prefs.values["newNewtabExperience.enabled"];
     return react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
       className: wrapperClassName
     }, this.props.showLogo && react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
@@ -10391,10 +10373,11 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
       className: "search-inner-wrapper"
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
       id: "newtab-search-text",
-      "data-l10n-id": "newtab-search-box-search-the-web-input",
+      "data-l10n-id": isNewNewtabExperienceEnabled ? "newtab-search-box-input" : "newtab-search-box-search-the-web-input",
       maxLength: "256",
       ref: this.onInputMount,
-      type: "search"
+      type: "search",
+      className: `${isNewNewtabExperienceEnabled ? " search-bar-new" : ""}`
     }), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("button", {
       id: "searchSubmit",
       className: "search-button",
@@ -10403,14 +10386,14 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
     })), this.props.handoffEnabled && react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
       className: "search-inner-wrapper"
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("button", {
-      className: "search-handoff-button",
-      "data-l10n-id": "newtab-search-box-search-the-web-input",
+      className: `search-handoff-button ${isNewNewtabExperienceEnabled ? " search-handoff-button-new" : ""}`,
+      "data-l10n-id": isNewNewtabExperienceEnabled ? "newtab-search-box-input" : "newtab-search-box-search-the-web-input",
       ref: this.onSearchHandoffButtonMount,
       onClick: this.onSearchHandoffClick,
       tabIndex: "-1"
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
       className: "fake-textbox",
-      "data-l10n-id": "newtab-search-box-search-the-web-text"
+      "data-l10n-id": isNewNewtabExperienceEnabled ? "newtab-search-box-text" : "newtab-search-box-search-the-web-text"
     }), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
       type: "search",
       className: "fake-editable",
@@ -10425,7 +10408,9 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
   }
 
 }
-const Search = Object(react_redux__WEBPACK_IMPORTED_MODULE_1__["connect"])()(_Search);
+const Search = Object(react_redux__WEBPACK_IMPORTED_MODULE_1__["connect"])(state => ({
+  Prefs: state.Prefs
+}))(_Search);
 
 /***/ }),
 /* 65 */
@@ -14335,10 +14320,24 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
     }, external_React_default.a.createElement("div", {
       id: "shortcuts-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+    }, external_React_default.a.createElement("label", {
+      className: "switch"
+    }, external_React_default.a.createElement("input", {
+      checked: topSitesEnabled,
+      type: "checkbox",
+      onChange: this.onPreferenceSelect,
+      preference: "feeds.topsites",
+      "aria-labelledby": "custom-shortcuts-title",
+      "aria-describedby": "custom-shortcuts-subtitle"
+    }), external_React_default.a.createElement("span", {
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-shortcuts-title",
       className: "title",
       "data-l10n-id": "newtab-custom-shortcuts-title"
     }), external_React_default.a.createElement("p", {
+      id: "custom-shortcuts-subtitle",
       className: "subtitle",
       "data-l10n-id": "newtab-custom-shortcuts-subtitle"
     }), external_React_default.a.createElement("div", {
@@ -14352,7 +14351,8 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       preference: "topSitesRows",
       value: topSitesRowsCount,
       onChange: this.onPreferenceSelect,
-      disabled: !topSitesEnabled
+      disabled: !topSitesEnabled,
+      "aria-labelledby": "custom-shortcuts-title"
     }, external_React_default.a.createElement("option", {
       value: "1",
       "data-l10n-id": "newtab-custom-row-selector",
@@ -14370,7 +14370,8 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       "data-l10n-id": "newtab-custom-row-selector",
       "data-l10n-args": "{\"num\": 4}"
     })), this.props.mayHaveSponsoredTopSites && external_React_default.a.createElement("div", {
-      className: "check-wrapper"
+      className: "check-wrapper",
+      role: "presentation"
     }, external_React_default.a.createElement("input", {
       id: "sponsored-shortcuts",
       className: "sponsored-checkbox",
@@ -14383,22 +14384,27 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       className: "sponsored",
       htmlFor: "sponsored-shortcuts",
       "data-l10n-id": "newtab-custom-sponsored-sites"
-    }))))), external_React_default.a.createElement("label", {
-      className: "switch"
-    }, external_React_default.a.createElement("input", {
-      checked: topSitesEnabled,
-      type: "checkbox",
-      onChange: this.onPreferenceSelect,
-      preference: "feeds.topsites"
-    }), external_React_default.a.createElement("span", {
-      className: "slider"
-    }))), this.props.pocketRegion && external_React_default.a.createElement("div", {
+    })))))), this.props.pocketRegion && external_React_default.a.createElement("div", {
       id: "pocket-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+    }, external_React_default.a.createElement("label", {
+      className: "switch"
+    }, external_React_default.a.createElement("input", {
+      checked: pocketEnabled,
+      type: "checkbox",
+      onChange: this.onPreferenceSelect,
+      preference: "feeds.section.topstories",
+      "aria-labelledby": "custom-pocket-title",
+      "aria-describedby": "custom-pocket-subtitle"
+    }), external_React_default.a.createElement("span", {
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-pocket-title",
       className: "title",
       "data-l10n-id": "newtab-custom-pocket-title"
     }), external_React_default.a.createElement("p", {
+      id: "custom-pocket-subtitle",
       className: "subtitle",
       "data-l10n-id": "newtab-custom-pocket-subtitle"
     }), external_React_default.a.createElement("div", {
@@ -14406,7 +14412,8 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
     }, external_React_default.a.createElement("div", {
       className: `more-information ${pocketEnabled ? "expand" : "shrink"}`
     }, external_React_default.a.createElement("div", {
-      className: "check-wrapper"
+      className: "check-wrapper",
+      role: "presentation"
     }, external_React_default.a.createElement("input", {
       id: "sponsored-pocket",
       className: "sponsored-checkbox",
@@ -14420,55 +14427,56 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       className: "sponsored",
       htmlFor: "sponsored-pocket",
       "data-l10n-id": "newtab-custom-pocket-sponsored"
-    }))))), external_React_default.a.createElement("label", {
-      className: "switch"
-    }, external_React_default.a.createElement("input", {
-      checked: pocketEnabled,
-      type: "checkbox",
-      onChange: this.onPreferenceSelect,
-      preference: "feeds.section.topstories",
-      eventSource: "TOP_STORIES"
-    }), external_React_default.a.createElement("span", {
-      className: "slider"
-    }))), external_React_default.a.createElement("div", {
+    })))))), external_React_default.a.createElement("div", {
       id: "recent-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
-      className: "title",
-      "data-l10n-id": "newtab-custom-recent-title"
-    }), external_React_default.a.createElement("p", {
-      className: "subtitle",
-      "data-l10n-id": "newtab-custom-recent-subtitle"
-    })), external_React_default.a.createElement("label", {
+    }, external_React_default.a.createElement("label", {
       className: "switch"
     }, external_React_default.a.createElement("input", {
       checked: highlightsEnabled,
       type: "checkbox",
       onChange: this.onPreferenceSelect,
       preference: "feeds.section.highlights",
-      eventSource: "HIGHLIGHTS"
+      eventSource: "HIGHLIGHTS",
+      "aria-labelledby": "custom-recent-title",
+      "aria-describedby": "custom-recent-subtitle"
     }), external_React_default.a.createElement("span", {
-      className: "slider"
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-recent-title",
+      className: "title",
+      "data-l10n-id": "newtab-custom-recent-title"
+    }), external_React_default.a.createElement("p", {
+      id: "custom-recent-subtitle",
+      className: "subtitle",
+      "data-l10n-id": "newtab-custom-recent-subtitle"
     }))), external_React_default.a.createElement("div", {
       id: "snippets-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
-      className: "title",
-      "data-l10n-id": "newtab-custom-snippets-title"
-    }), external_React_default.a.createElement("p", {
-      className: "subtitle",
-      "data-l10n-id": "newtab-custom-snippets-subtitle"
-    })), external_React_default.a.createElement("label", {
+    }, external_React_default.a.createElement("label", {
       className: "switch"
     }, external_React_default.a.createElement("input", {
       checked: snippetsEnabled,
       type: "checkbox",
       onChange: this.onPreferenceSelect,
-      preference: "feeds.snippets"
+      preference: "feeds.snippets",
+      "aria-labelledby": "custom-snippets-title",
+      "aria-describedby": "custom-snippets-subtitle"
     }), external_React_default.a.createElement("span", {
-      className: "slider"
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-snippets-title",
+      className: "title",
+      "data-l10n-id": "newtab-custom-snippets-title"
+    }), external_React_default.a.createElement("p", {
+      id: "custom-snippets-subtitle",
+      className: "subtitle",
+      "data-l10n-id": "newtab-custom-snippets-subtitle"
     }))), external_React_default.a.createElement("span", {
-      className: "divider"
+      className: "divider",
+      role: "separator"
     }), external_React_default.a.createElement("div", null, external_React_default.a.createElement("button", {
       id: "settings-link",
       className: "external-link",

@@ -102,10 +102,11 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
                                const JS::ReadOnlyCompileOptions& options,
                                CompilationInfo& compilationInfo,
                                SourceText<Unit>& sourceBuffer,
+                               InheritThis inheritThis = InheritThis::No,
                                js::Scope* enclosingScope = nullptr,
                                JSObject* enclosingEnv = nullptr)
       : sourceBuffer_(sourceBuffer),
-        compilationState_(cx, allocScope, options, compilationInfo,
+        compilationState_(cx, allocScope, options, compilationInfo, inheritThis,
                           enclosingScope, enclosingEnv) {
     MOZ_ASSERT(sourceBuffer_.get() != nullptr);
   }
@@ -163,10 +164,11 @@ class MOZ_STACK_CLASS frontend::ScriptCompiler
                           const JS::ReadOnlyCompileOptions& options,
                           CompilationInfo& compilationInfo,
                           SourceText<Unit>& sourceBuffer,
+                          InheritThis inheritThis = InheritThis::No,
                           js::Scope* enclosingScope = nullptr,
                           JSObject* enclosingEnv = nullptr)
       : Base(cx, allocScope, options, compilationInfo, sourceBuffer,
-             enclosingScope, enclosingEnv) {}
+             inheritThis, enclosingScope, enclosingEnv) {}
 
   using Base::createSourceAndParser;
 
@@ -453,7 +455,8 @@ static JSScript* CompileEvalScriptImpl(
 
   frontend::ScriptCompiler<Unit> compiler(
       cx, allocScope, compilationInfo.get().input.options,
-      compilationInfo.get(), srcBuf, enclosingScope, enclosingEnv);
+      compilationInfo.get(), srcBuf, InheritThis::Yes, enclosingScope,
+      enclosingEnv);
   if (!compiler.createSourceAndParser(cx, compilationInfo.get())) {
     return nullptr;
   }
@@ -505,7 +508,7 @@ class MOZ_STACK_CLASS frontend::ModuleCompiler final
                           js::Scope* enclosingScope = nullptr,
                           JSObject* enclosingEnv = nullptr)
       : Base(cx, allocScope, options, compilationInfo, sourceBuffer,
-             enclosingScope, enclosingEnv) {}
+             InheritThis::No, enclosingScope, enclosingEnv) {}
 
   bool compile(JSContext* cx, CompilationInfo& compilationInfo);
 };
@@ -530,10 +533,11 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
                                       const JS::ReadOnlyCompileOptions& options,
                                       CompilationInfo& compilationInfo,
                                       SourceText<Unit>& sourceBuffer,
+                                      InheritThis inheritThis = InheritThis::No,
                                       js::Scope* enclosingScope = nullptr,
                                       JSObject* enclosingEnv = nullptr)
       : Base(cx, allocScope, options, compilationInfo, sourceBuffer,
-             enclosingScope, enclosingEnv) {}
+             inheritThis, enclosingScope, enclosingEnv) {}
 
   using Base::createSourceAndParser;
 
@@ -682,7 +686,7 @@ void frontend::SourceAwareCompiler<Unit>::handleParseFailure(
 
   // Rewind to starting position to retry.
   parser->tokenStream.rewind(startPosition);
-  compilationInfo.rewind(startObj);
+  compilationInfo.rewind(compilationState_, startObj);
 
   // Assignment must be monotonic to prevent reparsing iloops
   MOZ_ASSERT_IF(compilationState_.directives.strict(), newDirectives.strict());
@@ -698,9 +702,9 @@ bool frontend::ScriptCompiler<Unit>::compileScriptToStencil(
   TokenStreamPosition startPosition(parser->tokenStream);
 
   // Emplace the topLevel stencil
-  MOZ_ASSERT(compilationInfo.stencil.scriptData.length() ==
+  MOZ_ASSERT(compilationState_.scriptData.length() ==
              CompilationInfo::TopLevelIndex);
-  if (!compilationInfo.stencil.scriptData.emplaceBack()) {
+  if (!compilationState_.scriptData.emplaceBack()) {
     ReportOutOfMemory(cx);
     return false;
   }
@@ -738,6 +742,10 @@ bool frontend::ScriptCompiler<Unit>::compileScriptToStencil(
     if (!emitter->emitScript(pn)) {
       return false;
     }
+
+    if (!compilationState_.finish(cx, compilationInfo)) {
+      return false;
+    }
   }
 
   MOZ_ASSERT_IF(!cx->isHelperThreadContext(), !cx->isExceptionPending());
@@ -753,9 +761,9 @@ bool frontend::ModuleCompiler<Unit>::compile(JSContext* cx,
   }
 
   // Emplace the topLevel stencil
-  MOZ_ASSERT(compilationInfo.stencil.scriptData.length() ==
+  MOZ_ASSERT(compilationState_.scriptData.length() ==
              CompilationInfo::TopLevelIndex);
-  if (!compilationInfo.stencil.scriptData.emplaceBack()) {
+  if (!compilationState_.scriptData.emplaceBack()) {
     ReportOutOfMemory(cx);
     return false;
   }
@@ -782,8 +790,13 @@ bool frontend::ModuleCompiler<Unit>::compile(JSContext* cx,
     return false;
   }
 
+  if (!compilationState_.finish(cx, compilationInfo)) {
+    return false;
+  }
+
   StencilModuleMetadata& moduleMetadata =
       *compilationInfo.stencil.moduleMetadata;
+
   builder.finishFunctionDecls(moduleMetadata);
 
   MOZ_ASSERT_IF(!cx->isHelperThreadContext(), !cx->isExceptionPending());
@@ -801,7 +814,8 @@ FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
   assertSourceAndParserCreated(compilationInfo.input);
 
   TokenStreamPosition startPosition(parser->tokenStream);
-  CompilationInfo::RewindToken startObj = compilationInfo.getRewindToken();
+  CompilationInfo::RewindToken startObj =
+      compilationInfo.getRewindToken(compilationState_);
 
   // Speculatively parse using the default directives implied by the context.
   // If a directive is encountered (e.g., "use strict") that changes how the
@@ -850,21 +864,28 @@ bool frontend::StandaloneFunctionCompiler<Unit>::compile(
     // we want the SourceExtent used in the final standalone script to
     // start from the beginning of the buffer, and use the provided
     // line and column.
-    compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex].extent =
+    compilationState_.scriptData[CompilationInfo::TopLevelIndex].extent =
         SourceExtent{/* sourceStart = */ 0,
                      sourceBuffer_.length(),
                      funbox->extent().toStringStart,
                      funbox->extent().toStringEnd,
                      compilationInfo.input.options.lineno,
                      compilationInfo.input.options.column};
+
+    if (!compilationState_.finish(cx, compilationInfo)) {
+      return false;
+    }
   } else {
+    if (!compilationState_.finish(cx, compilationInfo)) {
+      return false;
+    }
+
     // The asm.js module was created by parser. Instantiation below will
     // allocate the JSFunction that wraps it.
     MOZ_ASSERT(funbox->isAsmJSModule());
     MOZ_ASSERT(compilationInfo.stencil.asmJS.has(funbox->index()));
-    MOZ_ASSERT(
-        compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex]
-            .functionFlags.isAsmJSNative());
+    MOZ_ASSERT(compilationState_.scriptData[CompilationInfo::TopLevelIndex]
+                   .functionFlags.isAsmJSNative());
   }
 
   if (!CompilationInfo::instantiateStencils(cx, compilationInfo, gcOutput)) {
@@ -1020,10 +1041,12 @@ static bool CompileLazyFunctionToStencilImpl(JSContext* cx,
 
   Rooted<JSFunction*> fun(cx, lazy->function());
 
+  InheritThis inheritThis = fun->isArrow() ? InheritThis::Yes : InheritThis::No;
+
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(
       cx, allocScope, compilationInfo.input.options, compilationInfo,
-      fun->enclosingScope());
+      inheritThis, fun->enclosingScope());
 
   Parser<FullParseHandler, Unit> parser(
       cx, compilationInfo.input.options, units, length,
@@ -1058,8 +1081,14 @@ static bool CompileLazyFunctionToStencilImpl(JSContext* cx,
   // This excludes non-leaf functions and all script class constructors.
   bool hadLazyScriptData = lazy->hasPrivateScriptData();
   bool isRelazifiableAfterDelazify = lazy->isRelazifiableAfterDelazify();
-  compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex]
-      .allowRelazify = isRelazifiableAfterDelazify && !hadLazyScriptData;
+  if (isRelazifiableAfterDelazify && !hadLazyScriptData) {
+    compilationState.scriptData[CompilationInfo::TopLevelIndex]
+        .setAllowRelazify();
+  }
+
+  if (!compilationState.finish(cx, compilationInfo)) {
+    return false;
+  }
 
   assertException.reset();
   return true;
@@ -1121,9 +1150,12 @@ static JSFunction* CompileStandaloneFunction(
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  InheritThis inheritThis = (syntaxKind == FunctionSyntaxKind::Arrow)
+                                ? InheritThis::Yes
+                                : InheritThis::No;
   StandaloneFunctionCompiler<char16_t> compiler(
       cx, allocScope, compilationInfo.get().input.options,
-      compilationInfo.get(), srcBuf, enclosingScope);
+      compilationInfo.get(), srcBuf, inheritThis, enclosingScope);
   if (!compiler.createSourceAndParser(cx, compilationInfo.get())) {
     return nullptr;
   }

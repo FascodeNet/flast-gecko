@@ -105,6 +105,10 @@ enum class ThisBinding : uint8_t {
   DerivedConstructor
 };
 
+// If Yes, the script inherits it's "this" environment and binding from the
+// enclosing script. This is true for arrow-functions and eval scripts.
+enum class InheritThis { No, Yes };
+
 class GlobalSharedContext;
 class EvalSharedContext;
 class ModuleSharedContext;
@@ -323,6 +327,8 @@ class SuspendableContext : public SharedContext {
 class FunctionBox : public SuspendableContext {
   friend struct GCThingList;
 
+  CompilationState& compilationState_;
+
   // If this FunctionBox refers to a lazy child of the function being
   // compiled, this field holds the child's immediately enclosing scope's index.
   // Once compilation succeeds, we will store the scope pointed by this in the
@@ -407,7 +413,8 @@ class FunctionBox : public SuspendableContext {
   // End of fields.
 
   FunctionBox(JSContext* cx, SourceExtent extent,
-              CompilationInfo& compilationInfo, Directives directives,
+              CompilationInfo& compilationInfo,
+              CompilationState& compilationState, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
               const ParserAtom* atom, FunctionFlags flags, ScriptIndex index);
 

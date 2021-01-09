@@ -43,53 +43,59 @@ namespace frontend {
 // ScopeContext hold information derivied from the scope and environment chains
 // to try to avoid the parser needing to traverse VM structures directly.
 struct ScopeContext {
-  // Whether the enclosing scope allows certain syntax. Eval and arrow scripts
-  // inherit this from their enclosing scipt so we track it here.
+  // If this eval is in response to Debugger.Frame.eval, we may have an
+  // incomplete scope chain. In order to provide a better debugging experience,
+  // we inspect the (optional) environment chain to determine it's enclosing
+  // FunctionScope if there is one. If there is no such scope, we use the
+  // orignal scope provided.
+  //
+  // NOTE: This is used to compute the ThisBinding kind and to allow access to
+  //       private fields, while other contextual information only uses the
+  //       actual scope passed to the compile.
+  JS::Rooted<Scope*> effectiveScope;
+
+  // The type of binding required for `this` of the top level context, as
+  // indicated by the enclosing scopes of this parse.
+  //
+  // NOTE: This is computed based on the effective scope (defined above).
+  ThisBinding thisBinding = ThisBinding::Global;
+
+  // Eval and arrow scripts inherit certain syntax allowances from their
+  // enclosing scripts.
   bool allowNewTarget = false;
   bool allowSuperProperty = false;
   bool allowSuperCall = false;
   bool allowArguments = true;
 
-  // The type of binding required for `this` of the top level context, as
-  // indicated by the enclosing scopes of this parse.
-  ThisBinding thisBinding = ThisBinding::Global;
-
-  // Somewhere on the scope chain this parse is embedded within is a 'With'
-  // scope.
-  bool inWith = false;
-
-  // Somewhere on the scope chain this parse is embedded within a class scope.
-  bool inClass = false;
+  // Eval and arrow scripts also inherit the "this" environment -- used by
+  // `super` expressions -- from their enclosing script. We count the number of
+  // environment hops needed to get from enclosing scope to the nearest
+  // appropriate environment. This value is undefined if the script we are
+  // compiling is not an eval or arrow-function.
+  uint32_t enclosingThisEnvironmentHops = 0;
 
   // Class field initializer info if we are nested within a class constructor.
   // We may be an combination of arrow and eval context within the constructor.
   mozilla::Maybe<MemberInitializers> memberInitializers = {};
 
-  // If this eval is in response to Debugger.Frame.eval, we may have an
-  // incomplete scope chain. In order to determine a better 'this' binding, as
-  // well as to ensure we can provide better static error semantics for private
-  // names, we use the environment chain to attempt to find a more effective
-  // scope than the enclosing scope.
-  // If there is no more effective scope, this will just be the scope given in
-  // the constructor.
-  JS::Rooted<Scope*> effectiveScope;
+  // Indicates there is a 'class' or 'with' scope on enclosing scope chain.
+  bool inClass = false;
+  bool inWith = false;
 
-  explicit ScopeContext(JSContext* cx, Scope* scope,
+  explicit ScopeContext(JSContext* cx, InheritThis inheritThis, Scope* scope,
                         JSObject* enclosingEnv = nullptr)
       : effectiveScope(cx, determineEffectiveScope(scope, enclosingEnv)) {
-    computeAllowSyntax(scope);
-    computeThisBinding(effectiveScope);
-    computeInWith(scope);
-    computeExternalInitializers(scope);
-    computeInClass(scope);
+    if (inheritThis == InheritThis::Yes) {
+      computeThisBinding(effectiveScope);
+      computeThisEnvironment(scope);
+    }
+    computeInScope(scope);
   }
 
  private:
-  void computeAllowSyntax(Scope* scope);
   void computeThisBinding(Scope* scope);
-  void computeInWith(Scope* scope);
-  void computeExternalInitializers(Scope* scope);
-  void computeInClass(Scope* scope);
+  void computeThisEnvironment(Scope* scope);
+  void computeInScope(Scope* scope);
 
   static Scope* determineEffectiveScope(Scope* scope, JSObject* environment);
 };
@@ -224,6 +230,18 @@ struct MOZ_RAII CompilationState {
   UsedNameTracker usedNames;
   LifoAllocScope& allocScope;
 
+  CompilationInput& input;
+
+  // Temporary space to accumulate stencil data.
+  // Copied to CompilationStencil by `finish` method.
+  //
+  // See corresponding CompilationStencil fields for desription.
+  Vector<RegExpStencil, 0, js::SystemAllocPolicy> regExpData;
+  Vector<ScriptStencil, 0, js::SystemAllocPolicy> scriptData;
+  Vector<ScopeStencil, 0, js::SystemAllocPolicy> scopeData;
+  Vector<BaseParserScopeData*, 0, js::SystemAllocPolicy> scopeNames;
+  Vector<TaggedScriptThingIndex, 0, js::SystemAllocPolicy> gcThingData;
+
   // Table of parser atoms for this compilation.
   ParserAtomsTable parserAtoms;
 
@@ -237,8 +255,23 @@ struct MOZ_RAII CompilationState {
   CompilationState(JSContext* cx, LifoAllocScope& frontendAllocScope,
                    const JS::ReadOnlyCompileOptions& options,
                    CompilationInfo& compilationInfo,
+                   InheritThis inheritThis = InheritThis::No,
                    Scope* enclosingScope = nullptr,
                    JSObject* enclosingEnv = nullptr);
+
+  bool finish(JSContext* cx, CompilationInfo& compilationInfo);
+
+  const ParserAtom* getParserAtomAt(JSContext* cx,
+                                    TaggedParserAtomIndex taggedIndex) const;
+
+  // Allocate space for `length` gcthings, and return the address of the
+  // first element to `cursor` to initialize on the caller.
+  bool allocateGCThingsUninitialized(JSContext* cx, ScriptIndex scriptIndex,
+                                     size_t length,
+                                     TaggedScriptThingIndex** cursor);
+
+  bool appendGCThings(JSContext* cx, ScriptIndex scriptIndex,
+                      mozilla::Span<const TaggedScriptThingIndex> things);
 };
 
 // Store shared data for non-lazy script.
@@ -276,17 +309,21 @@ struct SharedDataContainer {
 struct CompilationStencil {
   // Hold onto the RegExpStencil, BigIntStencil, and ObjLiteralStencil that are
   // allocated during parse to ensure correct destruction.
-  Vector<RegExpStencil, 0, js::SystemAllocPolicy> regExpData;
+  mozilla::Span<RegExpStencil> regExpData;
   Vector<BigIntStencil, 0, js::SystemAllocPolicy> bigIntData;
   Vector<ObjLiteralStencil, 0, js::SystemAllocPolicy> objLiteralData;
 
   // Stencil for all function and non-function scripts. The TopLevelIndex is
   // reserved for the top-level script. This top-level may or may not be a
   // function.
-  Vector<ScriptStencil, 0, js::SystemAllocPolicy> scriptData;
+  mozilla::Span<ScriptStencil> scriptData;
   SharedDataContainer sharedData;
+  mozilla::Span<TaggedScriptThingIndex> gcThingData;
 
-  Vector<ScopeStencil, 0, js::SystemAllocPolicy> scopeData;
+  // scopeData and scopeNames have the same size, and i-th scopeNames contains
+  // the names for the bindings contained in the slot defined by i-th scopeData.
+  mozilla::Span<ScopeStencil> scopeData;
+  mozilla::Span<BaseParserScopeData*> scopeNames;
 
   // Module metadata if this is a module compile.
   mozilla::Maybe<StencilModuleMetadata> moduleMetadata;
@@ -299,7 +336,7 @@ struct CompilationStencil {
   // List of parser atoms for this compilation.
   // This may contain nullptr entries when round-tripping with XDR if the atom
   // was generated in original parse but not used by stencil.
-  ParserAtomVector parserAtomData;
+  ParserAtomSpan parserAtomData;
 
   CompilationStencil() = default;
 
@@ -309,13 +346,17 @@ struct CompilationStencil {
   const ParserAtom* getParserAtomAt(JSContext* cx,
                                     TaggedParserAtomIndex taggedIndex) const;
 
-  bool prepareStorageFor(JSContext* cx, size_t nonLazyFunctionCount) {
-    size_t nonLazyScriptCount = nonLazyFunctionCount;
-    if (!scriptData[0].isFunction()) {
+  bool prepareStorageFor(JSContext* cx, CompilationState& compilationState) {
+    // NOTE: At this point CompilationState shouldn't be finished, and
+    // CompilationStencil.scriptData field should be empty.
+    // Use CompilationState.scriptData as data source.
+    MOZ_ASSERT(scriptData.empty());
+    size_t allScriptCount = compilationState.scriptData.length();
+    size_t nonLazyScriptCount = compilationState.nonLazyFunctionCount;
+    if (!compilationState.scriptData[0].isFunction()) {
       nonLazyScriptCount++;
     }
-    return sharedData.prepareStorageFor(cx, nonLazyScriptCount,
-                                        scriptData.length());
+    return sharedData.prepareStorageFor(cx, nonLazyScriptCount, allScriptCount);
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
@@ -373,7 +414,7 @@ class ScriptStencilIterable {
     Iterator(const CompilationStencil& stencil, CompilationGCOutput& gcOutput,
              size_t index)
         : index_(index), stencil_(stencil), gcOutput_(gcOutput) {
-      MOZ_ASSERT(index == stencil.scriptData.length());
+      MOZ_ASSERT(index == stencil.scriptData.size());
     }
 
    public:
@@ -390,19 +431,19 @@ class ScriptStencilIterable {
     }
 
     void next() {
-      MOZ_ASSERT(index_ < stencil_.scriptData.length());
+      MOZ_ASSERT(index_ < stencil_.scriptData.size());
       index_++;
     }
 
     void assertFunction() {
-      if (index_ < stencil_.scriptData.length()) {
+      if (index_ < stencil_.scriptData.size()) {
         MOZ_ASSERT(stencil_.scriptData[index_].isFunction());
       }
     }
 
     void skipTopLevelNonFunction() {
       MOZ_ASSERT(index_ == 0);
-      if (stencil_.scriptData.length()) {
+      if (stencil_.scriptData.size()) {
         if (!stencil_.scriptData[0].isFunction()) {
           next();
           assertFunction();
@@ -423,7 +464,7 @@ class ScriptStencilIterable {
 
     static Iterator end(const CompilationStencil& stencil,
                         CompilationGCOutput& gcOutput) {
-      return Iterator(stencil, gcOutput, stencil.scriptData.length());
+      return Iterator(stencil, gcOutput, stencil.scriptData.size());
     }
   };
 
@@ -461,12 +502,14 @@ struct CompilationInfo {
   // get retried. This ensures iteration during stencil instantiation does not
   // encounter discarded frontend state.
   struct RewindToken {
+    // Temporarily share this token struct with CompilationState.
     size_t scriptDataLength = 0;
+
     size_t asmJSCount = 0;
   };
 
-  RewindToken getRewindToken();
-  void rewind(const RewindToken& pos);
+  RewindToken getRewindToken(CompilationState& state);
+  void rewind(CompilationState& state, const RewindToken& pos);
 
   // Construct a CompilationInfo
   CompilationInfo(JSContext* cx, const JS::ReadOnlyCompileOptions& options)
@@ -572,10 +615,6 @@ struct CompilationInfoVector {
 
   void trace(JSTracer* trc);
 };
-
-// Allocate an uninitialized script-things array using the Stencil's allocator.
-mozilla::Span<TaggedScriptThingIndex> NewScriptThingSpanUninitialized(
-    JSContext* cx, LifoAlloc& alloc, uint32_t ngcthings);
 
 }  // namespace frontend
 }  // namespace js

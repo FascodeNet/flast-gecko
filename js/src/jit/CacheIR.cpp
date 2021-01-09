@@ -596,22 +596,12 @@ static NativeGetPropCacheability CanAttachNativeGetProp(
 
 static void GuardGroupProto(CacheIRWriter& writer, JSObject* obj,
                             ObjOperandId objId) {
-  // Uses the group to determine if the prototype is unchanged. If the
-  // group's prototype is mutable, we must check the actual prototype,
-  // otherwise checking the group is sufficient. This can be used if object
-  // is not ShapedObject or if Shape has UNCACHEABLE_PROTO flag set.
+  // Uses the group to determine if the prototype is unchanged. This works
+  // because groups have an immutable prototype. This can be used if the shape
+  // has the UNCACHEABLE_PROTO flag set.
 
   ObjectGroup* group = obj->group();
-
-  if (group->hasUncacheableProto()) {
-    if (JSObject* proto = obj->staticPrototype()) {
-      writer.guardProto(objId, proto);
-    } else {
-      writer.guardNullProto(objId);
-    }
-  } else {
-    writer.guardGroupForProto(objId, group);
-  }
+  writer.guardGroupForProto(objId, group);
 }
 
 // Guard that a given object has same class and same OwnProperties (excluding
@@ -654,14 +644,9 @@ static void GeneratePrototypeGuardsForReceiver(CacheIRWriter& writer,
     GuardGroupProto(writer, obj, objId);
   }
 
-#ifdef DEBUG
   // The following cases already guaranteed the prototype is unchanged.
-  if (obj->is<TypedObject>()) {
-    MOZ_ASSERT(!obj->group()->hasUncacheableProto());
-  } else if (obj->is<ProxyObject>()) {
-    MOZ_ASSERT(!obj->hasUncacheableProto());
-  }
-#endif  // DEBUG
+  MOZ_ASSERT_IF(obj->is<TypedObject>() || obj->is<ProxyObject>(),
+                !obj->hasUncacheableProto());
 }
 
 static bool ProtoChainSupportsTeleporting(JSObject* obj, JSObject* holder) {
@@ -2331,19 +2316,11 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayElement(
   }
   TypedArrayObject* tarr = &obj->as<TypedArrayObject>();
 
-  // Ensure the index is in-bounds so the element type gets monitored.
-  if (index >= tarr->length().get()) {
-    return AttachDecision::NoAction;
-  }
-
   writer.guardShapeForClass(objId, tarr->shape());
 
-  // Don't handle out-of-bounds accesses here because we have to ensure the
-  // |undefined| type is monitored. See also tryAttachTypedArrayNonInt32Index.
-  // TODO(no-TI): Monitoring?
+  bool handleOOB = index >= tarr->length().get();
   bool allowDoubleForUint32 = AllowDoubleForUint32Array(tarr, index);
-  writer.loadTypedArrayElementResult(objId, indexId, tarr->type(),
-                                     /* handleOOB = */ false,
+  writer.loadTypedArrayElementResult(objId, indexId, tarr->type(), handleOOB,
                                      allowDoubleForUint32);
   writer.returnFromIC();
 
@@ -5095,13 +5072,6 @@ AttachDecision CallIRGenerator::tryAttachArraySlice(HandleFunction callee) {
   }
 
   RootedArrayObject arr(cx_, &thisval_.toObject().as<ArrayObject>());
-
-  // The group of the result will be dynamically fixed up to match the input
-  // object, allowing us to handle 'this' objects that might have more than one
-  // group. Make sure that no singletons can be sliced here.
-  if (arr->isSingleton()) {
-    return AttachDecision::NoAction;
-  }
 
   JSObject* templateObj =
       NewDenseFullyAllocatedArray(cx_, 0, /* proto = */ nullptr, TenuredObject);
@@ -8719,6 +8689,7 @@ ScriptedThisResult CallIRGenerator::getThisForScripted(
     return ScriptedThisResult::NoAction;
   }
 
+  AutoRealm ar(cx_, calleeFunc);
   PlainObject* thisObject =
       CreateThisForFunction(cx_, calleeFunc, newTarget, TenuredObject);
   if (!thisObject) {

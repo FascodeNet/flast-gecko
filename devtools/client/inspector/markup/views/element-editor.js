@@ -608,6 +608,25 @@ ElementEditor.prototype = {
     }
   },
 
+  /**
+   * Creates and returns the DOM for displaying an attribute with the following DOM
+   * structure:
+   *
+   * dom.span(
+   *   {
+   *     className: "attreditor",
+   *     "data-attr": attribute.name,
+   *     "data-value": attribute.value,
+   *   },
+   *   " ",
+   *   dom.span(
+   *     { className: "editable", tabIndex: 0 },
+   *     dom.span({ className: "attr-name theme-fg-color1" }, attribute.name),
+   *     '="',
+   *     dom.span({ className: "attr-value theme-fg-color2" }, attribute.value),
+   *     '"'
+   *   )
+   */
   _createAttribute: function(attribute, before = null) {
     const attr = this.doc.createElement("span");
     attr.dataset.attr = attribute.name;
@@ -625,6 +644,7 @@ ElementEditor.prototype = {
     const name = this.doc.createElement("span");
     name.classList.add("attr-name");
     name.classList.add("theme-fg-color1");
+    name.textContent = attribute.name;
     inner.appendChild(name);
 
     inner.appendChild(this.doc.createTextNode('="'));
@@ -636,6 +656,47 @@ ElementEditor.prototype = {
 
     inner.appendChild(this.doc.createTextNode('"'));
 
+    this._setupAttributeEditor(attribute, attr, inner, name, val);
+
+    // Figure out where we should place the attribute.
+    if (attribute.name == "id") {
+      before = this.attrList.firstChild;
+    } else if (attribute.name == "class") {
+      const idNode = this.attrElements.get("id");
+      before = idNode ? idNode.nextSibling : this.attrList.firstChild;
+    }
+    this.attrList.insertBefore(attr, before);
+
+    this.removeAttribute(attribute.name);
+    this.attrElements.set(attribute.name, attr);
+
+    this._appendAttributeValue(attribute, val);
+
+    return attr;
+  },
+
+  /**
+   * Setup the editable field for the given attribute.
+   *
+   * @param  {Object} attribute
+   *         An object containing the name and value of a DOM attribute.
+   * @param  {Element} attrEditorEl
+   *         The attribute container <span class="attreditor"> element.
+   * @param  {Element} editableEl
+   *         The editable <span class="editable"> element that is setup to be
+   *         an editable field.
+   * @param  {Element} attrNameEl
+   *         The attribute name <span class="attr-name"> element.
+   * @param  {Element} attrValueEl
+   *         The attribute value <span class="attr-value"> element.
+   */
+  _setupAttributeEditor: function(
+    attribute,
+    attrEditorEl,
+    editableEl,
+    attrNameEl,
+    attrValueEl
+  ) {
     // Double quotes need to be handled specially to prevent DOMParser failing.
     // name="v"a"l"u"e" when editing -> name='v"a"l"u"e"'
     // name="v'a"l'u"e" when editing -> name="v'a&quot;l'u&quot;e"
@@ -656,22 +717,22 @@ ElementEditor.prototype = {
     }
 
     // Make the attribute editable.
-    attr.editMode = editableField({
-      element: inner,
+    attrEditorEl.editMode = editableField({
+      element: editableEl,
       trigger: "dblclick",
       stopOnReturn: true,
       selectAll: false,
       initial: initial,
       multiline: true,
-      maxWidth: () => getAutocompleteMaxWidth(inner, this.container.elt),
+      maxWidth: () => getAutocompleteMaxWidth(editableEl, this.container.elt),
       contentType: InplaceEditor.CONTENT_TYPES.CSS_MIXED,
       popup: this.markup.popup,
       start: (editor, event) => {
         // If the editing was started inside the name or value areas,
         // select accordingly.
-        if (event && event.target === name) {
-          editor.input.setSelectionRange(0, name.textContent.length);
-        } else if (event && event.target.closest(".attr-value") === val) {
+        if (event?.target === attrNameEl) {
+          editor.input.setSelectionRange(0, attrNameEl.textContent.length);
+        } else if (event?.target.closest(".attr-value") === attrValueEl) {
           const length = editValueDisplayed.length;
           const editorLength = editor.input.value.length;
           const start = editorLength - (length + 1);
@@ -691,10 +752,10 @@ ElementEditor.prototype = {
         // Remove the attribute stored in this editor and re-add any attributes
         // parsed out of the input element. Restore original attribute if
         // parsing fails.
-        this.refocusOnEdit(attribute.name, attr, direction);
+        this.refocusOnEdit(attribute.name, attrEditorEl, direction);
         this._saveAttribute(attribute.name, undoMods);
         doMods.removeAttribute(attribute.name);
-        this._applyAttributes(newValue, attr, doMods, undoMods);
+        this._applyAttributes(newValue, attrEditorEl, doMods, undoMods);
         this.container.undo.do(
           () => {
             doMods.apply();
@@ -706,19 +767,18 @@ ElementEditor.prototype = {
       },
       cssProperties: this._cssProperties,
     });
+  },
 
-    // Figure out where we should place the attribute.
-    if (attribute.name == "id") {
-      before = this.attrList.firstChild;
-    } else if (attribute.name == "class") {
-      const idNode = this.attrElements.get("id");
-      before = idNode ? idNode.nextSibling : this.attrList.firstChild;
-    }
-    this.attrList.insertBefore(attr, before);
-
-    this.removeAttribute(attribute.name);
-    this.attrElements.set(attribute.name, attr);
-
+  /**
+   * Appends the attribute value to the given attribute value <span> element.
+   *
+   * @param  {Object} attribute
+   *         An object containing the name and value of a DOM attribute.
+   * @param  {Element} attributeValueEl
+   *         The attribute value <span class="attr-value"> element to append
+   *         the parsed attribute values to.
+   */
+  _appendAttributeValue: function(attribute, attributeValueEl) {
     // Parse the attribute value to detect whether there are linkable parts in
     // it (make sure to pass a complete list of existing attributes to the
     // parseAttribute function, by concatenating attribute, because this could
@@ -726,8 +786,8 @@ ElementEditor.prototype = {
     const attributes = this.node.attributes.filter(
       existingAttribute => existingAttribute.name !== attribute.name
     );
-
     attributes.push(attribute);
+
     const parsedLinksData = parseAttribute(
       this.node.namespaceURI,
       this.node.tagName,
@@ -736,34 +796,42 @@ ElementEditor.prototype = {
       attribute.value
     );
 
-    // Create links in the attribute value, and collapse long attributes if
-    // needed.
-    const collapse = value => {
-      if (value && value.match(COLLAPSE_DATA_URL_REGEX)) {
-        return truncateString(value, COLLAPSE_DATA_URL_LENGTH);
-      }
-      return this.markup.collapseAttributes
-        ? truncateString(value, this.markup.collapseAttributeLength)
-        : value;
-    };
+    attributeValueEl.innerHTML = "";
 
-    val.innerHTML = "";
+    // Create links in the attribute value, and truncate long attribute values if
+    // needed.
     for (const token of parsedLinksData) {
       if (token.type === "string") {
-        val.appendChild(this.doc.createTextNode(collapse(token.value)));
+        attributeValueEl.appendChild(
+          this.doc.createTextNode(this._truncateAttributeValue(token.value))
+        );
       } else {
         const link = this.doc.createElement("span");
         link.classList.add("link");
         link.setAttribute("data-type", token.type);
         link.setAttribute("data-link", token.value);
-        link.textContent = collapse(token.value);
-        val.appendChild(link);
+        link.textContent = this._truncateAttributeValue(token.value);
+        attributeValueEl.appendChild(link);
       }
     }
+  },
 
-    name.textContent = attribute.name;
+  /**
+   * Truncates the given attribute value if it is a base64 data URL or the
+   * collapse attributes pref is enabled.
+   *
+   * @param  {String} value
+   *         Attribute value.
+   * @return {String} truncated attribute value.
+   */
+  _truncateAttributeValue: function(value) {
+    if (value && value.match(COLLAPSE_DATA_URL_REGEX)) {
+      return truncateString(value, COLLAPSE_DATA_URL_LENGTH);
+    }
 
-    return attr;
+    return this.markup.collapseAttributes
+      ? truncateString(value, this.markup.collapseAttributeLength)
+      : value;
   },
 
   /**

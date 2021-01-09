@@ -352,7 +352,7 @@ sccache:
         type: git
         repo: https://github.com/mozilla/sccache
         # 0.2.14 release
-        revision: 655ef1a69691be4fcdcb8990dfca1001df5af129
+        revision: 5f57603ff6338d7b07221bf1fddcaedc14dba9b8
 
 fxc2:
     description: fxc2 source code
@@ -425,11 +425,11 @@ clang-10:
         revision: d32170dbd5b0d54436537b6b75beaf44324e0c28
 
 clang-11:
-    description: clang 11.0.0 source code
+    description: clang 11.0.1 source code
     fetch:
         type: git
         repo: https://github.com/llvm/llvm-project
-        revision: 176249bd6732a8044d457092ed932768724a6f06
+        revision: 43ff75f2c3feef64f9d73328230d34dac8832a91
 
 rust-1.47.0-dev:
     description: Rust 1.47.0-dev source code

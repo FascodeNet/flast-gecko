@@ -6,7 +6,8 @@
 
 #include "frontend/StencilXdr.h"  // StencilXDR
 
-#include "mozilla/Variant.h"  // mozilla::AsVariant
+#include "mozilla/OperatorNewExtensions.h"  // mozilla::KnownNotNull
+#include "mozilla/Variant.h"                // mozilla::AsVariant
 
 #include <stddef.h>     // size_t
 #include <stdint.h>     // uint8_t, uint16_t, uint32_t
@@ -20,148 +21,6 @@
 using namespace js;
 using namespace js::frontend;
 
-template <XDRMode mode>
-/* static */ XDRResult StencilXDR::Script(XDRState<mode>* xdr,
-                                          ScriptStencil& stencil) {
-  enum class XdrFlags : uint8_t {
-    HasMemberInitializers = 0,
-    HasFunctionAtom,
-    HasScopeIndex,
-    WasFunctionEmitted,
-    AllowRelazify,
-    HasSharedData,
-  };
-
-  struct XdrFields {
-    uint32_t immutableFlags;
-    uint32_t numMemberInitializers;
-    uint32_t numGcThings;
-    uint16_t functionFlags;
-    uint16_t nargs;
-    uint32_t scopeIndex;
-  };
-
-  uint8_t xdrFlags = 0;
-  XdrFields xdrFields = {};
-
-  if (mode == XDR_ENCODE) {
-    xdrFields.immutableFlags = stencil.immutableFlags;
-
-    if (stencil.memberInitializers.isSome()) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::HasMemberInitializers);
-    }
-    xdrFields.numMemberInitializers =
-        stencil.memberInitializers
-            .map([](auto i) { return i.numMemberInitializers; })
-            .valueOr(0);
-
-    xdrFields.numGcThings = stencil.gcThings.size();
-
-    if (stencil.functionAtom) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::HasFunctionAtom);
-    }
-
-    xdrFields.functionFlags = stencil.functionFlags.toRaw();
-    xdrFields.nargs = stencil.nargs;
-
-    if (stencil.lazyFunctionEnclosingScopeIndex_.isSome()) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::HasScopeIndex);
-    }
-    xdrFields.scopeIndex =
-        stencil.lazyFunctionEnclosingScopeIndex_.valueOr(ScopeIndex());
-
-    if (stencil.wasFunctionEmitted) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::WasFunctionEmitted);
-    }
-    if (stencil.allowRelazify) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::AllowRelazify);
-    }
-    if (stencil.hasSharedData) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::HasSharedData);
-    }
-  }
-
-#ifdef __cpp_lib_has_unique_object_representations
-  // We check endianess before decoding so if structures are fully packed, we
-  // may transcode them directly as raw bytes.
-  static_assert(std::has_unique_object_representations<XdrFields>(),
-                "XdrFields structure must be fully packed");
-  static_assert(std::has_unique_object_representations<SourceExtent>(),
-                "XdrFields structure must be fully packed");
-#endif
-
-  MOZ_TRY(xdr->codeUint8(&xdrFlags));
-  MOZ_TRY(xdr->codeBytes(&xdrFields, sizeof(XdrFields)));
-  MOZ_TRY(xdr->codeBytes(&stencil.extent, sizeof(SourceExtent)));
-
-  if (mode == XDR_DECODE) {
-    MOZ_ASSERT(xdr->hasOptions());
-
-    if (!(xdrFields.immutableFlags &
-          uint32_t(ImmutableScriptFlagsEnum::IsFunction))) {
-      MOZ_ASSERT(!xdr->isMultiDecode());
-      if (!js::CheckCompileOptionsMatch(
-              xdr->options(), ImmutableScriptFlags(xdrFields.immutableFlags),
-              xdr->isMultiDecode())) {
-        return xdr->fail(JS::TranscodeResult_Failure_WrongCompileOption);
-      }
-    }
-
-    stencil.immutableFlags = xdrFields.immutableFlags;
-
-    if (xdrFlags & (1 << uint8_t(XdrFlags::HasMemberInitializers))) {
-      stencil.memberInitializers.emplace(xdrFields.numMemberInitializers);
-    }
-
-    MOZ_ASSERT(stencil.gcThings.empty());
-    if (xdrFields.numGcThings > 0) {
-      // Allocated TaggedScriptThingIndex array and initialize to safe value.
-      mozilla::Span<TaggedScriptThingIndex> stencilThings =
-          NewScriptThingSpanUninitialized(xdr->cx(), xdr->stencilAlloc(),
-                                          xdrFields.numGcThings);
-      if (stencilThings.empty()) {
-        return xdr->fail(JS::TranscodeResult_Throw);
-      }
-      stencil.gcThings = stencilThings;
-    }
-
-    stencil.functionFlags = FunctionFlags(xdrFields.functionFlags);
-    stencil.nargs = xdrFields.nargs;
-
-    if (xdrFlags & (1 << uint8_t(XdrFlags::HasScopeIndex))) {
-      stencil.lazyFunctionEnclosingScopeIndex_.emplace(xdrFields.scopeIndex);
-    }
-
-    if (xdrFlags & (1 << uint8_t(XdrFlags::WasFunctionEmitted))) {
-      stencil.wasFunctionEmitted = true;
-    }
-    if (xdrFlags & (1 << uint8_t(XdrFlags::AllowRelazify))) {
-      stencil.allowRelazify = true;
-    }
-    if (xdrFlags & (1 << uint8_t(XdrFlags::HasSharedData))) {
-      stencil.hasSharedData = true;
-    }
-  }
-
-#ifdef __cpp_lib_has_unique_object_representations
-  // We check endianess before decoding so if structures are fully packed, we
-  // may transcode them directly as raw bytes.
-  static_assert(
-      std::has_unique_object_representations<TaggedScriptThingIndex>(),
-      "TaggedScriptThingIndex structure must be fully packed");
-#endif
-
-  MOZ_TRY(xdr->codeBytes(
-      const_cast<TaggedScriptThingIndex*>(stencil.gcThings.data()),
-      sizeof(TaggedScriptThingIndex) * xdrFields.numGcThings));
-
-  if (xdrFlags & (1 << uint8_t(XdrFlags::HasFunctionAtom))) {
-    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &stencil.functionAtom));
-  }
-
-  return Ok();
-};
-
 template <typename NameType>
 struct CanEncodeNameType {
   static constexpr bool value = false;
@@ -173,17 +32,14 @@ struct CanEncodeNameType<TaggedParserAtomIndex> {
 };
 
 template <XDRMode mode, typename ScopeT>
-/* static */ XDRResult StencilXDR::ScopeData(XDRState<mode>* xdr,
-                                             ScopeStencil& stencil) {
+/* static */ XDRResult StencilXDR::ScopeSpecificData(
+    XDRState<mode>* xdr, BaseParserScopeData*& baseScopeData) {
   using SlotInfo = typename ScopeT::SlotInfo;
   using ScopeDataT = typename ScopeT::ParserData;
 
   static_assert(CanEncodeNameType<typename ScopeDataT::NameType>::value);
-
-#ifdef __cpp_lib_has_unique_object_representations
-  static_assert(std::has_unique_object_representations<ScopeDataT>(),
-                "ScopeData structure must be fully packed");
-#endif
+  static_assert(CanCopyDataToDisk<ScopeDataT>::value,
+                "ScopeData cannot be bulk-copied to disk");
 
   static_assert(offsetof(ScopeDataT, slotInfo) == 0,
                 "slotInfo should be the first field");
@@ -197,7 +53,7 @@ template <XDRMode mode, typename ScopeT>
   };
 
   if (mode == XDR_ENCODE) {
-    ScopeDataT* scopeData = static_cast<ScopeDataT*>(stencil.data_);
+    ScopeDataT* scopeData = static_cast<ScopeDataT*>(baseScopeData);
     const SlotInfo* slotInfo = &scopeData->slotInfo;
     uint32_t totalLength = ComputeTotalLength(slotInfo->length);
     MOZ_TRY(xdr->codeBytes(scopeData, totalLength));
@@ -220,16 +76,37 @@ template <XDRMode mode, typename ScopeT>
 
     // Decode SlotInfo and trailing names at once.
     MOZ_TRY(xdr->codeBytes(scopeData, totalLength));
-    stencil.data_ = scopeData;
+    baseScopeData = scopeData;
   }
 
   return Ok();
 }
 
-template <XDRMode mode, typename VecType>
-static XDRResult XDRVector(XDRState<mode>* xdr, VecType& vec) {
-  uint32_t length;
+template <XDRMode mode, typename T, size_t N, class AP>
+static XDRResult XDRVectorUninitialized(XDRState<mode>* xdr,
+                                        Vector<T, N, AP>& vec,
+                                        uint32_t& length) {
+  if (mode == XDR_ENCODE) {
+    MOZ_ASSERT(vec.length() <= UINT32_MAX);
+    length = vec.length();
+  }
 
+  MOZ_TRY(xdr->codeUint32(&length));
+
+  if (mode == XDR_DECODE) {
+    MOZ_ASSERT(vec.empty());
+    if (!vec.resizeUninitialized(length)) {
+      js::ReportOutOfMemory(xdr->cx());
+      return xdr->fail(JS::TranscodeResult_Throw);
+    }
+  }
+
+  return Ok();
+}
+
+template <XDRMode mode, typename T, size_t N, class AP>
+static XDRResult XDRVector(XDRState<mode>* xdr, Vector<T, N, AP>& vec) {
+  uint32_t length;
   if (mode == XDR_ENCODE) {
     MOZ_ASSERT(vec.length() <= UINT32_MAX);
     length = vec.length();
@@ -248,44 +125,21 @@ static XDRResult XDRVector(XDRState<mode>* xdr, VecType& vec) {
   return Ok();
 }
 
-template <typename ItemType, XDRMode mode, typename VecType>
-static XDRResult XDRVectorContent(XDRState<mode>* xdr, VecType& vec) {
-#ifdef __cpp_lib_has_unique_object_representations
-  static_assert(std::has_unique_object_representations<ItemType>(),
-                "vector item structure must be fully packed");
-#endif
+template <XDRMode mode, typename T, size_t N, class AP>
+static XDRResult XDRVectorContent(XDRState<mode>* xdr, Vector<T, N, AP>& vec) {
+  static_assert(CanCopyDataToDisk<T>::value,
+                "Vector content cannot be bulk-copied to disk.");
 
   uint32_t length;
-
-  if (mode == XDR_ENCODE) {
-    MOZ_ASSERT(vec.length() <= UINT32_MAX);
-    length = vec.length();
-  }
-
-  MOZ_TRY(xdr->codeUint32(&length));
-
-  if (mode == XDR_DECODE) {
-    MOZ_ASSERT(vec.empty());
-    if (!vec.growByUninitialized(length)) {
-      js::ReportOutOfMemory(xdr->cx());
-      return xdr->fail(JS::TranscodeResult_Throw);
-    }
-  }
-
-  MOZ_TRY(xdr->codeBytes(vec.begin(), sizeof(ItemType) * length));
+  MOZ_TRY(XDRVectorUninitialized(xdr, vec, length));
+  MOZ_TRY(xdr->codeBytes(vec.begin(), sizeof(T) * length));
 
   return Ok();
 }
 
 template <XDRMode mode, typename T>
-static XDRResult XDRSpanContent(XDRState<mode>* xdr, mozilla::Span<T>& span) {
-#ifdef __cpp_lib_has_unique_object_representations
-  static_assert(std::has_unique_object_representations<T>(),
-                "span item structure must be fully packed");
-#endif
-
-  uint32_t size;
-
+static XDRResult XDRSpanUninitialized(XDRState<mode>* xdr,
+                                      mozilla::Span<T>& span, uint32_t& size) {
   if (mode == XDR_ENCODE) {
     MOZ_ASSERT(span.size() <= UINT32_MAX);
     size = span.size();
@@ -305,37 +159,33 @@ static XDRResult XDRSpanContent(XDRState<mode>* xdr, mozilla::Span<T>& span) {
     }
   }
 
-  MOZ_TRY(xdr->codeBytes(span.data(), sizeof(T) * size));
+  return Ok();
+}
+
+template <XDRMode mode, typename T>
+static XDRResult XDRSpanInitialized(XDRState<mode>* xdr,
+                                    mozilla::Span<T>& span) {
+  uint32_t size;
+  MOZ_TRY(XDRSpanUninitialized(xdr, span, size));
+
+  if (mode == XDR_DECODE) {
+    for (size_t i = 0; i < size; i++) {
+      new (mozilla::KnownNotNull, &span[i]) T();
+    }
+  }
 
   return Ok();
 }
 
-template <XDRMode mode>
-static XDRResult XDRStencilModuleEntryVector(
-    XDRState<mode>* xdr, StencilModuleMetadata::EntryVector& vec) {
-  uint64_t length;
+template <XDRMode mode, typename T>
+static XDRResult XDRSpanContent(XDRState<mode>* xdr, mozilla::Span<T>& span) {
+  static_assert(CanCopyDataToDisk<T>::value,
+                "Span cannot be bulk-copied to disk.");
 
-  if (mode == XDR_ENCODE) {
-    length = vec.length();
-  }
-
-  MOZ_TRY(xdr->codeUint64(&length));
-
-  if (mode == XDR_DECODE) {
-    MOZ_ASSERT(vec.empty());
-    if (!vec.resize(length)) {
-      return xdr->fail(JS::TranscodeResult_Throw);
-    }
-  }
-
-  for (StencilModuleEntry& entry : vec) {
-    MOZ_TRY(xdr->codeUint32(&entry.lineno));
-    MOZ_TRY(xdr->codeUint32(&entry.column));
-
-    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.specifier));
-    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.localName));
-    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.importName));
-    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry.exportName));
+  uint32_t size;
+  MOZ_TRY(XDRSpanUninitialized(xdr, span, size));
+  if (size) {
+    MOZ_TRY(xdr->codeBytes(span.data(), sizeof(T) * size));
   }
 
   return Ok();
@@ -344,32 +194,12 @@ static XDRResult XDRStencilModuleEntryVector(
 template <XDRMode mode>
 static XDRResult XDRStencilModuleMetadata(XDRState<mode>* xdr,
                                           StencilModuleMetadata& stencil) {
-  MOZ_TRY(XDRStencilModuleEntryVector(xdr, stencil.requestedModules));
-  MOZ_TRY(XDRStencilModuleEntryVector(xdr, stencil.importEntries));
-  MOZ_TRY(XDRStencilModuleEntryVector(xdr, stencil.localExportEntries));
-  MOZ_TRY(XDRStencilModuleEntryVector(xdr, stencil.indirectExportEntries));
-  MOZ_TRY(XDRStencilModuleEntryVector(xdr, stencil.starExportEntries));
-
-  {
-    uint64_t length;
-
-    if (mode == XDR_ENCODE) {
-      length = stencil.functionDecls.length();
-    }
-
-    MOZ_TRY(xdr->codeUint64(&length));
-
-    if (mode == XDR_DECODE) {
-      MOZ_ASSERT(stencil.functionDecls.empty());
-      if (!stencil.functionDecls.resize(length)) {
-        return xdr->fail(JS::TranscodeResult_Throw);
-      }
-    }
-
-    for (GCThingIndex& entry : stencil.functionDecls) {
-      MOZ_TRY(xdr->codeUint32(&entry.index));
-    }
-  }
+  MOZ_TRY(XDRVectorContent(xdr, stencil.requestedModules));
+  MOZ_TRY(XDRVectorContent(xdr, stencil.importEntries));
+  MOZ_TRY(XDRVectorContent(xdr, stencil.localExportEntries));
+  MOZ_TRY(XDRVectorContent(xdr, stencil.indirectExportEntries));
+  MOZ_TRY(XDRVectorContent(xdr, stencil.starExportEntries));
+  MOZ_TRY(XDRVectorContent(xdr, stencil.functionDecls));
 
   uint8_t isAsync = 0;
   if (mode == XDR_ENCODE) {
@@ -388,68 +218,9 @@ static XDRResult XDRStencilModuleMetadata(XDRState<mode>* xdr,
 }
 
 template <XDRMode mode>
-/* static */ XDRResult StencilXDR::Scope(XDRState<mode>* xdr,
-                                         ScopeStencil& stencil) {
-  enum class XdrFlags {
-    HasEnclosing,
-    HasEnvironment,
-    IsArrow,
-  };
-
-  uint8_t xdrFlags = 0;
-  uint8_t kind;
-
-  if (mode == XDR_ENCODE) {
-    kind = static_cast<uint8_t>(stencil.kind_);
-    if (stencil.enclosing_.isSome()) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::HasEnclosing);
-    }
-    if (stencil.numEnvironmentSlots_.isSome()) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::HasEnvironment);
-    }
-    if (stencil.isArrow_) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::IsArrow);
-    }
-  }
-
-  MOZ_TRY(xdr->codeUint8(&xdrFlags));
-  MOZ_TRY(xdr->codeUint8(&kind));
-  MOZ_TRY(xdr->codeUint32(&stencil.firstFrameSlot_));
-
-  if (mode == XDR_DECODE) {
-    stencil.kind_ = static_cast<ScopeKind>(kind);
-  }
-
-  if (xdrFlags & (1 << uint8_t(XdrFlags::HasEnclosing))) {
-    if (mode == XDR_DECODE) {
-      stencil.enclosing_ = mozilla::Some(ScopeIndex());
-    }
-    MOZ_ASSERT(stencil.enclosing_.isSome());
-    MOZ_TRY(xdr->codeUint32(&stencil.enclosing_->index));
-  }
-
-  if (xdrFlags & (1 << uint8_t(XdrFlags::HasEnvironment))) {
-    if (mode == XDR_DECODE) {
-      stencil.numEnvironmentSlots_ = mozilla::Some(0);
-    }
-    MOZ_ASSERT(stencil.numEnvironmentSlots_.isSome());
-    MOZ_TRY(xdr->codeUint32(&stencil.numEnvironmentSlots_.ref()));
-  }
-
-  if (xdrFlags & (1 << uint8_t(XdrFlags::IsArrow))) {
-    if (mode == XDR_DECODE) {
-      stencil.isArrow_ = true;
-    }
-  }
-
-  if (stencil.kind_ == ScopeKind::Function) {
-    if (mode == XDR_DECODE) {
-      stencil.functionIndex_ = mozilla::Some(ScriptIndex());
-    }
-    MOZ_ASSERT(stencil.functionIndex_.isSome());
-    MOZ_TRY(xdr->codeUint32(&stencil.functionIndex_->index));
-  }
-
+/* static */ XDRResult StencilXDR::ScopeData(
+    XDRState<mode>* xdr, ScopeStencil& stencil,
+    BaseParserScopeData*& baseScopeData) {
   // In both decoding and encoding, stencil.kind_ is now known, and
   // can be assumed.  This allows the encoding to write out the bytes
   // for the specialized scope-data type without needing to encode
@@ -458,13 +229,15 @@ template <XDRMode mode>
     // FunctionScope
     case ScopeKind::Function: {
       // Extra parentheses is for template parameters inside macro.
-      MOZ_TRY((StencilXDR::ScopeData<mode, FunctionScope>(xdr, stencil)));
+      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, FunctionScope>(
+          xdr, baseScopeData)));
       break;
     }
 
     // VarScope
     case ScopeKind::FunctionBodyVar: {
-      MOZ_TRY((StencilXDR::ScopeData<mode, VarScope>(xdr, stencil)));
+      MOZ_TRY(
+          (StencilXDR::ScopeSpecificData<mode, VarScope>(xdr, baseScopeData)));
       break;
     }
 
@@ -476,7 +249,8 @@ template <XDRMode mode>
     case ScopeKind::StrictNamedLambda:
     case ScopeKind::FunctionLexical:
     case ScopeKind::ClassBody: {
-      MOZ_TRY((StencilXDR::ScopeData<mode, LexicalScope>(xdr, stencil)));
+      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, LexicalScope>(
+          xdr, baseScopeData)));
       break;
     }
 
@@ -489,20 +263,23 @@ template <XDRMode mode>
     // EvalScope
     case ScopeKind::Eval:
     case ScopeKind::StrictEval: {
-      MOZ_TRY((StencilXDR::ScopeData<mode, EvalScope>(xdr, stencil)));
+      MOZ_TRY(
+          (StencilXDR::ScopeSpecificData<mode, EvalScope>(xdr, baseScopeData)));
       break;
     }
 
     // GlobalScope
     case ScopeKind::Global:
     case ScopeKind::NonSyntactic: {
-      MOZ_TRY((StencilXDR::ScopeData<mode, GlobalScope>(xdr, stencil)));
+      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, GlobalScope>(
+          xdr, baseScopeData)));
       break;
     }
 
     // ModuleScope
     case ScopeKind::Module: {
-      MOZ_TRY((StencilXDR::ScopeData<mode, ModuleScope>(xdr, stencil)));
+      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, ModuleScope>(
+          xdr, baseScopeData)));
       break;
     }
 
@@ -749,12 +526,16 @@ XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
   // All of the vector-indexed data elements referenced by the
   // main script tree must be materialized first.
 
-  MOZ_TRY(XDRVector(xdr, stencil.scopeData));
-  for (auto& entry : stencil.scopeData) {
-    MOZ_TRY(StencilXDR::Scope(xdr, entry));
+  MOZ_TRY(XDRSpanContent(xdr, stencil.scopeData));
+  MOZ_TRY(XDRSpanInitialized(xdr, stencil.scopeNames));
+  MOZ_ASSERT(stencil.scopeData.size() == stencil.scopeNames.size());
+  size_t scopeCount = stencil.scopeData.size();
+  for (size_t i = 0; i < scopeCount; i++) {
+    MOZ_TRY(StencilXDR::ScopeData(xdr, stencil.scopeData[i],
+                                  stencil.scopeNames[i]));
   }
 
-  MOZ_TRY(XDRVectorContent<RegExpStencil>(xdr, stencil.regExpData));
+  MOZ_TRY(XDRSpanContent(xdr, stencil.regExpData));
 
   MOZ_TRY(XDRVector(xdr, stencil.bigIntData));
   for (auto& entry : stencil.bigIntData) {
@@ -768,12 +549,11 @@ XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
 
   MOZ_TRY(XDRSharedDataContainer(xdr, stencil.sharedData));
 
+  MOZ_TRY(XDRSpanContent(xdr, stencil.gcThingData));
+
   // Now serialize the vector of ScriptStencils.
 
-  MOZ_TRY(XDRVector(xdr, stencil.scriptData));
-  for (auto& entry : stencil.scriptData) {
-    MOZ_TRY(StencilXDR::Script(xdr, entry));
-  }
+  MOZ_TRY(XDRSpanContent(xdr, stencil.scriptData));
 
   if (stencil.scriptData[CompilationInfo::TopLevelIndex].isModule()) {
     if (mode == XDR_DECODE) {

@@ -55,6 +55,12 @@ Simulator::Simulator(Decoder* decoder, FILE* stream)
   , oom_(false)
 {
     this->init(decoder, stream);
+
+    // If this environment variable is present, trace the executed instructions.
+    // (Very helpful for debugging code generation crashes.)
+    if (getenv("VIXL_TRACE")) {
+        set_trace_parameters(LOG_DISASM);
+    }
 }
 
 
@@ -163,7 +169,9 @@ Simulator* Simulator::Current() {
   if (!rt) {
     return nullptr;
   }
-  MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(rt));
+  if (!js::CurrentThreadCanAccessRuntime(rt)) {
+      return nullptr;
+  }
   return cx->simulator();
 }
 

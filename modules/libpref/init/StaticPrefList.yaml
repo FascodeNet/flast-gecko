@@ -1005,6 +1005,11 @@
   value: @IS_NOT_MOZILLA_OFFICIAL@
   mirror: always
 
+- name: browser.download.sanitize_non_media_extensions
+  type: bool
+  value: true
+  mirror: always
+
 # Image document's automatic image sizing.
 - name: browser.enable_automatic_image_resizing
   type: bool
@@ -1436,6 +1441,18 @@
 # Used to indicate whether session history listeners should be notified
 # about content viewer eviction. Used only for testing.
 - name: docshell.shistory.testing.bfevict
+  type: bool
+  value: false
+  mirror: always
+
+# If true, pages with an opener won't be bfcached.
+- name: docshell.shistory.bfcache.require_no_opener
+  type: bool
+  value: false
+  mirror: always
+
+# If true, page with beforeunload or unload event listeners can be bfcached.
+- name: docshell.shistory.bfcache.allow_unload_listeners
   type: bool
   value: false
   mirror: always
@@ -1983,8 +2000,8 @@
 # Whether we allow BrowsingContextGroup to suspend input events
 - name: dom.input_events.canSuspendInBCG.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
-  mirror: once
+  value: false
+  mirror: always
 
 # Enable not moving the cursor to end when a text input or textarea has .value
 # set to the value it already has.  By default, enabled.
@@ -4538,7 +4555,7 @@
 #ifdef XP_WIN
 - name: gfx.webrender.enabled-no-gpu-process-with-angle-win
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: once
 #endif
 
@@ -6077,6 +6094,13 @@
 - name: layout.css.clip-path-path.enabled
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+  rust: true
+
+# Is the image-set() function enabled?
+- name: layout.css.image-set.enabled
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
   rust: true
 

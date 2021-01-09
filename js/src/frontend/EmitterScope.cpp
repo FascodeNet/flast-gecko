@@ -382,7 +382,7 @@ bool EmitterScope::internScopeCreationData(BytecodeEmitter* bce,
   if (!createScope(bce->cx, enclosingScopeIndex(bce), &index)) {
     return false;
   }
-  ScopeStencil& scope = bce->compilationInfo.stencil.scopeData[index.index];
+  ScopeStencil& scope = bce->compilationState.scopeData[index.index];
   hasEnvironment_ = scope.hasEnvironment();
   return bce->perScriptData().gcThingList().append(index, &scopeIndex_);
 }
@@ -516,15 +516,13 @@ bool EmitterScope::enterLexical(BytecodeEmitter* bce, ScopeKind kind,
 
     NameLocation loc = NameLocation::fromBinding(bi.kind(), bi.location());
     if (!putNameInCache(
-            bce,
-            bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()),
+            bce, bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
             loc)) {
       return false;
     }
 
     if (!tdzCache->noteTDZCheck(
-            bce,
-            bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()),
+            bce, bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
             CheckTDZ)) {
       return false;
     }
@@ -535,9 +533,9 @@ bool EmitterScope::enterLexical(BytecodeEmitter* bce, ScopeKind kind,
   auto createScope = [kind, bindings, firstFrameSlot, bce](
                          JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                          ScopeIndex* index) {
-    return ScopeStencil::createForLexicalScope(cx, bce->compilationInfo, kind,
-                                               bindings, firstFrameSlot,
-                                               enclosing, index);
+    return ScopeStencil::createForLexicalScope(
+        cx, bce->compilationInfo, bce->compilationState, kind, bindings,
+        firstFrameSlot, enclosing, index);
   };
   if (!internScopeCreationData(bce, createScope)) {
     return false;
@@ -582,9 +580,9 @@ bool EmitterScope::enterNamedLambda(BytecodeEmitter* bce, FunctionBox* funbox) {
   // The lambda name, if not closed over, is accessed via JSOp::Callee and
   // not a frame slot. Do not update frame slot information.
   NameLocation loc = NameLocation::fromBinding(bi.kind(), bi.location());
-  if (!putNameInCache(
-          bce, bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()),
-          loc)) {
+  if (!putNameInCache(bce,
+                      bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
+                      loc)) {
     return false;
   }
 
@@ -598,8 +596,8 @@ bool EmitterScope::enterNamedLambda(BytecodeEmitter* bce, FunctionBox* funbox) {
                          JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                          ScopeIndex* index) {
     return ScopeStencil::createForLexicalScope(
-        cx, bce->compilationInfo, scopeKind, funbox->namedLambdaBindings(),
-        LOCALNO_LIMIT, enclosing, index);
+        cx, bce->compilationInfo, bce->compilationState, scopeKind,
+        funbox->namedLambdaBindings(), LOCALNO_LIMIT, enclosing, index);
   };
   if (!internScopeCreationData(bce, createScope)) {
     return false;
@@ -633,7 +631,7 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
 
       NameLocation loc = NameLocation::fromBinding(bi.kind(), bi.location());
       NameLocationMap::AddPtr p = cache.lookupForAdd(
-          bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()));
+          bce->compilationState.getParserAtomAt(bce->cx, bi.name()));
 
       // The only duplicate bindings that occur are simple formal
       // parameters, in which case the last position counts, so update the
@@ -646,10 +644,9 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
         continue;
       }
 
-      if (!cache.add(
-              p,
-              bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()),
-              loc)) {
+      if (!cache.add(p,
+                     bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
+                     loc)) {
         ReportOutOfMemory(bce->cx);
         return false;
       }
@@ -692,8 +689,8 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
                                    mozilla::Maybe<ScopeIndex> enclosing,
                                    ScopeIndex* index) {
     return ScopeStencil::createForFunctionScope(
-        cx, bce->compilationInfo, funbox->functionScopeBindings(),
-        funbox->hasParameterExprs,
+        cx, bce->compilationInfo, bce->compilationState,
+        funbox->functionScopeBindings(), funbox->hasParameterExprs,
         funbox->needsCallObjectRegardlessOfBindings(), funbox->index(),
         funbox->isArrow(), enclosing, index);
   };
@@ -731,8 +728,7 @@ bool EmitterScope::enterFunctionExtraBodyVar(BytecodeEmitter* bce,
       NameLocation loc = NameLocation::fromBinding(bi.kind(), bi.location());
       MOZ_ASSERT(bi.kind() == BindingKind::Var);
       if (!putNameInCache(
-              bce,
-              bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()),
+              bce, bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
               loc)) {
         return false;
       }
@@ -767,8 +763,9 @@ bool EmitterScope::enterFunctionExtraBodyVar(BytecodeEmitter* bce,
                          JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                          ScopeIndex* index) {
     return ScopeStencil::createForVarScope(
-        cx, bce->compilationInfo, ScopeKind::FunctionBodyVar,
-        funbox->extraVarScopeBindings(), firstFrameSlot,
+        cx, bce->compilationInfo, bce->compilationState,
+        ScopeKind::FunctionBodyVar, funbox->extraVarScopeBindings(),
+        firstFrameSlot,
         funbox->needsExtraBodyVarEnvironmentRegardlessOfBindings(), enclosing,
         index);
   };
@@ -822,9 +819,9 @@ bool EmitterScope::enterGlobal(BytecodeEmitter* bce,
                                      mozilla::Maybe<ScopeIndex> enclosing,
                                      ScopeIndex* index) {
     MOZ_ASSERT(enclosing.isNothing());
-    return ScopeStencil::createForGlobalScope(cx, bce->compilationInfo,
-                                              globalsc->scopeKind(),
-                                              globalsc->bindings, index);
+    return ScopeStencil::createForGlobalScope(
+        cx, bce->compilationInfo, bce->compilationState, globalsc->scopeKind(),
+        globalsc->bindings, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -842,7 +839,7 @@ bool EmitterScope::enterGlobal(BytecodeEmitter* bce,
     for (ParserBindingIter bi(*globalsc->bindings); bi; bi++) {
       NameLocation loc = NameLocation::fromBinding(bi.kind(), bi.location());
       const ParserAtom* name =
-          bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name());
+          bce->compilationState.getParserAtomAt(bce->cx, bi.name());
       if (!putNameInCache(bce, name, loc)) {
         return false;
       }
@@ -880,7 +877,8 @@ bool EmitterScope::enterEval(BytecodeEmitter* bce, EvalSharedContext* evalsc) {
                                    ScopeIndex* index) {
     ScopeKind scopeKind =
         evalsc->strict() ? ScopeKind::StrictEval : ScopeKind::Eval;
-    return ScopeStencil::createForEvalScope(cx, bce->compilationInfo, scopeKind,
+    return ScopeStencil::createForEvalScope(cx, bce->compilationInfo,
+                                            bce->compilationState, scopeKind,
                                             evalsc->bindings, enclosing, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
@@ -929,8 +927,7 @@ bool EmitterScope::enterModule(BytecodeEmitter* bce,
 
       NameLocation loc = NameLocation::fromBinding(bi.kind(), bi.location());
       if (!putNameInCache(
-              bce,
-              bce->compilationInfo.stencil.getParserAtomAt(bce->cx, bi.name()),
+              bce, bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
               loc)) {
         return false;
       }
@@ -942,9 +939,7 @@ bool EmitterScope::enterModule(BytecodeEmitter* bce,
         }
 
         if (!tdzCache->noteTDZCheck(
-                bce,
-                bce->compilationInfo.stencil.getParserAtomAt(bce->cx,
-                                                             bi.name()),
+                bce, bce->compilationState.getParserAtomAt(bce->cx, bi.name()),
                 CheckTDZ)) {
           return false;
         }
@@ -972,7 +967,8 @@ bool EmitterScope::enterModule(BytecodeEmitter* bce,
                                      mozilla::Maybe<ScopeIndex> enclosing,
                                      ScopeIndex* index) {
     return ScopeStencil::createForModuleScope(
-        cx, bce->compilationInfo, modulesc->bindings, enclosing, index);
+        cx, bce->compilationInfo, bce->compilationState, modulesc->bindings,
+        enclosing, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -993,8 +989,8 @@ bool EmitterScope::enterWith(BytecodeEmitter* bce) {
 
   auto createScope = [bce](JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                            ScopeIndex* index) {
-    return ScopeStencil::createForWithScope(cx, bce->compilationInfo, enclosing,
-                                            index);
+    return ScopeStencil::createForWithScope(
+        cx, bce->compilationInfo, bce->compilationState, enclosing, index);
   };
   if (!internScopeCreationData(bce, createScope)) {
     return false;

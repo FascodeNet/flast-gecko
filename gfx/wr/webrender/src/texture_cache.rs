@@ -20,14 +20,19 @@ use crate::lru_cache::LRUCache;
 use crate::profiler::{self, TransactionProfile};
 use crate::render_backend::{FrameStamp, FrameId};
 use crate::resource_cache::{CacheItem, CachedImageData};
-use crate::atlas_allocator::*;
-use crate::slab_allocator::*;
+use crate::texture_pack::{
+    AllocatorList,
+    AllocId,
+    AtlasAllocatorList,
+    ShelfAllocator,
+    ShelfAllocatorOptions,
+    SlabAllocator, SlabAllocatorParameters,
+};
 use smallvec::SmallVec;
 use std::cell::Cell;
 use std::{cmp, mem};
 use std::rc::Rc;
 use euclid::size2;
-
 
 /// Information about which shader will use the entry.
 ///
@@ -63,6 +68,8 @@ enum EntryDetails {
         origin: DeviceIntPoint,
         /// ID of the allocation specific to its allocator.
         alloc_id: AllocId,
+        /// The allocated size in bytes for this entry.
+        allocated_size_in_bytes: usize,
     },
 }
 
@@ -89,7 +96,9 @@ pub enum CacheEntryMarker {}
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 struct CacheEntry {
-    /// Size the requested item, in device pixels.
+    /// Size of the requested item, in device pixels. Does not include any
+    /// padding for alignment that the allocator may have added to this entry's
+    /// allocation.
     size: DeviceIntSize,
     /// Details specific to standalone or shared items.
     details: EntryDetails,
@@ -235,7 +244,7 @@ struct SharedTextures {
     alpha8_linear: AllocatorList<ShelfAllocator, TextureParameters>,
     alpha16_linear: AllocatorList<SlabAllocator, TextureParameters>,
     color8_linear: AllocatorList<ShelfAllocator, TextureParameters>,
-    color8_glyphs: AllocatorList<BucketedShelfAllocator, TextureParameters>,
+    color8_glyphs: AllocatorList<ShelfAllocator, TextureParameters>,
 }
 
 impl SharedTextures {
@@ -1137,7 +1146,7 @@ impl TextureCache {
                 // This is a standalone texture allocation. Free it directly.
                 self.pending_updates.push_free(entry.texture_id);
             }
-            EntryDetails::Cache { origin, alloc_id, .. } => {
+            EntryDetails::Cache { origin, alloc_id, allocated_size_in_bytes } => {
                 let allocator_list = self.shared_textures.select(
                     entry.input_format,
                     entry.filter,
@@ -1146,12 +1155,7 @@ impl TextureCache {
 
                 allocator_list.deallocate(entry.texture_id, alloc_id);
 
-                let bpp = allocator_list
-                    .texture_parameters()
-                    .formats
-                    .internal
-                    .bytes_per_pixel();
-                self.shared_bytes_allocated -= (entry.size.area() * bpp) as usize;
+                self.shared_bytes_allocated -= allocated_size_in_bytes;
 
                 if self.debug_flags.contains(
                     DebugFlags::TEXTURE_CACHE_DBG |
@@ -1219,7 +1223,8 @@ impl TextureCache {
         };
 
         let bpp = formats.internal.bytes_per_pixel();
-        self.shared_bytes_allocated += (allocated_rect.size.area() * bpp) as usize;
+        let allocated_size_in_bytes = (allocated_rect.size.area() * bpp) as usize;
+        self.shared_bytes_allocated += allocated_size_in_bytes;
 
         CacheEntry {
             size: params.descriptor.size,
@@ -1228,6 +1233,7 @@ impl TextureCache {
             details: EntryDetails::Cache {
                 origin: allocated_rect.origin,
                 alloc_id,
+                allocated_size_in_bytes,
             },
             uv_rect_handle: GpuCacheHandle::new(),
             input_format: params.descriptor.format,

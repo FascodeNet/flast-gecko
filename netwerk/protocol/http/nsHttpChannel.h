@@ -334,6 +334,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   [[nodiscard]] nsresult OnBeforeConnect();
   [[nodiscard]] nsresult ContinueOnBeforeConnect(bool aShouldUpgrade,
                                                  nsresult aStatus);
+  nsresult MaybeUseHTTPSRRForUpgrade(bool aShouldUpgrade, nsresult aStatus);
+  void OnHTTPSRRAvailable(nsIDNSHTTPSSVCRecord* aRecord);
   void OnBeforeConnectContinue();
   [[nodiscard]] nsresult Connect();
   void SpeculativeConnect();
@@ -479,11 +481,6 @@ class nsHttpChannel final : public HttpBaseChannel,
    */
   [[nodiscard]] nsresult ProcessContentSignatureHeader(
       nsHttpResponseHead* aResponseHead);
-
-  /**
-   * A function that will, if the feature is enabled, send security reports.
-   */
-  void ProcessSecurityReport(nsresult status);
 
   /**
    * A function to process a single security header (STS or PKP), assumes
