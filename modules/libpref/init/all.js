@@ -172,11 +172,7 @@ pref("security.cert_pinning.max_max_age_seconds", 5184000);
 // 0: Disable CRLite entirely
 // 1: Enable and check revocations via CRLite, but only collect telemetry
 // 2: Enable and enforce revocations via CRLite
-#if defined(NIGHTLY_BUILD)
-pref("security.pki.crlite_mode", 2);
-#else
 pref("security.pki.crlite_mode", 1);
-#endif
 
 // Represents the expected certificate transparency log merge delay (including
 // the time to generate a CRLite filter). Currently 28 hours in seconds.
@@ -4354,11 +4350,6 @@ pref("media.default_volume", "1.0");
 
 // return the maximum number of cores that navigator.hardwareCurrency returns
 pref("dom.maxHardwareConcurrency", 16);
-
-// Shutdown the osfile worker if its no longer needed.
-#if !defined(RELEASE_OR_BETA)
-  pref("osfile.reset_worker_delay", 30000);
-#endif
 
 pref("dom.storageManager.prompt.testing", false);
 pref("dom.storageManager.prompt.testing.allow", false);
