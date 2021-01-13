@@ -238,6 +238,7 @@ struct MOZ_RAII CompilationState {
   // See corresponding CompilationStencil fields for desription.
   Vector<RegExpStencil, 0, js::SystemAllocPolicy> regExpData;
   Vector<ScriptStencil, 0, js::SystemAllocPolicy> scriptData;
+  Vector<ScriptStencilExtra, 0, js::SystemAllocPolicy> scriptExtra;
   Vector<ScopeStencil, 0, js::SystemAllocPolicy> scopeData;
   Vector<BaseParserScopeData*, 0, js::SystemAllocPolicy> scopeNames;
   Vector<TaggedScriptThingIndex, 0, js::SystemAllocPolicy> gcThingData;
@@ -317,6 +318,7 @@ struct CompilationStencil {
   // reserved for the top-level script. This top-level may or may not be a
   // function.
   mozilla::Span<ScriptStencil> scriptData;
+  mozilla::Span<ScriptStencilExtra> scriptExtra;
   SharedDataContainer sharedData;
   mozilla::Span<TaggedScriptThingIndex> gcThingData;
 
@@ -338,6 +340,13 @@ struct CompilationStencil {
   // was generated in original parse but not used by stencil.
   ParserAtomSpan parserAtomData;
 
+  // FunctionKey is an identifier that identifies a function within the source
+  // next in a reproducible way. It allows us to match delazification data with
+  // initial parse data, even across different runs. This is only used for
+  // delazification stencils.
+  using FunctionKey = uint64_t;
+  FunctionKey functionKey = {};
+
   CompilationStencil() = default;
 
   // We need a move-constructor to work with Rooted.
@@ -358,6 +367,13 @@ struct CompilationStencil {
     }
     return sharedData.prepareStorageFor(cx, nonLazyScriptCount, allScriptCount);
   }
+
+  static FunctionKey toFunctionKey(const SourceExtent& extent) {
+    return static_cast<FunctionKey>(extent.sourceStart) << 32 |
+           static_cast<FunctionKey>(extent.sourceEnd);
+  }
+
+  bool isInitialStencil() const { return !scriptExtra.empty(); }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump();
@@ -397,13 +413,18 @@ class ScriptStencilIterable {
   class ScriptAndFunction {
    public:
     const ScriptStencil& script;
+    const ScriptStencilExtra* scriptExtra;
     JSFunction* function;
     ScriptIndex index;
 
     ScriptAndFunction() = delete;
-    ScriptAndFunction(const ScriptStencil& script, JSFunction* function,
-                      ScriptIndex index)
-        : script(script), function(function), index(index) {}
+    ScriptAndFunction(const ScriptStencil& script,
+                      const ScriptStencilExtra* scriptExtra,
+                      JSFunction* function, ScriptIndex index)
+        : script(script),
+          scriptExtra(scriptExtra),
+          function(function),
+          index(index) {}
   };
 
   class Iterator {
@@ -456,10 +477,14 @@ class ScriptStencilIterable {
     }
 
     ScriptAndFunction operator*() {
-      const ScriptStencil& script = stencil_.scriptData[index_];
-
       ScriptIndex index = ScriptIndex(index_);
-      return ScriptAndFunction(script, gcOutput_.functions[index], index);
+      const ScriptStencil& script = stencil_.scriptData[index];
+      const ScriptStencilExtra* scriptExtra = nullptr;
+      if (index < stencil_.scriptExtra.size()) {
+        scriptExtra = &stencil_.scriptExtra[index];
+      }
+      return ScriptAndFunction(script, scriptExtra, gcOutput_.functions[index],
+                               index);
     }
 
     static Iterator end(const CompilationStencil& stencil,
@@ -561,12 +586,7 @@ struct CompilationInfo {
 // This contains the initial compilation, and a vector of delazification.
 struct CompilationInfoVector {
  private:
-  using FunctionKey = uint64_t;
   using ScriptIndexVector = Vector<ScriptIndex, 0, js::SystemAllocPolicy>;
-
-  static FunctionKey toFunctionKey(const SourceExtent& extent) {
-    return (FunctionKey)extent.sourceStart << 32 | extent.sourceEnd;
-  }
 
   MOZ_MUST_USE bool buildDelazificationIndices(JSContext* cx);
 

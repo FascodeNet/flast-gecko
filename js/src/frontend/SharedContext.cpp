@@ -387,13 +387,22 @@ ScriptStencil& FunctionBox::functionStencil() const {
   return compilationState_.scriptData[funcDataIndex_];
 }
 
+ScriptStencilExtra& FunctionBox::functionExtraStencil() const {
+  return compilationState_.scriptExtra[funcDataIndex_];
+}
+
+bool FunctionBox::hasFunctionExtraStencil() const {
+  return funcDataIndex_ < compilationState_.scriptExtra.length();
+}
+
 void SharedContext::copyScriptFields(ScriptStencil& script) {
   MOZ_ASSERT(!isScriptFieldCopiedToStencil);
-
-  script.immutableFlags = immutableFlags_;
-  script.extent = extent_;
-
   isScriptFieldCopiedToStencil = true;
+}
+
+void SharedContext::copyScriptExtraFields(ScriptStencilExtra& scriptExtra) {
+  scriptExtra.immutableFlags = immutableFlags_;
+  scriptExtra.extent = extent_;
 }
 
 void FunctionBox::finishScriptFlags() {
@@ -424,7 +433,6 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
     script.functionAtom = atom_->toIndex();
   }
   script.functionFlags = flags_;
-  script.nargs = nargs_;
   if (enclosingScopeIndex_) {
     script.setLazyFunctionEnclosingScopeIndex(*enclosingScopeIndex_);
   }
@@ -435,14 +443,20 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
   isFunctionFieldCopiedToStencil = true;
 }
 
+void FunctionBox::copyFunctionExtraFields(ScriptStencilExtra& scriptExtra) {
+  scriptExtra.nargs = nargs_;
+}
+
 void FunctionBox::copyUpdatedImmutableFlags() {
-  ScriptStencil& script = functionStencil();
-  script.immutableFlags = immutableFlags_;
+  if (hasFunctionExtraStencil()) {
+    ScriptStencilExtra& scriptExtra = functionExtraStencil();
+    scriptExtra.immutableFlags = immutableFlags_;
+  }
 }
 
 void FunctionBox::copyUpdatedExtent() {
-  ScriptStencil& script = functionStencil();
-  script.extent = extent_;
+  ScriptStencilExtra& scriptExtra = functionExtraStencil();
+  scriptExtra.extent = extent_;
 }
 
 void FunctionBox::copyUpdatedMemberInitializers() {

@@ -267,6 +267,13 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     return nullptr;
   }
 
+  if (!handler_.canSkipLazyInnerFunctions()) {
+    if (!compilationState_.scriptExtra.emplaceBack()) {
+      js::ReportOutOfMemory(cx_);
+      return nullptr;
+    }
+  }
+
   // This source extent will be further filled in during the remainder of parse.
   SourceExtent extent;
   extent.toStringStart = toStringStart;
@@ -1966,6 +1973,12 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
   funbox->copyFunctionFields(script);
   funbox->copyScriptFields(script);
 
+  if (!handler_.canSkipLazyInnerFunctions()) {
+    ScriptStencilExtra& scriptExtra = funbox->functionExtraStencil();
+    funbox->copyFunctionExtraFields(scriptExtra);
+    funbox->copyScriptExtraFields(scriptExtra);
+  }
+
   return true;
 }
 
@@ -1987,6 +2000,10 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   funbox->finishScriptFlags();
   funbox->copyFunctionFields(script);
   funbox->copyScriptFields(script);
+
+  ScriptStencilExtra& scriptExtra = funbox->functionExtraStencil();
+  funbox->copyFunctionExtraFields(scriptExtra);
+  funbox->copyScriptExtraFields(scriptExtra);
 
   // Elide nullptr sentinels from end of binding list. These are inserted for
   // each scope regardless of if any bindings are actually closed over.
@@ -3301,10 +3318,6 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
                                        syntaxKind)) {
     MOZ_ASSERT(directives == newDirectives);
     return null();
-  }
-
-  if (fun->isClassConstructor()) {
-    funbox->setCtorToStringEnd(fun->baseScript()->extent().toStringEnd);
   }
 
   if (!CheckParseTree(cx_, alloc_, funNode)) {
@@ -7420,8 +7433,12 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
       }
 
       TokenPos propNamePos(propNameOffset, pos().end);
-      initializerIfPrivate = Some(
-          privateMethodInitializer(propNamePos, propAtom, storedMethodAtom));
+      auto initializerNode =
+          privateMethodInitializer(propNamePos, propAtom, storedMethodAtom);
+      if (!initializerNode) {
+        return false;
+      }
+      initializerIfPrivate = Some(initializerNode);
     }
   }
 

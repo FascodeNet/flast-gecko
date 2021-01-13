@@ -514,6 +514,7 @@ main {
 
 .personalize-button {
   font-size: 12px;
+  font-weight: 600;
   border: 1px solid transparent;
   border-radius: 4px;
   background-color: var(--newtab-background-button-color);
@@ -1257,25 +1258,25 @@ main {
     align-items: center;
     display: flex;
     justify-content: center;
-    margin-bottom: 49px; }
+    margin-bottom: 48px; }
     .search-wrapper .logo-and-wordmark .logo {
       background: url("chrome://branding/content/about-logo.png") no-repeat center;
-      background-size: 96px;
+      background-size: 82px;
       display: inline-block;
-      height: 96px;
-      width: 96px; }
+      height: 82px;
+      width: 82px; }
       @media (min-resolution: 2x) {
         .search-wrapper .logo-and-wordmark .logo {
           background-image: url("chrome://branding/content/about-logo@2x.png"); } }
     .search-wrapper .logo-and-wordmark .wordmark {
       background: url("chrome://branding/content/firefox-wordmark.svg") no-repeat center center;
-      background-size: 172px;
+      background-size: 134px;
       -moz-context-properties: fill;
       display: inline-block;
       fill: var(--newtab-search-wordmark-color);
-      height: 96px;
-      margin-inline-start: 15px;
-      width: 172px; }
+      height: 82px;
+      margin-inline-start: 16px;
+      width: 134px; }
     @media (max-width: 609px) {
       .search-wrapper .logo-and-wordmark .logo {
         background-size: 64px;
@@ -1284,7 +1285,8 @@ main {
       .search-wrapper .logo-and-wordmark .wordmark {
         background-size: 100px;
         height: 64px;
-        width: 100px; } }
+        width: 100px;
+        margin-inline-start: 12px; } }
   .search-wrapper .search-inner-wrapper {
     cursor: default;
     display: flex;
@@ -1668,6 +1670,8 @@ main {
     display: grid;
     grid-template-rows: auto;
     grid-template-columns: auto 26px; }
+    .home-section .section > div {
+      grid-area: 1; }
     .home-section .section .title {
       grid-column: 1 / -1;
       margin: 0;
@@ -1709,7 +1713,6 @@ main {
       appearance: none;
       padding-block: 7px;
       padding-inline: 10px 13px;
-      margin-bottom: 10px;
       margin-inline-start: 2px;
       -moz-context-properties: fill;
       fill: var(--customize-menu-primary-text-color);
@@ -1780,6 +1783,8 @@ main {
       max-height: 78px; }
       .home-section .section .more-info-top-wrapper .more-information {
         top: -77px; }
+      .home-section .section .more-info-top-wrapper .check-wrapper {
+        margin-top: 10px; }
     .home-section .section .more-info-pocket-wrapper {
       max-height: 35px; }
       .home-section .section .more-info-pocket-wrapper .more-information {

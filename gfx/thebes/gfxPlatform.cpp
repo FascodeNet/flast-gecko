@@ -83,10 +83,6 @@
 #  include "mozilla/WindowsVersion.h"
 #endif
 
-#ifdef MOZ_WAYLAND
-#  include "mozilla/widget/nsWaylandDisplay.h"
-#endif
-
 #include "nsGkAtoms.h"
 #include "gfxPlatformFontList.h"
 #include "gfxContext.h"
@@ -776,6 +772,8 @@ WebRenderMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
         helper.Report(aReport.images, "resource-cache/images");
         helper.Report(aReport.rasterized_blobs,
                       "resource-cache/rasterized-blobs");
+        helper.Report(aReport.texture_cache_structures,
+                      "texture-cache/structures");
         helper.Report(aReport.shader_cache, "shader-cache");
         helper.Report(aReport.display_list, "display-list");
 
@@ -1350,10 +1348,6 @@ void gfxPlatform::ShutdownLayersIPC() {
     return;
   }
   sLayersIPCIsUp = false;
-
-#ifdef MOZ_WAYLAND
-  widget::WaylandDisplayShutdown();
-#endif
 
   if (XRE_IsContentProcess()) {
     gfx::VRManagerChild::ShutDown();

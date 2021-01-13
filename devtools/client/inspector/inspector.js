@@ -58,7 +58,7 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   "saveScreenshot",
-  "devtools/shared/screenshot/save"
+  "devtools/client/shared/save-screenshot"
 );
 loader.lazyRequireGetter(
   this,
@@ -1646,9 +1646,6 @@ Inspector.prototype = {
     }
     this._destroyed = true;
 
-    this.currentTarget.threadFront.off("paused", this.handleThreadPaused);
-    this.currentTarget.threadFront.off("resumed", this.handleThreadResumed);
-
     this.cancelUpdate();
 
     this.sidebar.destroy();
@@ -1910,7 +1907,9 @@ Inspector.prototype = {
       nodeActorID: this.selection.nodeFront.actorID,
       clipboard: clipboardEnabled,
     };
-    const screenshotFront = await this.currentTarget.getFront("screenshot");
+    const screenshotFront = await this.selection.nodeFront.targetFront.getFront(
+      "screenshot"
+    );
     const screenshot = await screenshotFront.capture(args);
     await saveScreenshot(this.panelWin, args, screenshot);
   },

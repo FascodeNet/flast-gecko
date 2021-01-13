@@ -577,8 +577,8 @@ enum class ShellGlobalKind {
 };
 
 static JSObject* NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
-                                 JSPrincipals* principals,
-                                 ShellGlobalKind kind);
+                                 JSPrincipals* principals, ShellGlobalKind kind,
+                                 bool immutablePrototype);
 
 /*
  * A toy WindowProxy class for the shell. This is intended for testing code
@@ -4340,7 +4340,8 @@ static void WorkerMain(WorkerInput* input) {
     SetStandardRealmOptions(realmOptions);
 
     RootedObject global(cx, NewGlobalObject(cx, realmOptions, nullptr,
-                                            ShellGlobalKind::WindowProxy));
+                                            ShellGlobalKind::WindowProxy,
+                                            /* immutablePrototype = */ true));
     if (!global) {
       break;
     }
@@ -5316,6 +5317,10 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     ReportOutOfMemory(cx);
     return false;
   }
+  if (!compilationState.scriptExtra.emplaceBack()) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
 
   js::frontend::ParseNode* pn;
   if (goal == frontend::ParseGoal::Script) {
@@ -5804,9 +5809,8 @@ static bool runOffThreadScript(JSContext* cx, unsigned argc, Value* vp) {
   JS::OffThreadToken* token = job->waitUntilDone(cx);
   MOZ_ASSERT(token);
 
-  DeleteOffThreadJob(cx, job);
-
   RootedScript script(cx, JS::FinishOffThreadScript(cx, token));
+  DeleteOffThreadJob(cx, job);
   if (!script) {
     return false;
   }
@@ -5894,9 +5898,8 @@ static bool FinishOffThreadModule(JSContext* cx, unsigned argc, Value* vp) {
   JS::OffThreadToken* token = job->waitUntilDone(cx);
   MOZ_ASSERT(token);
 
-  DeleteOffThreadJob(cx, job);
-
   RootedObject module(cx, JS::FinishOffThreadModule(cx, token));
+  DeleteOffThreadJob(cx, job);
   if (!module) {
     return false;
   }
@@ -6007,9 +6010,8 @@ static bool runOffThreadDecodedScript(JSContext* cx, unsigned argc, Value* vp) {
   JS::OffThreadToken* token = job->waitUntilDone(cx);
   MOZ_ASSERT(token);
 
-  DeleteOffThreadJob(cx, job);
-
   RootedScript script(cx, JS::FinishOffThreadScriptDecoder(cx, token));
+  DeleteOffThreadJob(cx, job);
   if (!script) {
     return false;
   }
@@ -6518,6 +6520,7 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
   JS::RealmCreationOptions& creationOptions = options.creationOptions();
   JS::RealmBehaviors& behaviors = options.behaviors();
   ShellGlobalKind kind = ShellGlobalKind::WindowProxy;
+  bool immutablePrototype = true;
 
   SetStandardRealmOptions(options);
 
@@ -6580,6 +6583,13 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
                            : ShellGlobalKind::GlobalObject;
     }
 
+    if (!JS_GetProperty(cx, opts, "immutablePrototype", &v)) {
+      return false;
+    }
+    if (v.isBoolean()) {
+      immutablePrototype = v.toBoolean();
+    }
+
     if (!JS_GetProperty(cx, opts, "enableWritableStreams", &v)) {
       return false;
     }
@@ -6639,7 +6649,8 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RootedObject global(cx, NewGlobalObject(cx, options, principals.get(), kind));
+  RootedObject global(cx, NewGlobalObject(cx, options, principals.get(), kind,
+                                          immutablePrototype));
   if (!global) {
     return false;
   }
@@ -9032,6 +9043,7 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "         (default false).\n"
 "      useWindowProxy: the global will be created with a WindowProxy attached. In this\n"
 "          case, the WindowProxy will be returned.\n"
+"      immutablePrototype: whether the global's prototype is immutable.\n"
 "      principal: if present, its value converted to a number must be an\n"
 "         integer that fits in 32 bits; use that as the new realm's\n"
 "         principal. Shell principals are toys, meant only for testing; one\n"
@@ -10073,8 +10085,8 @@ static const JSPropertySpec TestingProperties[] = {
     JS_PSG("timesAccessed", TimesAccessed, 0), JS_PS_END};
 
 static JSObject* NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
-                                 JSPrincipals* principals,
-                                 ShellGlobalKind kind) {
+                                 JSPrincipals* principals, ShellGlobalKind kind,
+                                 bool immutablePrototype) {
   RootedObject glob(cx,
                     JS_NewGlobalObject(cx, &global_class, principals,
                                        JS::DontFireOnNewGlobalHook, options));
@@ -10099,13 +10111,15 @@ static JSObject* NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
     }
 #endif
 
-    bool succeeded;
-    if (!JS_SetImmutablePrototype(cx, glob, &succeeded)) {
-      return nullptr;
+    if (immutablePrototype) {
+      bool succeeded;
+      if (!JS_SetImmutablePrototype(cx, glob, &succeeded)) {
+        return nullptr;
+      }
+      MOZ_ASSERT(succeeded,
+                 "a fresh, unexposed global object is always capable of "
+                 "having its [[Prototype]] be immutable");
     }
-    MOZ_ASSERT(succeeded,
-               "a fresh, unexposed global object is always capable of "
-               "having its [[Prototype]] be immutable");
 
 #ifdef JS_HAS_CTYPES
     if (!fuzzingSafe && !JS::InitCTypesClass(cx, glob)) {
@@ -11102,7 +11116,8 @@ static int Shell(JSContext* cx, OptionParser* op, char** envp) {
   JS::RealmOptions options;
   SetStandardRealmOptions(options);
   RootedObject glob(
-      cx, NewGlobalObject(cx, options, nullptr, ShellGlobalKind::WindowProxy));
+      cx, NewGlobalObject(cx, options, nullptr, ShellGlobalKind::WindowProxy,
+                          /* immutablePrototype = */ true));
   if (!glob) {
     return 1;
   }

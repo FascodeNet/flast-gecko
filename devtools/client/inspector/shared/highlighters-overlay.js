@@ -1047,7 +1047,6 @@ class HighlightersOverlay {
       ...options,
       trigger,
     });
-    this._toggleRuleViewIcon(node, true, ".ruleview-grid");
 
     try {
       // Save grid highlighter state.
@@ -1199,8 +1198,6 @@ class HighlightersOverlay {
     // It's possible we just destroyed the grid highlighter for a node which also serves
     // as a subgrid's parent grid. If so, restore the parent grid highlighter.
     await this.restoreParentGridHighlighter(node);
-
-    this._toggleRuleViewIcon(node, false, ".ruleview-grid");
 
     // Emit the NodeFront of the grid container element that the grid highlighter was
     // hidden for.
@@ -1466,41 +1463,6 @@ class HighlightersOverlay {
   }
 
   /**
-   * Toggle all the icons with the given selector in the rule view if the current
-   * inspector selection is the highlighted node.
-   *
-   * @param  {NodeFront} node
-   *         The NodeFront of the element with a shape to highlight.
-   * @param  {Boolean} active
-   *         Whether or not the shape icon should be active.
-   * @param  {String} selector
-   *         The selector of the rule view icon to toggle.
-   */
-  _toggleRuleViewIcon(node, active, selector) {
-    const ruleViewEl = this.inspector.getPanel("ruleview").view.element;
-
-    if (this.inspector.selection.nodeFront !== node) {
-      if (selector === ".ruleview-grid") {
-        for (const icon of ruleViewEl.querySelectorAll(selector)) {
-          if (
-            this.canGridHighlighterToggle(this.inspector.selection.nodeFront)
-          ) {
-            icon.removeAttribute("disabled");
-          } else {
-            icon.setAttribute("disabled", true);
-          }
-        }
-      }
-
-      return;
-    }
-
-    for (const icon of ruleViewEl.querySelectorAll(selector)) {
-      icon.classList.toggle("active", active);
-    }
-  }
-
-  /**
    * Toggle the class "active" on the given shape point in the rule view if the current
    * inspector selection is highlighted by the shapes highlighter.
    *
@@ -1585,17 +1547,6 @@ class HighlightersOverlay {
   }
 
   /**
-   * Is the current clicked node a grid display property value in the
-   * rule-view.
-   *
-   * @param  {DOMNode} node
-   * @return {Boolean}
-   */
-  _isRuleViewDisplayGrid(node) {
-    return this.isRuleView(node) && node.classList.contains("ruleview-grid");
-  }
-
-  /**
    * Does the current clicked node have the shapes highlighter toggle in the
    * rule-view.
    *
@@ -1655,11 +1606,6 @@ class HighlightersOverlay {
   }
 
   onClick(event) {
-    if (this._isRuleViewDisplayGrid(event.target)) {
-      event.stopPropagation();
-      this.toggleGridHighlighter(this.inspector.selection.nodeFront, "rule");
-    }
-
     if (this._isRuleViewShapeSwatch(event.target)) {
       event.stopPropagation();
 

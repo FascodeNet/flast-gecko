@@ -527,7 +527,6 @@ void RenderCompositorNativeOGL::Bind(wr::NativeTileId aId,
 
   Maybe<GLuint> fbo = mCurrentlyBoundNativeLayer->NextSurfaceAsFramebuffer(
       validRect, dirtyRect, true);
-  MOZ_RELEASE_ASSERT(fbo);  // TODO: make fallible
 
   *aFboId = *fbo;
   *aOffset = wr::DeviceIntPoint{0, 0};
@@ -571,7 +570,8 @@ bool RenderCompositorNativeSWGL::InitDefaultFramebuffer(
     if (!MapNativeLayer(mNativeLayerForEntireWindow, aBounds, aBounds)) {
       return false;
     }
-    wr_swgl_init_default_framebuffer(mContext, aBounds.width, aBounds.height,
+    wr_swgl_init_default_framebuffer(mContext, aBounds.x, aBounds.y,
+                                     aBounds.width, aBounds.height,
                                      mLayerStride, mLayerValidRectData);
   }
   return true;

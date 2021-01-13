@@ -401,6 +401,39 @@ browser.engagement:
     record_in_processes:
       - 'main'
 
+  session_time_including_suspend:
+    bug_numbers:
+      - 1205985
+    description: >
+      The duration of the session in milliseconds, including the time the device
+      was suspended.
+    expires: never
+    kind: uint
+    notification_emails:
+      - padenot@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  session_time_excluding_suspend:
+    bug_numbers:
+      - 1205985
+    description: >
+      The duration of the session in milliseconds, excluding the time the device
+      was suspended.
+    expires: never
+    kind: uint
+    notification_emails:
+      - padenot@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+
 # The following section contains the browser engagement scalars.
 browser.engagement.navigation:
   urlbar:
@@ -3248,23 +3281,6 @@ telemetry:
     record_in_processes:
       - 'main'
 
-  process_creation_timestamp_inconsistent:
-    bug_numbers:
-      - 1514392
-    description: >
-      The number of times ProcessCreation saw an inconsistent value.
-    expires: "72"
-    kind: uint
-    notification_emails:
-      - jrediger@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
-    record_in_processes:
-      - 'main'
-      - 'content'
-
   environment_didnt_change:
     bug_numbers:
       - 1483477
@@ -3442,10 +3458,11 @@ gfx.canvas.remote:
   activated:
     bug_numbers:
       - 1641722
+      - 1672582
     description: >
       Number of times remote canvas 2D has been activated.
     kind: uint
-    expires: "85"
+    expires: "91"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3458,10 +3475,11 @@ gfx.canvas.remote:
   deactivated_no_device:
     bug_numbers:
       - 1641722
+      - 1672582
     description: >
       Number of times remote canvas 2D has been deactivated due to device creation failure.
     kind: uint
-    expires: "85"
+    expires: "91"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3474,10 +3492,11 @@ gfx.canvas.remote:
   deactivated_bad_stream:
     bug_numbers:
       - 1641722
+      - 1672582
     description: >
       Number of times remote canvas 2D has been deactivated due to a stream read failure.
     kind: uint
-    expires: "85"
+    expires: "91"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com

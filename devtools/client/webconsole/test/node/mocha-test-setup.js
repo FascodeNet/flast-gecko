@@ -55,7 +55,7 @@ global.loader = {
       "devtools/client/shared/keycodes",
       "devtools/client/shared/sourceeditor/editor",
       "devtools/client/shared/telemetry",
-      "devtools/shared/screenshot/save",
+      "devtools/client/shared/save-screenshot",
       "devtools/client/shared/focus",
     ];
     if (!excluded.includes(path)) {
@@ -156,6 +156,10 @@ requireHacker.global_hook("default", (path, module) => {
     };`,
     "devtools/shared/async-storage": () =>
       getModule("devtools/client/webconsole/test/node/fixtures/async-storage"),
+    "devtools/shared/generate-uuid": () =>
+      getModule(
+        "devtools/client/shared/test-helpers/jest-fixtures/generate-uuid"
+      ),
   };
 
   if (paths.hasOwnProperty(path)) {

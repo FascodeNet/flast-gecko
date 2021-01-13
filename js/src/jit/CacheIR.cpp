@@ -224,11 +224,8 @@ IRGenerator::IRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
 GetPropIRGenerator::GetPropIRGenerator(JSContext* cx, HandleScript script,
                                        jsbytecode* pc, ICState::Mode mode,
                                        CacheKind cacheKind, HandleValue val,
-                                       HandleValue idVal, HandleValue receiver)
-    : IRGenerator(cx, script, pc, cacheKind, mode),
-      val_(val),
-      idVal_(idVal),
-      receiver_(receiver) {}
+                                       HandleValue idVal)
+    : IRGenerator(cx, script, pc, cacheKind, mode), val_(val), idVal_(idVal) {}
 
 static void EmitLoadSlotResult(CacheIRWriter& writer, ObjOperandId holderId,
                                NativeObject* holder, Shape* shape) {
@@ -2346,7 +2343,8 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayNonInt32Index(
   // false.
   bool allowDoubleForUint32 = false;
   int32_t indexInt32;
-  if (mozilla::NumberEqualsInt32(idVal_.toNumber(), &indexInt32)) {
+  if (mozilla::NumberEqualsInt32(idVal_.toNumber(), &indexInt32) &&
+      indexInt32 >= 0) {
     uint32_t index = uint32_t(indexInt32);
     allowDoubleForUint32 = AllowDoubleForUint32Array(tarr, index);
   }
@@ -2677,8 +2675,6 @@ AttachDecision GetNameIRGenerator::tryAttachEnvironmentName(ObjOperandId objId,
       return AttachDecision::NoAction;
     }
 
-    MOZ_ASSERT(!env->hasUncacheableProto());
-
     // Check for an 'own' property on the env. There is no need to
     // check the prototype as non-with scopes do not inherit properties
     // from any prototype.
@@ -2817,8 +2813,6 @@ AttachDecision BindNameIRGenerator::tryAttachEnvironmentName(ObjOperandId objId,
     if (env->is<WithEnvironmentObject>()) {
       return AttachDecision::NoAction;
     }
-
-    MOZ_ASSERT(!env->hasUncacheableProto());
 
     // When we reach an unqualified variables object (like the global) we
     // have to stop looking and return that object.
@@ -6345,8 +6339,11 @@ AttachDecision CallIRGenerator::tryAttachMathFloor(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // Use an indirect truncation to inform the optimizer it needs to preserve
+    // a bailout when the input can't be represented as an int32, even if the
+    // final result is fully truncated.
     Int32OperandId intId = writer.guardToInt32(argumentId);
-    writer.loadInt32Result(intId);
+    writer.indirectTruncateInt32Result(intId);
   } else {
     NumberOperandId numberId = writer.guardIsNumber(argumentId);
 
@@ -6386,8 +6383,11 @@ AttachDecision CallIRGenerator::tryAttachMathCeil(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // Use an indirect truncation to inform the optimizer it needs to preserve
+    // a bailout when the input can't be represented as an int32, even if the
+    // final result is fully truncated.
     Int32OperandId intId = writer.guardToInt32(argumentId);
-    writer.loadInt32Result(intId);
+    writer.indirectTruncateInt32Result(intId);
   } else {
     NumberOperandId numberId = writer.guardIsNumber(argumentId);
 
@@ -6427,6 +6427,8 @@ AttachDecision CallIRGenerator::tryAttachMathTrunc(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // We don't need an indirect truncation barrier here, because Math.trunc
+    // always truncates, but never rounds its input away from zero.
     Int32OperandId intId = writer.guardToInt32(argumentId);
     writer.loadInt32Result(intId);
   } else {
@@ -6468,8 +6470,11 @@ AttachDecision CallIRGenerator::tryAttachMathRound(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // Use an indirect truncation to inform the optimizer it needs to preserve
+    // a bailout when the input can't be represented as an int32, even if the
+    // final result is fully truncated.
     Int32OperandId intId = writer.guardToInt32(argumentId);
-    writer.loadInt32Result(intId);
+    writer.indirectTruncateInt32Result(intId);
   } else {
     NumberOperandId numberId = writer.guardIsNumber(argumentId);
 

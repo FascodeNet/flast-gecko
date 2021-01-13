@@ -394,29 +394,45 @@ nsresult ScriptLoader::CheckContentPolicy(Document* aDocument,
 }
 
 /* static */
-bool ScriptLoader::IsAboutPageLoadingChromeURI(ScriptLoadRequest* aRequest) {
-  // if we are not dealing with a contentPrincipal it can not be a
-  // Principal with a scheme of about: and there is nothing left to do
-  if (!aRequest->TriggeringPrincipal()->GetIsContentPrincipal()) {
-    return false;
-  }
-  if (!aRequest->TriggeringPrincipal()->SchemeIs("about")) {
-    return false;
-  }
-  // if the triggering uri is not of scheme about:, there is nothing to do
-
-  // if the about: page is linkable from content, there is nothing to do
-  uint32_t aboutModuleFlags = 0;
-  nsresult rv =
-      aRequest->TriggeringPrincipal()->GetAboutModuleFlags(&aboutModuleFlags);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  if (aboutModuleFlags & nsIAboutModule::MAKE_LINKABLE) {
-    return false;
-  }
-
+bool ScriptLoader::IsAboutPageLoadingChromeURI(ScriptLoadRequest* aRequest,
+                                               Document* aDocument) {
   // if the uri to be loaded is not of scheme chrome:, there is nothing to do.
   if (!aRequest->mURI->SchemeIs("chrome")) {
+    return false;
+  }
+
+  // we can either get here with a regular contentPrincipal or with a
+  // NullPrincipal in case we are showing an error page in a sandboxed iframe.
+  // In either case if the about: page is linkable from content, there is
+  // nothing to do.
+  uint32_t aboutModuleFlags = 0;
+  nsresult rv = NS_OK;
+
+  nsCOMPtr<nsIPrincipal> triggeringPrincipal = aRequest->TriggeringPrincipal();
+  if (triggeringPrincipal->GetIsContentPrincipal()) {
+    if (!triggeringPrincipal->SchemeIs("about")) {
+      return false;
+    }
+    rv = triggeringPrincipal->GetAboutModuleFlags(&aboutModuleFlags);
+    NS_ENSURE_SUCCESS(rv, false);
+  } else if (triggeringPrincipal->GetIsNullPrincipal()) {
+    nsCOMPtr<nsIURI> docURI = aDocument->GetDocumentURI();
+    if (!docURI->SchemeIs("about")) {
+      return false;
+    }
+
+    nsCOMPtr<nsIAboutModule> aboutModule;
+    rv = NS_GetAboutModule(docURI, getter_AddRefs(aboutModule));
+    if (NS_FAILED(rv) || !aboutModule) {
+      return false;
+    }
+    rv = aboutModule->GetURIFlags(docURI, &aboutModuleFlags);
+    NS_ENSURE_SUCCESS(rv, false);
+  } else {
+    return false;
+  }
+
+  if (aboutModuleFlags & nsIAboutModule::MAKE_LINKABLE) {
     return false;
   }
 
@@ -1405,7 +1421,7 @@ nsresult ScriptLoader::StartLoad(ScriptLoadRequest* aRequest) {
     // According to the spec, module scripts have different behaviour to classic
     // scripts and always use CORS. Only exception: Non linkable about: pages
     // which load local module scripts.
-    if (IsAboutPageLoadingChromeURI(aRequest)) {
+    if (IsAboutPageLoadingChromeURI(aRequest, mDocument)) {
       securityFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL;
     } else {
       securityFlags = nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
@@ -3021,7 +3037,13 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
       JS::Rooted<JS::Value> rval(cx);
 
       rv = nsJSUtils::ModuleEvaluate(cx, module, &rval);
-      MOZ_ASSERT(NS_FAILED(rv) == aes.HasException());
+
+      if (NS_SUCCEEDED(rv)) {
+        // If we have an infinite loop in a module, which is stopped by the
+        // user, the module evaluation will fail, but we will not have an
+        // AutoEntryScript exception.
+        MOZ_ASSERT(!aes.HasException());
+      }
 
       if (NS_FAILED(rv)) {
         LOG(("ScriptLoadRequest (%p):   evaluation failed", aRequest));
@@ -3036,14 +3058,22 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
         }
       } else {
         // Path for when Top Level Await is enabled
-        JS::Rooted<JSObject*> aEvaluationPromise(cx, &rval.toObject());
+        JS::Rooted<JSObject*> aEvaluationPromise(cx);
+        if (NS_SUCCEEDED(rv)) {
+          // If the user cancels the evaluation on an infinite loop, we need
+          // to skip this step. In that case, ModuleEvaluate will not return a
+          // promise, rval will be undefined. We should treat it as a failed
+          // evaluation, and reject appropriately.
+          aEvaluationPromise.set(&rval.toObject());
+        }
         if (request->IsDynamicImport()) {
           FinishDynamicImport(cx, request, rv, aEvaluationPromise);
         } else {
           // If this is not a dynamic import, and if the promise is rejected,
           // the value is unwrapped from the promise value.
           if (!JS::ThrowOnModuleEvaluationFailure(cx, aEvaluationPromise)) {
-            LOG(("ScriptLoadRequest (%p):   evaluation failed", aRequest));
+            LOG(("ScriptLoadRequest (%p):   evaluation failed on throw",
+                 aRequest));
             // For a dynamic import, the promise is rejected.  Otherwise an
             // error is either reported by AutoEntryScript.
             rv = NS_OK;
@@ -3645,7 +3675,18 @@ nsresult ScriptLoader::OnStreamComplete(
     // hash in case we are going to save the bytecode of this script in the
     // cache.
     if (aRequest->IsSource()) {
-      rv = SaveSRIHash(aRequest, aSRIDataVerifier);
+      uint32_t sriLength = 0;
+      rv = SaveSRIHash(aRequest, aSRIDataVerifier, &sriLength);
+      MOZ_ASSERT_IF(NS_SUCCEEDED(rv),
+                    aRequest->mScriptBytecode.length() == sriLength);
+
+      aRequest->mBytecodeOffset = JS::AlignTranscodingBytecodeOffset(sriLength);
+      if (aRequest->mBytecodeOffset != sriLength) {
+        // We need extra padding after SRI hash.
+        if (!aRequest->mScriptBytecode.resize(aRequest->mBytecodeOffset)) {
+          return NS_ERROR_OUT_OF_MEMORY;
+        }
+      }
     }
 
     if (NS_SUCCEEDED(rv)) {
@@ -3707,43 +3748,51 @@ nsresult ScriptLoader::VerifySRI(ScriptLoadRequest* aRequest,
   return rv;
 }
 
-nsresult ScriptLoader::SaveSRIHash(
-    ScriptLoadRequest* aRequest, SRICheckDataVerifier* aSRIDataVerifier) const {
+nsresult ScriptLoader::SaveSRIHash(ScriptLoadRequest* aRequest,
+                                   SRICheckDataVerifier* aSRIDataVerifier,
+                                   uint32_t* sriLength) const {
   MOZ_ASSERT(aRequest->IsSource());
   MOZ_ASSERT(aRequest->mScriptBytecode.empty());
+
+  uint32_t len;
 
   // If the integrity metadata does not correspond to a valid hash function,
   // IsComplete would be false.
   if (!aRequest->mIntegrity.IsEmpty() && aSRIDataVerifier->IsComplete()) {
+    MOZ_ASSERT(aRequest->mScriptBytecode.length() == 0);
+
     // Encode the SRI computed hash.
-    uint32_t len = aSRIDataVerifier->DataSummaryLength();
-    if (!aRequest->mScriptBytecode.growBy(len)) {
+    len = aSRIDataVerifier->DataSummaryLength();
+
+    if (!aRequest->mScriptBytecode.resize(len)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-    aRequest->mBytecodeOffset = len;
 
     DebugOnly<nsresult> res = aSRIDataVerifier->ExportDataSummary(
-        aRequest->mScriptBytecode.length(), aRequest->mScriptBytecode.begin());
+        len, aRequest->mScriptBytecode.begin());
     MOZ_ASSERT(NS_SUCCEEDED(res));
   } else {
+    MOZ_ASSERT(aRequest->mScriptBytecode.length() == 0);
+
     // Encode a dummy SRI hash.
-    uint32_t len = SRICheckDataVerifier::EmptyDataSummaryLength();
-    if (!aRequest->mScriptBytecode.growBy(len)) {
+    len = SRICheckDataVerifier::EmptyDataSummaryLength();
+
+    if (!aRequest->mScriptBytecode.resize(len)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-    aRequest->mBytecodeOffset = len;
 
     DebugOnly<nsresult> res = SRICheckDataVerifier::ExportEmptyDataSummary(
-        aRequest->mScriptBytecode.length(), aRequest->mScriptBytecode.begin());
+        len, aRequest->mScriptBytecode.begin());
     MOZ_ASSERT(NS_SUCCEEDED(res));
   }
 
   // Verify that the exported and predicted length correspond.
   mozilla::DebugOnly<uint32_t> srilen;
   MOZ_ASSERT(NS_SUCCEEDED(SRICheckDataVerifier::DataSummaryLength(
-      aRequest->mScriptBytecode.length(), aRequest->mScriptBytecode.begin(),
-      &srilen)));
-  MOZ_ASSERT(srilen == aRequest->mBytecodeOffset);
+      len, aRequest->mScriptBytecode.begin(), &srilen)));
+  MOZ_ASSERT(srilen == len);
+
+  *sriLength = len;
 
   return NS_OK;
 }

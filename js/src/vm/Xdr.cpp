@@ -711,6 +711,11 @@ XDRResult XDRIncrementalEncoder::linearize(JS::TranscodeBuffer& buffer) {
 }
 
 XDRResult XDRIncrementalStencilEncoder::linearize(JS::TranscodeBuffer& buffer) {
+  // NOTE: If buffer is empty, buffer.begin() doesn't point valid buffer.
+  MOZ_ASSERT_IF(!buffer.empty(),
+                JS::IsTranscodingBytecodeAligned(buffer.begin()));
+  MOZ_ASSERT(JS::IsTranscodingBytecodeOffsetAligned(buffer.length()));
+
   switchToHeaderBuf();
 
   uint32_t nchunks = encodedFunctions_.count() + 1;
@@ -782,17 +787,12 @@ XDRResult XDRIncrementalStencilEncoder::codeStencils(
   return Ok();
 }
 
-/* static */
-XDRIncrementalStencilEncoder::FunctionKey
-XDRIncrementalStencilEncoder::toFunctionKey(const SourceExtent& extent) {
-  return (FunctionKey)extent.sourceStart << 32 | extent.sourceEnd;
-}
-
 XDRResultT<bool> XDRIncrementalStencilEncoder::checkAlreadyCoded(
     const frontend::CompilationStencil& stencil) {
-  auto key = toFunctionKey(
-      stencil.scriptData[frontend::CompilationInfo::TopLevelIndex].extent);
+  static_assert(std::is_same_v<frontend::CompilationStencil::FunctionKey,
+                               XDRIncrementalStencilEncoder::FunctionKey>);
 
+  auto key = stencil.functionKey;
   auto p = encodedFunctions_.lookupForAdd(key);
   if (p) {
     return true;

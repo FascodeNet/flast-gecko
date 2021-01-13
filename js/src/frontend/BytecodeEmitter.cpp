@@ -4496,6 +4496,8 @@ bool BytecodeEmitter::emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
 }
 
 bool BytecodeEmitter::emitShortCircuitAssignment(AssignmentNode* node) {
+  TDZCheckCache tdzCache(this);
+
   JSOp op;
   switch (node->getKind()) {
     case ParseNodeKind::CoalesceAssignExpr:
@@ -11298,15 +11300,11 @@ bool BytecodeEmitter::intoScriptStencil(ScriptIndex scriptIndex) {
     FunctionBox* funbox = sc->asFunctionBox();
     MOZ_ASSERT(&script == &funbox->functionStencil());
     funbox->copyUpdatedImmutableFlags();
-    MOZ_ASSERT(funbox->extent().sourceStart == script.extent.sourceStart);
-    MOZ_ASSERT(funbox->extent().sourceEnd == script.extent.sourceEnd);
-    MOZ_ASSERT(funbox->extent().toStringStart == script.extent.toStringStart);
-    MOZ_ASSERT(funbox->extent().toStringEnd == script.extent.toStringEnd);
-    MOZ_ASSERT(funbox->extent().lineno == script.extent.lineno);
-    MOZ_ASSERT(funbox->extent().column == script.extent.column);
     MOZ_ASSERT(script.isFunction());
   } else {
+    ScriptStencilExtra& scriptExtra = compilationState.scriptExtra[scriptIndex];
     sc->copyScriptFields(script);
+    sc->copyScriptExtraFields(scriptExtra);
   }
 
   return true;
