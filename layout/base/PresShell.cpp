@@ -30,6 +30,7 @@
 #include "mozilla/RangeUtils.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_font.h"
@@ -2467,7 +2468,8 @@ PresShell::CompleteMove(bool aForward, bool aExtend) {
       aExtend ? nsFrameSelection::FocusMode::kExtendSelection
               : nsFrameSelection::FocusMode::kCollapseToNewPoint;
   frameSelection->HandleClick(
-      pos.mResultContent, pos.mContentOffset, pos.mContentOffset, focusMode,
+      MOZ_KnownLive(pos.mResultContent) /* bug 1636889 */, pos.mContentOffset,
+      pos.mContentOffset, focusMode,
       aForward ? CARET_ASSOCIATE_AFTER : CARET_ASSOCIATE_BEFORE);
   if (limiter) {
     // HandleClick resets ancestorLimiter, so set it again.
@@ -6876,12 +6878,12 @@ nsresult PresShell::EventHandler::HandleEvent(nsIFrame* aFrameForPresShell,
 
   if (MaybeHandleEventWithAccessibleCaret(aFrameForPresShell, aGUIEvent,
                                           aEventStatus)) {
-    // Probably handled by AccessibleCaretEventHub.
+    // Handled by AccessibleCaretEventHub.
     return NS_OK;
   }
 
   if (MaybeDiscardEvent(aGUIEvent)) {
-    // Nobody cannot handle the event for now.
+    // Cannot handle the event for now.
     return NS_OK;
   }
 

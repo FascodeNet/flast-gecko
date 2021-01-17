@@ -120,6 +120,7 @@ SizeComputationInput::SizeComputationInput(
     nsIFrame* aFrame, gfxContext* aRenderingContext,
     WritingMode aContainingBlockWritingMode, nscoord aContainingBlockISize)
     : SizeComputationInput(aFrame, aRenderingContext) {
+  MOZ_ASSERT(!mFrame->IsTableColFrame());
   InitOffsets(aContainingBlockWritingMode, aContainingBlockISize,
               mFrame->Type());
 }
@@ -346,7 +347,8 @@ void ReflowInput::Init(nsPresContext* aPresContext,
     return;
   }
 
-  InitFrameType(type);
+  mFlags.mIsReplaced = mFrame->IsFrameOfType(nsIFrame::eReplaced) ||
+                       mFrame->IsFrameOfType(nsIFrame::eReplacedContainsBlock);
   InitConstraints(aPresContext, aContainingBlockSize, aBorder, aPadding, type);
 
   InitResizeFlags(aPresContext, type);
@@ -422,7 +424,7 @@ void ReflowInput::Init(nsPresContext* aPresContext,
     AvailableBSize() = NS_UNCONSTRAINEDSIZE;
   }
 
-  LAYOUT_WARN_IF_FALSE((mFrameType == NS_CSS_FRAME_TYPE_INLINE &&
+  LAYOUT_WARN_IF_FALSE((mStyleDisplay->IsInlineOutsideStyle() &&
                         !mFrame->IsFrameOfType(nsIFrame::eReplaced)) ||
                            type == LayoutFrameType::Text ||
                            ComputedISize() != NS_UNCONSTRAINEDSIZE,
@@ -753,83 +755,6 @@ nscoord ReflowInput::GetContainingBlockContentISize(
   return mCBReflowInput->GetWritingMode().IsOrthogonalTo(aWritingMode)
              ? mCBReflowInput->ComputedBSize()
              : mCBReflowInput->ComputedISize();
-}
-
-void ReflowInput::InitFrameType(LayoutFrameType aFrameType) {
-  const nsStyleDisplay* disp = mStyleDisplay;
-  nsCSSFrameType frameType;
-
-  DISPLAY_INIT_TYPE(mFrame, this);
-
-  if (aFrameType == LayoutFrameType::Table) {
-    mFrameType = NS_CSS_FRAME_TYPE_BLOCK;
-    return;
-  }
-
-  NS_ASSERTION(mFrame->StyleDisplay()->IsAbsolutelyPositionedStyle() ==
-                   disp->IsAbsolutelyPositionedStyle(),
-               "Unexpected position style");
-  NS_ASSERTION(
-      mFrame->StyleDisplay()->IsFloatingStyle() == disp->IsFloatingStyle(),
-      "Unexpected float style");
-  if (mFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW)) {
-    if (disp->IsAbsolutelyPositioned(mFrame)) {
-      frameType = NS_CSS_FRAME_TYPE_ABSOLUTE;
-      // XXXfr hack for making frames behave properly when in overflow container
-      // lists
-      //      see bug 154892; need to revisit later
-      if (mFrame->GetPrevInFlow()) frameType = NS_CSS_FRAME_TYPE_BLOCK;
-    } else if (disp->IsFloating(mFrame)) {
-      frameType = NS_CSS_FRAME_TYPE_FLOATING;
-    } else {
-      NS_ASSERTION(disp->mDisplay == StyleDisplay::MozPopup,
-                   "unknown out of flow frame type");
-      frameType = NS_CSS_FRAME_TYPE_UNKNOWN;
-    }
-  } else {
-    switch (disp->DisplayOutside()) {
-      case StyleDisplayOutside::Block:
-      case StyleDisplayOutside::TableCaption:
-        frameType = NS_CSS_FRAME_TYPE_BLOCK;
-        break;
-
-      case StyleDisplayOutside::Inline:
-        frameType = NS_CSS_FRAME_TYPE_INLINE;
-        break;
-
-      case StyleDisplayOutside::InternalTable:
-        frameType = NS_CSS_FRAME_TYPE_INTERNAL_TABLE;
-        break;
-
-      case StyleDisplayOutside::InternalRuby:
-        switch (disp->DisplayInside()) {
-          case StyleDisplayInside::RubyTextContainer:
-            frameType = NS_CSS_FRAME_TYPE_BLOCK;
-            break;
-          case StyleDisplayInside::RubyBase:
-          case StyleDisplayInside::RubyText:
-          case StyleDisplayInside::RubyBaseContainer:
-            frameType = NS_CSS_FRAME_TYPE_INLINE;
-            break;
-          default:
-            MOZ_ASSERT_UNREACHABLE("unexpected inside for InternalRuby");
-        }
-        break;
-
-      default:
-        frameType = NS_CSS_FRAME_TYPE_UNKNOWN;
-        break;
-    }
-  }
-
-  // See if the frame is replaced
-  if (mFrame->IsFrameOfType(nsIFrame::eReplacedContainsBlock)) {
-    frameType = NS_FRAME_REPLACED_CONTAINS_BLOCK(frameType);
-  } else if (mFrame->IsFrameOfType(nsIFrame::eReplaced)) {
-    frameType = NS_FRAME_REPLACED(frameType);
-  }
-
-  mFrameType = frameType;
 }
 
 /* static */
@@ -1212,7 +1137,7 @@ void ReflowInput::CalculateHypotheticalPosition(
   const auto& styleISize = mStylePosition->ISize(wm);
   bool isAutoISize = styleISize.IsAuto();
   Maybe<nsSize> intrinsicSize;
-  if (NS_FRAME_IS_REPLACED(mFrameType) && isAutoISize) {
+  if (mFlags.mIsReplaced && isAutoISize) {
     // See if we can get the intrinsic size of the element
     intrinsicSize = mFrame->GetIntrinsicSize().ToSize();
   }
@@ -1221,8 +1146,7 @@ void ReflowInput::CalculateHypotheticalPosition(
   // the element had been in the flow
   nscoord boxISize;
   bool knowBoxISize = false;
-  if (mStyleDisplay->IsOriginalDisplayInlineOutside() &&
-      !NS_FRAME_IS_REPLACED(mFrameType)) {
+  if (mStyleDisplay->IsOriginalDisplayInlineOutside() && !mFlags.mIsReplaced) {
     // For non-replaced inline-level elements the 'inline size' property
     // doesn't apply, so we don't know what the inline size would have
     // been without reflowing it
@@ -1238,7 +1162,7 @@ void ReflowInput::CalculateHypotheticalPosition(
     CalculateBorderPaddingMargin(eLogicalAxisInline, blockContentSize.ISize(wm),
                                  &insideBoxSizing, &outsideBoxSizing);
 
-    if (NS_FRAME_IS_REPLACED(mFrameType) && isAutoISize) {
+    if (mFlags.mIsReplaced && isAutoISize) {
       // It's a replaced element with an 'auto' inline size so the box
       // inline size is its intrinsic size plus any border/padding/margin
       if (intrinsicSize) {
@@ -1426,7 +1350,7 @@ void ReflowInput::CalculateHypotheticalPosition(
     nscoord boxBSize;
     const auto& styleBSize = mStylePosition->BSize(wm);
     if (styleBSize.BehavesLikeInitialValueOnBlockAxis()) {
-      if (NS_FRAME_IS_REPLACED(mFrameType) && intrinsicSize) {
+      if (mFlags.mIsReplaced && intrinsicSize) {
         // It's a replaced element with an 'auto' block size so the box
         // block size is its intrinsic size plus any border/padding/margin
         boxBSize = LogicalSize(wm, *intrinsicSize).BSize(wm) +
@@ -2068,16 +1992,13 @@ LogicalSize ReflowInput::ComputeContainingBlockRectangle(
     cbSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
   }
 
-  // mFrameType for abs-pos tables is NS_CSS_FRAME_TYPE_BLOCK, so we need to
-  // special case them here.
-  if (NS_FRAME_GET_TYPE(mFrameType) == NS_CSS_FRAME_TYPE_ABSOLUTE ||
-      (mFrame->IsTableFrame() &&
-       mFrame->IsAbsolutelyPositioned(mStyleDisplay) &&
-       mFrame->GetParent()->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW))) {
+  if ((mFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) ||
+       (mFrame->IsTableFrame() &&
+        mFrame->GetParent()->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW))) &&
+      mStyleDisplay->IsAbsolutelyPositioned(mFrame)) {
     // See if the ancestor is block-level or inline-level
     const auto computedPadding = aContainingBlockRI->ComputedLogicalPadding(wm);
-    if (NS_FRAME_GET_TYPE(aContainingBlockRI->mFrameType) ==
-        NS_CSS_FRAME_TYPE_INLINE) {
+    if (aContainingBlockRI->mStyleDisplay->IsInlineOutsideStyle()) {
       // Base our size on the actual size of the frame.  In cases when this is
       // completely bogus (eg initial reflow), this code shouldn't even be
       // called, since the code in nsInlineFrame::Reflow will pass in
@@ -2237,9 +2158,7 @@ void ReflowInput::InitConstraints(
         // this if clause enables %-blockSize on replaced inline frames,
         // such as images.  See bug 54119.  The else clause "blockSizeUnit =
         // eStyleUnit_Auto;" used to be called exclusively.
-        if (NS_FRAME_REPLACED(NS_CSS_FRAME_TYPE_INLINE) == mFrameType ||
-            NS_FRAME_REPLACED_CONTAINS_BLOCK(NS_CSS_FRAME_TYPE_INLINE) ==
-                mFrameType) {
+        if (mFlags.mIsReplaced && mStyleDisplay->IsInlineOutsideStyle()) {
           // Get the containing block reflow input
           NS_ASSERTION(nullptr != cbri, "no containing block");
           // in quirks mode, get the cb height using the special quirk method
@@ -2296,7 +2215,7 @@ void ReflowInput::InitConstraints(
     // Calculate the computed inlineSize and blockSize.
     // This varies by frame type.
 
-    if (NS_CSS_FRAME_TYPE_INTERNAL_TABLE == mFrameType) {
+    if (IsInternalTableFrame()) {
       // Internal table elements. The rules vary depending on the type.
       // Calculate the computed isize
       bool rowOrRowGroup = false;
@@ -2346,19 +2265,27 @@ void ReflowInput::InitConstraints(
       // Doesn't apply to internal table elements
       ComputedMinISize() = ComputedMinBSize() = 0;
       ComputedMaxISize() = ComputedMaxBSize() = NS_UNCONSTRAINEDSIZE;
-    } else if (NS_FRAME_GET_TYPE(mFrameType) == NS_CSS_FRAME_TYPE_ABSOLUTE) {
-      // XXX not sure if this belongs here or somewhere else - cwk
+
+    } else if (mFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) &&
+               mStyleDisplay->IsAbsolutelyPositionedStyle() &&
+               // XXXfr hack for making frames behave properly when in overflow
+               // container lists, see bug 154892; need to revisit later
+               !mFrame->GetPrevInFlow()) {
       InitAbsoluteConstraints(aPresContext, cbri,
                               cbSize.ConvertTo(cbri->GetWritingMode(), wm),
                               aFrameType);
     } else {
       AutoMaybeDisableFontInflation an(mFrame);
 
-      // Note: all flex and grid items are block-level, even if they have
-      // e.g. 'display:-moz-box' (which doesn't get NS_CSS_FRAME_TYPE_BLOCK).
       const bool isBlockLevel =
-          NS_CSS_FRAME_TYPE_BLOCK == NS_FRAME_GET_TYPE(mFrameType) ||
-          mFrame->IsFlexOrGridItem();
+          (mStyleDisplay->DisplayOutside() == StyleDisplayOutside::Block ||
+           mStyleDisplay->DisplayOutside() == StyleDisplayOutside::TableCaption ||
+           mFrame->IsTableFrame()) &&
+          // XXX abs.pos. continuations treated like blocks, see comment in
+          // the else-if condition above.
+          (!mFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) ||
+           mStyleDisplay->IsAbsolutelyPositionedStyle());
+
       if (!isBlockLevel) {
         mComputeSizeFlags += ComputeSizeFlag::ShrinkWrap;
       }
@@ -2960,6 +2887,7 @@ void ReflowInput::ComputeMinMaxValues(const LogicalSize& aCBSize) {
   // that's treated as the initial value too.
   // Likewise, if we're a child of a flex container who's measuring our
   // intrinsic height, then we want to disregard our min-height/max-height.
+  const bool isInternalTableFrame = IsInternalTableFrame();
   const nscoord& bPercentageBasis = aCBSize.BSize(wm);
   auto BSizeBehavesAsInitialValue = [&](const auto& aBSize) {
     if (nsLayoutUtils::IsAutoBSize(aBSize, bPercentageBasis)) {
@@ -2968,7 +2896,7 @@ void ReflowInput::ComputeMinMaxValues(const LogicalSize& aCBSize) {
     if (mFlags.mIsFlexContainerMeasuringBSize) {
       return true;
     }
-    if (mFrameType == NS_CSS_FRAME_TYPE_INTERNAL_TABLE) {
+    if (isInternalTableFrame) {
       return aBSize.HasLengthAndPercentage();
     }
     return false;
@@ -3003,4 +2931,9 @@ void ReflowInput::ComputeMinMaxValues(const LogicalSize& aCBSize) {
 
 bool ReflowInput::IsFloating() const {
   return mStyleDisplay->IsFloating(mFrame);
+}
+
+bool ReflowInput::IsInternalTableFrame() const {
+  return mFrame->IsTableRowGroupFrame() || mFrame->IsTableColGroupFrame() ||
+         mFrame->IsTableRowFrame() || mFrame->IsTableCellFrame();
 }

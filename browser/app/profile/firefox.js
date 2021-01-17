@@ -371,6 +371,10 @@ pref("browser.urlbar.shortcuts.history", true);
 
 pref("browser.urlbar.eventTelemetry.enabled", false);
 
+// When we send events to Urlbar extensions, we wait this amount of time in
+// milliseconds for them to respond before timing out.
+pref("browser.urlbar.extension.timeout", 400);
+
 // Controls when to DNS resolve single word search strings, after they were
 // searched for. If the string is resolved as a valid host, show a
 // "Did you mean to go to 'host'" prompt.
@@ -1353,6 +1357,14 @@ pref("browser.partnerlink.campaign.topsites", "amzn_2020_a1");
 // TabModalPromptBox (false).
 pref("prompts.tabChromePromptSubDialog", true);
 
+// Whether to show the dialogs opened at the content level, such as
+// alert() or prompt(), using a SubDialogManager in the TabDialogBox.
+#ifdef EARLY_BETA_OR_EARLIER
+  pref("prompts.contentPromptSubDialog", true);
+#else
+  pref("prompts.contentPromptSubDialog", false);
+#endif
+
 // Activates preloading of the new tab url.
 pref("browser.newtab.preload", true);
 
@@ -1710,12 +1722,7 @@ pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", true);
 //     "cookieBehavior4": cookie behaviour BEHAVIOR_REJECT_TRACKER
 //     "cookieBehavior5": cookie behaviour BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN
 // One value from each section must be included in the browser.contentblocking.features.strict pref.
-#ifdef NIGHTLY_BUILD
-// Enable Dynamic First-Party Isolation in Nightly.
 pref("browser.contentblocking.features.strict", "tp,tpPrivate,cookieBehavior5,cm,fp,stp,lvl2");
-#else
-pref("browser.contentblocking.features.strict", "tp,tpPrivate,cookieBehavior4,cm,fp,stp,lvl2");
-#endif
 
 // Hide the "Change Block List" link for trackers/tracking content in the custom
 // Content Blocking/ETP panel. By default, it will not be visible. There is also
@@ -2023,9 +2030,6 @@ pref("app.normandy.onsync_skew_sec", 600);
   pref("app.shield.optoutstudies.enabled", false);
 #endif
 
-// Web apps support
-pref("browser.ssb.enabled", false);
-
 // Multi-lingual preferences
 #if defined(RELEASE_OR_BETA) && !defined(MOZ_DEV_EDITION)
   pref("intl.multilingual.enabled", true);
@@ -2132,6 +2136,7 @@ pref("devtools.command-button-screenshot.enabled", false);
 pref("devtools.command-button-rulers.enabled", false);
 pref("devtools.command-button-measure.enabled", false);
 pref("devtools.command-button-noautohide.enabled", false);
+pref("devtools.command-button-errorcount.enabled", true);
 #ifndef MOZILLA_OFFICIAL
   pref("devtools.command-button-fission-prefs.enabled", true);
 #endif

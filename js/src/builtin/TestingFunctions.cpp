@@ -45,7 +45,7 @@
 #  include "frontend/TokenStream.h"
 #endif
 #include "frontend/BytecodeCompilation.h"
-#include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationInfoVector
+#include "frontend/CompilationInfo.h"  // frontend::CompilationStencil, frontend::CompilationStencilSet
 #include "gc/Allocator.h"
 #include "gc/Zone.h"
 #include "jit/BaselineJIT.h"
@@ -5010,19 +5010,19 @@ static bool CompileStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* TODO: StencilXDR - Add option to select between full and syntax parse. */
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationInfo> compilationInfo(
-      cx, frontend::CompilationInfo(cx, options));
-  if (!compilationInfo.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationStencil> stencil(
+      cx, frontend::CompilationStencil(cx, options));
+  if (!stencil.get().input.initForGlobal(cx)) {
     return false;
   }
-  if (!frontend::CompileGlobalScriptToStencil(cx, compilationInfo.get(), srcBuf,
+  if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
                                               ScopeKind::Global)) {
     return false;
   }
 
   /* Serialize the stencil to XDR. */
   JS::TranscodeBuffer xdrBytes;
-  if (!compilationInfo.get().serializeStencils(cx, xdrBytes)) {
+  if (!stencil.get().serializeStencils(cx, xdrBytes)) {
     return false;
   }
 
@@ -5060,21 +5060,21 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   const char* filename = "compileStencilXDR-DATA.js";
   uint32_t lineno = 1;
 
-  /* Prepare the CompilationInfoVector for decoding. */
+  /* Prepare the CompilationStencilSet for decoding. */
   CompileOptions options(cx);
   options.setFileAndLine(filename, lineno);
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationInfoVector> compilationInfos(
-      cx, frontend::CompilationInfoVector(cx, options));
-  if (!compilationInfos.get().initial.input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationStencilSet> stencilSet(
+      cx, frontend::CompilationStencilSet(cx, options));
+  if (!stencilSet.get().input.initForGlobal(cx)) {
     return false;
   }
 
   /* Deserialize the stencil from XDR. */
   JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength().get());
   bool succeeded = false;
-  if (!compilationInfos.get().deserializeStencils(cx, xdrRange, &succeeded)) {
+  if (!stencilSet.get().deserializeStencils(cx, xdrRange, &succeeded)) {
     return false;
   }
   if (!succeeded) {
@@ -5085,8 +5085,8 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* Instantiate the stencil. */
   Rooted<frontend::CompilationGCOutput> output(cx);
   Rooted<frontend::CompilationGCOutput> outputForDelazification(cx);
-  if (!compilationInfos.get().instantiateStencils(
-          cx, output.get(), outputForDelazification.get())) {
+  if (!stencilSet.get().instantiateStencils(cx, output.get(),
+                                            outputForDelazification.get())) {
     return false;
   }
 

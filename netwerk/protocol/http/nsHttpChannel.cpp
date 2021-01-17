@@ -174,7 +174,7 @@ void AccumulateCacheHitTelemetry(CacheDisposition hitOrMiss,
       key.AssignLiteral("JAVASCRIPT");
     } else if (StringBeginsWith(contentType, "text/css"_ns) ||
                (loadInfo && loadInfo->GetExternalContentPolicyType() ==
-                                nsIContentPolicy::TYPE_STYLESHEET)) {
+                                ExtContentPolicy::TYPE_STYLESHEET)) {
       key.AssignLiteral("STYLESHEET");
     } else if (StringBeginsWith(contentType, "application/wasm"_ns)) {
       key.AssignLiteral("WASM");
@@ -404,7 +404,7 @@ void nsHttpChannel::ReleaseMainThreadOnlyReferences() {
 nsresult nsHttpChannel::Init(nsIURI* uri, uint32_t caps, nsProxyInfo* proxyInfo,
                              uint32_t proxyResolveFlags, nsIURI* proxyURI,
                              uint64_t channelId,
-                             nsContentPolicyType aContentPolicyType) {
+                             ExtContentPolicyType aContentPolicyType) {
   nsresult rv = HttpBaseChannel::Init(uri, caps, proxyInfo, proxyResolveFlags,
                                       proxyURI, channelId, aContentPolicyType);
   if (NS_FAILED(rv)) return rv;
@@ -535,10 +535,10 @@ nsresult nsHttpChannel::OnBeforeConnect() {
   // header for *all* navigational requests instead of all requests as
   // defined in the spec, see:
   // https://www.w3.org/TR/upgrade-insecure-requests/#preference
-  nsContentPolicyType type = mLoadInfo->GetExternalContentPolicyType();
+  ExtContentPolicyType type = mLoadInfo->GetExternalContentPolicyType();
 
-  if (type == nsIContentPolicy::TYPE_DOCUMENT ||
-      type == nsIContentPolicy::TYPE_SUBDOCUMENT) {
+  if (type == ExtContentPolicy::TYPE_DOCUMENT ||
+      type == ExtContentPolicy::TYPE_SUBDOCUMENT) {
     rv = SetRequestHeader("Upgrade-Insecure-Requests"_ns, "1"_ns, false);
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -1478,7 +1478,7 @@ HttpTrafficCategory nsHttpChannel::CreateTrafficCategory() {
   {
     if ((mClassOfService & nsIClassOfService::Leader) &&
         mLoadInfo->GetExternalContentPolicyType() ==
-            nsIContentPolicy::TYPE_SCRIPT) {
+            ExtContentPolicy::TYPE_SCRIPT) {
       cos = HttpTrafficAnalyzer::ClassOfService::eLeader;
     } else if (mLoadFlags & nsIRequest::LOAD_BACKGROUND) {
       cos = HttpTrafficAnalyzer::ClassOfService::eBackground;
@@ -1529,7 +1529,7 @@ void nsHttpChannel::SetCachedContentType() {
     contentType = nsICacheEntry::CONTENT_TYPE_JAVASCRIPT;
   } else if (StringBeginsWith(contentTypeStr, "text/css"_ns) ||
              (mLoadInfo->GetExternalContentPolicyType() ==
-              nsIContentPolicy::TYPE_STYLESHEET)) {
+              ExtContentPolicy::TYPE_STYLESHEET)) {
     contentType = nsICacheEntry::CONTENT_TYPE_STYLESHEET;
   } else if (StringBeginsWith(contentTypeStr, "application/wasm"_ns)) {
     contentType = nsICacheEntry::CONTENT_TYPE_WASM;
@@ -1701,8 +1701,12 @@ nsresult nsHttpChannel::CallOnStartRequest() {
         request.mPromise->Resolve(std::move(child), __func__);
       }
     } else {
-      docListener->AttachStreamFilter(request.mChildProcessId)
-          ->ChainTo(request.mPromise.forget(), __func__);
+      if (docListener) {
+        docListener->AttachStreamFilter(request.mChildProcessId)
+            ->ChainTo(request.mPromise.forget(), __func__);
+      } else {
+        request.mPromise->Reject(false, __func__);
+      }
     }
     request.mPromise = nullptr;
   }
@@ -2504,6 +2508,11 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
             ("Suspending the transaction, asynchronously prompting for "
              "credentials"));
         mTransactionPump->Suspend();
+
+#ifdef DEBUG
+        // This is for test purposes only. See bug 1683176 for details.
+        gHttpHandler->OnTransactionSuspendedDueToAuthentication(this);
+#endif
         rv = NS_OK;
       } else if (NS_FAILED(rv)) {
         LOG(("ProcessAuthentication failed [rv=%" PRIx32 "]\n",
@@ -7584,6 +7593,17 @@ nsresult nsHttpChannel::ContinueOnStartRequest4(nsresult result) {
 
   if (LoadFallingBack()) return NS_OK;
 
+  if (NS_SUCCEEDED(mStatus) && mResponseHead && mAuthProvider) {
+    uint32_t httpStatus = mResponseHead->Status();
+    if (httpStatus != 401 && httpStatus != 407) {
+      nsresult rv = mAuthProvider->CheckForSuperfluousAuth();
+      if (NS_FAILED(rv)) {
+        LOG(("  CheckForSuperfluousAuth failed (%08x)",
+             static_cast<uint32_t>(rv)));
+      }
+    }
+  }
+
   return CallOnStartRequest();
 }
 
@@ -8458,27 +8478,6 @@ nsHttpChannel::GetCacheTokenExpirationTime(uint32_t* _retval) {
   if (!mCacheEntry) return NS_ERROR_NOT_AVAILABLE;
 
   return mCacheEntry->GetExpirationTime(_retval);
-}
-
-NS_IMETHODIMP
-nsHttpChannel::GetCacheTokenCachedCharset(nsACString& _retval) {
-  nsresult rv;
-
-  if (!mCacheEntry) return NS_ERROR_NOT_AVAILABLE;
-
-  nsCString cachedCharset;
-  rv = mCacheEntry->GetMetaDataElement("charset", getter_Copies(cachedCharset));
-  if (NS_SUCCEEDED(rv)) _retval = cachedCharset;
-
-  return rv;
-}
-
-NS_IMETHODIMP
-nsHttpChannel::SetCacheTokenCachedCharset(const nsACString& aCharset) {
-  if (!mCacheEntry) return NS_ERROR_NOT_AVAILABLE;
-
-  return mCacheEntry->SetMetaDataElement("charset",
-                                         PromiseFlatCString(aCharset).get());
 }
 
 NS_IMETHODIMP
@@ -9949,7 +9948,7 @@ nsresult nsHttpChannel::RedirectToInterceptedChannel() {
       InterceptedHttpChannel::CreateForInterception(
           mChannelCreationTime, mChannelCreationTimestamp, mAsyncOpenTime);
 
-  nsContentPolicyType type = mLoadInfo->GetExternalContentPolicyType();
+  ExtContentPolicyType type = mLoadInfo->GetExternalContentPolicyType();
 
   nsresult rv = intercepted->Init(
       mURI, mCaps, static_cast<nsProxyInfo*>(mProxyInfo.get()),

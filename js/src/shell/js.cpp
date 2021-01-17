@@ -2355,7 +2355,7 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
               JS_ReportErrorASCII(
                   cx,
                   "if both loadBytecode and saveIncrementalBytecode are set "
-                  "and --no-off-thread-parse-global is used, bytecode should "
+                  "and --off-thread-parse-global isn't used, bytecode should "
                   "have been saved with saveIncrementalBytecode");
               return false;
             }
@@ -2367,7 +2367,7 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
               JS_ReportErrorASCII(
                   cx,
                   "if both loadBytecode and saveIncrementalBytecode are set "
-                  "and --no-off-thread-parse-global isn't used, bytecode "
+                  "and --off-thread-parse-global is used, bytecode "
                   "should have been saved with saveBytecode");
               return false;
             }
@@ -5298,21 +5298,21 @@ enum class DumpType {
 template <typename Unit>
 static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
                     const Unit* units, size_t length,
-                    js::frontend::CompilationInfo& compilationInfo,
+                    js::frontend::CompilationStencil& stencil,
                     js::frontend::CompilationState& compilationState,
                     js::frontend::ParseGoal goal) {
   using namespace js::frontend;
 
   Parser<FullParseHandler, Unit> parser(cx, options, units, length, false,
-                                        compilationInfo, compilationState,
-                                        nullptr, nullptr);
+                                        stencil, compilationState, nullptr,
+                                        nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
 
   // Emplace the top-level stencil.
   MOZ_ASSERT(compilationState.scriptData.length() ==
-             CompilationInfo::TopLevelIndex);
+             CompilationStencil::TopLevelIndex);
   if (!compilationState.scriptData.emplaceBack()) {
     ReportOutOfMemory(cx);
     return false;
@@ -5333,7 +5333,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     ModuleBuilder builder(cx, &parser);
 
     SourceExtent extent = SourceExtent::makeGlobalExtent(length);
-    ModuleSharedContext modulesc(cx, compilationInfo, builder, extent);
+    ModuleSharedContext modulesc(cx, stencil, builder, extent);
     pn = parser.moduleBody(&modulesc);
   }
 
@@ -5354,7 +5354,7 @@ static bool DumpStencil(JSContext* cx,
                         const JS::ReadOnlyCompileOptions& options,
                         const Unit* units, size_t length,
                         js::frontend::ParseGoal goal) {
-  Rooted<UniquePtr<frontend::CompilationInfo>> compilationInfo(cx);
+  Rooted<UniquePtr<frontend::CompilationStencil>> stencil(cx);
 
   JS::SourceText<Unit> srcBuf;
   if (!srcBuf.init(cx, units, length, JS::SourceOwnership::Borrowed)) {
@@ -5362,18 +5362,18 @@ static bool DumpStencil(JSContext* cx,
   }
 
   if (goal == frontend::ParseGoal::Script) {
-    compilationInfo = frontend::CompileGlobalScriptToStencil(
-        cx, options, srcBuf, ScopeKind::Global);
+    stencil = frontend::CompileGlobalScriptToStencil(cx, options, srcBuf,
+                                                     ScopeKind::Global);
   } else {
-    compilationInfo = frontend::ParseModuleToStencil(cx, options, srcBuf);
+    stencil = frontend::ParseModuleToStencil(cx, options, srcBuf);
   }
 
-  if (!compilationInfo) {
+  if (!stencil) {
     return false;
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  compilationInfo->stencil.dump();
+  stencil->dump();
 #endif
 
   return true;
@@ -5542,15 +5542,15 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
           }
 
           bool unimplemented;
-          Rooted<UniquePtr<frontend::CompilationInfo>> compilationInfo(
+          Rooted<UniquePtr<frontend::CompilationStencil>> stencil(
               cx, Smoosh::compileGlobalScriptToStencil(cx, options, srcBuf,
                                                        &unimplemented));
-          if (!compilationInfo) {
+          if (!stencil) {
             return false;
           }
 
 #  ifdef DEBUG
-          compilationInfo->stencil.dump();
+          stencil->dump();
 #  endif
         } else {
           JS_ReportErrorASCII(cx,
@@ -5580,37 +5580,37 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
       }
     }
 
+    args.rval().setUndefined();
     return true;
   }
 
-  js::Rooted<frontend::CompilationInfo> compilationInfo(
-      cx, js::frontend::CompilationInfo(cx, options));
+  js::Rooted<frontend::CompilationStencil> stencil(
+      cx, js::frontend::CompilationStencil(cx, options));
   if (goal == frontend::ParseGoal::Script) {
-    if (!compilationInfo.get().input.initForGlobal(cx)) {
+    if (!stencil.get().input.initForGlobal(cx)) {
       return false;
     }
   } else {
-    if (!compilationInfo.get().input.initForModule(cx)) {
+    if (!stencil.get().input.initForModule(cx)) {
       return false;
     }
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(cx, allocScope, options,
-                                              compilationInfo.get());
+                                              stencil.get());
 
   if (isAscii) {
     const Latin1Char* latin1 = stableChars.latin1Range().begin().get();
     auto utf8 = reinterpret_cast<const mozilla::Utf8Unit*>(latin1);
-    if (!DumpAST<mozilla::Utf8Unit>(cx, options, utf8, length,
-                                    compilationInfo.get(), compilationState,
-                                    goal)) {
+    if (!DumpAST<mozilla::Utf8Unit>(cx, options, utf8, length, stencil.get(),
+                                    compilationState, goal)) {
       return false;
     }
   } else {
     MOZ_ASSERT(stableChars.isTwoByte());
     const char16_t* chars = stableChars.twoByteRange().begin().get();
-    if (!DumpAST<char16_t>(cx, options, chars, length, compilationInfo.get(),
+    if (!DumpAST<char16_t>(cx, options, chars, length, stencil.get(),
                            compilationState, goal)) {
       return false;
     }
@@ -5663,19 +5663,19 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
   const char16_t* chars = stableChars.twoByteRange().begin().get();
   size_t length = scriptContents->length();
 
-  js::Rooted<frontend::CompilationInfo> compilationInfo(
-      cx, js::frontend::CompilationInfo(cx, options));
-  if (!compilationInfo.get().input.initForGlobal(cx)) {
+  js::Rooted<frontend::CompilationStencil> stencil(
+      cx, js::frontend::CompilationStencil(cx, options));
+  if (!stencil.get().input.initForGlobal(cx)) {
     return false;
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(cx, allocScope, options,
-                                              compilationInfo.get());
+                                              stencil.get());
 
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
-      cx, options, chars, length, false, compilationInfo.get(),
-      compilationState, nullptr, nullptr);
+      cx, options, chars, length, false, stencil.get(), compilationState,
+      nullptr, nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -5931,7 +5931,7 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
   CompileOptions options(cx);
   options.setIntroductionType("js shell offThreadDecodeScript")
       .setFileAndLine("<string>", 1);
-  // NOTE: If --no-off-thread-parse-global is used, input can be either script
+  // NOTE: If --off-thread-parse-global is not used, input can be either script
   // for saveBytecode, or stencil for saveIncrementalBytecode.
   options.useOffThreadParseGlobal =
       CacheEntry_getKind(cx, cacheEntry) == BytecodeCacheKind::Script;
@@ -8697,10 +8697,10 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "      saveIncrementalBytecode: if true, and if the source is a\n"
 "         CacheEntryObject, the bytecode would be incrementally encoded and\n"
 "         saved into the cache entry.\n"
-"         If --no-off-thread-parse-global is used, the encoded bytecode's\n"
+"         If --off-thread-parse-global is not used, the encoded bytecode's\n"
 "         kind is 'stencil'. If not, the encoded bytecode's kind is 'script'\n"
 "         If both loadBytecode and saveIncrementalBytecode are set,\n"
-"         and --no-off-thread-parse-global is used, the input bytecode's\n"
+"         and --off-thread-parse-global is not used, the input bytecode's\n"
 "         kind should be 'stencil'."
 "      assertEqBytecode: if true, and if both loadBytecode and either\n"
 "         saveBytecode or saveIncrementalBytecode is true, then the loaded\n"
@@ -10486,7 +10486,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
                              op.getBoolOption("enable-private-methods");
   enablePrivateClassMethods = op.getBoolOption("enable-private-methods");
   enableTopLevelAwait = op.getBoolOption("enable-top-level-await");
-  useOffThreadParseGlobal = !op.getBoolOption("no-off-thread-parse-global");
+  useOffThreadParseGlobal = op.getBoolOption("off-thread-parse-global");
 
   JS::ContextOptionsRef(cx)
       .setAsmJS(enableAsmJS)
@@ -10643,16 +10643,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     }
   }
 
-  if (const char* str = op.getStringOption("ion-optimization-levels")) {
-    if (strcmp(str, "on") == 0) {
-      jit::JitOptions.disableOptimizationLevels = false;
-    } else if (strcmp(str, "off") == 0) {
-      jit::JitOptions.disableOptimizationLevels = true;
-    } else {
-      return OptionFailure("ion-optimization-levels", str);
-    }
-  }
-
   if (const char* str = op.getStringOption("ion-instruction-reordering")) {
     if (strcmp(str, "on") == 0) {
       jit::JitOptions.disableInstructionReordering = false;
@@ -10704,11 +10694,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   int32_t warmUpThreshold = op.getIntOption("ion-warmup-threshold");
   if (warmUpThreshold >= 0) {
     jit::JitOptions.setNormalIonWarmUpThreshold(warmUpThreshold);
-  }
-
-  warmUpThreshold = op.getIntOption("ion-full-warmup-threshold");
-  if (warmUpThreshold >= 0) {
-    jit::JitOptions.setFullIonWarmUpThreshold(warmUpThreshold);
   }
 
   warmUpThreshold = op.getIntOption("baseline-warmup-threshold");
@@ -10838,6 +10823,10 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 
   if (op.getBoolOption("enable-large-buffers")) {
     ArrayBufferObject::supportLargeBuffers = true;
+  }
+
+  if (op.getBoolOption("disable-bailout-loop-check")) {
+    jit::JitOptions.disableBailoutLoopCheck = true;
   }
 
 #if defined(JS_CODEGEN_ARM)
@@ -11486,9 +11475,8 @@ int main(int argc, char** argv, char** envp) {
                         "Enable private class methods") ||
       !op.addBoolOption('\0', "enable-top-level-await",
                         "Enable top-level await") ||
-      !op.addBoolOption('\0', "no-off-thread-parse-global",
-                        "Do not use parseGlobal in off-thread compilation and "
-                        "instead instantiate stencil in main-thread") ||
+      !op.addBoolOption('\0', "off-thread-parse-global",
+                        "Use parseGlobal in all off-thread compilation") ||
       !op.addBoolOption('\0', "enable-large-buffers",
                         "Allow creating ArrayBuffers larger than 2 GB on "
                         "64-bit platforms (experimental!)") ||
@@ -11528,8 +11516,7 @@ int main(int argc, char** argv, char** envp) {
       !op.addStringOption('\0', "ion-sink", "on/off",
                           "Sink code motion (default: off, on to enable)") ||
       !op.addStringOption('\0', "ion-optimization-levels", "on/off",
-                          "Use multiple Ion optimization levels (default: on, "
-                          "off to disable)") ||
+                          "No-op for fuzzing") ||
       !op.addStringOption('\0', "ion-loop-unrolling", "on/off",
                           "(NOP for fuzzers)") ||
       !op.addStringOption(
@@ -11545,6 +11532,8 @@ int main(int argc, char** argv, char** envp) {
       !op.addStringOption(
           '\0', "ion-osr", "on/off",
           "On-Stack Replacement (default: on, off to disable)") ||
+      !op.addBoolOption('\0', "disable-bailout-loop-check",
+                        "Turn off bailout loop check") ||
       !op.addStringOption(
           '\0', "ion-limit-script-size", "on/off",
           "Don't compile very large scripts (default: on, off to disable)") ||
@@ -11553,9 +11542,7 @@ int main(int argc, char** argv, char** envp) {
                        "at the normal optimization level (default: 1000)",
                        -1) ||
       !op.addIntOption('\0', "ion-full-warmup-threshold", "COUNT",
-                       "Wait for COUNT calls or iterations before compiling "
-                       "at the 'full' optimization level (default: 100,000)",
-                       -1) ||
+                       "No-op for fuzzing", -1) ||
       !op.addStringOption(
           '\0', "ion-regalloc", "[mode]",
           "Specify Ion register allocation:\n"

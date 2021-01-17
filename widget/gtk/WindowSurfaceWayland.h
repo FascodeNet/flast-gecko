@@ -75,16 +75,25 @@ class WindowBackBuffer {
   }
   static gfx::SurfaceFormat GetSurfaceFormat() { return mFormat; }
 
+#ifdef MOZ_LOGGING
+  void DumpToFile(const char* aHint);
+#endif
+
   RefPtr<nsWaylandDisplay> GetWaylandDisplay();
 
  private:
-  void ReleaseShmSurface();
+  void ReleaseWLBuffer();
 
   static gfx::SurfaceFormat mFormat;
   WindowSurfaceWayland* mWindowSurfaceWayland;
 
   // WaylandShmPool provides actual shared memory we draw into
   WaylandShmPool mShmPool;
+
+#ifdef MOZ_LOGGING
+  static int mDumpSerial;
+  static char* mDumpDir;
+#endif
 
   // wl_buffer is a wayland object that encapsulates the shared memory
   // and passes it to wayland compositor by wl_surface object.
@@ -164,8 +173,7 @@ class WindowSurfaceWayland : public WindowSurface {
   } RenderingCacheMode;
 
  private:
-  WindowBackBuffer* GetWaylandBufferWithSwitch();
-  WindowBackBuffer* GetWaylandBufferRecent();
+  WindowBackBuffer* GetWaylandBuffer();
   WindowBackBuffer* SetNewWaylandBuffer();
   WindowBackBuffer* CreateWaylandBuffer(int aWidth, int aHeight);
   WindowBackBuffer* WaylandBufferFindAvailable(int aWidth, int aHeight);

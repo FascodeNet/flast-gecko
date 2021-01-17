@@ -1191,8 +1191,6 @@ void nsGlobalWindowInner::FreeInnerObjects() {
     mDocumentPartitionedPrincipal = mDoc->PartitionedPrincipal();
     mDocumentURI = mDoc->GetDocumentURI();
     mDocBaseURI = mDoc->GetDocBaseURI();
-    mDocContentBlockingAllowListPrincipal =
-        mDoc->GetContentBlockingAllowListPrincipal();
     mDocumentCsp = mDoc->GetCsp();
 
     while (mDoc->EventHandlingSuppressed()) {
@@ -6213,7 +6211,7 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
     timeout->mScriptHandler->GetDescription(handlerDescription);
     str.Append(handlerDescription);
   }
-  AUTO_PROFILER_MARKER_TEXT("setTimeout callback", JS,
+  AUTO_PROFILER_MARKER_TEXT("setTimeout callback", DOM,
                             MarkerOptions(MarkerStack::TakeBacktrace(
                                               timeout->TakeProfilerBacktrace()),
                                           MarkerInnerWindowId(mWindowID)),
@@ -7558,12 +7556,6 @@ nsIURI* nsPIDOMWindowInner::GetDocumentURI() const {
 
 nsIURI* nsPIDOMWindowInner::GetDocBaseURI() const {
   return mDoc ? mDoc->GetDocBaseURI() : mDocBaseURI.get();
-}
-
-nsIPrincipal* nsPIDOMWindowInner::GetDocumentContentBlockingAllowListPrincipal()
-    const {
-  return mDoc ? mDoc->GetContentBlockingAllowListPrincipal()
-              : mDocContentBlockingAllowListPrincipal.get();
 }
 
 mozilla::dom::WindowContext* nsPIDOMWindowInner::GetWindowContext() const {

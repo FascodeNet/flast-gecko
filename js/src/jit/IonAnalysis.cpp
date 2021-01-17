@@ -2944,7 +2944,6 @@ static bool IsResumableMIRType(MIRType type) {
       return true;
 
     case MIRType::MagicHole:
-    case MIRType::ObjectOrNull:
     case MIRType::None:
     case MIRType::Slots:
     case MIRType::Elements:
@@ -3526,8 +3525,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
 
       MDefinition* ownerObject;
       switch (ins->op()) {
-        case MDefinition::Opcode::ConstantElements:
-          continue;
         case MDefinition::Opcode::Elements:
         case MDefinition::Opcode::ArrayBufferViewElements:
           MOZ_ASSERT(ins->numOperands() == 1);
@@ -3558,14 +3555,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
           MOZ_ASSERT_IF(!use->toStoreElementHole()->object()->isUnbox() &&
                             !ownerObject->isUnbox(),
                         use->toStoreElementHole()->object() == ownerObject);
-          continue;
-        }
-
-        if (use->isFallibleStoreElement()) {
-          // See StoreElementHole case above.
-          MOZ_ASSERT_IF(!use->toFallibleStoreElement()->object()->isUnbox() &&
-                            !ownerObject->isUnbox(),
-                        use->toFallibleStoreElement()->object() == ownerObject);
           continue;
         }
 

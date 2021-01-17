@@ -182,7 +182,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this._gripDepth = 0;
     this._threadLifetimePool = null;
     this._parentClosed = false;
-    this._scripts = null;
     this._xhrBreakpoints = [];
     this._observingNetwork = false;
     this._activeEventBreakpoints = new Set();
@@ -199,7 +198,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     this.breakpointActorMap = new BreakpointActorMap(this);
 
-    this._debuggerSourcesSeen = null;
+    this._debuggerSourcesSeen = new WeakSet();
 
     // A Set of URLs string to watch for when new sources are found by
     // the debugger instance.
@@ -222,6 +221,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this.pauseObjectGrip = this.pauseObjectGrip.bind(this);
     this._onOpeningRequest = this._onOpeningRequest.bind(this);
     this._onNewDebuggee = this._onNewDebuggee.bind(this);
+    this._onExceptionUnwind = this._onExceptionUnwind.bind(this);
     this._eventBreakpointListener = this._eventBreakpointListener.bind(this);
     this._onWindowReady = this._onWindowReady.bind(this);
     this._onWillNavigate = this._onWillNavigate.bind(this);
@@ -336,7 +336,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     if (this._dbg) {
       this.dbg.removeAllDebuggees();
     }
-    this._scripts = null;
   },
 
   /**
@@ -402,9 +401,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this.dbg.onNewScript = this.onNewScript;
     this.dbg.onNewDebuggee = this._onNewDebuggee;
 
-    this._debuggerSourcesSeen = new WeakSet();
-
-    this._options = { ...this._options, ...options };
     this.sourcesManager.on("newSource", this.onNewSourceEvent);
 
     // Initialize an event loop stack. This can't be done in the constructor,
@@ -413,21 +409,11 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       thread: this,
     });
 
-    if (options.breakpoints) {
-      this._setBreakpointsOnAttach(options.breakpoints);
-    }
-    if (options.eventBreakpoints) {
-      this.setActiveEventBreakpoints(options.eventBreakpoints);
-    }
-
     this.dbg.enable();
-
-    if ("observeAsmJS" in this._options) {
-      this.dbg.allowUnobservedAsmJS = !this._options.observeAsmJS;
-    }
+    this.reconfigure(options);
 
     // Set everything up so that breakpoint can work
-    this._setupForBreaking();
+    this._state = STATES.RUNNING;
 
     // Notify the parent that we've finished attaching. If this is a worker
     // thread which was paused until attaching, this will allow content to
@@ -446,12 +432,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   toggleEventLogging(logEventBreakpoints) {
     this._options.logEventBreakpoints = logEventBreakpoints;
     return this._options.logEventBreakpoints;
-  },
-
-  _setBreakpointsOnAttach(breakpoints) {
-    for (const { location, options } of Object.values(breakpoints)) {
-      this.setBreakpoint(location, options);
-    }
   },
 
   get pauseOverlay() {
@@ -769,18 +749,30 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
         error: "wrongState",
       };
     }
+    this._options = { ...this._options, ...options };
 
     if ("observeAsmJS" in options) {
       this.dbg.allowUnobservedAsmJS = !options.observeAsmJS;
     }
 
-    if ("pauseWorkersUntilAttach" in options) {
-      if (this._parent.pauseWorkersUntilAttach) {
-        this._parent.pauseWorkersUntilAttach(options.pauseWorkersUntilAttach);
+    if (
+      "pauseWorkersUntilAttach" in options &&
+      this._parent.pauseWorkersUntilAttach
+    ) {
+      this._parent.pauseWorkersUntilAttach(options.pauseWorkersUntilAttach);
+    }
+
+    if (options.breakpoints) {
+      for (const breakpoint of Object.values(options.breakpoints)) {
+        this.setBreakpoint(breakpoint.location, breakpoint.options);
       }
     }
 
-    this._options = { ...this._options, ...options };
+    if (options.eventBreakpoints) {
+      this.setActiveEventBreakpoints(options.eventBreakpoints);
+    }
+
+    this.maybePauseOnExceptions();
   },
 
   _eventBreakpointListener(notification) {
@@ -1281,18 +1273,13 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     }
   },
 
-  _setupForBreaking() {
-    this.maybePauseOnExceptions();
-    this._state = STATES.RUNNING;
-  },
-
   /**
    * Only resume and notify necessary observers. This should be used in cases
    * when we do not want to notify the front end of a resume, for example when
    * we are shutting down.
    */
   doResume({ resumeLimit } = {}) {
-    this._setupForBreaking();
+    this._state = STATES.RUNNING;
 
     // Drop the actors in the pause actor pool.
     this._pausePool.destroy();
@@ -1347,7 +1334,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
    */
   maybePauseOnExceptions() {
     if (this._options.pauseOnExceptions) {
-      this.dbg.onExceptionUnwind = this.onExceptionUnwind.bind(this);
+      this.dbg.onExceptionUnwind = this._onExceptionUnwind;
     } else {
       this.dbg.onExceptionUnwind = undefined;
     }
@@ -1596,7 +1583,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     // Clear stepping hooks.
     this.dbg.onEnterFrame = undefined;
-    this.dbg.onExceptionUnwind = undefined;
     this._requestedFrameRestart = null;
     this._clearSteppingHooks();
 
@@ -1781,7 +1767,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       this.sourcesManager.reset();
       this.clearDebuggees();
       this.dbg.enable();
-      this.maybePauseOnExceptions();
       // Update the global no matter if the debugger is on or off,
       // otherwise the global will be wrong when enabled later.
       this.global = window;
@@ -1814,7 +1799,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this.removeAllWatchpoints();
     this.disableAllBreakpoints();
     this.dbg.onEnterFrame = undefined;
-    this.dbg.onExceptionUnwind = undefined;
   },
 
   _onNavigate() {
@@ -1913,13 +1897,13 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     return { skip };
   },
 
+  // Bug 1686485 is meant to remove usages of this request
+  // in favor direct call to `reconfigure`
   pauseOnExceptions(pauseOnExceptions, ignoreCaughtExceptions) {
-    this._options = {
-      ...this._options,
+    this.reconfigure({
       pauseOnExceptions,
       ignoreCaughtExceptions,
-    };
-    this.maybePauseOnExceptions();
+    });
     return {};
   },
 
@@ -1932,7 +1916,12 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
    * @param value object
    *        The exception that was thrown.
    */
-  onExceptionUnwind(youngestFrame, value) {
+  _onExceptionUnwind(youngestFrame, value) {
+    // Ignore any reported exception if we are already paused
+    if (this.isPaused()) {
+      return undefined;
+    }
+
     let willBeCaught = false;
     for (let frame = youngestFrame; frame != null; frame = frame.older) {
       if (frame.script.isInCatchScope(frame.offset)) {

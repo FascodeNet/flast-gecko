@@ -49,59 +49,6 @@ NumericType NS_CSS_MINMAX(NumericType aValue, NumericType aMinValue,
   return result;
 }
 
-/**
- * CSS Frame type. Included as part of the reflow input.
- */
-typedef uint32_t nsCSSFrameType;
-
-#define NS_CSS_FRAME_TYPE_UNKNOWN 0
-#define NS_CSS_FRAME_TYPE_INLINE 1
-#define NS_CSS_FRAME_TYPE_BLOCK 2 /* block-level in normal flow */
-#define NS_CSS_FRAME_TYPE_FLOATING 3
-#define NS_CSS_FRAME_TYPE_ABSOLUTE 4
-#define NS_CSS_FRAME_TYPE_INTERNAL_TABLE \
-  5 /* row group frame, row frame, cell frame, ... */
-
-/**
- * Bit-flag that indicates whether the element is replaced. Applies to inline,
- * block-level, floating, and absolutely positioned elements
- */
-#define NS_CSS_FRAME_TYPE_REPLACED 0x08000
-
-/**
- * Bit-flag that indicates that the element is replaced and contains a block
- * (eg some form controls).  Applies to inline, block-level, floating, and
- * absolutely positioned elements.  Mutually exclusive with
- * NS_CSS_FRAME_TYPE_REPLACED.
- */
-#define NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK 0x10000
-
-/**
- * Helper macros for telling whether items are replaced
- */
-#define NS_FRAME_IS_REPLACED_NOBLOCK(_ft) \
-  (NS_CSS_FRAME_TYPE_REPLACED == ((_ft)&NS_CSS_FRAME_TYPE_REPLACED))
-
-#define NS_FRAME_IS_REPLACED(_ft)       \
-  (NS_FRAME_IS_REPLACED_NOBLOCK(_ft) || \
-   NS_FRAME_IS_REPLACED_CONTAINS_BLOCK(_ft))
-
-#define NS_FRAME_REPLACED(_ft) (NS_CSS_FRAME_TYPE_REPLACED | (_ft))
-
-#define NS_FRAME_IS_REPLACED_CONTAINS_BLOCK(_ft) \
-  (NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK ==  \
-   ((_ft)&NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK))
-
-#define NS_FRAME_REPLACED_CONTAINS_BLOCK(_ft) \
-  (NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK | (_ft))
-
-/**
- * A macro to extract the type. Masks off the 'replaced' bit-flag
- */
-#define NS_FRAME_GET_TYPE(_ft) \
-  ((_ft) &                     \
-   ~(NS_CSS_FRAME_TYPE_REPLACED | NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK))
-
 namespace mozilla {
 
 // A base class of ReflowInput that computes only the padding,
@@ -270,10 +217,6 @@ struct ReflowInput : public SizeComputationInput {
   // properly in InitCBReflowInput().
   const ReflowInput* mCBReflowInput = nullptr;
 
-  // The type of frame, from css's perspective. This value is
-  // initialized by the Init method below.
-  nsCSSFrameType mFrameType = NS_CSS_FRAME_TYPE_UNKNOWN;
-
   // The amount the in-flow position of the block is moving vertically relative
   // to its previous in-flow position (i.e. the amount the line containing the
   // block is moving).
@@ -437,6 +380,10 @@ struct ReflowInput : public SizeComputationInput {
 
   struct Flags {
     Flags() { memset(this, 0, sizeof(*this)); }
+
+    // cached mFrame->IsFrameOfType(nsIFrame::eReplaced) ||
+    //        mFrame->IsFrameOfType(nsIFrame::eReplacedContainsBlock)
+    bool mIsReplaced : 1;
 
     // used by tables to communicate special reflow (in process) to handle
     // percent bsize frames inside cells which may not have computed bsizes
@@ -887,7 +834,6 @@ struct ReflowInput : public SizeComputationInput {
 #endif
 
  protected:
-  void InitFrameType(LayoutFrameType aFrameType);
   void InitCBReflowInput();
   void InitResizeFlags(nsPresContext* aPresContext,
                        mozilla::LayoutFrameType aFrameType);
@@ -952,6 +898,13 @@ struct ReflowInput : public SizeComputationInput {
                                     nscoord* aOutsideBoxSizing) const;
 
   void CalculateBlockSideMargins(LayoutFrameType aFrameType);
+
+  /**
+   * @return true if mFrame is an internal table frame, i.e. an
+   * ns[RowGroup|ColGroup|Row|Cell]Frame.  (We exclude nsTableColFrame
+   * here since we never setup a ReflowInput for those.)
+   */
+  bool IsInternalTableFrame() const;
 
  private:
   // The available size in which to reflow the frame. The space represents the

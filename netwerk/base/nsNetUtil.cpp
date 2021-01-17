@@ -2714,9 +2714,8 @@ void net_EnsurePSMInit() {
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(NS_IsMainThread());
 
-  nsresult rv;
-  nsCOMPtr<nsISupports> psm = do_GetService(PSM_COMPONENT_CONTRACTID, &rv);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
+  DebugOnly<bool> rv = EnsureNSSInitializedChromeOrContent();
+  MOZ_ASSERT(rv);
 
 #ifndef MOZ_NEW_CERT_STORAGE
   nsCOMPtr<nsISupports> cbl = do_GetService(NS_CERTBLOCKLIST_CONTRACTID);
@@ -3183,11 +3182,11 @@ bool NS_ShouldClassifyChannel(nsIChannel* aChannel) {
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
-  nsContentPolicyType type = loadInfo->GetExternalContentPolicyType();
+  ExtContentPolicyType type = loadInfo->GetExternalContentPolicyType();
   // Skip classifying channel triggered by system unless it is a top-level
   // load.
   if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
-      nsIContentPolicy::TYPE_DOCUMENT != type) {
+      ExtContentPolicy::TYPE_DOCUMENT != type) {
     return false;
   }
 

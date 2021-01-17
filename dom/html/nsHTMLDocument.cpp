@@ -206,7 +206,9 @@ void nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
                                           nsIDocShell* aDocShell,
                                           int32_t& aCharsetSource,
                                           NotNull<const Encoding*>& aEncoding) {
-  if (kCharsetFromUserForced <= aCharsetSource) return;
+  if (kCharsetFromUserForced <= aCharsetSource) {
+    return;
+  }
 
   // mCharacterSet not updated yet for channel, so check aEncoding, too.
   if (WillIgnoreCharsetOverride() || !IsAsciiCompatible(aEncoding)) {
@@ -222,39 +224,12 @@ void nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
         return;
       }
       aEncoding = WrapNotNull(encoding);
-      aCharsetSource = kCharsetFromUserForced;
+      aCharsetSource = nsDocShell::Cast(aDocShell)->GetForcedAutodetection()
+                           ? kCharsetFromPendingUserForcedAutoDetection
+                           : kCharsetFromUserForced;
       aDocShell->SetCharset(""_ns);
     }
   }
-}
-
-void nsHTMLDocument::TryCacheCharset(nsICachingChannel* aCachingChannel,
-                                     int32_t& aCharsetSource,
-                                     NotNull<const Encoding*>& aEncoding) {
-  nsresult rv;
-
-  if (kCharsetFromCache <= aCharsetSource) {
-    return;
-  }
-
-  nsCString cachedCharset;
-  rv = aCachingChannel->GetCacheTokenCachedCharset(cachedCharset);
-  if (NS_FAILED(rv) || cachedCharset.IsEmpty()) {
-    return;
-  }
-  // The canonical names changed, so the cache may have an old name.
-  const Encoding* encoding = Encoding::ForLabelNoReplacement(cachedCharset);
-  if (!encoding) {
-    return;
-  }
-  // Check IsAsciiCompatible() even in the cache case, because the value
-  // might be stale and in the case of a stale charset that is not a rough
-  // ASCII superset, the parser has no way to recover.
-  if (!encoding->IsAsciiCompatible() && encoding != ISO_2022_JP_ENCODING) {
-    return;
-  }
-  aEncoding = WrapNotNull(encoding);
-  aCharsetSource = kCharsetFromCache;
 }
 
 void nsHTMLDocument::TryParentCharset(nsIDocShell* aDocShell,
@@ -276,14 +251,21 @@ void nsHTMLDocument::TryParentCharset(nsIDocShell* aDocShell,
     return;
   }
   if (kCharsetFromUserForced == parentSource ||
-      kCharsetFromUserForcedAutoDetection == parentSource) {
+      kCharsetFromUserForcedJapaneseAutoDetection == parentSource ||
+      kCharsetFromPendingUserForcedAutoDetection == parentSource ||
+      kCharsetFromInitialUserForcedAutoDetection == parentSource ||
+      kCharsetFromFinalUserForcedAutoDetection == parentSource) {
     if (WillIgnoreCharsetOverride() ||
         !IsAsciiCompatible(aEncoding) ||  // if channel said UTF-16
         !IsAsciiCompatible(parentCharset)) {
       return;
     }
     aEncoding = WrapNotNull(parentCharset);
-    aCharsetSource = kCharsetFromUserForced;
+    aCharsetSource =
+        (kCharsetFromUserForced == parentSource ||
+         kCharsetFromUserForcedJapaneseAutoDetection == parentSource)
+            ? kCharsetFromUserForced
+            : kCharsetFromPendingUserForcedAutoDetection;
     return;
   }
 
@@ -291,7 +273,7 @@ void nsHTMLDocument::TryParentCharset(nsIDocShell* aDocShell,
     return;
   }
 
-  if (kCharsetFromCache <= parentSource) {
+  if (kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8 <= parentSource) {
     // Make sure that's OK
     if (!NodePrincipal()->Equals(parentPrincipal) ||
         !IsAsciiCompatible(parentCharset)) {
@@ -392,7 +374,6 @@ nsresult nsHTMLDocument::StartDocumentLoad(const char* aCommand,
     return rv;
   }
 
-  nsCOMPtr<nsICachingChannel> cachingChan = do_QueryInterface(aChannel);
   nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aContainer));
 
   bool loadWithPrototype = false;
@@ -497,22 +478,10 @@ nsresult nsHTMLDocument::StartDocumentLoad(const char* aCommand,
 
     TryHintCharset(cv, charsetSource, encoding);  // For encoding reload
     TryParentCharset(docShell, charsetSource, encoding);
-
-    if (cachingChan && !urlSpec.IsEmpty()) {
-      TryCacheCharset(cachingChan, charsetSource, encoding);
-    }
   }
 
   SetDocumentCharacterSetSource(charsetSource);
   SetDocumentCharacterSet(encoding);
-
-  if (cachingChan) {
-    nsAutoCString charset;
-    encoding->Name(charset);
-    rv = cachingChan->SetCacheTokenCachedCharset(charset);
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "cannot SetMetaDataElement");
-    rv = NS_OK;  // don't propagate error
-  }
 
   // Set the parser as the stream listener for the document loader...
   rv = NS_OK;

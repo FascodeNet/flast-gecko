@@ -121,52 +121,6 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
   masm.unboxNonDouble(type, payload, output, ValueTypeFromMIRType(mir->type()));
 }
 
-void CodeGenerator::visitCompareB(LCompareB* lir) {
-  MCompare* mir = lir->mir();
-
-  const ValueOperand lhs = ToValue(lir, LCompareB::Lhs);
-  const LAllocation* rhs = lir->rhs();
-  const Register output = ToRegister(lir->output());
-
-  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
-
-  Label notBoolean, done;
-  masm.branchTestBoolean(Assembler::NotEqual, lhs, &notBoolean);
-  {
-    if (rhs->isConstant()) {
-      masm.cmp32(lhs.payloadReg(), Imm32(rhs->toConstant()->toBoolean()));
-    } else {
-      masm.cmp32(lhs.payloadReg(), ToRegister(rhs));
-    }
-    masm.emitSet(JSOpToCondition(mir->compareType(), mir->jsop()), output);
-    masm.jump(&done);
-  }
-  masm.bind(&notBoolean);
-  { masm.move32(Imm32(mir->jsop() == JSOp::StrictNe), output); }
-
-  masm.bind(&done);
-}
-
-void CodeGenerator::visitCompareBAndBranch(LCompareBAndBranch* lir) {
-  MCompare* mir = lir->cmpMir();
-  const ValueOperand lhs = ToValue(lir, LCompareBAndBranch::Lhs);
-  const LAllocation* rhs = lir->rhs();
-
-  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
-
-  Assembler::Condition cond = masm.testBoolean(Assembler::NotEqual, lhs);
-  jumpToBlock((mir->jsop() == JSOp::StrictEq) ? lir->ifFalse() : lir->ifTrue(),
-              cond);
-
-  if (rhs->isConstant()) {
-    masm.cmp32(lhs.payloadReg(), Imm32(rhs->toConstant()->toBoolean()));
-  } else {
-    masm.cmp32(lhs.payloadReg(), ToRegister(rhs));
-  }
-  emitBranch(JSOpToCondition(mir->compareType(), mir->jsop()), lir->ifTrue(),
-             lir->ifFalse());
-}
-
 // See ../CodeGenerator.cpp for more information.
 void CodeGenerator::visitWasmRegisterResult(LWasmRegisterResult* lir) {}
 

@@ -188,28 +188,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void visitNewArrayCallVM(LNewArray* lir);
   void visitNewObjectVMCall(LNewObject* lir);
 
-  void emitGetPropertyPolymorphic(LInstruction* lir, Register obj,
-                                  Register scratch,
-                                  const TypedOrValueRegister& output);
-  void emitSetPropertyPolymorphic(LInstruction* lir, Register obj,
-                                  Register scratch,
-                                  const ConstantOrRegister& value);
-  void emitCompareS(LInstruction* lir, JSOp op, Register left, Register right,
-                    Register output);
-
   void emitConcat(LInstruction* lir, Register lhs, Register rhs,
                   Register output);
-  template <typename T>
-  void emitLoadElementT(LLoadElementT* lir, const T& source);
-
-  template <typename T>
-  void emitStoreElementHoleT(T* lir);
-  template <typename T>
-  void emitStoreElementHoleV(T* lir);
-
-  void emitArrayPush(LInstruction* lir, Register obj,
-                     const ConstantOrRegister& value, Register elementsTemp,
-                     Register length, Register spectreTemp);
 
   void emitRest(LInstruction* lir, Register array, Register numActuals,
                 Register temp0, Register temp1, unsigned numFormals,

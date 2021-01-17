@@ -1147,11 +1147,11 @@ bool WarpCacheIRTranspiler::emitGuardIsExtensible(ObjOperandId objId) {
   return true;
 }
 
-bool WarpCacheIRTranspiler::emitGuardIndexIsNonNegative(
+bool WarpCacheIRTranspiler::emitGuardInt32IsNonNegative(
     Int32OperandId indexId) {
   MDefinition* index = getOperand(indexId);
 
-  auto* ins = MGuardIndexIsNonNegative::New(alloc(), index);
+  auto* ins = MGuardInt32IsNonNegative::New(alloc(), index);
   add(ins);
   setOperand(indexId, ins);
   return true;
@@ -1788,8 +1788,8 @@ bool WarpCacheIRTranspiler::emitLoadTypedArrayElementExistsResult(
   add(length);
 
   // Unsigned comparison to catch negative indices.
-  auto* ins = MCompare::New(alloc(), index, length, JSOp::Lt);
-  ins->setCompareType(MCompare::Compare_UInt32);
+  auto* ins =
+      MCompare::New(alloc(), index, length, JSOp::Lt, MCompare::Compare_UInt32);
   add(ins);
 
   pushResult(ins);
@@ -2571,8 +2571,7 @@ bool WarpCacheIRTranspiler::emitCompareResult(
   MDefinition* lhs = getOperand(lhsId);
   MDefinition* rhs = getOperand(rhsId);
 
-  auto* ins = MCompare::New(alloc(), lhs, rhs, op);
-  ins->setCompareType(compareType);
+  auto* ins = MCompare::New(alloc(), lhs, rhs, op, compareType);
   add(ins);
 
   pushResult(ins);
@@ -2642,9 +2641,9 @@ bool WarpCacheIRTranspiler::emitCompareNullUndefinedResult(
   // is null or undefined.
   MDefinition* cst =
       isUndefined ? constant(UndefinedValue()) : constant(NullValue());
-  auto* ins = MCompare::New(alloc(), input, cst, op);
-  ins->setCompareType(isUndefined ? MCompare::Compare_Undefined
-                                  : MCompare::Compare_Null);
+  auto compareType =
+      isUndefined ? MCompare::Compare_Undefined : MCompare::Compare_Null;
+  auto* ins = MCompare::New(alloc(), input, cst, op, compareType);
   add(ins);
 
   pushResult(ins);
@@ -3690,6 +3689,30 @@ bool WarpCacheIRTranspiler::emitAtomicsIsLockFreeResult(
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitBigIntAsIntNResult(Int32OperandId bitsId,
+                                                   BigIntOperandId bigIntId) {
+  MDefinition* bits = getOperand(bitsId);
+  MDefinition* bigInt = getOperand(bigIntId);
+
+  auto* ins = MBigIntAsIntN::New(alloc(), bits, bigInt);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitBigIntAsUintNResult(Int32OperandId bitsId,
+                                                    BigIntOperandId bigIntId) {
+  MDefinition* bits = getOperand(bitsId);
+  MDefinition* bigInt = getOperand(bigIntId);
+
+  auto* ins = MBigIntAsUintN::New(alloc(), bits, bigInt);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitLoadValueTruthyResult(ValOperandId inputId) {
   MDefinition* input = getOperand(inputId);
 
@@ -4282,7 +4305,6 @@ MDefinition* WarpCacheIRTranspiler::convertWasmArg(MDefinition* arg,
       // effect-free.
       switch (arg->type()) {
         case MIRType::Object:
-        case MIRType::ObjectOrNull:
           conversion = MWasmAnyRefFromJSObject::New(alloc(), arg);
           break;
         case MIRType::Null:

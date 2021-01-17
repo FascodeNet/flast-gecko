@@ -21,26 +21,29 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <unistd.h>
 #include <dlfcn.h>
-#include "nscore.h"
 #include <fcntl.h>
+#include <unistd.h>
+
+#include "mozilla/Unused.h"
+#include "nsAppRunner.h"  // for IsWaylandDisabled on IsX11EGLEnabled
 #include "stdint.h"
 
 #ifdef __SUNPRO_CC
 #  include <stdio.h>
 #endif
 
-#include "X11/Xlib.h"
-#include "X11/Xutil.h"
-
-#include "mozilla/Unused.h"
-
-#ifdef MOZ_WAYLAND
-#  include "nsAppRunner.h"  // for IsWaylandDisabled
-#  include "mozilla/widget/mozwayland.h"
+#ifdef MOZ_X11
+#  include "X11/Xlib.h"
+#  include "X11/Xutil.h"
 #endif
 
+#ifdef MOZ_WAYLAND
+#  include "mozilla/widget/mozwayland.h"
+#  include "mozilla/widget/xdg-output-unstable-v1-client-protocol.h"
+#endif
+
+#ifdef MOZ_X11
 // stuff from glx.h
 typedef struct __GLXcontextRec* GLXContext;
 typedef XID GLXPixmap;
@@ -51,10 +54,11 @@ typedef XID GLXFBConfigID;
 typedef XID GLXContextID;
 typedef XID GLXWindow;
 typedef XID GLXPbuffer;
-#define GLX_RGBA 4
-#define GLX_RED_SIZE 8
-#define GLX_GREEN_SIZE 9
-#define GLX_BLUE_SIZE 10
+#  define GLX_RGBA 4
+#  define GLX_RED_SIZE 8
+#  define GLX_GREEN_SIZE 9
+#  define GLX_BLUE_SIZE 10
+#endif
 
 // stuff from gl.h
 typedef uint8_t GLubyte;
@@ -87,6 +91,17 @@ typedef uint32_t GLenum;
 #define EGL_VENDOR 0x3053
 #define EGL_CONTEXT_CLIENT_VERSION 0x3098
 #define EGL_NO_CONTEXT nullptr
+
+// Open libGL and load needed symbols
+#if defined(__OpenBSD__) || defined(__NetBSD__)
+#  define LIBGL_FILENAME "libGL.so"
+#  define LIBGLES_FILENAME "libGLESv2.so"
+#  define LIBEGL_FILENAME "libEGL.so"
+#else
+#  define LIBGL_FILENAME "libGL.so.1"
+#  define LIBGLES_FILENAME "libGLESv2.so.2"
+#  define LIBEGL_FILENAME "libEGL.so.1"
+#endif
 
 #define EXIT_FAILURE_BUFFER_TOO_SMALL 2
 
@@ -149,6 +164,7 @@ static void record_flush() {
   mozilla::Unused << write(write_end_of_the_pipe, glxtest_buf, glxtest_length);
 }
 
+#ifdef MOZ_X11
 static int x_error_handler(Display*, XErrorEvent* ev) {
   record_value(
       "ERROR\nX error, error_code=%d, "
@@ -158,12 +174,31 @@ static int x_error_handler(Display*, XErrorEvent* ev) {
   _exit(EXIT_FAILURE);
   return 0;
 }
+#endif
 
 // childgltest is declared inside extern "C" so that the name is not mangled.
 // The name is used in build/valgrind/x86_64-pc-linux-gnu.sup to suppress
 // memory leak errors because we run it inside a short lived fork and we don't
 // care about leaking memory
 extern "C" {
+
+static void close_logging() {
+  // we want to redirect to /dev/null stdout, stderr, and while we're at it,
+  // any PR logging file descriptors. To that effect, we redirect all positive
+  // file descriptors up to what open() returns here. In particular, 1 is stdout
+  // and 2 is stderr.
+  int fd = open("/dev/null", O_WRONLY);
+  for (int i = 1; i < fd; i++) {
+    dup2(fd, i);
+  }
+  close(fd);
+
+  if (getenv("MOZ_AVOID_OPENGL_ALTOGETHER")) {
+    const char* msg = "ERROR\nMOZ_AVOID_OPENGL_ALTOGETHER envvar set";
+    mozilla::Unused << write(write_end_of_the_pipe, msg, strlen(msg));
+    exit(EXIT_FAILURE);
+  }
+}
 
 #define PCI_FILL_IDENT 0x0001
 #define PCI_FILL_CLASS 0x0020
@@ -288,30 +323,30 @@ static void get_gles_status(EGLDisplay dpy,
     return;
   }
 
-  void* libgles = dlopen("libGLESv2.so.2", RTLD_LAZY);
-  if (!libgles) {
-    libgles = dlopen("libGLESv2.so", RTLD_LAZY);
-  }
-  if (!libgles) {
-    record_error("libGLESv2 missing");
-    return;
-  }
-
   typedef GLubyte* (*PFNGLGETSTRING)(GLenum);
   PFNGLGETSTRING glGetString =
       cast<PFNGLGETSTRING>(eglGetProcAddress("glGetString"));
 
+  // Implementations disagree about whether eglGetProcAddress or dlsym
+  // should be used for getting functions from the actual API, see
+  // https://github.com/anholt/libepoxy/commit/14f24485e33816139398d1bd170d617703473738
+  void* libgl = nullptr;
   if (!glGetString) {
-    // Implementations disagree about whether eglGetProcAddress or dlsym
-    // should be used for getting functions from the actual API, see
-    // https://github.com/anholt/libepoxy/commit/14f24485e33816139398d1bd170d617703473738
-    glGetString = cast<PFNGLGETSTRING>(dlsym(libgles, "glGetString"));
-  }
+    libgl = dlopen(LIBGL_FILENAME, RTLD_LAZY);
+    if (!libgl) {
+      libgl = dlopen(LIBGLES_FILENAME, RTLD_LAZY);
+      if (!libgl) {
+        record_error("Unable to load " LIBGL_FILENAME " or " LIBGLES_FILENAME);
+        return;
+      }
+    }
 
-  if (!glGetString) {
-    dlclose(libgles);
-    record_error("libGLESv2 glGetString missing");
-    return;
+    glGetString = cast<PFNGLGETSTRING>(dlsym(libgl, "glGetString"));
+    if (!glGetString) {
+      dlclose(libgl);
+      record_error("libGL or libGLESv2 glGetString missing");
+      return;
+    }
   }
 
   EGLint config_attrs[] = {EGL_RED_SIZE,  8, EGL_GREEN_SIZE, 8,
@@ -335,14 +370,13 @@ static void get_gles_status(EGLDisplay dpy,
     record_error("libGLESv2 glGetString returned null");
   }
 
-  dlclose(libgles);
+  if (libgl) {
+    dlclose(libgl);
+  }
 }
 
 static void get_egl_status(EGLNativeDisplayType native_dpy, bool gles_test) {
-  void* libegl = dlopen("libEGL.so.1", RTLD_LAZY);
-  if (!libegl) {
-    libegl = dlopen("libEGL.so", RTLD_LAZY);
-  }
+  void* libegl = dlopen(LIBEGL_FILENAME, RTLD_LAZY);
   if (!libegl) {
     record_warning("libEGL missing");
     return;
@@ -409,13 +443,25 @@ static void get_egl_status(EGLNativeDisplayType native_dpy, bool gles_test) {
   dlclose(libegl);
 }
 
+#ifdef MOZ_X11
+static void get_x11_screen_info(Display* dpy) {
+  int screenCount = ScreenCount(dpy);
+  int defaultScreen = DefaultScreen(dpy);
+  if (screenCount != 0) {
+    record_value("SCREEN_INFO\n");
+    for (int idx = 0; idx < screenCount; idx++) {
+      Screen* scrn = ScreenOfDisplay(dpy, idx);
+      int current_height = scrn->height;
+      int current_width = scrn->width;
+
+      record_value("%dx%d:%d%s", current_width, current_height,
+                   idx == defaultScreen ? 1 : 0,
+                   idx == screenCount - 1 ? ";\n" : ";");
+    }
+  }
+}
+
 static void get_glx_status(int* gotGlxInfo, int* gotDriDriver) {
-  ///// Open libGL and load needed symbols /////
-#if defined(__OpenBSD__) || defined(__NetBSD__)
-#  define LIBGL_FILENAME "libGL.so"
-#else
-#  define LIBGL_FILENAME "libGL.so.1"
-#endif
   void* libgl = dlopen(LIBGL_FILENAME, RTLD_LAZY);
   if (!libgl) {
     record_error(LIBGL_FILENAME " missing");
@@ -567,21 +613,7 @@ static void get_glx_status(int* gotGlxInfo, int* gotDriDriver) {
   }
 
   // Get monitor information
-
-  int screenCount = ScreenCount(dpy);
-  int defaultScreen = DefaultScreen(dpy);
-  if (screenCount != 0) {
-    record_value("SCREEN_INFO\n");
-    for (int idx = 0; idx < screenCount; idx++) {
-      Screen* scrn = ScreenOfDisplay(dpy, idx);
-      int current_height = scrn->height;
-      int current_width = scrn->width;
-
-      record_value("%dx%d:%d%s", current_width, current_height,
-                   idx == defaultScreen ? 1 : 0,
-                   idx == screenCount - 1 ? ";\n" : ";");
-    }
-  }
+  get_x11_screen_info(dpy);
 
   ///// Clean up. Indeed, the parent process might fail to kill us (e.g. if it
   ///// doesn't need to check GL info) so we might be staying alive for longer
@@ -594,49 +626,34 @@ static void get_glx_status(int* gotGlxInfo, int* gotDriDriver) {
   XDestroyWindow(dpy, window);
   XFreeColormap(dpy, swa.colormap);
 
-#ifdef NS_FREE_PERMANENT_DATA  // conditionally defined in nscore.h, don't
-                               // forget to #include it above
+#  ifdef NS_FREE_PERMANENT_DATA  // conditionally defined in nscore.h, don't
+                                 // forget to #include it above
   XCloseDisplay(dpy);
-#else
+#  else
   // This XSync call wanted to be instead:
   //   XCloseDisplay(dpy);
   // but this can cause 1-minute stalls on certain setups using Nouveau, see bug
   // 973192
   XSync(dpy, False);
-#endif
+#  endif
 
   dlclose(libgl);
 }
 
-static void close_logging() {
-  // we want to redirect to /dev/null stdout, stderr, and while we're at it,
-  // any PR logging file descriptors. To that effect, we redirect all positive
-  // file descriptors up to what open() returns here. In particular, 1 is stdout
-  // and 2 is stderr.
-  int fd = open("/dev/null", O_WRONLY);
-  for (int i = 1; i < fd; i++) dup2(fd, i);
-  close(fd);
+static bool x11_egltest() {
+  get_egl_status(nullptr, true);
 
-  if (getenv("MOZ_AVOID_OPENGL_ALTOGETHER")) {
-    const char* msg = "ERROR\nMOZ_AVOID_OPENGL_ALTOGETHER envvar set";
-    mozilla::Unused << write(write_end_of_the_pipe, msg, strlen(msg));
-    exit(EXIT_FAILURE);
-  }
-}
-
-#ifdef MOZ_WAYLAND
-static bool wayland_egltest() {
-  // NOTE: returns false to fall back to X11 when the Wayland socket doesn't
-  // exist but fails with record_error if something actually went wrong
-  struct wl_display* dpy = wl_display_connect(nullptr);
+  Display* dpy = XOpenDisplay(nullptr);
   if (!dpy) {
     return false;
   }
+  XSetErrorHandler(x_error_handler);
 
-  get_egl_status((EGLNativeDisplayType)dpy, true);
+  get_x11_screen_info(dpy);
+
+  XCloseDisplay(dpy);
   return true;
 }
-#endif
 
 static void glxtest() {
   int gotGlxInfo = 0;
@@ -651,6 +668,319 @@ static void glxtest() {
     get_egl_status(nullptr, false);
   }
 }
+#endif
+
+#ifdef MOZ_WAYLAND
+typedef void (*print_info_t)(void* info);
+typedef void (*destroy_info_t)(void* info);
+
+struct global_info {
+  struct wl_list link;
+
+  uint32_t id;
+  uint32_t version;
+  char* interface;
+
+  print_info_t print;
+  destroy_info_t destroy;
+};
+
+struct output_info {
+  struct global_info global;
+  struct wl_list global_link;
+
+  struct wl_output* output;
+
+  int32_t version;
+
+  int32_t scale;
+};
+
+struct xdg_output_v1_info {
+  struct wl_list link;
+
+  struct zxdg_output_v1* xdg_output;
+  struct output_info* output;
+
+  struct {
+    int32_t width, height;
+  } logical;
+
+  char *name, *description;
+};
+
+struct xdg_output_manager_v1_info {
+  struct global_info global;
+  struct zxdg_output_manager_v1* manager;
+  struct weston_info* info;
+
+  struct wl_list outputs;
+};
+
+struct weston_info {
+  struct wl_display* display;
+  struct wl_registry* registry;
+
+  struct wl_list infos;
+  bool roundtrip_needed;
+
+  struct wl_list outputs;
+  struct xdg_output_manager_v1_info* xdg_output_manager_v1_info;
+};
+
+static void init_global_info(struct weston_info* info,
+                             struct global_info* global, uint32_t id,
+                             const char* interface, uint32_t version) {
+  global->id = id;
+  global->version = version;
+  global->interface = strdup(interface);
+
+  wl_list_insert(info->infos.prev, &global->link);
+}
+
+static void print_output_info(void* data) {}
+
+static void destroy_xdg_output_v1_info(struct xdg_output_v1_info* info) {
+  wl_list_remove(&info->link);
+  zxdg_output_v1_destroy(info->xdg_output);
+  free(info->name);
+  free(info->description);
+  free(info);
+}
+
+static void print_xdg_output_manager_v1_info(void* data) {
+  struct xdg_output_manager_v1_info* info =
+      (struct xdg_output_manager_v1_info*)data;
+  struct xdg_output_v1_info* output;
+
+  int screen_count = wl_list_length(&info->outputs);
+  if (screen_count != 0) {
+    record_value("SCREEN_INFO\n");
+    wl_list_for_each(output, &info->outputs, link) {
+      record_value("%dx%d:0;", output->logical.width, output->logical.height);
+    }
+    record_value("\n");
+  }
+}
+
+static void destroy_xdg_output_manager_v1_info(void* data) {
+  struct xdg_output_manager_v1_info* info =
+      (struct xdg_output_manager_v1_info*)data;
+  struct xdg_output_v1_info *output, *tmp;
+
+  zxdg_output_manager_v1_destroy(info->manager);
+
+  wl_list_for_each_safe(output, tmp, &info->outputs, link)
+      destroy_xdg_output_v1_info(output);
+}
+
+static void handle_xdg_output_v1_logical_position(void* data,
+                                                  struct zxdg_output_v1* output,
+                                                  int32_t x, int32_t y) {}
+
+static void handle_xdg_output_v1_logical_size(void* data,
+                                              struct zxdg_output_v1* output,
+                                              int32_t width, int32_t height) {
+  struct xdg_output_v1_info* xdg_output = (struct xdg_output_v1_info*)data;
+  xdg_output->logical.width = width;
+  xdg_output->logical.height = height;
+}
+
+static void handle_xdg_output_v1_done(void* data,
+                                      struct zxdg_output_v1* output) {}
+
+static void handle_xdg_output_v1_name(void* data, struct zxdg_output_v1* output,
+                                      const char* name) {
+  struct xdg_output_v1_info* xdg_output = (struct xdg_output_v1_info*)data;
+  xdg_output->name = strdup(name);
+}
+
+static void handle_xdg_output_v1_description(void* data,
+                                             struct zxdg_output_v1* output,
+                                             const char* description) {
+  struct xdg_output_v1_info* xdg_output = (struct xdg_output_v1_info*)data;
+  xdg_output->description = strdup(description);
+}
+
+static const struct zxdg_output_v1_listener xdg_output_v1_listener = {
+    .logical_position = handle_xdg_output_v1_logical_position,
+    .logical_size = handle_xdg_output_v1_logical_size,
+    .done = handle_xdg_output_v1_done,
+    .name = handle_xdg_output_v1_name,
+    .description = handle_xdg_output_v1_description,
+};
+
+static void add_xdg_output_v1_info(
+    struct xdg_output_manager_v1_info* manager_info,
+    struct output_info* output) {
+  struct xdg_output_v1_info* xdg_output =
+      (struct xdg_output_v1_info*)malloc(sizeof *xdg_output);
+
+  wl_list_insert(&manager_info->outputs, &xdg_output->link);
+  xdg_output->xdg_output = zxdg_output_manager_v1_get_xdg_output(
+      manager_info->manager, output->output);
+  zxdg_output_v1_add_listener(xdg_output->xdg_output, &xdg_output_v1_listener,
+                              xdg_output);
+
+  xdg_output->output = output;
+
+  manager_info->info->roundtrip_needed = true;
+}
+
+static void add_xdg_output_manager_v1_info(struct weston_info* info,
+                                           uint32_t id, uint32_t version) {
+  struct output_info* output;
+  struct xdg_output_manager_v1_info* manager =
+      (struct xdg_output_manager_v1_info*)malloc(sizeof *manager);
+
+  wl_list_init(&manager->outputs);
+  manager->info = info;
+
+  init_global_info(info, &manager->global, id,
+                   zxdg_output_manager_v1_interface.name, version);
+  manager->global.print = print_xdg_output_manager_v1_info;
+  manager->global.destroy = destroy_xdg_output_manager_v1_info;
+
+  manager->manager = (struct zxdg_output_manager_v1*)wl_registry_bind(
+      info->registry, id, &zxdg_output_manager_v1_interface,
+      version > 2 ? 2 : version);
+
+  wl_list_for_each(output, &info->outputs, global_link)
+      add_xdg_output_v1_info(manager, output);
+
+  info->xdg_output_manager_v1_info = manager;
+}
+
+static void output_handle_geometry(void* data, struct wl_output* wl_output,
+                                   int32_t x, int32_t y, int32_t physical_width,
+                                   int32_t physical_height, int32_t subpixel,
+                                   const char* make, const char* model,
+                                   int32_t output_transform) {}
+
+static void output_handle_mode(void* data, struct wl_output* wl_output,
+                               uint32_t flags, int32_t width, int32_t height,
+                               int32_t refresh) {}
+
+static void output_handle_done(void* data, struct wl_output* wl_output) {}
+
+static void output_handle_scale(void* data, struct wl_output* wl_output,
+                                int32_t scale) {
+  struct output_info* output = (struct output_info*)data;
+
+  output->scale = scale;
+}
+
+static const struct wl_output_listener output_listener = {
+    output_handle_geometry,
+    output_handle_mode,
+    output_handle_done,
+    output_handle_scale,
+};
+
+static void destroy_output_info(void* data) {
+  struct output_info* output = (struct output_info*)data;
+
+  wl_output_destroy(output->output);
+}
+
+static void add_output_info(struct weston_info* info, uint32_t id,
+                            uint32_t version) {
+  struct output_info* output = (struct output_info*)malloc(sizeof *output);
+
+  init_global_info(info, &output->global, id, "wl_output", version);
+  output->global.print = print_output_info;
+  output->global.destroy = destroy_output_info;
+
+  output->version = MIN(version, 2);
+  output->scale = 1;
+
+  output->output = (struct wl_output*)wl_registry_bind(
+      info->registry, id, &wl_output_interface, output->version);
+  wl_output_add_listener(output->output, &output_listener, output);
+
+  info->roundtrip_needed = true;
+  wl_list_insert(&info->outputs, &output->global_link);
+
+  if (info->xdg_output_manager_v1_info) {
+    add_xdg_output_v1_info(info->xdg_output_manager_v1_info, output);
+  }
+}
+
+static void global_handler(void* data, struct wl_registry* registry,
+                           uint32_t id, const char* interface,
+                           uint32_t version) {
+  struct weston_info* info = (struct weston_info*)data;
+
+  if (!strcmp(interface, "wl_output")) {
+    add_output_info(info, id, version);
+  } else if (!strcmp(interface, zxdg_output_manager_v1_interface.name)) {
+    add_xdg_output_manager_v1_info(info, id, version);
+  }
+}
+
+static void global_remove_handler(void* data, struct wl_registry* registry,
+                                  uint32_t name) {}
+
+static const struct wl_registry_listener registry_listener = {
+    global_handler, global_remove_handler};
+
+static void print_infos(struct wl_list* infos) {
+  struct global_info* info;
+
+  wl_list_for_each(info, infos, link) { info->print(info); }
+}
+
+static void destroy_info(void* data) {
+  struct global_info* global = (struct global_info*)data;
+
+  global->destroy(data);
+  wl_list_remove(&global->link);
+  free(global->interface);
+  free(data);
+}
+
+static void destroy_infos(struct wl_list* infos) {
+  struct global_info *info, *tmp;
+  wl_list_for_each_safe(info, tmp, infos, link) { destroy_info(info); }
+}
+
+static void get_wayland_screen_info(struct wl_display* dpy) {
+  struct weston_info info = {0};
+  info.display = dpy;
+
+  info.xdg_output_manager_v1_info = NULL;
+  wl_list_init(&info.infos);
+  wl_list_init(&info.outputs);
+
+  info.registry = wl_display_get_registry(info.display);
+  wl_registry_add_listener(info.registry, &registry_listener, &info);
+
+  do {
+    info.roundtrip_needed = false;
+    wl_display_roundtrip(info.display);
+  } while (info.roundtrip_needed);
+
+  print_infos(&info.infos);
+  destroy_infos(&info.infos);
+
+  wl_registry_destroy(info.registry);
+}
+
+static bool wayland_egltest() {
+  // NOTE: returns false to fall back to X11 when the Wayland socket doesn't
+  // exist but fails with record_error if something actually went wrong
+  struct wl_display* dpy = wl_display_connect(nullptr);
+  if (!dpy) {
+    return false;
+  }
+
+  get_egl_status((EGLNativeDisplayType)dpy, true);
+  get_wayland_screen_info(dpy);
+
+  wl_display_disconnect(dpy);
+  return true;
+}
+#endif
 
 int childgltest() {
   enum { bufsize = 2048 };
@@ -664,15 +994,21 @@ int childgltest() {
   // Get a list of all GPUs from the PCI bus.
   get_pci_status();
 
-  // TODO: --display command line argument is not properly handled
-  // NOTE: prefers X for now because eglQueryRendererIntegerMESA does not
-  // exist yet
+  bool result = false;
 #ifdef MOZ_WAYLAND
-  if (IsWaylandDisabled() || getenv("DISPLAY") || !wayland_egltest())
+  if (!IsWaylandDisabled()) {
+    result = wayland_egltest();
+  }
 #endif
-  {
+#ifdef MOZ_X11
+  // TODO: --display command line argument is not properly handled
+  if (!result && IsX11EGLEnabled()) {
+    result = x11_egltest();
+  }
+  if (!result) {
     glxtest();
   }
+#endif
 
   // Finally write buffered data to the pipe.
   record_flush();

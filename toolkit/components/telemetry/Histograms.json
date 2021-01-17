@@ -3450,6 +3450,87 @@
     "bug_numbers": [1655566],
     "description": "HTTP3: number of times when a stream is blocked by the flow control while sendnig data."
   },
+  "HTTP3_LOSS_RATIO": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 2000,
+    "n_buckets": 100,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: packet loss ratio (multiply by 10000)."
+  },
+  "HTTP3_LATE_ACK_RATIO": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 2000,
+    "n_buckets": 100,
+    "keyed": true,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: spurious retransmissions ratio (spurios_retransmission / packet sent * 10000)."
+  },
+  "HTTP3_LATE_ACK": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 100,
+    "keyed": true,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: the number of spurious retransmissions."
+  },
+  "HTTP3_COUNTS_PTO": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 5000,
+    "n_buckets": 100,
+    "keyed": true,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: the number of PTOs."
+  },
+  "HTTP3_DROP_DGRAMS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 5000,
+    "n_buckets": 100,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: the number of dropped datagrams."
+  },
+  "HTTP3_SAVED_DGRAMS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 5000,
+    "n_buckets": 100,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: the number of saved datagrams that are waiting for keys to be available."
+  },
+  "HTTP3_RECEIVED_SENT_DGRAMS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 100000,
+    "n_buckets": 100,
+    "keyed": true,
+    "bug_numbers": [1677951],
+    "description": "HTTP3: the number of received/sent packets."
+  },
   "HTTP_CONTENT_ENCODING": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -8211,15 +8292,15 @@
     "releaseChannelCollection": "opt-out",
     "description": "Number of HTML editors a node in the window has been observed by mutation observers, but has not had beforeinput event listeners"
   },
-  "ENCODING_OVERRIDE_SITUATION": {
+  "ENCODING_OVERRIDE_SITUATION_2": {
     "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
+    "products": ["firefox"],
     "alert_emails": ["hsivonen@mozilla.com"],
-    "bug_numbers": [840476, 977573, 1513473, 1554592, 1603047],
-    "expires_in_version": "79",
+    "bug_numbers": [840476, 977573, 1513473, 1554592, 1603047, 1648464],
+    "expires_in_version": "91",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
-    "labels": ["Local", "RemoteTld", "RemoteNonTld", "LocalChardet", "RemoteChardet", "Labeled", "AlreadyOverridden", "Bug"],
+    "labels": ["AutoOverridden", "ManuallyOverridden", "LocalLabeled", "LocalUnlabeled", "UnlabeledInLk", "UnlabeledJp", "UnlabeledNonUtf8", "UnlabeledUtf8", "ChannelNonUtf8", "ChannelUtf8", "MetaNonUtf8", "MetaUtf8", "Bug"],
     "description": "Labeling status of top-level page when overriding encoding"
   },
   "LONG_REFLOW_INTERRUPTIBLE": {

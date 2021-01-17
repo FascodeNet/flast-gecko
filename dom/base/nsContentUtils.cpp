@@ -8059,9 +8059,9 @@ int16_t nsContentUtils::GetButtonsFlagForButton(int32_t aButton) {
       return MouseButtonsFlag::eMiddleFlag;
     case MouseButton::eSecondary:
       return MouseButtonsFlag::eSecondaryFlag;
-    case 4:
+    case 3:
       return MouseButtonsFlag::e4thFlag;
-    case 5:
+    case 4:
       return MouseButtonsFlag::e5thFlag;
     default:
       NS_ERROR("Button not known.");
@@ -8269,10 +8269,10 @@ bool nsContentUtils::IsPreloadType(nsContentPolicyType aType) {
 }
 
 /* static */
-bool nsContentUtils::IsUpgradableDisplayType(nsContentPolicyType aType) {
+bool nsContentUtils::IsUpgradableDisplayType(ExtContentPolicyType aType) {
   MOZ_ASSERT(NS_IsMainThread());
-  return (aType == nsIContentPolicy::TYPE_IMAGE ||
-          aType == nsIContentPolicy::TYPE_MEDIA);
+  return (aType == ExtContentPolicy::TYPE_IMAGE ||
+          aType == ExtContentPolicy::TYPE_MEDIA);
 }
 
 // static

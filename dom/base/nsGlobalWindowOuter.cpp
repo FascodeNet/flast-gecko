@@ -3312,73 +3312,63 @@ void nsGlobalWindowOuter::GetContentOuter(JSContext* aCx,
                                           JS::MutableHandle<JSObject*> aRetval,
                                           CallerType aCallerType,
                                           ErrorResult& aError) {
-  nsCOMPtr<nsPIDOMWindowOuter> content =
-      GetContentInternal(aError, aCallerType);
+  RefPtr<BrowsingContext> content = GetContentInternal(aCallerType, aError);
   if (aError.Failed()) {
     return;
   }
 
-  if (content) {
-    JS::Rooted<JS::Value> val(aCx);
-    aError = nsContentUtils::WrapNative(aCx, content, &val);
-    if (aError.Failed()) {
-      return;
-    }
-
-    aRetval.set(&val.toObject());
+  if (!content) {
+    aRetval.set(nullptr);
     return;
   }
 
-  aRetval.set(nullptr);
+  JS::Rooted<JS::Value> val(aCx);
+  if (!ToJSValue(aCx, WindowProxyHolder{content}, &val)) {
+    aError.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+
+  MOZ_ASSERT(val.isObjectOrNull());
+  aRetval.set(val.toObjectOrNull());
 }
 
-already_AddRefed<nsPIDOMWindowOuter> nsGlobalWindowOuter::GetContentInternal(
-    ErrorResult& aError, CallerType aCallerType) {
+already_AddRefed<BrowsingContext> nsGlobalWindowOuter::GetContentInternal(
+    CallerType aCallerType, ErrorResult& aError) {
   // First check for a named frame named "content"
-  RefPtr<BrowsingContext> bc = GetChildWindow(u"content"_ns);
-  if (bc) {
-    nsCOMPtr<nsPIDOMWindowOuter> content(bc->GetDOMWindow());
-    return content.forget();
+  if (RefPtr<BrowsingContext> named = GetChildWindow(u"content"_ns)) {
+    return named.forget();
   }
 
-  nsCOMPtr<nsIDocShellTreeItem> primaryContent;
-  if (aCallerType != CallerType::System) {
-    if (mDoc) {
-      mDoc->WarnOnceAbout(DeprecatedOperations::eWindowContentUntrusted);
-    }
-    // If we're called by non-chrome code, make sure we don't return
-    // the primary content window if the calling tab is hidden. In
-    // such a case we return the same-type root in the hidden tab,
-    // which is "good enough", for now.
-    nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(mDocShell));
-
-    if (baseWin) {
-      bool visible = false;
-      baseWin->GetVisibility(&visible);
-
-      if (!visible) {
-        mDocShell->GetInProcessSameTypeRootTreeItem(
-            getter_AddRefs(primaryContent));
-      }
-    }
-  }
-
-  if (!primaryContent) {
+  // If we're in the parent process, and being called by system code, `content`
+  // should return the current primary content frame (if it's in-process).
+  //
+  // We return `nullptr` if the current primary content frame is out-of-process,
+  // rather than a remote window proxy, as that is the existing behaviour as of
+  // bug 1597437.
+  if (XRE_IsParentProcess() && aCallerType == CallerType::System) {
     nsCOMPtr<nsIDocShellTreeOwner> treeOwner = GetTreeOwner();
     if (!treeOwner) {
       aError.Throw(NS_ERROR_FAILURE);
       return nullptr;
     }
 
+    nsCOMPtr<nsIDocShellTreeItem> primaryContent;
     treeOwner->GetPrimaryContentShell(getter_AddRefs(primaryContent));
+    if (!primaryContent) {
+      return nullptr;
+    }
+
+    return do_AddRef(primaryContent->GetBrowsingContext());
   }
 
-  if (!primaryContent) {
-    return nullptr;
+  // For legacy untrusted callers we always return the same value as
+  // `window.top`
+  if (mDoc && aCallerType != CallerType::System) {
+    mDoc->WarnOnceAbout(DeprecatedOperations::eWindowContentUntrusted);
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> domWindow = primaryContent->GetWindow();
-  return domWindow.forget();
+  MOZ_ASSERT(mBrowsingContext->IsContent());
+  return do_AddRef(mBrowsingContext->Top());
 }
 
 nsresult nsGlobalWindowOuter::GetPrompter(nsIPrompt** aPrompt) {
@@ -7632,14 +7622,16 @@ void nsGlobalWindowOuter::MaybeResetWindowName(Document* aNewDocument) {
   // If we have an existing doucment, directly check the document prinicpals
   // with the new document to know if it is cross-origin.
   //
-  // When running wpt, we could have an existing about:blank documnet which has
-  // a principal that is the same as the principal of the new document. But the
-  // new document doesn't load an about:blank page. In this case, we should
-  // treat them as cross-origin despite both doucments have same-origin
-  // principals. This only happens when Fission is enabled.
-  if (mDoc && mDoc->NodePrincipal()->Equals(aNewDocument->NodePrincipal()) &&
-      (NS_IsAboutBlank(mDoc->GetDocumentURI()) ==
-       NS_IsAboutBlank(aNewDocument->GetDocumentURI()))) {
+  // Note that there will be an issue of initial document handling in Fission
+  // when running the WPT unset_context_name-1.html. In the test, the first
+  // about:blank page would be loaded with the principal of the testing domain
+  // in Fission and the window.name will be set there. Then, The window.name
+  // won't be reset after navigating to the testing page because the principal
+  // is the same. But, it won't be the case for non-Fission mode that the first
+  // about:blank will be loaded with a null principal and the window.name will
+  // be reset when loading the test page.
+  if (mDoc && mDoc->NodePrincipal()->EqualsConsideringDomain(
+                  aNewDocument->NodePrincipal())) {
     return;
   }
 

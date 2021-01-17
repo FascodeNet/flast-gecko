@@ -117,7 +117,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   [[nodiscard]] nsresult AddStandardRequestHeaders(
       nsHttpRequestHead*, bool isSecure,
-      nsContentPolicyType aContentPolicyType);
+      ExtContentPolicyType aContentPolicyType);
   [[nodiscard]] nsresult AddConnectionHeader(nsHttpRequestHead*,
                                              uint32_t capabilities);
   bool IsAcceptableEncoding(const char* encoding, bool isSecure);
@@ -439,6 +439,12 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   // communicating with the server.
   void OnExamineCachedResponse(nsIHttpChannel* chan) {
     NotifyObservers(chan, NS_HTTP_ON_EXAMINE_CACHED_RESPONSE_TOPIC);
+  }
+
+  // Called by the channel when the transaction pump is suspended because of
+  // trying to get credentials asynchronously.
+  void OnTransactionSuspendedDueToAuthentication(nsIHttpChannel* chan) {
+    NotifyObservers(chan, "http-on-transaction-suspended-authentication");
   }
 
   // Generates the host:port string for use in the Host: header as well as the

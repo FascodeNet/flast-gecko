@@ -28,10 +28,10 @@ namespace js {
 struct SourceExtent;
 
 namespace frontend {
-struct CompilationInfo;
-struct CompilationInfoVector;
-struct CompilationInput;
 struct CompilationStencil;
+struct CompilationStencilSet;
+struct CompilationInput;
+struct BaseCompilationStencil;
 }  // namespace frontend
 
 class LifoAlloc;
@@ -81,6 +81,23 @@ class XDRBuffer<XDR_ENCODE> : public XDRBufferBase {
     return ptr;
   }
 
+  bool align32() {
+    size_t extra = cursor_ % 4;
+    if (extra) {
+      size_t padding = 4 - extra;
+      if (!buffer_.appendN(0, padding)) {
+        ReportOutOfMemory(cx());
+        return false;
+      }
+      cursor_ += padding;
+    }
+    return true;
+  }
+
+#ifdef DEBUG
+  bool isAligned32() { return cursor_ % 4 == 0; }
+#endif
+
   const uint8_t* read(size_t n) {
     MOZ_CRASH("Should never read in encode mode");
     return nullptr;
@@ -103,6 +120,24 @@ class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
 
   XDRBuffer(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor = 0)
       : XDRBufferBase(cx, cursor), buffer_(buffer.begin(), buffer.length()) {}
+
+  bool align32() {
+    size_t extra = cursor_ % 4;
+    if (extra) {
+      size_t padding = 4 - extra;
+      cursor_ += padding;
+
+      // Don't let buggy code read past our buffer
+      if (cursor_ > buffer_.length()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+#ifdef DEBUG
+  bool isAligned32() { return cursor_ % 4 == 0; }
+#endif
 
   const uint8_t* read(size_t n) {
     MOZ_ASSERT(cursor_ < buffer_.length());
@@ -248,7 +283,7 @@ class XDRState : public XDRCoderBase {
   JSContext* cx() const { return mainBuf.cx(); }
   virtual bool isForStencil() const { return false; }
   virtual XDRResultT<bool> checkAlreadyCoded(
-      const frontend::CompilationStencil& stencil) {
+      const frontend::BaseCompilationStencil& stencil) {
     return false;
   }
 
@@ -267,7 +302,7 @@ class XDRState : public XDRCoderBase {
   virtual XDRAtomMap& atomMap() { MOZ_CRASH("does not have atomMap"); }
   virtual uint32_t& natoms() { MOZ_CRASH("does not have atomMap."); }
 
-  // The number of chunks (CompilationStencils) in the buffer.
+  // The number of chunks (BaseCompilationStencils) in the buffer.
   virtual uint32_t& nchunks() { MOZ_CRASH("does not have atomMap."); }
 
   virtual bool hasAtomTable() const { return false; }
@@ -287,7 +322,7 @@ class XDRState : public XDRCoderBase {
   }
 
   virtual XDRResult codeDelazificationStencils(
-      frontend::CompilationInfoVector& compilationInfos) {
+      frontend::CompilationStencilSet& stencilSet) {
     MOZ_CRASH("cannot code delazification stencils.");
   }
 
@@ -301,6 +336,17 @@ class XDRState : public XDRCoderBase {
     return mozilla::Err(code);
   }
 
+  XDRResult align32() {
+    if (!buf->align32()) {
+      return fail(JS::TranscodeResult_Throw);
+    }
+    return Ok();
+  }
+
+#ifdef DEBUG
+  bool isAligned32() { return buf->isAligned32(); }
+#endif
+
   XDRResult readData(const uint8_t** pptr, size_t length) {
     const uint8_t* ptr = buf->read(length);
     if (!ptr) {
@@ -310,12 +356,17 @@ class XDRState : public XDRCoderBase {
     return Ok();
   }
 
-  XDRResult peekData(const uint8_t** pptr, size_t length) {
-    const uint8_t* ptr = buf->peek(length);
+  // Peek the `sizeof(T)` bytes and return the pointer to `*pptr`.
+  // The caller is responsible for aligning the buffer by calling `align32`.
+  template <typename T>
+  XDRResult peekData(const T** pptr) {
+    static_assert(alignof(T) <= 4);
+    MOZ_ASSERT(isAligned32());
+    const uint8_t* ptr = buf->peek(sizeof(T));
     if (!ptr) {
       return fail(JS::TranscodeResult_Failure_BadDecode);
     }
-    *pptr = ptr;
+    *pptr = reinterpret_cast<const T*>(ptr);
     return Ok();
   }
 
@@ -455,6 +506,28 @@ class XDRState : public XDRCoderBase {
     return Ok();
   }
 
+  // While encoding, code the given data to the buffer.
+  // While decoding, borrow the buffer and return it to `*data`.
+  //
+  // The data can have extra bytes after `sizeof(T)`, and the caller should
+  // provide the entire data length as `length`.
+  //
+  // The caller is responsible for aligning the buffer by calling `align32`.
+  template <typename T>
+  XDRResult borrowedData(T** data, uint32_t length) {
+    static_assert(alignof(T) <= 4);
+    MOZ_ASSERT(isAligned32());
+
+    if (mode == XDR_ENCODE) {
+      MOZ_TRY(codeBytes(*data, length));
+    } else {
+      const uint8_t* cursor = nullptr;
+      MOZ_TRY(readData(&cursor, length));
+      *data = reinterpret_cast<T*>(const_cast<uint8_t*>(cursor));
+    }
+    return Ok();
+  }
+
   // Prefer using a variant below that is encoding aware.
   XDRResult codeChars(char* chars, size_t nchars);
 
@@ -473,8 +546,8 @@ class XDRState : public XDRCoderBase {
   XDRResult codeFunction(JS::MutableHandleFunction objp,
                          HandleScriptSourceObject sourceObject = nullptr);
   XDRResult codeScript(MutableHandleScript scriptp);
-  XDRResult codeStencil(frontend::CompilationInfo& compilationInfo);
-  XDRResult codeFunctionStencil(frontend::CompilationStencil& stencil);
+  XDRResult codeStencil(frontend::CompilationStencil& stencil);
+  XDRResult codeFunctionStencil(frontend::BaseCompilationStencil& stencil);
 };
 
 using XDREncoder = XDRState<XDR_ENCODE>;
@@ -515,8 +588,11 @@ class XDRDecoder : public XDRDecoderBase {
  * with a freshly initialized `parserAtoms` table.
  *
  * The decoded stencils are outputted to the default-initialized
- * `compilationInfo` parameter of `codeStencil` method, and decoded atoms are
+ * `stencil` parameter of `codeStencil` method, and decoded atoms are
  * interned into the `parserAtoms` parameter of the ctor.
+ *
+ * The decoded stencils borrow the input `buffer`/`range`, and the consumer
+ * has to keep the buffer alive while the decoded stencils are alive.
  */
 class XDRStencilDecoder : public XDRDecoderBase {
   uint32_t nchunks_ = 0;
@@ -551,7 +627,7 @@ class XDRStencilDecoder : public XDRDecoderBase {
   bool hasOptions() const override { return true; }
   const JS::ReadOnlyCompileOptions& options() override { return *options_; }
 
-  XDRResult codeStencils(frontend::CompilationInfoVector& compilationInfos);
+  XDRResult codeStencils(frontend::CompilationStencilSet& stencilSet);
 
  private:
   const JS::ReadOnlyCompileOptions* options_;
@@ -738,11 +814,13 @@ class XDRIncrementalStencilEncoder : public XDRIncrementalEncoderBase {
   // 3. initial compilation chunk
   //   a. number of atoms
   //   b. atoms
-  //   c. CompilationStencil
+  //   c. BaseCompilationStencil
+  //   d. ScriptStencilExtra array
+  //   e. moduleMetadata if exists
   // 4. array of delazification chunks
   //   a. number of atoms
   //   b. atoms
-  //   c. CompilationStencil
+  //   c. BaseCompilationStencil
 
   // A set of functions that is passed to codeFunctionStencil.
   // Used to avoid encoding delazification for same function twice.
@@ -757,13 +835,13 @@ class XDRIncrementalStencilEncoder : public XDRIncrementalEncoderBase {
   virtual ~XDRIncrementalStencilEncoder() = default;
 
   XDRResultT<bool> checkAlreadyCoded(
-      const frontend::CompilationStencil& stencil) override;
+      const frontend::BaseCompilationStencil& stencil) override;
 
   bool isForStencil() const override { return true; }
 
   XDRResult linearize(JS::TranscodeBuffer& buffer) override;
 
-  XDRResult codeStencils(frontend::CompilationInfoVector& compilationInfos);
+  XDRResult codeStencils(frontend::CompilationStencilSet& stencilSet);
 };
 
 template <XDRMode mode>
@@ -782,6 +860,10 @@ XDRResult XDRParserAtomEntry(XDRState<mode>* xdr,
 template <XDRMode mode>
 XDRResult XDRCompilationInput(XDRState<mode>* xdr,
                               frontend::CompilationInput& input);
+
+template <XDRMode mode>
+XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
+                                    frontend::BaseCompilationStencil& stencil);
 
 template <XDRMode mode>
 XDRResult XDRCompilationStencil(XDRState<mode>* xdr,

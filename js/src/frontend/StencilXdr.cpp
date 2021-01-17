@@ -14,9 +14,10 @@
 #include <type_traits>  // std::has_unique_object_representations
 #include <utility>      // std::forward
 
-#include "frontend/ScriptIndex.h"  // ScriptIndex
-#include "vm/JSScript.h"           // js::CheckCompileOptionsMatch
-#include "vm/StencilEnums.h"       // js::ImmutableScriptFlagsEnum
+#include "frontend/CompilationInfo.h"  // BaseCompilationStencil
+#include "frontend/ScriptIndex.h"      // ScriptIndex
+#include "vm/JSScript.h"               // js::CheckCompileOptionsMatch
+#include "vm/StencilEnums.h"           // js::ImmutableScriptFlagsEnum
 
 using namespace js;
 using namespace js::frontend;
@@ -46,38 +47,20 @@ template <XDRMode mode, typename ScopeT>
   static_assert(offsetof(ScopeDataT, trailingNames) == sizeof(SlotInfo),
                 "trailingNames should be the second field");
 
-  constexpr size_t SlotInfoSize = sizeof(SlotInfo);
-  auto ComputeTotalLength = [](size_t length) {
-    return SlotInfoSize +
-           sizeof(AbstractBindingName<TaggedParserAtomIndex>) * length;
-  };
+  MOZ_TRY(xdr->align32());
 
+  const SlotInfo* slotInfo;
   if (mode == XDR_ENCODE) {
     ScopeDataT* scopeData = static_cast<ScopeDataT*>(baseScopeData);
-    const SlotInfo* slotInfo = &scopeData->slotInfo;
-    uint32_t totalLength = ComputeTotalLength(slotInfo->length);
-    MOZ_TRY(xdr->codeBytes(scopeData, totalLength));
+    slotInfo = &scopeData->slotInfo;
   } else {
-    // Peek the SlotInfo bytes without consuming buffer yet. Once we compute the
-    // total length, we will read the entire scope data at once.
-    SlotInfo slotInfo;
-    const uint8_t* cursor = nullptr;
-    MOZ_TRY(xdr->peekData(&cursor, SlotInfoSize));
-    memcpy(&slotInfo, cursor, SlotInfoSize);
-
-    // Allocate scope data with trailing names.
-    uint32_t totalLength = ComputeTotalLength(slotInfo.length);
-    ScopeDataT* scopeData =
-        reinterpret_cast<ScopeDataT*>(xdr->stencilAlloc().alloc(totalLength));
-    if (!scopeData) {
-      js::ReportOutOfMemory(xdr->cx());
-      return xdr->fail(JS::TranscodeResult_Throw);
-    }
-
-    // Decode SlotInfo and trailing names at once.
-    MOZ_TRY(xdr->codeBytes(scopeData, totalLength));
-    baseScopeData = scopeData;
+    MOZ_TRY(xdr->peekData(&slotInfo));
   }
+
+  uint32_t totalLength =
+      sizeof(SlotInfo) +
+      sizeof(AbstractBindingName<TaggedParserAtomIndex>) * slotInfo->length;
+  MOZ_TRY(xdr->borrowedData(&baseScopeData, totalLength));
 
   return Ok();
 }
@@ -183,9 +166,24 @@ static XDRResult XDRSpanContent(XDRState<mode>* xdr, mozilla::Span<T>& span) {
                 "Span cannot be bulk-copied to disk.");
 
   uint32_t size;
-  MOZ_TRY(XDRSpanUninitialized(xdr, span, size));
+  if (mode == XDR_ENCODE) {
+    MOZ_ASSERT(span.size() <= UINT32_MAX);
+    size = span.size();
+  }
+
+  MOZ_TRY(xdr->codeUint32(&size));
+
   if (size) {
-    MOZ_TRY(xdr->codeBytes(span.data(), sizeof(T) * size));
+    MOZ_TRY(xdr->align32());
+
+    T* data;
+    if (mode == XDR_ENCODE) {
+      data = span.data();
+    }
+    MOZ_TRY(xdr->borrowedData(&data, sizeof(T) * size));
+    if (mode == XDR_DECODE) {
+      span = mozilla::Span(data, size);
+    }
   }
 
   return Ok();
@@ -517,12 +515,8 @@ template XDRResult XDRSharedDataContainer(XDRState<XDR_DECODE>* xdr,
                                           SharedDataContainer& sharedData);
 
 template <XDRMode mode>
-XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
-                                CompilationStencil& stencil) {
-  if (!stencil.asmJS.empty()) {
-    return xdr->fail(JS::TranscodeResult_Failure_AsmJSNotSupported);
-  }
-
+XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
+                                    BaseCompilationStencil& stencil) {
   MOZ_TRY(xdr->codeUint64(&stencil.functionKey));
 
   // All of the vector-indexed data elements referenced by the
@@ -556,10 +550,31 @@ XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
   // Now serialize the vector of ScriptStencils.
 
   MOZ_TRY(XDRSpanContent(xdr, stencil.scriptData));
+
+  return Ok();
+}
+
+template XDRResult XDRBaseCompilationStencil(XDRState<XDR_ENCODE>* xdr,
+                                             BaseCompilationStencil& stencil);
+
+template XDRResult XDRBaseCompilationStencil(XDRState<XDR_DECODE>* xdr,
+                                             BaseCompilationStencil& stencil);
+
+template <XDRMode mode>
+XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
+                                CompilationStencil& stencil) {
+  if (!stencil.asmJS.empty()) {
+    return xdr->fail(JS::TranscodeResult_Failure_AsmJSNotSupported);
+  }
+
+  MOZ_TRY(XDRBaseCompilationStencil(xdr, stencil));
+
   MOZ_TRY(XDRSpanContent(xdr, stencil.scriptExtra));
 
-  if (stencil.isInitialStencil() &&
-      stencil.scriptExtra[CompilationInfo::TopLevelIndex].isModule()) {
+  // We don't support coding non-initial CompilationStencil.
+  MOZ_ASSERT(stencil.isInitialStencil());
+
+  if (stencil.scriptExtra[CompilationStencil::TopLevelIndex].isModule()) {
     if (mode == XDR_DECODE) {
       stencil.moduleMetadata.emplace();
     }
@@ -569,6 +584,7 @@ XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
 
   return Ok();
 }
+
 template XDRResult XDRCompilationStencil(XDRState<XDR_ENCODE>* xdr,
                                          CompilationStencil& stencil);
 

@@ -2112,13 +2112,14 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
     IonScript* ionScript = outerScript->ionScript();
     switch (action) {
       case BailoutAction::InvalidateImmediately:
-        MOZ_CRASH("The IonScript should already have been invalidated.");
+        // The IonScript should already have been invalidated.
+        MOZ_ASSERT(false);
         break;
       case BailoutAction::InvalidateIfFrequent:
         ionScript->incNumFixableBailouts();
         if (ionScript->shouldInvalidate()) {
 #ifdef DEBUG
-          if (saveFailedICHash) {
+          if (saveFailedICHash && !JitOptions.disableBailoutLoopCheck) {
             outerScript->jitScript()->setFailedICHash(ionScript->icHash());
           }
 #endif

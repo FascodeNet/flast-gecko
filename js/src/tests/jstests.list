@@ -620,6 +620,13 @@ fails-if(!xulRuntime.shell) script test262/language/statements/class/subclass-bu
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1648202
 skip script test262/built-ins/RegExp/named-groups/non-unicode-property-names-valid.js
 
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1686052
+skip script test262/intl402/Locale/likely-subtags-grandfathered.js
+skip script test262/intl402/Locale/extensions-grandfathered.js
+skip script test262/intl402/Intl/getCanonicalLocales/preferred-variant.js
+skip script test262/intl402/Intl/getCanonicalLocales/preferred-grandfathered.js
+skip script test262/intl402/Intl/getCanonicalLocales/canonicalized-tags.js
+
 
 ###########################################################
 # Tests disabled due to issues in test262 importer script #
