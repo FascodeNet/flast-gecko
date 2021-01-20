@@ -294,10 +294,8 @@ static_assert(
         nsIContentPolicy::TYPE_OBJECT == 5 &&
         nsIContentPolicy::TYPE_DOCUMENT == 6 &&
         nsIContentPolicy::TYPE_SUBDOCUMENT == 7 &&
-        nsIContentPolicy::TYPE_REFRESH == 8 &&
         nsIContentPolicy::TYPE_PING == 10 &&
         nsIContentPolicy::TYPE_XMLHTTPREQUEST == 11 &&
-        nsIContentPolicy::TYPE_DATAREQUEST == 11 &&
         nsIContentPolicy::TYPE_OBJECT_SUBREQUEST == 12 &&
         nsIContentPolicy::TYPE_DTD == 13 && nsIContentPolicy::TYPE_FONT == 14 &&
         nsIContentPolicy::TYPE_MEDIA == 15 &&
@@ -2167,10 +2165,25 @@ Result<SavedResponse, nsresult> ReadResponse(mozIStorageConnection& aConn,
 
 #ifdef DEBUG
     nsDependentCSubstring scheme = url->Scheme();
+
     MOZ_ASSERT(
         scheme == "http" || scheme == "https" || scheme == "file" ||
-        (StaticPrefs::extensions_backgroundServiceWorker_enabled_AtStartup() &&
-         scheme == "moz-extension"));
+        // A cached response entry may have a moz-extension principal if:
+        //
+        // - This is an extension background service worker. The response for
+        //   the main script is expected tobe a moz-extension content principal
+        //   (the pref "extensions.backgroundServiceWorker.enabled" must be
+        //   enabled, if the pref is toggled to false at runtime then any
+        //   service worker registered for a moz-extension principal will be
+        //   unregistered on the next startup).
+        //
+        // - An extension is redirecting a script being imported info a worker
+        //   created from a regular webpage to a web-accessible extension
+        //   script. The reponse for these redirects will have a moz-extension
+        //   principal. Although extensions can attempt to redirect the main
+        //   script of service workers, this will always cause the install
+        //   process to fail.
+        scheme == "moz-extension");
 #endif
 
     nsCString origin;
@@ -2295,6 +2308,8 @@ Result<SavedRequest, nsresult> ReadRequest(mozIStorageConnection& aConn,
 
                           return Ok{};
                         }));
+
+  CACHE_TRY(OkIf(state), Err(NS_ERROR_UNEXPECTED));
 
   nsresult rv = state->GetUTF8String(0, savedRequest.mValue.method());
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -3038,9 +3053,9 @@ nsresult MigrateFrom18To19(mozIStorageConnection& aConn, bool& aRewriteSchema) {
                     int(nsIContentPolicy::TYPE_SUBDOCUMENT) == 7 &&
                     int(nsIContentPolicy::TYPE_INTERNAL_FRAME) == 28 &&
                     int(nsIContentPolicy::TYPE_INTERNAL_IFRAME) == 29 &&
-                    int(nsIContentPolicy::TYPE_REFRESH) == 8 &&
                     int(RequestMode::Navigate) == 3,
                 "This is where the numbers below come from!");
+  // 8 is former TYPE_REFRESH.
   nsresult rv = aConn.ExecuteSimpleSQL(nsLiteralCString(
       "UPDATE entries SET request_mode = 3 "
       "WHERE request_contentpolicytype IN (6, 7, 28, 29, 8);"));

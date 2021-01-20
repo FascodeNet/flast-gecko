@@ -137,20 +137,22 @@ static RunningTimes GetThreadRunningTimesDiff(
     PSLockRef aLock, const RegisteredThread& aRegisteredThread) {
   AUTO_PROFILER_STATS(GetRunningTimes);
 
-  PlatformData* platformData = aRegisteredThread.GetPlatformData();
+  PlatformData* const platformData = aRegisteredThread.GetPlatformData();
   MOZ_RELEASE_ASSERT(platformData);
-  HANDLE profiledThread = platformData->ProfiledThread();
+  const HANDLE profiledThread = platformData->ProfiledThread();
 
-  RunningTimes newRunningTimes;
+  const RunningTimes newRunningTimes = GetRunningTimesWithTightTimestamp(
+      [profiledThread](RunningTimes& aRunningTimes) {
+        AUTO_PROFILER_STATS(GetRunningTimes_QueryThreadCycleTime);
+        if (ULONG64 cycles;
+            QueryThreadCycleTime(profiledThread, &cycles) != 0) {
+          aRunningTimes.ResetThreadCPUDelta(cycles);
+        } else {
+          aRunningTimes.ClearThreadCPUDelta();
+        }
+      });
 
-  {
-    AUTO_PROFILER_STATS(GetRunningTimes_QueryThreadCycleTime);
-    if (ULONG64 cycles; QueryThreadCycleTime(profiledThread, &cycles) != 0) {
-      newRunningTimes.SetThreadCPUDelta(cycles);
-    }
-  }
-
-  RunningTimes diff =
+  const RunningTimes diff =
       newRunningTimes - platformData->PreviousThreadRunningTimesRef();
   platformData->PreviousThreadRunningTimesRef() = newRunningTimes;
   return diff;

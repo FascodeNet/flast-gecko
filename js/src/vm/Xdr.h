@@ -676,22 +676,19 @@ class XDRIncrementalEncoderBase : public XDREncoder {
  protected:
   JS::TranscodeBuffer slices_;
 
-  // Header buffer.
-  JS::TranscodeBuffer header_;
-  XDRBuffer<XDR_ENCODE> headerBuf_;
-
  public:
   explicit XDRIncrementalEncoderBase(JSContext* cx)
-      : XDREncoder(cx, slices_, 0), headerBuf_(cx, header_, 0) {}
+      : XDREncoder(cx, slices_, 0) {}
+
+  void switchToBuffer(XDRBuffer<XDR_ENCODE>* target) { buf = target; }
 
   bool isMainBuf() override { return buf == &mainBuf; }
 
   // Switch to streaming into the main buffer.
-  void switchToMainBuf() override { buf = &mainBuf; }
-  // Switch to streaming into the header buffer.
-  void switchToHeaderBuf() override { buf = &headerBuf_; }
+  void switchToMainBuf() override { switchToBuffer(&mainBuf); }
 
-  virtual XDRResult linearize(JS::TranscodeBuffer& buffer) {
+  virtual XDRResult linearize(JS::TranscodeBuffer& buffer,
+                              js::ScriptSource* ss) {
     MOZ_CRASH("cannot linearize.");
   }
 
@@ -754,6 +751,10 @@ class XDRIncrementalEncoder : public XDRIncrementalEncoderBase {
       HashMap<AutoXDRTree::Key, SlicesNode, DefaultHasher<AutoXDRTree::Key>,
               SystemAllocPolicy>;
 
+  // Header buffer.
+  JS::TranscodeBuffer header_;
+  XDRBuffer<XDR_ENCODE> headerBuf_;
+
   // Atom buffer.
   JS::TranscodeBuffer atoms_;
   XDRBuffer<XDR_ENCODE> atomBuf_;
@@ -775,6 +776,7 @@ class XDRIncrementalEncoder : public XDRIncrementalEncoderBase {
  public:
   explicit XDRIncrementalEncoder(JSContext* cx)
       : XDRIncrementalEncoderBase(cx),
+        headerBuf_(cx, header_, 0),
         atomBuf_(cx, atoms_, 0),
         scope_(nullptr),
         node_(nullptr),
@@ -786,7 +788,10 @@ class XDRIncrementalEncoder : public XDRIncrementalEncoderBase {
   uint32_t& natoms() override { return natoms_; }
 
   // Switch from streaming into the main buffer into the atom buffer.
-  void switchToAtomBuf() override { buf = &atomBuf_; }
+  void switchToAtomBuf() override { switchToBuffer(&atomBuf_); }
+
+  // Switch to streaming into the header buffer.
+  void switchToHeaderBuf() override { switchToBuffer(&headerBuf_); }
 
   bool hasAtomMap() const override { return true; }
   XDRAtomMap& atomMap() override { return atomMap_; }
@@ -799,7 +804,8 @@ class XDRIncrementalEncoder : public XDRIncrementalEncoderBase {
 
   // Append the content collected during the incremental encoding into the
   // buffer given as argument.
-  XDRResult linearize(JS::TranscodeBuffer& buffer) override;
+  XDRResult linearize(JS::TranscodeBuffer& buffer,
+                      js::ScriptSource* ss) override;
 
   void trace(JSTracer* trc) override;
 };
@@ -807,25 +813,24 @@ class XDRIncrementalEncoder : public XDRIncrementalEncoderBase {
 class XDRIncrementalStencilEncoder : public XDRIncrementalEncoderBase {
   // The structure of the resulting buffer is:
   //
-  // 1. header
-  //   a. version
-  //   b. CompilationInput (ScriptSource)
-  // 2. number of chunks (initial compilation + delazification)
-  // 3. initial compilation chunk
-  //   a. number of atoms
-  //   b. atoms
-  //   c. BaseCompilationStencil
-  //   d. ScriptStencilExtra array
-  //   e. moduleMetadata if exists
-  // 4. array of delazification chunks
-  //   a. number of atoms
-  //   b. atoms
-  //   c. BaseCompilationStencil
+  // 1. Header
+  //   a. Version
+  //   b. ScriptSource
+  //   c. Chunk count
+  //   d. Alignment padding
+  // 2. Initial Chunk
+  //   a. ParseAtomTable
+  //   b. BaseCompilationStencil
+  //   c. ScriptStencilExtra[]
+  //   d. StencilModuleMetadata (if exists)
+  // 3. Array of Delazification Chunks
+  //   a. ParseAtomTable
+  //   b. BaseCompilationStencil
 
   // A set of functions that is passed to codeFunctionStencil.
   // Used to avoid encoding delazification for same function twice.
   // NOTE: This is not a set of all encoded functions.
-  using FunctionKey = uint64_t;
+  using FunctionKey = uint32_t;
   HashSet<FunctionKey> encodedFunctions_;
 
  public:
@@ -839,7 +844,8 @@ class XDRIncrementalStencilEncoder : public XDRIncrementalEncoderBase {
 
   bool isForStencil() const override { return true; }
 
-  XDRResult linearize(JS::TranscodeBuffer& buffer) override;
+  XDRResult linearize(JS::TranscodeBuffer& buffer,
+                      js::ScriptSource* ss) override;
 
   XDRResult codeStencils(frontend::CompilationStencilSet& stencilSet);
 };
@@ -856,10 +862,6 @@ XDRResult XDRAtomData(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
 template <XDRMode mode>
 XDRResult XDRParserAtomEntry(XDRState<mode>* xdr,
                              frontend::ParserAtomEntry** atomp);
-
-template <XDRMode mode>
-XDRResult XDRCompilationInput(XDRState<mode>* xdr,
-                              frontend::CompilationInput& input);
 
 template <XDRMode mode>
 XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,

@@ -4157,7 +4157,7 @@
 
 - name: gfx.canvas.remote
   type: RelaxedAtomicBool
-#if defined(XP_WIN) && defined(EARLY_BETA_OR_EARLIER)
+#if defined(XP_WIN)
   value: true
 #else
   value: false
@@ -4338,6 +4338,16 @@
 - name: gfx.e10s.font-list.shared
   type: bool
   value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: once
+
+# Whether to load fonts (e.g. Twemoji Mozilla) bundled with the application:
+#  -1 - Auto behavior based on OS version (currently, disables loading on Win8.1 or later,
+#       or on "low-memory" Android devices)
+#   0 - Skip loading any bundled fonts
+#   1 - Always load bundled fonts
+- name: gfx.bundled-fonts.activate
+  type: int32_t
+  value: -1
   mirror: once
 
 - name: gfx.font_loader.delay
@@ -9707,12 +9717,6 @@
 #---------------------------------------------------------------------------
 # Prefs starting with "svg."
 #---------------------------------------------------------------------------
-
-# Is support for transform-box enabled?
-- name: svg.transform-box.enabled
-  type: bool
-  value: true
-  mirror: always
 
 # This pref controls whether the 'context-fill' and 'context-stroke' keywords
 # can be used in SVG-as-an-image in the content processes to use the fill/

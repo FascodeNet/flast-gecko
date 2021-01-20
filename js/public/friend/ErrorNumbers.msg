@@ -226,7 +226,7 @@ MSG_DEF(JSMSG_BAD_DUP_ARGS,            0, JSEXN_SYNTAXERR, "duplicate argument n
 MSG_DEF(JSMSG_BAD_FOR_EACH_LOOP,       0, JSEXN_SYNTAXERR, "invalid for each loop")
 MSG_DEF(JSMSG_BAD_FOR_LEFTSIDE,        0, JSEXN_SYNTAXERR, "invalid for-in/of left-hand side")
 MSG_DEF(JSMSG_LEXICAL_DECL_DEFINES_LET,0, JSEXN_SYNTAXERR, "a lexical declaration can't define a 'let' binding")
-MSG_DEF(JSMSG_LET_STARTING_FOROF_LHS,  0, JSEXN_SYNTAXERR, "an expression X in 'for (X of Y)' must not start with 'let'")
+MSG_DEF(JSMSG_BAD_STARTING_FOROF_LHS,  1, JSEXN_SYNTAXERR, "an expression X in 'for (X of Y)' must not start with '{0}'")
 MSG_DEF(JSMSG_BAD_INCOP_OPERAND,       0, JSEXN_SYNTAXERR, "invalid increment/decrement operand")
 MSG_DEF(JSMSG_BAD_LEFTSIDE_OF_ASS,     0, JSEXN_SYNTAXERR, "invalid assignment left-hand side")
 MSG_DEF(JSMSG_BAD_METHOD_DEF,          0, JSEXN_SYNTAXERR, "bad method definition")
@@ -745,13 +745,13 @@ MSG_DEF(JSMSG_READABLESTREAM_NYI,                        0, JSEXN_ERR,     "full
 MSG_DEF(JSMSG_STREAM_INVALID_HIGHWATERMARK,              0, JSEXN_RANGEERR, "'highWaterMark' must be a non-negative, non-NaN number.")
 MSG_DEF(JSMSG_STREAM_CONSUME_ERROR,                      0, JSEXN_TYPEERR,  "error consuming stream body")
 
-// Response-related
-MSG_DEF(JSMSG_ERROR_CONSUMING_RESPONSE,                  0, JSEXN_TYPEERR,  "there was an error consuming the Response")
-MSG_DEF(JSMSG_BAD_RESPONSE_VALUE,                        0, JSEXN_TYPEERR,  "expected Response or Promise resolving to Response")
-MSG_DEF(JSMSG_BAD_RESPONSE_MIME_TYPE,                    0, JSEXN_TYPEERR,  "Response has unsupported MIME type")
-MSG_DEF(JSMSG_BAD_RESPONSE_CORS_SAME_ORIGIN,             0, JSEXN_TYPEERR,  "Response.type must be 'basic', 'cors' or 'default'")
-MSG_DEF(JSMSG_BAD_RESPONSE_STATUS,                       0, JSEXN_TYPEERR,  "Response does not have ok status")
-MSG_DEF(JSMSG_RESPONSE_ALREADY_CONSUMED,                 0, JSEXN_TYPEERR,  "Response already consumed")
+// (wasm) Response-related
+MSG_DEF(JSMSG_WASM_ERROR_CONSUMING_RESPONSE,             0, JSEXN_TYPEERR,  "WebAssembly: There was an error consuming the Response")
+MSG_DEF(JSMSG_WASM_BAD_RESPONSE_VALUE,                   0, JSEXN_TYPEERR,  "WebAssembly: Expected Response or Promise resolving to Response")
+MSG_DEF(JSMSG_WASM_BAD_RESPONSE_MIME_TYPE,               2, JSEXN_TYPEERR,  "WebAssembly: Response has unsupported MIME type '{0}' expected '{1}'")
+MSG_DEF(JSMSG_WASM_BAD_RESPONSE_CORS_SAME_ORIGIN,        0, JSEXN_TYPEERR,  "WebAssembly: Response.type must be 'basic', 'cors' or 'default'")
+MSG_DEF(JSMSG_WASM_BAD_RESPONSE_STATUS,                  0, JSEXN_TYPEERR,  "WebAssembly: Response does not have ok status")
+MSG_DEF(JSMSG_WASM_RESPONSE_ALREADY_CONSUMED,            0, JSEXN_TYPEERR,  "WebAssembly: Response already consumed")
 
 // BigInt
 MSG_DEF(JSMSG_BIGINT_TO_NUMBER, 0, JSEXN_TYPEERR, "can't convert BigInt to number")

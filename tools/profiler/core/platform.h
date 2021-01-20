@@ -34,6 +34,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/ProfileBufferEntrySerialization.h"
+#include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 #include "nsString.h"
@@ -141,9 +142,23 @@ class RunningTimes {
  public:
   constexpr RunningTimes() = default;
 
+  // Constructor with only a timestamp, useful when no measurements will be
+  // taken.
+  constexpr explicit RunningTimes(const mozilla::TimeStamp& aTimeStamp)
+      : mPostMeasurementTimeStamp(aTimeStamp) {}
+
   constexpr void Clear() { *this = RunningTimes{}; }
 
   constexpr bool IsEmpty() const { return mKnownBits == 0; }
+
+  // This should be called right after CPU measurements have been taken.
+  void SetPostMeasurementTimeStamp(const mozilla::TimeStamp& aTimeStamp) {
+    mPostMeasurementTimeStamp = aTimeStamp;
+  }
+
+  const mozilla::TimeStamp& PostMeasurementTimeStamp() const {
+    return mPostMeasurementTimeStamp;
+  }
 
   // Should be filled for any registered thread.
 
@@ -152,10 +167,19 @@ class RunningTimes {
     return (mKnownBits & mGot##name##unit) != 0;                      \
   }                                                                   \
                                                                       \
-  constexpr void Set##name##unit(uint64_t a##name##unit) {            \
-    MOZ_ASSERT(!Is##name##unit##Known(), #name #unit " already set"); \
+  constexpr void Clear##name##unit() {                                \
+    m##name##unit = 0;                                                \
+    mKnownBits &= ~mGot##name##unit;                                  \
+  }                                                                   \
+                                                                      \
+  constexpr void Reset##name##unit(uint64_t a##name##unit) {          \
     m##name##unit = a##name##unit;                                    \
     mKnownBits |= mGot##name##unit;                                   \
+  }                                                                   \
+                                                                      \
+  constexpr void Set##name##unit(uint64_t a##name##unit) {            \
+    MOZ_ASSERT(!Is##name##unit##Known(), #name #unit " already set"); \
+    Reset##name##unit(a##name##unit);                                 \
   }                                                                   \
                                                                       \
   constexpr mozilla::Maybe<uint64_t> Get##name##unit() const {        \
@@ -187,8 +211,12 @@ class RunningTimes {
   }
 
   // Difference from `aBefore` to `this`. Any unknown makes the result unknown.
+  // PostMeasurementTimeStamp set to `this` PostMeasurementTimeStamp, to keep
+  // the most recent timestamp associated with the end of the interval over
+  // which the difference applies.
   RunningTimes operator-(const RunningTimes& aBefore) const {
     RunningTimes diff;
+    diff.mPostMeasurementTimeStamp = mPostMeasurementTimeStamp;
 #define RUNNING_TIME_SUB(index, name, unit, jsonProperty)           \
   if (Is##name##unit##Known() && aBefore.Is##name##unit##Known()) { \
     diff.Set##name##unit(m##name##unit - aBefore.m##name##unit);    \
@@ -203,6 +231,8 @@ class RunningTimes {
  private:
   friend mozilla::ProfileBufferEntryWriter::Serializer<RunningTimes>;
   friend mozilla::ProfileBufferEntryReader::Deserializer<RunningTimes>;
+
+  mozilla::TimeStamp mPostMeasurementTimeStamp;
 
   uint32_t mKnownBits = 0u;
 

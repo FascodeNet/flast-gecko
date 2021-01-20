@@ -1655,8 +1655,7 @@ void GfxInfoBase::DescribeFeatures(JSContext* aCx, JS::Handle<JSObject*> aObj) {
       gfxConfig::GetFeature(gfx::Feature::OPENGL_COMPOSITING);
   InitFeatureObject(aCx, aObj, "openglCompositing", openglCompositing, &obj);
 
-  gfx::FeatureState& omtp =
-      gfxConfig::GetFeature(gfx::Feature::OMTP);
+  gfx::FeatureState& omtp = gfxConfig::GetFeature(gfx::Feature::OMTP);
   InitFeatureObject(aCx, aObj, "omtp", omtp, &obj);
 
   // Only include AL if the platform attempted to use it.
@@ -1682,21 +1681,7 @@ bool GfxInfoBase::InitFeatureObject(JSContext* aCx,
     return false;
   }
 
-  nsCString status;
-  auto value = aFeatureState.GetValue();
-  switch (value) {
-    case FeatureStatus::Blocklisted:
-    case FeatureStatus::Disabled:
-    case FeatureStatus::Unavailable:
-    case FeatureStatus::UnavailableNoAngle:
-    case FeatureStatus::Blocked:
-      status.AppendPrintf("%s:%s", FeatureStatusToString(value),
-                          aFeatureState.GetFailureId().get());
-      break;
-    default:
-      status.Append(FeatureStatusToString(value));
-      break;
-  }
+  nsCString status = aFeatureState.GetStatusAndFailureIdString();
 
   JS::Rooted<JSString*> str(aCx, JS_NewStringCopyZ(aCx, status.get()));
   JS::Rooted<JS::Value> val(aCx, JS::StringValue(str));

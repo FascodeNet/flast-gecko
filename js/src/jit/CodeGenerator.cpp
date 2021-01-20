@@ -976,38 +976,20 @@ void CodeGenerator::visitValueToInt32(LValueToInt32* lir) {
   Register output = ToRegister(lir->output());
   FloatRegister temp = ToFloatRegister(lir->tempFloat());
 
-  MDefinition* input;
-  if (lir->mode() == LValueToInt32::NORMAL) {
-    input = lir->mirNormal()->input();
-  } else if (lir->mode() == LValueToInt32::TRUNCATE_NOWRAP) {
-    input = lir->mirTruncateNoWrap()->input();
-  } else {
-    input = lir->mirTruncate()->input();
-  }
-
   Label fails;
   if (lir->mode() == LValueToInt32::TRUNCATE) {
     OutOfLineCode* oolDouble = oolTruncateDouble(temp, output, lir->mir());
 
     // We can only handle strings in truncation contexts, like bitwise
     // operations.
-    Label* stringEntry;
-    Label* stringRejoin;
-    Register stringReg;
-    if (input->mightBeType(MIRType::String)) {
-      stringReg = ToRegister(lir->temp());
-      using Fn = bool (*)(JSContext*, JSString*, double*);
-      OutOfLineCode* oolString = oolCallVM<Fn, StringToNumber>(
-          lir, ArgList(stringReg), StoreFloatRegisterTo(temp));
-      stringEntry = oolString->entry();
-      stringRejoin = oolString->rejoin();
-    } else {
-      stringReg = InvalidReg;
-      stringEntry = nullptr;
-      stringRejoin = nullptr;
-    }
+    Register stringReg = ToRegister(lir->temp());
+    using Fn = bool (*)(JSContext*, JSString*, double*);
+    auto* oolString = oolCallVM<Fn, StringToNumber>(lir, ArgList(stringReg),
+                                                    StoreFloatRegisterTo(temp));
+    Label* stringEntry = oolString->entry();
+    Label* stringRejoin = oolString->rejoin();
 
-    masm.truncateValueToInt32(operand, input, stringEntry, stringRejoin,
+    masm.truncateValueToInt32(operand, stringEntry, stringRejoin,
                               oolDouble->entry(), stringReg, temp, output,
                               &fails);
     masm.bind(oolDouble->rejoin());
@@ -1015,11 +997,11 @@ void CodeGenerator::visitValueToInt32(LValueToInt32* lir) {
     auto* ool = new (alloc()) OutOfLineZeroIfNaN(lir, temp, output);
     addOutOfLineCode(ool, lir->mir());
 
-    masm.truncateNoWrapValueToInt32(operand, input, temp, output, ool->entry(),
+    masm.truncateNoWrapValueToInt32(operand, temp, output, ool->entry(),
                                     &fails);
     masm.bind(ool->rejoin());
   } else {
-    masm.convertValueToInt32(operand, input, temp, output, &fails,
+    masm.convertValueToInt32(operand, temp, output, &fails,
                              lir->mirNormal()->needsNegativeZeroCheck(),
                              lir->mirNormal()->conversion());
   }
@@ -1173,43 +1155,26 @@ void CodeGenerator::visitValueToBigInt(LValueToBigInt* lir) {
   ValueOperand operand = ToValue(lir, LValueToBigInt::Input);
   Register output = ToRegister(lir->output());
 
-  bool maybeBigInt = lir->mir()->input()->mightBeType(MIRType::BigInt);
-  bool maybeBool = lir->mir()->input()->mightBeType(MIRType::Boolean);
-  bool maybeString = lir->mir()->input()->mightBeType(MIRType::String);
-
-  Maybe<OutOfLineCode*> ool;
-  if (maybeBool || maybeString) {
-    using Fn = BigInt* (*)(JSContext*, HandleValue);
-    ool = mozilla::Some(oolCallVM<Fn, ToBigInt>(lir, ArgList(operand),
-                                                StoreRegisterTo(output)));
-  }
+  using Fn = BigInt* (*)(JSContext*, HandleValue);
+  auto* ool =
+      oolCallVM<Fn, ToBigInt>(lir, ArgList(operand), StoreRegisterTo(output));
 
   Register tag = masm.extractTag(operand, output);
 
-  Label done;
-  if (maybeBigInt) {
-    Label notBigInt;
-    masm.branchTestBigInt(Assembler::NotEqual, tag, &notBigInt);
-    masm.unboxBigInt(operand, output);
-    masm.jump(&done);
-    masm.bind(&notBigInt);
-  }
-  if (maybeBool) {
-    masm.branchTestBoolean(Assembler::Equal, tag, (*ool)->entry());
-  }
-  if (maybeString) {
-    masm.branchTestString(Assembler::Equal, tag, (*ool)->entry());
-  }
+  Label notBigInt, done;
+  masm.branchTestBigInt(Assembler::NotEqual, tag, &notBigInt);
+  masm.unboxBigInt(operand, output);
+  masm.jump(&done);
+  masm.bind(&notBigInt);
+
+  masm.branchTestBoolean(Assembler::Equal, tag, ool->entry());
+  masm.branchTestString(Assembler::Equal, tag, ool->entry());
 
   // ToBigInt(object) can have side-effects; all other types throw a TypeError.
   bailout(lir->snapshot());
 
-  if (ool) {
-    masm.bind((*ool)->rejoin());
-  }
-  if (maybeBigInt) {
-    masm.bind(&done);
-  }
+  masm.bind(ool->rejoin());
+  masm.bind(&done);
 }
 
 void CodeGenerator::visitInt32ToDouble(LInt32ToDouble* lir) {
@@ -1567,7 +1532,7 @@ void CodeGenerator::visitValueToString(LValueToString* lir) {
   const JSAtomState& names = gen->runtime->names();
 
   // String
-  if (lir->mir()->input()->mightBeType(MIRType::String)) {
+  {
     Label notString;
     masm.branchTestString(Assembler::NotEqual, tag, &notString);
     masm.unboxString(input, output);
@@ -1576,7 +1541,7 @@ void CodeGenerator::visitValueToString(LValueToString* lir) {
   }
 
   // Integer
-  if (lir->mir()->input()->mightBeType(MIRType::Int32)) {
+  {
     Label notInteger;
     masm.branchTestInt32(Assembler::NotEqual, tag, &notInteger);
     Register unboxed = ToTempUnboxRegister(lir->tempToUnbox());
@@ -1587,14 +1552,14 @@ void CodeGenerator::visitValueToString(LValueToString* lir) {
   }
 
   // Double
-  if (lir->mir()->input()->mightBeType(MIRType::Double)) {
+  {
     // Note: no fastpath. Need two extra registers and can only convert doubles
     // that fit integers and are smaller than StaticStrings::INT_STATIC_LIMIT.
     masm.branchTestDouble(Assembler::Equal, tag, ool->entry());
   }
 
   // Undefined
-  if (lir->mir()->input()->mightBeType(MIRType::Undefined)) {
+  {
     Label notUndefined;
     masm.branchTestUndefined(Assembler::NotEqual, tag, &notUndefined);
     masm.movePtr(ImmGCPtr(names.undefined), output);
@@ -1603,7 +1568,7 @@ void CodeGenerator::visitValueToString(LValueToString* lir) {
   }
 
   // Null
-  if (lir->mir()->input()->mightBeType(MIRType::Null)) {
+  {
     Label notNull;
     masm.branchTestNull(Assembler::NotEqual, tag, &notNull);
     masm.movePtr(ImmGCPtr(names.null), output);
@@ -1612,7 +1577,7 @@ void CodeGenerator::visitValueToString(LValueToString* lir) {
   }
 
   // Boolean
-  if (lir->mir()->input()->mightBeType(MIRType::Boolean)) {
+  {
     Label notBoolean, true_;
     masm.branchTestBoolean(Assembler::NotEqual, tag, &notBoolean);
     masm.branchTestBooleanTruthy(true, input, &true_);
@@ -1624,40 +1589,33 @@ void CodeGenerator::visitValueToString(LValueToString* lir) {
     masm.bind(&notBoolean);
   }
 
-  // Note: when phis are involved, |mir->input()->mightBeType(MIRType::Object)|
-  // could return true even though |mir->mightHaveSideEffects()| is (still)
-  // false. In this case objects/symbols are not actually possible so we check
-  // |mir->mightHaveSideEffects()| first to avoid assertion failures.
+  // Objects/symbols are only possible when |mir->mightHaveSideEffects()|.
   if (lir->mir()->mightHaveSideEffects()) {
     // Object
-    if (lir->mir()->input()->mightBeType(MIRType::Object)) {
-      if (lir->mir()->supportSideEffects()) {
-        masm.branchTestObject(Assembler::Equal, tag, ool->entry());
-      } else {
-        // Bail.
-        MOZ_ASSERT(lir->mir()->needsSnapshot());
-        Label bail;
-        masm.branchTestObject(Assembler::Equal, tag, &bail);
-        bailoutFrom(&bail, lir->snapshot());
-      }
+    if (lir->mir()->supportSideEffects()) {
+      masm.branchTestObject(Assembler::Equal, tag, ool->entry());
+    } else {
+      // Bail.
+      MOZ_ASSERT(lir->mir()->needsSnapshot());
+      Label bail;
+      masm.branchTestObject(Assembler::Equal, tag, &bail);
+      bailoutFrom(&bail, lir->snapshot());
     }
 
     // Symbol
-    if (lir->mir()->input()->mightBeType(MIRType::Symbol)) {
-      if (lir->mir()->supportSideEffects()) {
-        masm.branchTestSymbol(Assembler::Equal, tag, ool->entry());
-      } else {
-        // Bail.
-        MOZ_ASSERT(lir->mir()->needsSnapshot());
-        Label bail;
-        masm.branchTestSymbol(Assembler::Equal, tag, &bail);
-        bailoutFrom(&bail, lir->snapshot());
-      }
+    if (lir->mir()->supportSideEffects()) {
+      masm.branchTestSymbol(Assembler::Equal, tag, ool->entry());
+    } else {
+      // Bail.
+      MOZ_ASSERT(lir->mir()->needsSnapshot());
+      Label bail;
+      masm.branchTestSymbol(Assembler::Equal, tag, &bail);
+      bailoutFrom(&bail, lir->snapshot());
     }
   }
 
   // BigInt
-  if (lir->mir()->input()->mightBeType(MIRType::BigInt)) {
+  {
     // No fastpath currently implemented.
     masm.branchTestBigInt(Assembler::Equal, tag, ool->entry());
   }
@@ -4472,67 +4430,53 @@ void CodeGenerator::visitValueToInt64(LValueToInt64* lir) {
   Register temp = ToRegister(lir->temp());
   Register64 output = ToOutRegister64(lir);
 
-  bool maybeBigInt = lir->mir()->input()->mightBeType(MIRType::BigInt);
-  bool maybeBool = lir->mir()->input()->mightBeType(MIRType::Boolean);
-  bool maybeString = lir->mir()->input()->mightBeType(MIRType::String);
-  int checks = int(maybeBigInt) + int(maybeBool) + int(maybeString);
+  int checks = 3;
 
-  if (checks == 0) {
-    // Bail on other types.
-    bailout(lir->snapshot());
-  } else {
-    Label fail, done;
-    // Jump to fail if this is the last check and we fail it,
-    // otherwise to the next test.
-    auto emitTestAndUnbox = [&](auto testAndUnbox) {
-      MOZ_ASSERT(checks > 0);
+  Label fail, done;
+  // Jump to fail if this is the last check and we fail it,
+  // otherwise to the next test.
+  auto emitTestAndUnbox = [&](auto testAndUnbox) {
+    MOZ_ASSERT(checks > 0);
 
-      checks--;
-      Label notType;
-      Label* target = checks ? &notType : &fail;
+    checks--;
+    Label notType;
+    Label* target = checks ? &notType : &fail;
 
-      testAndUnbox(target);
+    testAndUnbox(target);
 
-      if (checks) {
-        masm.jump(&done);
-        masm.bind(&notType);
-      }
-    };
-
-    Register tag = masm.extractTag(input, temp);
-
-    // BigInt.
-    if (maybeBigInt) {
-      emitTestAndUnbox([&](Label* target) {
-        masm.branchTestBigInt(Assembler::NotEqual, tag, target);
-        masm.unboxBigInt(input, temp);
-        masm.loadBigInt64(temp, output);
-      });
+    if (checks) {
+      masm.jump(&done);
+      masm.bind(&notType);
     }
+  };
 
-    // Boolean
-    if (maybeBool) {
-      emitTestAndUnbox([&](Label* target) {
-        masm.branchTestBoolean(Assembler::NotEqual, tag, target);
-        masm.unboxBoolean(input, temp);
-        masm.move32To64ZeroExtend(temp, output);
-      });
-    }
+  Register tag = masm.extractTag(input, temp);
 
-    // String
-    if (maybeString) {
-      emitTestAndUnbox([&](Label* target) {
-        masm.branchTestString(Assembler::NotEqual, tag, target);
-        masm.unboxString(input, temp);
-        emitStringToInt64(lir, temp, output);
-      });
-    }
+  // BigInt.
+  emitTestAndUnbox([&](Label* target) {
+    masm.branchTestBigInt(Assembler::NotEqual, tag, target);
+    masm.unboxBigInt(input, temp);
+    masm.loadBigInt64(temp, output);
+  });
 
-    MOZ_ASSERT(checks == 0);
+  // Boolean
+  emitTestAndUnbox([&](Label* target) {
+    masm.branchTestBoolean(Assembler::NotEqual, tag, target);
+    masm.unboxBoolean(input, temp);
+    masm.move32To64ZeroExtend(temp, output);
+  });
 
-    bailoutFrom(&fail, lir->snapshot());
-    masm.bind(&done);
-  }
+  // String
+  emitTestAndUnbox([&](Label* target) {
+    masm.branchTestString(Assembler::NotEqual, tag, target);
+    masm.unboxString(input, temp);
+    emitStringToInt64(lir, temp, output);
+  });
+
+  MOZ_ASSERT(checks == 0);
+
+  bailoutFrom(&fail, lir->snapshot());
+  masm.bind(&done);
 }
 
 void CodeGenerator::visitTruncateBigIntToInt64(LTruncateBigIntToInt64* lir) {
@@ -6403,7 +6347,8 @@ void CodeGenerator::emitDebugForceBailing(LInstruction* lir) {
 #endif
 
 bool CodeGenerator::generateBody() {
-  JitSpew(JitSpew_Codegen, "==== BEGIN CodeGenerator::generateBody ====\n");
+  JitSpewCont(JitSpew_Codegen, "\n");
+  JitSpew(JitSpew_Codegen, "==== BEGIN CodeGenerator::generateBody ====");
   IonScriptCounts* counts = maybeCreateScriptCounts();
 
 #if defined(JS_ION_PERF)
@@ -9365,13 +9310,8 @@ void CodeGenerator::visitIsNullOrLikeUndefinedV(LIsNullOrLikeUndefinedV* lir) {
       ScratchTagScope tag(masm, value);
       masm.splitTagForTest(value, tag);
 
-      MDefinition* input = lir->mir()->lhs();
-      if (input->mightBeType(MIRType::Null)) {
-        masm.branchTestNull(Assembler::Equal, tag, nullOrLikeUndefined);
-      }
-      if (input->mightBeType(MIRType::Undefined)) {
-        masm.branchTestUndefined(Assembler::Equal, tag, nullOrLikeUndefined);
-      }
+      masm.branchTestNull(Assembler::Equal, tag, nullOrLikeUndefined);
+      masm.branchTestUndefined(Assembler::Equal, tag, nullOrLikeUndefined);
 
       // Check whether it's a truthy object or a falsy object that emulates
       // undefined.
@@ -9444,13 +9384,8 @@ void CodeGenerator::visitIsNullOrLikeUndefinedAndBranchV(
       ScratchTagScope tag(masm, value);
       masm.splitTagForTest(value, tag);
 
-      MDefinition* input = lir->cmpMir()->lhs();
-      if (input->mightBeType(MIRType::Null)) {
-        masm.branchTestNull(Assembler::Equal, tag, ifTrueLabel);
-      }
-      if (input->mightBeType(MIRType::Undefined)) {
-        masm.branchTestUndefined(Assembler::Equal, tag, ifTrueLabel);
-      }
+      masm.branchTestNull(Assembler::Equal, tag, ifTrueLabel);
+      masm.branchTestUndefined(Assembler::Equal, tag, ifTrueLabel);
 
       masm.branchTestObject(Assembler::NotEqual, tag, ifFalseLabel);
     }
@@ -12890,24 +12825,16 @@ void CodeGenerator::visitClampVToUint8(LClampVToUint8* lir) {
   ValueOperand operand = ToValue(lir, LClampVToUint8::Input);
   FloatRegister tempFloat = ToFloatRegister(lir->tempFloat());
   Register output = ToRegister(lir->output());
-  MDefinition* input = lir->mir()->input();
 
-  Label* stringEntry;
-  Label* stringRejoin;
-  if (input->mightBeType(MIRType::String)) {
-    using Fn = bool (*)(JSContext*, JSString*, double*);
-    OutOfLineCode* oolString = oolCallVM<Fn, StringToNumber>(
-        lir, ArgList(output), StoreFloatRegisterTo(tempFloat));
-    stringEntry = oolString->entry();
-    stringRejoin = oolString->rejoin();
-  } else {
-    stringEntry = nullptr;
-    stringRejoin = nullptr;
-  }
+  using Fn = bool (*)(JSContext*, JSString*, double*);
+  OutOfLineCode* oolString = oolCallVM<Fn, StringToNumber>(
+      lir, ArgList(output), StoreFloatRegisterTo(tempFloat));
+  Label* stringEntry = oolString->entry();
+  Label* stringRejoin = oolString->rejoin();
 
   Label fails;
-  masm.clampValueToUint8(operand, input, stringEntry, stringRejoin, output,
-                         tempFloat, output, &fails);
+  masm.clampValueToUint8(operand, stringEntry, stringRejoin, output, tempFloat,
+                         output, &fails);
 
   bailoutFrom(&fails, lir->snapshot());
 }
@@ -13589,35 +13516,23 @@ void CodeGenerator::visitIsObjectAndBranch(LIsObjectAndBranch* ins) {
 }
 
 void CodeGenerator::visitIsNullOrUndefined(LIsNullOrUndefined* ins) {
-  MDefinition* input = ins->mir()->value();
   Register output = ToRegister(ins->output());
   ValueOperand value = ToValue(ins, LIsNullOrUndefined::Input);
 
-  if (input->mightBeType(MIRType::Null)) {
-    if (input->mightBeType(MIRType::Undefined)) {
-      Label isNotNull, done;
-      masm.branchTestNull(Assembler::NotEqual, value, &isNotNull);
+  Label isNotNull, done;
+  masm.branchTestNull(Assembler::NotEqual, value, &isNotNull);
 
-      masm.move32(Imm32(1), output);
-      masm.jump(&done);
+  masm.move32(Imm32(1), output);
+  masm.jump(&done);
 
-      masm.bind(&isNotNull);
-      masm.testUndefinedSet(Assembler::Equal, value, output);
+  masm.bind(&isNotNull);
+  masm.testUndefinedSet(Assembler::Equal, value, output);
 
-      masm.bind(&done);
-    } else {
-      masm.testNullSet(Assembler::Equal, value, output);
-    }
-  } else if (input->mightBeType(MIRType::Undefined)) {
-    masm.testUndefinedSet(Assembler::Equal, value, output);
-  } else {
-    masm.move32(Imm32(0), output);
-  }
+  masm.bind(&done);
 }
 
 void CodeGenerator::visitIsNullOrUndefinedAndBranch(
     LIsNullOrUndefinedAndBranch* ins) {
-  MDefinition* input = ins->isNullOrUndefinedMir()->value();
   Label* ifTrue = getJumpLabelForBranch(ins->ifTrue());
   Label* ifFalse = getJumpLabelForBranch(ins->ifFalse());
   ValueOperand value = ToValue(ins, LIsNullOrUndefinedAndBranch::Input);
@@ -13625,12 +13540,9 @@ void CodeGenerator::visitIsNullOrUndefinedAndBranch(
   ScratchTagScope tag(masm, value);
   masm.splitTagForTest(value, tag);
 
-  if (input->mightBeType(MIRType::Null)) {
-    masm.branchTestNull(Assembler::Equal, tag, ifTrue);
-  }
-  if (input->mightBeType(MIRType::Undefined)) {
-    masm.branchTestUndefined(Assembler::Equal, tag, ifTrue);
-  }
+  masm.branchTestNull(Assembler::Equal, tag, ifTrue);
+  masm.branchTestUndefined(Assembler::Equal, tag, ifTrue);
+
   if (!isNextBlock(ins->ifFalse()->lir())) {
     masm.jump(ifFalse);
   }

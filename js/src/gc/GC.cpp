@@ -927,9 +927,7 @@ GCRuntime::GCRuntime(JSRuntime* rt)
       isFull(false),
       incrementalState(gc::State::NotActive),
       initialState(gc::State::NotActive),
-#ifdef JS_GC_ZEAL
       useZeal(false),
-#endif
       lastMarkSlice(false),
       safeToYield(true),
       markOnBackgroundThreadDuringSweeping(false),
@@ -4642,12 +4640,10 @@ void GCRuntime::groupZonesForSweeping(JS::GCReason reason) {
     finder.useOneComponent();
   }
 
-#ifdef JS_GC_ZEAL
   // Use one component for two-slice zeal modes.
   if (useZeal && hasIncrementalTwoSliceZealMode()) {
     finder.useOneComponent();
   }
-#endif
 
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
     MOZ_ASSERT(zone->isGCMarking());
@@ -5522,7 +5518,7 @@ IncrementalProgress GCRuntime::beginSweepingSweepGroup(JSFreeOp* fop,
 
 #ifdef JS_GC_ZEAL
 bool GCRuntime::shouldYieldForZeal(ZealMode mode) {
-  bool yield = useZeal && isIncremental && hasZealMode(mode);
+  bool yield = useZeal && hasZealMode(mode);
 
   // Only yield on the first sweep slice for this mode.
   bool firstSweepSlice = initialState != State::Sweep;
@@ -6724,9 +6720,21 @@ static bool NeedToCollectNursery(GCRuntime* gc) {
   return !gc->nursery().isEmpty() || !gc->storeBuffer().isEmpty();
 }
 
+#ifdef DEBUG
+static const char* DescribeBudget(const SliceBudget& budget) {
+  MOZ_ASSERT(TlsContext.get()->isMainThreadContext());
+  constexpr size_t length = 32;
+  static char buffer[length];
+  budget.describe(buffer, length);
+  return buffer;
+}
+#endif
+
 void GCRuntime::incrementalSlice(SliceBudget& budget,
                                  const MaybeInvocationKind& gckind,
                                  JS::GCReason reason) {
+  MOZ_ASSERT_IF(isIncrementalGCInProgress(), isIncremental);
+
   AutoSetThreadIsPerformingGC performingGC;
 
   AutoGCSession session(this, JS::HeapState::MajorCollecting);
@@ -6740,38 +6748,25 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
   bool destroyingRuntime = (reason == JS::GCReason::DESTROY_RUNTIME);
 
   initialState = incrementalState;
+  isIncremental = !budget.isUnlimited();
 
 #ifdef JS_GC_ZEAL
-  /*
-   * Do the incremental collection type specified by zeal mode if the
-   * collection was triggered by runDebugGC() and incremental GC has not been
-   * cancelled by resetIncrementalGC().
-   */
-  useZeal = reason == JS::GCReason::DEBUG_GC && !budget.isUnlimited();
-#else
-  bool useZeal = false;
+  // Do the incremental collection type specified by zeal mode if the collection
+  // was triggered by runDebugGC() and incremental GC has not been cancelled by
+  // resetIncrementalGC().
+  useZeal = isIncremental && reason == JS::GCReason::DEBUG_GC;
 #endif
 
 #ifdef DEBUG
-  {
-    char budgetBuffer[32];
-    budget.describe(budgetBuffer, 32);
-    stats().writeLogMessage(
-        "Incremental: %d, lastMarkSlice: %d, useZeal: %d, budget: %s",
-        bool(isIncremental), bool(lastMarkSlice), bool(useZeal), budgetBuffer);
-  }
+  stats().log("Incremental: %d, lastMarkSlice: %d, useZeal: %d, budget: %s",
+              bool(isIncremental), bool(lastMarkSlice), bool(useZeal),
+              DescribeBudget(budget));
 #endif
 
-  MOZ_ASSERT_IF(isIncrementalGCInProgress(), isIncremental);
-
-  isIncremental = !budget.isUnlimited();
-
   if (useZeal && hasIncrementalTwoSliceZealMode()) {
-    /*
-     * Yields between slices occurs at predetermined points in these modes;
-     * the budget is not used.
-     */
-    stats().writeLogMessage("Using unlimited budget for two-slice zeal mode");
+    // Yields between slices occurs at predetermined points in these modes; the
+    // budget is not used. |isIncremental| is still true.
+    stats().log("Using unlimited budget for two-slice zeal mode");
     budget.makeUnlimited();
   }
 
@@ -6798,8 +6793,7 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
         break;
       }
 
-      if (isIncremental && useZeal &&
-          hasZealMode(ZealMode::YieldBeforeRootMarking)) {
+      if (useZeal && hasZealMode(ZealMode::YieldBeforeRootMarking)) {
         break;
       }
 
@@ -6832,8 +6826,7 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
 
       incrementalState = State::Mark;
 
-      if (isIncremental && useZeal &&
-          hasZealMode(ZealMode::YieldBeforeMarking)) {
+      if (useZeal && hasZealMode(ZealMode::YieldBeforeMarking)) {
         break;
       }
 
@@ -6878,7 +6871,7 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
              !(useZeal && hasZealMode(ZealMode::YieldBeforeMarking))) ||
             (useZeal && hasZealMode(ZealMode::YieldBeforeSweeping))) {
           lastMarkSlice = true;
-          stats().writeLogMessage("Yielding before starting sweeping");
+          stats().log("Yielding before starting sweeping");
           break;
         }
       }
@@ -7502,8 +7495,7 @@ void GCRuntime::collect(bool nonincrementalByAPI, SliceBudget budget,
     return;
   }
 
-  stats().writeLogMessage("GC starting in state %s",
-                          StateName(incrementalState));
+  stats().log("GC starting in state %s", StateName(incrementalState));
 
   AutoTraceLog logGC(TraceLoggerForCurrentThread(), TraceLogger_GC);
   AutoStopVerifyingBarriers av(rt, IsShutdownReason(reason));
@@ -7525,7 +7517,7 @@ void GCRuntime::collect(bool nonincrementalByAPI, SliceBudget budget,
 
     if (reason == JS::GCReason::ABORT_GC) {
       MOZ_ASSERT(!isIncrementalGCInProgress());
-      stats().writeLogMessage("GC aborted by request");
+      stats().log("GC aborted by request");
       break;
     }
 
@@ -7570,7 +7562,7 @@ void GCRuntime::collect(bool nonincrementalByAPI, SliceBudget budget,
     MOZ_RELEASE_ASSERT(CheckGrayMarkingState(rt));
   }
 #endif
-  stats().writeLogMessage("GC ending in state %s", StateName(incrementalState));
+  stats().log("GC ending in state %s", StateName(incrementalState));
 
   UnscheduleZones(this);
 }

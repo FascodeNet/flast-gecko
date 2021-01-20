@@ -544,31 +544,6 @@ MDefinition* MTest::foldsTo(TempAllocator& alloc) {
   return this;
 }
 
-void MTest::filtersUndefinedOrNull(bool trueBranch, MDefinition** subject,
-                                   bool* filtersUndefined, bool* filtersNull) {
-  MDefinition* ins = getOperand(0);
-  if (ins->isCompare()) {
-    ins->toCompare()->filtersUndefinedOrNull(trueBranch, subject,
-                                             filtersUndefined, filtersNull);
-    return;
-  }
-
-  if (!trueBranch && ins->isNot()) {
-    *subject = ins->getOperand(0);
-    *filtersUndefined = *filtersNull = true;
-    return;
-  }
-
-  if (trueBranch) {
-    *subject = ins;
-    *filtersUndefined = *filtersNull = true;
-    return;
-  }
-
-  *filtersUndefined = *filtersNull = false;
-  *subject = nullptr;
-}
-
 #ifdef JS_JITSPEW
 void MDefinition::printOpcode(GenericPrinter& out) const {
   PrintOpcodeName(out, op());
@@ -775,34 +750,6 @@ void MDefinition::justReplaceAllUsesWith(MDefinition* dom) {
     i->setProducerUnchecked(dom);
   }
   dom->uses_.takeElements(uses_);
-}
-
-void MDefinition::justReplaceAllUsesWithExcept(MDefinition* dom) {
-  MOZ_ASSERT(dom != nullptr);
-  MOZ_ASSERT(dom != this);
-
-  // Carry over the fact the value has uses which are no longer inspectable
-  // with the graph.
-  if (isUseRemoved()) {
-    dom->setUseRemovedUnchecked();
-  }
-
-  // Move all uses to new dom. Save the use of the dominating instruction.
-  MUse* exceptUse = nullptr;
-  for (MUseIterator i(usesBegin()), e(usesEnd()); i != e; ++i) {
-    if (i->consumer() != dom) {
-      i->setProducerUnchecked(dom);
-    } else {
-      MOZ_ASSERT(!exceptUse);
-      exceptUse = *i;
-    }
-  }
-  dom->uses_.takeElements(uses_);
-
-  // Restore the use to the original definition.
-  dom->uses_.remove(exceptUse);
-  exceptUse->setProducerUnchecked(this);
-  uses_.pushFront(exceptUse);
 }
 
 bool MDefinition::optimizeOutAllUses(TempAllocator& alloc) {
@@ -1588,11 +1535,6 @@ void MNearbyInt::trySpecializeFloat32(TempAllocator& alloc) {
   }
 }
 
-MTableSwitch* MTableSwitch::New(TempAllocator& alloc, MDefinition* ins,
-                                int32_t low, int32_t high) {
-  return new (alloc) MTableSwitch(alloc, ins, low, high);
-}
-
 MGoto* MGoto::New(TempAllocator& alloc, MBasicBlock* target) {
   return new (alloc) MGoto(target);
 }
@@ -1643,9 +1585,6 @@ void MUnbox::printOpcode(GenericPrinter& out) const {
       break;
     case Infallible:
       out.printf(" (infallible)");
-      break;
-    case TypeBarrier:
-      out.printf(" (typebarrier)");
       break;
     default:
       break;
@@ -1926,36 +1865,6 @@ bool MPhi::updateForReplacement(MDefinition* def) {
                usageAnalysis_ == PhiUsage::Unknown);
     MOZ_ASSERT(usageAnalysis_ == other->usageAnalysis_);
   }
-  return true;
-}
-
-static MIRType MergeTypes(MIRType type, MIRType newType) {
-  if (type == newType) {
-    return type;
-  }
-  if (IsTypeRepresentableAsDouble(type) &&
-      IsTypeRepresentableAsDouble(newType)) {
-    return MIRType::Double;
-  }
-  return MIRType::Value;
-}
-
-bool MPhi::specializeType(TempAllocator& alloc) {
-#ifdef DEBUG
-  MOZ_ASSERT(!specialized_);
-  specialized_ = true;
-#endif
-
-  MOZ_ASSERT(!inputs_.empty());
-
-  MIRType resultType = getOperand(0)->type();
-
-  for (size_t i = 1; i < inputs_.length(); i++) {
-    MDefinition* def = getOperand(i);
-    resultType = MergeTypes(resultType, def->type());
-  }
-
-  setResultType(resultType);
   return true;
 }
 
@@ -2280,33 +2189,6 @@ void MBinaryArithInstruction::printOpcode(GenericPrinter& out) const {
   }
 }
 #endif
-
-MBinaryArithInstruction* MBinaryArithInstruction::New(TempAllocator& alloc,
-                                                      Opcode op,
-                                                      MDefinition* left,
-                                                      MDefinition* right,
-                                                      MIRType specialization) {
-  switch (op) {
-    case Opcode::Add:
-      return MAdd::New(alloc, left, right, specialization);
-    case Opcode::Sub:
-      return MSub::New(alloc, left, right, specialization);
-    case Opcode::Mul:
-      return MMul::New(alloc, left, right, specialization);
-    case Opcode::Div:
-      return MDiv::New(alloc, left, right, specialization);
-    case Opcode::Mod:
-      return MMod::New(alloc, left, right, specialization);
-    default:
-      MOZ_CRASH("unexpected binary opcode");
-  }
-}
-
-bool MBinaryArithInstruction::constantDoubleResult(TempAllocator& alloc) {
-  bool typeChange = false;
-  EvaluateConstantOperands(alloc, this, &typeChange);
-  return typeChange;
-}
 
 MDefinition* MRsh::foldsTo(TempAllocator& alloc) {
   MDefinition* f = MBinaryBitwiseInstruction::foldsTo(alloc);
@@ -3993,38 +3875,6 @@ void MCompare::trySpecializeFloat32(TempAllocator& alloc) {
       ConvertDefinitionToDouble<1>(alloc, rhs, this);
     }
   }
-}
-
-void MCompare::filtersUndefinedOrNull(bool trueBranch, MDefinition** subject,
-                                      bool* filtersUndefined,
-                                      bool* filtersNull) {
-  *filtersNull = *filtersUndefined = false;
-  *subject = nullptr;
-
-  if (compareType() != Compare_Undefined && compareType() != Compare_Null) {
-    return;
-  }
-
-  MOZ_ASSERT(IsEqualityOp(jsop()));
-
-  // JSOp::*Ne only removes undefined/null from if/true branch
-  if (!trueBranch && (jsop() == JSOp::StrictNe || jsop() == JSOp::Ne)) {
-    return;
-  }
-
-  // JSOp::*Eq only removes undefined/null from else/false branch
-  if (trueBranch && (jsop() == JSOp::StrictEq || jsop() == JSOp::Eq)) {
-    return;
-  }
-
-  if (IsStrictEqualityOp(jsop())) {
-    *filtersUndefined = compareType() == Compare_Undefined;
-    *filtersNull = compareType() == Compare_Null;
-  } else {
-    *filtersUndefined = *filtersNull = true;
-  }
-
-  *subject = lhs();
 }
 
 MDefinition* MNot::foldsTo(TempAllocator& alloc) {

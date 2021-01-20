@@ -571,6 +571,7 @@ browser.startup:
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -587,6 +588,7 @@ browser.startup:
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -603,6 +605,7 @@ browser.startup:
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -619,6 +622,7 @@ browser.startup:
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -635,6 +639,7 @@ browser.startup:
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -655,6 +660,7 @@ browser.startup:
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -665,6 +671,7 @@ browser.startup:
     bug_numbers:
       - 1622263
       - 1614351
+      - 1683101
     description: >
       How the about:home startup cache functioned on startup.
 
@@ -679,10 +686,11 @@ browser.startup:
       8: User did not load about:home on its own by default.
       9: Cache is disabled because about:newtab preloading is disabled.
 
-    expires: "87"
+    expires: "92"
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -693,14 +701,16 @@ browser.startup:
     bug_numbers:
       - 1622263
       - 1614351
+      - 1683101
     description: >
       True if the about:home startup cache was written via the AsyncShutdown
       blocker.
 
-    expires: "87"
+    expires: "92"
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -1938,6 +1948,20 @@ pictureinpicture:
       - 'firefox'
     record_in_processes:
       - content
+  most_concurrent_players:
+    bug_numbers:
+      - 1677107
+    description:
+      The most concurrent Picture-in-Picture players the user had open at any one time.
+    expires: "91"
+    kind: uint
+    notification_emails:
+      - mconley@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
 
 preferences:
   created_new_user_prefs_file:
@@ -2994,7 +3018,6 @@ devtools.toolbox:
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
       - daisuke@mozilla.com
-      - hkirschner@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3710,6 +3733,23 @@ gfx.adapter:
     record_in_processes:
       - 'main'
     release_channel_collection: opt-out
+gfx.feature:
+  webrender:
+    bug_numbers:
+      - 1687312
+    description:
+      Whether webrender is enabled or disabled, and why.
+    expires: never
+    kind: string
+    notification_emails:
+      - gfx-telemetry-alerts@mozilla.com
+      - jnicol@mozilla.com
+    products:
+      - geckoview_streaming
+    record_in_processes:
+      - main
+    release_channel_collection: opt-out
+
 gfx:
   compositor:
     bug_numbers:
@@ -4443,7 +4483,7 @@ timestamps:
     expires: never
     kind: uint
     notification_emails:
-      - hkirschner@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4460,7 +4500,7 @@ timestamps:
     expires: never
     kind: uint
     notification_emails:
-      - hkirschner@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
       - gfx-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -4478,6 +4518,7 @@ timestamps:
     expires: never
     kind: uint
     notification_emails:
+      - perf-telemetry-alerts@mozilla.com
       - mconley@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -4497,6 +4538,7 @@ browser.timings:
     expires: never
     kind: uint
     notification_emails:
+      - perf-telemetry-alerts@mozilla.com
       - florian@mozilla.com
     release_channel_collection: opt-in
     products:

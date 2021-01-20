@@ -323,8 +323,8 @@ static XDRResult AtomTable(XDRState<mode>* xdr) {
 }
 
 template <XDRMode mode>
-static XDRResult ParserAtomTable(XDRState<mode>* xdr,
-                                 frontend::BaseCompilationStencil& stencil) {
+static XDRResult XDRParserAtomTable(XDRState<mode>* xdr,
+                                    frontend::BaseCompilationStencil& stencil) {
   if (mode == XDR_ENCODE) {
     uint32_t atomVectorLength = stencil.parserAtomData.size();
     MOZ_TRY(XDRAtomCount(xdr, &atomVectorLength));
@@ -454,36 +454,50 @@ XDRResult XDRState<mode>::codeScript(MutableHandleScript scriptp) {
 }
 
 template <XDRMode mode>
+static XDRResult XDRStencilHeader(
+    XDRState<mode>* xdr, const JS::ReadOnlyCompileOptions* maybeOptions,
+    MutableHandle<ScriptSourceHolder> source, uint32_t* pNumChunks) {
+  // The XDR-Stencil header is inserted at beginning of buffer, but it is
+  // computed at the end the incremental-encoding process.
+
+  MOZ_TRY(VersionCheck(xdr, XDRFormatType::Stencil));
+  MOZ_TRY(ScriptSource::XDR(xdr, maybeOptions, source));
+  MOZ_TRY(XDRChunkCount(xdr, pNumChunks));
+  MOZ_TRY(xdr->align32());
+
+  return Ok();
+}
+
+template <XDRMode mode>
 XDRResult XDRState<mode>::codeStencil(frontend::CompilationStencil& stencil) {
 #ifdef DEBUG
   auto sanityCheck = mozilla::MakeScopeExit(
       [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
 #endif
 
-  // As with codeScript, use header buffer when incrementally encoding.
+  // Instrumented scripts cannot be encoded, as they have extra instructions
+  // which are not normally present. Globals with instrumentation enabled must
+  // compile scripts via the bytecode emitter, which will insert these
+  // instructions.
   if (mode == XDR_ENCODE) {
-    switchToHeaderBuf();
+    if (!!stencil.input.options.instrumentationKinds) {
+      return fail(JS::TranscodeResult_Failure);
+    }
   }
-  MOZ_TRY(VersionCheck(this, XDRFormatType::Stencil));
 
-  if (hasOptions()) {
-    MOZ_ASSERT(&options() == &stencil.input.options);
-  }
-  MOZ_TRY(XDRCompilationInput(this, stencil.input));
-
-  // If we are incrementally encoding, the number of chunks are encoded in
-  // XDRIncrementalStencilEncoder::linearize, after the header.
+  // Process the header now if decoding. If we are encoding, we defer generating
+  // the header data until the `linearize` call, but still prepend it to final
+  // buffer before giving to the caller.
   if (mode == XDR_DECODE) {
-    MOZ_TRY(XDRChunkCount(this, &nchunks()));
-    MOZ_TRY(align32());
+    Rooted<ScriptSourceHolder> holder(cx());
+    MOZ_TRY(
+        XDRStencilHeader(this, &stencil.input.options, &holder, &nchunks()));
+    stencil.input.setSource(holder.get().get());
   }
-
-  if (mode == XDR_ENCODE) {
-    switchToMainBuf();
-  }
-  MOZ_TRY(ParserAtomTable(this, stencil));
 
   MOZ_ASSERT(isMainBuf());
+
+  MOZ_TRY(XDRParserAtomTable(this, stencil));
   MOZ_TRY(XDRCompilationStencil(this, stencil));
 
   return Ok();
@@ -502,8 +516,7 @@ XDRResult XDRState<mode>::codeFunctionStencil(
     return Ok();
   }
 
-  MOZ_TRY(ParserAtomTable(this, stencil));
-
+  MOZ_TRY(XDRParserAtomTable(this, stencil));
   MOZ_TRY(XDRBaseCompilationStencil(this, stencil));
 
   return Ok();
@@ -676,7 +689,8 @@ void XDRIncrementalEncoder::endSubTree() {
   }
 }
 
-XDRResult XDRIncrementalEncoder::linearize(JS::TranscodeBuffer& buffer) {
+XDRResult XDRIncrementalEncoder::linearize(JS::TranscodeBuffer& buffer,
+                                           ScriptSource* ss) {
   if (oom_) {
     ReportOutOfMemory(cx());
     return fail(JS::TranscodeResult_Throw);
@@ -735,28 +749,32 @@ XDRResult XDRIncrementalEncoder::linearize(JS::TranscodeBuffer& buffer) {
   return Ok();
 }
 
-XDRResult XDRIncrementalStencilEncoder::linearize(JS::TranscodeBuffer& buffer) {
+XDRResult XDRIncrementalStencilEncoder::linearize(JS::TranscodeBuffer& buffer,
+                                                  ScriptSource* ss) {
   // NOTE: If buffer is empty, buffer.begin() doesn't point valid buffer.
   MOZ_ASSERT_IF(!buffer.empty(),
                 JS::IsTranscodingBytecodeAligned(buffer.begin()));
   MOZ_ASSERT(JS::IsTranscodingBytecodeOffsetAligned(buffer.length()));
 
-  switchToHeaderBuf();
+  // Use the output buffer directly. The caller may have already have data in
+  // the buffer so ensure we skip over it.
+  XDRBuffer<XDR_ENCODE> outputBuf(cx(), buffer, buffer.length());
 
-  uint32_t nchunks = encodedFunctions_.count() + 1;
-  MOZ_TRY(XDRChunkCount(this, &nchunks));
-  MOZ_TRY(align32());
+  // Code the header directly in the output buffer.
+  {
+    switchToBuffer(&outputBuf);
 
-  switchToMainBuf();
+    Rooted<ScriptSourceHolder> holder(cx(), ss);
+    uint32_t nchunks = 1 + encodedFunctions_.count();
+    MOZ_TRY(XDRStencilHeader(this, nullptr, &holder, &nchunks));
 
-  size_t totalLength = buffer.length() + header_.length() + slices_.length();
-  if (!buffer.reserve(totalLength)) {
-    ReportOutOfMemory(cx());
-    return fail(JS::TranscodeResult_Throw);
+    switchToMainBuf();
   }
 
-  buffer.infallibleAppend(header_.begin(), header_.length());
-  buffer.infallibleAppend(slices_.begin(), slices_.length());
+  // The accumlated transcode data can now be copied to the output buffer.
+  if (!buffer.append(slices_.begin(), slices_.length())) {
+    return fail(JS::TranscodeResult_Throw);
+  }
 
   return Ok();
 }
