@@ -495,59 +495,48 @@ JSString* js::ObjectToSource(JSContext* cx, HandleObject obj) {
   return buf.finishString();
 }
 
-static bool GetBuiltinTagSlow(JSContext* cx, HandleObject obj,
-                              MutableHandleString builtinTag) {
+static JSString* GetBuiltinTagSlow(JSContext* cx, HandleObject obj) {
   // Step 4.
   bool isArray;
   if (!IsArray(cx, obj, &isArray)) {
-    return false;
+    return nullptr;
   }
 
   // Step 5.
   if (isArray) {
-    builtinTag.set(cx->names().objectArray);
-    return true;
+    return cx->names().objectArray;
   }
 
-  // Steps 6-13.
+  // Steps 6-14.
   ESClass cls;
   if (!JS::GetBuiltinClass(cx, obj, &cls)) {
-    return false;
+    return nullptr;
   }
 
   switch (cls) {
     case ESClass::String:
-      builtinTag.set(cx->names().objectString);
-      return true;
+      return cx->names().objectString;
     case ESClass::Arguments:
-      builtinTag.set(cx->names().objectArguments);
-      return true;
+      return cx->names().objectArguments;
     case ESClass::Error:
-      builtinTag.set(cx->names().objectError);
-      return true;
+      return cx->names().objectError;
     case ESClass::Boolean:
-      builtinTag.set(cx->names().objectBoolean);
-      return true;
+      return cx->names().objectBoolean;
     case ESClass::Number:
-      builtinTag.set(cx->names().objectNumber);
-      return true;
+      return cx->names().objectNumber;
     case ESClass::Date:
-      builtinTag.set(cx->names().objectDate);
-      return true;
+      return cx->names().objectDate;
     case ESClass::RegExp:
-      builtinTag.set(cx->names().objectRegExp);
-      return true;
+      return cx->names().objectRegExp;
     default:
       if (obj->isCallable()) {
         // Non-standard: Prevent <object> from showing up as Function.
-        RootedObject unwrapped(cx, CheckedUnwrapDynamic(obj, cx));
+        JSObject* unwrapped = CheckedUnwrapDynamic(obj, cx);
         if (!unwrapped || !unwrapped->getClass()->isDOMClass()) {
-          builtinTag.set(cx->names().objectFunction);
-          return true;
+          return cx->names().objectFunction;
         }
       }
-      builtinTag.set(nullptr);
-      return true;
+      return cx->names().objectObject;
   }
 }
 
@@ -559,8 +548,7 @@ static MOZ_ALWAYS_INLINE JSString* GetBuiltinTagFast(JSObject* obj,
 
   // Optimize the non-proxy case to bypass GetBuiltinClass.
   if (clasp == &PlainObject::class_) {
-    // This is not handled by GetBuiltinTagSlow, but this case is by far
-    // the most common so we optimize it here.
+    // This case is by far the most common so we handle it first.
     return cx->names().objectObject;
   }
 
@@ -605,7 +593,7 @@ static MOZ_ALWAYS_INLINE JSString* GetBuiltinTagFast(JSObject* obj,
     return cx->names().objectFunction;
   }
 
-  return nullptr;
+  return cx->names().objectObject;
 }
 
 // For primitive values we try to avoid allocating the object if we can
@@ -681,33 +669,14 @@ bool js::obj_toString(JSContext* cx, unsigned argc, Value* vp) {
     obj = &args.thisv().toObject();
   }
 
+  // When |obj| is a non-proxy object, compute |builtinTag| only when needed.
   RootedString builtinTag(cx);
   const JSClass* clasp = obj->getClass();
   if (MOZ_UNLIKELY(clasp->isProxy())) {
-    if (!GetBuiltinTagSlow(cx, obj, &builtinTag)) {
+    builtinTag = GetBuiltinTagSlow(cx, obj);
+    if (!builtinTag) {
       return false;
     }
-  } else {
-    builtinTag = GetBuiltinTagFast(obj, clasp, cx);
-#ifdef DEBUG
-    // Assert this fast path is correct and matches BuiltinTagSlow. The
-    // only exception is the PlainObject case: we special-case it here
-    // because it's so common, but BuiltinTagSlow doesn't handle this.
-    RootedString builtinTagSlow(cx);
-    if (!GetBuiltinTagSlow(cx, obj, &builtinTagSlow)) {
-      return false;
-    }
-    if (clasp == &PlainObject::class_) {
-      MOZ_ASSERT(!builtinTagSlow);
-    } else {
-      MOZ_ASSERT(builtinTagSlow == builtinTag);
-    }
-#endif
-  }
-
-  // Step 14.
-  if (!builtinTag) {
-    builtinTag = cx->names().objectObject;
   }
 
   // Step 15.
@@ -719,6 +688,18 @@ bool js::obj_toString(JSContext* cx, unsigned argc, Value* vp) {
 
   // Step 16.
   if (!tag.isString()) {
+    if (!builtinTag) {
+      builtinTag = GetBuiltinTagFast(obj, clasp, cx);
+  #ifdef DEBUG
+      // Assert this fast path is correct and matches BuiltinTagSlow.
+      JSString* builtinTagSlow = GetBuiltinTagSlow(cx, obj);
+      if (!builtinTagSlow) {
+        return false;
+      }
+      MOZ_ASSERT(builtinTagSlow == builtinTag);
+  #endif
+    }
+
     args.rval().setString(builtinTag);
     return true;
   }
@@ -738,21 +719,14 @@ bool js::obj_toString(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-JSString* js::ObjectClassToString(JSContext* cx, HandleObject obj) {
-  const JSClass* clasp = obj->getClass();
+JSString* js::ObjectClassToString(JSContext* cx, JSObject* obj) {
+  AutoUnsafeCallWithABI unsafe;
 
-  if (JSString* tag = GetBuiltinTagFast(obj, clasp, cx)) {
-    return tag;
-  }
-
-  const char* className = clasp->name;
-  StringBuffer sb(cx);
-  if (!sb.append("[object ") || !sb.append(className, strlen(className)) ||
-      !sb.append(']')) {
+  if (MaybeHasInterestingSymbolProperty(cx, obj,
+                                        cx->wellKnownSymbols().toStringTag)) {
     return nullptr;
   }
-
-  return sb.finishAtom();
+  return GetBuiltinTagFast(obj, obj->getClass(), cx);
 }
 
 static bool obj_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp) {
@@ -1361,7 +1335,7 @@ static bool TryEnumerableOwnPropertiesNative(JSContext* cx, HandleObject obj,
 
   if (obj->is<TypedArrayObject>()) {
     Handle<TypedArrayObject*> tobj = obj.as<TypedArrayObject>();
-    uint32_t len = tobj->length().deprecatedGetUint32();
+    size_t len = tobj->length().get();
 
     // Fail early if the typed array contains too many elements for a
     // dense array, because we likely OOM anyway when trying to allocate

@@ -920,7 +920,7 @@ function TypedArraySlice(start, end) {
             ThrowTypeError(JSMSG_TYPED_ARRAY_DETACHED);
 
         // Steps 10-13, 15.
-        var sliced = TypedArrayBitwiseSlice(O, A, k | 0, count | 0);
+        var sliced = TypedArrayBitwiseSlice(O, A, k, count);
 
         // Step 14.
         if (!sliced) {
@@ -1691,7 +1691,7 @@ function ArrayBufferSlice(start, end) {
         ThrowTypeError(JSMSG_TYPED_ARRAY_DETACHED);
 
     // Steps 20-22.
-    ArrayBufferCopyData(newBuffer, 0, O, first | 0, newLen | 0, isWrapped);
+    ArrayBufferCopyData(newBuffer, 0, O, first, newLen, isWrapped);
 
     // Step 23.
     return newBuffer;
@@ -1774,7 +1774,7 @@ function SharedArrayBufferSlice(start, end) {
         ThrowTypeError(JSMSG_SHORT_SHARED_ARRAY_BUFFER_RETURNED, newLen, actualLen);
 
     // Steps 16-18.
-    SharedArrayBufferCopyData(newObj, 0, O, first | 0, newLen | 0, isWrapped);
+    SharedArrayBufferCopyData(newObj, 0, O, first, newLen, isWrapped);
 
     // Step 19.
     return newObj;

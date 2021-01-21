@@ -469,6 +469,11 @@
     type: RelaxedAtomicBool
     value: true
     mirror: always
+    
+-   name: apz.gtk.touchpad_pinch.enabled
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
 #endif
 
 - name: apz.keyboard.enabled
@@ -3653,18 +3658,6 @@
 - name: extensions.serviceWorkerRegister.allowed
   type: bool
   value: false
-  mirror: always
-
-# This pref governs whether we enable content script CSP in extensions.
-- name: extensions.content_script_csp.enabled
-  type: bool
-  value: false
-  mirror: always
-
-# This pref governs whether content script CSP is report-only.
-- name: extensions.content_script_csp.report_only
-  type: bool
-  value: true
   mirror: always
 
 # This pref governs whether we run webextensions in a separate process (true)
@@ -9443,7 +9436,7 @@
 
 - name: privacy.window.name.update.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # By default, the network state isolation is not active when there is a proxy

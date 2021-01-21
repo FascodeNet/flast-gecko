@@ -453,7 +453,7 @@ bool js::GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
 
   if (aobj->is<TypedArrayObject>()) {
     Handle<TypedArrayObject*> typedArray = aobj.as<TypedArrayObject>();
-    if (typedArray->length().deprecatedGetUint32() == length) {
+    if (typedArray->length().get() == length) {
       return TypedArrayObject::getElements(cx, typedArray, vp);
     }
   }
@@ -3222,8 +3222,7 @@ static bool GetIndexedPropertiesInRange(JSContext* cx, HandleObject obj,
 
     // Append typed array elements.
     if (nativeObj->is<TypedArrayObject>()) {
-      uint32_t len =
-          nativeObj->as<TypedArrayObject>().length().deprecatedGetUint32();
+      size_t len = nativeObj->as<TypedArrayObject>().length().get();
       for (uint32_t i = begin; i < len && i < end; i++) {
         if (!indexes.append(i)) {
           return false;

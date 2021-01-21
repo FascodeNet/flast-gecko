@@ -17,17 +17,15 @@
 #include "SSLServerCertVerification.h"
 #include "ScopedNSSTypes.h"
 #include "SharedSSLState.h"
-#ifdef MOZ_NEW_CERT_STORAGE
-#  include "cert_storage/src/cert_storage.h"
-#endif
+#include "cert_storage/src/cert_storage.h"
 #include "keyhi.h"
 #include "mozilla/Base64.h"
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Logging.h"
-#include "mozilla/net/SSLTokensCache.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/net/SSLTokensCache.h"
 #include "mozilla/net/SocketProcessChild.h"
 #include "mozpkix/pkixnss.h"
 #include "mozpkix/pkixtypes.h"
@@ -193,6 +191,7 @@ nsNSSSocketInfo::SetClientCert(nsIX509Cert* aClientCert) {
 }
 
 void nsNSSSocketInfo::NoteTimeUntilReady() {
+  MutexAutoLock lock(mMutex);
   if (mNotedTimeUntilReady) return;
 
   mNotedTimeUntilReady = true;
@@ -218,7 +217,7 @@ void nsNSSSocketInfo::SetHandshakeCompleted() {
                                   : mFalseStartCallbackCalled
                                       ? ChoseNotToFalseStart
                                       : NotAllowedToFalseStart;
-
+    MutexAutoLock lock(mMutex);
     // This will include TCP and proxy tunnel wait time
     Telemetry::AccumulateTimeDelta(
         Telemetry::SSL_TIME_UNTIL_HANDSHAKE_FINISHED_KEYED_BY_KA, mKeaGroup,
@@ -254,6 +253,7 @@ void nsNSSSocketInfo::SetHandshakeCompleted() {
 }
 
 void nsNSSSocketInfo::SetNegotiatedNPN(const char* value, uint32_t length) {
+  MutexAutoLock lock(mMutex);
   if (!value) {
     mNegotiatedNPN.Truncate();
   } else {
@@ -1992,11 +1992,8 @@ class ClientAuthCertNonverifyingTrustDomain final : public TrustDomain {
       nsTArray<nsTArray<uint8_t>>& collectedCANames,
       nsTArray<nsTArray<uint8_t>>& thirdPartyCertificates)
       : mCollectedCANames(collectedCANames),
-#ifdef MOZ_NEW_CERT_STORAGE
         mCertStorage(do_GetService(NS_CERT_STORAGE_CID)),
-#endif
-        mThirdPartyCertificates(thirdPartyCertificates) {
-  }
+        mThirdPartyCertificates(thirdPartyCertificates) {}
 
   virtual mozilla::pkix::Result GetCertTrust(
       EndEntityOrCA endEntityOrCA, const CertPolicyId& policy,
@@ -2063,9 +2060,7 @@ class ClientAuthCertNonverifyingTrustDomain final : public TrustDomain {
 
  private:
   nsTArray<nsTArray<uint8_t>>& mCollectedCANames;  // non-owning
-#ifdef MOZ_NEW_CERT_STORAGE
   nsCOMPtr<nsICertStorage> mCertStorage;
-#endif
   nsTArray<nsTArray<uint8_t>>& mThirdPartyCertificates;  // non-owning
   UniqueCERTCertList mBuiltChain;
 };
@@ -2124,7 +2119,6 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::FindIssuer(
   // First try all relevant certificates known to Gecko, which avoids calling
   // CERT_CreateSubjectCertList, because that can be expensive.
   Vector<Input> geckoCandidates;
-#ifdef MOZ_NEW_CERT_STORAGE
   if (!mCertStorage) {
     return mozilla::pkix::Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
@@ -2146,7 +2140,6 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::FindIssuer(
       return mozilla::pkix::Result::FATAL_ERROR_NO_MEMORY;
     }
   }
-#endif
 
   for (const auto& thirdPartyCertificate : mThirdPartyCertificates) {
     Input thirdPartyCertificateInput;

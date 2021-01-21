@@ -194,12 +194,12 @@ pref("security.pki.mitm_canary_issuer.enabled", true);
 pref("security.pki.mitm_detected", false);
 
 // Intermediate CA Preloading settings
-#if defined(MOZ_NEW_CERT_STORAGE) && !defined(MOZ_WIDGET_ANDROID)
+#if !defined(MOZ_WIDGET_ANDROID)
   pref("security.remote_settings.intermediates.enabled", true);
 #else
   pref("security.remote_settings.intermediates.enabled", false);
 #endif
-#if defined(MOZ_NEW_CERT_STORAGE) && !defined(MOZ_WIDGET_ANDROID) && defined(EARLY_BETA_OR_EARLIER)
+#if defined(EARLY_BETA_OR_EARLIER) && !defined(MOZ_WIDGET_ANDROID)
   pref("security.intermediate_preloading_healer.enabled", true);
 #else
   pref("security.intermediate_preloading_healer.enabled", false);
@@ -400,7 +400,7 @@ pref("media.decoder-doctor.verbose", false);
 pref("media.decoder-doctor.new-issue-endpoint", "https://webcompat.com/issues/new");
 
 pref("media.videocontrols.picture-in-picture.enabled", false);
-pref("media.videocontrols.picture-in-picture.allow-multiple", false);
+pref("media.videocontrols.picture-in-picture.allow-multiple", true);
 pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.min-video-secs", 45);
@@ -2554,6 +2554,10 @@ pref("browser.tabs.remote.autostart", false);
   pref("fission.autostart", false);
 #endif
 
+// Whether certain properties from origin attributes should be included as part
+// of remote types. Only in effect when fission is enabled.
+pref("browser.tabs.remote.useOriginAttributesInRemoteType", false);
+
 // Pref to control whether we use separate content processes for top-level load
 // of file:// URIs.
 pref("browser.tabs.remote.separateFileUriProcess", true);
@@ -3902,6 +3906,12 @@ pref("extensions.webcompat-reporter.newIssueEndpoint", "https://webcompat.com/is
 #else
   pref("extensions.webcompat-reporter.enabled", false);
 #endif
+
+// Add-on content security policies.
+pref("extensions.webextensions.base-content-security-policy", "script-src 'self' https://* http://localhost:* http://127.0.0.1:* moz-extension: blob: filesystem: 'unsafe-eval' 'unsafe-inline'; object-src 'self' moz-extension: blob: filesystem:;");
+pref("extensions.webextensions.base-content-security-policy.v3", "script-src 'self' http://localhost:* http://127.0.0.1:*; object-src 'self';");
+pref("extensions.webextensions.default-content-security-policy", "script-src 'self'; object-src 'self';");
+
 
 pref("network.buffer.cache.count", 24);
 pref("network.buffer.cache.size",  32768);

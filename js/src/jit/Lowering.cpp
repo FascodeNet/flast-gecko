@@ -4419,10 +4419,10 @@ void LIRGenerator::visitGuardToClass(MGuardToClass* ins) {
 void LIRGenerator::visitObjectClassToString(MObjectClassToString* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
   MOZ_ASSERT(ins->type() == MIRType::String);
-  auto lir =
-      new (alloc()) LObjectClassToString(useRegisterAtStart(ins->object()));
+  auto* lir = new (alloc()) LObjectClassToString(
+      useRegisterAtStart(ins->object()), tempFixed(CallTempReg0));
+  assignSnapshot(lir, ins->bailoutKind());
   defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
 }
 
 void LIRGenerator::visitWasmAddOffset(MWasmAddOffset* ins) {

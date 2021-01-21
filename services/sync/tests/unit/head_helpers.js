@@ -633,8 +633,6 @@ async function promiseVisit(expectedType, expectedURI) {
       },
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onFrecencyChanged() {},
-      onManyFrecenciesChanged() {},
       onDeleteURI(uri) {
         done("removed", uri.spec);
       },

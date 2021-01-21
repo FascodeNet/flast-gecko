@@ -738,7 +738,7 @@ Arena* Chunk::fetchNextDecommittedArena() {
   unsigned offset = findDecommittedArenaOffset();
   info.lastDecommittedArenaOffset = offset + 1;
   --info.numArenasFree;
-  decommittedArenas.unset(offset);
+  decommittedArenas[offset] = false;
 
   Arena* arena = &arenas[offset];
   MarkPagesInUseSoft(arena, ArenaSize);
@@ -756,12 +756,12 @@ Arena* Chunk::fetchNextDecommittedArena() {
 uint32_t Chunk::findDecommittedArenaOffset() {
   /* Note: lastFreeArenaOffset can be past the end of the list. */
   for (unsigned i = info.lastDecommittedArenaOffset; i < ArenasPerChunk; i++) {
-    if (decommittedArenas.get(i)) {
+    if (decommittedArenas[i]) {
       return i;
     }
   }
   for (unsigned i = 0; i < info.lastDecommittedArenaOffset; i++) {
-    if (decommittedArenas.get(i)) {
+    if (decommittedArenas[i]) {
       return i;
     }
   }
@@ -788,7 +788,7 @@ Chunk* GCRuntime::getOrAllocChunk(AutoLockGCBgAlloc& lock) {
 }
 
 void GCRuntime::recycleChunk(Chunk* chunk, const AutoLockGC& lock) {
-  AlwaysPoison(&chunk->trailer, JS_FREED_CHUNK_PATTERN, sizeof(ChunkTrailer),
+  AlwaysPoison(&chunk->header, JS_FREED_CHUNK_PATTERN, sizeof(ChunkHeader),
                MemCheckKind::MakeNoAccess);
   emptyChunks(lock).push(chunk);
 }
@@ -861,6 +861,9 @@ void Chunk::init(GCRuntime* gc) {
   Poison(this, JS_FRESH_TENURED_PATTERN, ChunkSize,
          MemCheckKind::MakeUndefined);
 
+  new (&header) ChunkHeader(gc->rt);
+  info.init();
+
   /*
    * We clear the bitmap to guard against JS::GCThingIsMarkedGray being called
    * on uninitialized data, which would happen before the first GC cycle.
@@ -873,15 +876,11 @@ void Chunk::init(GCRuntime* gc) {
    */
   decommitAllArenas();
 
-  /* Initialize the chunk info. */
-  info.init();
-  new (&trailer) ChunkTrailer(gc->rt);
-
   /* The rest of info fields are initialized in pickChunk. */
 }
 
 void Chunk::decommitAllArenas() {
-  decommittedArenas.clear(true);
+  decommittedArenas.SetAll();
   MarkPagesUnusedSoft(&arenas[0], ArenasPerChunk * ArenaSize);
 
   info.freeArenasHead = nullptr;
