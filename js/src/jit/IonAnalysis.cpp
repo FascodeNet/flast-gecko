@@ -362,6 +362,7 @@ static void ConvertToBailingBlock(TempAllocator& alloc, MBasicBlock* block) {
 }
 
 bool jit::PruneUnusedBranches(MIRGenerator* mir, MIRGraph& graph) {
+  JitSpew(JitSpew_Prune, "Begin");
   MOZ_ASSERT(!mir->compilingWasm(),
              "wasm compilation has no code coverage support.");
 
@@ -2944,7 +2945,6 @@ static bool IsResumableMIRType(MIRType type) {
       return true;
 
     case MIRType::MagicHole:
-    case MIRType::ObjectOrNull:
     case MIRType::None:
     case MIRType::Slots:
     case MIRType::Elements:
@@ -3526,8 +3526,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
 
       MDefinition* ownerObject;
       switch (ins->op()) {
-        case MDefinition::Opcode::ConstantElements:
-          continue;
         case MDefinition::Opcode::Elements:
         case MDefinition::Opcode::ArrayBufferViewElements:
           MOZ_ASSERT(ins->numOperands() == 1);
@@ -3558,14 +3556,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
           MOZ_ASSERT_IF(!use->toStoreElementHole()->object()->isUnbox() &&
                             !ownerObject->isUnbox(),
                         use->toStoreElementHole()->object() == ownerObject);
-          continue;
-        }
-
-        if (use->isFallibleStoreElement()) {
-          // See StoreElementHole case above.
-          MOZ_ASSERT_IF(!use->toFallibleStoreElement()->object()->isUnbox() &&
-                            !ownerObject->isUnbox(),
-                        use->toFallibleStoreElement()->object() == ownerObject);
           continue;
         }
 
@@ -4176,30 +4166,26 @@ bool jit::FoldLoadsWithUnbox(MIRGenerator* mir, MIRGraph& graph) {
 
       MIRType type = unbox->type();
       MUnbox::Mode mode = unbox->mode();
-      BailoutKind bailoutKind = unbox->bailoutKind();
 
       MInstruction* replacement;
       switch (load->op()) {
         case MDefinition::Opcode::LoadFixedSlot: {
           auto* loadIns = load->toLoadFixedSlot();
           replacement = MLoadFixedSlotAndUnbox::New(
-              graph.alloc(), loadIns->object(), loadIns->slot(), mode, type,
-              bailoutKind);
+              graph.alloc(), loadIns->object(), loadIns->slot(), mode, type);
           break;
         }
         case MDefinition::Opcode::LoadDynamicSlot: {
           auto* loadIns = load->toLoadDynamicSlot();
           replacement = MLoadDynamicSlotAndUnbox::New(
-              graph.alloc(), loadIns->slots(), loadIns->slot(), mode, type,
-              bailoutKind);
+              graph.alloc(), loadIns->slots(), loadIns->slot(), mode, type);
           break;
         }
         case MDefinition::Opcode::LoadElement: {
           auto* loadIns = load->toLoadElement();
           MOZ_ASSERT_IF(loadIns->needsHoleCheck(), unbox->fallible());
           replacement = MLoadElementAndUnbox::New(
-              graph.alloc(), loadIns->elements(), loadIns->index(), mode, type,
-              bailoutKind);
+              graph.alloc(), loadIns->elements(), loadIns->index(), mode, type);
           break;
         }
         default:
@@ -4334,10 +4320,17 @@ void jit::DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
   out.printf("===== %s =====\n", phase);
 
   size_t depth = 2;
+  bool isFirstBlock = true;
   for (ReversePostorderIterator block(graph.rpoBegin());
        block != graph.rpoEnd(); block++) {
+    if (isFirstBlock) {
+      isFirstBlock = false;
+    } else {
+      out.printf("  --\n");
+    }
     for (MInstructionIterator iter(block->begin()), end(block->end());
          iter != end; iter++) {
+      out.printf("  ");
       DumpDefinition(out, *iter, depth);
       out.printf("\n");
     }

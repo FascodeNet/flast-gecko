@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <initializer_list>
+#include <iterator>
 #include <utility>
 
 #if defined(XP_UNIX) && !defined(XP_DARWIN)
@@ -45,7 +46,7 @@
 #  include "frontend/TokenStream.h"
 #endif
 #include "frontend/BytecodeCompilation.h"
-#include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationInfoVector
+#include "frontend/CompilationInfo.h"  // frontend::CompilationStencil, frontend::CompilationStencilSet
 #include "gc/Allocator.h"
 #include "gc/Zone.h"
 #include "jit/BaselineJIT.h"
@@ -131,7 +132,6 @@
 
 using namespace js;
 
-using mozilla::ArrayLength;
 using mozilla::AssertedCast;
 using mozilla::AsWritableChars;
 using mozilla::Maybe;
@@ -676,18 +676,17 @@ static bool GCParameter(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  size_t paramIndex = 0;
-  for (;; paramIndex++) {
-    if (paramIndex == ArrayLength(paramMap)) {
-      JS_ReportErrorASCII(
-          cx, "the first argument must be one of:" GC_PARAMETER_ARGS_LIST);
-      return false;
-    }
-    if (JS_LinearStringEqualsAscii(linearStr, paramMap[paramIndex].name)) {
-      break;
-    }
+  const auto* ptr = std::find_if(
+      std::begin(paramMap), std::end(paramMap), [&](const auto& param) {
+        return JS_LinearStringEqualsAscii(linearStr, param.name);
+      });
+  if (ptr == std::end(paramMap)) {
+    JS_ReportErrorASCII(
+        cx, "the first argument must be one of:" GC_PARAMETER_ARGS_LIST);
+    return false;
   }
-  const ParamInfo& info = paramMap[paramIndex];
+
+  const ParamInfo& info = *ptr;
   JSGCParamKey param = info.param;
 
   // Request mode.
@@ -3351,7 +3350,9 @@ static bool testingFunc_invalidate(JSContext* cx, unsigned argc, Value* vp) {
     while (!iter.isPhysicalJitFrame()) {
       ++iter;
     }
-    js::jit::Invalidate(cx, iter.script());
+    if (iter.script()->hasIonScript()) {
+      js::jit::Invalidate(cx, iter.script());
+    }
   }
 
   args.rval().setUndefined();
@@ -5008,19 +5009,19 @@ static bool CompileStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* TODO: StencilXDR - Add option to select between full and syntax parse. */
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationInfo> compilationInfo(
-      cx, frontend::CompilationInfo(cx, options));
-  if (!compilationInfo.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationStencil> stencil(
+      cx, frontend::CompilationStencil(cx, options));
+  if (!stencil.get().input.initForGlobal(cx)) {
     return false;
   }
-  if (!frontend::CompileGlobalScriptToStencil(cx, compilationInfo.get(), srcBuf,
+  if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
                                               ScopeKind::Global)) {
     return false;
   }
 
   /* Serialize the stencil to XDR. */
   JS::TranscodeBuffer xdrBytes;
-  if (!compilationInfo.get().serializeStencils(cx, xdrBytes)) {
+  if (!stencil.get().serializeStencils(cx, xdrBytes)) {
     return false;
   }
 
@@ -5058,21 +5059,21 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   const char* filename = "compileStencilXDR-DATA.js";
   uint32_t lineno = 1;
 
-  /* Prepare the CompilationInfoVector for decoding. */
+  /* Prepare the CompilationStencilSet for decoding. */
   CompileOptions options(cx);
   options.setFileAndLine(filename, lineno);
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationInfoVector> compilationInfos(
-      cx, frontend::CompilationInfoVector(cx, options));
-  if (!compilationInfos.get().initial.input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationStencilSet> stencilSet(
+      cx, frontend::CompilationStencilSet(cx, options));
+  if (!stencilSet.get().input.initForGlobal(cx)) {
     return false;
   }
 
   /* Deserialize the stencil from XDR. */
   JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength().get());
   bool succeeded = false;
-  if (!compilationInfos.get().deserializeStencils(cx, xdrRange, &succeeded)) {
+  if (!stencilSet.get().deserializeStencils(cx, xdrRange, &succeeded)) {
     return false;
   }
   if (!succeeded) {
@@ -5083,8 +5084,8 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* Instantiate the stencil. */
   Rooted<frontend::CompilationGCOutput> output(cx);
   Rooted<frontend::CompilationGCOutput> outputForDelazification(cx);
-  if (!compilationInfos.get().instantiateStencils(
-          cx, output.get(), outputForDelazification.get())) {
+  if (!stencilSet.get().instantiateStencils(cx, output.get(),
+                                            outputForDelazification.get())) {
     return false;
   }
 

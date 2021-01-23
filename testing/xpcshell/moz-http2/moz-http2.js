@@ -735,19 +735,6 @@ function handleRequest(req, res) {
             "hex"
           ),
         });
-      } else if (packet.questions[0].type == "HTTPS") {
-        answers.push({
-          name: packet.questions[0].name,
-          type: packet.questions[0].type,
-          ttl: 55,
-          class: "IN",
-          flush: false,
-          data: {
-            priority: 1,
-            name: "some.domain.stuff.",
-            values: [{ key: "echconfig", value: "testytestystringstring" }],
-          },
-        });
       }
 
       if (u.query.cnameloop) {
@@ -856,6 +843,7 @@ function handleRequest(req, res) {
             { key: "echconfig", value: "123..." },
             { key: "ipv6hint", value: "::1" },
             { key: 30, value: "somelargestring" },
+            { key: "odohconfig", value: "456..." },
           ],
         },
       });
@@ -873,6 +861,7 @@ function handleRequest(req, res) {
             { key: "ipv4hint", value: ["1.2.3.4", "5.6.7.8"] },
             { key: "echconfig", value: "abc..." },
             { key: "ipv6hint", value: ["::1", "fe80::794f:6d2c:3d5e:7836"] },
+            { key: "odohconfig", value: "def..." },
           ],
         },
       });

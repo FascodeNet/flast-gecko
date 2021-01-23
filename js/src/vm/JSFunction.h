@@ -11,6 +11,8 @@
  * JS function definitions.
  */
 
+#include <iterator>
+
 #include "jstypes.h"
 
 #include "js/shadow/Function.h"        // JS::shadow::Function
@@ -348,11 +350,6 @@ class JSFunction : public js::NativeObject {
   JSObject* environment() const {
     MOZ_ASSERT(isInterpreted());
     return u.scripted.env_;
-  }
-
-  void setEnvironment(JSObject* obj) {
-    MOZ_ASSERT(isInterpreted());
-    *reinterpret_cast<js::GCPtrObject*>(&u.scripted.env_) = obj;
   }
 
   void initEnvironment(JSObject* obj) {
@@ -763,14 +760,6 @@ extern JSFunction* DefineFunction(
 
 extern bool fun_toString(JSContext* cx, unsigned argc, Value* vp);
 
-struct WellKnownSymbols;
-
-// Assumes that fun.__proto__ === Function.__proto__, i.e., does not check for
-// the case where a function with a non-default __proto__ has an overridden
-// @@hasInstance handler. Will assert if not.
-extern bool FunctionHasDefaultHasInstance(JSFunction* fun,
-                                          const WellKnownSymbols& symbols);
-
 extern void ThrowTypeErrorBehavior(JSContext* cx);
 
 /*
@@ -868,32 +857,31 @@ inline const js::FunctionExtended* JSFunction::toExtendedOffMainThread() const {
 inline void JSFunction::initializeExtended() {
   MOZ_ASSERT(isExtended());
 
-  MOZ_ASSERT(mozilla::ArrayLength(toExtended()->extendedSlots) == 2);
+  MOZ_ASSERT(std::size(toExtended()->extendedSlots) == 2);
   toExtended()->extendedSlots[0].init(js::UndefinedValue());
   toExtended()->extendedSlots[1].init(js::UndefinedValue());
 }
 
 inline void JSFunction::initExtendedSlot(size_t which, const js::Value& val) {
-  MOZ_ASSERT(which < mozilla::ArrayLength(toExtended()->extendedSlots));
+  MOZ_ASSERT(which < std::size(toExtended()->extendedSlots));
   MOZ_ASSERT(js::IsObjectValueInCompartment(val, compartment()));
   toExtended()->extendedSlots[which].init(val);
 }
 
 inline void JSFunction::setExtendedSlot(size_t which, const js::Value& val) {
-  MOZ_ASSERT(which < mozilla::ArrayLength(toExtended()->extendedSlots));
+  MOZ_ASSERT(which < std::size(toExtended()->extendedSlots));
   MOZ_ASSERT(js::IsObjectValueInCompartment(val, compartment()));
   toExtended()->extendedSlots[which] = val;
 }
 
 inline const js::Value& JSFunction::getExtendedSlot(size_t which) const {
-  MOZ_ASSERT(which < mozilla::ArrayLength(toExtended()->extendedSlots));
+  MOZ_ASSERT(which < std::size(toExtended()->extendedSlots));
   return toExtended()->extendedSlots[which];
 }
 
 inline const js::Value& JSFunction::getExtendedSlotOffMainThread(
     size_t which) const {
-  MOZ_ASSERT(which <
-             mozilla::ArrayLength(toExtendedOffMainThread()->extendedSlots));
+  MOZ_ASSERT(which < std::size(toExtendedOffMainThread()->extendedSlots));
   return toExtendedOffMainThread()->extendedSlots[which];
 }
 

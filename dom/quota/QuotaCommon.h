@@ -702,11 +702,6 @@ class NotNull;
 
 // Telemetry probes to collect number of failure during the initialization.
 #ifdef NIGHTLY_BUILD
-#  define REPORT_TELEMETRY_INIT_ERR(_key, _label)   \
-    mozilla::Telemetry::AccumulateCategoricalKeyed( \
-        mozilla::dom::quota::_key,                  \
-        mozilla::Telemetry::LABELS_QM_INIT_TELEMETRY_ERROR::_label);
-
 #  define RECORD_IN_NIGHTLY(_recorder, _status) \
     do {                                        \
       if (NS_SUCCEEDED(_recorder)) {            \
@@ -720,9 +715,6 @@ class NotNull;
 #  define RETURN_STATUS_OR_RESULT(_status, _rv) \
     return Err(NS_FAILED(_status) ? (_status) : (_rv))
 #else
-#  define REPORT_TELEMETRY_INIT_ERR(_key, _label) \
-    {}
-
 #  define RECORD_IN_NIGHTLY(_dummy, _status) \
     {}
 
@@ -858,9 +850,9 @@ auto Reduce(Range&& aRange, T aInit, const BinaryOp& aBinaryOp) {
 }
 
 template <typename Range, typename Body>
-auto CollectEachInRange(const Range& aRange, const Body& aBody)
+auto CollectEachInRange(Range&& aRange, const Body& aBody)
     -> Result<mozilla::Ok, nsresult> {
-  for (const auto& element : aRange) {
+  for (auto&& element : aRange) {
     MOZ_TRY(aBody(element));
   }
 
@@ -979,6 +971,16 @@ nsDependentCSubstring GetLeafName(const nsACString& aPath);
 
 Result<nsCOMPtr<nsIFile>, nsresult> CloneFileAndAppend(
     nsIFile& aDirectory, const nsAString& aPathElement);
+
+enum class nsIFileKind {
+  ExistsAsDirectory,
+  ExistsAsFile,
+  DoesNotExist,
+};
+
+// XXX We can use this outside of QM and its clients as well, probably. Maybe it
+// could be moved to xpcom/io?
+Result<nsIFileKind, nsresult> GetDirEntryKind(nsIFile& aFile);
 
 Result<nsCOMPtr<mozIStorageStatement>, nsresult> CreateStatement(
     mozIStorageConnection& aConnection, const nsACString& aStatementString);

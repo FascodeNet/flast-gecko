@@ -861,9 +861,8 @@ var invalidateFrecencies = async function(db, idList) {
   for (let chunk of PlacesUtils.chunkArray(idList, db.variableLimit)) {
     await db.execute(
       `UPDATE moz_places
-       SET frecency = NOTIFY_FRECENCY(
-         CALCULATE_FRECENCY(id), url, guid, hidden, last_visit_date
-       ) WHERE id in (${sqlBindPlaceholders(chunk)})`,
+       SET frecency = CALCULATE_FRECENCY(id)
+       WHERE id in (${sqlBindPlaceholders(chunk)})`,
       chunk
     );
     await db.execute(
@@ -874,6 +873,9 @@ var invalidateFrecencies = async function(db, idList) {
       chunk
     );
   }
+
+  PlacesObservers.notifyListeners([new PlacesRanking()]);
+
   // Trigger frecency updates for all affected origins.
   await db.execute(`DELETE FROM moz_updateoriginsupdate_temp`);
 };
@@ -916,11 +918,10 @@ var clear = async function(db) {
                         WHERE frecency > 0`);
   });
 
-  let observers = PlacesUtils.history.getObservers();
-  // Notify frecency change observers.
-  notify(observers, "onManyFrecenciesChanged");
-
-  PlacesObservers.notifyListeners([new PlacesHistoryCleared()]);
+  PlacesObservers.notifyListeners([
+    new PlacesHistoryCleared(),
+    new PlacesRanking(),
+  ]);
 
   // Trigger frecency updates for all affected origins.
   await db.execute(`DELETE FROM moz_updateoriginsupdate_temp`);
@@ -1618,31 +1619,27 @@ var insertMany = function(db, pageInfos, onResult, onError) {
   }
 
   return new Promise((resolve, reject) => {
-    asyncHistory.updatePlaces(
-      infos,
-      {
-        handleError: (resultCode, result) => {
-          let pageInfo = mergeUpdateInfoIntoPageInfo(result);
-          onErrorData.push(pageInfo);
-        },
-        handleResult: result => {
-          let pageInfo = mergeUpdateInfoIntoPageInfo(result);
-          onResultData.push(pageInfo);
-        },
-        ignoreErrors: !onError,
-        ignoreResults: !onResult,
-        handleCompletion: updatedCount => {
-          notifyOnResult(onResultData, onResult);
-          notifyOnResult(onErrorData, onError);
-          if (updatedCount > 0) {
-            resolve();
-          } else {
-            reject({ message: "No items were added to history." });
-          }
-        },
+    asyncHistory.updatePlaces(infos, {
+      handleError: (resultCode, result) => {
+        let pageInfo = mergeUpdateInfoIntoPageInfo(result);
+        onErrorData.push(pageInfo);
       },
-      true
-    );
+      handleResult: result => {
+        let pageInfo = mergeUpdateInfoIntoPageInfo(result);
+        onResultData.push(pageInfo);
+      },
+      ignoreErrors: !onError,
+      ignoreResults: !onResult,
+      handleCompletion: updatedCount => {
+        notifyOnResult(onResultData, onResult);
+        notifyOnResult(onErrorData, onError);
+        if (updatedCount > 0) {
+          resolve();
+        } else {
+          reject({ message: "No items were added to history." });
+        }
+      },
+    });
   });
 };
 

@@ -1898,7 +1898,7 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
     mOMTASampler->SetWebRenderWindowId(windowId);
   }
 
-  nsCString error("FEATURE_FAILTURE_WEBRENDER_INITIALIZE_UNSPECIFIED");
+  nsCString error("FEATURE_FAILURE_WEBRENDER_INITIALIZE_UNSPECIFIED");
   RefPtr<wr::WebRenderAPI> api = wr::WebRenderAPI::Create(
       this, std::move(widget), windowId, aSize, aWindowKind, error);
   if (!api) {
@@ -1914,7 +1914,10 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
 
   bool useCompositorWnd = false;
 #ifdef XP_WIN
-  useCompositorWnd = !!mWidget->AsWindows()->GetCompositorHwnd();
+  // Headless mode uses HeadlessWidget.
+  if (mWidget->AsWindows()) {
+    useCompositorWnd = !!mWidget->AsWindows()->GetCompositorHwnd();
+  }
 #endif
   mAsyncImageManager =
       new AsyncImagePipelineManager(api->Clone(), useCompositorWnd);

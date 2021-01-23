@@ -230,14 +230,15 @@ class OSXBootstrapper(BaseBootstrapper):
         )
 
     def generate_mobile_android_mozconfig(self):
-        return getattr(
-            self, "generate_%s_mobile_android_mozconfig" % self.package_manager
-        )()
+        return self._generate_mobile_android_mozconfig()
 
     def generate_mobile_android_artifact_mode_mozconfig(self):
-        return getattr(
-            self, "generate_%s_mobile_android_mozconfig" % self.package_manager
-        )(artifact_mode=True)
+        return self._generate_mobile_android_mozconfig(artifact_mode=True)
+
+    def _generate_mobile_android_mozconfig(self, artifact_mode=False):
+        from mozboot import android
+
+        return android.generate_mozconfig("macosx", artifact_mode=artifact_mode)
 
     def ensure_xcode(self):
         if self.os_version < StrictVersion("10.7"):
@@ -328,33 +329,36 @@ class OSXBootstrapper(BaseBootstrapper):
         # which('brew') is found.
         assert self.brew is not None
 
-    def _ensure_homebrew_packages(self, packages, extra_brew_args=[]):
+    def _ensure_homebrew_packages(self, packages, is_for_cask=False):
+        package_type_flag = "--cask" if is_for_cask else "--formula"
         self._ensure_homebrew_found()
         self._ensure_package_manager_updated()
-        cmd = [self.brew] + extra_brew_args
+
+        def create_homebrew_cmd(*parameters):
+            base_cmd = [self.brew]
+            base_cmd.extend(parameters)
+            return base_cmd + [package_type_flag]
 
         installed = set(
             subprocess.check_output(
-                cmd + ["list", "--formula"], universal_newlines=True
+                create_homebrew_cmd("list"), universal_newlines=True
             ).split()
         )
-        to_install = set(package for package in packages if package not in installed)
-
-        # The "--quiet" tells "brew" to only list the package names, and not the
-        # comparison between current and new version.
         outdated = set(
             subprocess.check_output(
-                cmd + ["outdated", "--quiet"], universal_newlines=True
+                create_homebrew_cmd("outdated", "--quiet"), universal_newlines=True
             ).split()
         )
+
+        to_install = set(package for package in packages if package not in installed)
         to_upgrade = set(package for package in packages if package in outdated)
 
         if to_install or to_upgrade:
             print(PACKAGE_MANAGER_PACKAGES % ("Homebrew",))
         if to_install:
-            subprocess.check_call(cmd + ["install"] + list(to_install))
+            subprocess.check_call(create_homebrew_cmd("install") + list(to_install))
         if to_upgrade:
-            subprocess.check_call(cmd + ["upgrade"] + list(to_upgrade))
+            subprocess.check_call(create_homebrew_cmd("upgrade") + list(to_upgrade))
 
     def _ensure_homebrew_casks(self, casks):
         self._ensure_homebrew_found()
@@ -372,8 +376,7 @@ class OSXBootstrapper(BaseBootstrapper):
         if b"caskroom/versions" in known_taps:
             subprocess.check_output([self.brew, "untap", "caskroom/versions"])
 
-        # Change |brew install cask| into |brew cask install cask|.
-        self._ensure_homebrew_packages(casks, extra_brew_args=["cask"])
+        self._ensure_homebrew_packages(casks, is_for_cask=True)
 
     def ensure_homebrew_system_packages(self, install_mercurial):
         packages = [
@@ -427,11 +430,6 @@ class OSXBootstrapper(BaseBootstrapper):
         android.ensure_android(
             "macosx", artifact_mode=artifact_mode, no_interactive=self.no_interactive
         )
-
-    def generate_homebrew_mobile_android_mozconfig(self, artifact_mode=False):
-        from mozboot import android
-
-        return android.generate_mozconfig("macosx", artifact_mode=artifact_mode)
 
     def _ensure_macports_packages(self, packages):
         self.port = which("port")
@@ -504,11 +502,6 @@ class OSXBootstrapper(BaseBootstrapper):
         android.ensure_android(
             "macosx", artifact_mode=artifact_mode, no_interactive=self.no_interactive
         )
-
-    def generate_macports_mobile_android_mozconfig(self, artifact_mode=False):
-        from mozboot import android
-
-        return android.generate_mozconfig("macosx", artifact_mode=artifact_mode)
 
     def ensure_package_manager(self):
         """

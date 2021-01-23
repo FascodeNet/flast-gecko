@@ -18,6 +18,7 @@
 
 class nsIFrame;
 class nsIContent;
+class nsPresContext;
 
 namespace mozilla {
 
@@ -73,7 +74,7 @@ class PointerEventHandler final {
   // Called in ESM::PreHandleEvent to update current active pointers in a hash
   // table.
   static void UpdateActivePointerState(WidgetMouseEvent* aEvent,
-                                       nsIContent* aTargetContent);
+                                       nsIContent* aTargetContent = nullptr);
 
   // Request/release pointer capture of the specified pointer by the element.
   static void RequestPointerCaptureById(uint32_t aPointerId,
@@ -195,6 +196,8 @@ class PointerEventHandler final {
   static MOZ_ALWAYS_INLINE int32_t GetSpoofedPointerIdForRFP() {
     return sSpoofedPointerId.valueOr(0);
   }
+
+  static void NotifyDestroyPresContext(nsPresContext* aPresContext);
 
  private:
   // Set pointer capture of the specified pointer by the element.

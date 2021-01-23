@@ -138,6 +138,14 @@ panelview {
   padding: 0;
 }
 
+/* Prevent a scrollbar from appearing while the animation for transitioning from
+   one view to another runs, which would otherwise happen if the new view has
+   more height than the old one because that would mean that during the
+   animation the height of the multiview will be too short for the new view. */
+panelmultiview[transitioning] > .panel-viewcontainer > .panel-viewstack > panelview > .panel-subview-body {
+  overflow-y: hidden;
+}
+
 /* This section is to anchor all the drop down panels at the same height, shift the
   panel`s top margin according to its positioning and the uidensity of the window. */
 #downloadsPanel,
@@ -1201,7 +1209,7 @@ panelview .toolbarbutton-1,
 }
 
 .subviewbutton[type="open-to-new"]::after {
-  content: url(chrome://browser/skin/open-in-new.svg);
+  content: url(chrome://global/skin/icons/open-in-new.svg);
   -moz-context-properties: fill, fill-opacity;
   fill: currentColor;
   fill-opacity: 0.6;
@@ -1235,6 +1243,10 @@ panelview .toolbarbutton-1,
   -moz-box-orient: horizontal;
   border: 0;
   border-radius: 0;
+}
+
+.toolbaritem-combined-buttons:not([widget-type="button-and-view"]),
+.toolbaritem-menu-buttons {
   margin-inline-end: 8px;
 }
 
@@ -1446,6 +1458,10 @@ toolbarpaletteitem[place="palette"] > #search-container {
 toolbarpaletteitem[place="menu-panel"],
 toolbarpaletteitem[place="menu-panel"] > toolbaritem {
   -moz-box-flex: 1;
+}
+
+.toolbaritem-combined-buttons[cui-areatype="menu-panel"] > .toolbarbutton-combined-buttons-dropmarker {
+  display: none;
 }
 
 .toolbaritem-combined-buttons@inAnyPanel@ > toolbarbutton:not(.toolbarbutton-1)[disabled] {

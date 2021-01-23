@@ -52,6 +52,8 @@
   --in-content-dialog-header-background: #f1f1f1;
   --in-content-sidebar-width: 240px;
 
+  --dialog-warning-text-color: var(--red-60);
+
   --panel-border-radius: 2px; /* This is overridden on Windows */
 
   --blue-40: #45a1ff;
@@ -77,6 +79,7 @@
   --green-80: #006504;
   --green-90: #003706;
   --orange-50: #ff9400;
+  --red-40: #ff4f5e;
   --red-50: #ff0039;
   --red-50-a30: rgba(255, 0, 57, 0.3);
   --red-60: #d70022;
@@ -101,9 +104,10 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Keep this in sync with layout/base/PresShell.cpp! */
+    /* Keep these in sync with layout/base/PresShell.cpp, and plaintext.css */
     --in-content-page-background: #2A2A2E;
     --in-content-page-color: rgb(249, 249, 250);
+
     --in-content-text-color: var(--in-content-page-color);
     --in-content-deemphasized-text: var(--grey-40);
     --in-content-box-background: #202023;
@@ -140,6 +144,8 @@
     --in-content-tab-color: var(--in-content-page-color);
 
     --card-outline-color: var(--grey-60);
+
+    --dialog-warning-text-color: var(--red-40);
 
     scrollbar-color: rgba(249,249,250,.4) rgba(20,20,25,.3);
   }
@@ -546,7 +552,7 @@ html|input[type="checkbox"] {
 }
 
 xul|checkbox:not([disabled="true"]):hover > xul|*.checkbox-check,
-html|input[type="checkbox"]:not(:disabled):hover {
+html|input[type="checkbox"]:enabled:hover {
   background-color: var(--grey-90-a20);
 }
 
@@ -567,7 +573,7 @@ html|input[type="checkbox"]:checked {
 }
 
 xul|checkbox:not([disabled="true"])[checked]:hover > xul|*.checkbox-check,
-html|input[type="checkbox"]:not(:disabled):checked:hover {
+html|input[type="checkbox"]:enabled:checked:hover {
   background-color: var(--blue-70);
 }
 

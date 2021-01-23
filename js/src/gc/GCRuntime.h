@@ -68,7 +68,7 @@ struct SweepAction {
 };
 
 class ChunkPool {
-  Chunk* head_;
+  TenuredChunk* head_;
   size_t count_;
 
  public:
@@ -93,41 +93,52 @@ class ChunkPool {
   bool empty() const { return !head_; }
   size_t count() const { return count_; }
 
-  Chunk* head() {
+  TenuredChunk* head() {
     MOZ_ASSERT(head_);
     return head_;
   }
-  Chunk* pop();
-  void push(Chunk* chunk);
-  Chunk* remove(Chunk* chunk);
+  TenuredChunk* pop();
+  void push(TenuredChunk* chunk);
+  TenuredChunk* remove(TenuredChunk* chunk);
 
   void sort();
 
  private:
-  Chunk* mergeSort(Chunk* list, size_t count);
+  TenuredChunk* mergeSort(TenuredChunk* list, size_t count);
   bool isSorted() const;
 
 #ifdef DEBUG
  public:
-  bool contains(Chunk* chunk) const;
+  bool contains(TenuredChunk* chunk) const;
   bool verify() const;
 #endif
 
  public:
   // Pool mutation does not invalidate an Iter unless the mutation
-  // is of the Chunk currently being visited by the Iter.
+  // is of the TenuredChunk currently being visited by the Iter.
   class Iter {
    public:
     explicit Iter(ChunkPool& pool) : current_(pool.head_) {}
     bool done() const { return !current_; }
     void next();
-    Chunk* get() const { return current_; }
-    operator Chunk*() const { return get(); }
-    Chunk* operator->() const { return get(); }
+    TenuredChunk* get() const { return current_; }
+    operator TenuredChunk*() const { return get(); }
+    TenuredChunk* operator->() const { return get(); }
 
    private:
-    Chunk* current_;
+    TenuredChunk* current_;
   };
+};
+
+class BackgroundMarkTask : public GCParallelTask {
+ public:
+  explicit BackgroundMarkTask(GCRuntime* gc)
+      : GCParallelTask(gc), budget(SliceBudget::unlimited()) {}
+  void setBudget(const SliceBudget& budget) { this->budget = budget; }
+  void run(AutoLockHelperThreadState& lock) override;
+
+ private:
+  SliceBudget budget;
 };
 
 class BackgroundUnmarkTask : public GCParallelTask {
@@ -169,23 +180,12 @@ class BackgroundAllocTask : public GCParallelTask {
   void run(AutoLockHelperThreadState& lock) override;
 };
 
-// Search the provided Chunks for free arenas and decommit them.
+// Search the provided chunks for free arenas and decommit them.
 class BackgroundDecommitTask : public GCParallelTask {
  public:
   explicit BackgroundDecommitTask(GCRuntime* gc) : GCParallelTask(gc) {}
 
   void run(AutoLockHelperThreadState& lock) override;
-};
-
-class SweepMarkTask : public GCParallelTask {
- public:
-  explicit SweepMarkTask(GCRuntime* gc)
-      : GCParallelTask(gc), budget(SliceBudget::unlimited()) {}
-  void setBudget(const SliceBudget& budget) { this->budget = budget; }
-  void run(AutoLockHelperThreadState& lock) override;
-
- private:
-  SliceBudget budget;
 };
 
 template <typename F>
@@ -503,7 +503,7 @@ class GCRuntime {
     marker.setGCMode(mode);
   }
 
-  inline void updateOnFreeArenaAlloc(const ChunkInfo& info);
+  inline void updateOnFreeArenaAlloc(const TenuredChunkInfo& info);
   inline void updateOnArenaFree();
 
   ChunkPool& fullChunks(const AutoLockGC& lock) { return fullChunks_.ref(); }
@@ -525,8 +525,8 @@ class GCRuntime {
     return NonEmptyChunksIter(availableChunks(lock), fullChunks(lock));
   }
 
-  Chunk* getOrAllocChunk(AutoLockGCBgAlloc& lock);
-  void recycleChunk(Chunk* chunk, const AutoLockGC& lock);
+  TenuredChunk* getOrAllocChunk(AutoLockGCBgAlloc& lock);
+  void recycleChunk(TenuredChunk* chunk, const AutoLockGC& lock);
 
 #ifdef JS_GC_ZEAL
   void startVerifyPreBarriers();
@@ -616,8 +616,8 @@ class GCRuntime {
 
   // For ArenaLists::allocateFromArena()
   friend class ArenaLists;
-  Chunk* pickChunk(AutoLockGCBgAlloc& lock);
-  Arena* allocateArena(Chunk* chunk, Zone* zone, AllocKind kind,
+  TenuredChunk* pickChunk(AutoLockGCBgAlloc& lock);
+  Arena* allocateArena(TenuredChunk* chunk, Zone* zone, AllocKind kind,
                        ShouldCheckThresholds checkThresholds,
                        const AutoLockGC& lock);
 
@@ -641,7 +641,7 @@ class GCRuntime {
   bool tooManyEmptyChunks(const AutoLockGC& lock);
   ChunkPool expireEmptyChunkPool(const AutoLockGC& lock);
   void freeEmptyChunks(const AutoLockGC& lock);
-  void prepareToFreeChunk(ChunkInfo& info);
+  void prepareToFreeChunk(TenuredChunkInfo& info);
 
   friend class BackgroundAllocTask;
   bool wantBackgroundAllocation(const AutoLockGC& lock) const;
@@ -727,7 +727,7 @@ class GCRuntime {
   void maybeDoCycleCollection();
   void findDeadCompartments();
 
-  friend class SweepMarkTask;
+  friend class BackgroundMarkTask;
   IncrementalProgress markUntilBudgetExhausted(
       SliceBudget& sliceBudget,
       GCMarker::ShouldReportMarkTime reportTime = GCMarker::ReportMarkTime);
@@ -829,7 +829,7 @@ class GCRuntime {
   void finishCollection();
   void maybeStopStringPretenuring();
   void checkGCStateNotInUse();
-  IncrementalProgress joinSweepMarkTask();
+  IncrementalProgress joinBackgroundMarkTask();
 
 #ifdef JS_GC_ZEAL
   void computeNonIncrementalMarkingForValidation(AutoGCSession& session);
@@ -1016,9 +1016,11 @@ class GCRuntime {
   /* The incremental state at the start of this slice. */
   MainThreadOrGCTaskData<State> initialState;
 
-#ifdef JS_GC_ZEAL
   /* Whether to pay attention the zeal settings in this incremental slice. */
+#ifdef JS_GC_ZEAL
   MainThreadData<bool> useZeal;
+#else
+  const bool useZeal;
 #endif
 
   /* Indicates that the last incremental slice exhausted the mark stack. */
@@ -1200,10 +1202,10 @@ class GCRuntime {
 
   BackgroundAllocTask allocTask;
   BackgroundUnmarkTask unmarkTask;
+  BackgroundMarkTask markTask;
   BackgroundSweepTask sweepTask;
   BackgroundFreeTask freeTask;
   BackgroundDecommitTask decommitTask;
-  SweepMarkTask sweepMarkTask;
 
   /*
    * During incremental sweeping, this field temporarily holds the arenas of

@@ -6,11 +6,12 @@
 # received from the raptor control server
 from __future__ import absolute_import
 
-import six
 import json
 import os
-
+import shutil
 from abc import ABCMeta, abstractmethod
+
+import six
 from logger.logger import RaptorLogger
 from output import RaptorOutput, BrowsertimeOutput
 
@@ -97,6 +98,17 @@ class PerftestResultsHandler(object):
                         "Unknown test modifier %s was provided as an extra option"
                         % name
                     )
+
+        if (
+            self.app.lower()
+            in (
+                "chrome",
+                "chrome-m",
+                "chromium",
+            )
+            and "webrender" in extra_options
+        ):
+            extra_options.remove("webrender")
 
         return extra_options
 
@@ -298,12 +310,20 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
         super(BrowsertimeResultsHandler, self).__init__(**config)
         self._root_results_dir = root_results_dir
         self.browsertime_visualmetrics = False
+        if not os.path.exists(self._root_results_dir):
+            os.mkdir(self._root_results_dir)
 
     def result_dir(self):
         return self._root_results_dir
 
     def result_dir_for_test(self, test):
         return os.path.join(self._root_results_dir, test["name"])
+
+    def remove_result_dir_for_test(self, test):
+        test_result_dir = self.result_dir_for_test(test)
+        if os.path.exists(test_result_dir):
+            shutil.rmtree(test_result_dir)
+        return test_result_dir
 
     def add(self, new_result_json):
         # not using control server with bt

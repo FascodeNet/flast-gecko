@@ -15,8 +15,9 @@
 #include <algorithm>
 
 #include "frontend/BytecodeCompilation.h"
-#include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationGCOutput
+#include "frontend/CompilationInfo.h"  // frontend::CompilationStencilSet, frontend::CompilationGCOutput
 #include "frontend/ParserAtom.h"  // frontend::ParserAtomsTable
+#include "gc/GC.h"                // gc::MergeRealms
 #include "jit/IonCompileTask.h"
 #include "jit/JitRuntime.h"
 #include "js/ContextOptions.h"      // JS::ContextOptions
@@ -581,11 +582,11 @@ void ParseTask::trace(JSTracer* trc) {
   scripts.trace(trc);
   sourceObjects.trace(trc);
 
-  if (compilationInfo_) {
-    compilationInfo_->trace(trc);
+  if (stencil_) {
+    stencil_->trace(trc);
   }
-  if (compilationInfos_) {
-    compilationInfos_->trace(trc);
+  if (stencilSet_) {
+    stencilSet_->trace(trc);
   }
   gcOutput_.trace(trc);
   gcOutputForDelazification_.trace(trc);
@@ -679,12 +680,12 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
 
   ScopeKind scopeKind =
       options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
-  compilationInfo_ =
+  stencil_ =
       frontend::CompileGlobalScriptToStencil(cx, options, data, scopeKind);
 
-  if (compilationInfo_) {
-    if (!frontend::PrepareForInstantiate(cx, *compilationInfo_, gcOutput_)) {
-      compilationInfo_ = nullptr;
+  if (stencil_) {
+    if (!frontend::PrepareForInstantiate(cx, *stencil_, gcOutput_)) {
+      stencil_ = nullptr;
     }
   }
 
@@ -694,15 +695,15 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
 }
 
 bool ParseTask::instantiateStencils(JSContext* cx) {
-  if (!compilationInfo_ && !compilationInfos_) {
+  if (!stencil_ && !stencilSet_) {
     return false;
   }
 
   bool result;
-  if (compilationInfo_) {
-    result = frontend::InstantiateStencils(cx, *compilationInfo_, gcOutput_);
+  if (stencil_) {
+    result = frontend::InstantiateStencils(cx, *stencil_, gcOutput_);
   } else {
-    result = frontend::InstantiateStencils(cx, *compilationInfos_, gcOutput_,
+    result = frontend::InstantiateStencils(cx, *stencilSet_, gcOutput_,
                                            gcOutputForDelazification_);
   }
 
@@ -747,11 +748,11 @@ void ModuleParseTask<Unit>::parse(JSContext* cx) {
 
   options.setModule();
 
-  compilationInfo_ = frontend::ParseModuleToStencil(cx, options, data);
+  stencil_ = frontend::ParseModuleToStencil(cx, options, data);
 
-  if (compilationInfo_) {
-    if (!frontend::PrepareForInstantiate(cx, *compilationInfo_, gcOutput_)) {
-      compilationInfo_ = nullptr;
+  if (stencil_) {
+    if (!frontend::PrepareForInstantiate(cx, *stencil_, gcOutput_)) {
+      stencil_ = nullptr;
     }
   }
 
@@ -765,7 +766,9 @@ ScriptDecodeTask::ScriptDecodeTask(JSContext* cx,
                                    JS::OffThreadCompileCallback callback,
                                    void* callbackData)
     : ParseTask(ParseTaskKind::ScriptDecode, cx, callback, callbackData),
-      range(range) {}
+      range(range) {
+  MOZ_ASSERT(JS::IsTranscodingBytecodeAligned(range.begin().get()));
+}
 
 void ScriptDecodeTask::parse(JSContext* cx) {
   MOZ_ASSERT(cx->isHelperThreadContext());
@@ -775,30 +778,29 @@ void ScriptDecodeTask::parse(JSContext* cx) {
 
   if (options.useStencilXDR) {
     // The buffer contains stencil.
-    Rooted<UniquePtr<frontend::CompilationInfoVector>> compilationInfos(
-        cx, js_new<frontend::CompilationInfoVector>(cx, options));
-    if (!compilationInfos) {
+    Rooted<UniquePtr<frontend::CompilationStencilSet>> stencilSet(
+        cx, js_new<frontend::CompilationStencilSet>(cx, options));
+    if (!stencilSet) {
       ReportOutOfMemory(cx);
       return;
     }
 
-    XDRStencilDecoder decoder(
-        cx, &compilationInfos.get()->initial.input.options, range);
-    if (!compilationInfos.get()->initial.input.initForGlobal(cx)) {
+    XDRStencilDecoder decoder(cx, &stencilSet.get()->input.options, range);
+    if (!stencilSet.get()->input.initForGlobal(cx)) {
       return;
     }
 
-    XDRResult res = decoder.codeStencils(*compilationInfos);
+    XDRResult res = decoder.codeStencils(*stencilSet);
     if (!res.isOk()) {
       return;
     }
 
-    compilationInfos_ = std::move(compilationInfos.get());
+    stencilSet_ = std::move(stencilSet.get());
 
-    if (compilationInfos_) {
-      if (!frontend::PrepareForInstantiate(cx, *compilationInfos_, gcOutput_,
+    if (stencilSet_) {
+      if (!frontend::PrepareForInstantiate(cx, *stencilSet_, gcOutput_,
                                            gcOutputForDelazification_)) {
-        compilationInfos_ = nullptr;
+        stencilSet_ = nullptr;
       }
     }
 
@@ -884,24 +886,24 @@ static void WaitForOffThreadParses(JSRuntime* rt,
     return;
   }
 
+  GlobalHelperThreadState::ParseTaskVector& worklist =
+      HelperThreadState().parseWorklist(lock);
+
   while (true) {
     bool pending = false;
-    GlobalHelperThreadState::ParseTaskVector& worklist =
-        HelperThreadState().parseWorklist(lock);
     for (const auto& task : worklist) {
       if (task->runtimeMatches(rt)) {
         pending = true;
+        break;
       }
     }
     if (!pending) {
       bool inProgress = false;
       for (auto* helper : HelperThreadState().helperTasks(lock)) {
-        if (!helper->is<ParseTask>()) {
-          continue;
-        }
-
-        if (helper->as<ParseTask>()->runtimeMatches(rt)) {
+        if (helper->is<ParseTask>() &&
+            helper->as<ParseTask>()->runtimeMatches(rt)) {
           inProgress = true;
+          break;
         }
       }
       if (!inProgress) {
@@ -910,6 +912,16 @@ static void WaitForOffThreadParses(JSRuntime* rt,
     }
     HelperThreadState().wait(lock, GlobalHelperThreadState::CONSUMER);
   }
+
+#ifdef DEBUG
+  for (const auto& task : worklist) {
+    MOZ_ASSERT(!task->runtimeMatches(rt));
+  }
+  for (auto* helper : HelperThreadState().helperTasks(lock)) {
+    MOZ_ASSERT_IF(helper->is<ParseTask>(),
+                  !helper->as<ParseTask>()->runtimeMatches(rt));
+  }
+#endif
 }
 
 void js::WaitForOffThreadParses(JSRuntime* rt) {
@@ -952,7 +964,7 @@ void js::CancelOffThreadParses(JSRuntime* rt) {
   }
 
 #ifdef DEBUG
-  for (const auto& task : HelperThreadState().parseWorklist(lock)) {
+  for (ParseTask* task : finished) {
     MOZ_ASSERT(!task->runtimeMatches(rt));
   }
 #endif
@@ -1088,11 +1100,9 @@ bool GlobalHelperThreadState::submitTask(
   return true;
 }
 
-static bool StartOffThreadParseTask(JSContext* cx, UniquePtr<ParseTask> task,
-                                    const ReadOnlyCompileOptions& options,
-                                    JS::OffThreadToken** tokenOut = nullptr) {
-  MOZ_ASSERT_IF(tokenOut, *tokenOut == nullptr);
-
+static JS::OffThreadToken* StartOffThreadParseTask(
+    JSContext* cx, UniquePtr<ParseTask> task,
+    const ReadOnlyCompileOptions& options) {
   // Suppress GC so that calls below do not trigger a new incremental GC
   // which could require barriers on the atoms zone.
   gc::AutoSuppressGC nogc(cx);
@@ -1103,7 +1113,7 @@ static bool StartOffThreadParseTask(JSContext* cx, UniquePtr<ParseTask> task,
   if (options.useOffThreadParseGlobal) {
     global = CreateGlobalForOffThreadParse(cx, nogc);
     if (!global) {
-      return false;
+      return nullptr;
     }
   }
 
@@ -1114,119 +1124,105 @@ static bool StartOffThreadParseTask(JSContext* cx, UniquePtr<ParseTask> task,
   AutoSetCreatedForHelperThread createdForHelper(global);
 
   if (!task->init(cx, options, global)) {
-    return false;
+    return nullptr;
   }
 
   JS::OffThreadToken* token = task.get();
   if (!QueueOffThreadParseTask(cx, std::move(task))) {
-    return false;
-  }
-
-  // Return an opaque pointer to caller so that it may query/cancel the task
-  // before the callback is fired.
-  if (tokenOut) {
-    *tokenOut = token;
+    return nullptr;
   }
 
   createdForHelper.forget();
-  return true;
+
+  // Return an opaque pointer to caller so that it may query/cancel the task
+  // before the callback is fired.
+  return token;
 }
 
 template <typename Unit>
-static bool StartOffThreadParseScriptInternal(
+static JS::OffThreadToken* StartOffThreadParseScriptInternal(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     JS::SourceText<Unit>& srcBuf, JS::OffThreadCompileCallback callback,
-    void* callbackData, JS::OffThreadToken** tokenOut) {
+    void* callbackData) {
   auto task = cx->make_unique<ScriptParseTask<Unit>>(cx, srcBuf, callback,
                                                      callbackData);
   if (!task) {
-    return false;
+    return nullptr;
   }
 
-  return StartOffThreadParseTask(cx, std::move(task), options, tokenOut);
+  return StartOffThreadParseTask(cx, std::move(task), options);
 }
 
-bool js::StartOffThreadParseScript(JSContext* cx,
-                                   const ReadOnlyCompileOptions& options,
-                                   JS::SourceText<char16_t>& srcBuf,
-                                   JS::OffThreadCompileCallback callback,
-                                   void* callbackData,
-                                   JS::OffThreadToken** tokenOut) {
+JS::OffThreadToken* js::StartOffThreadParseScript(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    JS::SourceText<char16_t>& srcBuf, JS::OffThreadCompileCallback callback,
+    void* callbackData) {
   return StartOffThreadParseScriptInternal(cx, options, srcBuf, callback,
-                                           callbackData, tokenOut);
+                                           callbackData);
 }
 
-bool js::StartOffThreadParseScript(JSContext* cx,
-                                   const ReadOnlyCompileOptions& options,
-                                   JS::SourceText<Utf8Unit>& srcBuf,
-                                   JS::OffThreadCompileCallback callback,
-                                   void* callbackData,
-                                   JS::OffThreadToken** tokenOut) {
+JS::OffThreadToken* js::StartOffThreadParseScript(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    JS::SourceText<Utf8Unit>& srcBuf, JS::OffThreadCompileCallback callback,
+    void* callbackData) {
   return StartOffThreadParseScriptInternal(cx, options, srcBuf, callback,
-                                           callbackData, tokenOut);
+                                           callbackData);
 }
 
 template <typename Unit>
-static bool StartOffThreadParseModuleInternal(
+static JS::OffThreadToken* StartOffThreadParseModuleInternal(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     JS::SourceText<Unit>& srcBuf, JS::OffThreadCompileCallback callback,
-    void* callbackData, JS::OffThreadToken** tokenOut) {
+    void* callbackData) {
   auto task = cx->make_unique<ModuleParseTask<Unit>>(cx, srcBuf, callback,
                                                      callbackData);
   if (!task) {
-    return false;
+    return nullptr;
   }
 
-  return StartOffThreadParseTask(cx, std::move(task), options, tokenOut);
+  return StartOffThreadParseTask(cx, std::move(task), options);
 }
 
-bool js::StartOffThreadParseModule(JSContext* cx,
-                                   const ReadOnlyCompileOptions& options,
-                                   JS::SourceText<char16_t>& srcBuf,
-                                   JS::OffThreadCompileCallback callback,
-                                   void* callbackData,
-                                   JS::OffThreadToken** tokenOut) {
+JS::OffThreadToken* js::StartOffThreadParseModule(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    JS::SourceText<char16_t>& srcBuf, JS::OffThreadCompileCallback callback,
+    void* callbackData) {
   return StartOffThreadParseModuleInternal(cx, options, srcBuf, callback,
-                                           callbackData, tokenOut);
+                                           callbackData);
 }
 
-bool js::StartOffThreadParseModule(JSContext* cx,
-                                   const ReadOnlyCompileOptions& options,
-                                   JS::SourceText<Utf8Unit>& srcBuf,
-                                   JS::OffThreadCompileCallback callback,
-                                   void* callbackData,
-                                   JS::OffThreadToken** tokenOut) {
+JS::OffThreadToken* js::StartOffThreadParseModule(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    JS::SourceText<Utf8Unit>& srcBuf, JS::OffThreadCompileCallback callback,
+    void* callbackData) {
   return StartOffThreadParseModuleInternal(cx, options, srcBuf, callback,
-                                           callbackData, tokenOut);
+                                           callbackData);
 }
 
-bool js::StartOffThreadDecodeScript(JSContext* cx,
-                                    const ReadOnlyCompileOptions& options,
-                                    const JS::TranscodeRange& range,
-                                    JS::OffThreadCompileCallback callback,
-                                    void* callbackData,
-                                    JS::OffThreadToken** tokenOut) {
+JS::OffThreadToken* js::StartOffThreadDecodeScript(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    const JS::TranscodeRange& range, JS::OffThreadCompileCallback callback,
+    void* callbackData) {
   // XDR data must be Stencil format, or a parse-global must be available.
   MOZ_RELEASE_ASSERT(options.useStencilXDR || options.useOffThreadParseGlobal);
 
   auto task =
       cx->make_unique<ScriptDecodeTask>(cx, range, callback, callbackData);
   if (!task) {
-    return false;
+    return nullptr;
   }
 
-  return StartOffThreadParseTask(cx, std::move(task), options, tokenOut);
+  return StartOffThreadParseTask(cx, std::move(task), options);
 }
 
-bool js::StartOffThreadDecodeMultiScripts(JSContext* cx,
-                                          const ReadOnlyCompileOptions& options,
-                                          JS::TranscodeSources& sources,
-                                          JS::OffThreadCompileCallback callback,
-                                          void* callbackData) {
+JS::OffThreadToken* js::StartOffThreadDecodeMultiScripts(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    JS::TranscodeSources& sources, JS::OffThreadCompileCallback callback,
+    void* callbackData) {
   auto task = cx->make_unique<MultiScriptsDecodeTask>(cx, sources, callback,
                                                       callbackData);
   if (!task) {
-    return false;
+    return nullptr;
   }
 
   // NOTE: All uses of DecodeMulti are currently generated by non-incremental
@@ -1456,9 +1452,12 @@ void GlobalHelperThreadState::waitForAllThreadsLocked(
     AutoLockHelperThreadState& lock) {
   CancelOffThreadWasmTier2GeneratorLocked(lock);
 
-  while (hasActiveThreads(lock)) {
+  while (hasActiveThreads(lock) || hasQueuedTasks(lock)) {
     wait(lock, CONSUMER);
   }
+
+  MOZ_ASSERT(!hasActiveThreads(lock));
+  MOZ_ASSERT(!hasQueuedTasks(lock));
 }
 
 // A task can be a "master" task, ie, it will block waiting for other worker
@@ -1760,20 +1759,6 @@ static bool IonCompileTaskHasHigherPriority(jit::IonCompileTask* first,
   //
   // This method can return whatever it wants, though it really ought to be a
   // total order. The ordering is allowed to race (change on the fly), however.
-
-  // A lower optimization level indicates a higher priority.
-  jit::OptimizationLevel firstLevel =
-      first->mirGen().optimizationInfo().level();
-  jit::OptimizationLevel secondLevel =
-      second->mirGen().optimizationInfo().level();
-  if (firstLevel != secondLevel) {
-    return firstLevel < secondLevel;
-  }
-
-  // A script without an IonScript has precedence on one with.
-  if (first->scriptHasIonScript() != second->scriptHasIonScript()) {
-    return !first->scriptHasIonScript();
-  }
 
   // A higher warm-up counter indicates a higher priority.
   jit::JitScript* firstJitScript = first->script()->jitScript();
@@ -2093,8 +2078,7 @@ JSScript* GlobalHelperThreadState::finishSingleParseTask(
       DebugAPI::onNewScript(cx, script);
     }
   } else {
-    MOZ_ASSERT(parseTask->compilationInfo_.get() ||
-               parseTask->compilationInfos_.get());
+    MOZ_ASSERT(parseTask->stencil_.get() || parseTask->stencilSet_.get());
 
     if (!parseTask->instantiateStencils(cx)) {
       return nullptr;
@@ -2109,16 +2093,16 @@ JSScript* GlobalHelperThreadState::finishSingleParseTask(
     if (parseTask->options.useStencilXDR) {
       UniquePtr<XDRIncrementalEncoderBase> xdrEncoder;
 
-      if (parseTask->compilationInfo_.get()) {
-        auto compilationInfo = parseTask->compilationInfo_.get();
-        if (!compilationInfo->input.source()->xdrEncodeInitialStencil(
-                cx, *compilationInfo, xdrEncoder)) {
+      if (parseTask->stencil_.get()) {
+        auto* stencil = parseTask->stencil_.get();
+        if (!stencil->input.source()->xdrEncodeInitialStencil(cx, *stencil,
+                                                              xdrEncoder)) {
           return nullptr;
         }
       } else {
-        auto compilationInfos = parseTask->compilationInfos_.get();
-        if (!compilationInfos->initial.input.source()->xdrEncodeStencils(
-                cx, *compilationInfos, xdrEncoder)) {
+        auto* stencilSet = parseTask->stencilSet_.get();
+        if (!stencilSet->input.source()->xdrEncodeStencils(cx, *stencilSet,
+                                                           xdrEncoder)) {
           return nullptr;
         }
       }
@@ -2613,6 +2597,16 @@ const HelperThread::Selector HelperThread::selectors[] = {
     &GlobalHelperThreadState::maybeGetIonFreeTask,
     &GlobalHelperThreadState::maybeGetWasmTier2CompileTask,
     &GlobalHelperThreadState::maybeGetWasmTier2GeneratorTask};
+
+bool GlobalHelperThreadState::hasQueuedTasks(
+    const AutoLockHelperThreadState& lock) {
+  return !gcParallelWorklist(lock).isEmpty() || !ionWorklist(lock).empty() ||
+         !wasmWorklist(lock, wasm::CompileMode::Tier1).empty() ||
+         !promiseHelperTasks(lock).empty() || !parseWorklist(lock).empty() ||
+         !compressionWorklist(lock).empty() || !ionFreeList(lock).empty() ||
+         !wasmWorklist(lock, wasm::CompileMode::Tier2).empty() ||
+         !wasmTier2GeneratorWorklist(lock).empty();
+}
 
 HelperThread::AutoProfilerLabel::AutoProfilerLabel(
     HelperThread* helperThread, const char* label,

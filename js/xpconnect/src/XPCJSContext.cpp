@@ -859,8 +859,6 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
       Preferences::GetInt(JS_OPTIONS_DOT_STR "baselinejit.threshold", -1);
   int32_t normalIonThreshold =
       Preferences::GetInt(JS_OPTIONS_DOT_STR "ion.threshold", -1);
-  int32_t fullIonThreshold =
-      Preferences::GetInt(JS_OPTIONS_DOT_STR "ion.full.threshold", -1);
   int32_t ionFrequentBailoutThreshold = Preferences::GetInt(
       JS_OPTIONS_DOT_STR "ion.frequent_bailout_threshold", -1);
 
@@ -914,8 +912,6 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
                                 useBaselineEager ? 0 : baselineThreshold);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_NORMAL_WARMUP_TRIGGER,
                                 useIonEager ? 0 : normalIonThreshold);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_FULL_WARMUP_TRIGGER,
-                                useIonEager ? 0 : fullIonThreshold);
   JS_SetGlobalJitCompilerOption(cx,
                                 JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD,
                                 ionFrequentBailoutThreshold);
@@ -1453,9 +1449,12 @@ void XPCJSContext::AfterProcessTask(uint32_t aNewRecursionDepth) {
       }
 
       auto uriType = mExecutedChromeScript ? "browser"_ns : "content"_ns;
+      // Use AppendFloat to avoid printf-type APIs using locale-specific
+      // decimal separators, when we definitely want a `.`.
+      nsCString durationStr;
+      durationStr.AppendFloat(hangDuration);
       auto extra = Some<nsTArray<Telemetry::EventExtraEntry>>(
-          {Telemetry::EventExtraEntry{"hang_duration"_ns,
-                                      nsPrintfCString("%.2f", hangDuration)},
+          {Telemetry::EventExtraEntry{"hang_duration"_ns, durationStr},
            Telemetry::EventExtraEntry{"uri_type"_ns, uriType}});
       Telemetry::RecordEvent(
           Telemetry::EventID::Slow_script_warning_Shown_Browser, Nothing(),

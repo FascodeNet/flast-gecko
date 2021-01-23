@@ -126,6 +126,23 @@ window.addEventListener("AboutLoginsChromeToContent", event => {
       gElements.loginItem.updateVulnerableLogins(event.detail.value);
       break;
     }
+    case "ImportPasswordsDialog": {
+      let dialog = document.querySelector("import-summary-dialog");
+      let options = {
+        logins: event.detail.value,
+      };
+      dialog.show(options);
+      break;
+    }
+    case "RemaskPassword": {
+      window.dispatchEvent(new CustomEvent("AboutLoginsRemaskPassword"));
+      break;
+    }
+    case "ImportPasswordsErrorDialog": {
+      let dialog = document.querySelector("import-error-dialog");
+      dialog.show(event.detail.value);
+      break;
+    }
   }
 });
 

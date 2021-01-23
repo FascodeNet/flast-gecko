@@ -82,7 +82,7 @@ class OSXSymbolDumper:
             if actual_breakpad_id != expected_breakpad_id:
                 return None
 
-            with open(output_filename, "w") as f:
+            with open(output_filename, "wb") as f:
                 f.write(stdout)
             return output_filename
 
@@ -116,7 +116,7 @@ class LinuxSymbolDumper:
         if proc.returncode != 0:
             return
 
-        with open(output_filename, "w") as f:
+        with open(output_filename, "wb") as f:
             f.write(stdout)
 
             # Append nm -D output to the file. On Linux, most system libraries
@@ -312,8 +312,7 @@ class ProfileSymbolicator:
         left = 0
         right = len(libs) - 1
         while left <= right:
-            # pylint --py3k W1619
-            mid = (left + right) / 2
+            mid = (left + right) // 2
             if address >= libs[mid]["end"]:
                 left = mid + 1
             elif address < libs[mid]["start"]:

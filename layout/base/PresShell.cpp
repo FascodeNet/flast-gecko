@@ -30,6 +30,7 @@
 #include "mozilla/RangeUtils.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_font.h"
@@ -1292,6 +1293,7 @@ void PresShell::Destroy() {
         }
       }
     }
+    mPresContext->ClearOneShotPostRefreshObservers();
   }
 
 #ifdef MOZ_REFLOW_PERF
@@ -2467,7 +2469,8 @@ PresShell::CompleteMove(bool aForward, bool aExtend) {
       aExtend ? nsFrameSelection::FocusMode::kExtendSelection
               : nsFrameSelection::FocusMode::kCollapseToNewPoint;
   frameSelection->HandleClick(
-      pos.mResultContent, pos.mContentOffset, pos.mContentOffset, focusMode,
+      MOZ_KnownLive(pos.mResultContent) /* bug 1636889 */, pos.mContentOffset,
+      pos.mContentOffset, focusMode,
       aForward ? CARET_ASSOCIATE_AFTER : CARET_ASSOCIATE_BEFORE);
   if (limiter) {
     // HandleClick resets ancestorLimiter, so set it again.
@@ -3447,12 +3450,13 @@ static void ScrollToShowRect(nsIScrollableFrame* aFrameAsScrollable,
   }
   ScrollStyles ss = aFrameAsScrollable->GetScrollStyles();
   nsRect allowedRange(scrollPt, nsSize(0, 0));
-  uint32_t directions = aFrameAsScrollable->GetAvailableScrollingDirections();
+  ScrollDirections directions =
+      aFrameAsScrollable->GetAvailableScrollingDirections();
 
   if (((aScrollFlags & ScrollFlags::ScrollOverflowHidden) ||
        ss.mVertical != StyleOverflow::Hidden) &&
       (!aVertical.mOnlyIfPerceivedScrollableDirection ||
-       (directions & nsIScrollableFrame::VERTICAL))) {
+       (directions.contains(ScrollDirection::eVertical)))) {
     if (ComputeNeedToScroll(aVertical.mWhenToScroll, lineSize.height, aRect.y,
                             aRect.YMost(), visibleRect.y + scrollPadding.top,
                             visibleRect.YMost() - scrollPadding.bottom)) {
@@ -3468,7 +3472,7 @@ static void ScrollToShowRect(nsIScrollableFrame* aFrameAsScrollable,
   if (((aScrollFlags & ScrollFlags::ScrollOverflowHidden) ||
        ss.mHorizontal != StyleOverflow::Hidden) &&
       (!aHorizontal.mOnlyIfPerceivedScrollableDirection ||
-       (directions & nsIScrollableFrame::HORIZONTAL))) {
+       (directions.contains(ScrollDirection::eHorizontal)))) {
     if (ComputeNeedToScroll(aHorizontal.mWhenToScroll, lineSize.width, aRect.x,
                             aRect.XMost(), visibleRect.x + scrollPadding.left,
                             visibleRect.XMost() - scrollPadding.right)) {
@@ -6876,12 +6880,12 @@ nsresult PresShell::EventHandler::HandleEvent(nsIFrame* aFrameForPresShell,
 
   if (MaybeHandleEventWithAccessibleCaret(aFrameForPresShell, aGUIEvent,
                                           aEventStatus)) {
-    // Probably handled by AccessibleCaretEventHub.
+    // Handled by AccessibleCaretEventHub.
     return NS_OK;
   }
 
   if (MaybeDiscardEvent(aGUIEvent)) {
-    // Nobody cannot handle the event for now.
+    // Cannot handle the event for now.
     return NS_OK;
   }
 
@@ -8265,16 +8269,6 @@ nsresult PresShell::EventHandler::DispatchEvent(
   }
 
   nsContentUtils::SetIsHandlingKeyBoardEvent(wasHandlingKeyBoardEvent);
-
-  if (aEvent->mMessage == ePointerUp || aEvent->mMessage == ePointerCancel) {
-    // Implicitly releasing capture for given pointer.
-    // ePointerLostCapture should be send after ePointerUp or
-    // ePointerCancel.
-    WidgetPointerEvent* pointerEvent = aEvent->AsPointerEvent();
-    MOZ_ASSERT(pointerEvent);
-    PointerEventHandler::ReleasePointerCaptureById(pointerEvent->pointerId);
-    PointerEventHandler::CheckPointerCaptureState(pointerEvent);
-  }
 
   if (mPresShell->IsDestroying()) {
     return NS_OK;

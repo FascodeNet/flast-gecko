@@ -6,7 +6,6 @@
 
 #include "vm/SelfHosting.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
@@ -18,6 +17,7 @@
 #include "jsdate.h"
 #include "jsfriendapi.h"
 #include "jsmath.h"
+#include "jsnum.h"
 #include "selfhosted.out.h"
 
 #include "builtin/Array.h"
@@ -43,7 +43,7 @@
 #include "builtin/String.h"
 #include "builtin/WeakMapObject.h"
 #include "frontend/BytecodeCompilation.h"  // CompileGlobalScriptToStencil
-#include "frontend/CompilationInfo.h"      // js::frontend::CompilationInfo
+#include "frontend/CompilationInfo.h"      // js::frontend::CompilationStencil
 #include "frontend/ParserAtom.h"           // js::frontend::ParserAtom
 #include "gc/Marking.h"
 #include "gc/Policy.h"
@@ -51,6 +51,7 @@
 #include "jit/InlinableNatives.h"
 #include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"
+#include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/ErrorReport.h"  // JS::PrintError
 #include "js/Exception.h"
@@ -1012,6 +1013,25 @@ static bool intrinsic_SetCanonicalName(JSContext* cx, unsigned argc,
   return true;
 }
 
+static bool intrinsic_SetIsInlinableLargeFunction(JSContext* cx, unsigned argc,
+                                                  Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 1);
+
+  RootedFunction fun(cx, &args[0].toObject().as<JSFunction>());
+  MOZ_ASSERT(fun->isSelfHostedBuiltin());
+
+  // _SetIsInlinableLargeFunction can only be called on top-level function
+  // declarations.
+  MOZ_ASSERT(fun->kind() == FunctionFlags::NormalFunction);
+  MOZ_ASSERT(!fun->isLambda());
+
+  fun->baseScript()->setIsInlinableLargeFunction();
+
+  args.rval().setUndefined();
+  return true;
+}
+
 static bool intrinsic_GeneratorObjectIsClosed(JSContext* cx, unsigned argc,
                                               Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1068,9 +1088,8 @@ static bool intrinsic_ArrayBufferByteLength(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[0].isObject());
   MOZ_ASSERT(args[0].toObject().is<T>());
 
-  size_t byteLength =
-      args[0].toObject().as<T>().byteLength().deprecatedGetUint32();
-  args.rval().setInt32(mozilla::AssertedCast<int32_t>(byteLength));
+  size_t byteLength = args[0].toObject().as<T>().byteLength().get();
+  args.rval().setNumber(byteLength);
   return true;
 }
 
@@ -1087,9 +1106,16 @@ static bool intrinsic_PossiblyWrappedArrayBufferByteLength(JSContext* cx,
     return false;
   }
 
-  uint32_t length = obj->byteLength().deprecatedGetUint32();
-  args.rval().setInt32(mozilla::AssertedCast<int32_t>(length));
+  size_t byteLength = obj->byteLength().get();
+  args.rval().setNumber(byteLength);
   return true;
+}
+
+static void AssertNonNegativeInteger(const Value& v) {
+  MOZ_ASSERT(v.isNumber());
+  MOZ_ASSERT(v.toNumber() >= 0);
+  MOZ_ASSERT(v.toNumber() < DOUBLE_INTEGRAL_PRECISION_LIMIT);
+  MOZ_ASSERT(JS::ToInteger(v.toNumber()) == v.toNumber());
 }
 
 template <typename T>
@@ -1097,9 +1123,9 @@ static bool intrinsic_ArrayBufferCopyData(JSContext* cx, unsigned argc,
                                           Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 6);
-  MOZ_RELEASE_ASSERT(args[1].isInt32());
-  MOZ_RELEASE_ASSERT(args[3].isInt32());
-  MOZ_RELEASE_ASSERT(args[4].isInt32());
+  AssertNonNegativeInteger(args[1]);
+  AssertNonNegativeInteger(args[3]);
+  AssertNonNegativeInteger(args[4]);
 
   bool isWrapped = args[5].toBoolean();
   Rooted<T*> toBuffer(cx);
@@ -1114,10 +1140,10 @@ static bool intrinsic_ArrayBufferCopyData(JSContext* cx, unsigned argc,
       return false;
     }
   }
-  uint32_t toIndex = uint32_t(args[1].toInt32());
+  size_t toIndex = size_t(args[1].toNumber());
   Rooted<T*> fromBuffer(cx, &args[2].toObject().as<T>());
-  uint32_t fromIndex = uint32_t(args[3].toInt32());
-  uint32_t count = uint32_t(args[4].toInt32());
+  size_t fromIndex = size_t(args[3].toNumber());
+  size_t count = size_t(args[4].toNumber());
 
   T::copyData(toBuffer, toIndex, fromBuffer, fromIndex, count);
 
@@ -1258,8 +1284,7 @@ static bool intrinsic_PossiblyWrappedTypedArrayLength(JSContext* cx,
     return false;
   }
 
-  uint32_t typedArrayLength = obj->length().deprecatedGetUint32();
-  args.rval().setInt32(mozilla::AssertedCast<int32_t>(typedArrayLength));
+  args.rval().set(obj->lengthValue());
   return true;
 }
 
@@ -1278,67 +1303,6 @@ static bool intrinsic_PossiblyWrappedTypedArrayHasDetachedBuffer(JSContext* cx,
 
   bool detached = obj->hasDetachedBuffer();
   args.rval().setBoolean(detached);
-  return true;
-}
-
-static bool intrinsic_MoveTypedArrayElements(JSContext* cx, unsigned argc,
-                                             Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 4);
-  MOZ_RELEASE_ASSERT(args[1].isInt32());
-  MOZ_RELEASE_ASSERT(args[2].isInt32());
-  MOZ_RELEASE_ASSERT(args[3].isInt32());
-
-  Rooted<TypedArrayObject*> tarray(cx,
-                                   &args[0].toObject().as<TypedArrayObject>());
-  uint32_t to = uint32_t(args[1].toInt32());
-  uint32_t from = uint32_t(args[2].toInt32());
-  uint32_t count = uint32_t(args[3].toInt32());
-
-  MOZ_ASSERT(count > 0,
-             "don't call this method if copying no elements, because then "
-             "the not-detached requirement is wrong");
-
-  if (tarray->hasDetachedBuffer()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_TYPED_ARRAY_DETACHED);
-    return false;
-  }
-
-  // Don't multiply by |tarray->bytesPerElement()| in case the compiler can't
-  // strength-reduce multiplication by 1/2/4/8 into the equivalent shift.
-  const size_t ElementShift = TypedArrayShift(tarray->type());
-
-  MOZ_ASSERT((UINT32_MAX >> ElementShift) > to);
-  uint32_t byteDest = to << ElementShift;
-
-  MOZ_ASSERT((UINT32_MAX >> ElementShift) > from);
-  uint32_t byteSrc = from << ElementShift;
-
-  MOZ_ASSERT((UINT32_MAX >> ElementShift) >= count);
-  uint32_t byteSize = count << ElementShift;
-
-#ifdef DEBUG
-  {
-    uint32_t viewByteLength = tarray->byteLength().deprecatedGetUint32();
-    MOZ_ASSERT(byteSize <= viewByteLength);
-    MOZ_ASSERT(byteDest < viewByteLength);
-    MOZ_ASSERT(byteSrc < viewByteLength);
-    MOZ_ASSERT(byteDest <= viewByteLength - byteSize);
-    MOZ_ASSERT(byteSrc <= viewByteLength - byteSize);
-  }
-#endif
-
-  SharedMem<uint8_t*> data = tarray->dataPointerEither().cast<uint8_t*>();
-  if (tarray->isSharedMemory()) {
-    jit::AtomicOperations::memmoveSafeWhenRacy(data + byteDest, data + byteSrc,
-                                               byteSize);
-  } else {
-    memmove(data.unwrapUnshared() + byteDest, data.unwrapUnshared() + byteSrc,
-            byteSize);
-  }
-
-  args.rval().setUndefined();
   return true;
 }
 
@@ -1413,8 +1377,8 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args.length() == 4);
   MOZ_ASSERT(args[0].isObject());
   MOZ_ASSERT(args[1].isObject());
-  MOZ_RELEASE_ASSERT(args[2].isInt32());
-  MOZ_RELEASE_ASSERT(args[3].isInt32());
+  AssertNonNegativeInteger(args[2]);
+  AssertNonNegativeInteger(args[3]);
 
   Rooted<TypedArrayObject*> source(cx,
                                    &args[0].toObject().as<TypedArrayObject>());
@@ -1437,16 +1401,12 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
     return true;
   }
 
-  MOZ_ASSERT(args[2].toInt32() >= 0);
-  uint32_t sourceOffset = uint32_t(args[2].toInt32());
+  size_t sourceOffset = size_t(args[2].toNumber());
+  size_t count = size_t(args[3].toNumber());
 
-  MOZ_ASSERT(args[3].toInt32() >= 0);
-  uint32_t count = uint32_t(args[3].toInt32());
-
-  MOZ_ASSERT(count > 0 && count <= source->length().deprecatedGetUint32());
-  MOZ_ASSERT(sourceOffset <= source->length().deprecatedGetUint32() - count);
-  MOZ_ASSERT(count <=
-             unsafeTypedArrayCrossCompartment->length().deprecatedGetUint32());
+  MOZ_ASSERT(count > 0 && count <= source->length().get());
+  MOZ_ASSERT(sourceOffset <= source->length().get() - count);
+  MOZ_ASSERT(count <= unsafeTypedArrayCrossCompartment->length().get());
 
   size_t elementSize = TypedArrayElemSize(sourceType);
   MOZ_ASSERT(elementSize ==
@@ -1458,7 +1418,7 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
   SharedMem<uint8_t*> unsafeTargetDataCrossCompartment =
       unsafeTypedArrayCrossCompartment->dataPointerEither().cast<uint8_t*>();
 
-  uint32_t byteLength = count * elementSize;
+  size_t byteLength = count * elementSize;
 
   // The same-type case requires exact copying preserving the bit-level
   // encoding of the source data, so use memcpy if possible. If source and
@@ -2358,6 +2318,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
           CallNonGenericSelfhostedMethod<Is<ArrayIteratorObject>>, 2, 0),
 
     JS_FN("_SetCanonicalName", intrinsic_SetCanonicalName, 2, 0),
+    JS_FN("_SetIsInlinableLargeFunction", intrinsic_SetIsInlinableLargeFunction,
+          1, 0),
 
     JS_INLINABLE_FN("GuardToArrayIterator",
                     intrinsic_GuardToBuiltin<ArrayIteratorObject>, 1, 0,
@@ -2474,7 +2436,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("PossiblyWrappedTypedArrayHasDetachedBuffer",
           intrinsic_PossiblyWrappedTypedArrayHasDetachedBuffer, 1, 0),
 
-    JS_FN("MoveTypedArrayElements", intrinsic_MoveTypedArrayElements, 4, 0),
     JS_FN("TypedArrayBitwiseSlice", intrinsic_TypedArrayBitwiseSlice, 4, 0),
     JS_FN("TypedArrayInitFromPackedArray",
           intrinsic_TypedArrayInitFromPackedArray, 2, 0),
@@ -2707,6 +2668,7 @@ void js::FillSelfHostingCompileOptions(CompileOptions& options) {
   options.setSelfHostingMode(true);
   options.setForceFullParse();
   options.setForceStrictMode();
+  options.setIsRunOnce(true);
 }
 
 GlobalObject* JSRuntime::createSelfHostingGlobal(JSContext* cx) {
@@ -2841,10 +2803,10 @@ static bool VerifyGlobalNames(JSContext* cx, Handle<GlobalObject*> shg) {
   return true;
 }
 
-bool JSRuntime::initSelfHostingFromXDR(JSContext* cx,
-                                       const CompileOptions& options,
-                                       frontend::CompilationInfoVector& ciVec,
-                                       MutableHandle<JSScript*> scriptOut) {
+bool JSRuntime::initSelfHostingFromXDR(
+    JSContext* cx, const CompileOptions& options,
+    frontend::CompilationStencilSet& stencilSet,
+    MutableHandle<JSScript*> scriptOut) {
   MOZ_ASSERT(selfHostingGlobal_);
   MOZ_ASSERT(selfHostedXDR.length() > 0);
   scriptOut.set(nullptr);
@@ -2852,7 +2814,7 @@ bool JSRuntime::initSelfHostingFromXDR(JSContext* cx,
   // Deserialize the stencil from XDR.
   JS::TranscodeRange xdrRange(selfHostedXDR);
   bool decodeOk = false;
-  if (!ciVec.deserializeStencils(cx, xdrRange, &decodeOk)) {
+  if (!stencilSet.deserializeStencils(cx, xdrRange, &decodeOk)) {
     return false;
   }
   // If XDR decode failed, it's not a propagated error.
@@ -2863,8 +2825,8 @@ bool JSRuntime::initSelfHostingFromXDR(JSContext* cx,
 
   // Instantiate the stencil.
   Rooted<frontend::CompilationGCOutput> output(cx);
-  if (!frontend::CompilationInfo::instantiateStencils(cx, ciVec.initial,
-                                                      output.get())) {
+  if (!frontend::CompilationStencil::instantiateStencils(cx, stencilSet,
+                                                         output.get())) {
     return false;
   }
 
@@ -2879,12 +2841,6 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
     selfHostingGlobal_ = cx->runtime()->parentRuntime->selfHostingGlobal_;
     return true;
   }
-
-  /*
-   * Self hosted state can be accessed from threads for other runtimes
-   * parented to this one, so cannot include state in the nursery.
-   */
-  JS::AutoDisableGenerationalGC disable(cx);
 
   Rooted<GlobalObject*> shg(cx, JSRuntime::createSelfHostingGlobal(cx));
   if (!shg) {
@@ -2912,13 +2868,13 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
   // Try initializing from Stencil XDR.
   if (selfHostedXDR.length() > 0) {
     // Initialize the compilation info that houses the stencil.
-    Rooted<frontend::CompilationInfoVector> ciVec(
-        cx, frontend::CompilationInfoVector(cx, options));
-    if (!ciVec.get().initial.input.initForSelfHostingGlobal(cx)) {
+    Rooted<frontend::CompilationStencilSet> stencilSet(
+        cx, frontend::CompilationStencilSet(cx, options));
+    if (!stencilSet.get().input.initForSelfHostingGlobal(cx)) {
       return false;
     }
 
-    if (!initSelfHostingFromXDR(cx, options, ciVec.get(), &script)) {
+    if (!initSelfHostingFromXDR(cx, options, stencilSet.get(), &script)) {
       return false;
     }
   }
@@ -2926,9 +2882,9 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
   // If script wasn't generated, it means XDR was either not provided or that it
   // failed the decoding phase. Parse from text as before.
   if (!script) {
-    Rooted<frontend::CompilationInfo> compilationInfo(
-        cx, frontend::CompilationInfo(cx, options));
-    if (!compilationInfo.get().input.initForSelfHostingGlobal(cx)) {
+    Rooted<frontend::CompilationStencil> stencil(
+        cx, frontend::CompilationStencil(cx, options));
+    if (!stencil.get().input.initForSelfHostingGlobal(cx)) {
       return false;
     }
 
@@ -2950,15 +2906,15 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
       return false;
     }
 
-    if (!frontend::CompileGlobalScriptToStencil(cx, compilationInfo.get(),
-                                                srcBuf, ScopeKind::Global)) {
+    if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
+                                                ScopeKind::Global)) {
       return false;
     }
 
     // Serialize the stencil to XDR.
     if (selfHostedXDRWriter) {
       JS::TranscodeBuffer xdrBuffer;
-      if (!compilationInfo.get().serializeStencils(cx, xdrBuffer)) {
+      if (!stencil.get().serializeStencils(cx, xdrBuffer)) {
         return false;
       }
 
@@ -2969,8 +2925,8 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
 
     // Instantiate the stencil.
     Rooted<frontend::CompilationGCOutput> output(cx);
-    if (!frontend::CompilationInfo::instantiateStencils(
-            cx, compilationInfo.get(), output.get())) {
+    if (!frontend::CompilationStencil::instantiateStencils(cx, stencil.get(),
+                                                           output.get())) {
       return false;
     }
 
@@ -2988,7 +2944,9 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
   }
 
   // Garbage collect the self hosting zone once when it is created. It should
-  // not be modified after this point.
+  // not be modified after this point. Drop top-level script reference before we
+  // do this collection.
+  script.set(nullptr);
   cx->runtime()->gc.freezeSelfHostingZone();
 
   return true;

@@ -12762,10 +12762,25 @@ Result<FileUsageType, nsresult> FileManager::GetUsage(nsIFile* aDirectory) {
         nsresult rv;
         leafName.ToInteger64(&rv);
         if (NS_SUCCEEDED(rv)) {
-          IDB_TRY_INSPECT(const int64_t& fileSize,
-                          MOZ_TO_RESULT_INVOKE(file, GetFileSize));
+          IDB_TRY_INSPECT(
+              const auto& thisUsage,
+              MOZ_TO_RESULT_INVOKE(file, GetFileSize)
+                  .map([](const int64_t fileSize) {
+                    return FileUsageType(Some(uint64_t(fileSize)));
+                  })
+                  .orElse(
+                      [](const nsresult rv) -> Result<FileUsageType, nsresult> {
+                        if (rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST ||
+                            rv == NS_ERROR_FILE_NOT_FOUND) {
+                          // If the file does no longer exist, treat it as
+                          // 0-sized.
+                          return FileUsageType{};
+                        }
 
-          usage += FileUsageType(Some(uint64_t(fileSize)));
+                        return Err(rv);
+                      }));
+
+          usage += thisUsage;
 
           return Ok{};
         }
@@ -13887,17 +13902,17 @@ nsresult Maintenance::DirectoryWork() {
           // (GetDirectoryMetadata2WithRestore also checks if it's a valid
           // origin).
 
-          int64_t timestamp;
-          bool persisted;
-          QuotaInfo quotaInfo;
-          IDB_TRY(quotaManager->GetDirectoryMetadata2WithRestore(
-                      originDir, persistent, &timestamp, &persisted, quotaInfo),
-                  // Not much we can do here...
-                  Ok{});
+          IDB_TRY_INSPECT(
+              const auto& metadata,
+              quotaManager->GetDirectoryMetadataWithQuotaInfo2WithRestore(
+                  originDir, persistent),
+              // Not much we can do here...
+              Ok{});
 
           // Don't do any maintenance for private browsing databases, which are
           // only temporary.
-          if (OriginAttributes::IsPrivateBrowsing(quotaInfo.mOrigin)) {
+          if (OriginAttributes::IsPrivateBrowsing(
+                  metadata.mQuotaInfo.mOrigin)) {
             return Ok{};
           }
 
@@ -13910,7 +13925,8 @@ nsresult Maintenance::DirectoryWork() {
 
             IDB_TRY_UNWRAP(
                 const DebugOnly<bool> created,
-                quotaManager->EnsurePersistentOriginIsInitialized(quotaInfo)
+                quotaManager
+                    ->EnsurePersistentOriginIsInitialized(metadata.mQuotaInfo)
                     .map([](const auto& res) { return res.second; }),
                 // Not much we can do here...
                 Ok{});
@@ -13979,7 +13995,7 @@ nsresult Maintenance::DirectoryWork() {
               }));
 
           if (!databasePaths.IsEmpty()) {
-            mDirectoryInfos.EmplaceBack(persistenceType, quotaInfo,
+            mDirectoryInfos.EmplaceBack(persistenceType, metadata.mQuotaInfo,
                                         std::move(databasePaths));
           }
 

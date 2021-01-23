@@ -4,8 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
-const isFissionEnabled = Services.appinfo.fissionAutostart;
 /**
  * This is the registry for all DAMP tests. Tests will be run in the order specified by
  * the DAMP_TESTS array.
@@ -105,9 +103,6 @@ module.exports = [
     path: "inspector/complicated.js",
     description:
       "Measure open/close toolbox on inspector panel against complicated document",
-    // Bug 1503499 & 1677587 - disable for frequent failures on fission
-    // Linked to ThreadActor race conditions, see Bug 1678741.
-    disabled: isFissionEnabled,
   },
   {
     name: "complicated.debugger",
@@ -120,18 +115,12 @@ module.exports = [
     path: "styleeditor/complicated.js",
     description:
       "Measure open/close toolbox on style editor panel against complicated document",
-    // Bug 1677587 - disable for frequent failures on fission
-    // Linked to ThreadActor race conditions, see Bug 1678741.
-    disabled: isFissionEnabled,
   },
   {
     name: "complicated.netmonitor",
     path: "netmonitor/complicated.js",
     description:
       "Measure open/close toolbox on network monitor panel against complicated document",
-    // Bug 1574417 - disable for frequent failures on fission.
-    // Linked to ThreadActor race conditions, see Bug 1678741.
-    disabled: isFissionEnabled,
   },
   // Run all tests against a document specific to each tool
   {
@@ -196,6 +185,11 @@ module.exports = [
     name: "panelsInBackground.reload",
     path: "toolbox/panels-in-background.js",
     description: "Measure page reload time when all panels are in background",
+  },
+  {
+    name: "toolbox.screenshot",
+    path: "toolbox/screenshot.js",
+    description: "Measure the time to take a fullpage screenshot",
   },
   {
     name: "server.protocoljs",

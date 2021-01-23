@@ -66,6 +66,10 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   Sxtw(ARMRegister(dest.reg, 64), ARMRegister(src, 32));
 }
 
+void MacroAssembler::move32SignExtendToPtr(Register src, Register dest) {
+  Sxtw(ARMRegister(dest, 64), ARMRegister(src, 32));
+}
+
 void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
   Mov(ARMRegister(dest, 32), ARMRegister(src, 32));
 }
@@ -1226,13 +1230,15 @@ void MacroAssembler::branchNeg32(Condition cond, Register reg, Label* label) {
   B(label, cond);
 }
 
-void MacroAssembler::branchAddPtr(Condition cond, Register src, Register dest,
+template <typename T>
+void MacroAssembler::branchAddPtr(Condition cond, T src, Register dest,
                                   Label* label) {
   adds64(src, dest);
   B(label, cond);
 }
 
-void MacroAssembler::branchSubPtr(Condition cond, Register src, Register dest,
+template <typename T>
+void MacroAssembler::branchSubPtr(Condition cond, T src, Register dest,
                                   Label* label) {
   subs64(src, dest);
   B(label, cond);
@@ -1740,9 +1746,20 @@ void MacroAssembler::cmp32Move32(Condition cond, Register lhs, Register rhs,
 void MacroAssembler::cmp32Move32(Condition cond, Register lhs,
                                  const Address& rhs, Register src,
                                  Register dest) {
-  cmp32(lhs, rhs);
-  Csel(ARMRegister(dest, 32), ARMRegister(src, 32), ARMRegister(dest, 32),
+  MOZ_CRASH("NYI");
+}
+
+void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs, Register rhs,
+                                   Register src, Register dest) {
+  cmpPtr(lhs, rhs);
+  Csel(ARMRegister(dest, 64), ARMRegister(src, 64), ARMRegister(dest, 64),
        cond);
+}
+
+void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs,
+                                   const Address& rhs, Register src,
+                                   Register dest) {
+  MOZ_CRASH("NYI");
 }
 
 void MacroAssembler::cmp32Load32(Condition cond, Register lhs,
@@ -1842,6 +1859,36 @@ void MacroAssembler::spectreBoundsCheck32(Register index, const Address& length,
 
   if (JitOptions.spectreIndexMasking) {
     Csel(ARMRegister(index, 32), ARMRegister(index, 32), vixl::wzr,
+         Assembler::Above);
+  }
+}
+
+void MacroAssembler::spectreBoundsCheckPtr(Register index, Register length,
+                                           Register maybeScratch,
+                                           Label* failure) {
+  MOZ_ASSERT(length != maybeScratch);
+  MOZ_ASSERT(index != maybeScratch);
+
+  branchPtr(Assembler::BelowOrEqual, length, index, failure);
+
+  if (JitOptions.spectreIndexMasking) {
+    Csel(ARMRegister(index, 64), ARMRegister(index, 64), vixl::xzr,
+         Assembler::Above);
+  }
+}
+
+void MacroAssembler::spectreBoundsCheckPtr(Register index,
+                                           const Address& length,
+                                           Register maybeScratch,
+                                           Label* failure) {
+  MOZ_ASSERT(index != length.base);
+  MOZ_ASSERT(length.base != maybeScratch);
+  MOZ_ASSERT(index != maybeScratch);
+
+  branchPtr(Assembler::BelowOrEqual, length, index, failure);
+
+  if (JitOptions.spectreIndexMasking) {
+    Csel(ARMRegister(index, 64), ARMRegister(index, 64), vixl::xzr,
          Assembler::Above);
   }
 }

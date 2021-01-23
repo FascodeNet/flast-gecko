@@ -365,14 +365,6 @@ bool CheckOverRecursedBaseline(JSContext* cx, BaselineFrame* frame);
 enum class EqualityKind : bool { NotEqual, Equal };
 
 template <EqualityKind Kind>
-bool LooselyEqual(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
-                  bool* res);
-
-template <EqualityKind Kind>
-bool StrictlyEqual(JSContext* cx, MutableHandleValue lhs,
-                   MutableHandleValue rhs, bool* res);
-
-template <EqualityKind Kind>
 bool StringsEqual(JSContext* cx, HandleString lhs, HandleString rhs, bool* res);
 
 enum class ComparisonKind : bool { GreaterThanOrEqual, LessThan };
@@ -414,9 +406,6 @@ bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out);
 [[nodiscard]] bool CreateThisFromIon(JSContext* cx, HandleObject callee,
                                      HandleObject newTarget,
                                      MutableHandleValue rval);
-
-bool GetDynamicNamePure(JSContext* cx, JSObject* scopeChain, JSString* str,
-                        Value* vp);
 
 void PostWriteBarrier(JSRuntime* rt, js::gc::Cell* cell);
 void PostGlobalWriteBarrier(JSRuntime* rt, GlobalObject* obj);
@@ -509,10 +498,6 @@ JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
                                            InterpreterFrame* interpFrame,
                                            uint32_t numStackValues);
 
-[[nodiscard]] bool IonRecompile(JSContext* cx);
-[[nodiscard]] bool IonForcedRecompile(JSContext* cx);
-[[nodiscard]] bool IonForcedInvalidation(JSContext* cx);
-
 JSString* StringReplace(JSContext* cx, HandleString string,
                         HandleString pattern, HandleString repl);
 
@@ -521,7 +506,6 @@ JSString* StringReplace(JSContext* cx, HandleString string,
                                    bool strict);
 
 void AssertValidBigIntPtr(JSContext* cx, JS::BigInt* bi);
-void AssertValidObjectOrNullPtr(JSContext* cx, JSObject* obj);
 void AssertValidObjectPtr(JSContext* cx, JSObject* obj);
 void AssertValidStringPtr(JSContext* cx, JSString* str);
 void AssertValidSymbolPtr(JSContext* cx, JS::Symbol* sym);
@@ -639,6 +623,9 @@ bool BigIntStringCompare(JSContext* cx, HandleBigInt x, HandleString y,
 template <ComparisonKind Kind>
 bool StringBigIntCompare(JSContext* cx, HandleString x, HandleBigInt y,
                          bool* res);
+
+BigInt* BigIntAsIntN(JSContext* cx, HandleBigInt x, int32_t bits);
+BigInt* BigIntAsUintN(JSContext* cx, HandleBigInt x, int32_t bits);
 
 using AtomicsCompareExchangeFn = int32_t (*)(TypedArrayObject*, int32_t,
                                              int32_t, int32_t);

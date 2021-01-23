@@ -73,6 +73,15 @@ BROWSERTIME_SCHEMA = Schema(
     [{Required("files"): {Required("video"): [str]}}], extra=ALLOW_EXTRA
 )
 
+SHOULD_ALERT = {
+    "ContentfulSpeedIndex": True,
+    "FirstVisualChange": True,
+    "LastVisualChange": True,
+    "PerceptualSpeedIndex": True,
+    "SpeedIndex": True,
+    "videoRecordingStart": False,
+}
+
 with Path("/", "builds", "worker", "performance-artifact-schema.json").open() as f:
     PERFHERDER_SCHEMA = json.loads(f.read())
 
@@ -106,7 +115,7 @@ def run_command(log, cmd, job_count):
 
     if time.time() - start > MAX_TIME:
         log.error(
-            "[TEST-UNEXPECTED FAIL] Timed out waiting for response from command",
+            "TEST-UNEXPECTED-FAIL | Timed out waiting for response from command",
             cmd=cmd,
         )
         return 1, "Timed out"
@@ -127,7 +136,7 @@ def run_command(log, cmd, job_count):
         if level.strip() in ("[ERROR]", "[CRITICAL]"):
             if rc == 0:
                 rc = 1
-            log.error("[TEST-UNEXPECTED FAIL]" + newline)
+            log.error("TEST-UNEXPECTED-FAIL | " + newline)
         elif level == "[WARNING]":
             log.warning(newline)
         else:
@@ -171,6 +180,7 @@ def append_result(log, suites, test_name, name, result, extra_options):
             "replicates": [result],
             "lowerIsBetter": True,
             "unit": "ms",
+            "shouldAlert": SHOULD_ALERT[name],
         }
     else:
         subtests[name]["replicates"].append(result)
@@ -419,7 +429,7 @@ def run_visual_metrics(job, visualmetrics_path, options):
                 failed_tests.append(metric)
         if failed_tests:
             log.error(
-                "[TEST-UNEXPECTED-FAIL] Some visual metrics have an erroneous value of 0."
+                "TEST-UNEXPECTED-FAIL | Some visual metrics have an erroneous value of 0."
             )
             log.info("Tests which failed: %s" % str(failed_tests))
             rc += 1

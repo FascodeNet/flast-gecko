@@ -464,8 +464,6 @@ function getObserverPromise(bookmarkedUri) {
     observer = {
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onFrecencyChanged(aURI) {},
-      onManyFrecenciesChanged() {},
       onDeleteURI(aURI) {
         try {
           Assert.notEqual(

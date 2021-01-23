@@ -276,10 +276,11 @@ static uint32_t DefaultFeatures() {
 // Extra default features when MOZ_PROFILER_STARTUP is set (even if not
 // available).
 static uint32_t StartupExtraDefaultFeatures() {
+  // Enable CPUUtilization by default for startup profiles as it is useful to
+  // see when startup alternates between CPU intensive tasks and being blocked.
   // Enable file I/Os by default for startup profiles as startup is heavy on
   // I/O operations.
-  return ProfilerFeature::MainThreadIO | ProfilerFeature::FileIO |
-         ProfilerFeature::FileIOAll;
+  return ProfilerFeature::CPUUtilization | ProfilerFeature::FileIOAll;
 }
 
 // The class is a thin shell around mozglue PlatformMutex. It does not preserve
@@ -2258,8 +2259,6 @@ static void DoSyncSample(PSLockRef aLock, RegisteredThread& aRegisteredThread,
 // is `aSamplePos`, we can write the rest to `aBuffer` (which may be different).
 static inline void DoPeriodicSample(PSLockRef aLock,
                                     RegisteredThread& aRegisteredThread,
-                                    ProfiledThreadData& aProfiledThreadData,
-                                    const TimeStamp& aNow,
                                     const Registers& aRegs, uint64_t aSamplePos,
                                     ProfileBuffer& aBuffer) {
   // WARNING: this function runs within the profiler's "critical section".
@@ -3132,8 +3131,69 @@ class Sampler {
 // END Sampler
 ////////////////////////////////////////////////////////////////////////
 
+// Platform-specific function that retrieves per-thread CPU measurements.
 static RunningTimes GetThreadRunningTimesDiff(
     PSLockRef aLock, const RegisteredThread& aRegisteredThread);
+
+// Template function to be used by `GetThreadRunningTimesDiff()` (unless some
+// platform has a better way to achieve this).
+// It help perform CPU measurements and tie them to a timestamp, such that the
+// measurements and timestamp are very close together.
+// This is necessary, because the relative CPU usage is computed by dividing
+// consecutive CPU measurements by their timestamp difference; if there was an
+// unexpected big gap, it could skew this computation and produce impossible
+// spikes that would hide the rest of the data. See bug 1685938 for more info.
+// Note that this may call the measurement function more than once; it is
+// assumed to normally be fast.
+// This was verified experimentally, but there is currently no regression
+// testing for it; see follow-up bug 1687402.
+template <typename GetCPURunningTimesFunction>
+RunningTimes GetRunningTimesWithTightTimestamp(
+    GetCPURunningTimesFunction&& aGetCPURunningTimesFunction) {
+  // Once per process, compute a threshold over which running times and their
+  // timestamp is considered too far apart.
+  static const TimeDuration scMaxRunningTimesReadDuration = [&]() {
+    // Run the main CPU measurements + timestamp a number of times and capture
+    // their durations.
+    constexpr int loops = 128;
+    TimeDuration durations[loops];
+    RunningTimes runningTimes;
+    TimeStamp before = TimeStamp::NowUnfuzzed();
+    for (int i = 0; i < loops; ++i) {
+      AUTO_PROFILER_STATS(GetRunningTimes_MaxRunningTimesReadDuration);
+      aGetCPURunningTimesFunction(runningTimes);
+      const TimeStamp after = TimeStamp::NowUnfuzzed();
+      durations[i] = after - before;
+      before = after;
+    }
+    // Move median duration to the middle.
+    std::nth_element(&durations[0], &durations[loops / 2], &durations[loops]);
+    // Use median*8 as cut-off point.
+    // Typical durations should be around a microsecond, the cut-off should then
+    // be around 10 microseconds, well below the expected minimum inter-sample
+    // interval (observed as a few milliseconds), so overall this should keep
+    // cpu/interval spikes
+    return durations[loops / 2] * 8;
+  }();
+
+  // Record CPU measurements between two timestamps.
+  RunningTimes runningTimes;
+  TimeStamp before = TimeStamp::NowUnfuzzed();
+  aGetCPURunningTimesFunction(runningTimes);
+  TimeStamp after = TimeStamp::NowUnfuzzed();
+  // In most cases, the above should be quick enough. But if not, repeat:
+  while (MOZ_UNLIKELY(after - before > scMaxRunningTimesReadDuration)) {
+    AUTO_PROFILER_STATS(GetRunningTimes_REDO);
+    before = after;
+    aGetCPURunningTimesFunction(runningTimes);
+    after = TimeStamp::NowUnfuzzed();
+  }
+  // Finally, record the closest timestamp just after the final measurement was
+  // done. This must stay *after* the CPU measurements.
+  runningTimes.SetPostMeasurementTimeStamp(after);
+
+  return runningTimes;
+}
 
 ////////////////////////////////////////////////////////////////////////
 // BEGIN SamplerThread
@@ -3288,18 +3348,25 @@ void SamplerThread::Run() {
   // Will be kept between collections, to know what each collection does.
   auto previousState = localBuffer.GetState();
 
-  // This will be positive if we are running behind schedule (sampling less
-  // frequently than desired) and negative if we are ahead of schedule.
-  TimeDuration lastSleepOvershoot = 0;
-  TimeStamp sampleStart = TimeStamp::NowUnfuzzed();
-
   // This will be set inside the loop, from inside the lock scope, to capture
   // all callbacks added before that, but none after the lock is released.
   UniquePtr<PostSamplingCallbackListItem> postSamplingCallbacks;
   // This will be set inside the loop, before invoking callbacks outside.
   SamplingState samplingState{};
 
+  const TimeDuration sampleInterval =
+      TimeDuration::FromMicroseconds(mIntervalMicroseconds);
+  const uint32_t minimumIntervalSleepUs =
+      static_cast<uint32_t>(mIntervalMicroseconds / 4);
+
+  // This is the scheduled time at which each sampling loop should start.
+  // It will determine the ideal next sampling start by adding the expected
+  // interval, unless when sampling runs late -- See end of while() loop.
+  TimeStamp scheduledSampleStart = TimeStamp::NowUnfuzzed();
+
   while (true) {
+    const TimeStamp sampleStart = TimeStamp::NowUnfuzzed();
+
     // This scope is for |lock|. It ends before we sleep below.
     {
       // There should be no local callbacks left from a previous loop.
@@ -3334,7 +3401,8 @@ void SamplerThread::Run() {
       TimeStamp expiredMarkersCleaned = TimeStamp::NowUnfuzzed();
 
       if (!ActivePS::IsSamplingPaused(lock)) {
-        TimeDuration delta = sampleStart - CorePS::ProcessStartTime();
+        double sampleStartDeltaMs =
+            (sampleStart - CorePS::ProcessStartTime()).ToMilliseconds();
         ProfileBuffer& buffer = ActivePS::Buffer(lock);
 
         // handle per-process generic counters
@@ -3342,7 +3410,7 @@ void SamplerThread::Run() {
         for (auto& counter : counters) {
           // create Buffer entries for each counter
           buffer.AddEntry(ProfileBufferEntry::CounterId(counter));
-          buffer.AddEntry(ProfileBufferEntry::Time(delta.ToMilliseconds()));
+          buffer.AddEntry(ProfileBufferEntry::Time(sampleStartDeltaMs));
           // XXX support keyed maps of counts
           // In the future, we'll support keyed counters - for example, counters
           // with a key which is a thread ID. For "simple" counters we'll just
@@ -3370,11 +3438,17 @@ void SamplerThread::Run() {
                 thread.mProfiledThreadData.get();
             RefPtr<ThreadInfo> info = registeredThread->Info();
 
-            RunningTimes runningTimesDiff;
-            if (cpuUtilization) {
-              runningTimesDiff =
-                  GetThreadRunningTimesDiff(lock, *registeredThread);
-            }
+            const RunningTimes runningTimesDiff = [&]() {
+              if (!cpuUtilization) {
+                // If we don't need CPU measurements, we only need a timestamp.
+                return RunningTimes(TimeStamp::NowUnfuzzed());
+              }
+              return GetThreadRunningTimesDiff(lock, *registeredThread);
+            }();
+
+            const TimeStamp& now = runningTimesDiff.PostMeasurementTimeStamp();
+            double threadSampleDeltaMs =
+                (now - CorePS::ProcessStartTime()).ToMilliseconds();
 
             // If the thread is asleep and has been sampled before in the same
             // sleep episode, find and copy the previous sample, as that's
@@ -3384,7 +3458,7 @@ void SamplerThread::Run() {
             if (registeredThread->RacyRegisteredThread()
                     .CanDuplicateLastSampleDueToSleep()) {
               const bool dup_ok = ActivePS::Buffer(lock).DuplicateLastSample(
-                  info->ThreadId(), CorePS::ProcessStartTime(),
+                  info->ThreadId(), threadSampleDeltaMs,
                   profiledThreadData->LastSample(), runningTimesDiff);
               if (dup_ok) {
                 continue;
@@ -3392,8 +3466,6 @@ void SamplerThread::Run() {
             }
 
             AUTO_PROFILER_STATS(gecko_SamplerThread_Run_DoPeriodicSample);
-
-            TimeStamp now = TimeStamp::NowUnfuzzed();
 
             // Add the thread ID now, so we know its position in the main
             // buffer, which is used by some JS data.
@@ -3404,9 +3476,8 @@ void SamplerThread::Run() {
 
             // Also add the time, so it's always there after the thread ID, as
             // expected by the parser. (Other stack data is optional.)
-            TimeDuration delta = now - CorePS::ProcessStartTime();
             buffer.AddEntry(ProfileBufferEntry::TimeBeforeCompactStack(
-                delta.ToMilliseconds()));
+                threadSampleDeltaMs));
 
             Maybe<double> unresponsiveDuration_ms;
 
@@ -3424,8 +3495,7 @@ void SamplerThread::Run() {
               mSampler.SuspendAndSampleAndResumeThread(
                   lock, *registeredThread, now,
                   [&](const Registers& aRegs, const TimeStamp& aNow) {
-                    DoPeriodicSample(lock, *registeredThread,
-                                     *profiledThreadData, now, aRegs, samplePos,
+                    DoPeriodicSample(lock, *registeredThread, aRegs, samplePos,
                                      localProfileBuffer);
 
                     // For "eventDelay", we want the input delay - but if
@@ -3682,7 +3752,8 @@ void SamplerThread::Run() {
           ActivePS::FulfillChunkRequests(lock);
         }
 
-        buffer.CollectOverheadStats(delta, lockAcquired - sampleStart,
+        buffer.CollectOverheadStats(sampleStartDeltaMs,
+                                    lockAcquired - sampleStart,
                                     expiredMarkersCleaned - lockAcquired,
                                     countersSampled - expiredMarkersCleaned,
                                     threadsSampled - countersSampled);
@@ -3698,21 +3769,32 @@ void SamplerThread::Run() {
 
     ProfilerChild::ProcessPendingUpdate();
 
-    // Calculate how long a sleep to request.  After the sleep, measure how
-    // long we actually slept and take the difference into account when
-    // calculating the sleep interval for the next iteration.  This is an
-    // attempt to keep "to schedule" in the presence of inaccuracy of the
-    // actual sleep intervals.
-    TimeStamp targetSleepEndTime =
-        sampleStart + TimeDuration::FromMicroseconds(mIntervalMicroseconds);
-    TimeStamp beforeSleep = TimeStamp::NowUnfuzzed();
-    TimeDuration targetSleepDuration = targetSleepEndTime - beforeSleep;
-    double sleepTime = std::max(
-        0.0, (targetSleepDuration - lastSleepOvershoot).ToMicroseconds());
-    SleepMicro(static_cast<uint32_t>(sleepTime));
-    sampleStart = TimeStamp::NowUnfuzzed();
-    lastSleepOvershoot =
-        sampleStart - (beforeSleep + TimeDuration::FromMicroseconds(sleepTime));
+    // We expect the next sampling loop to start `sampleInterval` after this
+    // loop here was scheduled to start.
+    scheduledSampleStart += sampleInterval;
+
+    // Try to sleep until we reach that next scheduled time.
+    const TimeStamp beforeSleep = TimeStamp::NowUnfuzzed();
+    if (scheduledSampleStart >= beforeSleep) {
+      // There is still time before the next scheduled sample time.
+      const uint32_t sleepTimeUs = static_cast<uint32_t>(
+          (scheduledSampleStart - beforeSleep).ToMicroseconds());
+      if (sleepTimeUs >= minimumIntervalSleepUs) {
+        SleepMicro(sleepTimeUs);
+      } else {
+        // If we're too close to that time, sleep the minimum amount of time.
+        // Note that the next scheduled start is not shifted, so at the end of
+        // the next loop, sleep may again be adjusted to get closer to schedule.
+        SleepMicro(minimumIntervalSleepUs);
+      }
+    } else {
+      // This sampling loop ended after the next sampling should have started!
+      // There is little point to try and keep up to schedule now, it would
+      // require more work, while it's likely we're late because the system is
+      // already busy. Try and restart a normal schedule from now.
+      scheduledSampleStart = beforeSleep + sampleInterval;
+      SleepMicro(static_cast<uint32_t>(sampleInterval.ToMicroseconds()));
+    }
   }
 
   // End of `while` loop. We can only be here from a `break` inside the loop.

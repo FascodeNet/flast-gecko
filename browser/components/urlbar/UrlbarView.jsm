@@ -645,7 +645,7 @@ class UrlbarView {
           setAccessibleFocus: this.controller._userSelectionBehavior == "arrow",
         });
       } else if (
-        firstResult.payload.keywordOffer == UrlbarUtils.KEYWORD_OFFER.SHOW &&
+        firstResult.payload.providesSearchMode &&
         queryContext.trimmedSearchString != "@"
       ) {
         // Filtered keyword offer results can be in the first position but not
@@ -1174,7 +1174,7 @@ class UrlbarView {
 
     if (
       result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
-      !result.payload.keywordOffer &&
+      !result.payload.providesSearchMode &&
       !result.payload.inPrivateWindow
     ) {
       item.setAttribute("type", "search");
@@ -1291,7 +1291,7 @@ class UrlbarView {
               { engine: result.payload.engine }
             );
           };
-        } else if (!result.payload.keywordOffer) {
+        } else if (!result.payload.providesSearchMode) {
           actionSetter = () => {
             this.document.l10n.setAttributes(
               action,
@@ -1462,6 +1462,25 @@ class UrlbarView {
     for (let [name, node] of item._elements) {
       node.id = `${item.id}-${name}`;
       idsByName.set(name, node.id);
+    }
+
+    // First, apply highlighting. We do this before updating via getViewUpdate
+    // so the dynamic provider can override the highlighting by setting the
+    // textContent of the highlighted node, if it wishes.
+    for (let [payloadName, highlights] of Object.entries(
+      result.payloadHighlights
+    )) {
+      if (!highlights.length) {
+        continue;
+      }
+      // Highlighting only works if the dynamic element name is the same as the
+      // highlighted payload property name.
+      let nodeToHighlight = item.querySelector(`#${item.id}-${payloadName}`);
+      this._addTextContentWithHighlights(
+        nodeToHighlight,
+        result.payload[payloadName],
+        highlights
+      );
     }
 
     // Get the view update from the result's provider.
@@ -1777,7 +1796,7 @@ class UrlbarView {
    *   The DOM node for the result's tile.
    */
   _setResultTitle(result, titleNode) {
-    if (result.payload.keywordOffer) {
+    if (result.payload.providesSearchMode) {
       // Keyword offers are the only result that require a localized title.
       // We localize the title instead of using the action text as a title
       // because some keyword offer results use both a title and action text

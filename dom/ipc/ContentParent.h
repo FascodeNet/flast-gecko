@@ -633,6 +633,17 @@ class ContentParent final
 
   nsresult TransmitPermissionsForPrincipal(nsIPrincipal* aPrincipal);
 
+  // Whenever receiving a Principal we need to validate that Principal case
+  // by case, where we grant individual callsites to customize the checks!
+  enum class ValidatePrincipalOptions {
+    AllowNullPtr,  // Not a NullPrincipal but a nullptr as Principal.
+    AllowSystem,
+    AllowExpanded,
+  };
+  bool ValidatePrincipal(
+      nsIPrincipal* aPrincipal,
+      const EnumSet<ValidatePrincipalOptions>& aOptions = {});
+
   // This function is called in BrowsingContext immediately before IPC call to
   // load a URI. If aURI is a BlobURL, this method transmits all BlobURLs for
   // aPrincipal that were previously not transmitted. This allows for opening a
@@ -664,7 +675,8 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvWindowClose(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aTrustedCaller);
   mozilla::ipc::IPCResult RecvWindowFocus(
-      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType);
+      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
+      uint64_t aActionId);
   mozilla::ipc::IPCResult RecvWindowBlur(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvRaiseWindow(
@@ -1410,6 +1422,10 @@ class ContentParent final
 #endif
 
   mozilla::ipc::IPCResult RecvFOGData(ByteBuf&& buf);
+
+  mozilla::ipc::IPCResult RecvSetContainerFeaturePolicy(
+      const MaybeDiscardedBrowsingContext& aContainerContext,
+      FeaturePolicy* aContainerFeaturePolicy);
 
  public:
   void SendGetFilesResponseAndForget(const nsID& aID,

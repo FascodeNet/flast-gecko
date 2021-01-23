@@ -401,6 +401,39 @@ browser.engagement:
     record_in_processes:
       - 'main'
 
+  session_time_including_suspend:
+    bug_numbers:
+      - 1205985
+    description: >
+      The duration of the session in milliseconds, including the time the device
+      was suspended.
+    expires: never
+    kind: uint
+    notification_emails:
+      - padenot@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  session_time_excluding_suspend:
+    bug_numbers:
+      - 1205985
+    description: >
+      The duration of the session in milliseconds, excluding the time the device
+      was suspended.
+    expires: never
+    kind: uint
+    notification_emails:
+      - padenot@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+
 # The following section contains the browser engagement scalars.
 browser.engagement.navigation:
   urlbar:
@@ -538,6 +571,7 @@ browser.startup:
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -554,6 +588,7 @@ browser.startup:
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -570,6 +605,7 @@ browser.startup:
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -586,6 +622,7 @@ browser.startup:
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -602,6 +639,7 @@ browser.startup:
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -622,6 +660,7 @@ browser.startup:
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -632,6 +671,7 @@ browser.startup:
     bug_numbers:
       - 1622263
       - 1614351
+      - 1683101
     description: >
       How the about:home startup cache functioned on startup.
 
@@ -646,10 +686,11 @@ browser.startup:
       8: User did not load about:home on its own by default.
       9: Cache is disabled because about:newtab preloading is disabled.
 
-    expires: "87"
+    expires: "92"
     kind: uint
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -660,14 +701,16 @@ browser.startup:
     bug_numbers:
       - 1622263
       - 1614351
+      - 1683101
     description: >
       True if the about:home startup cache was written via the AsyncShutdown
       blocker.
 
-    expires: "87"
+    expires: "92"
     kind: boolean
     notification_emails:
       - mconley@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -1905,6 +1948,20 @@ pictureinpicture:
       - 'firefox'
     record_in_processes:
       - content
+  most_concurrent_players:
+    bug_numbers:
+      - 1677107
+    description:
+      The most concurrent Picture-in-Picture players the user had open at any one time.
+    expires: "91"
+    kind: uint
+    notification_emails:
+      - mconley@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
 
 preferences:
   created_new_user_prefs_file:
@@ -2961,7 +3018,6 @@ devtools.toolbox:
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
       - daisuke@mozilla.com
-      - hkirschner@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3248,23 +3304,6 @@ telemetry:
     record_in_processes:
       - 'main'
 
-  process_creation_timestamp_inconsistent:
-    bug_numbers:
-      - 1514392
-    description: >
-      The number of times ProcessCreation saw an inconsistent value.
-    expires: "72"
-    kind: uint
-    notification_emails:
-      - jrediger@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
-    record_in_processes:
-      - 'main'
-      - 'content'
-
   environment_didnt_change:
     bug_numbers:
       - 1483477
@@ -3442,10 +3481,11 @@ gfx.canvas.remote:
   activated:
     bug_numbers:
       - 1641722
+      - 1672582
     description: >
       Number of times remote canvas 2D has been activated.
     kind: uint
-    expires: "85"
+    expires: "91"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3458,10 +3498,11 @@ gfx.canvas.remote:
   deactivated_no_device:
     bug_numbers:
       - 1641722
+      - 1672582
     description: >
       Number of times remote canvas 2D has been deactivated due to device creation failure.
     kind: uint
-    expires: "85"
+    expires: "91"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3474,10 +3515,11 @@ gfx.canvas.remote:
   deactivated_bad_stream:
     bug_numbers:
       - 1641722
+      - 1672582
     description: >
       Number of times remote canvas 2D has been deactivated due to a stream read failure.
     kind: uint
-    expires: "85"
+    expires: "91"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3691,6 +3733,23 @@ gfx.adapter:
     record_in_processes:
       - 'main'
     release_channel_collection: opt-out
+gfx.feature:
+  webrender:
+    bug_numbers:
+      - 1687312
+    description:
+      Whether webrender is enabled or disabled, and why.
+    expires: never
+    kind: string
+    notification_emails:
+      - gfx-telemetry-alerts@mozilla.com
+      - jnicol@mozilla.com
+    products:
+      - geckoview_streaming
+    record_in_processes:
+      - main
+    release_channel_collection: opt-out
+
 gfx:
   compositor:
     bug_numbers:
@@ -4074,38 +4133,6 @@ pdf.viewer:
       - 'main'
       - 'content'
 
-# The following section contains scalars for the Unknown Content Type (Helper App) dialog.
-unknowncontenttype:
-  pdf_action:
-    bug_numbers:
-      - 773942
-    description: >
-      A counter incremented every time a user uses the Unknown Content Type dialog
-      for PDF files, with counts grouped by action chosen (see keys). Some external
-      applications that have very high adoption are counted specifically.
-      Note: 'OPEN_WITH_SYSTEM_DEFAULT' may eventually resolve to one of Acrobat, Foxit, MsEdge, Chromium, etc.
-    keyed: true
-    keys:
-      - 'OPEN_WITH_INTERNAL_HANDLER'
-      - 'OPEN_WITH_SYSTEM_DEFAULT'
-      - 'OPEN_WITH_ACROBAT'
-      - 'OPEN_WITH_FOXIT'
-      - 'OPEN_WITH_MSEDGE'
-      - 'OPEN_WITH_CHROMIUM'
-      - 'OPEN_WITH_PREVIEW'
-      - 'OPEN_WITH_OTHER'
-      - 'SAVE'
-      - 'CANCEL'
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - jaws@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
 # The following section contains scalars for printing.
 printing:
   trigger:
@@ -4424,7 +4451,7 @@ timestamps:
     expires: never
     kind: uint
     notification_emails:
-      - hkirschner@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4441,7 +4468,7 @@ timestamps:
     expires: never
     kind: uint
     notification_emails:
-      - hkirschner@mozilla.com
+      - perf-telemetry-alerts@mozilla.com
       - gfx-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -4459,6 +4486,7 @@ timestamps:
     expires: never
     kind: uint
     notification_emails:
+      - perf-telemetry-alerts@mozilla.com
       - mconley@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -4478,6 +4506,7 @@ browser.timings:
     expires: never
     kind: uint
     notification_emails:
+      - perf-telemetry-alerts@mozilla.com
       - florian@mozilla.com
     release_channel_collection: opt-in
     products:
@@ -4825,6 +4854,314 @@ browser.search:
       - 'main'
     release_channel_collection: opt-out
 
+browser.search.withads:
+  urlbar:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the urlbar. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  urlbar_searchmode:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the urlbar in search mode. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  searchbar:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the search bar. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  about_home:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from about:home. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  about_newtab:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from about:newtab. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  contextmenu:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the context menu. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  webextension:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from a webextension. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  system:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the system, e.g. command line. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  unknown:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from a place not categorized by the other scalars. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+browser.search.adclicks:
+  urlbar:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the urlbar. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  urlbar_searchmode:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the urlbar in search mode. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  searchbar:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the search bar. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  about_home:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from about:home. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  about_newtab:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from about:newtab. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  contextmenu:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the context menu. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  webextension:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from a webextension. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  system:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from the system, e.g. command line. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+  unknown:
+    bug_numbers:
+      - 1664847
+    description: >
+      Records counts of SERP pages with adverts displayed where the search was started from a place not categorized by the other scalars. The key format is ‘<provider>:<tagged|organic>’
+    expires: never
+    keyed: true
+    kind: uint
+    notification_emails:
+      - fx-search@mozilla.com
+      - teon@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
 browser.searchinit:
   init_result_status_code:
     bug_numbers:
@@ -4863,22 +5200,38 @@ browser.searchinit:
     release_channel_collection: opt-out
 
 encoding:
-  override_used:
+  override_used_manual:
     bug_numbers:
       - 840476
       - 1513473
       - 1554592
       - 1603047
+      - 1648464
     description: >-
-      Whether the Text Encoding menu was used to override an encoding in this subsession.
-    expires: "79"
+      Whether an item other than Automatic in the Text Encoding menu was used to override an encoding in this subsession.
+    expires: "91"
     kind: boolean
     notification_emails:
       - hsivonen@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
-      - 'fennec'
+    record_in_processes:
+      - main
+      - content
+
+  override_used_automatic:
+    bug_numbers:
+      - 1648464
+    description: >-
+      Whether the item Automatic in the Text Encoding menu was used to override an encoding in this subsession.
+    expires: "91"
+    kind: boolean
+    notification_emails:
+      - hsivonen@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
     record_in_processes:
       - main
       - content

@@ -1152,7 +1152,11 @@ class PresShell final : public nsStubDocumentObserver,
                              FlushType aFlushType);
 
   bool AddPostRefreshObserver(nsAPostRefreshObserver* aObserver);
+  bool AddPostRefreshObserver(mozilla::OneShotPostRefreshObserver* aObserver) =
+      delete;
   bool RemovePostRefreshObserver(nsAPostRefreshObserver* aObserver);
+  bool RemovePostRefreshObserver(
+      mozilla::OneShotPostRefreshObserver* aObserver) = delete;
 
   // Represents an update to the visual scroll offset that will be sent to APZ.
   // The update type is used to determine priority compared to other scroll
@@ -1319,8 +1323,10 @@ class PresShell final : public nsStubDocumentObserver,
   NS_IMETHOD PhysicalMove(int16_t aDirection, int16_t aAmount,
                           bool aExtend) override;
   NS_IMETHOD CharacterMove(bool aForward, bool aExtend) override;
-  NS_IMETHOD WordMove(bool aForward, bool aExtend) override;
-  NS_IMETHOD LineMove(bool aForward, bool aExtend) override;
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD WordMove(bool aForward,
+                                                  bool aExtend) override;
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD LineMove(bool aForward,
+                                                  bool aExtend) override;
   NS_IMETHOD IntraLineMove(bool aForward, bool aExtend) override;
   MOZ_CAN_RUN_SCRIPT
   NS_IMETHOD PageMove(bool aForward, bool aExtend) override;
@@ -1328,7 +1334,8 @@ class PresShell final : public nsStubDocumentObserver,
   NS_IMETHOD ScrollLine(bool aForward) override;
   NS_IMETHOD ScrollCharacter(bool aRight) override;
   NS_IMETHOD CompleteScroll(bool aForward) override;
-  NS_IMETHOD CompleteMove(bool aForward, bool aExtend) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD CompleteMove(bool aForward,
+                                             bool aExtend) override;
   NS_IMETHOD CheckVisibility(nsINode* node, int16_t startOffset,
                              int16_t EndOffset, bool* _retval) override;
   nsresult CheckVisibilityContent(nsIContent* aNode, int16_t aStartOffset,
@@ -1881,7 +1888,7 @@ class PresShell final : public nsStubDocumentObserver,
   // Utility method to restore the root scrollframe state
   void RestoreRootScrollPosition();
 
-  void MaybeReleaseCapturingContent();
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void MaybeReleaseCapturingContent();
 
   class DelayedEvent {
    public:

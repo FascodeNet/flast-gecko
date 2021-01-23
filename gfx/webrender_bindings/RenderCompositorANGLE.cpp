@@ -264,7 +264,7 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
     return false;
   }
 
-  if (!mSwapChain && dxgiFactory2 && IsWin8OrLater()) {
+  if (!mSwapChain && dxgiFactory2) {
     RefPtr<IDXGISwapChain1> swapChain1;
     bool useTripleBuffering = false;
 
@@ -300,10 +300,13 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
       mSwapChain1 = swapChain1;
       mUseTripleBuffering = useTripleBuffering;
     } else if (gfx::gfxVars::UseWebRenderFlipSequentialWin()) {
-      MOZ_ASSERT(GetCompositorHwnd());
-      aError.Assign(
-          nsPrintfCString("RcANGLE(swap chain hwnd create failed %x)", hr));
-      return false;
+      gfxCriticalNoteOnce << "FLIP_SEQUENTIAL is not supported. Fallback";
+
+      if (mWidget->AsWindows()->GetCompositorHwnd()) {
+        // Destroy compositor window.
+        mWidget->AsWindows()->DestroyCompositorWindow();
+        hwnd = mWidget->AsWindows()->GetHwnd();
+      }
     }
   }
 
@@ -528,30 +531,41 @@ RenderedFrameId RenderCompositorANGLE::EndFrame(
       mFullRender = false;
       // If there is no diry rect, we skip SwapChain present.
       if (!aDirtyRects.IsEmpty()) {
+        int rectsCount = 0;
         StackArray<RECT, 1> rects(aDirtyRects.Length());
+
         for (size_t i = 0; i < aDirtyRects.Length(); ++i) {
           const DeviceIntRect& rect = aDirtyRects[i];
           // Clip rect to bufferSize
-          rects[i].left =
-              std::max(0, std::min(rect.origin.x, bufferSize.width));
-          rects[i].top =
-              std::max(0, std::min(rect.origin.y, bufferSize.height));
-          rects[i].right = std::max(
+          int left = std::max(0, std::min(rect.origin.x, bufferSize.width));
+          int top = std::max(0, std::min(rect.origin.y, bufferSize.height));
+          int right = std::max(
               0, std::min(rect.origin.x + rect.size.width, bufferSize.width));
-          rects[i].bottom = std::max(
+          int bottom = std::max(
               0, std::min(rect.origin.y + rect.size.height, bufferSize.height));
+
+          // When rect is not empty, the rect could be passed to Present1().
+          if (left < right && top < bottom) {
+            rects[rectsCount].left = left;
+            rects[rectsCount].top = top;
+            rects[rectsCount].right = right;
+            rects[rectsCount].bottom = bottom;
+            rectsCount++;
+          }
         }
 
-        DXGI_PRESENT_PARAMETERS params;
-        PodZero(&params);
-        params.DirtyRectsCount = aDirtyRects.Length();
-        params.pDirtyRects = rects.data();
+        if (rectsCount > 0) {
+          DXGI_PRESENT_PARAMETERS params;
+          PodZero(&params);
+          params.DirtyRectsCount = rectsCount;
+          params.pDirtyRects = rects.data();
 
-        HRESULT hr;
-        hr = mSwapChain1->Present1(0, 0, &params);
-        if (FAILED(hr) && hr != DXGI_STATUS_OCCLUDED) {
-          gfxCriticalNote << "Present1 failed: " << gfx::hexa(hr);
-          mFullRender = true;
+          HRESULT hr;
+          hr = mSwapChain1->Present1(0, 0, &params);
+          if (FAILED(hr) && hr != DXGI_STATUS_OCCLUDED) {
+            gfxCriticalNote << "Present1 failed: " << gfx::hexa(hr);
+            mFullRender = true;
+          }
         }
       }
     } else {

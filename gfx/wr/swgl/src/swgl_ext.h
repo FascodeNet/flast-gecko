@@ -213,7 +213,8 @@ static ALWAYS_INLINE T swgl_linearQuantizeStep(S s, T p) {
                           __VA_ARGS__)
 
 // Convert and pack planar YUV samples to RGB output using a color space
-static ALWAYS_INLINE PackedRGBA8 convertYUV(int colorSpace, U16 y, U16 u, U16 v) {
+static ALWAYS_INLINE PackedRGBA8 convertYUV(int colorSpace, U16 y, U16 u,
+                                            U16 v) {
   auto yy = V8<int16_t>(zip(y, y));
   auto uv = V8<int16_t>(zip(u, v));
   switch (colorSpace) {
@@ -408,7 +409,7 @@ static void blendTextureNearestRGBA8(S sampler, const ivec2_scalar& i, int span,
   }
   // Here we only deal with valid samples within the sample bounds. No clamping
   // should occur here within these inner loops.
-  int n = min(maxX + 1 - curX, span);
+  int n = clamp(maxX + 1 - curX, 0, span);
   span -= n;
   // Try to process as many chunks as possible with full loads and stores.
   if (blend_key) {

@@ -121,8 +121,8 @@ const PREF_PDFJS_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
 /**
  * Fission-compatible JSProcess implementations.
  * Each actor options object takes the form of a ProcessActorOptions dictionary.
- * Detailed documentation of these options is in dom/docs/Fission.rst,
- * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jsprocessactor
+ * Detailed documentation of these options is in dom/docs/ipc/jsactors.rst,
+ * available at https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html
  */
 let JSPROCESSACTORS = {
   // Miscellaneous stuff that needs to be initialized per process.
@@ -172,8 +172,8 @@ let JSPROCESSACTORS = {
 
 /**
  * Fission-compatible JSWindowActor implementations.
- * Detailed documentation of these is in dom/docs/Fission.rst,
- * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jswindowactor
+ * Detailed documentation of these options is in dom/docs/ipc/jsactors.rst,
+ * available at https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html
  */
 let JSWINDOWACTORS = {
   AboutLogins: {
@@ -403,17 +403,18 @@ let JSWINDOWACTORS = {
     },
     child: {
       moduleURI: "resource:///actors/ContentSearchChild.jsm",
-      matches: [
-        "about:home",
-        "about:newtab",
-        "about:welcome",
-        "about:privatebrowsing",
-        "chrome://mochitests/content/*",
-      ],
       events: {
         ContentSearchClient: { capture: true, wantUntrusted: true },
       },
     },
+    matches: [
+      "about:home",
+      "about:welcome",
+      "about:newtab",
+      "about:privatebrowsing",
+      "about:test-about-content-search-ui",
+    ],
+    remoteTypes: ["privilegedabout"],
   },
 
   ContextMenu: {
@@ -686,17 +687,6 @@ let JSWINDOWACTORS = {
   SwitchDocumentDirection: {
     child: {
       moduleURI: "resource:///actors/SwitchDocumentDirectionChild.jsm",
-    },
-
-    allFrames: true,
-  },
-
-  SiteSpecificBrowser: {
-    parent: {
-      moduleURI: "resource:///actors/SiteSpecificBrowserParent.jsm",
-    },
-    child: {
-      moduleURI: "resource:///actors/SiteSpecificBrowserChild.jsm",
     },
 
     allFrames: true,
@@ -1135,7 +1125,11 @@ BrowserGlue.prototype = {
           Cu.reportError(ex);
         }
         let win = BrowserWindowTracker.getTopWindow();
-        BrowserSearchTelemetry.recordSearch(win.gBrowser, engine, "urlbar");
+        BrowserSearchTelemetry.recordSearch(
+          win.gBrowser.selectedBrowser,
+          engine,
+          "urlbar"
+        );
         break;
       case "browser-search-engine-modified":
         // Ensure we cleanup the hiddenOneOffs pref when removing
@@ -2421,6 +2415,14 @@ BrowserGlue.prototype = {
         task: async () => {
           await ContextualIdentityService.load();
           Discovery.update();
+        },
+      },
+
+      {
+        task: () => {
+          // We postponed loading bookmarks toolbar content until startup
+          // has finished, so we can start loading it now:
+          PlacesUIUtils.unblockToolbars();
         },
       },
 

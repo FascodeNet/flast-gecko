@@ -7,18 +7,13 @@
 #ifndef mozilla_glean_GleanMemoryDistribution_h
 #define mozilla_glean_GleanMemoryDistribution_h
 
+#include "mozilla/glean/bindings/DistributionData.h"
 #include "mozilla/glean/fog_ffi_generated.h"
 #include "mozilla/Maybe.h"
-#include "nsDataHashtable.h"
 #include "nsIGleanMetrics.h"
 #include "nsTArray.h"
 
 namespace mozilla::glean {
-
-struct DistributionData final {
-  uint64_t sum;
-  nsDataHashtable<nsUint64HashKey, uint64_t> values;
-};
 
 namespace impl {
 

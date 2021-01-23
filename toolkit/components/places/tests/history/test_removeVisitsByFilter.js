@@ -24,7 +24,7 @@ add_task(async function test_removeVisitsByFilter() {
 
     let bookmarkIndices = new Set(options.bookmarks);
     let visits = [];
-    let frecencyChangePromises = new Map();
+    let rankingChangePromises = [];
     let uriDeletePromises = new Map();
     let getURL = options.url
       ? i =>
@@ -64,7 +64,6 @@ add_task(async function test_removeVisitsByFilter() {
           // `true` if there is a bookmark for this URI, i.e. of the page
           // should not be entirely removed.
           hasBookmark,
-          onFrecencyChanged: null,
           onDeleteURI: null,
         },
       };
@@ -135,10 +134,7 @@ add_task(async function test_removeVisitsByFilter() {
         (options.url &&
           remainingItems.some(v => v.uri.spec == removedItems[i].uri.spec))
       ) {
-        frecencyChangePromises.set(
-          removedItems[i].uri.spec,
-          PromiseUtils.defer()
-        );
+        rankingChangePromises.push(PromiseUtils.defer());
       } else if (!options.url || i == 0) {
         uriDeletePromises.set(removedItems[i].uri.spec, PromiseUtils.defer());
       }
@@ -148,18 +144,6 @@ add_task(async function test_removeVisitsByFilter() {
       deferred: PromiseUtils.defer(),
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onFrecencyChanged(aURI) {
-        info("onFrecencyChanged " + aURI.spec);
-        let deferred = frecencyChangePromises.get(aURI.spec);
-        Assert.ok(!!deferred, "Observing onFrecencyChanged");
-        deferred.resolve();
-      },
-      onManyFrecenciesChanged() {
-        info("Many frecencies changed");
-        for (let [, deferred] of frecencyChangePromises) {
-          deferred.resolve();
-        }
-      },
       onDeleteURI(aURI) {
         info("onDeleteURI " + aURI.spec);
         let deferred = uriDeletePromises.get(aURI.spec);
@@ -186,11 +170,18 @@ add_task(async function test_removeVisitsByFilter() {
             this.deferred.reject("Unexpected history-cleared event happens");
             break;
           }
+          case "pages-rank-changed": {
+            info("pages-rank-changed");
+            for (const deferred of rankingChangePromises) {
+              deferred.resolve();
+            }
+            break;
+          }
         }
       }
     };
     PlacesObservers.addListener(
-      ["page-title-changed", "history-cleared"],
+      ["page-title-changed", "history-cleared", "pages-rank-changed"],
       placesEventListener
     );
 
@@ -268,10 +259,10 @@ add_task(async function test_removeVisitsByFilter() {
     info("Checking URI delete promises.");
     await Promise.all(Array.from(uriDeletePromises.values()));
     info("Checking frecency change promises.");
-    await Promise.all(Array.from(frecencyChangePromises.values()));
+    await Promise.all(rankingChangePromises);
     PlacesUtils.history.removeObserver(observer);
     PlacesObservers.removeListener(
-      ["page-title-changed", "history-cleared"],
+      ["page-title-changed", "history-cleared", "pages-rank-changed"],
       placesEventListener
     );
   };

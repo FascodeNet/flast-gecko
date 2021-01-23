@@ -10,13 +10,13 @@
 
 #include "vm/JSFunction-inl.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Range.h"
 #include "mozilla/Utf8.h"
 
 #include <algorithm>
+#include <iterator>
 #include <string.h>
 
 #include "jsapi.h"
@@ -45,6 +45,7 @@
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
 #include "util/StringBuffer.h"
+#include "util/Text.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/BooleanObject.h"
@@ -74,7 +75,6 @@
 
 using namespace js;
 
-using mozilla::ArrayLength;
 using mozilla::CheckedInt;
 using mozilla::Maybe;
 using mozilla::Some;
@@ -764,7 +764,7 @@ bool JS::OrdinaryHasInstance(JSContext* cx, HandleObject objArg, HandleValue v,
 
 inline void JSFunction::trace(JSTracer* trc) {
   if (isExtended()) {
-    TraceRange(trc, ArrayLength(toExtended()->extendedSlots),
+    TraceRange(trc, std::size(toExtended()->extendedSlots),
                (GCPtrValue*)toExtended()->extendedSlots, "nativeReserved");
   }
 
@@ -1020,28 +1020,6 @@ JSString* fun_toStringHelper(JSContext* cx, HandleObject obj, bool isToSource) {
   }
 
   return FunctionToString(cx, obj.as<JSFunction>(), isToSource);
-}
-
-bool js::FunctionHasDefaultHasInstance(JSFunction* fun,
-                                       const WellKnownSymbols& symbols) {
-  jsid id = SYMBOL_TO_JSID(symbols.hasInstance);
-  Shape* shape = fun->lookupPure(id);
-  if (shape) {
-    if (!shape->isDataProperty()) {
-      return false;
-    }
-    const Value hasInstance = fun->as<NativeObject>().getSlot(shape->slot());
-    return IsNativeFunction(hasInstance, fun_symbolHasInstance);
-  }
-
-#ifdef DEBUG
-  // The proto must be Function.__proto__. It has an immutable @@hasInstance
-  // property. (Callers should check this first.)
-  Value funProto = fun->global().getPrototype(JSProto_Function);
-  MOZ_ASSERT(fun->staticPrototype() == &funProto.toObject());
-#endif
-
-  return true;
 }
 
 bool js::fun_toString(JSContext* cx, unsigned argc, Value* vp) {
@@ -1341,7 +1319,7 @@ JSLinearString* JSFunction::getBoundFunctionName(JSContext* cx,
 
   static constexpr char boundWithSpaceChars[] = "bound ";
   static constexpr size_t boundWithSpaceCharsLength =
-      ArrayLength(boundWithSpaceChars) - 1;  // No trailing '\0'.
+      js_strlen(boundWithSpaceChars);
   MOZ_ASSERT(
       StringEqualsAscii(cx->names().boundWithSpace, boundWithSpaceChars));
 
@@ -1568,11 +1546,11 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
     JS::CompileOptions options(cx);
     frontend::FillCompileOptionsForLazyFunction(options, lazy);
 
-    Rooted<frontend::CompilationInfo> compilationInfo(
-        cx, frontend::CompilationInfo(cx, options));
-    compilationInfo.get().input.initFromLazy(lazy);
+    Rooted<frontend::CompilationStencil> stencil(
+        cx, frontend::CompilationStencil(cx, options));
+    stencil.get().input.initFromLazy(lazy);
 
-    if (!frontend::CompileLazyFunctionToStencil(cx, compilationInfo.get(), lazy,
+    if (!frontend::CompileLazyFunctionToStencil(cx, stencil.get(), lazy,
                                                 units.get(), sourceLength)) {
       // The frontend shouldn't fail after linking the function and the
       // non-lazy script together.
@@ -1581,7 +1559,7 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
       return false;
     }
 
-    if (!frontend::InstantiateStencilsForDelazify(cx, compilationInfo.get())) {
+    if (!frontend::InstantiateStencilsForDelazify(cx, stencil.get())) {
       // The frontend shouldn't fail after linking the function and the
       // non-lazy script together.
       MOZ_ASSERT(fun->baseScript() == lazy);
@@ -1594,7 +1572,7 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
       //       format to use for incremental encoding.
       bool useStencilXDR = !js::UseOffThreadParseGlobal();
       if (useStencilXDR) {
-        if (!ss->xdrEncodeFunctionStencil(cx, compilationInfo.get().stencil)) {
+        if (!ss->xdrEncodeFunctionStencil(cx, stencil.get())) {
           return false;
         }
       } else {
@@ -2052,6 +2030,8 @@ JSFunction* js::NewFunctionWithProto(
              allocKind == gc::AllocKind::FUNCTION_EXTENDED);
   MOZ_ASSERT_IF(native, !enclosingEnv);
   MOZ_ASSERT(NewFunctionEnvironmentIsWellFormed(cx, enclosingEnv));
+
+  // NOTE: Keep this in sync with `CreateFunctionFast` in Stencil.cpp
 
   JSFunction* fun =
       NewObjectWithClassProto<JSFunction>(cx, proto, allocKind, newKind);

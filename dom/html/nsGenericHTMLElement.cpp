@@ -971,17 +971,6 @@ nsIFormControlFrame* nsGenericHTMLElement::GetFormControlFrame(
   return nullptr;
 }
 
-nsPresContext* nsGenericHTMLElement::GetPresContext(PresContextFor aFor) {
-  // Get the document
-  Document* doc =
-      (aFor == eForComposedDoc) ? GetComposedDoc() : GetUncomposedDoc();
-  if (doc) {
-    return doc->GetPresContext();
-  }
-
-  return nullptr;
-}
-
 static const nsAttrValue::EnumTable kDivAlignTable[] = {
     {"left", StyleTextAlign::MozLeft},
     {"right", StyleTextAlign::MozRight},
@@ -2071,6 +2060,7 @@ bool nsGenericHTMLFormElement::IsElementDisabledForEvents(WidgetEvent* aEvent,
     case eAnimationEnd:
     case eAnimationIteration:
     case eAnimationCancel:
+    case eFormChange:
     case eMouseMove:
     case eMouseOver:
     case eMouseOut:
@@ -2091,6 +2081,10 @@ bool nsGenericHTMLFormElement::IsElementDisabledForEvents(WidgetEvent* aEvent,
       return false;
     default:
       break;
+  }
+
+  if (aEvent->mSpecifiedEventType == nsGkAtoms::oninput) {
+    return false;
   }
 
   // FIXME(emilio): This poking at the style of the frame is slightly bogus

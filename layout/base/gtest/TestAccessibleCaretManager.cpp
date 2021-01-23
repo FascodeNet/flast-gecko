@@ -60,7 +60,7 @@ class AccessibleCaretManagerTester : public ::testing::Test {
   class MockAccessibleCaretManager : public AccessibleCaretManager {
    public:
     using CaretMode = AccessibleCaretManager::CaretMode;
-    using AccessibleCaretManager::HideCarets;
+    using AccessibleCaretManager::HideCaretsAndDispatchCaretStateChangedEvent;
     using AccessibleCaretManager::UpdateCarets;
 
     MockAccessibleCaretManager() : AccessibleCaretManager(nullptr) {
@@ -89,8 +89,8 @@ class AccessibleCaretManagerTester : public ::testing::Test {
 
     bool UpdateCaretsForOverlappingTilt() override { return true; }
 
-    void UpdateCaretsForAlwaysTilt(nsIFrame* aStartFrame,
-                                   nsIFrame* aEndFrame) override {
+    void UpdateCaretsForAlwaysTilt(const nsIFrame* aStartFrame,
+                                   const nsIFrame* aEndFrame) override {
       if (mFirstCaret->IsVisuallyVisible()) {
         mFirstCaret->SetAppearance(Appearance::Left);
       }
@@ -99,7 +99,7 @@ class AccessibleCaretManagerTester : public ::testing::Test {
       }
     }
 
-    bool IsTerminated() const override { return false; }
+    Terminated IsTerminated() const override { return Terminated::No; }
     bool IsScrollStarted() const { return mIsScrollStarted; }
 
     MOCK_CONST_METHOD0(GetCaretMode, CaretMode());
@@ -650,7 +650,7 @@ MOZ_CAN_RUN_SCRIPT_FOR_DEFINITION {
   EXPECT_EQ(FirstCaretAppearance(), Appearance::Normal);
   check.Call("updatecarets");
 
-  mManager.HideCarets();
+  mManager.HideCaretsAndDispatchCaretStateChangedEvent();
   EXPECT_EQ(FirstCaretAppearance(), Appearance::None);
   check.Call("hidecarets");
 

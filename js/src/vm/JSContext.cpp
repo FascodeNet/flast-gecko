@@ -10,7 +10,6 @@
 
 #include "vm/JSContext-inl.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
@@ -50,6 +49,7 @@
 #include "util/DifferentialTesting.h"
 #include "util/DoubleToString.h"
 #include "util/NativeStack.h"
+#include "util/Text.h"
 #include "util/Windows.h"
 #include "vm/BytecodeUtil.h"  // JSDVG_IGNORE_STACK
 #include "vm/ErrorObject.h"
@@ -303,6 +303,9 @@ void js::ReportOverRecursed(JSContext* maybecx, unsigned errorNumber) {
     } else {
       maybecx->addPendingOverRecursed();
     }
+#ifdef DEBUG
+    maybecx->hadOverRecursed_ = true;
+#endif
   }
 }
 
@@ -373,7 +376,7 @@ static void PrintErrorLine(FILE* file, const char* prefix,
     } else {
       static const char unavailableStr[] = "<context unavailable>";
       utf8buf = unavailableStr;
-      n = mozilla::ArrayLength(unavailableStr) - 1;
+      n = js_strlen(unavailableStr);
     }
 
     fputs(":\n", file);
@@ -922,6 +925,9 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
       unwrappedException_(this),
       unwrappedExceptionStack_(this),
       overRecursed_(this, false),
+#ifdef DEBUG
+      hadOverRecursed_(this, false),
+#endif
       propagatingForcedReturn_(this, false),
       reportGranularity(this, JS_DEFAULT_JITREPORT_GRANULARITY),
       resolvingList(this, nullptr),

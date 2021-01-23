@@ -2526,8 +2526,10 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
   // out of process iframes also get to skip this check.
   if (!OwnerIsMozBrowserFrame() && !XRE_IsContentProcess()) {
     if (parentDocShell->ItemType() != nsIDocShellTreeItem::typeChrome) {
-      // Allow two exceptions to this rule :
-      // - about:addon so it can load remote extension options pages
+      // Allow three exceptions to this rule :
+      // - about:addons so it can load remote extension options pages
+      // - about:preferences (in Thunderbird only) so it can load remote
+      //     extension options pages for FileLink providers
       // - DevTools webext panels if DevTools is loaded in a content frame
       //
       // Note that the new frame's message manager will not be a child of the
@@ -2547,6 +2549,9 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
       if (!(specIgnoringRef.EqualsLiteral("about:addons") ||
             specIgnoringRef.EqualsLiteral(
                 "chrome://mozapps/content/extensions/aboutaddons.html") ||
+#ifdef MOZ_THUNDERBIRD
+            specIgnoringRef.EqualsLiteral("about:preferences") ||
+#endif
             specIgnoringRef.EqualsLiteral(
                 "chrome://browser/content/webext-panels.xhtml"))) {
         return false;
@@ -2667,7 +2672,7 @@ bool nsFrameLoader::TryRemoteBrowser() {
   // Check if we should report a browser-crashed error because the browser
   // failed to start.
   if (XRE_IsParentProcess() && mOwnerContent && mOwnerContent->IsXULElement()) {
-    MaybeNotifyCrashed(nullptr, nullptr);
+    MaybeNotifyCrashed(nullptr, ContentParentId(), nullptr);
   }
 
   return false;
@@ -3679,6 +3684,7 @@ void nsFrameLoader::SetWillChangeProcess() {
 }
 
 void nsFrameLoader::MaybeNotifyCrashed(BrowsingContext* aBrowsingContext,
+                                       ContentParentId aChildID,
                                        mozilla::ipc::MessageChannel* aChannel) {
   if (mTabProcessCrashFired) {
     return;
@@ -3726,6 +3732,7 @@ void nsFrameLoader::MaybeNotifyCrashed(BrowsingContext* aBrowsingContext,
   if (aBrowsingContext) {
     init.mBrowsingContextId = aBrowsingContext->Id();
     init.mIsTopFrame = aBrowsingContext->IsTop();
+    init.mChildID = aChildID;
   }
 
   RefPtr<FrameCrashedEvent> event = FrameCrashedEvent::Constructor(

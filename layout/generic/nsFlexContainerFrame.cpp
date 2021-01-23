@@ -1497,7 +1497,7 @@ static nscoord PartiallyResolveAutoMinSize(
       // responsible for computing the min-content inline-size and min()'ing it
       // with the value we return.
       specifiedSizeSuggestion = aFlexItem.Frame()->ComputeISizeValue(
-          percentBasis.ISize(cbWM), boxSizingAdjust.ISize(cbWM),
+          cbWM, percentBasis, boxSizingAdjust,
           mainStyleSize.AsLengthPercentage());
     }
   } else {
@@ -4452,29 +4452,25 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
     contentBoxCrossSize = data->mContentBoxCrossSize;
   }
 
-  // We assume we are the last fragment by using
-  // PreReflowBlockLevelLogicalSkipSides(), and skip block-end border and
-  // padding if needed.
-  LogicalMargin borderPadding =
-      aReflowInput.ComputedLogicalBorderPadding(wm).ApplySkipSides(
-          PreReflowBlockLevelLogicalSkipSides());
-
-  const LogicalSize availableSizeForItems =
-      ComputeAvailableSizeForItems(aReflowInput, borderPadding);
-
   const LogicalSize contentBoxSize =
       axisTracker.LogicalSizeFromFlexRelativeSizes(contentBoxMainSize,
                                                    contentBoxCrossSize);
   const nscoord effectiveContentBSize =
       contentBoxSize.BSize(wm) - consumedBSize;
-
-  // Check if we may need a next-in-flow. If so, we'll need to skip block-end
-  // border and padding.
-  const bool mayNeedNextInFlow =
-      effectiveContentBSize > availableSizeForItems.BSize(wm);
-  if (mayNeedNextInFlow) {
-    if (aReflowInput.mStyleBorder->mBoxDecorationBreak ==
-        StyleBoxDecorationBreak::Slice) {
+  LogicalMargin borderPadding = aReflowInput.ComputedLogicalBorderPadding(wm);
+  bool mayNeedNextInFlow = false;
+  if (MOZ_UNLIKELY(aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE)) {
+    // We assume we are the last fragment by using
+    // PreReflowBlockLevelLogicalSkipSides(), and skip block-end border and
+    // padding if needed.
+    borderPadding.ApplySkipSides(PreReflowBlockLevelLogicalSkipSides());
+    // Check if we may need a next-in-flow. If so, we'll need to skip block-end
+    // border and padding.
+    const LogicalSize availableSizeForItems =
+        ComputeAvailableSizeForItems(aReflowInput, borderPadding);
+    mayNeedNextInFlow = effectiveContentBSize > availableSizeForItems.BSize(wm);
+    if (mayNeedNextInFlow && aReflowInput.mStyleBorder->mBoxDecorationBreak ==
+                                 StyleBoxDecorationBreak::Slice) {
       borderPadding.BEnd(wm) = 0;
     }
   }
@@ -4509,6 +4505,8 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
     sumOfChildrenBlockSize = 0;
   }
 
+  const LogicalSize availableSizeForItems =
+      ComputeAvailableSizeForItems(aReflowInput, borderPadding);
   const auto [maxBlockEndEdgeOfChildren, areChildrenComplete] =
       ReflowChildren(aReflowInput, contentBoxMainSize, contentBoxCrossSize,
                      containerSize, availableSizeForItems, borderPadding,
@@ -5001,7 +4999,7 @@ void nsFlexContainerFrame::DoFlexLayout(
             childReflowInput.SetComputedISize(item.MainSize());
           } else {
             childReflowInput.SetComputedBSize(item.MainSize());
-            childReflowInput.mFlags.mBSizeIsSetByAspectRatio = false;
+            childReflowInput.mFlags.mIsBSizeSetByAspectRatio = false;
             if (item.TreatBSizeAsIndefinite()) {
               childReflowInput.mFlags.mTreatBSizeAsIndefinite = true;
             }
@@ -5440,7 +5438,7 @@ nsReflowStatus nsFlexContainerFrame::ReflowFlexItem(
     didOverrideComputedISize = true;
   } else {
     childReflowInput.SetComputedBSize(aItem.MainSize());
-    childReflowInput.mFlags.mBSizeIsSetByAspectRatio = false;
+    childReflowInput.mFlags.mIsBSizeSetByAspectRatio = false;
     didOverrideComputedBSize = true;
     if (aItem.TreatBSizeAsIndefinite()) {
       childReflowInput.mFlags.mTreatBSizeAsIndefinite = true;
@@ -5466,7 +5464,7 @@ nsReflowStatus nsFlexContainerFrame::ReflowFlexItem(
       // the block size would always be considered definite (or where its
       // definiteness would be irrelevant).
       childReflowInput.SetComputedBSize(aItem.CrossSize());
-      childReflowInput.mFlags.mBSizeIsSetByAspectRatio = false;
+      childReflowInput.mFlags.mIsBSizeSetByAspectRatio = false;
       didOverrideComputedBSize = true;
     }
   }

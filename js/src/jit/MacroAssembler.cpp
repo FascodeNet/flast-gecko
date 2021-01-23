@@ -2401,10 +2401,10 @@ void MacroAssembler::convertDoubleToInt(FloatRegister src, Register output,
 }
 
 void MacroAssembler::convertValueToInt(
-    ValueOperand value, MDefinition* maybeInput, Label* handleStringEntry,
-    Label* handleStringRejoin, Label* truncateDoubleSlow, Register stringReg,
-    FloatRegister temp, Register output, Label* fail,
-    IntConversionBehavior behavior, IntConversionInputKind conversion) {
+    ValueOperand value, Label* handleStringEntry, Label* handleStringRejoin,
+    Label* truncateDoubleSlow, Register stringReg, FloatRegister temp,
+    Register output, Label* fail, IntConversionBehavior behavior,
+    IntConversionInputKind conversion) {
   Label done, isInt32, isBool, isDouble, isNull, isString;
 
   bool handleStrings = (behavior == IntConversionBehavior::Truncate ||
@@ -2417,12 +2417,12 @@ void MacroAssembler::convertValueToInt(
     ScratchTagScope tag(*this, value);
     splitTagForTest(value, tag);
 
-    maybeBranchTestType(MIRType::Int32, maybeInput, tag, &isInt32);
+    branchTestInt32(Equal, tag, &isInt32);
     if (conversion == IntConversionInputKind::Any ||
         conversion == IntConversionInputKind::NumbersOrBoolsOnly) {
-      maybeBranchTestType(MIRType::Boolean, maybeInput, tag, &isBool);
+      branchTestBoolean(Equal, tag, &isBool);
     }
-    maybeBranchTestType(MIRType::Double, maybeInput, tag, &isDouble);
+    branchTestDouble(Equal, tag, &isDouble);
 
     if (conversion == IntConversionInputKind::Any) {
       // If we are not truncating, we fail for anything that's not
@@ -2436,9 +2436,9 @@ void MacroAssembler::convertValueToInt(
         case IntConversionBehavior::Truncate:
         case IntConversionBehavior::TruncateNoWrap:
         case IntConversionBehavior::ClampToUint8:
-          maybeBranchTestType(MIRType::Null, maybeInput, tag, &isNull);
+          branchTestNull(Equal, tag, &isNull);
           if (handleStrings) {
-            maybeBranchTestType(MIRType::String, maybeInput, tag, &isString);
+            branchTestString(Equal, tag, &isString);
           }
           branchTestUndefined(Assembler::NotEqual, tag, fail);
           break;
@@ -3503,40 +3503,6 @@ void MacroAssembler::branchIfObjectNotExtensible(Register obj, Register scratch,
                Imm32(js::BaseShape::NOT_EXTENSIBLE), label);
 }
 
-void MacroAssembler::maybeBranchTestType(MIRType type, MDefinition* maybeDef,
-                                         Register tag, Label* label) {
-  if (!maybeDef || maybeDef->mightBeType(type)) {
-    switch (type) {
-      case MIRType::Null:
-        branchTestNull(Equal, tag, label);
-        break;
-      case MIRType::Boolean:
-        branchTestBoolean(Equal, tag, label);
-        break;
-      case MIRType::Int32:
-        branchTestInt32(Equal, tag, label);
-        break;
-      case MIRType::Double:
-        branchTestDouble(Equal, tag, label);
-        break;
-      case MIRType::String:
-        branchTestString(Equal, tag, label);
-        break;
-      case MIRType::Symbol:
-        branchTestSymbol(Equal, tag, label);
-        break;
-      case MIRType::BigInt:
-        branchTestBigInt(Equal, tag, label);
-        break;
-      case MIRType::Object:
-        branchTestObject(Equal, tag, label);
-        break;
-      default:
-        MOZ_CRASH("Unsupported type");
-    }
-  }
-}
-
 void MacroAssembler::wasmTrap(wasm::Trap trap,
                               wasm::BytecodeOffset bytecodeOffset) {
   uint32_t trapOffset = wasmTrapInstruction().offset();
@@ -3797,13 +3763,13 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
   // If the GC thing is in the nursery, we don't need to barrier it.
   if (type == MIRType::Value || type == MIRType::Object ||
       type == MIRType::String) {
-    branch32(Assembler::Equal, Address(temp2, gc::ChunkLocationOffset),
-             Imm32(int32_t(gc::ChunkLocation::Nursery)), noBarrier);
+    branchPtr(Assembler::NotEqual, Address(temp2, gc::ChunkStoreBufferOffset),
+              ImmWord(0), noBarrier);
   } else {
 #ifdef DEBUG
     Label isTenured;
-    branch32(Assembler::NotEqual, Address(temp2, gc::ChunkLocationOffset),
-             Imm32(int32_t(gc::ChunkLocation::Nursery)), &isTenured);
+    branchPtr(Assembler::Equal, Address(temp2, gc::ChunkStoreBufferOffset),
+              ImmWord(0), &isTenured);
     assumeUnreachable("JIT pre-barrier: unexpected nursery pointer");
     bind(&isTenured);
 #endif
@@ -3835,26 +3801,32 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
   andPtr(Imm32(gc::ChunkMask), temp1);
   rshiftPtr(Imm32(3), temp1);
 
-  static const size_t nbits = sizeof(uintptr_t) * CHAR_BIT;
-  static_assert(nbits == JS_BITS_PER_WORD, "Calculation below relies on this");
+  static_assert(gc::MarkBitmapWordBits == JS_BITS_PER_WORD,
+                "Calculation below relies on this");
 
   // Load the bitmap word in temp2.
   //
-  // word = chunk.bitmap[bit / nbits];
+  // word = chunk.bitmap[bit / MarkBitmapWordBits];
+
+  // Fold the adjustment for the fact that arenas don't start at the beginning
+  // of the chunk into the offset to the chunk bitmap.
+  const size_t firstArenaAdjustment = gc::FirstArenaAdjustmentBits / CHAR_BIT;
+  const intptr_t offset =
+      intptr_t(gc::ChunkMarkBitmapOffset) - intptr_t(firstArenaAdjustment);
+
   movePtr(temp1, temp3);
 #if JS_BITS_PER_WORD == 64
   rshiftPtr(Imm32(6), temp1);
-  loadPtr(BaseIndex(temp2, temp1, TimesEight, gc::ChunkMarkBitmapOffset),
-          temp2);
+  loadPtr(BaseIndex(temp2, temp1, TimesEight, offset), temp2);
 #else
   rshiftPtr(Imm32(5), temp1);
-  loadPtr(BaseIndex(temp2, temp1, TimesFour, gc::ChunkMarkBitmapOffset), temp2);
+  loadPtr(BaseIndex(temp2, temp1, TimesFour, offset), temp2);
 #endif
 
   // Load the mask in temp1.
   //
-  // mask = uintptr_t(1) << (bit % nbits);
-  andPtr(Imm32(nbits - 1), temp3);
+  // mask = uintptr_t(1) << (bit % MarkBitmapWordBits);
+  andPtr(Imm32(gc::MarkBitmapWordBits - 1), temp3);
   move32(Imm32(1), temp1);
 #ifdef JS_CODEGEN_X64
   MOZ_ASSERT(temp3 == rcx);
@@ -3903,8 +3875,8 @@ void MacroAssembler::atomicIsLockFreeJS(Register value, Register output) {
 // ========================================================================
 // Spectre Mitigations.
 
-void MacroAssembler::spectreMaskIndex(Register index, Register length,
-                                      Register output) {
+void MacroAssembler::spectreMaskIndex32(Register index, Register length,
+                                        Register output) {
   MOZ_ASSERT(JitOptions.spectreIndexMasking);
   MOZ_ASSERT(length != output);
   MOZ_ASSERT(index != output);
@@ -3913,8 +3885,8 @@ void MacroAssembler::spectreMaskIndex(Register index, Register length,
   cmp32Move32(Assembler::Below, index, length, index, output);
 }
 
-void MacroAssembler::spectreMaskIndex(Register index, const Address& length,
-                                      Register output) {
+void MacroAssembler::spectreMaskIndex32(Register index, const Address& length,
+                                        Register output) {
   MOZ_ASSERT(JitOptions.spectreIndexMasking);
   MOZ_ASSERT(index != length.base);
   MOZ_ASSERT(length.base != output);
@@ -3922,6 +3894,27 @@ void MacroAssembler::spectreMaskIndex(Register index, const Address& length,
 
   move32(Imm32(0), output);
   cmp32Move32(Assembler::Below, index, length, index, output);
+}
+
+void MacroAssembler::spectreMaskIndexPtr(Register index, Register length,
+                                         Register output) {
+  MOZ_ASSERT(JitOptions.spectreIndexMasking);
+  MOZ_ASSERT(length != output);
+  MOZ_ASSERT(index != output);
+
+  movePtr(ImmWord(0), output);
+  cmpPtrMovePtr(Assembler::Below, index, length, index, output);
+}
+
+void MacroAssembler::spectreMaskIndexPtr(Register index, const Address& length,
+                                         Register output) {
+  MOZ_ASSERT(JitOptions.spectreIndexMasking);
+  MOZ_ASSERT(index != length.base);
+  MOZ_ASSERT(length.base != output);
+  MOZ_ASSERT(index != output);
+
+  movePtr(ImmWord(0), output);
+  cmpPtrMovePtr(Assembler::Below, index, length, index, output);
 }
 
 void MacroAssembler::boundsCheck32PowerOfTwo(Register index, uint32_t length,

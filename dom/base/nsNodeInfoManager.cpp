@@ -362,6 +362,8 @@ static bool IsSystemOrAddonOrAboutPrincipal(nsIPrincipal* aPrincipal) {
 }
 
 bool nsNodeInfoManager::InternalSVGEnabled() {
+  MOZ_ASSERT(!mSVGEnabled, "Caller should use the cached mSVGEnabled!");
+
   // If the svg.disabled pref. is true, convert all SVG nodes into
   // disabled SVG nodes by swapping the namespace.
   nsNameSpaceManager* nsmgr = nsNameSpaceManager::GetInstance();
@@ -386,9 +388,9 @@ bool nsNodeInfoManager::InternalSVGEnabled() {
       (SVGEnabled || IsSystemOrAddonOrAboutPrincipal(mPrincipal) ||
        (loadInfo &&
         (loadInfo->GetExternalContentPolicyType() ==
-             nsIContentPolicy::TYPE_IMAGE ||
+             ExtContentPolicy::TYPE_IMAGE ||
          loadInfo->GetExternalContentPolicyType() ==
-             nsIContentPolicy::TYPE_OTHER) &&
+             ExtContentPolicy::TYPE_OTHER) &&
         (IsSystemOrAddonOrAboutPrincipal(loadInfo->GetLoadingPrincipal()) ||
          IsSystemOrAddonOrAboutPrincipal(loadInfo->TriggeringPrincipal()))));
   mSVGEnabled = Some(conclusion);
@@ -396,6 +398,8 @@ bool nsNodeInfoManager::InternalSVGEnabled() {
 }
 
 bool nsNodeInfoManager::InternalMathMLEnabled() {
+  MOZ_ASSERT(!mMathMLEnabled, "Caller should use the cached mMathMLEnabled!");
+
   // If the mathml.disabled pref. is true, convert all MathML nodes into
   // disabled MathML nodes by swapping the namespace.
   nsNameSpaceManager* nsmgr = nsNameSpaceManager::GetInstance();

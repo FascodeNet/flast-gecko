@@ -742,7 +742,8 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
 
     // If this was a crash, tell our nsFrameLoader to fire crash events.
     if (why == AbnormalShutdown) {
-      frameLoader->MaybeNotifyCrashed(mBrowsingContext, GetIPCChannel());
+      frameLoader->MaybeNotifyCrashed(mBrowsingContext, Manager()->ChildID(),
+                                      GetIPCChannel());
 
       auto* bridge = GetBrowserBridgeParent();
       if (bridge && bridge->CanSend() && !mBrowsingContext->IsDiscarded()) {
@@ -2689,7 +2690,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
 
   if (aWebProgressData && aWebProgressData->isTopLevel() &&
       aLocationChangeData.isSome()) {
-    nsCOMPtr<nsIPrincipal> contentBlockingAllowListPrincipal;
     Unused << browser->SetIsNavigating(aLocationChangeData->isNavigating());
     Unused << browser->UpdateForLocationChange(
         aLocation, aLocationChangeData->charset(),

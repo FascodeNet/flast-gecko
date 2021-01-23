@@ -128,12 +128,10 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
     mode = "Compiling";
   }
   JitSpew(JitSpew_IonScripts,
-          "Warp %s script %s:%u:%u (%p) (warmup-counter=%" PRIu32
-          ", level=%s%s%s)",
+          "Warp %s script %s:%u:%u (%p) (warmup-counter=%" PRIu32 ",%s%s)",
           mode, outerScript_->filename(), outerScript_->lineno(),
           outerScript_->column(), static_cast<JSScript*>(outerScript_),
           outerScript_->getWarmUpCount(),
-          OptimizationLevelString(mirGen_.optimizationInfo().level()),
           outerScript_->isGenerator() ? " isGenerator" : "",
           outerScript_->isAsync() ? " isAsync" : "");
 #endif
@@ -170,6 +168,26 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
     Fprinter& out = JitSpewPrinter();
     snapshot->dump(out);
   }
+#endif
+
+#ifdef DEBUG
+  // When transpiled CacheIR bails out, we do not want to recompile
+  // with the exact same data and get caught in an invalidation loop.
+  //
+  // To avoid this, we store a hash of the stub pointers and entry
+  // counts in this snapshot, save that hash in the JitScript if we
+  // have a TranspiledCacheIR bailout, and assert that the hash has
+  // changed when we recompile.
+  //
+  // Note: this assertion catches potential performance issues.
+  // Failing this assertion is not a correctness/security problem.
+  // We therefore ignore cases involving OOM or stack overflow.
+  HashNumber hash = icScript->hash();
+  if (outerScript_->jitScript()->hasFailedICHash()) {
+    HashNumber oldHash = outerScript_->jitScript()->getFailedICHash();
+    MOZ_ASSERT_IF(hash == oldHash, cx_->hadNondeterministicException());
+  }
+  snapshot->setICHash(hash);
 #endif
 
   return snapshot;
@@ -1005,8 +1023,7 @@ AbortReasonOr<bool> WarpScriptOracle::maybeInlineCall(
         // If the target script can't be warp-compiled, mark it as
         // uninlineable, clean up, and fall through to the non-inlined path.
         fallbackStub->setTrialInliningState(TrialInliningState::Failure);
-        fallbackStub->unlinkStubDontInvalidateWarp(cx_->zone(),
-                                                   /*prev=*/nullptr, stub);
+        fallbackStub->unlinkStub(cx_->zone(), /*prev=*/nullptr, stub);
         targetScript->setUninlineable();
         info_->inlineScriptTree()->removeCallee(inlineScriptTree);
         icScript_->removeInlinedChild(loc.bytecodeToOffset(script_));

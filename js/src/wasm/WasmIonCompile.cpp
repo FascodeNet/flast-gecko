@@ -663,7 +663,7 @@ class FunctionCompiler {
     if (inDeadCode()) {
       return nullptr;
     }
-    auto* ins = MCompare::New(alloc(), lhs, rhs, op, type);
+    auto* ins = MCompare::NewWasm(alloc(), lhs, rhs, op, type);
     curBlock_->add(ins);
     return ins;
   }
@@ -1447,6 +1447,9 @@ class FunctionCompiler {
     }
 
     for (iter.switchToPrev(); !iter.done(); iter.prev()) {
+      if (!mirGen().ensureBallast()) {
+        return false;
+      }
       const ABIResult& result = iter.cur();
       MInstruction* def;
       if (result.inRegister()) {
@@ -1702,7 +1705,7 @@ class FunctionCompiler {
   }
 
  public:
-  MOZ_MUST_USE bool pushDefs(const DefVector& defs) {
+  [[nodiscard]] bool pushDefs(const DefVector& defs) {
     if (inDeadCode()) {
       return true;
     }
@@ -5480,7 +5483,10 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
   GenerateTrapExitMachineState(&trapExitLayout, &trapExitLayoutNumWords);
 
   for (const FuncCompileInput& func : inputs) {
-    JitSpew(JitSpew_Codegen, "# ========================================");
+    JitSpewCont(JitSpew_Codegen, "\n");
+    JitSpew(JitSpew_Codegen,
+            "# ================================"
+            "==================================");
     JitSpew(JitSpew_Codegen, "# ==");
     JitSpew(JitSpew_Codegen,
             "# wasm::IonCompileFunctions: starting on function index %d",
@@ -5562,7 +5568,10 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
             "# wasm::IonCompileFunctions: completed function index %d",
             (int)func.index);
     JitSpew(JitSpew_Codegen, "# ==");
-    JitSpew(JitSpew_Codegen, "# ========================================");
+    JitSpew(JitSpew_Codegen,
+            "# ================================"
+            "==================================");
+    JitSpewCont(JitSpew_Codegen, "\n");
   }
 
   masm.finish();

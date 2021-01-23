@@ -2797,12 +2797,16 @@ nsDOMWindowUtils::ZoomToFocusedInput() {
     }
   }
   if (waitForRefresh) {
-    waitForRefresh =
-        presShell->AddPostRefreshObserver(new OneShotPostRefreshObserver(
-            presShell, [widget = RefPtr<nsIWidget>(widget), presShellId, viewId,
-                        bounds, flags](PresShell*) {
-              widget->ZoomToRect(presShellId, viewId, bounds, flags);
-            }));
+    waitForRefresh = false;
+    if (nsPresContext* presContext = presShell->GetPresContext()) {
+      waitForRefresh = presContext->RegisterOneShotPostRefreshObserver(
+          new OneShotPostRefreshObserver(
+              presShell,
+              [widget = RefPtr<nsIWidget>(widget), presShellId, viewId, bounds,
+               flags](PresShell*, OneShotPostRefreshObserver*) {
+                widget->ZoomToRect(presShellId, viewId, bounds, flags);
+              }));
+    }
   }
   if (!waitForRefresh) {
     widget->ZoomToRect(presShellId, viewId, bounds, flags);
@@ -3464,8 +3468,9 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
   nsPoint relPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(
       widget, pt, RelativeTo{targetFrame});
 
+  const RefPtr<nsPresContext> pinnedPresContext{GetPresContext()};
   nsresult rv = targetFrame->SelectByTypeAtPoint(
-      GetPresContext(), relPoint, amount, amount, nsIFrame::SELECT_ACCUMULATE);
+      pinnedPresContext, relPoint, amount, amount, nsIFrame::SELECT_ACCUMULATE);
   *_retval = !NS_FAILED(rv);
   return NS_OK;
 }

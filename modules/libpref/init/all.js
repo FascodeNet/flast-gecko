@@ -172,11 +172,7 @@ pref("security.cert_pinning.max_max_age_seconds", 5184000);
 // 0: Disable CRLite entirely
 // 1: Enable and check revocations via CRLite, but only collect telemetry
 // 2: Enable and enforce revocations via CRLite
-#if defined(NIGHTLY_BUILD)
-pref("security.pki.crlite_mode", 2);
-#else
 pref("security.pki.crlite_mode", 1);
-#endif
 
 // Represents the expected certificate transparency log merge delay (including
 // the time to generate a CRLite filter). Currently 28 hours in seconds.
@@ -198,12 +194,12 @@ pref("security.pki.mitm_canary_issuer.enabled", true);
 pref("security.pki.mitm_detected", false);
 
 // Intermediate CA Preloading settings
-#if defined(MOZ_NEW_CERT_STORAGE) && !defined(MOZ_WIDGET_ANDROID)
+#if !defined(MOZ_WIDGET_ANDROID)
   pref("security.remote_settings.intermediates.enabled", true);
 #else
   pref("security.remote_settings.intermediates.enabled", false);
 #endif
-#if defined(MOZ_NEW_CERT_STORAGE) && !defined(MOZ_WIDGET_ANDROID) && defined(EARLY_BETA_OR_EARLIER)
+#if defined(EARLY_BETA_OR_EARLIER) && !defined(MOZ_WIDGET_ANDROID)
   pref("security.intermediate_preloading_healer.enabled", true);
 #else
   pref("security.intermediate_preloading_healer.enabled", false);
@@ -404,7 +400,7 @@ pref("media.decoder-doctor.verbose", false);
 pref("media.decoder-doctor.new-issue-endpoint", "https://webcompat.com/issues/new");
 
 pref("media.videocontrols.picture-in-picture.enabled", false);
-pref("media.videocontrols.picture-in-picture.allow-multiple", false);
+pref("media.videocontrols.picture-in-picture.allow-multiple", true);
 pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.min-video-secs", 45);
@@ -497,11 +493,7 @@ pref("media.videocontrols.keyboard-tab-to-all-controls", false);
   pref("media.peerconnection.mute_on_bye_or_timeout", false);
 
   // 770 = DTLS 1.0, 771 = DTLS 1.2, 772 = DTLS 1.3
-#ifdef EARLY_BETA_OR_EARLIER
-  pref("media.peerconnection.dtls.version.min", 771);
-#else
-  pref("media.peerconnection.dtls.version.min", 770);
-#endif
+pref("media.peerconnection.dtls.version.min", 771);
 #ifdef NIGHTLY_BUILD
   pref("media.peerconnection.dtls.version.max", 772);
 #else
@@ -596,11 +588,6 @@ pref("gfx.downloadable_fonts.fallback_delay_short", 100);
 // disable downloadable font cache so that behavior is consistently
 // the uncached load behavior across pages (useful for testing reflow problems)
 pref("gfx.downloadable_fonts.disable_cache", false);
-
-#ifdef ANDROID
-  pref("gfx.bundled_fonts.enabled", true);
-  pref("gfx.bundled_fonts.force-enabled", false);
-#endif
 
 // Do we fire a notification about missing fonts, so the front-end can decide
 // whether to try and do something about it (e.g. download additional fonts)?
@@ -1006,7 +993,7 @@ pref("dom.disable_window_move_resize",      false);
 
 pref("dom.allow_scripts_to_close_windows",          false);
 
-pref("dom.popup_allowed_events", "change click dblclick auxclick mouseup pointerup notificationclick reset submit touchend contextmenu");
+pref("dom.popup_allowed_events", "change click dblclick auxclick mousedown mouseup pointerdown pointerup notificationclick reset submit touchend contextmenu");
 
 pref("dom.serviceWorkers.disable_open_click_delay", 1000);
 
@@ -1094,7 +1081,6 @@ pref("javascript.options.baselinejit.threshold", 100);
 pref("javascript.options.ion",              true);
 // Duplicated in JitOptions - ensure both match.
 pref("javascript.options.ion.threshold",    1500);
-pref("javascript.options.ion.full.threshold", 100000);
 // Duplicated in JitOptions - ensure both match.
 pref("javascript.options.ion.frequent_bailout_threshold", 10);
 pref("javascript.options.asmjs",                  true);
@@ -1918,8 +1904,6 @@ pref("network.http.tailing.total-max", 45000);
 
 // Enable or disable the whole fix from bug 1563538
 pref("network.http.spdy.bug1563538", true);
-pref("network.http.spdy.bug1563695", true);
-pref("network.http.spdy.bug1556491", true);
 
 pref("network.proxy.ftp",                   "");
 pref("network.proxy.ftp_port",              0);
@@ -2567,6 +2551,10 @@ pref("browser.tabs.remote.autostart", false);
 #else
   pref("fission.autostart", false);
 #endif
+
+// Whether certain properties from origin attributes should be included as part
+// of remote types. Only in effect when fission is enabled.
+pref("browser.tabs.remote.useOriginAttributesInRemoteType", false);
 
 // Pref to control whether we use separate content processes for top-level load
 // of file:// URIs.
@@ -3917,6 +3905,12 @@ pref("extensions.webcompat-reporter.newIssueEndpoint", "https://webcompat.com/is
   pref("extensions.webcompat-reporter.enabled", false);
 #endif
 
+// Add-on content security policies.
+pref("extensions.webextensions.base-content-security-policy", "script-src 'self' https://* http://localhost:* http://127.0.0.1:* moz-extension: blob: filesystem: 'unsafe-eval' 'unsafe-inline'; object-src 'self' moz-extension: blob: filesystem:;");
+pref("extensions.webextensions.base-content-security-policy.v3", "script-src 'self' http://localhost:* http://127.0.0.1:*; object-src 'self';");
+pref("extensions.webextensions.default-content-security-policy", "script-src 'self'; object-src 'self';");
+
+
 pref("network.buffer.cache.count", 24);
 pref("network.buffer.cache.size",  32768);
 
@@ -4354,11 +4348,6 @@ pref("media.default_volume", "1.0");
 
 // return the maximum number of cores that navigator.hardwareCurrency returns
 pref("dom.maxHardwareConcurrency", 16);
-
-// Shutdown the osfile worker if its no longer needed.
-#if !defined(RELEASE_OR_BETA)
-  pref("osfile.reset_worker_delay", 30000);
-#endif
 
 pref("dom.storageManager.prompt.testing", false);
 pref("dom.storageManager.prompt.testing.allow", false);

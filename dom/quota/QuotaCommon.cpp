@@ -163,6 +163,23 @@ Result<nsCOMPtr<nsIFile>, nsresult> CloneFileAndAppend(
   return resultFile;
 }
 
+Result<nsIFileKind, nsresult> GetDirEntryKind(nsIFile& aFile) {
+  QM_TRY_RETURN(
+      MOZ_TO_RESULT_INVOKE(aFile, IsDirectory)
+          .map([](const bool isDirectory) {
+            return isDirectory ? nsIFileKind::ExistsAsDirectory
+                               : nsIFileKind::ExistsAsFile;
+          })
+          .orElse([](const nsresult rv) -> Result<nsIFileKind, nsresult> {
+            if (rv == NS_ERROR_FILE_NOT_FOUND ||
+                rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST) {
+              return nsIFileKind::DoesNotExist;
+            }
+
+            return Err(rv);
+          }));
+}
+
 Result<nsCOMPtr<mozIStorageStatement>, nsresult> CreateStatement(
     mozIStorageConnection& aConnection, const nsACString& aStatementString) {
   QM_TRY_RETURN(MOZ_TO_RESULT_INVOKE_TYPED(nsCOMPtr<mozIStorageStatement>,
@@ -291,14 +308,19 @@ void LogError(const nsLiteralCString& aModule, const nsACString& aExpr,
               Maybe<nsresult> aRv) {
   nsAutoCString extraInfosString;
 
-  const char* rvName = nullptr;
+  nsAutoCString rvName;
   if (aRv) {
-    rvName = mozilla::GetStaticErrorName(*aRv);
+    if (NS_ERROR_GET_MODULE(*aRv) == NS_ERROR_MODULE_WIN32) {
+      // XXX We could also try to get the Win32 error name here.
+      rvName = nsPrintfCString("WIN32(0x%" PRIX16 ")", NS_ERROR_GET_CODE(*aRv));
+    } else {
+      rvName = mozilla::GetStaticErrorName(*aRv);
+    }
     extraInfosString.AppendPrintf(
-        "failed with "
+        " failed with "
         "result 0x%" PRIX32 "%s%s%s",
-        static_cast<uint32_t>(*aRv), rvName ? " (" : "", rvName ? rvName : "",
-        rvName ? ")" : "");
+        static_cast<uint32_t>(*aRv), !rvName.IsEmpty() ? " (" : "",
+        !rvName.IsEmpty() ? rvName.get() : "", !rvName.IsEmpty() ? ")" : "");
   }
 
 #ifdef QM_ENABLE_SCOPED_LOG_EXTRA_INFO
@@ -350,7 +372,7 @@ void LogError(const nsLiteralCString& aModule, const nsACString& aExpr,
       res.AppendElement(EventExtraEntry{
           "context"_ns, nsPromiseFlatCString{*contextIt->second}});
 
-      if (rvName) {
+      if (!rvName.IsEmpty()) {
         res.AppendElement(EventExtraEntry{"result"_ns, nsCString{rvName}});
       }
 

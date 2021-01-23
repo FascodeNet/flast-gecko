@@ -178,7 +178,8 @@ class FullParseHandler {
     return new_<NumericLiteral>(value, decimalPoint, pos);
   }
 
-  BigIntLiteralType newBigInt(BigIntIndex index, CompilationStencil& stencil,
+  BigIntLiteralType newBigInt(BigIntIndex index,
+                              BaseCompilationStencil& stencil,
                               const TokenPos& pos) {
     return new_<BigIntLiteral>(index, stencil, pos);
   }
@@ -920,7 +921,8 @@ class FullParseHandler {
              kind == ParseNodeKind::NotExpr ||
              kind == ParseNodeKind::BitNotExpr ||
              kind == ParseNodeKind::PosExpr || kind == ParseNodeKind::NegExpr ||
-             IsTypeofKind(kind) || IsDeleteKind(kind);
+             kind == ParseNodeKind::AwaitExpr || IsTypeofKind(kind) ||
+             IsDeleteKind(kind);
     }
     return false;
   }

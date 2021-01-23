@@ -58,14 +58,16 @@ export class _CollapsibleSection extends React.PureComponent {
   }
 
   componentDidMount() {
-    this.contextMenuButtonRef.addEventListener(
-      "mouseenter",
-      this.onMenuButtonMouseEnter
-    );
-    this.contextMenuButtonRef.addEventListener(
-      "mouseleave",
-      this.onMenuButtonMouseLeave
-    );
+    if (!this.props.Prefs.values["newNewtabExperience.enabled"]) {
+      this.contextMenuButtonRef.addEventListener(
+        "mouseenter",
+        this.onMenuButtonMouseEnter
+      );
+      this.contextMenuButtonRef.addEventListener(
+        "mouseleave",
+        this.onMenuButtonMouseLeave
+      );
+    }
   }
 
   componentWillUnmount() {
@@ -73,14 +75,17 @@ export class _CollapsibleSection extends React.PureComponent {
       VISIBILITY_CHANGE_EVENT,
       this.enableOrDisableAnimation
     );
-    this.contextMenuButtonRef.removeEventListener(
-      "mouseenter",
-      this.onMenuButtonMouseEnter
-    );
-    this.contextMenuButtonRef.removeEventListener(
-      "mouseleave",
-      this.onMenuButtonMouseLeave
-    );
+
+    if (!this.props.Prefs.values["newNewtabExperience.enabled"]) {
+      this.contextMenuButtonRef.removeEventListener(
+        "mouseenter",
+        this.onMenuButtonMouseEnter
+      );
+      this.contextMenuButtonRef.removeEventListener(
+        "mouseleave",
+        this.onMenuButtonMouseLeave
+      );
+    }
   }
 
   enableOrDisableAnimation() {
@@ -251,11 +256,7 @@ export class _CollapsibleSection extends React.PureComponent {
             <span className="click-target-container">
               {/* Click-targets that toggle a collapsible section should have an aria-expanded attribute; see bug 1553234 */}
               <span
-                className={`click-target ${
-                  isNewNewtabExperienceEnabled
-                    ? " new-header"
-                    : " click-pointer"
-                }`}
+                className="click-target"
                 role="button"
                 tabIndex="0"
                 onKeyPress={this.onKeyPress}
@@ -289,27 +290,29 @@ export class _CollapsibleSection extends React.PureComponent {
               </span>
             </span>
           </h3>
-          <div>
-            <ContextMenuButton
-              tooltip="newtab-menu-section-tooltip"
-              onUpdate={this.onMenuUpdate}
-              refFunction={this.setContextMenuButtonRef}
-            >
-              <SectionMenu
-                id={id}
-                extraOptions={extraMenuOptions}
-                source={eventSource}
-                showPrefName={showPrefName}
-                privacyNoticeURL={privacyNoticeURL}
-                collapsed={collapsed}
-                isFixed={isFixed}
-                isFirst={isFirst}
-                isLast={isLast}
-                dispatch={dispatch}
-                isWebExtension={isWebExtension}
-              />
-            </ContextMenuButton>
-          </div>
+          {!isNewNewtabExperienceEnabled && (
+            <div>
+              <ContextMenuButton
+                tooltip="newtab-menu-section-tooltip"
+                onUpdate={this.onMenuUpdate}
+                refFunction={this.setContextMenuButtonRef}
+              >
+                <SectionMenu
+                  id={id}
+                  extraOptions={extraMenuOptions}
+                  source={eventSource}
+                  showPrefName={showPrefName}
+                  privacyNoticeURL={privacyNoticeURL}
+                  collapsed={collapsed}
+                  isFixed={isFixed}
+                  isFirst={isFirst}
+                  isLast={isLast}
+                  dispatch={dispatch}
+                  isWebExtension={isWebExtension}
+                />
+              </ContextMenuButton>
+            </div>
+          )}
         </div>
         <ErrorBoundary className="section-body-fallback">
           <div

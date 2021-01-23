@@ -13,39 +13,49 @@ const { XPCOMUtils } = ChromeUtils.import(
 XPCOMUtils.defineLazyModuleGetters(this, {
   PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
 
-// A list of known search origins.
-const KNOWN_SEARCH_SOURCES = [
-  "abouthome",
-  "contextmenu",
-  "newtab",
-  "searchbar",
-  "system",
-  "urlbar",
-  "urlbar-searchmode",
-  "webextension",
-];
+// A map of known search origins.
+// The keys of this map are used in the calling code to recordSearch, and in
+// the SEARCH_COUNTS histogram.
+// The values of this map are used in the names of scalars for the following
+// scalar groups:
+// browser.engagement.navigation.*
+// browser.search.withads.*
+// browser.search.adclicks.*
+const KNOWN_SEARCH_SOURCES = new Map([
+  ["abouthome", "about_home"],
+  ["contextmenu", "contextmenu"],
+  ["newtab", "about_newtab"],
+  ["searchbar", "searchbar"],
+  ["system", "system"],
+  ["urlbar", "urlbar"],
+  ["urlbar-searchmode", "urlbar_searchmode"],
+  ["webextension", "webextension"],
+]);
 
 /**
  * This class handles saving search telemetry related to the url bar,
  * search bar and other areas as per the sources above.
  */
 class BrowserSearchTelemetryHandler {
+  KNOWN_SEARCH_SOURCES = KNOWN_SEARCH_SOURCES;
+
   /**
    * Determines if we should record a search for this browser instance.
    * Private Browsing mode is normally skipped.
    *
-   * @param {tabbrowser} tabbrowser
+   * @param {browser} browser
    *   The browser where the search was loaded.
    * @returns {boolean}
    *   True if the search should be recorded, false otherwise.
    */
-  shouldRecordSearchCount(tabbrowser) {
+  shouldRecordSearchCount(browser) {
     return (
-      !PrivateBrowsingUtils.isWindowPrivate(tabbrowser.ownerGlobal) ||
+      !PrivateBrowsingUtils.isWindowPrivate(browser.ownerGlobal) ||
       !Services.prefs.getBoolPref("browser.engagement.search_counts.pbm", false)
     );
   }
@@ -163,8 +173,8 @@ class BrowserSearchTelemetryHandler {
    * Telemetry records only search counts per engine and action origin, but
    * nothing pertaining to the search contents themselves.
    *
-   * @param {tabbrowser} tabbrowser
-   *        The tabbrowser where the search was loaded.
+   * @param {browser} browser
+   *        The browser where the search originated.
    * @param {nsISearchEngine} engine
    *        The engine handling the search.
    * @param {string} source
@@ -181,12 +191,12 @@ class BrowserSearchTelemetryHandler {
    *        The search engine alias used in the search, if any.
    * @throws if source is not in the known sources list.
    */
-  recordSearch(tabbrowser, engine, source, details = {}) {
+  recordSearch(browser, engine, source, details = {}) {
     try {
-      if (!this.shouldRecordSearchCount(tabbrowser)) {
+      if (!this.shouldRecordSearchCount(browser)) {
         return;
       }
-      if (!KNOWN_SEARCH_SOURCES.includes(source)) {
+      if (!KNOWN_SEARCH_SOURCES.has(source)) {
         console.error("Unknown source for search: ", source);
         return;
       }
@@ -208,7 +218,20 @@ class BrowserSearchTelemetryHandler {
       }
 
       // Dispatch the search signal to other handlers.
-      this._handleSearchAction(engine, source, details);
+      switch (source) {
+        case "urlbar":
+        case "searchbar":
+        case "urlbar-searchmode":
+          this._handleSearchAndUrlbar(browser, engine, source, details);
+          break;
+        case "abouthome":
+        case "newtab":
+          this._recordSearch(browser, engine, details.url, source, "enter");
+          break;
+        default:
+          this._recordSearch(browser, engine, details.url, source);
+          break;
+      }
     } catch (ex) {
       // Catch any errors here, so that search actions are not broken if
       // telemetry is broken for some reason.
@@ -216,41 +239,20 @@ class BrowserSearchTelemetryHandler {
     }
   }
 
-  _handleSearchAction(engine, source, details) {
-    switch (source) {
-      case "urlbar":
-      case "searchbar":
-        this._handleSearchAndUrlbar(engine, source, details);
-        break;
-      case "urlbar-searchmode":
-        this._handleSearchAndUrlbar(engine, "urlbar_searchmode", details);
-        break;
-      case "abouthome":
-        this._recordSearch(engine, details.url, "about_home", "enter");
-        break;
-      case "newtab":
-        this._recordSearch(engine, details.url, "about_newtab", "enter");
-        break;
-      case "contextmenu":
-      case "system":
-      case "webextension":
-        this._recordSearch(engine, details.url, source);
-        break;
-    }
-  }
-
   /**
    * This function handles the "urlbar", "urlbar-oneoff", "searchbar" and
    * "searchbar-oneoff" sources.
    *
-   * @param {msISearchEngine} engine
+   * @param {browser} browser
+   *   The browser where the search originated.
+   * @param {nsISearchEngine} engine
    *   The engine handling the search.
    * @param {string} source
    *   Where the search originated from.
    * @param {object} details
    *   @see recordSearch
    */
-  _handleSearchAndUrlbar(engine, source, details) {
+  _handleSearchAndUrlbar(browser, engine, source, details) {
     const isOneOff = !!details.isOneOff;
     let action = "enter";
     if (isOneOff) {
@@ -263,25 +265,35 @@ class BrowserSearchTelemetryHandler {
       action = "alias";
     }
 
-    this._recordSearch(engine, details.url, source, action);
+    this._recordSearch(browser, engine, details.url, source, action);
   }
 
-  _recordSearch(engine, url, source, action = null) {
+  _recordSearch(browser, engine, url, source, action = null) {
     if (url) {
       PartnerLinkAttribution.makeSearchEngineRequest(engine, url).catch(
         Cu.reportError
       );
     }
 
+    let scalarSource = KNOWN_SEARCH_SOURCES.get(source);
+
+    SearchSERPTelemetry.recordBrowserSource(browser, scalarSource);
+
     let scalarKey = action ? "search_" + action : "search";
     Services.telemetry.keyedScalarAdd(
-      "browser.engagement.navigation." + source,
+      "browser.engagement.navigation." + scalarSource,
       scalarKey,
       1
     );
-    Services.telemetry.recordEvent("navigation", "search", source, action, {
-      engine: engine.telemetryId,
-    });
+    Services.telemetry.recordEvent(
+      "navigation",
+      "search",
+      scalarSource,
+      action,
+      {
+        engine: engine.telemetryId,
+      }
+    );
   }
 }
 

@@ -131,7 +131,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   [[nodiscard]] virtual nsresult Init(
       nsIURI* aURI, uint32_t aCaps, nsProxyInfo* aProxyInfo,
       uint32_t aProxyResolveFlags, nsIURI* aProxyURI, uint64_t aChannelId,
-      nsContentPolicyType aContentPolicyType) override;
+      ExtContentPolicyType aContentPolicyType) override;
 
   [[nodiscard]] nsresult OnPush(uint32_t aPushedStreamId,
                                 const nsACString& aUrl,
@@ -744,7 +744,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   MOZ_ATOMIC_BITFIELDS(mAtomicBitfields6, 32, (
     // Only set to true when we receive an HTTPSSVC record before the
     // transaction is created.
-    (uint32_t, HTTPSSVCTelemetryReported, 1)
+    (uint32_t, HTTPSSVCTelemetryReported, 1),
+    (uint32_t, EchConfigUsed, 1)
   ))
   // clang-format on
 
@@ -823,7 +824,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   nsresult TriggerNetwork();
   void CancelNetworkRequest(nsresult aStatus);
 
-  void SetHTTPSSVCRecord(nsIDNSHTTPSSVCRecord* aRecord);
+  void SetHTTPSSVCRecord(already_AddRefed<nsIDNSHTTPSSVCRecord>&& aRecord);
 
   // Timer used to delay the network request, or to trigger the network
   // request if retrieving the cache entry takes too long.
@@ -858,9 +859,10 @@ class nsHttpChannel final : public HttpBaseChannel,
   // called and reset the value when we switch to another failover proxy.
   int32_t mProxyConnectResponseCode;
 
-  // If this is not null, this will be used to update the connection info in
-  // nsHttpChannel::BeginConnect().
-  nsCOMPtr<nsIDNSHTTPSSVCRecord> mHTTPSSVCRecord;
+  // If mHTTPSSVCRecord has value, it means OnHTTPSRRAvailable() is called and
+  // we got the result of HTTPS RR query. Otherwise, it means we are still
+  // waiting for the result or the query is not performed.
+  Maybe<nsCOMPtr<nsIDNSHTTPSSVCRecord>> mHTTPSSVCRecord;
 
  protected:
   virtual void DoNotifyListenerCleanup() override;

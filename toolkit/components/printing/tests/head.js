@@ -277,11 +277,11 @@ class PrintHelper {
   }
 
   get _tabDialogBoxManager() {
-    return this._tabDialogBox.getManager();
+    return this._tabDialogBox.getTabDialogManager();
   }
 
   get _dialogs() {
-    return this._tabDialogBox._dialogManager._dialogs;
+    return this._tabDialogBox.getTabDialogManager()._dialogs;
   }
 
   get dialog() {
@@ -430,6 +430,7 @@ class PrintHelper {
       MockFilePicker.init(window);
       registerCleanupFunction(() => MockFilePicker.cleanup());
     }
+    MockFilePicker.returnValue = MockFilePicker.returnOK;
     let file = Services.dirsvc.get("TmpD", Ci.nsIFile);
     file.append(filename);
     registerCleanupFunction(() => {

@@ -1639,7 +1639,7 @@ void Element::GetElementsWithGrid(nsTArray<RefPtr<Element>>& aElements) {
 
 bool Element::HasVisibleScrollbars() {
   nsIScrollableFrame* scrollFrame = GetScrollFrame();
-  return scrollFrame && scrollFrame->GetScrollbarVisibility();
+  return scrollFrame && (!scrollFrame->GetScrollbarVisibility().isEmpty());
 }
 
 nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {
@@ -4145,6 +4145,17 @@ already_AddRefed<nsIAutoCompletePopup> Element::AsAutoCompletePopup() {
   nsCOMPtr<nsIAutoCompletePopup> value;
   GetCustomInterface(getter_AddRefs(value));
   return value.forget();
+}
+
+nsPresContext* Element::GetPresContext(PresContextFor aFor) {
+  // Get the document
+  Document* doc =
+      (aFor == eForComposedDoc) ? GetComposedDoc() : GetUncomposedDoc();
+  if (doc) {
+    return doc->GetPresContext();
+  }
+
+  return nullptr;
 }
 
 MOZ_DEFINE_MALLOC_SIZE_OF(ServoElementMallocSizeOf)

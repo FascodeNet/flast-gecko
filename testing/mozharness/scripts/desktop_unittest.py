@@ -260,6 +260,15 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
                     "help": "Run tests in a cross origin iframe.",
                 },
             ],
+            [
+                ["--enable-a11y-checks"],
+                {
+                    "action": "store_true",
+                    "default": False,
+                    "dest": "a11y_checks",
+                    "help": "Run tests with accessibility checks disabled.",
+                },
+            ],
         ]
         + copy.deepcopy(testing_config_options)
         + copy.deepcopy(code_coverage_config_options)
@@ -430,12 +439,17 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
         self.register_virtualenv_module(name="mock")
         self.register_virtualenv_module(name="simplejson")
 
-        requirements_files = [
-            os.path.join(
-                dirs["abs_test_install_dir"], "config", "marionette_requirements.txt"
-            )
-        ]
+        marionette_requirements_file = os.path.join(
+            dirs["abs_test_install_dir"], "config", "marionette_requirements.txt"
+        )
+        # marionette_requirements.txt must use the legacy resolver until bug 1684969 is resolved.
+        self.register_virtualenv_module(
+            requirements=[marionette_requirements_file],
+            two_pass=True,
+            legacy_resolver=True,
+        )
 
+        requirements_files = []
         if self._query_specified_suites("mochitest") is not None:
             # mochitest is the only thing that needs this
             if PY2:
@@ -579,6 +593,9 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
 
             if c["extra_prefs"]:
                 base_cmd.extend(["--setpref={}".format(p) for p in c["extra_prefs"]])
+
+            if c["a11y_checks"]:
+                base_cmd.append("--enable-a11y-checks")
 
             # set pluginsPath
             abs_res_plugins_dir = os.path.join(abs_res_dir, "plugins")

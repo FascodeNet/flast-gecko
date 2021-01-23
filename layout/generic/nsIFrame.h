@@ -54,6 +54,7 @@
 #include "LayoutConstants.h"
 #include "mozilla/layout/FrameChildList.h"
 #include "mozilla/AspectRatio.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RelativeTo.h"
@@ -2144,16 +2145,26 @@ class nsIFrame : public nsQueryFrame {
                                mozilla::WidgetGUIEvent* aEvent,
                                nsEventStatus* aEventStatus);
 
-  nsresult SelectByTypeAtPoint(nsPresContext* aPresContext,
-                               const nsPoint& aPoint,
-                               nsSelectionAmount aBeginAmountType,
-                               nsSelectionAmount aEndAmountType,
-                               uint32_t aSelectFlags);
+  /**
+   * Search for selectable content at point and attempt to select
+   * based on the start and end selection behaviours.
+   *
+   * @param aPresContext Presentation context
+   * @param aPoint Point at which selection will occur. Coordinates
+   * should be relative to this frame.
+   * @param aBeginAmountType, aEndAmountType Selection behavior, see
+   * nsIFrame for definitions.
+   * @param aSelectFlags Selection flags defined in nsIFrame.h.
+   * @return success or failure at finding suitable content to select.
+   */
+  MOZ_CAN_RUN_SCRIPT nsresult
+  SelectByTypeAtPoint(nsPresContext* aPresContext, const nsPoint& aPoint,
+                      nsSelectionAmount aBeginAmountType,
+                      nsSelectionAmount aEndAmountType, uint32_t aSelectFlags);
 
-  nsresult PeekBackwardAndForward(nsSelectionAmount aAmountBack,
-                                  nsSelectionAmount aAmountForward,
-                                  int32_t aStartPos, bool aJumpLines,
-                                  uint32_t aSelectFlags);
+  MOZ_CAN_RUN_SCRIPT nsresult PeekBackwardAndForward(
+      nsSelectionAmount aAmountBack, nsSelectionAmount aAmountForward,
+      int32_t aStartPos, bool aJumpLines, uint32_t aSelectFlags);
 
   enum { SELECT_ACCUMULATE = 0x01 };
 
@@ -2164,23 +2175,22 @@ class nsIFrame : public nsQueryFrame {
 
   // Selection Methods
 
-  NS_IMETHOD HandlePress(nsPresContext* aPresContext,
-                         mozilla::WidgetGUIEvent* aEvent,
-                         nsEventStatus* aEventStatus);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD
+  HandlePress(nsPresContext* aPresContext, mozilla::WidgetGUIEvent* aEvent,
+              nsEventStatus* aEventStatus);
 
-  NS_IMETHOD HandleMultiplePress(nsPresContext* aPresContext,
-                                 mozilla::WidgetGUIEvent* aEvent,
-                                 nsEventStatus* aEventStatus,
-                                 bool aControlHeld);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD HandleMultiplePress(
+      nsPresContext* aPresContext, mozilla::WidgetGUIEvent* aEvent,
+      nsEventStatus* aEventStatus, bool aControlHeld);
 
   MOZ_CAN_RUN_SCRIPT
   NS_IMETHOD HandleDrag(nsPresContext* aPresContext,
                         mozilla::WidgetGUIEvent* aEvent,
                         nsEventStatus* aEventStatus);
 
-  NS_IMETHOD HandleRelease(nsPresContext* aPresContext,
-                           mozilla::WidgetGUIEvent* aEvent,
-                           nsEventStatus* aEventStatus);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD
+  HandleRelease(nsPresContext* aPresContext, mozilla::WidgetGUIEvent* aEvent,
+                nsEventStatus* aEventStatus);
 
   // Test if we are selecting a table object:
   //  Most table/cell selection requires that Ctrl (Cmd on Mac) key is down
@@ -4379,6 +4389,11 @@ class nsIFrame : public nsQueryFrame {
 
   NS_IMETHODIMP RefreshSizeCache(nsBoxLayoutState& aState);
 
+  Maybe<nscoord> ComputeInlineSizeFromAspectRatio(
+      mozilla::WritingMode aWM, const mozilla::LogicalSize& aCBSize,
+      const mozilla::LogicalSize& aContentEdgeToBoxSizing,
+      mozilla::ComputeSizeFlags aFlags) const;
+
  public:
   /**
    * @return true if this text frame ends with a newline character.  It
@@ -4718,35 +4733,41 @@ class nsIFrame : public nsQueryFrame {
    * Helper function - computes the content-box inline size for aSize, which is
    * a more complex version to resolve a StyleExtremumLength.
    */
-  nscoord ComputeISizeValue(gfxContext* aRenderingContext,
-                            nscoord aContainingBlockISize,
-                            nscoord aContentEdgeToBoxSizing,
-                            nscoord aBoxSizingToMarginEdge,
-                            StyleExtremumLength aSize,
-                            mozilla::ComputeSizeFlags aFlags);
+  struct ISizeComputationResult {
+    nscoord mISize = 0;
+    AspectRatioUsage mAspectRatioUsage = AspectRatioUsage::None;
+  };
+  ISizeComputationResult ComputeISizeValue(
+      gfxContext* aRenderingContext, const mozilla::WritingMode aWM,
+      const mozilla::LogicalSize& aContainingBlockSize,
+      const mozilla::LogicalSize& aContentEdgeToBoxSizing,
+      nscoord aBoxSizingToMarginEdge, StyleExtremumLength aSize,
+      mozilla::ComputeSizeFlags aFlags);
 
   /**
    * Helper function - computes the content-box inline size for aSize, which is
    * a simpler version to resolve a LengthPercentage.
    */
-  nscoord ComputeISizeValue(nscoord aContainingBlockISize,
-                            nscoord aContentEdgeToBoxSizing,
+  nscoord ComputeISizeValue(const mozilla::WritingMode aWM,
+                            const mozilla::LogicalSize& aContainingBlockSize,
+                            const mozilla::LogicalSize& aContentEdgeToBoxSizing,
                             const LengthPercentage& aSize);
 
   template <typename SizeOrMaxSize>
-  nscoord ComputeISizeValue(gfxContext* aRenderingContext,
-                            nscoord aContainingBlockISize,
-                            nscoord aContentEdgeToBoxSizing,
-                            nscoord aBoxSizingToMarginEdge,
-                            const SizeOrMaxSize& aSize,
-                            mozilla::ComputeSizeFlags aFlags = {}) {
+  ISizeComputationResult ComputeISizeValue(
+      gfxContext* aRenderingContext, const mozilla::WritingMode aWM,
+      const mozilla::LogicalSize& aContainingBlockSize,
+      const mozilla::LogicalSize& aContentEdgeToBoxSizing,
+      nscoord aBoxSizingToMarginEdge, const SizeOrMaxSize& aSize,
+      mozilla::ComputeSizeFlags aFlags = {}) {
     MOZ_ASSERT(aSize.IsExtremumLength() || aSize.IsLengthPercentage(),
                "This doesn't handle auto / none");
     if (aSize.IsLengthPercentage()) {
-      return ComputeISizeValue(aContainingBlockISize, aContentEdgeToBoxSizing,
-                               aSize.AsLengthPercentage());
+      return {ComputeISizeValue(aWM, aContainingBlockSize,
+                                aContentEdgeToBoxSizing,
+                                aSize.AsLengthPercentage())};
     }
-    return ComputeISizeValue(aRenderingContext, aContainingBlockISize,
+    return ComputeISizeValue(aRenderingContext, aWM, aContainingBlockSize,
                              aContentEdgeToBoxSizing, aBoxSizingToMarginEdge,
                              aSize.AsExtremumLength(), aFlags);
   }

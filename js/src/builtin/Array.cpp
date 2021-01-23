@@ -6,7 +6,6 @@
 
 #include "builtin/Array-inl.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MathAlgorithms.h"
@@ -14,6 +13,7 @@
 #include "mozilla/TextUtils.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
@@ -58,7 +58,6 @@
 using namespace js;
 
 using mozilla::Abs;
-using mozilla::ArrayLength;
 using mozilla::CeilingLog2;
 using mozilla::CheckedInt;
 using mozilla::DebugOnly;
@@ -453,7 +452,7 @@ bool js::GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
 
   if (aobj->is<TypedArrayObject>()) {
     Handle<TypedArrayObject*> typedArray = aobj.as<TypedArrayObject>();
-    if (typedArray->length().deprecatedGetUint32() == length) {
+    if (typedArray->length().get() == length) {
       return TypedArrayObject::getElements(cx, typedArray, vp);
     }
   }
@@ -1761,11 +1760,11 @@ static inline bool CompareLexicographicInt32(const Value& a, const Value& b,
     if (digitsa == digitsb) {
       *lessOrEqualp = (auint <= buint);
     } else if (digitsa > digitsb) {
-      MOZ_ASSERT((digitsa - digitsb) < ArrayLength(powersOf10));
+      MOZ_ASSERT((digitsa - digitsb) < std::size(powersOf10));
       *lessOrEqualp =
           (uint64_t(auint) < uint64_t(buint) * powersOf10[digitsa - digitsb]);
     } else { /* if (digitsb > digitsa) */
-      MOZ_ASSERT((digitsb - digitsa) < ArrayLength(powersOf10));
+      MOZ_ASSERT((digitsb - digitsa) < std::size(powersOf10));
       *lessOrEqualp =
           (uint64_t(auint) * powersOf10[digitsb - digitsa] <= uint64_t(buint));
     }
@@ -3222,8 +3221,7 @@ static bool GetIndexedPropertiesInRange(JSContext* cx, HandleObject obj,
 
     // Append typed array elements.
     if (nativeObj->is<TypedArrayObject>()) {
-      uint32_t len =
-          nativeObj->as<TypedArrayObject>().length().deprecatedGetUint32();
+      size_t len = nativeObj->as<TypedArrayObject>().length().get();
       for (uint32_t i = begin; i < len && i < end; i++) {
         if (!indexes.append(i)) {
           return false;

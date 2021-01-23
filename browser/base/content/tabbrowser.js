@@ -30,6 +30,14 @@
         "resource:///modules/UrlbarProviderOpenTabs.jsm"
       );
 
+      if (AppConstants.MOZ_CRASHREPORTER) {
+        ChromeUtils.defineModuleGetter(
+          this,
+          "TabCrashHandler",
+          "resource:///modules/ContentCrashHandlers.jsm"
+        );
+      }
+
       Services.obs.addObserver(this, "contextual-identity-updated");
 
       Services.els.addSystemEventListener(document, "keydown", this, false);
@@ -324,6 +332,14 @@
       // if available, to ensure we don't spawn a new process.
       let remoteType;
       let initialBrowsingContextGroupId;
+
+      if (tabArgument && tabArgument.hasAttribute("usercontextid")) {
+        // The window's first argument is a tab if and only if we are swapping tabs.
+        // We must set the browser's usercontextid so that the newly created remote
+        // tab child has the correct usercontextid.
+        userContextId = parseInt(tabArgument.getAttribute("usercontextid"), 10);
+      }
+
       if (tabArgument && tabArgument.linkedBrowser) {
         remoteType = tabArgument.linkedBrowser.remoteType;
         initialBrowsingContextGroupId =
@@ -342,22 +358,21 @@
         }
 
         if (uriToLoad && typeof uriToLoad == "string") {
+          let oa = E10SUtils.predictOriginAttributes({
+            window,
+            userContextId,
+          });
           remoteType = E10SUtils.getRemoteTypeForURI(
             uriToLoad,
             gMultiProcessBrowser,
             gFissionBrowser,
-            E10SUtils.DEFAULT_REMOTE_TYPE
+            E10SUtils.DEFAULT_REMOTE_TYPE,
+            null,
+            oa
           );
         } else {
           remoteType = E10SUtils.DEFAULT_REMOTE_TYPE;
         }
-      }
-
-      if (tabArgument && tabArgument.hasAttribute("usercontextid")) {
-        // The window's first argument is a tab if and only if we are swapping tabs.
-        // We must set the browser's usercontextid so that the newly created remote
-        // tab child has the correct usercontextid.
-        userContextId = parseInt(tabArgument.getAttribute("usercontextid"), 10);
       }
 
       let createOptions = {
@@ -968,9 +983,14 @@
           ? "Private"
           : "Default";
       if (title) {
+        // We're using a function rather than just using `title` as the
+        // new substring to avoid `$$`, `$'` etc. having a special
+        // meaning to `replace`.
+        // See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace#specifying_a_string_as_a_parameter
+        // and the documentation for functions for more info about this.
         return docElement.dataset["contentTitle" + dataSuffix].replace(
           "CONTENTTITLE",
-          title
+          () => title
         );
       }
 
@@ -1168,7 +1188,12 @@
 
         this._startMultiSelectChange();
         this._multiSelectChangeSelected = true;
-        this.clearMultiSelectedTabs({ isLastMultiSelectChange: true });
+        this.clearMultiSelectedTabs();
+        if (this._multiSelectChangeAdditions.size) {
+          // Some tab has been multiselected just before switching tabs.
+          // The tab that was selected at that point should also be multiselected.
+          this.addToMultiSelectedTabs(oldTab);
+        }
 
         if (oldBrowser != newBrowser && oldBrowser.getInPermitUnload) {
           oldBrowser.getInPermitUnload(inPermitUnload => {
@@ -1859,10 +1884,11 @@
 
       aBrowser.droppedLinkHandler = oldDroppedLinkHandler;
 
-      // Switching a browser's remoteness will create a new frameLoader.
-      // As frameLoaders start out with an active docShell we have to
-      // deactivate it if this is not the selected tab's browser or the
-      // browser window is minimized.
+      // This shouldn't really be necessary (it should always set the same
+      // value as activeness is correctly preserved across remoteness changes).
+      // However, this has the side effect of sending MozLayerTreeReady /
+      // MozLayerTreeCleared events for remote frames, which the tab switcher
+      // depends on.
       aBrowser.docShellIsActive = this.shouldActivateDocShell(aBrowser);
 
       // Create a new tab progress listener for the new browser we just injected,
@@ -1945,12 +1971,15 @@
 
       let oldRemoteType = aBrowser.remoteType;
 
+      let oa = E10SUtils.predictOriginAttributes({ browser: aBrowser });
+
       aOptions.remoteType = E10SUtils.getRemoteTypeForURI(
         aURL,
         gMultiProcessBrowser,
         gFissionBrowser,
         oldRemoteType,
-        aBrowser.currentURI
+        aBrowser.currentURI,
+        oa
       );
 
       // If this URL can't load in the current browser then flip it to the
@@ -1971,6 +2000,7 @@
       uriIsAboutBlank,
       userContextId,
       skipLoad,
+      initiallyActive,
     } = {}) {
       let b = document.createXULElement("browser");
       // Use the JSM global to create the permanentKey, so that if the
@@ -2001,6 +2031,10 @@
       };
       for (let attribute in defaultBrowserAttributes) {
         b.setAttribute(attribute, defaultBrowserAttributes[attribute]);
+      }
+
+      if (!initiallyActive) {
+        b.setAttribute("initiallyactive", "false");
       }
 
       if (userContextId) {
@@ -2163,12 +2197,17 @@
               } else {
                 uri = browser._cachedCurrentURI = Services.io.newURI(url);
               }
+              let oa = E10SUtils.predictOriginAttributes({
+                browser,
+                userContextId: aTab.getAttribute("usercontextid"),
+              });
               return E10SUtils.getRemoteTypeForURI(
                 url,
                 gMultiProcessBrowser,
                 gFissionBrowser,
                 undefined,
-                uri
+                uri,
+                oa
               );
             };
             break;
@@ -2611,6 +2650,8 @@
           preferredRemoteType = openerBrowser.remoteType;
         }
 
+        var oa = E10SUtils.predictOriginAttributes({ window, userContextId });
+
         // If URI is about:blank and we don't have a preferred remote type,
         // then we need to use the referrer, if we have one, to get the
         // correct remote type for the new tab.
@@ -2623,7 +2664,10 @@
           preferredRemoteType = E10SUtils.getRemoteTypeForURI(
             referrerInfo.originalReferrer.spec,
             gMultiProcessBrowser,
-            gFissionBrowser
+            gFissionBrowser,
+            E10SUtils.DEFAULT_REMOTE_TYPE,
+            null,
+            oa
           );
         }
 
@@ -2633,7 +2677,9 @@
               aURI,
               gMultiProcessBrowser,
               gFissionBrowser,
-              preferredRemoteType
+              preferredRemoteType,
+              null,
+              oa
             );
 
         // If we open a new tab with the newtab URL in the default
@@ -4551,7 +4597,7 @@
       );
     },
 
-    addToMultiSelectedTabs(aTab, { isLastMultiSelectChange = false } = {}) {
+    addToMultiSelectedTabs(aTab) {
       if (aTab.multiselected) {
         return;
       }
@@ -4564,16 +4610,6 @@
         this._multiSelectChangeRemovals.delete(aTab);
       } else {
         this._multiSelectChangeAdditions.add(aTab);
-      }
-
-      if (isLastMultiSelectChange) {
-        let { selectedTab } = this;
-        if (!selectedTab.multiselected) {
-          this.addToMultiSelectedTabs(selectedTab, {
-            isLastMultiSelectChange: false,
-          });
-        }
-        this.tabContainer._setPositionalAttributes();
       }
     },
 
@@ -4595,17 +4631,11 @@
           : [indexOfTab2, indexOfTab1];
 
       for (let i = lowerIndex; i <= higherIndex; i++) {
-        this.addToMultiSelectedTabs(tabs[i], {
-          isLastMultiSelectChange: false,
-        });
+        this.addToMultiSelectedTabs(tabs[i]);
       }
-      this.tabContainer._setPositionalAttributes();
     },
 
-    removeFromMultiSelectedTabs(
-      aTab,
-      { isLastMultiSelectChange = false } = {}
-    ) {
+    removeFromMultiSelectedTabs(aTab) {
       if (!aTab.multiselected) {
         return;
       }
@@ -4618,16 +4648,9 @@
       } else {
         this._multiSelectChangeRemovals.add(aTab);
       }
-      if (isLastMultiSelectChange) {
-        if (aTab.selected) {
-          this.switchToNextMultiSelectedTab();
-        }
-        this.avoidSingleSelectedTab();
-        this.tabContainer._setPositionalAttributes();
-      }
     },
 
-    clearMultiSelectedTabs({ isLastMultiSelectChange = false } = {}) {
+    clearMultiSelectedTabs() {
       if (this._clearMultiSelectionLocked) {
         if (this._clearMultiSelectionLockedOnce) {
           this._clearMultiSelectionLockedOnce = false;
@@ -4641,14 +4664,9 @@
       }
 
       for (let tab of this.selectedTabs) {
-        this.removeFromMultiSelectedTabs(tab, {
-          isLastMultiSelectChange: false,
-        });
+        this.removeFromMultiSelectedTabs(tab);
       }
       this._lastMultiSelectedTabRef = null;
-      if (isLastMultiSelectChange) {
-        this.tabContainer._setPositionalAttributes();
-      }
     },
 
     selectAllTabs() {
@@ -4704,7 +4722,7 @@
      */
     avoidSingleSelectedTab() {
       if (this.multiSelectedTabsCount == 1) {
-        this.clearMultiSelectedTabs({ isLastMultiSelectChange: false });
+        this.clearMultiSelectedTabs();
       }
     },
 
@@ -4731,16 +4749,13 @@
     },
 
     set selectedTabs(tabs) {
-      this.clearMultiSelectedTabs({ isLastMultiSelectChange: false });
+      this.clearMultiSelectedTabs();
       this.selectedTab = tabs[0];
       if (tabs.length > 1) {
         for (let tab of tabs) {
-          this.addToMultiSelectedTabs(tab, {
-            isLastMultiSelectChange: false,
-          });
+          this.addToMultiSelectedTabs(tab);
         }
       }
-      this.tabContainer._setPositionalAttributes();
     },
 
     get selectedTabs() {
@@ -4784,15 +4799,29 @@
     },
 
     _endMultiSelectChange() {
+      let noticeable = false;
+      let { selectedTab } = this;
+      if (this._multiSelectChangeAdditions.size) {
+        if (!selectedTab.multiselected) {
+          this.addToMultiSelectedTabs(selectedTab);
+        }
+        noticeable = true;
+      }
+      if (this._multiSelectChangeRemovals.size) {
+        if (this._multiSelectChangeRemovals.has(selectedTab)) {
+          this.switchToNextMultiSelectedTab();
+        }
+        this.avoidSingleSelectedTab();
+        noticeable = true;
+      }
       this._multiSelectChangeStarted = false;
-      let noticeable =
-        this._multiSelectChangeSelected ||
-        this._multiSelectChangeAdditions.size ||
-        this._multiSelectChangeRemovals.size;
-      if (noticeable) {
+      if (noticeable || this._multiSelectChangeSelected) {
         this._multiSelectChangeSelected = false;
         this._multiSelectChangeAdditions.clear();
         this._multiSelectChangeRemovals.clear();
+        if (noticeable) {
+          this.tabContainer._setPositionalAttributes();
+        }
         this.dispatchEvent(
           new CustomEvent("TabMultiSelect", { bubbles: true })
         );
@@ -5010,7 +5039,12 @@
       if (includeLabel) {
         label = tab._fullLabel || tab.getAttribute("label");
       }
-      if (Services.prefs.getBoolPref("browser.tabs.tooltipsShowPid", false)) {
+      if (
+        Services.prefs.getBoolPref(
+          "browser.tabs.tooltipsShowPidAndActiveness",
+          false
+        )
+      ) {
         if (tab.linkedBrowser) {
           // When enabled, show the PID of the content process, and if
           // we're running with fission enabled, try to include PIDs for
@@ -5028,6 +5062,9 @@
               }
               label += "]";
             }
+          }
+          if (tab.linkedBrowser.docShellIsActive) {
+            label += " [A]";
           }
         }
       }
@@ -5463,11 +5500,16 @@
       );
 
       let onTabCrashed = event => {
-        if (!event.isTrusted || !event.isTopFrame) {
+        if (!event.isTrusted) {
           return;
         }
 
         let browser = event.originalTarget;
+
+        if (!event.isTopFrame) {
+          TabCrashHandler.onSubFrameCrash(browser, event.childID);
+          return;
+        }
 
         // Preloaded browsers do not actually have any tabs. If one crashes,
         // it should be released and removed.
@@ -5680,10 +5722,11 @@
 
           browser.droppedLinkHandler = oldDroppedLinkHandler;
 
-          // Switching a browser's remoteness will create a new frameLoader.
-          // As frameLoaders start out with an active docShell we have to
-          // deactivate it if this is not the selected tab's browser or the
-          // browser window is minimized.
+          // This shouldn't really be necessary (it should always set the same
+          // value as activeness is correctly preserved across remoteness changes).
+          // However, this has the side effect of sending MozLayerTreeReady /
+          // MozLayerTreeCleared events for remote frames, which the tab switcher
+          // depends on.
           browser.docShellIsActive = this.shouldActivateDocShell(browser);
 
           // Create a new tab progress listener for the new browser we just

@@ -14,6 +14,8 @@
 namespace mozilla {
 namespace widget {
 
+using namespace gfx;
+
 GtkCompositorWidget::GtkCompositorWidget(
     const GtkCompositorWidgetInitData& aInitData,
     const layers::CompositorOptions& aOptions, nsWindow* aWindow)
@@ -124,6 +126,30 @@ void GtkCompositorWidget::SetEGLNativeWindowSize(
   }
 }
 #endif
+
+void GtkCompositorWidget::ClearBeforePaint(
+    RefPtr<gfx::DrawTarget> aTarget, const LayoutDeviceIntRegion& aRegion) {
+  // We need to clear target buffer alpha values of popup windows as
+  // SW-WR paints with alpha blending (see Bug 1674473).
+  if (mWidget->IsPopup()) {
+    for (auto iter = aRegion.RectIter(); !iter.Done(); iter.Next()) {
+      LayoutDeviceIntRect r = iter.Get();
+      aTarget->FillRect(gfx::Rect(r.x, r.y, r.width, r.height),
+                        ColorPattern(DeviceColor(0, 0, 0, 0)),
+                        DrawOptions(1.0f, CompositionOp::OP_SOURCE));
+    }
+    aTarget->Flush();
+  }
+
+  // Clear background of titlebar area to render titlebar
+  // transparent corners correctly.
+  gfx::Rect rect;
+  if (mWidget->GetTitlebarRect(rect)) {
+    aTarget->FillRect(rect, ColorPattern(DeviceColor(0, 0, 0, 0)),
+                      DrawOptions(1.0f, CompositionOp::OP_SOURCE));
+    aTarget->Flush();
+  }
+}
 
 }  // namespace widget
 }  // namespace mozilla

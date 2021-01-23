@@ -79,7 +79,7 @@ void ObjectGroup::setProtoUnchecked(TaggedProto proto) {
 }
 
 /////////////////////////////////////////////////////////////////////
-// JSObject
+// GlobalObject
 /////////////////////////////////////////////////////////////////////
 
 bool GlobalObject::shouldSplicePrototype() {
@@ -119,43 +119,35 @@ bool GlobalObject::splicePrototype(JSContext* cx, Handle<GlobalObject*> global,
 /////////////////////////////////////////////////////////////////////
 
 /*
- * Entries for the per-realm set of groups which are the default
- * types to use for some prototype. An optional associated object is used which
- * allows multiple groups to be created with the same prototype. The
- * associated object may be a function (for types constructed with 'new') or a
- * type descriptor (for typed objects). These entries are also used for the set
- * of lazy groups in the realm, which use a null associated object
- * (though there are only a few of these per realm).
+ * Entries for the per-realm set of groups based on prototype and class. An
+ * optional associated object is used which allows multiple groups to be
+ * created with the same prototype. The associated object is a type descriptor
+ * (for typed objects).
  */
 struct ObjectGroupRealm::NewEntry {
   WeakHeapPtrObjectGroup group;
 
   // Note: This pointer is only used for equality and does not need a read
   // barrier.
-  JSObject* associated;
+  TypeDescr* associated;
 
-  NewEntry(ObjectGroup* group, JSObject* associated)
+  NewEntry(ObjectGroup* group, TypeDescr* associated)
       : group(group), associated(associated) {}
 
   struct Lookup {
     const JSClass* clasp;
     TaggedProto proto;
-    JSObject* associated;
+    TypeDescr* associated;
 
-    Lookup(const JSClass* clasp, TaggedProto proto, JSObject* associated)
+    Lookup(const JSClass* clasp, TaggedProto proto, TypeDescr* associated)
         : clasp(clasp), proto(proto), associated(associated) {
       MOZ_ASSERT(clasp);
-      MOZ_ASSERT_IF(associated && associated->is<JSFunction>(),
-                    clasp == &PlainObject::class_);
     }
 
     explicit Lookup(const NewEntry& entry)
         : clasp(entry.group.unbarrieredGet()->clasp()),
           proto(entry.group.unbarrieredGet()->proto()),
-          associated(entry.associated) {
-      MOZ_ASSERT_IF(associated && associated->is<JSFunction>(),
-                    clasp == &PlainObject::class_);
-    }
+          associated(entry.associated) {}
   };
 
   bool needsSweep() {
@@ -219,16 +211,12 @@ class ObjectGroupRealm::NewTable
   explicit NewTable(Zone* zone) : Base(zone) {}
 };
 
-/* static*/ ObjectGroupRealm& ObjectGroupRealm::get(const ObjectGroup* group) {
-  return group->realm()->objectGroups_;
-}
-
 /* static*/ ObjectGroupRealm& ObjectGroupRealm::getForNewObject(JSContext* cx) {
   return cx->realm()->objectGroups_;
 }
 
 MOZ_ALWAYS_INLINE ObjectGroup* ObjectGroupRealm::DefaultNewGroupCache::lookup(
-    const JSClass* clasp, TaggedProto proto, JSObject* associated) {
+    const JSClass* clasp, TaggedProto proto, TypeDescr* associated) {
   if (group_ && associated_ == associated && group_->proto() == proto &&
       group_->clasp() == clasp) {
     return group_;

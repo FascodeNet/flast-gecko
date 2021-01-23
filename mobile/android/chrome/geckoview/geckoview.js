@@ -144,16 +144,6 @@ var ModuleManager = {
     );
   },
 
-  remoteTypeFor(aURI, currentType) {
-    return E10SUtils.getRemoteTypeForURI(
-      aURI,
-      /* multiProcess */ true,
-      /* useRemoteSubframes */ false,
-      currentType,
-      this.browser.currentURI
-    );
-  },
-
   // Ensures that session history has been flushed before changing remoteness
   async prepareToChangeRemoteness() {
     // Session state like history is maintained at the process level so we need
@@ -182,17 +172,10 @@ var ModuleManager = {
     this.forEach(module => {
       module.onDestroyBrowser();
     });
-
-    // TODO: Bug 1673683: `docShellIsActive` is sometimes not preserved when
-    // switching process.
-    this.docShellIsActiveWhileSwitchingProcess = this.browser.docShellIsActive;
   },
 
   didChangeBrowserRemoteness() {
     debug`DidChangeBrowserRemoteness`;
-
-    this.browser.docShellIsActive = this.docShellIsActiveWhileSwitchingProcess;
-    this.docShellIsActiveWhileSwitchingProcess = undefined;
 
     this.forEach(module => {
       if (module.impl) {

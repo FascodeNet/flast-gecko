@@ -2186,7 +2186,7 @@ nsresult LaunchChild(bool aBlankCommandLine) {
 
 #ifdef MOZ_JPROF
   // make sure JPROF doesn't think we're E10s
-  unsetenv("JPROF_SLAVE");
+  unsetenv("JPROF_ISCHILD");
 #endif
 
   if (aBlankCommandLine) {
@@ -4121,6 +4121,13 @@ bool IsWaylandDisabled() {
     NS_WARNING("Running Wayland backen on Gtk3 < 3.22. Expect issues/glitches");
   }
   return !enableWayland;
+}
+#endif
+
+#if defined(MOZ_X11)
+bool IsX11EGLEnabled() {
+  const char* eglPref = PR_GetEnv("MOZ_X11_EGL");
+  return (eglPref && *eglPref);
 }
 #endif
 

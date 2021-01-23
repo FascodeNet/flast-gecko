@@ -14,13 +14,13 @@
 
 #include "jstypes.h"
 
-#include "gc/Barrier.h"  // HeapPtr{JitCode,Object}, PreBarrieredValue
-#include "jit/IonOptimizationLevels.h"  // OptimizationLevel
-#include "jit/IonTypes.h"               // IonCompilationId
-#include "jit/JitCode.h"                // JitCode
-#include "js/TypeDecls.h"               // jsbytecode
-#include "util/TrailingArray.h"         // TrailingArray
-#include "vm/TraceLogging.h"            // TraceLoggerEvent
+#include "gc/Barrier.h"          // HeapPtr{JitCode,Object}, PreBarrieredValue
+#include "jit/IonTypes.h"        // IonCompilationId
+#include "jit/JitCode.h"         // JitCode
+#include "jit/JitOptions.h"      // JitOptions
+#include "js/TypeDecls.h"        // jsbytecode
+#include "util/TrailingArray.h"  // TrailingArray
+#include "vm/TraceLogging.h"     // TraceLoggerEvent
 
 namespace js {
 namespace jit {
@@ -93,19 +93,23 @@ class alignas(8) IonScript final : public TrailingArray {
   // per-platform if we want.
   uint32_t invalidateEpilogueDataOffset_ = 0;
 
-  // Number of times this script bailed out without invalidation.
-  uint32_t numBailouts_ = 0;
+  // Number of bailouts that have occurred for reasons that could be
+  // fixed if we invalidated and recompiled.
+  uint16_t numFixableBailouts_ = 0;
 
-  // Flag set if we have bailed out from an instruction hoisted by
-  // LICM.  If this happens twice without triggering a CacheIR
-  // invalidation, we will disable LICM.
-  bool hadLICMBailout_ = false;
+  // Number of bailouts that have occurred for reasons that can't be
+  // fixed by recompiling: for example, bailing out to catch an exception.
+  uint16_t numUnfixableBailouts_ = 0;
+
+ public:
+  enum class LICMState : uint8_t { NeverBailed, Bailed, BailedAndHitFallback };
+
+ private:
+  // Tracks the state of LICM bailouts.
+  LICMState licmState_ = LICMState::NeverBailed;
 
   // Flag set if IonScript was compiled with profiling enabled.
   bool hasProfilingInstrumentation_ = false;
-
-  // Flag for if this script is getting recompiled.
-  uint32_t recompiling_ = 0;
 
   // Number of bytes this function reserves on the stack.
   uint32_t frameSlots_ = 0;
@@ -123,15 +127,17 @@ class alignas(8) IonScript final : public TrailingArray {
   // Identifier of the compilation which produced this code.
   IonCompilationId compilationId_;
 
-  // The optimization level this script was compiled in.
-  OptimizationLevel optimizationLevel_;
-
   // Number of times we tried to enter this script via OSR but failed due to
   // a LOOPENTRY pc other than osrPc_.
   uint32_t osrPcMismatchCounter_ = 0;
 
   // TraceLogger events that are baked into the IonScript.
   TraceLoggerEventVector traceLoggerEvents_;
+
+#ifdef DEBUG
+  // A hash of the ICScripts used in this compilation.
+  mozilla::HashNumber icHash_ = 0;
+#endif
 
   // End of fields.
 
@@ -274,8 +280,7 @@ class alignas(8) IonScript final : public TrailingArray {
 
  private:
   IonScript(IonCompilationId compilationId, uint32_t frameSlots,
-            uint32_t argumentSlots, uint32_t frameSize,
-            OptimizationLevel optimizationLevel);
+            uint32_t argumentSlots, uint32_t frameSize);
 
  public:
   static IonScript* New(JSContext* cx, IonCompilationId compilationId,
@@ -285,8 +290,7 @@ class alignas(8) IonScript final : public TrailingArray {
                         size_t bailoutEntries, size_t constants,
                         size_t nurseryObjects, size_t safepointIndices,
                         size_t osiIndices, size_t icEntries, size_t runtimeSize,
-                        size_t safepointsSize,
-                        OptimizationLevel optimizationLevel);
+                        size_t safepointsSize);
 
   static void Destroy(JSFreeOp* fop, IonScript* script);
 
@@ -294,9 +298,6 @@ class alignas(8) IonScript final : public TrailingArray {
 
   static inline size_t offsetOfInvalidationCount() {
     return offsetof(IonScript, invalidationCount_);
-  }
-  static inline size_t offsetOfRecompiling() {
-    return offsetof(IonScript, recompiling_);
   }
 
  public:
@@ -338,13 +339,28 @@ class alignas(8) IonScript final : public TrailingArray {
     MOZ_ASSERT(invalidateEpilogueDataOffset_);
     return invalidateEpilogueDataOffset_;
   }
-  void incNumBailouts() { numBailouts_++; }
-  bool bailoutExpected() const {
-    return numBailouts_ >= JitOptions.frequentBailoutThreshold;
+
+  void incNumFixableBailouts() { numFixableBailouts_++; }
+  void incNumUnfixableBailouts() { numUnfixableBailouts_++; }
+
+  bool shouldInvalidate() const {
+    return numFixableBailouts_ >= JitOptions.frequentBailoutThreshold;
+  }
+  bool shouldInvalidateAndDisable() const {
+    return numUnfixableBailouts_ >= JitOptions.frequentBailoutThreshold * 5;
   }
 
-  void setHadLICMBailout() { hadLICMBailout_ = true; }
-  bool hadLICMBailout() const { return hadLICMBailout_; }
+  LICMState licmState() const { return licmState_; }
+  void setHadLICMBailout() {
+    if (licmState_ == LICMState::NeverBailed) {
+      licmState_ = LICMState::Bailed;
+    }
+  }
+  void noteBaselineFallback() {
+    if (licmState_ == LICMState::Bailed) {
+      licmState_ = LICMState::BailedAndHitFallback;
+    }
+  }
 
   void setHasProfilingInstrumentation() { hasProfilingInstrumentation_ = true; }
   void clearHasProfilingInstrumentation() {
@@ -415,19 +431,17 @@ class alignas(8) IonScript final : public TrailingArray {
     }
   }
   IonCompilationId compilationId() const { return compilationId_; }
-  OptimizationLevel optimizationLevel() const { return optimizationLevel_; }
   uint32_t incrOsrPcMismatchCounter() { return ++osrPcMismatchCounter_; }
   void resetOsrPcMismatchCounter() { osrPcMismatchCounter_ = 0; }
-
-  void setRecompiling() { recompiling_ = true; }
-
-  bool isRecompiling() const { return recompiling_; }
-
-  void clearRecompiling() { recompiling_ = false; }
 
   size_t allocBytes() const { return allocBytes_; }
 
   static void preWriteBarrier(Zone* zone, IonScript* ionScript);
+
+#ifdef DEBUG
+  mozilla::HashNumber icHash() const { return icHash_; }
+  void setICHash(mozilla::HashNumber hash) { icHash_ = hash; }
+#endif
 };
 
 // Execution information for a basic block which may persist after the

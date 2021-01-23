@@ -66,26 +66,39 @@ void MacroAssembler::move32To64ZeroExtend(Register src, Register64 dest) {
 }
 
 void MacroAssembler::move8To64SignExtend(Register src, Register64 dest) {
-  MOZ_ASSERT(dest.low == eax);
-  MOZ_ASSERT(dest.high == edx);
-  move8SignExtend(src, eax);
-  masm.cdq();
+  move8SignExtend(src, dest.low);
+  if (dest.low == eax && dest.high == edx) {
+    masm.cdq();
+  } else {
+    movl(dest.low, dest.high);
+    sarl(Imm32(31), dest.high);
+  }
 }
 
 void MacroAssembler::move16To64SignExtend(Register src, Register64 dest) {
-  MOZ_ASSERT(dest.low == eax);
-  MOZ_ASSERT(dest.high == edx);
-  move16SignExtend(src, eax);
-  masm.cdq();
+  move16SignExtend(src, dest.low);
+  if (dest.low == eax && dest.high == edx) {
+    masm.cdq();
+  } else {
+    movl(dest.low, dest.high);
+    sarl(Imm32(31), dest.high);
+  }
 }
 
 void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
-  MOZ_ASSERT(dest.low == eax);
-  MOZ_ASSERT(dest.high == edx);
-  if (src != eax) {
-    movl(src, eax);
+  if (src != dest.low) {
+    movl(src, dest.low);
   }
-  masm.cdq();
+  if (dest.low == eax && dest.high == edx) {
+    masm.cdq();
+  } else {
+    movl(dest.low, dest.high);
+    sarl(Imm32(31), dest.high);
+  }
+}
+
+void MacroAssembler::move32SignExtendToPtr(Register src, Register dest) {
+  movl(src, dest);
 }
 
 void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
@@ -934,6 +947,8 @@ void MacroAssembler::branchTest64(Condition cond, Register64 lhs,
     movl(lhs.low, temp);
     orl(lhs.high, temp);
     branchTestPtr(cond, temp, temp, label);
+  } else if (cond == Assembler::Signed || cond == Assembler::NotSigned) {
+    branchTest32(cond, lhs.high, rhs.high, label);
   } else {
     MOZ_CRASH("Unsupported condition");
   }
@@ -975,6 +990,17 @@ void MacroAssembler::cmp32LoadPtr(Condition cond, const Address& lhs, Imm32 rhs,
                                   const Address& src, Register dest) {
   cmp32(lhs, rhs);
   cmovCCl(cond, Operand(src), dest);
+}
+
+void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs, Register rhs,
+                                   Register src, Register dest) {
+  cmp32Move32(cond, lhs, rhs, src, dest);
+}
+
+void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs,
+                                   const Address& rhs, Register src,
+                                   Register dest) {
+  cmp32Move32(cond, lhs, rhs, src, dest);
 }
 
 void MacroAssembler::test32LoadPtr(Condition cond, const Address& addr,
@@ -1049,6 +1075,19 @@ void MacroAssembler::spectreBoundsCheck32(Register index, const Address& length,
   MOZ_ASSERT(index != maybeScratch);
 
   spectreBoundsCheck32(index, Operand(length), maybeScratch, failure);
+}
+
+void MacroAssembler::spectreBoundsCheckPtr(Register index, Register length,
+                                           Register maybeScratch,
+                                           Label* failure) {
+  spectreBoundsCheck32(index, length, maybeScratch, failure);
+}
+
+void MacroAssembler::spectreBoundsCheckPtr(Register index,
+                                           const Address& length,
+                                           Register maybeScratch,
+                                           Label* failure) {
+  spectreBoundsCheck32(index, length, maybeScratch, failure);
 }
 
 // ========================================================================

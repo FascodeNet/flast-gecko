@@ -65,7 +65,7 @@ linux64-hfsplus:
         fetch:
             - hfsplus-tools
         toolchain:
-            - linux64-clang-9
+            - linux64-clang-11
 
 linux64-libdmg:
     description: "libdmg-hfsplus toolchain build"
@@ -139,25 +139,6 @@ browsertime:
     fetches:
         toolchain:
             - linux64-node
-
-wasi-sysroot-9:
-    description: "wasi sysroot build using clang-9"
-    attributes:
-        local-toolchain: true
-    treeherder:
-        symbol: TL(wasi-sysroot)
-    run-on-projects: [trunk]
-    run:
-        script: build-wasi-sysroot.sh
-        sparse-profile: null
-        toolchain-artifact: public/build/wasi-sysroot.tar.xz
-    fetches:
-        fetch:
-            - clang-9
-            - wasi-sdk
-        toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
 
 wasi-sysroot-11:
     description: "wasi sysroot build using clang-11"
@@ -359,6 +340,30 @@ macosx64-sdk-11.0:
     # Expiry similar to that of fetches
     expires-after: 1000 years
 
+macosx64-x64-compiler-rt-11:
+    description: "macOS x64 Compiler-rt for Clang 11 toolchain build"
+    treeherder:
+        symbol: TM(x64-crt)
+    worker:
+        env:
+            TOOLTOOL_MANIFEST: "browser/config/tooltool-manifests/macosx64/cross-releng.manifest"
+    run:
+        using: toolchain-script
+        script: build-compiler-rt.sh
+        arguments:
+            - x86_64-apple-darwin
+            - 'build/build-clang/rename_gcov_flush_clang_11.patch'
+        resources:
+            - 'build/build-clang/rename_gcov_flush_clang_11.patch'
+        toolchain-artifact: public/build/compiler-rt.tar.zst
+        tooltool-downloads: internal
+    fetches:
+        fetch:
+            - clang-11
+        toolchain:
+            - linux64-cctools-port-clang-11
+            - linux64-clang-11
+
 macosx64-aarch64-compiler-rt-11:
     description: "macOS aarch64 Compiler-rt for Clang 11 toolchain build"
     treeherder:
@@ -368,11 +373,14 @@ macosx64-aarch64-compiler-rt-11:
         script: build-compiler-rt.sh
         arguments:
             - aarch64-apple-darwin
+            - 'build/build-clang/rename_gcov_flush_clang_11.patch'
+        resources:
+            - 'build/build-clang/rename_gcov_flush_clang_11.patch'
         toolchain-artifact: public/build/compiler-rt.tar.zst
     fetches:
         fetch:
             - clang-11
         toolchain:
             - linux64-cctools-port-clang-11
-            - linux64-clang-11-macosx-cross
+            - linux64-clang-11
             - macosx64-sdk-11.0

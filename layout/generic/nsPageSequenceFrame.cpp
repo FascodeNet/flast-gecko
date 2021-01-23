@@ -469,7 +469,7 @@ nsresult nsPageSequenceFrame::StartPrint(nsPresContext* aPresContext,
 }
 
 static void GetPrintCanvasElementsInFrame(
-    nsIFrame* aFrame, nsTArray<RefPtr<HTMLCanvasElement> >* aArr) {
+    nsIFrame* aFrame, nsTArray<RefPtr<HTMLCanvasElement>>* aArr) {
   if (!aFrame) {
     return;
   }
@@ -504,11 +504,31 @@ static void GetPrintCanvasElementsInFrame(
   }
 }
 
-nsIFrame* nsPageSequenceFrame::GetCurrentSheetFrame() {
+// Note: this isn't quite a full tree traversal, since we exclude any
+// nsPageFame children that have the NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state-bit.
+static void GetPrintCanvasElementsInSheet(
+    PrintedSheetFrame* aSheetFrame, nsTArray<RefPtr<HTMLCanvasElement>>* aArr) {
+  MOZ_ASSERT(aSheetFrame, "Caller should've null-checked for us already");
+  for (nsIFrame* child : aSheetFrame->PrincipalChildList()) {
+    // Exclude any pages that are technically children but are skipped by a
+    // custom range; they're not meant to be printed, so we don't want to
+    // waste time rendering their canvas descendants.
+    MOZ_ASSERT(child->IsPageFrame(),
+               "PrintedSheetFrame's children must all be nsPageFrames");
+    auto* pageFrame = static_cast<nsPageFrame*>(child);
+    if (!pageFrame->HasAnyStateBits(NS_PAGE_SKIPPED_BY_CUSTOM_RANGE)) {
+      GetPrintCanvasElementsInFrame(pageFrame, aArr);
+    }
+  }
+}
+
+PrintedSheetFrame* nsPageSequenceFrame::GetCurrentSheetFrame() {
   uint32_t i = 0;
   for (nsIFrame* child : mFrames) {
+    MOZ_ASSERT(child->IsPrintedSheetFrame(),
+               "Our children must all be PrintedSheetFrame");
     if (i == mCurrentSheetIdx) {
-      return child;
+      return static_cast<PrintedSheetFrame*>(child);
     }
     ++i;
   }
@@ -517,7 +537,7 @@ nsIFrame* nsPageSequenceFrame::GetCurrentSheetFrame() {
 
 nsresult nsPageSequenceFrame::PrePrintNextSheet(nsITimerCallback* aCallback,
                                                 bool* aDone) {
-  nsIFrame* currentSheet = GetCurrentSheetFrame();
+  PrintedSheetFrame* currentSheet = GetCurrentSheetFrame();
   if (!currentSheet) {
     *aDone = true;
     return NS_ERROR_FAILURE;
@@ -537,7 +557,7 @@ nsresult nsPageSequenceFrame::PrePrintNextSheet(nsITimerCallback* aCallback,
   // process for all the canvas.
   if (!mCurrentCanvasListSetup) {
     mCurrentCanvasListSetup = true;
-    GetPrintCanvasElementsInFrame(currentSheet, &mCurrentCanvasList);
+    GetPrintCanvasElementsInSheet(currentSheet, &mCurrentCanvasList);
 
     if (!mCurrentCanvasList.IsEmpty()) {
       nsresult rv = NS_OK;
@@ -621,7 +641,7 @@ nsresult nsPageSequenceFrame::PrintNextSheet() {
   // print are 1 and then two (which is different than printing a page range,
   // where the page numbers would have been 2 and then 3)
 
-  nsIFrame* currentSheetFrame = GetCurrentSheetFrame();
+  PrintedSheetFrame* currentSheetFrame = GetCurrentSheetFrame();
   if (!currentSheetFrame) {
     return NS_ERROR_FAILURE;
   }

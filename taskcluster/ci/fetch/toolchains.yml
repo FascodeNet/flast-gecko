@@ -351,8 +351,8 @@ sccache:
     fetch:
         type: git
         repo: https://github.com/mozilla/sccache
-        # 0.2.14 release
-        revision: 5f57603ff6338d7b07221bf1fddcaedc14dba9b8
+        # 0.2.15 release
+        revision: 6b6d2f7d2dceefeb4f583712aa4c221db62be0bd
 
 fxc2:
     description: fxc2 source code
@@ -409,13 +409,6 @@ clang-8:
         type: git
         repo: https://github.com/llvm/llvm-project
         revision: 19a71f6bdf2dddb10764939e7f0ec2b98dba76c9
-
-clang-9:
-    description: clang 9.0.1 source code
-    fetch:
-        type: git
-        repo: https://github.com/llvm/llvm-project
-        revision: c1a0a213378a458fbea1a5c77b315c7dce08fd05
 
 clang-10:
     description: clang 10.0.0 source code

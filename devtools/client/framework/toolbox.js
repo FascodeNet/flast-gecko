@@ -21,6 +21,7 @@ const REGEX_4XX_5XX = /^[4,5]\d\d$/;
 var { Ci, Cc } = require("chrome");
 var promise = require("promise");
 const { debounce } = require("devtools/shared/debounce");
+const { throttle } = require("devtools/shared/throttle");
 const { safeAsyncMethod } = require("devtools/shared/async-utils");
 var Services = require("Services");
 var ChromeUtils = require("ChromeUtils");
@@ -340,6 +341,12 @@ function Toolbox(
   this._onNavigate = this._onNavigate.bind(this);
   this._onResourceAvailable = this._onResourceAvailable.bind(this);
   this._onResourceUpdated = this._onResourceUpdated.bind(this);
+
+  this._throttledSetToolboxButtons = throttle(
+    () => this.component.setToolboxButtons(this.toolbarButtons),
+    500,
+    this
+  );
 
   this.isPaintFlashing = false;
 
@@ -1860,7 +1867,11 @@ Toolbox.prototype = {
    */
   _buildButtons() {
     // Beyond the normal preference filtering
-    this.toolbarButtons = [this._buildPickerButton(), this._buildFrameButton()];
+    this.toolbarButtons = [
+      this._buildErrorCountButton(),
+      this._buildPickerButton(),
+      this._buildFrameButton(),
+    ];
 
     ToolboxButtons.forEach(definition => {
       const button = this._createButtonState(definition);
@@ -1888,6 +1899,23 @@ Toolbox.prototype = {
     });
 
     return this.frameButton;
+  },
+
+  /**
+   * Button to display the number of errors.
+   */
+  _buildErrorCountButton() {
+    this.errorCountButton = this._createButtonState({
+      id: "command-button-errorcount",
+      isInStartContainer: false,
+      isTargetSupported: target => true,
+      description: L10N.getStr("toolbox.errorCountButton.description"),
+    });
+    // Use updateErrorCountButton to set some properties so we don't have to repeat
+    // the logic here.
+    this.updateErrorCountButton();
+
+    return this.errorCountButton;
   },
 
   /**
@@ -2158,6 +2186,12 @@ Toolbox.prototype = {
     if (isVisible) {
       this.frameButton.isChecked = selectedFrame.parentID != null;
     }
+  },
+
+  updateErrorCountButton() {
+    this.errorCountButton.isVisible =
+      this._commandIsVisible(this.errorCountButton) && this._errorCount > 0;
+    this.errorCountButton.errorCount = this._errorCount;
   },
 
   /**
@@ -2948,6 +2982,8 @@ Toolbox.prototype = {
    * Fired when user just started navigating away to another web page.
    */
   async _onWillNavigate() {
+    // Clearing the error count as soon as we navigate
+    this.setErrorCount(0);
     this.updateToolboxButtons();
     const toolId = this.currentToolId;
     // For now, only inspector, webconsole and netmonitor fire "reloaded" event
@@ -3538,6 +3574,7 @@ Toolbox.prototype = {
 
     this.updatePickerButton();
     this.updateFrameButton();
+    this.updateErrorCountButton();
 
     // Calling setToolboxButtons in case the visibility of a button changed.
     this.component.setToolboxButtons(this.toolbarButtons);
@@ -4240,7 +4277,7 @@ Toolbox.prototype = {
   },
 
   _onResourceAvailable(resources) {
-    let errors = 0;
+    let errors = this._errorCount || 0;
 
     for (const resource of resources) {
       if (
@@ -4262,17 +4299,16 @@ Toolbox.prototype = {
 
         // Reset the count on console.clear
         if (level === "clear") {
-          this._errorCount = 0;
           errors = 0;
         }
       }
     }
 
-    this.setErrorCount((this._errorCount || 0) + errors);
+    this.setErrorCount(errors);
   },
 
   _onResourceUpdated(resources) {
-    let errors = 0;
+    let errors = this._errorCount || 0;
 
     for (const { update } of resources) {
       // In order to match webconsole behaviour, we treat 4xx and 5xx network calls as errors.
@@ -4285,7 +4321,7 @@ Toolbox.prototype = {
       }
     }
 
-    this.setErrorCount((this._errorCount || 0) + errors);
+    this.setErrorCount(errors);
   },
 
   /**
@@ -4294,10 +4330,15 @@ Toolbox.prototype = {
    * @param {Number} count
    */
   setErrorCount(count) {
-    this._errorCount = count;
-    if (!this.component) {
+    // Don't re-render if the number of errors changed
+    if (!this.component || this._errorCount === count) {
       return;
     }
-    this.component.setErrorCount(this._errorCount);
+
+    this._errorCount = count;
+
+    // Update button properties and trigger a render of the toolbox
+    this.updateErrorCountButton();
+    this._throttledSetToolboxButtons();
   },
 };

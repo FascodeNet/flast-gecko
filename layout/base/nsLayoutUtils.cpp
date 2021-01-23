@@ -1397,15 +1397,15 @@ nsIScrollableFrame* nsLayoutUtils::GetNearestScrollableFrameForDirection(
   for (nsIFrame* f = aFrame; f; f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
     nsIScrollableFrame* scrollableFrame = do_QueryFrame(f);
     if (scrollableFrame) {
-      uint32_t directions =
+      ScrollDirections directions =
           scrollableFrame->GetAvailableScrollingDirectionsForUserInputEvents();
       if (aDirections.contains(ScrollDirection::eVertical)) {
-        if (directions & nsIScrollableFrame::VERTICAL) {
+        if (directions.contains(ScrollDirection::eVertical)) {
           return scrollableFrame;
         }
       }
       if (aDirections.contains(ScrollDirection::eHorizontal)) {
-        if (directions & nsIScrollableFrame::HORIZONTAL) {
+        if (directions.contains(ScrollDirection::eHorizontal)) {
           return scrollableFrame;
         }
       }
@@ -8797,7 +8797,7 @@ void nsLayoutUtils::AppendFrameTextContent(nsIFrame* aFrame,
 }
 
 /* static */
-nsRect nsLayoutUtils::GetSelectionBoundingRect(Selection* aSel) {
+nsRect nsLayoutUtils::GetSelectionBoundingRect(const Selection* aSel) {
   nsRect res;
   // Bounding client rect may be empty after calling GetBoundingClientRect
   // when range is collapsed. So we get caret's rect when range is

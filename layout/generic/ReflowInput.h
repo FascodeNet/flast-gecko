@@ -49,59 +49,6 @@ NumericType NS_CSS_MINMAX(NumericType aValue, NumericType aMinValue,
   return result;
 }
 
-/**
- * CSS Frame type. Included as part of the reflow input.
- */
-typedef uint32_t nsCSSFrameType;
-
-#define NS_CSS_FRAME_TYPE_UNKNOWN 0
-#define NS_CSS_FRAME_TYPE_INLINE 1
-#define NS_CSS_FRAME_TYPE_BLOCK 2 /* block-level in normal flow */
-#define NS_CSS_FRAME_TYPE_FLOATING 3
-#define NS_CSS_FRAME_TYPE_ABSOLUTE 4
-#define NS_CSS_FRAME_TYPE_INTERNAL_TABLE \
-  5 /* row group frame, row frame, cell frame, ... */
-
-/**
- * Bit-flag that indicates whether the element is replaced. Applies to inline,
- * block-level, floating, and absolutely positioned elements
- */
-#define NS_CSS_FRAME_TYPE_REPLACED 0x08000
-
-/**
- * Bit-flag that indicates that the element is replaced and contains a block
- * (eg some form controls).  Applies to inline, block-level, floating, and
- * absolutely positioned elements.  Mutually exclusive with
- * NS_CSS_FRAME_TYPE_REPLACED.
- */
-#define NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK 0x10000
-
-/**
- * Helper macros for telling whether items are replaced
- */
-#define NS_FRAME_IS_REPLACED_NOBLOCK(_ft) \
-  (NS_CSS_FRAME_TYPE_REPLACED == ((_ft)&NS_CSS_FRAME_TYPE_REPLACED))
-
-#define NS_FRAME_IS_REPLACED(_ft)       \
-  (NS_FRAME_IS_REPLACED_NOBLOCK(_ft) || \
-   NS_FRAME_IS_REPLACED_CONTAINS_BLOCK(_ft))
-
-#define NS_FRAME_REPLACED(_ft) (NS_CSS_FRAME_TYPE_REPLACED | (_ft))
-
-#define NS_FRAME_IS_REPLACED_CONTAINS_BLOCK(_ft) \
-  (NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK ==  \
-   ((_ft)&NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK))
-
-#define NS_FRAME_REPLACED_CONTAINS_BLOCK(_ft) \
-  (NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK | (_ft))
-
-/**
- * A macro to extract the type. Masks off the 'replaced' bit-flag
- */
-#define NS_FRAME_GET_TYPE(_ft) \
-  ((_ft) &                     \
-   ~(NS_CSS_FRAME_TYPE_REPLACED | NS_CSS_FRAME_TYPE_REPLACED_CONTAINS_BLOCK))
-
 namespace mozilla {
 
 // A base class of ReflowInput that computes only the padding,
@@ -229,14 +176,15 @@ struct SizeComputationInput {
    * sizes.
    */
   template <typename SizeOrMaxSize>
-  inline nscoord ComputeISizeValue(nscoord aContainingBlockISize,
-                                   nscoord aContentEdgeToBoxSizing,
+  inline nscoord ComputeISizeValue(const WritingMode aWM,
+                                   const LogicalSize& aContainingBlockSize,
+                                   const LogicalSize& aContentEdgeToBoxSizing,
                                    nscoord aBoxSizingToMarginEdge,
                                    const SizeOrMaxSize&) const;
   // same as previous, but using mComputedBorderPadding, mComputedPadding,
   // and mComputedMargin
   template <typename SizeOrMaxSize>
-  inline nscoord ComputeISizeValue(nscoord aContainingBlockISize,
+  inline nscoord ComputeISizeValue(const LogicalSize& aContainingBlockSize,
                                    mozilla::StyleBoxSizing aBoxSizing,
                                    const SizeOrMaxSize&) const;
 
@@ -269,10 +217,6 @@ struct ReflowInput : public SizeComputationInput {
   // percentage widths, etc.) of this reflow input's frame. It will be setup
   // properly in InitCBReflowInput().
   const ReflowInput* mCBReflowInput = nullptr;
-
-  // The type of frame, from css's perspective. This value is
-  // initialized by the Init method below.
-  nsCSSFrameType mFrameType = NS_CSS_FRAME_TYPE_UNKNOWN;
 
   // The amount the in-flow position of the block is moving vertically relative
   // to its previous in-flow position (i.e. the amount the line containing the
@@ -406,10 +350,6 @@ struct ReflowInput : public SizeComputationInput {
                       : ht + ComputedPhysicalBorderPadding().TopBottom());
   }
 
-  bool ComputedBSizeIsSetByAspectRatio() const {
-    return mFlags.mBSizeIsSetByAspectRatio;
-  }
-
   // Our saved containing block dimensions.
   LogicalSize mContainingBlockSize{mWritingMode};
 
@@ -437,6 +377,10 @@ struct ReflowInput : public SizeComputationInput {
 
   struct Flags {
     Flags() { memset(this, 0, sizeof(*this)); }
+
+    // cached mFrame->IsFrameOfType(nsIFrame::eReplaced) ||
+    //        mFrame->IsFrameOfType(nsIFrame::eReplacedContainsBlock)
+    bool mIsReplaced : 1;
 
     // used by tables to communicate special reflow (in process) to handle
     // percent bsize frames inside cells which may not have computed bsizes
@@ -560,12 +504,12 @@ struct ReflowInput : public SizeComputationInput {
     // context.
     bool mMovedBlockFragments : 1;
 
-    // If the block-size is replacd by aspect-ratio and inline size (i.e.
-    // block axis is the ratio-dependent axis). We set this flag, so we could
-    // apply Automatic content-based minimum sizes after we know the content
-    // size of child fraems.
+    // Is the block-size computed by aspect-ratio and inline size (i.e. block
+    // axis is the ratio-dependent axis)? We set this flag so that we can check
+    // whether to apply automatic content-based minimum sizes once we know the
+    // children's block-size (after reflowing them).
     // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
-    bool mBSizeIsSetByAspectRatio : 1;
+    bool mIsBSizeSetByAspectRatio : 1;
   };
   Flags mFlags;
   mozilla::ComputeSizeFlags mComputeSizeFlags;
@@ -887,7 +831,6 @@ struct ReflowInput : public SizeComputationInput {
 #endif
 
  protected:
-  void InitFrameType(LayoutFrameType aFrameType);
   void InitCBReflowInput();
   void InitResizeFlags(nsPresContext* aPresContext,
                        mozilla::LayoutFrameType aFrameType);
@@ -952,6 +895,13 @@ struct ReflowInput : public SizeComputationInput {
                                     nscoord* aOutsideBoxSizing) const;
 
   void CalculateBlockSideMargins(LayoutFrameType aFrameType);
+
+  /**
+   * @return true if mFrame is an internal table frame, i.e. an
+   * ns[RowGroup|ColGroup|Row|Cell]Frame.  (We exclude nsTableColFrame
+   * here since we never setup a ReflowInput for those.)
+   */
+  bool IsInternalTableFrame() const;
 
  private:
   // The available size in which to reflow the frame. The space represents the

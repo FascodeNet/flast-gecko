@@ -16,6 +16,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Locale;
 
 import org.mozilla.gecko.GeckoThread;
 import org.mozilla.gecko.annotation.WrapForJNI;
@@ -138,9 +139,11 @@ public class GeckoWebExecutor {
             throw new IllegalArgumentException("Unknown cache mode");
         }
 
+        final String uri = request.uri.toLowerCase(Locale.ROOT);
         // We don't need to fully validate the URI here, just a sanity check
-        if (!request.uri.toLowerCase().matches("(http|blob).*")) {
-            throw new IllegalArgumentException("Unsupported URI scheme");
+        if (!uri.matches("(http|blob).*")) {
+            throw new IllegalArgumentException("Unsupported URI scheme: " +
+                    (uri.length() > 10 ? uri.substring(0, 10) : uri));
         }
 
         final GeckoResult<WebResponse> result = new GeckoResult<>();

@@ -9,6 +9,7 @@
 #include "jit/CacheIRCompiler.h"
 #include "jit/VMFunctions.h"
 #include "util/DiagnosticAssertions.h"
+#include "vm/EqualityOperations.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "vm/Interpreter-inl.h"
@@ -162,7 +163,7 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   MOZ_ASSERT(!val.isMagic());
 
   TryAttachIonStub<GetPropIRGenerator>(cx, ic, ionScript, ic->kind(), val,
-                                       idVal, val);
+                                       idVal);
 
   if (ic->kind() == CacheKind::GetProp) {
     RootedPropertyName name(cx, idVal.toString()->asAtom().asPropertyName());
@@ -192,7 +193,7 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
 
   RootedValue val(cx, ObjectValue(*obj));
   TryAttachIonStub<GetPropIRGenerator>(cx, ic, ionScript, ic->kind(), val,
-                                       idVal, receiver);
+                                       idVal);
 
   if (ic->kind() == CacheKind::GetPropSuper) {
     RootedPropertyName name(cx, idVal.toString()->asAtom().asPropertyName());
@@ -653,24 +654,26 @@ bool IonCompareIC::update(JSContext* cx, HandleScript outerScript,
       }
       break;
     case JSOp::Eq:
-      if (!LooselyEqual<EqualityKind::Equal>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!js::LooselyEqual(cx, lhsCopy, rhsCopy, res)) {
         return false;
       }
       break;
     case JSOp::Ne:
-      if (!LooselyEqual<EqualityKind::NotEqual>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!js::LooselyEqual(cx, lhsCopy, rhsCopy, res)) {
         return false;
       }
+      *res = !*res;
       break;
     case JSOp::StrictEq:
-      if (!StrictlyEqual<EqualityKind::Equal>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!js::StrictlyEqual(cx, lhsCopy, rhsCopy, res)) {
         return false;
       }
       break;
     case JSOp::StrictNe:
-      if (!StrictlyEqual<EqualityKind::NotEqual>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!js::StrictlyEqual(cx, lhsCopy, rhsCopy, res)) {
         return false;
       }
+      *res = !*res;
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unhandled ion compare op");

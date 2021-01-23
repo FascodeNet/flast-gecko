@@ -1412,54 +1412,6 @@ void CodeGenerator::visitCompareFAndBranch(LCompareFAndBranch* comp) {
   emitBranch(cond, comp->ifTrue(), comp->ifFalse());
 }
 
-void CodeGenerator::visitCompareB(LCompareB* lir) {
-  MCompare* mir = lir->mir();
-  const ValueOperand lhs = ToValue(lir, LCompareB::Lhs);
-  const LAllocation* rhs = lir->rhs();
-  const Register output = ToRegister(lir->output());
-  const Assembler::Condition cond =
-      JSOpToCondition(mir->compareType(), mir->jsop());
-
-  vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-  const Register scratch = temps.AcquireX().asUnsized();
-
-  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
-
-  // Load boxed boolean into scratch.
-  if (rhs->isConstant()) {
-    masm.moveValue(rhs->toConstant()->toJSValue(), ValueOperand(scratch));
-  } else {
-    masm.boxValue(JSVAL_TYPE_BOOLEAN, ToRegister(rhs), scratch);
-  }
-
-  // Compare the entire Value.
-  masm.cmpPtrSet(cond, lhs.valueReg(), scratch, output);
-}
-
-void CodeGenerator::visitCompareBAndBranch(LCompareBAndBranch* lir) {
-  MCompare* mir = lir->cmpMir();
-  const ValueOperand lhs = ToValue(lir, LCompareBAndBranch::Lhs);
-  const LAllocation* rhs = lir->rhs();
-  const Assembler::Condition cond =
-      JSOpToCondition(mir->compareType(), mir->jsop());
-
-  vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-  const Register scratch = temps.AcquireX().asUnsized();
-
-  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
-
-  // Load boxed boolean into scratch.
-  if (rhs->isConstant()) {
-    masm.moveValue(rhs->toConstant()->toJSValue(), ValueOperand(scratch));
-  } else {
-    masm.boxValue(JSVAL_TYPE_BOOLEAN, ToRegister(rhs), scratch);
-  }
-
-  // Compare the entire Value.
-  masm.cmpPtr(lhs.valueReg(), scratch);
-  emitBranch(cond, lir->ifTrue(), lir->ifFalse());
-}
-
 void CodeGenerator::visitBitAndAndBranch(LBitAndAndBranch* baab) {
   if (baab->right()->isConstant()) {
     masm.Tst(toWRegister(baab->left()), Operand(ToInt32(baab->right())));
@@ -1862,4 +1814,72 @@ void CodeGenerator::visitWasmAtomicBinopHeapForEffect(
 void CodeGenerator::visitAtomicTypedArrayElementBinopForEffect(
     LAtomicTypedArrayElementBinopForEffect*) {
   MOZ_CRASH("NYI");
+}
+
+void CodeGenerator::visitSimd128(LSimd128* ins) { MOZ_CRASH("No SIMD"); }
+
+void CodeGenerator::visitWasmBitselectSimd128(LWasmBitselectSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmBinarySimd128WithConstant(
+    LWasmBinarySimd128WithConstant* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmVariableShiftSimd128(
+    LWasmVariableShiftSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmConstantShiftSimd128(
+    LWasmConstantShiftSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmShuffleSimd128(LWasmShuffleSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmPermuteSimd128(LWasmPermuteSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmReplaceLaneSimd128(LWasmReplaceLaneSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmReplaceInt64LaneSimd128(
+    LWasmReplaceInt64LaneSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmScalarToSimd128(LWasmScalarToSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmInt64ToSimd128(LWasmInt64ToSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmReduceSimd128(LWasmReduceSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmReduceAndBranchSimd128(
+    LWasmReduceAndBranchSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmReduceSimd128ToInt64(
+    LWasmReduceSimd128ToInt64* ins) {
+  MOZ_CRASH("No SIMD");
 }

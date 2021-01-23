@@ -79,11 +79,7 @@
 #include "nsHttpHandler.h"
 #include "nsNSSComponent.h"
 #include "nsIRedirectHistoryEntry.h"
-#ifdef MOZ_NEW_CERT_STORAGE
-#  include "nsICertStorage.h"
-#else
-#  include "nsICertBlocklist.h"
-#endif
+#include "nsICertStorage.h"
 #include "nsICertOverrideService.h"
 #include "nsQueryObject.h"
 #include "mozIThirdPartyUtil.h"
@@ -2714,13 +2710,8 @@ void net_EnsurePSMInit() {
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(NS_IsMainThread());
 
-  nsresult rv;
-  nsCOMPtr<nsISupports> psm = do_GetService(PSM_COMPONENT_CONTRACTID, &rv);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-
-#ifndef MOZ_NEW_CERT_STORAGE
-  nsCOMPtr<nsISupports> cbl = do_GetService(NS_CERTBLOCKLIST_CONTRACTID);
-#endif
+  DebugOnly<bool> rv = EnsureNSSInitializedChromeOrContent();
+  MOZ_ASSERT(rv);
 }
 
 bool NS_IsAboutBlank(nsIURI* uri) {
@@ -3183,11 +3174,11 @@ bool NS_ShouldClassifyChannel(nsIChannel* aChannel) {
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
-  nsContentPolicyType type = loadInfo->GetExternalContentPolicyType();
+  ExtContentPolicyType type = loadInfo->GetExternalContentPolicyType();
   // Skip classifying channel triggered by system unless it is a top-level
   // load.
   if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
-      nsIContentPolicy::TYPE_DOCUMENT != type) {
+      ExtContentPolicy::TYPE_DOCUMENT != type) {
     return false;
   }
 

@@ -53,6 +53,10 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   movslq(src, dest.reg);
 }
 
+void MacroAssembler::move32SignExtendToPtr(Register src, Register dest) {
+  movslq(src, dest);
+}
+
 void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
   movl(src, dest);
 }
@@ -720,6 +724,19 @@ void MacroAssembler::branchToComputedAddress(const BaseIndex& address) {
   jmp(Operand(address));
 }
 
+void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs, Register rhs,
+                                   Register src, Register dest) {
+  cmpPtr(lhs, rhs);
+  cmovCCq(cond, src, dest);
+}
+
+void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs,
+                                   const Address& rhs, Register src,
+                                   Register dest) {
+  cmpPtr(lhs, Operand(rhs));
+  cmovCCq(cond, src, dest);
+}
+
 void MacroAssembler::cmp32MovePtr(Condition cond, Register lhs, Imm32 rhs,
                                   Register src, Register dest) {
   cmp32(lhs, rhs);
@@ -794,6 +811,52 @@ void MacroAssembler::spectreBoundsCheck32(Register index, const Address& length,
 
   if (JitOptions.spectreIndexMasking) {
     cmovCCl(Assembler::AboveOrEqual, scratch, index);
+  }
+}
+
+void MacroAssembler::spectreBoundsCheckPtr(Register index, Register length,
+                                           Register maybeScratch,
+                                           Label* failure) {
+  MOZ_ASSERT(length != maybeScratch);
+  MOZ_ASSERT(index != maybeScratch);
+
+  ScratchRegisterScope scratch(*this);
+  MOZ_ASSERT(index != scratch);
+  MOZ_ASSERT(length != scratch);
+
+  if (JitOptions.spectreIndexMasking) {
+    movePtr(ImmWord(0), scratch);
+  }
+
+  cmpPtr(index, length);
+  j(Assembler::AboveOrEqual, failure);
+
+  if (JitOptions.spectreIndexMasking) {
+    cmovCCq(Assembler::AboveOrEqual, scratch, index);
+  }
+}
+
+void MacroAssembler::spectreBoundsCheckPtr(Register index,
+                                           const Address& length,
+                                           Register maybeScratch,
+                                           Label* failure) {
+  MOZ_ASSERT(index != length.base);
+  MOZ_ASSERT(length.base != maybeScratch);
+  MOZ_ASSERT(index != maybeScratch);
+
+  ScratchRegisterScope scratch(*this);
+  MOZ_ASSERT(index != scratch);
+  MOZ_ASSERT(length.base != scratch);
+
+  if (JitOptions.spectreIndexMasking) {
+    movePtr(ImmWord(0), scratch);
+  }
+
+  cmpPtr(index, Operand(length));
+  j(Assembler::AboveOrEqual, failure);
+
+  if (JitOptions.spectreIndexMasking) {
+    cmovCCq(Assembler::AboveOrEqual, scratch, index);
   }
 }
 

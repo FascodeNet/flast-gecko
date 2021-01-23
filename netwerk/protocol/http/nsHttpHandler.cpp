@@ -303,8 +303,6 @@ nsHttpHandler::nsHttpHandler()
       mEnforceH1Framing(FRAMECHECK_BARELY),
       mDefaultHpackBuffer(4096),
       mBug1563538(true),
-      mBug1563695(true),
-      mBug1556491(true),
       mHttp3Enabled(true),
       mQpackTableSize(4096),
       mHttp3MaxBlockedStreams(10),
@@ -690,7 +688,7 @@ nsresult nsHttpHandler::InitConnectionMgr() {
 
 nsresult nsHttpHandler::AddStandardRequestHeaders(
     nsHttpRequestHead* request, bool isSecure,
-    nsContentPolicyType aContentPolicyType) {
+    ExtContentPolicyType aContentPolicyType) {
   nsresult rv;
 
   // Add the "User-Agent" header
@@ -703,13 +701,13 @@ nsresult nsHttpHandler::AddStandardRequestHeaders(
   // service worker expects to see it.  The other "default" headers are
   // hidden from service worker interception.
   nsAutoCString accept;
-  if (aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT ||
-      aContentPolicyType == nsIContentPolicy::TYPE_SUBDOCUMENT) {
+  if (aContentPolicyType == ExtContentPolicy::TYPE_DOCUMENT ||
+      aContentPolicyType == ExtContentPolicy::TYPE_SUBDOCUMENT) {
     accept.Assign(mDocumentAcceptHeader);
-  } else if (aContentPolicyType == nsIContentPolicy::TYPE_IMAGE ||
-             aContentPolicyType == nsIContentPolicy::TYPE_IMAGESET) {
+  } else if (aContentPolicyType == ExtContentPolicy::TYPE_IMAGE ||
+             aContentPolicyType == ExtContentPolicy::TYPE_IMAGESET) {
     accept.Assign(mImageAcceptHeader);
-  } else if (aContentPolicyType == nsIContentPolicy::TYPE_STYLESHEET) {
+  } else if (aContentPolicyType == ExtContentPolicy::TYPE_STYLESHEET) {
     accept.Assign(ACCEPT_HEADER_STYLE);
   } else {
     accept.Assign(ACCEPT_HEADER_ALL);
@@ -1965,18 +1963,6 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     rv = Preferences::GetBool(HTTP_PREF("spdy.bug1563538"), &cVar);
     if (NS_SUCCEEDED(rv)) {
       mBug1563538 = cVar;
-    }
-  }
-  if (PREF_CHANGED(HTTP_PREF("spdy.bug1563695"))) {
-    rv = Preferences::GetBool(HTTP_PREF("spdy.bug1563695"), &cVar);
-    if (NS_SUCCEEDED(rv)) {
-      mBug1563695 = cVar;
-    }
-  }
-  if (PREF_CHANGED(HTTP_PREF("spdy.bug1556491"))) {
-    rv = Preferences::GetBool(HTTP_PREF("spdy.bug1556491"), &cVar);
-    if (NS_SUCCEEDED(rv)) {
-      mBug1556491 = cVar;
     }
   }
 

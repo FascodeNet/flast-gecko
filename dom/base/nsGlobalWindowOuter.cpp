@@ -3312,73 +3312,63 @@ void nsGlobalWindowOuter::GetContentOuter(JSContext* aCx,
                                           JS::MutableHandle<JSObject*> aRetval,
                                           CallerType aCallerType,
                                           ErrorResult& aError) {
-  nsCOMPtr<nsPIDOMWindowOuter> content =
-      GetContentInternal(aError, aCallerType);
+  RefPtr<BrowsingContext> content = GetContentInternal(aCallerType, aError);
   if (aError.Failed()) {
     return;
   }
 
-  if (content) {
-    JS::Rooted<JS::Value> val(aCx);
-    aError = nsContentUtils::WrapNative(aCx, content, &val);
-    if (aError.Failed()) {
-      return;
-    }
-
-    aRetval.set(&val.toObject());
+  if (!content) {
+    aRetval.set(nullptr);
     return;
   }
 
-  aRetval.set(nullptr);
+  JS::Rooted<JS::Value> val(aCx);
+  if (!ToJSValue(aCx, WindowProxyHolder{content}, &val)) {
+    aError.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+
+  MOZ_ASSERT(val.isObjectOrNull());
+  aRetval.set(val.toObjectOrNull());
 }
 
-already_AddRefed<nsPIDOMWindowOuter> nsGlobalWindowOuter::GetContentInternal(
-    ErrorResult& aError, CallerType aCallerType) {
+already_AddRefed<BrowsingContext> nsGlobalWindowOuter::GetContentInternal(
+    CallerType aCallerType, ErrorResult& aError) {
   // First check for a named frame named "content"
-  RefPtr<BrowsingContext> bc = GetChildWindow(u"content"_ns);
-  if (bc) {
-    nsCOMPtr<nsPIDOMWindowOuter> content(bc->GetDOMWindow());
-    return content.forget();
+  if (RefPtr<BrowsingContext> named = GetChildWindow(u"content"_ns)) {
+    return named.forget();
   }
 
-  nsCOMPtr<nsIDocShellTreeItem> primaryContent;
-  if (aCallerType != CallerType::System) {
-    if (mDoc) {
-      mDoc->WarnOnceAbout(DeprecatedOperations::eWindowContentUntrusted);
-    }
-    // If we're called by non-chrome code, make sure we don't return
-    // the primary content window if the calling tab is hidden. In
-    // such a case we return the same-type root in the hidden tab,
-    // which is "good enough", for now.
-    nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(mDocShell));
-
-    if (baseWin) {
-      bool visible = false;
-      baseWin->GetVisibility(&visible);
-
-      if (!visible) {
-        mDocShell->GetInProcessSameTypeRootTreeItem(
-            getter_AddRefs(primaryContent));
-      }
-    }
-  }
-
-  if (!primaryContent) {
+  // If we're in the parent process, and being called by system code, `content`
+  // should return the current primary content frame (if it's in-process).
+  //
+  // We return `nullptr` if the current primary content frame is out-of-process,
+  // rather than a remote window proxy, as that is the existing behaviour as of
+  // bug 1597437.
+  if (XRE_IsParentProcess() && aCallerType == CallerType::System) {
     nsCOMPtr<nsIDocShellTreeOwner> treeOwner = GetTreeOwner();
     if (!treeOwner) {
       aError.Throw(NS_ERROR_FAILURE);
       return nullptr;
     }
 
+    nsCOMPtr<nsIDocShellTreeItem> primaryContent;
     treeOwner->GetPrimaryContentShell(getter_AddRefs(primaryContent));
+    if (!primaryContent) {
+      return nullptr;
+    }
+
+    return do_AddRef(primaryContent->GetBrowsingContext());
   }
 
-  if (!primaryContent) {
-    return nullptr;
+  // For legacy untrusted callers we always return the same value as
+  // `window.top`
+  if (mDoc && aCallerType != CallerType::System) {
+    mDoc->WarnOnceAbout(DeprecatedOperations::eWindowContentUntrusted);
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> domWindow = primaryContent->GetWindow();
-  return domWindow.forget();
+  MOZ_ASSERT(mBrowsingContext->IsContent());
+  return do_AddRef(mBrowsingContext->Top());
 }
 
 nsresult nsGlobalWindowOuter::GetPrompter(nsIPrompt** aPrompt) {
@@ -5063,47 +5053,14 @@ void nsGlobalWindowOuter::PromptOuter(const nsAString& aMessage,
   }
 }
 
-void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
+void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
+                                     uint64_t aActionId) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     return;
   }
 
-  nsCOMPtr<nsIBaseWindow> baseWin = do_QueryInterface(mDocShell);
-  if (!baseWin) {
-    return;
-  }
-
-  nsCOMPtr<nsPIDOMWindowInner> caller = do_QueryInterface(GetEntryGlobal());
-  nsPIDOMWindowOuter* callerOuter = caller ? caller->GetOuterWindow() : nullptr;
-  BrowsingContext* callerBC =
-      callerOuter ? callerOuter->GetBrowsingContext() : nullptr;
-  RefPtr<BrowsingContext> openerBC = GetOpenerBrowsingContext();
-
-  // Enforce dom.disable_window_flip (for non-chrome), but still allow the
-  // window which opened us to raise us at times when popups are allowed
-  // (bugs 355482 and 369306).
-  bool canFocus = CanSetProperty("dom.disable_window_flip") ||
-                  (openerBC == callerBC &&
-                   RevisePopupAbuseLevel(PopupBlocker::GetPopupControlState()) <
-                       PopupBlocker::openBlocked);
-
-  bool isActive = false;
-  if (XRE_IsParentProcess()) {
-    nsCOMPtr<nsPIDOMWindowOuter> activeWindow = fm->GetActiveWindow();
-
-    nsCOMPtr<nsIDocShellTreeItem> rootItem;
-    mDocShell->GetInProcessRootTreeItem(getter_AddRefs(rootItem));
-    nsCOMPtr<nsPIDOMWindowOuter> rootWin =
-        rootItem ? rootItem->GetWindow() : nullptr;
-    isActive = (rootWin == activeWindow);
-  } else {
-    BrowsingContext* activeBrowsingContext = fm->GetActiveBrowsingContext();
-    BrowsingContext* bc = GetBrowsingContext();
-    if (bc) {
-      isActive = (activeBrowsingContext == bc->Top());
-    }
-  }
+  auto [canFocus, isActive] = GetBrowsingContext()->CanFocusCheck(aCallerType);
 
   nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = GetTreeOwnerWindow();
   if (treeOwnerAsWin && (canFocus || isActive)) {
@@ -5134,11 +5091,10 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
       parent = bc->Canonical()->GetParentCrossChromeBoundary();
     }
   }
-  uint64_t actionId = nsFocusManager::GenerateFocusActionId();
   if (parent) {
     if (!parent->IsInProcess()) {
       if (isActive) {
-        fm->WindowRaised(this, actionId);
+        fm->WindowRaised(this, aActionId);
         // XXX we still need to notify framer about the focus moves to OOP
         // iframe to generate corresponding blur event for bug 1677474.
       } else {
@@ -5163,7 +5119,7 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
     // if there is no parent, this must be a toplevel window, so raise the
     // window if canFocus is true. If this is a child process, the raise
     // window request will get forwarded to the parent by the puppet widget.
-    fm->RaiseWindow(this, aCallerType, actionId);
+    fm->RaiseWindow(this, aCallerType, aActionId);
   }
 }
 
@@ -5708,70 +5664,6 @@ bool nsGlobalWindowOuter::CanSetProperty(const char* aPrefName) {
   // If the pref is set to true, we can not set the property
   // and vice versa.
   return !Preferences::GetBool(aPrefName, true);
-}
-
-bool nsGlobalWindowOuter::IsPopupAllowed() {
-  return mBrowsingContext->IsPopupAllowed();
-}
-
-/*
- * Examine the current document state to see if we're in a way that is
- * typically abused by web designers. The window.open code uses this
- * routine to determine whether to allow the new window.
- * Returns a value from the PopupControlState enum.
- */
-PopupBlocker::PopupControlState nsGlobalWindowOuter::RevisePopupAbuseLevel(
-    PopupBlocker::PopupControlState aControl) {
-  NS_ASSERTION(mDocShell, "Must have docshell");
-
-  if (mDocShell->ItemType() != nsIDocShellTreeItem::typeContent) {
-    return PopupBlocker::openAllowed;
-  }
-
-  PopupBlocker::PopupControlState abuse = aControl;
-  switch (abuse) {
-    case PopupBlocker::openControlled:
-    case PopupBlocker::openBlocked:
-    case PopupBlocker::openOverridden:
-      if (IsPopupAllowed()) {
-        abuse = PopupBlocker::PopupControlState(abuse - 1);
-      }
-      break;
-    case PopupBlocker::openAbused:
-      if (IsPopupAllowed()) {
-        // Skip PopupBlocker::openBlocked
-        abuse = PopupBlocker::openControlled;
-      }
-      break;
-    case PopupBlocker::openAllowed:
-      break;
-    default:
-      NS_WARNING("Strange PopupControlState!");
-  }
-
-  // limit the number of simultaneously open popups
-  if (abuse == PopupBlocker::openAbused || abuse == PopupBlocker::openBlocked ||
-      abuse == PopupBlocker::openControlled) {
-    int32_t popupMax = StaticPrefs::dom_popup_maximum();
-    if (popupMax >= 0 &&
-        PopupBlocker::GetOpenPopupSpamCount() >= (uint32_t)popupMax) {
-      abuse = PopupBlocker::openOverridden;
-    }
-  }
-
-  // If this popup is allowed, let's block any other for this event, forcing
-  // PopupBlocker::openBlocked state.
-  if ((abuse == PopupBlocker::openAllowed ||
-       abuse == PopupBlocker::openControlled) &&
-      StaticPrefs::dom_block_multiple_popups() && !IsPopupAllowed() &&
-      !mDoc->ConsumeTransientUserGestureActivation()) {
-    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns, mDoc,
-                                    nsContentUtils::eDOM_PROPERTIES,
-                                    "MultiplePopupsBlockedNoUserActivation");
-    abuse = PopupBlocker::openBlocked;
-  }
-
-  return abuse;
 }
 
 /* If a window open is blocked, fire the appropriate DOM events. */
@@ -7103,7 +6995,7 @@ nsresult nsGlobalWindowOuter::OpenInternal(
   PopupBlocker::PopupControlState abuseLevel =
       PopupBlocker::GetPopupControlState();
   if (checkForPopup) {
-    abuseLevel = RevisePopupAbuseLevel(abuseLevel);
+    abuseLevel = mBrowsingContext->RevisePopupAbuseLevel(abuseLevel);
     if (abuseLevel >= PopupBlocker::openBlocked) {
       if (!aCalledNoScript) {
         // If script in some other window is doing a window.open on us and
@@ -7611,14 +7503,16 @@ void nsGlobalWindowOuter::MaybeResetWindowName(Document* aNewDocument) {
   // If we have an existing doucment, directly check the document prinicpals
   // with the new document to know if it is cross-origin.
   //
-  // When running wpt, we could have an existing about:blank documnet which has
-  // a principal that is the same as the principal of the new document. But the
-  // new document doesn't load an about:blank page. In this case, we should
-  // treat them as cross-origin despite both doucments have same-origin
-  // principals. This only happens when Fission is enabled.
-  if (mDoc && mDoc->NodePrincipal()->Equals(aNewDocument->NodePrincipal()) &&
-      (NS_IsAboutBlank(mDoc->GetDocumentURI()) ==
-       NS_IsAboutBlank(aNewDocument->GetDocumentURI()))) {
+  // Note that there will be an issue of initial document handling in Fission
+  // when running the WPT unset_context_name-1.html. In the test, the first
+  // about:blank page would be loaded with the principal of the testing domain
+  // in Fission and the window.name will be set there. Then, The window.name
+  // won't be reset after navigating to the testing page because the principal
+  // is the same. But, it won't be the case for non-Fission mode that the first
+  // about:blank will be loaded with a null principal and the window.name will
+  // be reset when loading the test page.
+  if (mDoc && mDoc->NodePrincipal()->EqualsConsideringDomain(
+                  aNewDocument->NodePrincipal())) {
     return;
   }
 

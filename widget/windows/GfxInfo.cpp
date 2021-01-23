@@ -1094,6 +1094,11 @@ GfxInfo::GetDisplayHeight(nsTArray<uint32_t>& aDisplayHeight) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+GfxInfo::GetDrmRenderDevice(nsACString& aDrmRenderDevice) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 /* Cisco's VPN software can cause corruption of the floating point state.
  * Make a note of this in our crash reports so that some weird crashes
  * make more sense */
@@ -1773,14 +1778,12 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER - ALLOWLIST
-#ifdef EARLY_BETA_OR_EARLIER
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::AmdR600, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_AMD_R600");
-#endif
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,

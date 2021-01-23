@@ -27,6 +27,7 @@
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/SVGMaskFrame.h"
 #include "mozilla/SVGObserverUtils.h"
@@ -4795,8 +4796,9 @@ nsIFrame::HandlePress(nsPresContext* aPresContext, WidgetGUIEvent* aEvent,
     return nsFrameSelection::FocusMode::kCollapseToNewPoint;
   }();
 
-  rv = fc->HandleClick(offsets.content, offsets.StartOffset(),
-                       offsets.EndOffset(), focusMode, offsets.associate);
+  rv = fc->HandleClick(MOZ_KnownLive(offsets.content) /* bug 1636889 */,
+                       offsets.StartOffset(), offsets.EndOffset(), focusMode,
+                       offsets.associate);
 
   if (NS_FAILED(rv)) return rv;
 
@@ -4815,20 +4817,6 @@ nsIFrame::HandlePress(nsPresContext* aPresContext, WidgetGUIEvent* aEvent,
   return rv;
 }
 
-/*
- * SelectByTypeAtPoint
- *
- * Search for selectable content at point and attempt to select
- * based on the start and end selection behaviours.
- *
- * @param aPresContext Presentation context
- * @param aPoint Point at which selection will occur. Coordinates
- * should be relaitve to this frame.
- * @param aBeginAmountType, aEndAmountType Selection behavior, see
- * nsIFrame for definitions.
- * @param aSelectFlags Selection flags defined in nsFame.h.
- * @return success or failure at finding suitable content to select.
- */
 nsresult nsIFrame::SelectByTypeAtPoint(nsPresContext* aPresContext,
                                        const nsPoint& aPoint,
                                        nsSelectionAmount aBeginAmountType,
@@ -4948,12 +4936,14 @@ nsresult nsIFrame::PeekBackwardAndForward(nsSelectionAmount aAmountBack,
           ? nsFrameSelection::FocusMode::kMultiRangeSelection
           : nsFrameSelection::FocusMode::kCollapseToNewPoint;
   rv = frameSelection->HandleClick(
-      startpos.mResultContent, startpos.mContentOffset, startpos.mContentOffset,
-      focusMode, CARET_ASSOCIATE_AFTER);
+      MOZ_KnownLive(startpos.mResultContent) /* bug 1636889 */,
+      startpos.mContentOffset, startpos.mContentOffset, focusMode,
+      CARET_ASSOCIATE_AFTER);
   if (NS_FAILED(rv)) return rv;
 
   rv = frameSelection->HandleClick(
-      endpos.mResultContent, endpos.mContentOffset, endpos.mContentOffset,
+      MOZ_KnownLive(endpos.mResultContent) /* bug 1636889 */,
+      endpos.mContentOffset, endpos.mContentOffset,
       nsFrameSelection::FocusMode::kExtendSelection, CARET_ASSOCIATE_BEFORE);
   if (NS_FAILED(rv)) return rv;
 
@@ -5043,14 +5033,12 @@ NS_IMETHODIMP nsIFrame::HandleDrag(nsPresContext* aPresContext,
  * This static method handles part of the nsIFrame::HandleRelease in a way
  * which doesn't rely on the nsFrame object to stay alive.
  */
-static nsresult HandleFrameSelection(nsFrameSelection* aFrameSelection,
-                                     nsIFrame::ContentOffsets& aOffsets,
-                                     bool aHandleTableSel,
-                                     int32_t aContentOffsetForTableSel,
-                                     TableSelectionMode aTargetForTableSel,
-                                     nsIContent* aParentContentForTableSel,
-                                     WidgetGUIEvent* aEvent,
-                                     const nsEventStatus* aEventStatus) {
+MOZ_CAN_RUN_SCRIPT_BOUNDARY static nsresult HandleFrameSelection(
+    nsFrameSelection* aFrameSelection, nsIFrame::ContentOffsets& aOffsets,
+    bool aHandleTableSel, int32_t aContentOffsetForTableSel,
+    TableSelectionMode aTargetForTableSel,
+    nsIContent* aParentContentForTableSel, WidgetGUIEvent* aEvent,
+    const nsEventStatus* aEventStatus) {
   if (!aFrameSelection) {
     return NS_OK;
   }
@@ -5079,8 +5067,9 @@ static nsresult HandleFrameSelection(nsFrameSelection* aFrameSelection,
               ? nsFrameSelection::FocusMode::kExtendSelection
               : nsFrameSelection::FocusMode::kCollapseToNewPoint;
       rv = aFrameSelection->HandleClick(
-          aOffsets.content, aOffsets.StartOffset(), aOffsets.EndOffset(),
-          focusMode, aOffsets.associate);
+          MOZ_KnownLive(aOffsets.content) /* bug 1636889 */,
+          aOffsets.StartOffset(), aOffsets.EndOffset(), focusMode,
+          aOffsets.associate);
       if (NS_FAILED(rv)) {
         return rv;
       }
@@ -5201,7 +5190,7 @@ struct MOZ_STACK_CLASS FrameContentRange {
 };
 
 // Retrieve the content offsets of a frame
-static FrameContentRange GetRangeForFrame(nsIFrame* aFrame) {
+static FrameContentRange GetRangeForFrame(const nsIFrame* aFrame) {
   nsIContent* content = aFrame->GetContent();
   if (!content) {
     NS_WARNING("Frame has no content");
@@ -6206,9 +6195,11 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
                            aFlags.contains(ComputeSizeFlag::UseAutoISize);
   // Compute inline-axis size
   if (!isAutoISize) {
-    result.ISize(aWM) = ComputeISizeValue(
-        aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
+    auto iSizeResult = ComputeISizeValue(
+        aRenderingContext, aWM, aCBSize, boxSizingAdjust,
         boxSizingToMarginEdgeISize, *inlineStyleCoord, aFlags);
+    result.ISize(aWM) = iSizeResult.mISize;
+    aspectRatioUsage = iSizeResult.mAspectRatioUsage;
   } else if (stylePos->mAspectRatio.HasFiniteRatio() &&
              !nsLayoutUtils::IsAutoBSize(*blockStyleCoord,
                                          aCBSize.BSize(aWM))) {
@@ -6287,18 +6278,20 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   const auto& maxISizeCoord = stylePos->MaxISize(aWM);
   nscoord maxISize = NS_UNCONSTRAINEDSIZE;
   if (!maxISizeCoord.IsNone() && !isFlexItemInlineAxisMainAxis) {
-    maxISize = ComputeISizeValue(
-        aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
-        boxSizingToMarginEdgeISize, maxISizeCoord, aFlags);
+    maxISize =
+        ComputeISizeValue(aRenderingContext, aWM, aCBSize, boxSizingAdjust,
+                          boxSizingToMarginEdgeISize, maxISizeCoord, aFlags)
+            .mISize;
     result.ISize(aWM) = std::min(maxISize, result.ISize(aWM));
   }
 
   const auto& minISizeCoord = stylePos->MinISize(aWM);
   nscoord minISize;
   if (!minISizeCoord.IsAuto() && !isFlexItemInlineAxisMainAxis) {
-    minISize = ComputeISizeValue(
-        aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
-        boxSizingToMarginEdgeISize, minISizeCoord, aFlags);
+    minISize =
+        ComputeISizeValue(aRenderingContext, aWM, aCBSize, boxSizingAdjust,
+                          boxSizingToMarginEdgeISize, minISizeCoord, aFlags)
+            .mISize;
   } else if (MOZ_UNLIKELY(
                  aFlags.contains(ComputeSizeFlag::IApplyAutoMinSize))) {
     // This implements "Implied Minimum Size of Grid Items".
@@ -6324,10 +6317,9 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
     MOZ_ASSERT(!IsFrameOfType(eReplaced),
                "aspect-ratio minimums should not apply to replaced elements");
-    // We use min-content on the inline-axis as the minimum size.
-    minISize = ComputeISizeValue(
-        aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
-        boxSizingToMarginEdgeISize, StyleExtremumLength::MinContent, aFlags);
+    // The inline size computed by aspect-ratio shouldn't less than the content
+    // size.
+    minISize = GetMinISize(aRenderingContext);
   } else {
     // Treat "min-width: auto" as 0.
     // NOTE: Technically, "auto" is supposed to behave like "min-content" on
@@ -6485,67 +6477,115 @@ nscoord nsIFrame::ShrinkWidthToFit(gfxContext* aRenderingContext,
   return result;
 }
 
-nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
-                                    nscoord aContainingBlockISize,
-                                    nscoord aContentEdgeToBoxSizing,
-                                    nscoord aBoxSizingToMarginEdge,
-                                    StyleExtremumLength aSize,
-                                    ComputeSizeFlags aFlags) {
+Maybe<nscoord> nsIFrame::ComputeInlineSizeFromAspectRatio(
+    WritingMode aWM, const LogicalSize& aCBSize,
+    const LogicalSize& aContentEdgeToBoxSizing, ComputeSizeFlags aFlags) const {
+  // FIXME: Bug 1670151: Use GetAspectRatio() to cover replaced elements.
+  const AspectRatio aspectRatio = StylePosition()->mAspectRatio.ToLayoutRatio();
+  if (aFlags.contains(ComputeSizeFlag::SkipAspectRatio) || !aspectRatio) {
+    return Nothing();
+  }
+
+  const StyleSize& styleBSize = StylePosition()->BSize(aWM);
+  if (aFlags.contains(ComputeSizeFlag::UseAutoBSize) ||
+      nsLayoutUtils::IsAutoBSize(styleBSize, aCBSize.BSize(aWM))) {
+    return Nothing();
+  }
+
+  MOZ_ASSERT(styleBSize.IsLengthPercentage());
+  nscoord bSize = nsLayoutUtils::ComputeBSizeValue(
+      aCBSize.BSize(aWM), aContentEdgeToBoxSizing.BSize(aWM),
+      styleBSize.AsLengthPercentage());
+  return Some(aspectRatio.ComputeRatioDependentSize(
+      LogicalAxis::eLogicalAxisInline, aWM, bSize, aContentEdgeToBoxSizing));
+}
+
+nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
+    gfxContext* aRenderingContext, const WritingMode aWM,
+    const LogicalSize& aContainingBlockSize,
+    const LogicalSize& aContentEdgeToBoxSizing, nscoord aBoxSizingToMarginEdge,
+    StyleExtremumLength aSize, ComputeSizeFlags aFlags) {
   // If 'this' is a container for font size inflation, then shrink
   // wrapping inside of it should not apply font size inflation.
   AutoMaybeDisableFontInflation an(this);
+  // If we have an aspect-ratio and a definite block size, we resolve the
+  // min-content and max-content size by the aspect-ratio and the block size.
+  // https://github.com/w3c/csswg-drafts/issues/5032
+  Maybe<nscoord> intrinsicSizeFromAspectRatio =
+      aSize == StyleExtremumLength::MozAvailable
+          ? Nothing()
+          : ComputeInlineSizeFromAspectRatio(aWM, aContainingBlockSize,
+                                             aContentEdgeToBoxSizing, aFlags);
   nscoord result;
   switch (aSize) {
     case StyleExtremumLength::MaxContent:
-      result = GetPrefISize(aRenderingContext);
+      result = intrinsicSizeFromAspectRatio ? *intrinsicSizeFromAspectRatio
+                                            : GetPrefISize(aRenderingContext);
       NS_ASSERTION(result >= 0, "inline-size less than zero");
-      return result;
+      return {result, intrinsicSizeFromAspectRatio
+                          ? AspectRatioUsage::ToComputeISize
+                          : AspectRatioUsage::None};
     case StyleExtremumLength::MinContent:
-      result = GetMinISize(aRenderingContext);
+      result = intrinsicSizeFromAspectRatio ? *intrinsicSizeFromAspectRatio
+                                            : GetMinISize(aRenderingContext);
       NS_ASSERTION(result >= 0, "inline-size less than zero");
       if (MOZ_UNLIKELY(
               aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize))) {
-        auto available = aContainingBlockISize -
-                         (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing);
+        auto available =
+            aContainingBlockSize.ISize(aWM) -
+            (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing.ISize(aWM));
         result = std::min(available, result);
       }
-      return result;
+      return {result, intrinsicSizeFromAspectRatio
+                          ? AspectRatioUsage::ToComputeISize
+                          : AspectRatioUsage::None};
     case StyleExtremumLength::MozFitContent: {
-      nscoord pref = GetPrefISize(aRenderingContext),
-              min = GetMinISize(aRenderingContext),
-              fill = aContainingBlockISize -
-                     (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing);
+      nscoord pref = NS_UNCONSTRAINEDSIZE;
+      nscoord min = 0;
+      if (intrinsicSizeFromAspectRatio) {
+        // The min-content and max-content size are identical and equal to the
+        // size computed from the block size and the aspect ratio.
+        pref = min = *intrinsicSizeFromAspectRatio;
+      } else {
+        pref = GetPrefISize(aRenderingContext);
+        min = GetMinISize(aRenderingContext);
+      }
+      nscoord fill =
+          aContainingBlockSize.ISize(aWM) -
+          (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing.ISize(aWM));
       if (MOZ_UNLIKELY(
               aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize))) {
         min = std::min(min, fill);
       }
       result = std::max(min, std::min(pref, fill));
       NS_ASSERTION(result >= 0, "inline-size less than zero");
-      return result;
+      return {result};
     }
     case StyleExtremumLength::MozAvailable:
-      return aContainingBlockISize -
-             (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing);
+      return {aContainingBlockSize.ISize(aWM) -
+              (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing.ISize(aWM))};
   }
   MOZ_ASSERT_UNREACHABLE("Unknown extremum length?");
-  return 0;
+  return {};
 }
 
-nscoord nsIFrame::ComputeISizeValue(nscoord aContainingBlockISize,
-                                    nscoord aContentEdgeToBoxSizing,
+nscoord nsIFrame::ComputeISizeValue(const WritingMode aWM,
+                                    const LogicalSize& aContainingBlockSize,
+                                    const LogicalSize& aContentEdgeToBoxSizing,
                                     const LengthPercentage& aSize) {
   LAYOUT_WARN_IF_FALSE(
-      aContainingBlockISize != NS_UNCONSTRAINEDSIZE,
+      aContainingBlockSize.ISize(aWM) != NS_UNCONSTRAINEDSIZE,
       "have unconstrained inline-size; this should only result from "
       "very large sizes, not attempts at intrinsic inline-size "
       "calculation");
-  NS_ASSERTION(aContainingBlockISize >= 0, "inline-size less than zero");
+  NS_ASSERTION(aContainingBlockSize.ISize(aWM) >= 0,
+               "inline-size less than zero");
 
-  nscoord result = aSize.Resolve(aContainingBlockISize);
+  nscoord result = aSize.Resolve(aContainingBlockSize.ISize(aWM));
   // The result of a calc() expression might be less than 0; we
   // should clamp at runtime (below).  (Percentages and coords that
   // are less than 0 have already been dropped by the parser.)
-  result -= aContentEdgeToBoxSizing;
+  result -= aContentEdgeToBoxSizing.ISize(aWM);
   return std::max(0, result);
 }
 
@@ -8496,8 +8536,8 @@ nsresult nsIFrame::PeekOffsetForParagraph(nsPeekOffsetStruct* aPos) {
 }
 
 // Determine movement direction relative to frame
-static bool IsMovingInFrameDirection(nsIFrame* frame, nsDirection aDirection,
-                                     bool aVisual) {
+static bool IsMovingInFrameDirection(const nsIFrame* frame,
+                                     nsDirection aDirection, bool aVisual) {
   bool isReverseDirection =
       aVisual && nsBidiPresUtils::IsReversedDirectionFrame(frame);
   return aDirection == (isReverseDirection ? eDirPrevious : eDirNext);
@@ -11610,17 +11650,6 @@ DR_init_offsets_cookie::~DR_init_offsets_cookie() {
   SizeComputationInput::DisplayInitOffsetsExit(mFrame, mState, mValue);
 }
 
-DR_init_type_cookie::DR_init_type_cookie(nsIFrame* aFrame, ReflowInput* aState)
-    : mFrame(aFrame), mState(aState) {
-  MOZ_COUNT_CTOR(DR_init_type_cookie);
-  mValue = ReflowInput::DisplayInitFrameTypeEnter(mFrame, mState);
-}
-
-DR_init_type_cookie::~DR_init_type_cookie() {
-  MOZ_COUNT_DTOR(DR_init_type_cookie);
-  ReflowInput::DisplayInitFrameTypeExit(mFrame, mState, mValue);
-}
-
 struct DR_Rule;
 
 struct DR_FrameTypeInfo {
@@ -12552,61 +12581,6 @@ void SizeComputationInput::DisplayInitOffsetsExit(nsIFrame* aFrame,
     const auto bp = aState->ComputedPhysicalBorderPadding();
     DR_state->PrintMargin("b+p", &bp);
     putchar('\n');
-  }
-  DR_state->DeleteTreeNode(*treeNode);
-}
-
-/* static */
-void* ReflowInput::DisplayInitFrameTypeEnter(nsIFrame* aFrame,
-                                             ReflowInput* aState) {
-  MOZ_ASSERT(aFrame, "non-null frame required");
-  MOZ_ASSERT(aState, "non-null state required");
-
-  if (!DR_state->mInited) DR_state->Init();
-  if (!DR_state->mActive) return nullptr;
-
-  // we don't print anything here
-  return DR_state->CreateTreeNode(aFrame, aState);
-}
-
-/* static */
-void ReflowInput::DisplayInitFrameTypeExit(nsIFrame* aFrame,
-                                           ReflowInput* aState, void* aValue) {
-  MOZ_ASSERT(aFrame, "non-null frame required");
-  MOZ_ASSERT(aState, "non-null state required");
-
-  if (!DR_state->mActive) return;
-  if (!aValue) return;
-
-  DR_FrameTreeNode* treeNode = (DR_FrameTreeNode*)aValue;
-  if (treeNode->mDisplay) {
-    DR_state->DisplayFrameTypeInfo(aFrame, treeNode->mIndent);
-    printf("InitFrameType");
-
-    if (aFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW)) printf(" out-of-flow");
-    if (aFrame->GetPrevInFlow()) printf(" prev-in-flow");
-    if (aFrame->IsAbsolutelyPositioned()) printf(" abspos");
-    if (aFrame->IsFloating()) printf(" float");
-
-    {
-      nsAutoCString result;
-      aFrame->Style()->GetComputedPropertyValue(eCSSProperty_display, result);
-      printf(" display=%s", result.get());
-    }
-
-    // This array must exactly match the NS_CSS_FRAME_TYPE constants.
-    const char* const cssFrameTypes[] = {
-        "unknown", "inline", "block", "floating", "absolute", "internal-table"};
-    nsCSSFrameType bareType = NS_FRAME_GET_TYPE(aState->mFrameType);
-    bool repNoBlock = NS_FRAME_IS_REPLACED_NOBLOCK(aState->mFrameType);
-    bool repBlock = NS_FRAME_IS_REPLACED_CONTAINS_BLOCK(aState->mFrameType);
-
-    if (bareType >= ArrayLength(cssFrameTypes)) {
-      printf(" result=type %u", bareType);
-    } else {
-      printf(" result=%s", cssFrameTypes[bareType]);
-    }
-    printf("%s%s\n", repNoBlock ? " +rep" : "", repBlock ? " +repBlk" : "");
   }
   DR_state->DeleteTreeNode(*treeNode);
 }

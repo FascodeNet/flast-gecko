@@ -75,16 +75,25 @@ class WindowBackBuffer {
   }
   static gfx::SurfaceFormat GetSurfaceFormat() { return mFormat; }
 
+#ifdef MOZ_LOGGING
+  void DumpToFile(const char* aHint);
+#endif
+
   RefPtr<nsWaylandDisplay> GetWaylandDisplay();
 
  private:
-  void ReleaseShmSurface();
+  void ReleaseWLBuffer();
 
   static gfx::SurfaceFormat mFormat;
   WindowSurfaceWayland* mWindowSurfaceWayland;
 
   // WaylandShmPool provides actual shared memory we draw into
   WaylandShmPool mShmPool;
+
+#ifdef MOZ_LOGGING
+  static int mDumpSerial;
+  static char* mDumpDir;
+#endif
 
   // wl_buffer is a wayland object that encapsulates the shared memory
   // and passes it to wayland compositor by wl_surface object.
@@ -97,22 +106,16 @@ class WindowBackBuffer {
 
 class WindowImageSurface {
  public:
-  static void Draw(gfx::SourceSurface* aSurface, gfx::DrawTarget* aDest,
-                   const LayoutDeviceIntRegion& aRegion);
-
-  void Draw(gfx::DrawTarget* aDest,
-            LayoutDeviceIntRegion& aWaylandBufferDamage);
-
-  WindowImageSurface(gfxImageSurface* aImageSurface,
+  void DrawToTarget(gfx::DrawTarget* aDest,
+                    LayoutDeviceIntRegion& aWaylandBufferDamage);
+  WindowImageSurface(gfx::DataSourceSurface* aImageSurface,
                      const LayoutDeviceIntRegion& aUpdateRegion);
-
   bool OverlapsSurface(class WindowImageSurface& aBottomSurface);
 
   const LayoutDeviceIntRegion* GetUpdateRegion() { return &mUpdateRegion; };
 
  private:
-  RefPtr<gfx::SourceSurface> mSurface;
-  RefPtr<gfxImageSurface> mImageSurface;
+  RefPtr<gfx::DataSourceSurface> mImageSurface;
   const LayoutDeviceIntRegion mUpdateRegion;
 };
 
@@ -164,8 +167,7 @@ class WindowSurfaceWayland : public WindowSurface {
   } RenderingCacheMode;
 
  private:
-  WindowBackBuffer* GetWaylandBufferWithSwitch();
-  WindowBackBuffer* GetWaylandBufferRecent();
+  WindowBackBuffer* GetWaylandBuffer();
   WindowBackBuffer* SetNewWaylandBuffer();
   WindowBackBuffer* CreateWaylandBuffer(int aWidth, int aHeight);
   WindowBackBuffer* WaylandBufferFindAvailable(int aWidth, int aHeight);
@@ -224,7 +226,7 @@ class WindowSurfaceWayland : public WindowSurface {
   // holds all cached drawings.
   // mDelayedImageCommits can be drawn by FrameCallbackHandler()
   // or when WaylandBuffer is detached.
-  RefPtr<gfxImageSurface> mImageSurface;
+  RefPtr<gfx::DataSourceSurface> mImageSurface;
   AutoTArray<WindowImageSurface, 30> mDelayedImageCommits;
 
   int64_t mLastCommitTime;

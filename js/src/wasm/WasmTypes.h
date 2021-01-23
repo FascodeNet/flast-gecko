@@ -20,7 +20,6 @@
 #define wasm_types_h
 
 #include "mozilla/Alignment.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/BinarySearch.h"
 #include "mozilla/EnumeratedArray.h"
@@ -91,7 +90,6 @@ using RootedWasmExceptionObject = Rooted<WasmExceptionObject*>;
 
 namespace wasm {
 
-using mozilla::ArrayEqual;
 using mozilla::Atomic;
 using mozilla::DebugOnly;
 using mozilla::EnumeratedArray;
@@ -212,7 +210,7 @@ struct ShareableBytes : ShareableBase<ShareableBytes> {
   const uint8_t* begin() const { return bytes.begin(); }
   const uint8_t* end() const { return bytes.end(); }
   size_t length() const { return bytes.length(); }
-  bool append(const uint8_t* start, uint32_t len) {
+  bool append(const uint8_t* start, size_t len) {
     return bytes.append(start, len);
   }
 };
@@ -1305,18 +1303,18 @@ using MutableHandleValVector = MutableHandle<ValVector>;
 //
 // This can return false if the type check fails, or if a boxing into AnyRef
 // throws an OOM.
-extern MOZ_MUST_USE bool CheckRefType(JSContext* cx, RefType targetType,
-                                      HandleValue v,
-                                      MutableHandleFunction fnval,
-                                      MutableHandleAnyRef refval);
+[[nodiscard]] extern bool CheckRefType(JSContext* cx, RefType targetType,
+                                       HandleValue v,
+                                       MutableHandleFunction fnval,
+                                       MutableHandleAnyRef refval);
 
 // The same as above for when the target type is 'funcref'.
-extern MOZ_MUST_USE bool CheckFuncRefValue(JSContext* cx, HandleValue v,
-                                           MutableHandleFunction fun);
+[[nodiscard]] extern bool CheckFuncRefValue(JSContext* cx, HandleValue v,
+                                            MutableHandleFunction fun);
 
 // The same as above for when the target type is 'eqref'.
-extern MOZ_MUST_USE bool CheckEqRefValue(JSContext* cx, HandleValue v,
-                                         MutableHandleAnyRef vp);
+[[nodiscard]] extern bool CheckEqRefValue(JSContext* cx, HandleValue v,
+                                          MutableHandleAnyRef vp);
 class NoDebug;
 class DebugCodegenVal;
 
@@ -1364,7 +1362,7 @@ class FuncType {
   FuncType(ValTypeVector&& args, ValTypeVector&& results)
       : args_(std::move(args)), results_(std::move(results)) {}
 
-  MOZ_MUST_USE bool clone(const FuncType& src) {
+  [[nodiscard]] bool clone(const FuncType& src) {
     MOZ_ASSERT(args_.empty());
     MOZ_ASSERT(results_.empty());
     return args_.appendAll(src.args_) && results_.appendAll(src.results_);
@@ -1909,7 +1907,7 @@ class StructType {
   StructType(StructType&&) = default;
   StructType& operator=(StructType&&) = default;
 
-  MOZ_MUST_USE bool clone(const StructType& src) {
+  [[nodiscard]] bool clone(const StructType& src) {
     if (!fields_.appendAll(src.fields_)) {
       return false;
     }
@@ -1929,7 +1927,7 @@ class StructType {
     }
   }
 
-  MOZ_MUST_USE bool computeLayout();
+  [[nodiscard]] bool computeLayout();
 
   // Get the offset to a field from the base of the struct object. This
   // is just the field offset for outline typed objects, but includes
@@ -2428,7 +2426,7 @@ class TypeDef {
     return *this;
   }
 
-  MOZ_MUST_USE bool clone(const TypeDef& src) {
+  [[nodiscard]] bool clone(const TypeDef& src) {
     MOZ_ASSERT(isNone());
     tag_ = src.tag_;
     switch (src.tag_) {
@@ -2595,13 +2593,13 @@ class TypeContext {
   uint32_t length() const { return types_.length(); }
 
   template <typename U>
-  MOZ_MUST_USE bool append(U&& typeDef) {
+  [[nodiscard]] bool append(U&& typeDef) {
     return types_.append(std::move(typeDef));
   }
-  MOZ_MUST_USE bool resize(uint32_t length) { return types_.resize(length); }
+  [[nodiscard]] bool resize(uint32_t length) { return types_.resize(length); }
 
-  MOZ_MUST_USE bool transferTypes(const TypeDefWithIdVector& types,
-                                  uint32_t* baseIndex) {
+  [[nodiscard]] bool transferTypes(const TypeDefWithIdVector& types,
+                                   uint32_t* baseIndex) {
     *baseIndex = length();
     if (!resize(*baseIndex + types.length())) {
       return false;
@@ -3860,7 +3858,7 @@ class DebugFrame {
   // returnValue() can return a Handle to it.
 
   bool hasCachedReturnJSValue() const { return flags_.hasCachedReturnJSValue; }
-  MOZ_MUST_USE bool updateReturnJSValue(JSContext* cx);
+  [[nodiscard]] bool updateReturnJSValue(JSContext* cx);
   HandleValue returnValue() const;
   void clearReturnJSValue();
 

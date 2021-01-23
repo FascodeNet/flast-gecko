@@ -6,6 +6,8 @@
 
 #include "js/MemoryMetrics.h"
 
+#include "mozilla/MathAlgorithms.h"
+
 #include <algorithm>
 
 #include "gc/GC.h"
@@ -184,21 +186,14 @@ struct StatsClosure {
 };
 
 static void DecommittedArenasChunkCallback(JSRuntime* rt, void* data,
-                                           gc::Chunk* chunk,
+                                           gc::TenuredChunk* chunk,
                                            const JS::AutoRequireNoGC& nogc) {
-  // This case is common and fast to check.  Do it first.
-  if (chunk->decommittedArenas.isAllClear()) {
-    return;
+  size_t n = 0;
+  for (uint32_t word : chunk->decommittedArenas.Storage()) {
+    n += mozilla::CountPopulation32(word);
   }
 
-  size_t n = 0;
-  for (size_t i = 0; i < gc::ArenasPerChunk; i++) {
-    if (chunk->decommittedArenas.get(i)) {
-      n += gc::ArenaSize;
-    }
-  }
-  MOZ_ASSERT(n > 0);
-  *static_cast<size_t*>(data) += n;
+  *static_cast<size_t*>(data) += n * gc::ArenaSize;
 }
 
 static void StatsZoneCallback(JSRuntime* rt, void* data, Zone* zone,
@@ -623,8 +618,10 @@ static bool CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats,
   // Finish any ongoing incremental GC that may change the data we're gathering
   // and ensure that we don't do anything that could start another one.
   gc::FinishGC(cx);
-  gc::WaitForBackgroundTasks(cx);
   JS::AutoAssertNoGC nogc(cx);
+
+  // Wait for any background tasks to finish.
+  WaitForAllHelperThreads();
 
   if (!rtStats->realmStatsVector.reserve(rt->numRealms)) {
     return false;
@@ -709,7 +706,7 @@ static bool CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats,
   size_t numDirtyChunks =
       (rtStats->gcHeapChunkTotal - rtStats->gcHeapUnusedChunks) / gc::ChunkSize;
   size_t perChunkAdmin =
-      sizeof(gc::Chunk) - (sizeof(gc::Arena) * gc::ArenasPerChunk);
+      sizeof(gc::TenuredChunk) - (sizeof(gc::Arena) * gc::ArenasPerChunk);
   rtStats->gcHeapChunkAdmin = numDirtyChunks * perChunkAdmin;
 
   // |gcHeapUnusedArenas| is the only thing left.  Compute it in terms of

@@ -43,7 +43,6 @@ using JS::AutoStableStringChars;
 using JS::CompileOptions;
 using JS::RegExpFlag;
 using JS::RegExpFlags;
-using mozilla::ArrayLength;
 using mozilla::DebugOnly;
 using mozilla::PodCopy;
 
@@ -181,26 +180,6 @@ const JSClass RegExpObject::protoClass_ = {
 template <typename CharT>
 RegExpObject* RegExpObject::create(JSContext* cx, const CharT* chars,
                                    size_t length, RegExpFlags flags,
-                                   frontend::TokenStreamAnyChars& tokenStream,
-                                   NewObjectKind newKind) {
-  static_assert(std::is_same_v<CharT, char16_t>,
-                "this code may need updating if/when CharT encodes UTF-8");
-
-  RootedAtom source(cx, AtomizeChars(cx, chars, length));
-  if (!source) {
-    return nullptr;
-  }
-
-  return create(cx, source, flags, tokenStream, newKind);
-}
-
-template RegExpObject* RegExpObject::create(
-    JSContext* cx, const char16_t* chars, size_t length, RegExpFlags flags,
-    frontend::TokenStreamAnyChars& tokenStream, NewObjectKind newKind);
-
-template <typename CharT>
-RegExpObject* RegExpObject::create(JSContext* cx, const CharT* chars,
-                                   size_t length, RegExpFlags flags,
                                    NewObjectKind newKind) {
   static_assert(std::is_same_v<CharT, char16_t>,
                 "this code may need updating if/when CharT encodes UTF-8");
@@ -217,17 +196,6 @@ template RegExpObject* RegExpObject::create(JSContext* cx,
                                             const char16_t* chars,
                                             size_t length, RegExpFlags flags,
                                             NewObjectKind newKind);
-
-RegExpObject* RegExpObject::create(JSContext* cx, HandleAtom source,
-                                   RegExpFlags flags,
-                                   frontend::TokenStreamAnyChars& tokenStream,
-                                   NewObjectKind newKind) {
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  if (!irregexp::CheckPatternSyntax(cx, tokenStream, source, flags)) {
-    return nullptr;
-  }
-  return createSyntaxChecked(cx, source, flags, newKind);
-}
 
 RegExpObject* RegExpObject::createSyntaxChecked(JSContext* cx,
                                                 HandleAtom source,
@@ -851,8 +819,7 @@ RegExpRunStatus RegExpShared::executeAtom(MutableHandleRegExpShared re,
 size_t RegExpShared::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
   size_t n = 0;
 
-  for (size_t i = 0; i < ArrayLength(compilationArray); i++) {
-    const RegExpCompilation& compilation = compilationArray[i];
+  for (const auto& compilation : compilationArray) {
     if (compilation.byteCode) {
       n += mallocSizeOf(compilation.byteCode);
     }

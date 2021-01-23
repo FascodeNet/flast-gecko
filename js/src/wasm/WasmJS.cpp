@@ -179,7 +179,7 @@ static inline bool WasmDebuggerActive(JSContext* cx) {
 }
 
 /*
- * [WASMDOC] Compiler and feature selection; compiler and feature availability.
+ * [SMDOC] Compiler and feature selection; compiler and feature availability.
  *
  * In order to make the computation of whether a wasm feature or wasm compiler
  * is available predictable, we have established some rules, and implemented
@@ -4238,7 +4238,7 @@ static bool ResolveResponse_OnFulfilled(JSContext* cx, unsigned argc,
   }
 
   if (!callArgs.get(0).isObject()) {
-    return RejectWithErrorNumber(cx, JSMSG_BAD_RESPONSE_VALUE, promise);
+    return RejectWithErrorNumber(cx, JSMSG_WASM_BAD_RESPONSE_VALUE, promise);
   }
 
   RootedObject response(cx, &callArgs.get(0).toObject());

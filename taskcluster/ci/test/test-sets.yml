@@ -555,4 +555,6 @@ linux-tsan-tests:
     - mochitest-browser-chrome
     - mochitest-media
     - mochitest-plain
+    - web-platform-tests
+    - web-platform-tests-reftest
     - xpcshell

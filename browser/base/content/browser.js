@@ -27,7 +27,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   CFRPageActions: "resource://activity-stream/lib/CFRPageActions.jsm",
   CharsetMenu: "resource://gre/modules/CharsetMenu.jsm",
   Color: "resource://gre/modules/Color.jsm",
-  ContentSearch: "resource:///modules/ContentSearch.jsm",
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
@@ -70,9 +69,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SimpleServiceDiscovery: "resource://gre/modules/SimpleServiceDiscovery.jsm",
   SiteDataManager: "resource:///modules/SiteDataManager.jsm",
   SitePermissions: "resource:///modules/SitePermissions.jsm",
-  SiteSpecificBrowser: "resource:///modules/SiteSpecificBrowserService.jsm",
-  SiteSpecificBrowserService:
-    "resource:///modules/SiteSpecificBrowserService.jsm",
   SubDialogManager: "resource://gre/modules/SubDialog.jsm",
   TabModalPrompt: "chrome://global/content/tabprompts.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
@@ -558,6 +554,18 @@ XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "gProton",
   "browser.proton.enabled",
+  false,
+  (pref, oldValue, newValue) => {
+    document.documentElement.toggleAttribute("proton", newValue);
+  }
+);
+
+/* Temporary pref while we settle some questions around new tab design.
+   This will eventually be removed and browser.proton.enabled will be used instead. */
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gProtonTabs",
+  "browser.proton.tabs.enabled",
   false,
   (pref, oldValue, newValue) => {
     document.documentElement.toggleAttribute("proton", newValue);
@@ -1930,8 +1938,6 @@ var gBrowserInit = {
     FullZoom.init();
     PanelUI.init();
 
-    SiteSpecificBrowserUI.init();
-
     UpdateUrlbarSearchSplitterState();
 
     BookmarkingUI.init();
@@ -2288,10 +2294,6 @@ var gBrowserInit = {
     }
 
     scheduleIdleTask(() => {
-      PlacesToolbarHelper.startShowingToolbar();
-    });
-
-    scheduleIdleTask(() => {
       // Initialize the Sync UI
       gSync.init();
     });
@@ -2566,130 +2568,6 @@ XPCOMUtils.defineLazyGetter(
 gBrowserInit.idleTasksFinishedPromise = new Promise(resolve => {
   gBrowserInit.idleTaskPromiseResolve = resolve;
 });
-
-const SiteSpecificBrowserUI = {
-  menuInitialized: false,
-
-  init() {
-    if (!SiteSpecificBrowserService.isEnabled) {
-      return;
-    }
-
-    XPCOMUtils.defineLazyGetter(this, "panelBody", () => {
-      return PanelMultiView.getViewNode(
-        document,
-        "appMenu-SSBView .panel-subview-body"
-      );
-    });
-
-    let initializeMenu = async () => {
-      let list = await SiteSpecificBrowserService.list();
-
-      for (let ssb of list) {
-        this.addSSBToMenu(ssb);
-      }
-
-      if (!list.length) {
-        document.getElementById("appMenu-ssb-button").hidden = true;
-      }
-
-      this.menuInitialized = true;
-      Services.obs.addObserver(this, "site-specific-browser-install", true);
-      Services.obs.addObserver(this, "site-specific-browser-uninstall", true);
-    };
-
-    document.getElementById("appMenu-popup").addEventListener(
-      "popupshowing",
-      () => {
-        let blocker = initializeMenu();
-        PanelMultiView.getViewNode(
-          document,
-          "appMenu-SSBView"
-        ).addEventListener(
-          "ViewShowing",
-          event => {
-            event.detail.addBlocker(blocker);
-          },
-          { once: true }
-        );
-      },
-      { once: true }
-    );
-  },
-
-  observe(subject, topic, id) {
-    let ssb = SiteSpecificBrowser.get(id);
-    switch (topic) {
-      case "site-specific-browser-install":
-        this.addSSBToMenu(ssb);
-        break;
-      case "site-specific-browser-uninstall":
-        this.removeSSBFromMenu(ssb);
-        break;
-    }
-  },
-
-  removeSSBFromMenu(ssb) {
-    let container = document.getElementById("ssb-button-" + ssb.id);
-    if (!container) {
-      return;
-    }
-
-    if (!container.nextElementSibling && !container.previousElementSibling) {
-      document.getElementById("appMenu-ssb-button").hidden = true;
-    }
-
-    let button = container.querySelector(".ssb-launch");
-    let uri = button.getAttribute("image");
-    if (uri) {
-      URL.revokeObjectURL(uri);
-    }
-
-    container.remove();
-  },
-
-  addSSBToMenu(ssb) {
-    let container = document.createXULElement("toolbaritem");
-    container.id = `ssb-button-${ssb.id}`;
-    container.className = "toolbaritem-menu-buttons";
-
-    let menu = document.createXULElement("toolbarbutton");
-    menu.className = "ssb-launch subviewbutton subviewbutton-iconic";
-    menu.setAttribute("label", ssb.name);
-    menu.setAttribute("flex", "1");
-
-    ssb.getScaledIcon(16 * devicePixelRatio).then(
-      icon => {
-        if (icon) {
-          menu.setAttribute("image", URL.createObjectURL(icon));
-        }
-      },
-      error => {
-        console.error(error);
-      }
-    );
-
-    menu.addEventListener("command", () => {
-      ssb.launch();
-    });
-
-    let uninstall = document.createXULElement("toolbarbutton");
-    uninstall.className = "ssb-uninstall subviewbutton subviewbutton-iconic";
-    // Hardcoded for now. Localization tracked in bug 1602528.
-    uninstall.setAttribute("tooltiptext", "Uninstall");
-
-    uninstall.addEventListener("command", () => {
-      ssb.uninstall();
-    });
-
-    container.append(menu);
-    container.append(uninstall);
-    this.panelBody.append(container);
-    document.getElementById("appMenu-ssb-button").hidden = false;
-  },
-
-  QueryInterface: ChromeUtils.generateQI(["nsISupportsWeakReference"]),
-};
 
 function HandleAppCommandEvent(evt) {
   switch (evt.command) {
@@ -3251,10 +3129,14 @@ async function BrowserViewSourceOfDocument(args) {
     // source in tab expects the new view source browser's remoteness to match
     // that of the original URL, so disable remoteness if necessary for this
     // URL.
+    var oa = E10SUtils.predictOriginAttributes({ window });
     preferredRemoteType = E10SUtils.getRemoteTypeForURI(
       args.URL,
       gMultiProcessBrowser,
-      gFissionBrowser
+      gFissionBrowser,
+      E10SUtils.DEFAULT_REMOTE_TYPE,
+      null,
+      oa
     );
   }
 
@@ -4425,9 +4307,12 @@ const BrowserSearch = {
       csp
     );
     if (engine) {
-      BrowserSearchTelemetry.recordSearch(gBrowser, engine, "contextmenu", {
-        url,
-      });
+      BrowserSearchTelemetry.recordSearch(
+        gBrowser.selectedBrowser,
+        engine,
+        "contextmenu",
+        { url }
+      );
     }
   },
 
@@ -4444,7 +4329,12 @@ const BrowserSearch = {
       csp
     );
     if (engine) {
-      BrowserSearchTelemetry.recordSearch(gBrowser, engine, "system", { url });
+      BrowserSearchTelemetry.recordSearch(
+        gBrowser.selectedBrowser,
+        engine,
+        "system",
+        { url }
+      );
     }
   },
 
@@ -4464,12 +4354,10 @@ const BrowserSearch = {
     );
 
     BrowserSearchTelemetry.recordSearch(
-      gBrowser,
+      gBrowser.selectedBrowser,
       result.engine,
       "webextension",
-      {
-        url: result.url,
-      }
+      { url: result.url }
     );
   },
 
@@ -8894,9 +8782,10 @@ const SafeBrowsingNotificationBox = {
 };
 
 /**
- * The TabDialogBox supports opening window dialogs as SubDialogs on tab level.
+ * The TabDialogBox supports opening window dialogs as SubDialogs on the tab and content
+ * level. Both tab and content dialogs have their own separate managers.
  * Dialogs will be queued FIFO and cover the web content.
- * Tab dialogs are closed when the user reloads or leaves the page.
+ * Dialogs are closed when the user reloads or leaves the page.
  * While a dialog is open PopupNotifications, such as permission prompts, are
  * suppressed.
  */
@@ -8904,9 +8793,11 @@ class TabDialogBox {
   constructor(browser) {
     this._weakBrowserRef = Cu.getWeakReference(browser);
 
-    // Create parent element for dialogs
+    // Create parent element for tab dialogs
     let template = document.getElementById("dialogStackTemplate");
     let dialogStack = template.content.cloneNode(true).firstElementChild;
+    dialogStack.classList.add("tab-prompt-dialog");
+
     this.browser.parentNode.insertBefore(
       dialogStack,
       this.browser.nextElementSibling
@@ -8915,7 +8806,8 @@ class TabDialogBox {
     // Initially the stack only contains the template
     let dialogTemplate = dialogStack.firstElementChild;
 
-    this._dialogManager = new SubDialogManager({
+    // Create dialog manager for prompts at the tab level.
+    this._tabDialogManager = new SubDialogManager({
       dialogStack,
       dialogTemplate,
       orderType: SubDialogManager.ORDER_QUEUE,
@@ -8927,7 +8819,7 @@ class TabDialogBox {
   }
 
   /**
-   * Open a dialog on tab level.
+   * Open a dialog on tab or content level.
    * @param {String} aURL - URL of the dialog to load in the tab box.
    * @param {Object} [aOptions]
    * @param {String} [aOptions.features] - Comma separated list of window
@@ -8940,6 +8832,8 @@ class TabDialogBox {
    * @param {Boolean} [aOptions.keepOpenSameOriginNav] - By default dialogs are
    * aborted on any navigation.
    * Set to true to keep the dialog open for same origin navigation.
+   * @param {Number} [aOptions.modalType] - The modal type to create the dialog for.
+   * By default, we show the dialog for tab prompts.
    * @returns {Promise} - Resolves once the dialog has been closed.
    */
   open(
@@ -8949,22 +8843,32 @@ class TabDialogBox {
       allowDuplicateDialogs = true,
       sizeTo,
       keepOpenSameOriginNav,
+      modalType = null,
     } = {},
     ...aParams
   ) {
     return new Promise(resolve => {
-      if (!this._dialogManager.hasDialogs) {
+      // Get the dialog manager to open the prompt with.
+      let dialogManager =
+        modalType === Ci.nsIPrompt.MODAL_TYPE_CONTENT
+          ? this.getContentDialogManager()
+          : this._tabDialogManager;
+      let hasDialogs =
+        this._tabDialogManager.hasDialogs ||
+        this._contentDialogManager?.hasDialogs;
+
+      if (!hasDialogs) {
         this._onFirstDialogOpen();
       }
 
       let closingCallback = () => {
-        if (!this._dialogManager.hasDialogs) {
+        if (!hasDialogs) {
           this._onLastDialogClose();
         }
       };
 
       // Open dialog and resolve once it has been closed
-      let dialog = this._dialogManager.open(
+      let dialog = dialogManager.open(
         aURL,
         {
           features,
@@ -9009,6 +8913,29 @@ class TabDialogBox {
     this.tab?.removeEventListener("TabClose", this);
   }
 
+  _buildContentPromptDialog() {
+    let template = document.getElementById("dialogStackTemplate");
+    let contentDialogStack = template.content.cloneNode(true).firstElementChild;
+    contentDialogStack.classList.add("content-prompt-dialog");
+
+    // Create a dialog manager for content prompts.
+    let tabPromptDialog = this.browser.parentNode.querySelector(
+      ".tab-prompt-dialog"
+    );
+    this.browser.parentNode.insertBefore(contentDialogStack, tabPromptDialog);
+
+    let contentDialogTemplate = contentDialogStack.firstElementChild;
+    this._contentDialogManager = new SubDialogManager({
+      dialogStack: contentDialogStack,
+      dialogTemplate: contentDialogTemplate,
+      orderType: SubDialogManager.ORDER_QUEUE,
+      allowDuplicateDialogs: true,
+      dialogOptions: {
+        consumeOutsideClicks: false,
+      },
+    });
+  }
+
   handleEvent(event) {
     if (event.type !== "TabClose") {
       return;
@@ -9017,11 +8944,17 @@ class TabDialogBox {
   }
 
   abortAllDialogs() {
-    this._dialogManager.abortDialogs();
+    this._tabDialogManager.abortDialogs();
+    this._contentDialogManager?.abortDialogs();
   }
 
   focus() {
-    this._dialogManager.focusTopDialog();
+    // Prioritize focusing the dialog manager for tab prompts
+    if (this._tabDialogManager._dialogs.length) {
+      this._tabDialogManager.focusTopDialog();
+      return;
+    }
+    this._contentDialogManager?.focusTopDialog();
   }
 
   /**
@@ -9051,7 +8984,8 @@ class TabDialogBox {
 
     this._lastPrincipal = this.browser.contentPrincipal;
 
-    this._dialogManager.abortDialogs(filterFn);
+    this._tabDialogManager.abortDialogs(filterFn);
+    this._contentDialogManager?.abortDialogs(filterFn);
   }
 
   get tab() {
@@ -9066,8 +9000,15 @@ class TabDialogBox {
     return browser;
   }
 
-  getManager() {
-    return this._dialogManager;
+  getTabDialogManager() {
+    return this._tabDialogManager;
+  }
+
+  getContentDialogManager() {
+    if (!this._contentDialogManager) {
+      this._buildContentPromptDialog();
+    }
+    return this._contentDialogManager;
   }
 }
 

@@ -983,9 +983,11 @@ void nsCocoaWindow::Show(bool bState) {
 // the assigned space even when opened from another display. Apply the
 // workaround whenever more than one display is enabled.
 bool nsCocoaWindow::NeedsRecreateToReshow() {
-  // Limit the workaround to popup windows because only they need to override
-  // the "Assign To" setting. i.e., to display where the parent window is.
-  return (mWindowType == eWindowType_popup) && mWasShown && ([[NSScreen screens] count] > 1);
+  // Limit the workaround to non-tooltip popup windows because only they need to
+  // override the "Assign To" setting. i.e., to display where the parent window
+  // is.
+  return (mWindowType == eWindowType_popup) && (mPopupType != ePopupTypeTooltip) && mWasShown &&
+         ([[NSScreen screens] count] > 1);
 }
 
 struct ShadowParams {
@@ -2183,9 +2185,8 @@ void nsCocoaWindow::SetMenuBar(nsMenuBarX* aMenuBar) {
   // Only paint for active windows, or paint the hidden window menu bar if no
   // other menu bar has been painted yet so that some reasonable menu bar is
   // displayed when the app starts up.
-  id windowDelegate = [mWindow delegate];
   if (mMenuBar && ((!gSomeMenuBarPainted && nsMenuUtilsX::GetHiddenWindowMenuBar() == mMenuBar) ||
-                   (windowDelegate && [windowDelegate toplevelActiveState])))
+                   [mWindow isMainWindow]))
     mMenuBar->Paint();
 }
 

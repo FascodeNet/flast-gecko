@@ -248,7 +248,7 @@ nsresult InterceptedHttpChannel::RedirectForResponseURL(
   nsCOMPtr<nsILoadInfo> redirectLoadInfo =
       CloneLoadInfoForRedirect(aResponseURI, flags);
 
-  nsContentPolicyType contentPolicyType =
+  ExtContentPolicyType contentPolicyType =
       redirectLoadInfo->GetExternalContentPolicyType();
 
   rv = newChannel->Init(
@@ -1195,22 +1195,6 @@ InterceptedHttpChannel::GetCacheTokenExpirationTime(uint32_t* _retval) {
 
   if (mSynthesizedCacheInfo) {
     return mSynthesizedCacheInfo->GetCacheTokenExpirationTime(_retval);
-  }
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
-InterceptedHttpChannel::GetCacheTokenCachedCharset(nsACString& _retval) {
-  if (mSynthesizedCacheInfo) {
-    return mSynthesizedCacheInfo->GetCacheTokenCachedCharset(_retval);
-  }
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
-InterceptedHttpChannel::SetCacheTokenCachedCharset(const nsACString& aCharset) {
-  if (mSynthesizedCacheInfo) {
-    return mSynthesizedCacheInfo->SetCacheTokenCachedCharset(aCharset);
   }
   return NS_ERROR_NOT_AVAILABLE;
 }

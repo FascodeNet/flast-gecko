@@ -104,6 +104,10 @@ void nsBulletFrame::DidSetComputedStyle(ComputedStyle* aOldStyle) {
       loader->AssociateRequestToFrame(
           newListImage, this,
           css::ImageLoader::Flags::RequiresReflowOnSizeAvailable);
+
+      // Image bullets can affect the layout of the page, so boost the image
+      // load priority.
+      newListImage->BoostPriority(imgIRequest::CATEGORY_SIZE_QUERY);
     }
   }
 
@@ -311,7 +315,7 @@ ImgDrawResult BulletRenderer::Paint(gfxContext& aRenderingContext, nsPoint aPt,
                                     bool aDisableSubpixelAA, nsIFrame* aFrame) {
   if (IsImageType()) {
     return mImageRenderer->DrawLayer(aFrame->PresContext(), aRenderingContext,
-                                     mDest, mDest, nsPoint(), aDirtyRect,
+                                     mDest, mDest, mDest.TopLeft(), aDirtyRect,
                                      mDest.Size(),
                                      /* aOpacity = */ 1.0f);
   }
@@ -385,7 +389,7 @@ ImgDrawResult BulletRenderer::CreateWebRenderCommandsForImage(
   MOZ_RELEASE_ASSERT(IsImageType());
   return mImageRenderer->BuildWebRenderDisplayItemsForLayer(
       aItem->Frame()->PresContext(), aBuilder, aResources, aSc, aManager, aItem,
-      mDest, mDest, nsPoint(), mDest, mDest.Size(),
+      mDest, mDest, mDest.TopLeft(), mDest, mDest.Size(),
       /* aOpacity = */ 1.0f);
 }
 
@@ -574,21 +578,7 @@ Maybe<BulletRenderer> nsBulletFrame::CreateBulletRenderer(
   CounterStyle* listStyleType = ResolveCounterStyle();
   nsMargin padding = mPadding.GetPhysicalMargin(GetWritingMode());
   const auto& image = StyleList()->mListStyleImage;
-  const bool isValidImage = [&] {
-    if (image.IsNone()) {
-      return false;
-    }
-    if (auto* request = image.GetImageRequest()) {
-      uint32_t status = imgIRequest::STATUS_ERROR;
-      request->GetImageStatus(&status);
-      if (status & imgIRequest::STATUS_ERROR) {
-        return false;
-      }
-    }
-    return true;
-  }();
-
-  if (isValidImage) {
+  if (!image.IsNone()) {
     nsRect dest(padding.left, padding.top,
                 mRect.width - (padding.left + padding.right),
                 mRect.height - (padding.top + padding.bottom));

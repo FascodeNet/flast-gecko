@@ -46,9 +46,9 @@ class TypeDescr : public NativeObject {
 
   const wasm::TypeDef& getType(JSContext* cx) const;
 
-  MOZ_MUST_USE bool lookupProperty(JSContext* cx, jsid id, uint32_t* offset,
-                                   wasm::ValType* type);
-  MOZ_MUST_USE bool hasProperty(JSContext* cx, jsid id) {
+  [[nodiscard]] bool lookupProperty(JSContext* cx, jsid id, uint32_t* offset,
+                                    wasm::ValType* type);
+  [[nodiscard]] bool hasProperty(JSContext* cx, jsid id) {
     uint32_t offset;
     wasm::ValType type;
     return lookupProperty(cx, id, &offset, &type);
@@ -68,7 +68,7 @@ class TypeDescr : public NativeObject {
   // order.
   // TODO/AnyRef-boxing: once anyref has a more complicated structure, we must
   // revisit this.
-  MOZ_MUST_USE bool hasTraceList() const {
+  [[nodiscard]] bool hasTraceList() const {
     return !getFixedSlot(Slot::TraceList).isUndefined();
   }
   const uint32_t* traceList() const {
@@ -90,34 +90,34 @@ class TypedObject : public JSObject {
  protected:
   static const ObjectOps objectOps_;
 
-  static MOZ_MUST_USE bool obj_lookupProperty(
+  [[nodiscard]] static bool obj_lookupProperty(
       JSContext* cx, HandleObject obj, HandleId id, MutableHandleObject objp,
       MutableHandle<PropertyResult> propp);
 
-  static MOZ_MUST_USE bool obj_defineProperty(JSContext* cx, HandleObject obj,
-                                              HandleId id,
-                                              Handle<PropertyDescriptor> desc,
-                                              ObjectOpResult& result);
+  [[nodiscard]] static bool obj_defineProperty(JSContext* cx, HandleObject obj,
+                                               HandleId id,
+                                               Handle<PropertyDescriptor> desc,
+                                               ObjectOpResult& result);
 
-  static MOZ_MUST_USE bool obj_hasProperty(JSContext* cx, HandleObject obj,
-                                           HandleId id, bool* foundp);
+  [[nodiscard]] static bool obj_hasProperty(JSContext* cx, HandleObject obj,
+                                            HandleId id, bool* foundp);
 
-  static MOZ_MUST_USE bool obj_getProperty(JSContext* cx, HandleObject obj,
-                                           HandleValue receiver, HandleId id,
-                                           MutableHandleValue vp);
+  [[nodiscard]] static bool obj_getProperty(JSContext* cx, HandleObject obj,
+                                            HandleValue receiver, HandleId id,
+                                            MutableHandleValue vp);
 
-  static MOZ_MUST_USE bool obj_setProperty(JSContext* cx, HandleObject obj,
-                                           HandleId id, HandleValue v,
-                                           HandleValue receiver,
-                                           ObjectOpResult& result);
+  [[nodiscard]] static bool obj_setProperty(JSContext* cx, HandleObject obj,
+                                            HandleId id, HandleValue v,
+                                            HandleValue receiver,
+                                            ObjectOpResult& result);
 
-  static MOZ_MUST_USE bool obj_getOwnPropertyDescriptor(
+  [[nodiscard]] static bool obj_getOwnPropertyDescriptor(
       JSContext* cx, HandleObject obj, HandleId id,
       MutableHandle<PropertyDescriptor> desc);
 
-  static MOZ_MUST_USE bool obj_deleteProperty(JSContext* cx, HandleObject obj,
-                                              HandleId id,
-                                              ObjectOpResult& result);
+  [[nodiscard]] static bool obj_deleteProperty(JSContext* cx, HandleObject obj,
+                                               HandleId id,
+                                               ObjectOpResult& result);
 
   bool loadValue(JSContext* cx, size_t offset, wasm::ValType type,
                  MutableHandleValue vp);
@@ -126,9 +126,9 @@ class TypedObject : public JSObject {
   uint8_t* typedMemBase() const;
 
  public:
-  static MOZ_MUST_USE bool obj_newEnumerate(JSContext* cx, HandleObject obj,
-                                            MutableHandleIdVector properties,
-                                            bool enumerableOnly);
+  [[nodiscard]] static bool obj_newEnumerate(JSContext* cx, HandleObject obj,
+                                             MutableHandleIdVector properties,
+                                             bool enumerableOnly);
 
   TypedProto& typedProto() const {
     // Typed objects' prototypes can't be modified.

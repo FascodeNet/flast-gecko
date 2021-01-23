@@ -532,7 +532,7 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   bool GetClosedOuter();
   bool Closed() override;
   void StopOuter(mozilla::ErrorResult& aError);
-  void FocusOuter(mozilla::dom::CallerType aCallerType);
+  void FocusOuter(mozilla::dom::CallerType aCallerType, uint64_t aActionId);
   nsresult Focus(mozilla::dom::CallerType aCallerType) override;
   void BlurOuter();
   mozilla::dom::WindowProxyHolder GetFramesOuter();
@@ -640,16 +640,11 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   void UpdateCommands(const nsAString& anAction, mozilla::dom::Selection* aSel,
                       int16_t aReason) override;
 
-  already_AddRefed<nsPIDOMWindowOuter> GetContentInternal(
-      mozilla::ErrorResult& aError, mozilla::dom::CallerType aCallerType);
+  already_AddRefed<mozilla::dom::BrowsingContext> GetContentInternal(
+      mozilla::dom::CallerType aCallerType, mozilla::ErrorResult& aError);
   void GetContentOuter(JSContext* aCx, JS::MutableHandle<JSObject*> aRetval,
                        mozilla::dom::CallerType aCallerType,
                        mozilla::ErrorResult& aError);
-  already_AddRefed<nsPIDOMWindowOuter> GetContent() {
-    nsCOMPtr<nsPIDOMWindowOuter> win = GetContentInternal(
-        mozilla::IgnoreErrors(), mozilla::dom::CallerType::System);
-    return win.forget();
-  }
 
   // ChromeWindow bits.  Do NOT call these unless your window is in
   // fact chrome.
@@ -1065,9 +1060,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   virtual mozilla::AbstractThread* AbstractMainThreadFor(
       mozilla::TaskCategory aCategory) override;
-
- private:
-  bool IsPopupAllowed();
 
  protected:
   bool mFullscreen : 1;

@@ -290,6 +290,19 @@ const POSTPROCESSORS = {
     context.logError(context.makeError(msg));
     throw new Error(msg);
   },
+
+  manifestVersionCheck(value, context) {
+    if (
+      value == 2 ||
+      (value == 3 &&
+        Services.prefs.getBoolPref("extensions.manifestV3.enabled", false))
+    ) {
+      return value;
+    }
+    const msg = `Unsupported manifest version: ${value}`;
+    context.logError(context.makeError(msg));
+    throw new Error(msg);
+  },
 };
 
 // Parses a regular expression, with support for the Python extended
@@ -375,7 +388,7 @@ class Context {
       }
     }
 
-    let props = ["preprocessors", "isChromeCompat"];
+    let props = ["preprocessors", "isChromeCompat", "manifestVersion"];
     for (let prop of props) {
       if (prop in params) {
         if (prop in this && typeof this[prop] == "object") {
@@ -1086,13 +1099,20 @@ const FORMATS = {
   },
 
   contentSecurityPolicy(string, context) {
-    let error = contentPolicyService.validateAddonCSP(string);
+    // Manifest V3 extension_pages allows localhost.  When sandbox is
+    // implemented, or any other V3 or later directive, the flags
+    // logic will need to be updated.
+    let flags =
+      context.manifestVersion < 3
+        ? Ci.nsIAddonContentPolicy.CSP_ALLOW_ANY
+        : Ci.nsIAddonContentPolicy.CSP_ALLOW_LOCALHOST;
+    let error = contentPolicyService.validateAddonCSP(string, flags);
     if (error != null) {
-      // The SyntaxError raised below is not reported as part of the "choices" error message,
+      // The CSP validation error is not reported as part of the "choices" error message,
       // we log the CSP validation error explicitly here to make it easier for the addon developers
       // to see and fix the extension CSP.
       context.logError(`Error processing ${context.currentTarget}: ${error}`);
-      throw new SyntaxError(error);
+      return null;
     }
     return string;
   },

@@ -15,6 +15,7 @@
 #include "builtin/DataViewObject.h"
 #include "builtin/MapObject.h"
 #include "builtin/ModuleObject.h"
+#include "builtin/Object.h"
 #include "jit/BaselineCacheIRCompiler.h"
 #include "jit/BaselineIC.h"
 #include "jit/CacheIRSpewer.h"
@@ -224,11 +225,8 @@ IRGenerator::IRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
 GetPropIRGenerator::GetPropIRGenerator(JSContext* cx, HandleScript script,
                                        jsbytecode* pc, ICState::Mode mode,
                                        CacheKind cacheKind, HandleValue val,
-                                       HandleValue idVal, HandleValue receiver)
-    : IRGenerator(cx, script, pc, cacheKind, mode),
-      val_(val),
-      idVal_(idVal),
-      receiver_(receiver) {}
+                                       HandleValue idVal)
+    : IRGenerator(cx, script, pc, cacheKind, mode), val_(val), idVal_(idVal) {}
 
 static void EmitLoadSlotResult(CacheIRWriter& writer, ObjOperandId holderId,
                                NativeObject* holder, Shape* shape) {
@@ -1724,6 +1722,16 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayLength(HandleObject obj,
     return AttachDecision::NoAction;
   }
 
+  // For now only optimize when the result fits in an int32.
+  auto* tarr = &obj->as<TypedArrayObject>();
+  if (tarr->length().get() > INT32_MAX) {
+    return AttachDecision::NoAction;
+  }
+
+  if (mode_ != ICState::Mode::Specialized) {
+    return AttachDecision::NoAction;
+  }
+
   // Receiver should be the object.
   if (isSuper()) {
     return AttachDecision::NoAction;
@@ -2269,7 +2277,7 @@ AttachDecision GetPropIRGenerator::tryAttachSparseElement(
   writer.guardIndexGreaterThanDenseInitLength(objId, indexId);
 
   // Ensures we are able to efficiently able to map to an integral jsid.
-  writer.guardIndexIsNonNegative(indexId);
+  writer.guardInt32IsNonNegative(indexId);
 
   // Shape guard the prototype chain to avoid shadowing indexes from appearing.
   // The helper function also ensures that the index does not appear within the
@@ -2346,7 +2354,8 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayNonInt32Index(
   // false.
   bool allowDoubleForUint32 = false;
   int32_t indexInt32;
-  if (mozilla::NumberEqualsInt32(idVal_.toNumber(), &indexInt32)) {
+  if (mozilla::NumberEqualsInt32(idVal_.toNumber(), &indexInt32) &&
+      indexInt32 >= 0) {
     uint32_t index = uint32_t(indexInt32);
     allowDoubleForUint32 = AllowDoubleForUint32Array(tarr, index);
   }
@@ -2677,8 +2686,6 @@ AttachDecision GetNameIRGenerator::tryAttachEnvironmentName(ObjOperandId objId,
       return AttachDecision::NoAction;
     }
 
-    MOZ_ASSERT(!env->hasUncacheableProto());
-
     // Check for an 'own' property on the env. There is no need to
     // check the prototype as non-with scopes do not inherit properties
     // from any prototype.
@@ -2817,8 +2824,6 @@ AttachDecision BindNameIRGenerator::tryAttachEnvironmentName(ObjOperandId objId,
     if (env->is<WithEnvironmentObject>()) {
       return AttachDecision::NoAction;
     }
-
-    MOZ_ASSERT(!env->hasUncacheableProto());
 
     // When we reach an unqualified variables object (like the global) we
     // have to stop looking and return that object.
@@ -3912,7 +3917,7 @@ AttachDecision SetPropIRGenerator::tryAttachAddOrUpdateSparseElement(
   writer.guardIsExtensible(objId);
 
   // Ensures we are able to efficiently able to map to an integral jsid.
-  writer.guardIndexIsNonNegative(indexId);
+  writer.guardInt32IsNonNegative(indexId);
 
   // Shape guard the prototype chain to avoid shadowing indexes from appearing.
   // Guard the prototype of the receiver explicitly, because the receiver's
@@ -6345,8 +6350,11 @@ AttachDecision CallIRGenerator::tryAttachMathFloor(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // Use an indirect truncation to inform the optimizer it needs to preserve
+    // a bailout when the input can't be represented as an int32, even if the
+    // final result is fully truncated.
     Int32OperandId intId = writer.guardToInt32(argumentId);
-    writer.loadInt32Result(intId);
+    writer.indirectTruncateInt32Result(intId);
   } else {
     NumberOperandId numberId = writer.guardIsNumber(argumentId);
 
@@ -6386,8 +6394,11 @@ AttachDecision CallIRGenerator::tryAttachMathCeil(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // Use an indirect truncation to inform the optimizer it needs to preserve
+    // a bailout when the input can't be represented as an int32, even if the
+    // final result is fully truncated.
     Int32OperandId intId = writer.guardToInt32(argumentId);
-    writer.loadInt32Result(intId);
+    writer.indirectTruncateInt32Result(intId);
   } else {
     NumberOperandId numberId = writer.guardIsNumber(argumentId);
 
@@ -6427,6 +6438,8 @@ AttachDecision CallIRGenerator::tryAttachMathTrunc(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // We don't need an indirect truncation barrier here, because Math.trunc
+    // always truncates, but never rounds its input away from zero.
     Int32OperandId intId = writer.guardToInt32(argumentId);
     writer.loadInt32Result(intId);
   } else {
@@ -6468,8 +6481,11 @@ AttachDecision CallIRGenerator::tryAttachMathRound(HandleFunction callee) {
   if (args_[0].isInt32()) {
     MOZ_ASSERT(resultIsInt32);
 
+    // Use an indirect truncation to inform the optimizer it needs to preserve
+    // a bailout when the input can't be represented as an int32, even if the
+    // final result is fully truncated.
     Int32OperandId intId = writer.guardToInt32(argumentId);
-    writer.loadInt32Result(intId);
+    writer.indirectTruncateInt32Result(intId);
   } else {
     NumberOperandId numberId = writer.guardIsNumber(argumentId);
 
@@ -7457,6 +7473,108 @@ AttachDecision CallIRGenerator::tryAttachObjectIsPrototypeOf(
   return AttachDecision::Attach;
 }
 
+AttachDecision CallIRGenerator::tryAttachObjectToString(HandleFunction callee) {
+  // Expecting no arguments.
+  if (argc_ != 0) {
+    return AttachDecision::NoAction;
+  }
+
+  // Ensure |this| is an object.
+  if (!thisval_.isObject()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Don't attach if the object has @@toStringTag or is a proxy.
+  if (!ObjectClassToString(cx_, &thisval_.toObject())) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'toString' native function.
+  emitNativeCalleeGuard(callee);
+
+  // Guard that |this| is an object.
+  ValOperandId thisValId =
+      writer.loadArgumentDynamicSlot(ArgumentKind::This, argcId);
+  ObjOperandId thisObjId = writer.guardToObject(thisValId);
+
+  writer.objectToStringResult(thisObjId);
+  writer.returnFromIC();
+
+  trackAttached("ObjectToString");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachBigIntAsIntN(HandleFunction callee) {
+  // Need two arguments (Int32, BigInt).
+  if (argc_ != 2 || !args_[0].isInt32() || !args_[1].isBigInt()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Negative bits throws an error.
+  if (args_[0].toInt32() < 0) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'BigInt.asIntN' native function.
+  emitNativeCalleeGuard(callee);
+
+  // Convert bits to int32.
+  ValOperandId bitsId = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  Int32OperandId int32BitsId = writer.guardToInt32Index(bitsId);
+
+  // Number of bits mustn't be negative.
+  writer.guardInt32IsNonNegative(int32BitsId);
+
+  ValOperandId arg1Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+  BigIntOperandId bigIntId = writer.guardToBigInt(arg1Id);
+
+  writer.bigIntAsIntNResult(int32BitsId, bigIntId);
+  writer.returnFromIC();
+
+  trackAttached("BigIntAsIntN");
+  return AttachDecision::Attach;
+}
+
+AttachDecision CallIRGenerator::tryAttachBigIntAsUintN(HandleFunction callee) {
+  // Need two arguments (Int32, BigInt).
+  if (argc_ != 2 || !args_[0].isInt32() || !args_[1].isBigInt()) {
+    return AttachDecision::NoAction;
+  }
+
+  // Negative bits throws an error.
+  if (args_[0].toInt32() < 0) {
+    return AttachDecision::NoAction;
+  }
+
+  // Initialize the input operand.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Guard callee is the 'BigInt.asUintN' native function.
+  emitNativeCalleeGuard(callee);
+
+  // Convert bits to int32.
+  ValOperandId bitsId = writer.loadArgumentFixedSlot(ArgumentKind::Arg0, argc_);
+  Int32OperandId int32BitsId = writer.guardToInt32Index(bitsId);
+
+  // Number of bits mustn't be negative.
+  writer.guardInt32IsNonNegative(int32BitsId);
+
+  ValOperandId arg1Id = writer.loadArgumentFixedSlot(ArgumentKind::Arg1, argc_);
+  BigIntOperandId bigIntId = writer.guardToBigInt(arg1Id);
+
+  writer.bigIntAsUintNResult(int32BitsId, bigIntId);
+  writer.returnFromIC();
+
+  trackAttached("BigIntAsUintN");
+  return AttachDecision::Attach;
+}
+
 AttachDecision CallIRGenerator::tryAttachFunCall(HandleFunction callee) {
   if (!callee->isNativeWithoutJitEntry() || callee->native() != fun_call) {
     return AttachDecision::NoAction;
@@ -7620,6 +7738,12 @@ AttachDecision CallIRGenerator::tryAttachTypedArrayLength(
   }
 
   MOZ_ASSERT(args_[0].toObject().is<TypedArrayObject>());
+
+  // For now only optimize when the result fits in an int32.
+  auto* tarr = &args_[0].toObject().as<TypedArrayObject>();
+  if (tarr->length().get() > INT32_MAX) {
+    return AttachDecision::NoAction;
+  }
 
   // Initialize the input operand.
   Int32OperandId argcId(writer.setInputOperandId(0));
@@ -8575,7 +8699,7 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
     case InlinableNative::ObjectIsPrototypeOf:
       return tryAttachObjectIsPrototypeOf(callee);
     case InlinableNative::ObjectToString:
-      return AttachDecision::NoAction;  // Not yet supported.
+      return tryAttachObjectToString(callee);
 
     // Set intrinsics.
     case InlinableNative::IntrinsicGuardToSetObject:
@@ -8641,6 +8765,12 @@ AttachDecision CallIRGenerator::tryAttachInlinableNative(
       return tryAttachAtomicsStore(callee);
     case InlinableNative::AtomicsIsLockFree:
       return tryAttachAtomicsIsLockFree(callee);
+
+    // BigInt natives.
+    case InlinableNative::BigIntAsIntN:
+      return tryAttachBigIntAsIntN(callee);
+    case InlinableNative::BigIntAsUintN:
+      return tryAttachBigIntAsUintN(callee);
 
     // Boolean natives.
     case InlinableNative::Boolean:

@@ -10,6 +10,7 @@
 
 #include "vm/JSScript-inl.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
@@ -33,7 +34,7 @@
 
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
-#include "frontend/CompilationInfo.h"  // frontend::CompilationStencil
+#include "frontend/CompilationInfo.h"  // frontend::BaseCompilationStencil
 #include "frontend/SharedContext.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "frontend/StencilXdr.h"   // frontend::StencilXdr::SharedData
@@ -1184,7 +1185,7 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
       ssHolder.get().reset(sourceObject->source());
     }
 
-    MOZ_TRY(ScriptSource::XDR(xdr, options, &ssHolder));
+    MOZ_TRY(ScriptSource::XDR(xdr, options.ptrOr(nullptr), &ssHolder));
 
     if (mode == XDR_DECODE) {
       sourceObject = ScriptSourceObject::create(cx, ssHolder.get().get());
@@ -2783,7 +2784,7 @@ bool ScriptSource::xdrEncodeTopLevel(JSContext* cx, HandleScript script) {
 }
 
 bool ScriptSource::xdrEncodeInitialStencil(
-    JSContext* cx, frontend::CompilationInfo& compilationInfo,
+    JSContext* cx, frontend::CompilationStencil& stencil,
     UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
   // Encoding failures are reported by the xdrFinalizeEncoder function.
   if (containsAsmJS()) {
@@ -2799,7 +2800,7 @@ bool ScriptSource::xdrEncodeInitialStencil(
   AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
   auto failureCase = mozilla::MakeScopeExit([&] { xdrEncoder.reset(nullptr); });
 
-  XDRResult res = xdrEncoder->codeStencil(compilationInfo);
+  XDRResult res = xdrEncoder->codeStencil(stencil);
   if (res.isErr()) {
     // On encoding failure, let failureCase destroy encoder and return true
     // to avoid failing any currently executing script.
@@ -2815,13 +2816,13 @@ bool ScriptSource::xdrEncodeInitialStencil(
 }
 
 bool ScriptSource::xdrEncodeStencils(
-    JSContext* cx, frontend::CompilationInfoVector& compilationInfos,
+    JSContext* cx, frontend::CompilationStencilSet& stencilSet,
     UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
-  if (!xdrEncodeInitialStencil(cx, compilationInfos.initial, xdrEncoder)) {
+  if (!xdrEncodeInitialStencil(cx, stencilSet, xdrEncoder)) {
     return false;
   }
 
-  for (auto& delazification : compilationInfos.delazifications) {
+  for (auto& delazification : stencilSet.delazifications) {
     if (!xdrEncodeFunctionStencilWith(cx, delazification, xdrEncoder)) {
       return false;
     }
@@ -2860,14 +2861,14 @@ bool ScriptSource::xdrEncodeFunction(JSContext* cx, HandleFunction fun,
 }
 
 bool ScriptSource::xdrEncodeFunctionStencil(
-    JSContext* cx, frontend::CompilationStencil& stencil) {
+    JSContext* cx, frontend::BaseCompilationStencil& stencil) {
   MOZ_ASSERT(hasEncoder());
   AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
   return xdrEncodeFunctionStencilWith(cx, stencil, xdrEncoder_);
 }
 
 bool ScriptSource::xdrEncodeFunctionStencilWith(
-    JSContext* cx, frontend::CompilationStencil& stencil,
+    JSContext* cx, frontend::BaseCompilationStencil& stencil,
     UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
   auto failureCase = mozilla::MakeScopeExit([&] { xdrEncoder.reset(nullptr); });
 
@@ -2894,7 +2895,7 @@ bool ScriptSource::xdrFinalizeEncoder(JSContext* cx,
 
   auto cleanup = mozilla::MakeScopeExit([&] { xdrEncoder_.reset(nullptr); });
 
-  XDRResult res = xdrEncoder_->linearize(buffer);
+  XDRResult res = xdrEncoder_->linearize(buffer, this);
   return res.isOk();
 }
 
@@ -3236,7 +3237,7 @@ XDRResult ScriptSource::xdrData(XDRState<mode>* const xdr,
 template <XDRMode mode>
 /* static */
 XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
-                            const mozilla::Maybe<JS::CompileOptions>& options,
+                            const ReadOnlyCompileOptions* maybeOptions,
                             MutableHandle<ScriptSourceHolder> holder) {
   JSContext* cx = xdr->cx();
   ScriptSource* ss = nullptr;
@@ -3255,7 +3256,7 @@ XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
     // Most CompileOptions fields aren't used by ScriptSourceObject, and those
     // that are (element; elementAttributeName) aren't preserved by XDR. So
     // this can be simple.
-    if (!ss->initFromOptions(cx, *options)) {
+    if (!ss->initFromOptions(cx, *maybeOptions)) {
       return xdr->fail(JS::TranscodeResult_Throw);
     }
   }
@@ -3323,12 +3324,12 @@ XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
 template /* static */
     XDRResult
     ScriptSource::XDR(XDRState<XDR_ENCODE>* xdr,
-                      const mozilla::Maybe<JS::CompileOptions>& options,
+                      const ReadOnlyCompileOptions* maybeOptions,
                       MutableHandle<ScriptSourceHolder> holder);
 template /* static */
     XDRResult
     ScriptSource::XDR(XDRState<XDR_DECODE>* xdr,
-                      const mozilla::Maybe<JS::CompileOptions>& options,
+                      const ReadOnlyCompileOptions* maybeOptions,
                       MutableHandle<ScriptSourceHolder> holder);
 
 // Format and return a cx->pod_malloc'ed URL for a generated script like:
@@ -3728,7 +3729,7 @@ PrivateScriptData* PrivateScriptData::new_(JSContext* cx, uint32_t ngcthings) {
 bool PrivateScriptData::InitFromStencil(
     JSContext* cx, js::HandleScript script,
     js::frontend::CompilationInput& input,
-    js::frontend::CompilationStencil& stencil,
+    js::frontend::BaseCompilationStencil& stencil,
     js::frontend::CompilationGCOutput& gcOutput,
     const js::frontend::ScriptIndex scriptIndex) {
   js::frontend::ScriptStencil& scriptStencil = stencil.scriptData[scriptIndex];
@@ -3826,7 +3827,7 @@ bool JSScript::createPrivateScriptData(JSContext* cx, HandleScript script,
 /* static */
 bool JSScript::fullyInitFromStencil(
     JSContext* cx, js::frontend::CompilationInput& input,
-    js::frontend::CompilationStencil& stencil,
+    js::frontend::BaseCompilationStencil& stencil,
     frontend::CompilationGCOutput& gcOutput, HandleScript script,
     const js::frontend::ScriptIndex scriptIndex) {
   MutableScriptFlags lazyMutableFlags;
@@ -3880,7 +3881,10 @@ bool JSScript::fullyInitFromStencil(
 
   // Note: These flags should already be correct when the BaseScript was
   // allocated.
-  MOZ_ASSERT(script->immutableFlags() == scriptStencil.immutableFlags);
+  MOZ_ASSERT_IF(stencil.isInitialStencil(),
+                script->immutableFlags() == stencil.asCompilationStencil()
+                                                .scriptExtra[scriptIndex]
+                                                .immutableFlags);
 
   // Derive initial mutable flags
   script->resetArgsUsageAnalysis();
@@ -3935,6 +3939,8 @@ JSScript* JSScript::fromStencil(JSContext* cx,
                                 frontend::CompilationGCOutput& gcOutput,
                                 const js::frontend::ScriptIndex scriptIndex) {
   js::frontend::ScriptStencil& scriptStencil = stencil.scriptData[scriptIndex];
+  js::frontend::ScriptStencilExtra& scriptExtra =
+      stencil.scriptExtra[scriptIndex];
   MOZ_ASSERT(scriptStencil.hasSharedData(),
              "Need generated bytecode to use JSScript::fromStencil");
 
@@ -3945,8 +3951,8 @@ JSScript* JSScript::fromStencil(JSContext* cx,
 
   Rooted<ScriptSourceObject*> sourceObject(cx, gcOutput.sourceObject);
   RootedScript script(
-      cx, Create(cx, functionOrGlobal, sourceObject, scriptStencil.extent,
-                 scriptStencil.immutableFlags));
+      cx, Create(cx, functionOrGlobal, sourceObject, scriptExtra.extent,
+                 scriptExtra.immutableFlags));
   if (!script) {
     return nullptr;
   }
@@ -4534,6 +4540,11 @@ static JSScript* CopyScriptImpl(JSContext* cx, HandleScript src,
 
   // Reset the mutable flags to request arguments analysis as needed.
   dst->resetArgsUsageAnalysis();
+
+  // Maintain this flag when cloning self-hosted functions.
+  if (src->isInlinableLargeFunction()) {
+    dst->setIsInlinableLargeFunction();
+  }
 
   // Clone the PrivateScriptData into dst
   if (!PrivateScriptData::Clone(cx, src, dst, scopes)) {

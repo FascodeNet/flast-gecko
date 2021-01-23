@@ -118,7 +118,7 @@ var PrintUtils = {
 
   getPreviewBrowser(sourceBrowser) {
     let dialogBox = gBrowser.getTabDialogBox(sourceBrowser);
-    for (let dialog of dialogBox._dialogManager._dialogs) {
+    for (let dialog of dialogBox.getTabDialogManager()._dialogs) {
       let browser = dialog._box.querySelector(".printPreviewBrowser");
       if (browser) {
         return browser;
@@ -156,6 +156,7 @@ var PrintUtils = {
         userContextId: browsingContext.originAttributes.userContextId,
         initialBrowsingContextGroupId: browsingContext.group.id,
         skipLoad: true,
+        initiallyActive: true,
       });
       browser.addEventListener("DOMWindowClose", function(e) {
         // Ignore close events from printing, see the code creating browsers in
@@ -235,8 +236,7 @@ var PrintUtils = {
         "PrintingSelection"
       );
       hasSelection = await sourceActor.sendQuery(
-        "PrintingSelection:HasSelection",
-        {}
+        "PrintingSelection:HasSelection"
       );
     }
 

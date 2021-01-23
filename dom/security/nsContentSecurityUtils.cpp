@@ -696,11 +696,11 @@ nsresult ParseCSPAndEnforceFrameAncestorCheck(
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
-  nsContentPolicyType contentType = loadInfo->GetExternalContentPolicyType();
+  ExtContentPolicyType contentType = loadInfo->GetExternalContentPolicyType();
   // frame-ancestor check only makes sense for subdocument and object loads,
   // if this is not a load of such type, there is nothing to do here.
-  if (contentType != nsIContentPolicy::TYPE_SUBDOCUMENT &&
-      contentType != nsIContentPolicy::TYPE_OBJECT) {
+  if (contentType != ExtContentPolicy::TYPE_SUBDOCUMENT &&
+      contentType != ExtContentPolicy::TYPE_OBJECT) {
     return NS_OK;
   }
 
@@ -1128,10 +1128,10 @@ long nsContentSecurityUtils::ClassifyDownload(
     loadingPrincipal = loadInfo->TriggeringPrincipal();
   }
   // Creating a fake Loadinfo that is just used for the MCB check.
-  nsCOMPtr<nsILoadInfo> secCheckLoadInfo =
-      new LoadInfo(loadingPrincipal, loadInfo->TriggeringPrincipal(), nullptr,
-                   nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
-                   nsIContentPolicy::TYPE_FETCH);
+  nsCOMPtr<nsILoadInfo> secCheckLoadInfo = new mozilla::net::LoadInfo(
+      loadingPrincipal, loadInfo->TriggeringPrincipal(), nullptr,
+      nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
+      nsIContentPolicy::TYPE_FETCH);
 
   int16_t decission = nsIContentPolicy::ACCEPT;
   nsMixedContentBlocker::ShouldLoad(false,  //  aHadInsecureImageRedirect

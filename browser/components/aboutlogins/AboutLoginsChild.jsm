@@ -73,6 +73,9 @@ class AboutLoginsChild extends JSWindowActorChild {
           getLoginOrigin(uriString) {
             return LoginHelper.getLoginOrigin(uriString);
           },
+          setFocus(element) {
+            Services.focus.setFocus(element, Services.focus.FLAG_BYKEY);
+          },
           /**
            * Shows the Master Password prompt if enabled, or the
            * OS auth dialog otherwise.
@@ -212,6 +215,9 @@ class AboutLoginsChild extends JSWindowActorChild {
           masterPasswordPromise.resolve(message.data.result);
           recordTelemetryEvent(message.data.telemetryEvent);
         }
+        break;
+      case "AboutLogins:RemaskPassword":
+        this.sendToContent("RemaskPassword", message.data);
         break;
       case "AboutLogins:Setup":
         let waivedContent = Cu.waiveXrays(this.browsingContext.window);

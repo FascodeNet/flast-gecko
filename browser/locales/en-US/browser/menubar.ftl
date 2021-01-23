@@ -7,6 +7,51 @@
 #
 # NOTE: For Engineers, please don't re-use these strings outside of the menubar.
 
+## Application Menu (macOS only)
+
+menu-application-services =
+    .label = Services
+menu-application-hide-this =
+    .label = Hide { -brand-shorter-name }
+menu-application-hide-other =
+    .label = Hide Others
+menu-application-show-all =
+    .label = Show All
+menu-application-touch-bar =
+    .label = Customize Touch Bar…
+
+##
+
+# These menu-quit strings are only used on Windows and Linux.
+menu-quit =
+    .label =
+        { PLATFORM() ->
+            [windows] Exit
+           *[other] Quit
+        }
+    .accesskey =
+        { PLATFORM() ->
+            [windows] x
+           *[other] Q
+        }
+
+# This menu-quit-mac string is only used on macOS.
+menu-quit-mac =
+    .label = Quit { -brand-shorter-name }
+
+# This menu-quit-button string is only used on Linux.
+menu-quit-button =
+    .label = { menu-quit.label }
+
+# This menu-quit-button-win string is only used on Windows.
+menu-quit-button-win =
+    .label = { menu-quit.label }
+    .tooltip = Exit { -brand-shorter-name }
+
+menu-about =
+    .label = About { -brand-shorter-name }
+    .accesskey = A
+
 ## File Menu
 
 menu-file =
@@ -241,6 +286,14 @@ menu-window-bring-all-to-front =
 
 ## Help Menu
 
+# NOTE: For Engineers, any additions or changes to Help menu strings should
+# also be reflected in the related strings in appmenu.ftl. Those strings, by
+# convention, will have the same ID as these, but prefixed with "app".
+# Example: appmenu-help-product
+#
+# These strings are duplicated to allow for different casing depending on
+# where the strings appear.
+
 menu-help =
     .label = Help
     .accesskey = H
@@ -276,3 +329,6 @@ menu-help-report-deceptive-site =
 menu-help-not-deceptive =
     .label = This Isn’t a Deceptive Site…
     .accesskey = D
+menu-help-check-for-update =
+    .label = Check for Updates…
+    .accesskey = C

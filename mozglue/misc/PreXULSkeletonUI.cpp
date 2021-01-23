@@ -813,13 +813,13 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   int urlbarBorderRadius = CSSToDevPixels(2, sCSSToDevPixelScaling);
   // found in urlbar-searchbar.inc.css "#urlbar-background"
   int urlbarBorderWidth = CSSToDevPixelsFloor(1, sCSSToDevPixelScaling);
-  int urlbarBorderColor = 0xbebebe;
+  int urlbarBorderColor = currentTheme.urlbarBorderColor;
 
   // The (traditionally dark blue on Windows) background of the tab bar.
   ColorRect tabBar = {};
   tabBar.color = currentTheme.tabBarColor;
   tabBar.x = 0;
-  tabBar.y = menubar.height;
+  tabBar.y = menubar.height + topBorder.height;
   tabBar.width = sWindowWidth;
   tabBar.height = tabBarHeight;
   tabBar.flipIfRTL = false;
@@ -831,7 +831,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   ColorRect tabLine = {};
   tabLine.color = currentTheme.tabLineColor;
   tabLine.x = titlebarSpacerWidth;
-  tabLine.y = menubar.height;
+  tabLine.y = menubar.height + topBorder.height;
   tabLine.width = selectedTabWidth;
   tabLine.height = tabLineHeight;
   tabLine.flipIfRTL = true;
@@ -1333,8 +1333,10 @@ ThemeColors GetTheme(ThemeMode themeId) {
       theme.chromeContentDividerColor = 0x0c0c0d;
       // controlled by css variable --tab-line-color
       theme.tabLineColor = 0x0a84ff;
-      // controlled by css variable --lwt-toolbar-field-background-colo
+      // controlled by css variable --lwt-toolbar-field-background-color
       theme.urlbarColor = 0x474749;
+      // controlled by css variable --lwt-toolbar-field-border-color
+      theme.urlbarBorderColor = 0x5a5a5c;
       theme.animationColor = theme.urlbarColor;
       return theme;
     case ThemeMode::Light:
@@ -1346,11 +1348,13 @@ ThemeColors GetTheme(ThemeMode themeId) {
       // controlled by css variable --lwt-accent-color
       theme.tabBarColor = 0xe3e4e6;
       // --chrome-content-separator-color in browser.css
-      theme.chromeContentDividerColor = 0x9e9fa1;
+      theme.chromeContentDividerColor = 0xcccccc;
       // controlled by css variable --tab-line-color
       theme.tabLineColor = 0x0a84ff;
       // by css variable --lwt-toolbar-field-background-color
       theme.urlbarColor = 0xffffff;
+      // controlled by css variable --lwt-toolbar-field-border-color
+      theme.urlbarBorderColor = 0xcccccc;
       theme.animationColor = theme.backgroundColor;
       return theme;
     case ThemeMode::Default:
@@ -1370,6 +1374,8 @@ ThemeColors GetTheme(ThemeMode themeId) {
       theme.tabLineColor = 0x0a84ff;
       // controlled by css variable --toolbar-color
       theme.urlbarColor = 0xffffff;
+      // controlled by css variable --lwt-toolbar-field-border-color
+      theme.urlbarBorderColor = 0xbebebe;
       theme.animationColor = theme.backgroundColor;
       return theme;
   }
@@ -1688,7 +1694,7 @@ void CreateAndStorePreXULSkeletonUI(HINSTANCE hInstance, int argc,
   bool explicitProfile = false;
   if (!AreAllCmdlineArgumentsApproved(argc, argv, &explicitProfile) ||
       EnvHasValue("MOZ_SAFE_MODE_RESTART") || EnvHasValue("XRE_PROFILE_PATH") ||
-      EnvHasValue("MOZ_RESET_PROFILE_RESTART")) {
+      EnvHasValue("MOZ_RESET_PROFILE_RESTART") || EnvHasValue("MOZ_HEADLESS")) {
     sPreXULSkeletonUIDisallowed = true;
     return;
   }

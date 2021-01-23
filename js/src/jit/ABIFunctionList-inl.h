@@ -16,6 +16,7 @@
 #include "builtin/Array.h"      // js::ArrayShiftMoveElements
 #include "builtin/MapObject.h"  // js::MapIteratorObject::next,
                                 // js::SetIteratorObject::next
+#include "builtin/Object.h"     // js::ObjectClassToString
 #include "builtin/RegExp.h"     // js::RegExpPrototypeOptimizableRaw,
                                 // js::RegExpInstanceOptimizableRaw
 
@@ -104,7 +105,6 @@ namespace jit {
   _(js::jit::AllocateFatInlineString)                                 \
   _(js::jit::AllocateString)                                          \
   _(js::jit::AssertValidBigIntPtr)                                    \
-  _(js::jit::AssertValidObjectOrNullPtr)                              \
   _(js::jit::AssertValidObjectPtr)                                    \
   _(js::jit::AssertValidStringPtr)                                    \
   _(js::jit::AssertValidSymbolPtr)                                    \
@@ -121,7 +121,6 @@ namespace jit {
   _(js::jit::EqualStringsHelperPure)                                  \
   _(js::jit::FinishBailoutToBaseline)                                 \
   _(js::jit::FrameIsDebuggeeCheck)                                    \
-  _(js::jit::GetDynamicNamePure)                                      \
   _(js::jit::GetIndexFromString)                                      \
   _(js::jit::GetInt32FromStringPure)                                  \
   _(js::jit::GetNativeDataPropertyByValuePure)                        \
@@ -155,6 +154,7 @@ namespace jit {
   _(js::NativeObject::growSlotsPure)                                  \
   _(js::NumberMod)                                                    \
   _(js::NumberToStringPure)                                           \
+  _(js::ObjectClassToString)                                          \
   _(js::powi)                                                         \
   _(js::ProxyGetProperty)                                             \
   _(js::RegExpInstanceOptimizableRaw)                                 \

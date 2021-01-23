@@ -9,7 +9,6 @@
 #ifndef vm_JSScript_h
 #define vm_JSScript_h
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MaybeOneOf.h"
@@ -80,8 +79,8 @@ class Shape;
 class DebugScript;
 
 namespace frontend {
-struct CompilationInfo;
 struct CompilationStencil;
+struct BaseCompilationStencil;
 struct CompilationGCOutput;
 }  // namespace frontend
 
@@ -1032,7 +1031,7 @@ class ScriptSource {
   // instantiating stencil (so, corresponding canonical ScriptSourceObject
   // gets created).
   bool xdrEncodeInitialStencil(
-      JSContext* cx, frontend::CompilationInfo& compilationInfo,
+      JSContext* cx, frontend::CompilationStencil& stencil,
       UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
 
   // Create a new XDR encoder, and encode the stencils.
@@ -1041,7 +1040,7 @@ class ScriptSource {
   // instantiating stencil (so, corresponding canonical ScriptSourceObject
   // gets created).
   bool xdrEncodeStencils(JSContext* cx,
-                         frontend::CompilationInfoVector& compilationInfos,
+                         frontend::CompilationStencilSet& stencilSet,
                          UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
 
   void setIncrementalEncoder(XDRIncrementalEncoderBase* xdrEncoder);
@@ -1058,13 +1057,13 @@ class ScriptSource {
   // Encode a delazified function's stencil.  In case of errors, the XDR
   // encoder is freed.
   bool xdrEncodeFunctionStencil(JSContext* cx,
-                                frontend::CompilationStencil& stencil);
+                                frontend::BaseCompilationStencil& stencil);
 
  private:
   // Encode a delazified function's stencil.  In case of errors, the passed
   // XDR encoder is freed.
   bool xdrEncodeFunctionStencilWith(
-      JSContext* cx, frontend::CompilationStencil& stencil,
+      JSContext* cx, frontend::BaseCompilationStencil& stencil,
       UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
 
  public:
@@ -1097,8 +1096,8 @@ class ScriptSource {
  public:
   template <XDRMode mode>
   static MOZ_MUST_USE XDRResult
-  XDR(XDRState<mode>* xdr, const mozilla::Maybe<JS::CompileOptions>& options,
-      MutableHandle<ScriptSourceHolder> ss);
+  XDR(XDRState<mode>* xdr, const JS::ReadOnlyCompileOptions* maybeOptions,
+      MutableHandle<ScriptSourceHolder> holder);
 
   void trace(JSTracer* trc);
 };
@@ -1407,7 +1406,7 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
 
   static bool InitFromStencil(JSContext* cx, js::HandleScript script,
                               js::frontend::CompilationInput& input,
-                              js::frontend::CompilationStencil& stencil,
+                              js::frontend::BaseCompilationStencil& stencil,
                               js::frontend::CompilationGCOutput& gcOutput,
                               const js::frontend::ScriptIndex scriptIndex);
 
@@ -1703,9 +1702,11 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   MUTABLE_FLAG_GETTER_SETTER(hadLICMInvalidation, HadLICMInvalidation)
   MUTABLE_FLAG_GETTER_SETTER(hadEagerTruncationBailout,
                              HadEagerTruncationBailout)
+  MUTABLE_FLAG_GETTER_SETTER(hadUnboxFoldingBailout, HadUnboxFoldingBailout)
   MUTABLE_FLAG_GETTER_SETTER(uninlineable, Uninlineable)
   MUTABLE_FLAG_GETTER_SETTER(failedLexicalCheck, FailedLexicalCheck)
   MUTABLE_FLAG_GETTER_SETTER(hadSpeculativePhiBailout, HadSpeculativePhiBailout)
+  MUTABLE_FLAG_GETTER_SETTER(isInlinableLargeFunction, IsInlinableLargeFunction)
 
 #undef IMMUTABLE_FLAG_GETTER
 #undef MUTABLE_FLAG_GETTER_SETTER
@@ -1903,7 +1904,7 @@ class JSScript : public js::BaseScript {
   friend bool js::PrivateScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
       js::frontend::CompilationInput& input,
-      js::frontend::CompilationStencil& stencil,
+      js::frontend::BaseCompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput,
       const js::frontend::ScriptIndex scriptIndex);
 
@@ -1929,12 +1930,11 @@ class JSScript : public js::BaseScript {
                                       uint32_t ngcthings);
 
  public:
-  static bool fullyInitFromStencil(JSContext* cx,
-                                   js::frontend::CompilationInput& input,
-                                   js::frontend::CompilationStencil& stencil,
-                                   js::frontend::CompilationGCOutput& gcOutput,
-                                   js::HandleScript script,
-                                   const js::frontend::ScriptIndex scriptIndex);
+  static bool fullyInitFromStencil(
+      JSContext* cx, js::frontend::CompilationInput& input,
+      js::frontend::BaseCompilationStencil& stencil,
+      js::frontend::CompilationGCOutput& gcOutput, js::HandleScript script,
+      const js::frontend::ScriptIndex scriptIndex);
 
   // Allocate a JSScript and initialize it with bytecode. This consumes
   // allocations within the stencil.

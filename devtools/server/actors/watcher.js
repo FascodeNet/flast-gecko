@@ -145,10 +145,8 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           [Resources.TYPES.LOCAL_STORAGE]: hasBrowserElement,
           [Resources.TYPES.SESSION_STORAGE]: hasBrowserElement,
           [Resources.TYPES.PLATFORM_MESSAGE]: true,
-          [Resources.TYPES.NETWORK_EVENT]:
-            enableServerWatcher && hasBrowserElement,
-          [Resources.TYPES.NETWORK_EVENT_STACKTRACE]:
-            enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.NETWORK_EVENT]: hasBrowserElement,
+          [Resources.TYPES.NETWORK_EVENT_STACKTRACE]: hasBrowserElement,
           [Resources.TYPES.STYLESHEET]:
             enableServerWatcher && hasBrowserElement,
           [Resources.TYPES.SOURCE]: hasBrowserElement,
@@ -274,6 +272,22 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   },
 
   /**
+   * Try to retrieve a parent process TargetActor:
+   * - either when debugging a parent process page (when browserElement is set to the page's tab),
+   * - or when debugging the main process (when browserElement is null).
+   *
+   * See comment in `watchResources`, this will handle targets which are ignored by Frame and Process
+   * target helpers. (and only those which are ignored)
+   */
+  _getTargetActorInParentProcess() {
+    return this.browserElement
+      ? // Note: if any, the BrowsingContextTargetActor returned here is created for a parent process
+        // page and lives in the parent process.
+        TargetActorRegistry.getTargetActor(this.browserId)
+      : TargetActorRegistry.getParentProcessTargetActor();
+  },
+
+  /**
    * Start watching for a list of resource types.
    * This should only resolve once all "already existing" resources of these types
    * are notified to the client via resource-available-form event on related target actors.
@@ -300,8 +314,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
 
     // Fetch resources from all existing targets
     for (const targetType in TARGET_HELPERS) {
-      // Frame target helper handles the top level target, if it runs in the content process
-      // so we should always process it. It does a second check to isWatchingTargets.
+      // We process frame targets even if we aren't watching them,
+      // because frame target helper codepath handles the top level target, if it runs in the *content* process.
+      // It will do another check to `isWatchingTargets(FRAME)` internally.
+      // Note that the workaround at the end of this method, using TargetActorRegistry
+      // is specific to top level target running in the *parent* process.
       if (
         !WatcherRegistry.isWatchingTargets(this, targetType) &&
         targetType != Targets.TYPES.FRAME
@@ -324,10 +341,8 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
     }
 
     /*
-     * The Watcher actor doesn't support watching for targets other than frame targets yet:
-     *  - process targets (bug 1620248)
-     *  - worker targets (bug 1633712)
-     *  - top level tab target (bug 1644397 and possibly some other followup).
+     * The Watcher actor doesn't support watching the top level target
+     * (bug 1644397 and possibly some other followup).
      *
      * Because of that, we miss reaching these targets in the previous lines of this function.
      * Since all BrowsingContext target actors register themselves to the TargetActorRegistry,
@@ -347,9 +362,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       Targets.TYPES.FRAME
     );
     if (frameResourceTypes.length > 0) {
-      const targetActor = this.browserElement
-        ? TargetActorRegistry.getTargetActor(this.browserId)
-        : TargetActorRegistry.getParentProcessTargetActor();
+      const targetActor = this._getTargetActorInParentProcess();
       if (targetActor) {
         await targetActor.addWatcherDataEntry("resources", frameResourceTypes);
       }
@@ -419,9 +432,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       Targets.TYPES.FRAME
     );
     if (frameResourceTypes.length > 0) {
-      const targetActor = this.browserElement
-        ? TargetActorRegistry.getTargetActor(this.browserId)
-        : TargetActorRegistry.getParentProcessTargetActor();
+      const targetActor = this._getTargetActorInParentProcess();
       if (targetActor) {
         targetActor.removeWatcherDataEntry("resources", frameResourceTypes);
       }
@@ -478,6 +489,12 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           });
         })
     );
+
+    // See comment in watchResources
+    const targetActor = this._getTargetActorInParentProcess();
+    if (targetActor) {
+      await targetActor.addWatcherDataEntry(type, entries);
+    }
   },
 
   /**
@@ -503,5 +520,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           entries,
         });
       });
+
+    // See comment in watchResources
+    const targetActor = this._getTargetActorInParentProcess();
+    if (targetActor) {
+      targetActor.removeWatcherDataEntry(type, entries);
+    }
   },
 });

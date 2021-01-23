@@ -6,7 +6,6 @@
 
 #include "gc/Statistics.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/TimeStamp.h"
@@ -604,7 +603,7 @@ UniqueChars Statistics::renderNurseryJson() const {
 }
 
 #ifdef DEBUG
-void Statistics::writeLogMessage(const char* fmt, ...) {
+void Statistics::log(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
   if (gcDebugFile) {
@@ -1191,7 +1190,7 @@ void Statistics::beginSlice(const ZoneGCStats& zoneStats,
     (*sliceCallback)(cx, JS::GC_SLICE_BEGIN, desc);
   }
 
-  writeLogMessage("begin slice");
+  log("begin slice");
 }
 
 void Statistics::endSlice() {
@@ -1204,7 +1203,7 @@ void Statistics::endSlice() {
     slice.endFaults = GetPageFaultCount();
     slice.finalState = gc->state();
 
-    writeLogMessage("end slice");
+    log("end slice");
 
     sendSliceTelemetry(slice);
 
@@ -1413,7 +1412,7 @@ void Statistics::recordPhaseBegin(Phase phase) {
 
   phaseStack.infallibleAppend(phase);
   phaseStartTimes[phase] = now;
-  writeLogMessage("begin: %s", phases[phase].path);
+  log("begin: %s", phases[phase].path);
 }
 
 void Statistics::recordPhaseEnd(Phase phase) {
@@ -1468,7 +1467,7 @@ void Statistics::recordPhaseEnd(Phase phase) {
 
 #ifdef DEBUG
   phaseEndTimes[phase] = now;
-  writeLogMessage("end: %s", phases[phase].path);
+  log("end: %s", phases[phase].path);
 #endif
 }
 

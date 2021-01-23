@@ -244,7 +244,7 @@ const AddonCardListenerHandler = new Proxy(
           elements = document.querySelectorAll(
             `${cardSelector}, ${cardSelector} addon-details`
           );
-        } else {
+        } else if (name == "onUpdateModeChanged") {
           elements = document.querySelectorAll("addon-card");
         }
 
@@ -591,7 +591,6 @@ class DiscoAddonWrapper {
 
     this.dailyUsers = details.addon.average_daily_users;
 
-    this.editorialHeading = details.heading_text;
     this.editorialDescription = details.description_text;
     this.iconURL = details.addon.icon_url;
     this.amoListingUrl = details.addon.url;
@@ -2356,10 +2355,15 @@ class InlineOptionsBrowser extends HTMLElement {
     let readyPromise;
     let remoteSubframes = window.docShell.QueryInterface(Ci.nsILoadContext)
       .useRemoteSubframes;
+    // For now originAttributes have no effect, which will change if the
+    // optionsURL becomes anything but moz-extension* or we start considering
+    // OA for extensions.
+    var oa = E10SUtils.predictOriginAttributes({ browser });
     let loadRemote = E10SUtils.canLoadURIInRemoteType(
       optionsURL,
       remoteSubframes,
-      E10SUtils.EXTENSION_REMOTE_TYPE
+      E10SUtils.EXTENSION_REMOTE_TYPE,
+      oa
     );
     if (loadRemote) {
       browser.setAttribute("remote", "true");
@@ -3611,10 +3615,6 @@ class RecommendedAddonCard extends HTMLElement {
     // the add-on's original description that would normally appear on a card.
     card.querySelector(".disco-description-main").textContent =
       addon.editorialDescription;
-    if (addon.editorialHeading) {
-      card.querySelector(".disco-description-intro").textContent =
-        addon.editorialHeading;
-    }
 
     let hasStats = false;
     if (addon.averageRating) {
