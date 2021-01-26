@@ -5806,12 +5806,8 @@ bool BytecodeEmitter::emitFor(ForNode* forNode,
 }
 
 MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
-    FunctionNode* funNode, bool needsProto /* = false */,
-    ListNode* classContentsIfConstructor /* = nullptr */) {
+    FunctionNode* funNode, bool needsProto /* = false */) {
   FunctionBox* funbox = funNode->funbox();
-
-  MOZ_ASSERT((classContentsIfConstructor != nullptr) ==
-             funbox->isClassConstructor());
 
   //                [stack]
 
@@ -5833,21 +5829,6 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
   }
 
   if (funbox->isInterpreted()) {
-    // Compute the field initializers data and update the funbox.
-    //
-    // NOTE: For a lazy function, this will be applied to any existing function
-    //       in UpdateEmittedInnerFunctions().
-    if (classContentsIfConstructor) {
-      mozilla::Maybe<MemberInitializers> memberInitializers =
-          setupMemberInitializers(classContentsIfConstructor,
-                                  FieldPlacement::Instance);
-      if (!memberInitializers) {
-        ReportAllocationOverflow(cx);
-        return false;
-      }
-      funbox->setMemberInitializers(*memberInitializers);
-    }
-
     if (!funbox->emitBytecode) {
       return fe.emitLazy();
       //            [stack] FUN?
@@ -9514,8 +9495,8 @@ const MemberInitializers& BytecodeEmitter::findMemberInitializersForCall() {
       // expect fields in the first place.
       MOZ_RELEASE_ASSERT(funbox->isClassConstructor());
 
-      MOZ_ASSERT(funbox->memberInitializers().valid);
-      return funbox->memberInitializers();
+      return funbox->useMemberInitializers() ? funbox->memberInitializers()
+                                             : MemberInitializers::Empty();
     }
   }
 
@@ -9526,6 +9507,7 @@ const MemberInitializers& BytecodeEmitter::findMemberInitializersForCall() {
 bool BytecodeEmitter::emitInitializeInstanceMembers() {
   const MemberInitializers& memberInitializers =
       findMemberInitializersForCall();
+  MOZ_ASSERT(memberInitializers.valid);
   size_t numInitializers = memberInitializers.numMemberInitializers;
 
   if (numInitializers == 0) {
@@ -10383,7 +10365,7 @@ bool BytecodeEmitter::emitClass(
         return false;
       }
     }
-    if (!emitFunction(ctor, isDerived, classMembers)) {
+    if (!emitFunction(ctor, isDerived)) {
       //            [stack] HOMEOBJ CTOR
       return false;
     }

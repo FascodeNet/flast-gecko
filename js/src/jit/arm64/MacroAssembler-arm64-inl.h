@@ -1990,6 +1990,8 @@ static inline ARMFPRegister Simd2D(FloatRegister r) { return SimdReg(r).V2D(); }
 
 static inline ARMFPRegister Simd1D(FloatRegister r) { return SimdReg(r).V1D(); }
 
+static inline ARMFPRegister SimdQ(FloatRegister r) { return SimdReg(r).Q(); }
+
 //{{{ check_macroassembler_style
 
 // Moves
@@ -2210,6 +2212,71 @@ void MacroAssembler::mulInt16x8(FloatRegister rhs, FloatRegister lhsDest) {
 
 void MacroAssembler::mulInt32x4(FloatRegister rhs, FloatRegister lhsDest) {
   Mul(Simd4S(lhsDest), Simd4S(lhsDest), Simd4S(rhs));
+}
+
+void MacroAssembler::extMulLowInt8x16(FloatRegister rhs,
+                                      FloatRegister lhsDest) {
+  Smull(Simd8H(lhsDest), Simd8B(lhsDest), Simd8B(rhs));
+}
+
+void MacroAssembler::extMulHighInt8x16(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  Smull2(Simd8H(lhsDest), Simd16B(lhsDest), Simd16B(rhs));
+}
+
+void MacroAssembler::unsignedExtMulLowInt8x16(FloatRegister rhs,
+                                              FloatRegister lhsDest) {
+  Umull(Simd8H(lhsDest), Simd8B(lhsDest), Simd8B(rhs));
+}
+
+void MacroAssembler::unsignedExtMulHighInt8x16(FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  Umull2(Simd8H(lhsDest), Simd16B(lhsDest), Simd16B(rhs));
+}
+
+void MacroAssembler::extMulLowInt16x8(FloatRegister rhs,
+                                      FloatRegister lhsDest) {
+  Smull(Simd4S(lhsDest), Simd4H(lhsDest), Simd4H(rhs));
+}
+
+void MacroAssembler::extMulHighInt16x8(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  Smull2(Simd4S(lhsDest), Simd8H(lhsDest), Simd8H(rhs));
+}
+
+void MacroAssembler::unsignedExtMulLowInt16x8(FloatRegister rhs,
+                                              FloatRegister lhsDest) {
+  Umull(Simd4S(lhsDest), Simd4H(lhsDest), Simd4H(rhs));
+}
+
+void MacroAssembler::unsignedExtMulHighInt16x8(FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  Umull2(Simd4S(lhsDest), Simd8H(lhsDest), Simd8H(rhs));
+}
+
+void MacroAssembler::extMulLowInt32x4(FloatRegister rhs,
+                                      FloatRegister lhsDest) {
+  Smull(Simd2D(lhsDest), Simd2S(lhsDest), Simd2S(rhs));
+}
+
+void MacroAssembler::extMulHighInt32x4(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  Smull2(Simd2D(lhsDest), Simd4S(lhsDest), Simd4S(rhs));
+}
+
+void MacroAssembler::unsignedExtMulLowInt32x4(FloatRegister rhs,
+                                              FloatRegister lhsDest) {
+  Umull(Simd2D(lhsDest), Simd2S(lhsDest), Simd2S(rhs));
+}
+
+void MacroAssembler::unsignedExtMulHighInt32x4(FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  Umull2(Simd2D(lhsDest), Simd4S(lhsDest), Simd4S(rhs));
+}
+
+void MacroAssembler::q15MulrSatInt16x8(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  Sqrdmulh(Simd8H(lhsDest), Simd8H(lhsDest), Simd8H(rhs));
 }
 
 // Integer Negate
@@ -2560,6 +2627,14 @@ void MacroAssembler::bitmaskInt32x4(FloatRegister src, Register dest,
   Mov(ARMRegister(dest, 32), Simd4S(scratch), 0);
 }
 
+void MacroAssembler::bitmaskInt64x2(FloatRegister src, Register dest,
+                                    FloatRegister temp) {
+  Sqxtn(Simd2S(temp), Simd2D(src));
+  Ushr(Simd2S(temp), Simd2S(temp), 31);
+  Usra(ARMFPRegister(temp, 64), ARMFPRegister(temp, 64), 31);
+  Fmov(ARMRegister(dest, 32), ARMFPRegister(temp, 32));
+}
+
 // Comparisons (integer and floating-point)
 
 void MacroAssembler::compareInt8x16(Assembler::Condition cond,
@@ -2807,6 +2882,15 @@ void MacroAssembler::widenLowInt32x4(FloatRegister src, FloatRegister dest) {
 void MacroAssembler::unsignedWidenLowInt32x4(FloatRegister src,
                                              FloatRegister dest) {
   Ushll(Simd2D(dest), Simd2S(src), 0);
+}
+
+void MacroAssembler::widenHighInt32x4(FloatRegister src, FloatRegister dest) {
+  Sshll2(Simd2D(dest), Simd4S(src), 0);
+}
+
+void MacroAssembler::unsignedWidenHighInt32x4(FloatRegister src,
+                                              FloatRegister dest) {
+  Ushll2(Simd2D(dest), Simd4S(src), 0);
 }
 
 // Compare-based minimum/maximum (experimental as of August, 2020)

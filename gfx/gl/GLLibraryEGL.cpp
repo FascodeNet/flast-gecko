@@ -79,7 +79,8 @@ static const char* sEGLExtensionNames[] = {
     "EGL_EXT_swap_buffers_with_damage",
     "EGL_KHR_swap_buffers_with_damage",
     "EGL_EXT_buffer_age",
-    "EGL_KHR_partial_update"};
+    "EGL_KHR_partial_update",
+    "EGL_NV_robustness_video_memory_purge"};
 
 PRLibrary* LoadApitraceLibrary() {
   const char* path = nullptr;
@@ -316,6 +317,8 @@ static std::shared_ptr<EglDisplay> GetAndInitDisplayForAccelANGLE(
 #if defined(XP_UNIX)
 #  define GLES2_LIB "libGLESv2.so"
 #  define GLES2_LIB2 "libGLESv2.so.2"
+#  define GL_LIB "libGL.so"
+#  define GL_LIB2 "libGL.so.1"
 #elif defined(XP_WIN)
 #  define GLES2_LIB "libGLESv2.dll"
 #else
@@ -397,6 +400,18 @@ bool GLLibraryEGL::Init(nsACString* const out_failureId) {
 #  ifdef APITRACE_LIB
   if (!mGLLibrary) {
     mGLLibrary = PR_LoadLibrary(APITRACE_LIB);
+  }
+#  endif
+
+#  ifdef GL_LIB
+  if (!mGLLibrary) {
+    mGLLibrary = PR_LoadLibrary(GL_LIB);
+  }
+#  endif
+
+#  ifdef GL_LIB2
+  if (!mGLLibrary) {
+    mGLLibrary = PR_LoadLibrary(GL_LIB2);
   }
 #  endif
 

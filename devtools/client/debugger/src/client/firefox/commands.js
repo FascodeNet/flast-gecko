@@ -5,12 +5,7 @@
 // @flow
 
 import { createThread, createFrame } from "./create";
-import {
-  addThreadEventListeners,
-  clientEvents,
-  removeThreadEventListeners,
-  ensureSourceActor,
-} from "./events";
+import { waitForSourceActorToBeRegisteredInStore } from "./events";
 import { makePendingLocationId } from "../../utils/breakpoint";
 
 // $FlowIgnore
@@ -352,7 +347,9 @@ async function getFrames(thread: string) {
   // Ensure that each frame has its source already available.
   // Because of throttling, the source may be available a bit late.
   await Promise.all(
-    response.frames.map(frame => ensureSourceActor(frame.where.actor))
+    response.frames.map(frame =>
+      waitForSourceActorToBeRegisteredInStore(frame.where.actor)
+    )
   );
 
   return response.frames.map<?Frame>((frame, i) =>
@@ -439,26 +436,6 @@ async function toggleEventLogging(logEventBreakpoints: boolean) {
   );
 }
 
-function getAllThreadFronts(): ThreadFront[] {
-  const fronts = [currentThreadFront()];
-  for (const { threadFront } of (Object.values(targets): any)) {
-    fronts.push(threadFront);
-  }
-  return fronts;
-}
-
-// Check if any of the targets were paused before we opened
-// the debugger. If one is paused. Fake a `pause` RDP event
-// by directly calling the client event listener.
-async function checkIfAlreadyPaused() {
-  for (const threadFront of getAllThreadFronts()) {
-    const pausedPacket = threadFront.getLastPausePacket();
-    if (pausedPacket) {
-      clientEvents.paused(threadFront, pausedPacket);
-    }
-  }
-}
-
 function getSourceForActor(actor: ActorId) {
   if (!sourceActors[actor]) {
     throw new Error(`Unknown source actor: ${actor}`);
@@ -470,19 +447,11 @@ async function addThread(targetFront: Target) {
   const threadActorID = targetFront.targetForm.threadActor;
   if (!targets[threadActorID]) {
     targets[threadActorID] = targetFront;
-    addThreadEventListeners(targetFront.threadFront);
   }
   return createThread(threadActorID, targetFront);
 }
 
 function removeThread(thread: Thread) {
-  const targetFront = targets[thread.actor];
-  if (targetFront) {
-    // Note that if the target is already fully destroyed, threadFront will be
-    // null, but event listeners will already have been removed.
-    removeThreadEventListeners(targetFront.threadFront);
-  }
-
   delete targets[thread.actor];
 }
 
@@ -569,7 +538,6 @@ const clientCommands = {
   getFrames,
   pauseOnExceptions,
   toggleEventLogging,
-  checkIfAlreadyPaused,
   registerSourceActor,
   addThread,
   removeThread,

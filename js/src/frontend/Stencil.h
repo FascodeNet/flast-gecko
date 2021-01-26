@@ -719,8 +719,6 @@ class ScriptStencil {
   //   * non-lazy Function (except asm.js module)
   //   * lazy Function (cannot be asm.js module)
 
-  uint32_t memberInitializers_ = 0;
-
   // GCThings are stored into
   // {CompilationState,BaseCompilationStencil}.gcThingData, in [gcThingsOffset,
   // gcThingsOffset + gcThingsLength) range.
@@ -763,13 +761,9 @@ class ScriptStencil {
   // The shared data is stored into BaseCompilationStencil.sharedData.
   static constexpr uint16_t HasSharedDataFlag = 1 << 2;
 
-  // Set if this script has member initializer.
-  // `memberInitializers_` is valid only if this flag is set.
-  static constexpr uint16_t HasMemberInitializersFlag = 1 << 3;
-
   // True if this script is lazy function and has enclosing scope.
   // `lazyFunctionEnclosingScopeIndex_` is valid only if this flag is set.
-  static constexpr uint16_t HasLazyFunctionEnclosingScopeIndexFlag = 1 << 4;
+  static constexpr uint16_t HasLazyFunctionEnclosingScopeIndexFlag = 1 << 3;
 
   uint16_t flags_ = 0;
 
@@ -787,7 +781,7 @@ class ScriptStencil {
   bool hasGCThings() const { return gcThingsLength; }
 
   mozilla::Span<TaggedScriptThingIndex> gcthings(
-      BaseCompilationStencil& stencil) const;
+      const BaseCompilationStencil& stencil) const;
 
   bool wasFunctionEmitted() const { return flags_ & WasFunctionEmittedFlag; }
 
@@ -800,24 +794,6 @@ class ScriptStencil {
   bool hasSharedData() const { return flags_ & HasSharedDataFlag; }
 
   void setHasSharedData() { flags_ |= HasSharedDataFlag; }
-
-  bool hasMemberInitializers() const {
-    return flags_ & HasMemberInitializersFlag;
-  }
-
- private:
-  void setHasMemberInitializers() { flags_ |= HasMemberInitializersFlag; }
-
- public:
-  void setMemberInitializers(MemberInitializers member) {
-    memberInitializers_ = member.serialize();
-    setHasMemberInitializers();
-  }
-
-  MemberInitializers memberInitializers() const {
-    MOZ_ASSERT(hasMemberInitializers());
-    return MemberInitializers(memberInitializers_);
-  }
 
   bool hasLazyFunctionEnclosingScopeIndex() const {
     return flags_ & HasLazyFunctionEnclosingScopeIndexFlag;
@@ -855,6 +831,10 @@ class ScriptStencilExtra {
   // The location of this script in the source.
   SourceExtent extent;
 
+  // See `PrivateScriptData::memberInitializers_`.
+  // This data only valid when `UseMemberInitializers` script flag is true.
+  uint32_t memberInitializers_ = 0;
+
   // See `JSFunction::nargs_`.
   uint16_t nargs = 0;
 
@@ -865,6 +845,21 @@ class ScriptStencilExtra {
 
   bool isModule() const {
     return immutableFlags.hasFlag(ImmutableScriptFlagsEnum::IsModule);
+  }
+
+  bool useMemberInitializers() const {
+    return immutableFlags.hasFlag(
+        ImmutableScriptFlagsEnum::UseMemberInitializers);
+  }
+
+  void setMemberInitializers(MemberInitializers member) {
+    MOZ_ASSERT(useMemberInitializers());
+    memberInitializers_ = member.serialize();
+  }
+
+  MemberInitializers memberInitializers() const {
+    MOZ_ASSERT(useMemberInitializers());
+    return MemberInitializers(memberInitializers_);
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)

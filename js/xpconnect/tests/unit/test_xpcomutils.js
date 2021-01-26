@@ -172,20 +172,53 @@ add_test(function test_categoryRegistration()
   // Load test components.
   do_load_manifest("CatRegistrationComponents.manifest");
 
-  const EXPECTED_ENTRIES = new Map([
+  const expectedEntries = new Map([
     ["CatRegisteredComponent", "@unit.test.com/cat-registered-component;1"],
     ["CatAppRegisteredComponent", "@unit.test.com/cat-app-registered-component;1"],
   ]);
 
   // Verify the correct entries are registered in the "test-cat" category.
   for (let {entry, value} of Services.catMan.enumerateCategory(CATEGORY_NAME)) {
-    print("Verify that the name/value pair exists in the expected entries.");
-    ok(EXPECTED_ENTRIES.has(entry));
-    Assert.equal(EXPECTED_ENTRIES.get(entry), value);
-    EXPECTED_ENTRIES.delete(entry);
+    ok(expectedEntries.has(entry), `${entry} is expected`);
+    Assert.equal(value, expectedEntries.get(entry), "${entry} has correct value.");
+    expectedEntries.delete(entry);
   }
-  print("Check that all of the expected entries have been deleted.");
-  Assert.equal(EXPECTED_ENTRIES.size, 0);
+  Assert.deepEqual(
+    Array.from(expectedEntries.keys()),
+    [],
+    "All expected entries have been deleted."
+  );
+  run_next_test();
+});
+
+add_test(function test_categoryBackgroundTaskRegistration()
+{
+  const CATEGORY_NAME = "test-cat1";
+
+  // Note that this test should succeed whether or not MOZ_BACKGROUNDTASKS is
+  // defined.  If it's defined, there's no active task so the `backgroundtask`
+  // directive is processed, dropped, and always succeeds.  If it's not defined,
+  // then the `backgroundtask` directive is processed and ignored.
+
+  // Load test components.
+  do_load_manifest("CatBackgroundTaskRegistrationComponents.manifest");
+
+  const expectedEntries = new Map([
+    ["Cat1RegisteredComponent", "@unit.test.com/cat1-registered-component;1"],
+    ["Cat1BackgroundTaskNotRegisteredComponent", "@unit.test.com/cat1-backgroundtask-notregistered-component;1"],
+  ]);
+
+  // Verify the correct entries are registered in the "test-cat" category.
+  for (let {entry, value} of Services.catMan.enumerateCategory(CATEGORY_NAME)) {
+    ok(expectedEntries.has(entry), `${entry} is expected`);
+    Assert.equal(value, expectedEntries.get(entry), "Verify that the value is correct in the expected entries.");
+    expectedEntries.delete(entry);
+  }
+  Assert.deepEqual(
+    Array.from(expectedEntries.keys()),
+    [],
+    "All expected entries have been deleted."
+  );
   run_next_test();
 });
 

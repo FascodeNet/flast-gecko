@@ -1445,6 +1445,10 @@ void MacroAssembler::bitmaskInt32x4(FloatRegister src, Register dest) {
   vmovmskps(src, dest);
 }
 
+void MacroAssembler::bitmaskInt64x2(FloatRegister src, Register dest) {
+  vmovmskpd(src, dest);
+}
+
 // Swizzle - permute with variable indices
 
 void MacroAssembler::swizzleInt8x16(FloatRegister rhs, FloatRegister lhsDest,
@@ -1583,6 +1587,120 @@ void MacroAssembler::mulInt64x2(FloatRegister rhs, FloatRegister lhsDest,
   vpaddq(Operand(temp2), lhsDest, lhsDest);  // lhsDest =
                                              //    <(DG+CH)_low+CG_high CG_low>
                                              //    <(BE+AF)_low+AE_high AE_low>
+}
+
+// Code generation from the PR: https://github.com/WebAssembly/simd/pull/376.
+// The double PSHUFD for the 32->64 case is not great, and there's some
+// discussion on the PR (scroll down far enough) on how to avoid one of them,
+// but we need benchmarking + correctness proofs.
+
+void MacroAssembler::extMulLowInt8x16(FloatRegister rhs,
+                                      FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  widenLowInt8x16(rhs, scratch);
+  widenLowInt8x16(lhsDest, lhsDest);
+  mulInt16x8(scratch, lhsDest);
+}
+
+void MacroAssembler::extMulHighInt8x16(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  widenHighInt8x16(rhs, scratch);
+  widenHighInt8x16(lhsDest, lhsDest);
+  mulInt16x8(scratch, lhsDest);
+}
+
+void MacroAssembler::unsignedExtMulLowInt8x16(FloatRegister rhs,
+                                              FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  unsignedWidenLowInt8x16(rhs, scratch);
+  unsignedWidenLowInt8x16(lhsDest, lhsDest);
+  mulInt16x8(scratch, lhsDest);
+}
+
+void MacroAssembler::unsignedExtMulHighInt8x16(FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  unsignedWidenHighInt8x16(rhs, scratch);
+  unsignedWidenHighInt8x16(lhsDest, lhsDest);
+  mulInt16x8(scratch, lhsDest);
+}
+
+void MacroAssembler::extMulLowInt16x8(FloatRegister rhs,
+                                      FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vmovdqa(lhsDest, scratch);
+  vpmullw(Operand(rhs), lhsDest, lhsDest);
+  vpmulhw(Operand(rhs), scratch, scratch);
+  vpunpcklwd(scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::extMulHighInt16x8(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vmovdqa(lhsDest, scratch);
+  vpmullw(Operand(rhs), lhsDest, lhsDest);
+  vpmulhw(Operand(rhs), scratch, scratch);
+  vpunpckhwd(scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::unsignedExtMulLowInt16x8(FloatRegister rhs,
+                                              FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vmovdqa(lhsDest, scratch);
+  vpmullw(Operand(rhs), lhsDest, lhsDest);
+  vpmulhuw(Operand(rhs), scratch, scratch);
+  vpunpcklwd(scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::unsignedExtMulHighInt16x8(FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vmovdqa(lhsDest, scratch);
+  vpmullw(Operand(rhs), lhsDest, lhsDest);
+  vpmulhuw(Operand(rhs), scratch, scratch);
+  vpunpckhwd(scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::extMulLowInt32x4(FloatRegister rhs,
+                                      FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vpshufd(ComputeShuffleMask(0, 0, 1, 0), lhsDest, scratch);
+  vpshufd(ComputeShuffleMask(0, 0, 1, 0), rhs, lhsDest);
+  vpmuldq(scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::extMulHighInt32x4(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vpshufd(ComputeShuffleMask(2, 0, 3, 0), lhsDest, scratch);
+  vpshufd(ComputeShuffleMask(2, 0, 3, 0), rhs, lhsDest);
+  vpmuldq(scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::unsignedExtMulLowInt32x4(FloatRegister rhs,
+                                              FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vpshufd(ComputeShuffleMask(0, 0, 1, 0), lhsDest, scratch);
+  vpshufd(ComputeShuffleMask(0, 0, 1, 0), rhs, lhsDest);
+  vpmuludq(Operand(scratch), lhsDest, lhsDest);
+}
+
+void MacroAssembler::unsignedExtMulHighInt32x4(FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vpshufd(ComputeShuffleMask(2, 0, 3, 0), lhsDest, scratch);
+  vpshufd(ComputeShuffleMask(2, 0, 3, 0), rhs, lhsDest);
+  vpmuludq(Operand(scratch), lhsDest, lhsDest);
+}
+
+void MacroAssembler::q15MulrSatInt16x8(FloatRegister rhs,
+                                       FloatRegister lhsDest) {
+  ScratchSimd128Scope scratch(*this);
+  vpmulhrsw(Operand(rhs), lhsDest, lhsDest);
+  vmovdqa(lhsDest, scratch);
+  vpcmpeqwSimd128(SimdConstant::SplatX8(0x8000), scratch);
+  vpxor(scratch, lhsDest, lhsDest);
 }
 
 // Integer negate
@@ -2570,6 +2688,17 @@ void MacroAssembler::widenLowInt32x4(FloatRegister src, FloatRegister dest) {
 void MacroAssembler::unsignedWidenLowInt32x4(FloatRegister src,
                                              FloatRegister dest) {
   vpmovzxdq(Operand(src), dest);
+}
+
+void MacroAssembler::widenHighInt32x4(FloatRegister src, FloatRegister dest) {
+  vpshufd(ComputeShuffleMask(2, 3, 2, 3), src, dest);
+  vpmovsxdq(Operand(dest), dest);
+}
+
+void MacroAssembler::unsignedWidenHighInt32x4(FloatRegister src,
+                                              FloatRegister dest) {
+  vpshufd(ComputeShuffleMask(2, 3, 2, 3), src, dest);
+  vpmovzxdq(Operand(dest), dest);
 }
 
 // ========================================================================

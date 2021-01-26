@@ -5080,9 +5080,6 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
     return;
   }
 
-  // Don't look for a presshell if we're a root chrome window that's got
-  // about:blank loaded.  We don't want to focus our widget in that case.
-  // XXXbz should we really be checking for IsInitialDocument() instead?
   RefPtr<BrowsingContext> parent;
   BrowsingContext* bc = GetBrowsingContext();
   if (bc) {
@@ -5104,12 +5101,8 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
       }
       return;
     }
-    nsCOMPtr<Document> parentdoc = parent->GetDocument();
-    if (!parentdoc) {
-      return;
-    }
 
-    if (Element* frame = parentdoc->FindContentForSubDocument(mDoc)) {
+    if (Element* frame = mDoc->GetEmbedderElement()) {
       nsContentUtils::RequestFrameFocus(*frame, canFocus, aCallerType);
     }
     return;

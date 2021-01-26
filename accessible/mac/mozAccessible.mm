@@ -111,7 +111,7 @@ using namespace mozilla::a11y;
 static const uint64_t kCachedStates =
     states::CHECKED | states::PRESSED | states::MIXED | states::EXPANDED |
     states::CURRENT | states::SELECTED | states::TRAVERSED | states::LINKED |
-    states::HASPOPUP | states::BUSY;
+    states::HASPOPUP | states::BUSY | states::MULTI_LINE;
 static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
 
 - (uint64_t)state {
@@ -1021,18 +1021,11 @@ struct RoleDescrComparator {
       // We consider any caret move event to be a selected text change event.
       // So dispatching an event for EVENT_TEXT_SELECTION_CHANGED would be
       // reduntant.
-      id<MOXTextMarkerSupport> delegate = [self moxTextMarkerDelegate];
-      id selectedRange = [delegate moxSelectedTextMarkerRange];
-      BOOL isCollapsed =
-          [static_cast<MOXTextMarkerDelegate*>(delegate) selectionIsCollapsed];
-      NSDictionary* userInfo = @{
-        @"AXTextChangeElement" : self,
-        @"AXSelectedTextMarkerRange" :
-            (selectedRange ? selectedRange : [NSNull null]),
-        @"AXTextStateChangeType" : isCollapsed
-            ? @(AXTextStateChangeTypeSelectionMove)
-            : @(AXTextStateChangeTypeSelectionExtend)
-      };
+      MOXTextMarkerDelegate* delegate =
+          static_cast<MOXTextMarkerDelegate*>([self moxTextMarkerDelegate]);
+      NSMutableDictionary* userInfo =
+          [[delegate selectionChangeInfo] mutableCopy];
+      userInfo[@"AXTextChangeElement"] = self;
 
       mozAccessible* webArea = [self topWebArea];
       [webArea

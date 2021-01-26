@@ -260,11 +260,15 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     // Keep a reference to the chromeEventHandler for the current targetActor, to make
     // sure we will be able to remove the listener during the WalkerActor destroy().
     this.chromeEventHandler = targetActor.chromeEventHandler;
-    // shadowrootattached is a chrome-only event.
+    // shadowrootattached is a chrome-only event. We enable it below.
     this.chromeEventHandler.addEventListener(
       "shadowrootattached",
       this.onShadowrootattached
     );
+
+    for (const { document } of this.targetActor.windows) {
+      document.shadowRootAttachedEventEnabled = true;
+    }
 
     // Ensure that the root document node actor is ready and
     // managed.
@@ -398,6 +402,11 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         "shadowrootattached",
         this.onShadowrootattached
       );
+
+      // This event is just for devtools, so we can unset once we're done.
+      for (const { document } of this.targetActor.windows) {
+        document.shadowRootAttachedEventEnabled = false;
+      }
 
       this.onFrameLoad = null;
       this.onFrameUnload = null;
@@ -2489,6 +2498,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       );
       return;
     }
+
+    window.document.shadowRootAttachedEventEnabled = true;
 
     if (isTopLevel) {
       // If we initialize the inspector while the document is loading,

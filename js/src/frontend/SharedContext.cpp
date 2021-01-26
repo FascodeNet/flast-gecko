@@ -88,7 +88,9 @@ void ScopeContext::computeThisEnvironment(Scope* scope) {
 
         if (fun->isClassConstructor()) {
           memberInitializers =
-              mozilla::Some(fun->baseScript()->getMemberInitializers());
+              fun->baseScript()->useMemberInitializers()
+                  ? mozilla::Some(fun->baseScript()->getMemberInitializers())
+                  : mozilla::Some(MemberInitializers::Empty());
           MOZ_ASSERT(memberInitializers->valid);
         }
 
@@ -416,10 +418,6 @@ void FunctionBox::copyScriptFields(ScriptStencil& script) {
 
   SharedContext::copyScriptFields(script);
 
-  if (memberInitializers_) {
-    script.setMemberInitializers(*memberInitializers_);
-  }
-
   isScriptFieldCopiedToStencil = true;
 }
 
@@ -443,6 +441,10 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
 }
 
 void FunctionBox::copyFunctionExtraFields(ScriptStencilExtra& scriptExtra) {
+  if (useMemberInitializers()) {
+    scriptExtra.setMemberInitializers(memberInitializers());
+  }
+
   scriptExtra.nargs = nargs_;
 }
 
@@ -459,9 +461,13 @@ void FunctionBox::copyUpdatedExtent() {
 }
 
 void FunctionBox::copyUpdatedMemberInitializers() {
-  ScriptStencil& script = functionStencil();
-  if (memberInitializers_) {
-    script.setMemberInitializers(*memberInitializers_);
+  MOZ_ASSERT(useMemberInitializers());
+  if (hasFunctionExtraStencil()) {
+    ScriptStencilExtra& scriptExtra = functionExtraStencil();
+    scriptExtra.setMemberInitializers(memberInitializers());
+  } else {
+    // We are delazifying and the original PrivateScriptData has the member
+    // initializer information already. See: JSScript::fullyInitFromStencil.
   }
 }
 
