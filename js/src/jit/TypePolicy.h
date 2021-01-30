@@ -231,6 +231,20 @@ class UnboxedInt32Policy final : private TypePolicy {
   }
 };
 
+// Expects either an Int32 or IntPtr for operand Op.
+template <unsigned Op>
+class Int32OrIntPtrPolicy final : private TypePolicy {
+ public:
+  constexpr Int32OrIntPtrPolicy() = default;
+  EMPTY_DATA_;
+  [[nodiscard]] static bool staticAdjustInputs(TempAllocator& alloc,
+                                               MInstruction* def);
+  [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
+                                  MInstruction* def) const override {
+    return staticAdjustInputs(alloc, def);
+  }
+};
+
 // Expect an Int for operand Op. Else a ToInt32 instruction is inserted.
 template <unsigned Op>
 class ConvertToInt32Policy final : public TypePolicy {
@@ -512,15 +526,6 @@ class ClampPolicy final : public TypePolicy {
   EMPTY_DATA_;
   [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
                                   MInstruction* ins) const override;
-};
-
-// Policy for MTypedArrayIndexToInt32. Operand is either Double or Int32.
-class TypedArrayIndexPolicy final : public TypePolicy {
- public:
-  constexpr TypedArrayIndexPolicy() = default;
-  SPECIALIZATION_DATA_;
-  [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
-                                  MInstruction* def) const override;
 };
 
 #undef SPECIALIZATION_DATA_

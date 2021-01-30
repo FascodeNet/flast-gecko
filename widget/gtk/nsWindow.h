@@ -380,7 +380,7 @@ class nsWindow final : public nsBaseWidget {
   virtual nsresult SetNonClientMargins(
       LayoutDeviceIntMargin& aMargins) override;
   void SetDrawsInTitlebar(bool aState) override;
-  bool GetTitlebarRect(mozilla::gfx::Rect& aRect);
+  LayoutDeviceIntRect GetTitlebarRect();
   virtual void UpdateWindowDraggingRegion(
       const LayoutDeviceIntRegion& aRegion) override;
 
@@ -405,16 +405,16 @@ class nsWindow final : public nsBaseWidget {
   nsresult GetSystemFont(nsCString& aFontName) override;
 
   typedef enum {
-    CSD_SUPPORT_SYSTEM,  // CSD including shadows
-    CSD_SUPPORT_CLIENT,  // CSD without shadows
-    CSD_SUPPORT_NONE,    // WM does not support CSD at all
-    CSD_SUPPORT_UNKNOWN
+    GTK_DECORATION_SYSTEM,  // CSD including shadows
+    GTK_DECORATION_CLIENT,  // CSD without shadows
+    GTK_DECORATION_NONE,    // WM does not support CSD at all
+    GTK_DECORATION_UNKNOWN
   } CSDSupportLevel;
   /**
    * Get the support of Client Side Decoration by checking
    * the XDG_CURRENT_DESKTOP environment variable.
    */
-  static CSDSupportLevel GetSystemCSDSupportLevel(bool aIsPopup = false);
+  static CSDSupportLevel GetSystemCSDSupportLevel();
 
   static bool HideTitlebarByDefault();
   static bool GetTopLevelWindowActiveState(nsIFrame* aFrame);
@@ -507,6 +507,10 @@ class nsWindow final : public nsBaseWidget {
                  bool aRepaint);
   void NativeMoveResizeWaylandPopup(GdkPoint* aPosition, GdkRectangle* aSize);
 
+  // Returns true if the given point (in device pixels) is within a resizer
+  // region of the window. Only used when drawing decorations client side.
+  bool CheckResizerEdge(LayoutDeviceIntPoint aPoint, GdkWindowEdge& aOutEdge);
+
   GtkTextDirection GetTextDirection();
 
   void AddCSDDecorationSize(int* aWidth, int* aHeight);
@@ -560,7 +564,7 @@ class nsWindow final : public nsBaseWidget {
   // window. See bug 1225044.
   unsigned int mPendingConfigures;
 
-  // Window titlebar rendering mode, CSD_SUPPORT_NONE if it's disabled
+  // Window titlebar rendering mode, GTK_DECORATION_NONE if it's disabled
   // for this window.
   CSDSupportLevel mCSDSupportLevel;
   // Use dedicated GdkWindow for mContainer

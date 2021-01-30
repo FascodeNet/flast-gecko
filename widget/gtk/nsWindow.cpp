@@ -307,7 +307,7 @@ static SystemTimeConverter<guint32>& TimeConverter() {
   return sTimeConverterSingleton;
 }
 
-nsWindow::CSDSupportLevel nsWindow::sCSDSupportLevel = CSD_SUPPORT_UNKNOWN;
+nsWindow::CSDSupportLevel nsWindow::sCSDSupportLevel = GTK_DECORATION_UNKNOWN;
 bool nsWindow::sTransparentMainWindow = false;
 static bool sIgnoreChangedSettings = false;
 
@@ -539,7 +539,7 @@ nsWindow::nsWindow() {
   mLastScrollEventTime = GDK_CURRENT_TIME;
 
   mPendingConfigures = 0;
-  mCSDSupportLevel = CSD_SUPPORT_NONE;
+  mCSDSupportLevel = GTK_DECORATION_NONE;
   mDrawToContainer = false;
   mDrawInTitlebar = false;
   mTitlebarBackdropState = false;
@@ -1069,7 +1069,7 @@ void nsWindow::SetSizeConstraints(const SizeConstraints& aConstraints) {
 }
 
 void nsWindow::AddCSDDecorationSize(int* aWidth, int* aHeight) {
-  if (mCSDSupportLevel == CSD_SUPPORT_CLIENT && mDrawInTitlebar) {
+  if (mCSDSupportLevel == GTK_DECORATION_CLIENT && mDrawInTitlebar) {
     GtkBorder decorationSize = GetCSDDecorationSize(!mIsTopLevel);
     *aWidth += decorationSize.left + decorationSize.right;
     *aHeight += decorationSize.top + decorationSize.bottom;
@@ -2290,7 +2290,7 @@ LayoutDeviceIntRect nsWindow::GetClientBounds() {
 void nsWindow::UpdateClientOffsetFromFrameExtents() {
   AUTO_PROFILER_LABEL("nsWindow::UpdateClientOffsetFromFrameExtents", OTHER);
 
-  if (mCSDSupportLevel == CSD_SUPPORT_CLIENT && mDrawInTitlebar) {
+  if (mCSDSupportLevel == GTK_DECORATION_CLIENT && mDrawInTitlebar) {
     return;
   }
 
@@ -3194,7 +3194,7 @@ void nsWindow::OnSizeAllocate(GtkAllocation* aAllocation) {
   // is enabled. In either cases (Wayland or system titlebar is off on X11)
   // we don't get _NET_FRAME_EXTENTS X11 property notification so we derive
   // it from mContainer position.
-  if (mCSDSupportLevel == CSD_SUPPORT_CLIENT) {
+  if (mCSDSupportLevel == GTK_DECORATION_CLIENT) {
     if (!mIsX11Display || (mIsX11Display && mDrawInTitlebar)) {
       UpdateClientOffsetFromCSDWindow();
     }
@@ -3308,6 +3308,47 @@ void nsWindow::OnLeaveNotifyEvent(GdkEventCrossing* aEvent) {
   DispatchInputEvent(&event);
 }
 
+bool nsWindow::CheckResizerEdge(LayoutDeviceIntPoint aPoint,
+                                GdkWindowEdge& aOutEdge) {
+  // We only need to handle resizers for PIP window.
+  if (!mIsPIPWindow) {
+    return false;
+  }
+
+  // Don't allow resizing maximized windows.
+  if (mSizeState != nsSizeMode_Normal) {
+    return false;
+  }
+
+#define RESIZER_SIZE 15
+  int resizerSize = RESIZER_SIZE * GdkScaleFactor();
+  int topDist = aPoint.y;
+  int leftDist = aPoint.x;
+  int rightDist = mBounds.width - aPoint.x;
+  int bottomDist = mBounds.height - aPoint.y;
+
+  if (leftDist <= resizerSize && topDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_NORTH_WEST;
+  } else if (rightDist <= resizerSize && topDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_NORTH_EAST;
+  } else if (leftDist <= resizerSize && bottomDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_SOUTH_WEST;
+  } else if (rightDist <= resizerSize && bottomDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_SOUTH_EAST;
+  } else if (topDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_NORTH;
+  } else if (leftDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_WEST;
+  } else if (rightDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_EAST;
+  } else if (bottomDist <= resizerSize) {
+    aOutEdge = GDK_WINDOW_EDGE_SOUTH;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 template <typename Event>
 static LayoutDeviceIntPoint GetRefPoint(nsWindow* aWindow, Event* aEvent) {
   if (aEvent->window == aWindow->GetGdkWindow()) {
@@ -3368,6 +3409,39 @@ void nsWindow::OnMotionNotifyEvent(GdkEventMotion* aEvent) {
     }
   }
 #endif /* MOZ_X11 */
+
+  GdkWindowEdge edge;
+  if (CheckResizerEdge(GetRefPoint(this, aEvent), edge)) {
+    nsCursor cursor = eCursor_none;
+    switch (edge) {
+      case GDK_WINDOW_EDGE_NORTH:
+        cursor = eCursor_n_resize;
+        break;
+      case GDK_WINDOW_EDGE_NORTH_WEST:
+        cursor = eCursor_nw_resize;
+        break;
+      case GDK_WINDOW_EDGE_NORTH_EAST:
+        cursor = eCursor_ne_resize;
+        break;
+      case GDK_WINDOW_EDGE_WEST:
+        cursor = eCursor_w_resize;
+        break;
+      case GDK_WINDOW_EDGE_EAST:
+        cursor = eCursor_e_resize;
+        break;
+      case GDK_WINDOW_EDGE_SOUTH:
+        cursor = eCursor_s_resize;
+        break;
+      case GDK_WINDOW_EDGE_SOUTH_WEST:
+        cursor = eCursor_sw_resize;
+        break;
+      case GDK_WINDOW_EDGE_SOUTH_EAST:
+        cursor = eCursor_se_resize;
+        break;
+    }
+    SetCursor(cursor, nullptr, 0, 0);
+    return;
+  }
 
   WidgetMouseEvent event(true, eMouseMove, this, WidgetMouseEvent::eReal);
 
@@ -3536,6 +3610,15 @@ void nsWindow::OnButtonPressEvent(GdkEventButton* aEvent) {
 
   // check to see if we should rollup
   if (CheckForRollup(aEvent->x_root, aEvent->y_root, false, false)) return;
+
+  // Check to see if the event is within our window's resize region
+  GdkWindowEdge edge;
+  if (CheckResizerEdge(GetRefPoint(this, aEvent), edge)) {
+    gdk_window_begin_resize_drag(gtk_widget_get_window(mShell), edge,
+                                 aEvent->button, aEvent->x_root, aEvent->y_root,
+                                 aEvent->time);
+    return;
+  }
 
   gdouble pressure = 0;
   gdk_event_get_axis((GdkEvent*)aEvent, GDK_AXIS_PRESSURE, &pressure);
@@ -4120,7 +4203,7 @@ void nsWindow::OnScaleChanged(GtkAllocation* aAllocation) {
   // is enabled. In ither cases (Wayland or system titlebar is off on X11)
   // we don't get _NET_FRAME_EXTENTS X11 property notification so we derive
   // it from mContainer position.
-  if (mCSDSupportLevel == CSD_SUPPORT_CLIENT) {
+  if (mCSDSupportLevel == GTK_DECORATION_CLIENT) {
     if (!mIsX11Display || (mIsX11Display && mDrawInTitlebar)) {
       UpdateClientOffsetFromCSDWindow();
     }
@@ -4313,7 +4396,8 @@ bool nsWindow::IsToplevelWindowTransparent() {
       } else {
         // Enable transparent toplevel window if we can draw main window
         // without system titlebar as Gtk+ themes use titlebar round corners.
-        sTransparentMainWindow = GetSystemCSDSupportLevel() != CSD_SUPPORT_NONE;
+        sTransparentMainWindow =
+            GetSystemCSDSupportLevel() != GTK_DECORATION_NONE;
       }
     }
     transparencyConfigured = true;
@@ -4515,8 +4599,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
 
       if (mWindowType == eWindowType_toplevel ||
           mWindowType == eWindowType_dialog) {
-        bool isPopup = mIsPIPWindow || mWindowType == eWindowType_dialog;
-        mCSDSupportLevel = GetSystemCSDSupportLevel(isPopup);
+        mCSDSupportLevel = GetSystemCSDSupportLevel();
       }
 
       // Don't use transparency for PictureInPicture windows.
@@ -4700,7 +4783,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
        */
       GtkStyleContext* style = gtk_widget_get_style_context(mShell);
       mDrawToContainer = !mIsX11Display ||
-                         (mCSDSupportLevel == CSD_SUPPORT_CLIENT) ||
+                         (mCSDSupportLevel == GTK_DECORATION_CLIENT) ||
                          gtk_style_context_has_class(style, "csd");
       eventWidget = (mDrawToContainer) ? container : mShell;
 
@@ -5814,13 +5897,12 @@ nsresult nsWindow::UpdateTranslucentWindowAlphaInternal(const nsIntRect& aRect,
   return NS_OK;
 }
 
-bool nsWindow::GetTitlebarRect(mozilla::gfx::Rect& aRect) {
+LayoutDeviceIntRect nsWindow::GetTitlebarRect() {
   if (!mGdkWindow || !mDrawInTitlebar) {
-    return false;
+    return LayoutDeviceIntRect();
   }
 
-  aRect = gfx::Rect(0, 0, mBounds.width, TITLEBAR_SHAPE_MASK_HEIGHT);
-  return true;
+  return LayoutDeviceIntRect(0, 0, mBounds.width, TITLEBAR_SHAPE_MASK_HEIGHT);
 }
 
 void nsWindow::UpdateTitlebarTransparencyBitmap() {
@@ -7627,14 +7709,19 @@ void nsWindow::SetDrawsInTitlebar(bool aState) {
   LOG(("nsWindow::SetDrawsInTitlebar() [%p] State %d mCSDSupportLevel %d\n",
        (void*)this, aState, (int)mCSDSupportLevel));
 
-  if (!mShell || mCSDSupportLevel == CSD_SUPPORT_NONE ||
+  if (mIsPIPWindow && aState == mDrawInTitlebar) {
+    gtk_window_set_decorated(GTK_WINDOW(mShell), !aState);
+    return;
+  }
+
+  if (!mShell || mCSDSupportLevel == GTK_DECORATION_NONE ||
       aState == mDrawInTitlebar) {
     return;
   }
 
-  if (mCSDSupportLevel == CSD_SUPPORT_SYSTEM) {
+  if (mCSDSupportLevel == GTK_DECORATION_SYSTEM) {
     SetWindowDecoration(aState ? eBorderStyle_border : mBorderStyle);
-  } else if (mCSDSupportLevel == CSD_SUPPORT_CLIENT) {
+  } else if (mCSDSupportLevel == GTK_DECORATION_CLIENT) {
     LOG(("    Using CSD mode\n"));
 
     /* Window manager does not support GDK_DECOR_BORDER,
@@ -7974,8 +8061,8 @@ nsresult nsWindow::SynthesizeNativeTouchPoint(uint32_t aPointerId,
   return NS_OK;
 }
 
-nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
-  if (sCSDSupportLevel != CSD_SUPPORT_UNKNOWN) {
+nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel() {
+  if (sCSDSupportLevel != GTK_DECORATION_UNKNOWN) {
     return sCSDSupportLevel;
   }
 
@@ -7983,11 +8070,11 @@ nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
   const char* decorationOverride = getenv("MOZ_GTK_TITLEBAR_DECORATION");
   if (decorationOverride) {
     if (strcmp(decorationOverride, "none") == 0) {
-      sCSDSupportLevel = CSD_SUPPORT_NONE;
+      sCSDSupportLevel = GTK_DECORATION_NONE;
     } else if (strcmp(decorationOverride, "client") == 0) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else if (strcmp(decorationOverride, "system") == 0) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
     }
     return sCSDSupportLevel;
   }
@@ -7995,7 +8082,7 @@ nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
   // nsWindow::GetSystemCSDSupportLevel can be called from various threads
   // so we can't use gfxPlatformGtk here.
   if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
-    sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+    sCSDSupportLevel = GTK_DECORATION_CLIENT;
     return sCSDSupportLevel;
   }
 
@@ -8003,60 +8090,60 @@ nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
   if (currentDesktop) {
     // GNOME Flashback (fallback)
     if (strstr(currentDesktop, "GNOME-Flashback:GNOME") != nullptr) {
-      sCSDSupportLevel = aIsPopup ? CSD_SUPPORT_CLIENT : CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
       // Pop Linux Bug 1629198
     } else if (strstr(currentDesktop, "pop:GNOME") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
       // gnome-shell
     } else if (strstr(currentDesktop, "GNOME") != nullptr) {
-      sCSDSupportLevel = aIsPopup ? CSD_SUPPORT_CLIENT : CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
     } else if (strstr(currentDesktop, "XFCE") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else if (strstr(currentDesktop, "X-Cinnamon") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
       // KDE Plasma
     } else if (strstr(currentDesktop, "KDE") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else if (strstr(currentDesktop, "Enlightenment") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else if (strstr(currentDesktop, "LXDE") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else if (strstr(currentDesktop, "openbox") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else if (strstr(currentDesktop, "i3") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_NONE;
+      sCSDSupportLevel = GTK_DECORATION_NONE;
     } else if (strstr(currentDesktop, "MATE") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
       // Ubuntu Unity
     } else if (strstr(currentDesktop, "Unity") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
       // Elementary OS
     } else if (strstr(currentDesktop, "Pantheon") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
     } else if (strstr(currentDesktop, "LXQt") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = GTK_DECORATION_SYSTEM;
     } else if (strstr(currentDesktop, "Deepin") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     } else {
 // Release or beta builds are not supposed to be broken
 // so disable titlebar rendering on untested/unknown systems.
 #if defined(RELEASE_OR_BETA)
-      sCSDSupportLevel = CSD_SUPPORT_NONE;
+      sCSDSupportLevel = GTK_DECORATION_NONE;
 #else
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
 #endif
     }
   } else {
-    sCSDSupportLevel = CSD_SUPPORT_NONE;
+    sCSDSupportLevel = GTK_DECORATION_NONE;
   }
 
   // GTK_CSD forces CSD mode - use also CSD because window manager
   // decorations does not work with CSD.
   // We check GTK_CSD as well as gtk_window_should_use_csd() does.
-  if (sCSDSupportLevel == CSD_SUPPORT_SYSTEM) {
+  if (sCSDSupportLevel == GTK_DECORATION_SYSTEM) {
     const char* csdOverride = getenv("GTK_CSD");
     if (csdOverride && g_strcmp0(csdOverride, "1") == 0) {
-      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
+      sCSDSupportLevel = GTK_DECORATION_CLIENT;
     }
   }
 
@@ -8097,7 +8184,7 @@ bool nsWindow::HideTitlebarByDefault() {
 
     // Don't hide titlebar when it's disabled on current desktop.
     const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
-    if (!currentDesktop || GetSystemCSDSupportLevel() == CSD_SUPPORT_NONE) {
+    if (!currentDesktop || GetSystemCSDSupportLevel() == GTK_DECORATION_NONE) {
       return false;
     }
 

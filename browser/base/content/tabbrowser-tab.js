@@ -33,6 +33,7 @@
           <vbox class="tab-label-container proton"
                 onoverflow="this.setAttribute('textoverflow', 'true');"
                 onunderflow="this.removeAttribute('textoverflow');"
+                align="start"
                 flex="1">
             <label class="tab-text tab-label" role="presentation"/>
             <hbox class="tab-icon-sound">
@@ -140,7 +141,7 @@
 
     set _visuallySelected(val) {
       if (val == (this.getAttribute("visuallyselected") == "true")) {
-        return val;
+        return;
       }
 
       if (val) {
@@ -149,8 +150,6 @@
         this.removeAttribute("visuallyselected");
       }
       gBrowser._tabAttrModified(this, ["visuallyselected"]);
-
-      return val;
     }
 
     set _selected(val) {
@@ -173,8 +172,6 @@
       ) {
         this._visuallySelected = val;
       }
-
-      return val;
     }
 
     get pinned() {
@@ -231,7 +228,7 @@
         return false;
       }
 
-      if (!BrowserUtils.checkEmptyPageOrigin(browser)) {
+      if (!BrowserUIUtils.checkEmptyPageOrigin(browser)) {
         return false;
       }
 

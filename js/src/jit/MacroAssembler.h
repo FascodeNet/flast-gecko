@@ -1139,6 +1139,13 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void maxDouble(FloatRegister other, FloatRegister srcDest,
                         bool handleNaN) PER_SHARED_ARCH;
 
+  void minMaxArrayInt32(Register array, Register result, Register temp1,
+                        Register temp2, Register temp3, bool isMax,
+                        Label* fail);
+  void minMaxArrayNumber(Register array, FloatRegister result,
+                         FloatRegister floatTemp, Register temp1,
+                         Register temp2, bool isMax, Label* fail);
+
   // Compute |pow(base, power)| and store the result in |dest|. If the result
   // exceeds the int32 range, jumps to |onOver|.
   // |base| and |power| are preserved, the other input registers are clobbered.
@@ -4206,9 +4213,13 @@ class MacroAssembler : public MacroAssemblerSpecific {
       JS::ExpandoAndGeneration* expandoAndGeneration, uint64_t generation,
       Label* fail);
 
-  void loadArrayBufferByteLengthInt32(Register obj, Register output);
-  void loadArrayBufferViewByteOffsetInt32(Register obj, Register output);
-  void loadArrayBufferViewLengthInt32(Register obj, Register output);
+  void loadArrayBufferByteLengthInt32(Register obj, Register output,
+                                      Label* fail);
+  void loadArrayBufferViewByteOffsetInt32(Register obj, Register output,
+                                          Label* fail);
+  void loadArrayBufferViewLengthInt32(Register obj, Register output,
+                                      Label* fail);
+  void loadArrayBufferViewLengthPtr(Register obj, Register output);
 
  private:
   void isCallableOrConstructor(bool isCallable, Register obj, Register output,
@@ -4638,7 +4649,7 @@ static inline MIRType ToMIRType(ABIArgType argType) {
 }
 
 // Helper for generatePreBarrier.
-inline DynFn JitMarkFunction(MIRType type);
+inline DynFn JitPreWriteBarrier(MIRType type);
 
 template <class VecT, class ABIArgGeneratorT>
 class ABIArgIterBase {

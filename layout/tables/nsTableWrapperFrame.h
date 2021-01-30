@@ -92,11 +92,12 @@ class nsTableWrapperFrame : public nsContainerFrame {
   virtual nscoord GetMinISize(gfxContext* aRenderingContext) override;
   virtual nscoord GetPrefISize(gfxContext* aRenderingContext) override;
 
-  virtual mozilla::LogicalSize ComputeAutoSize(
+  mozilla::LogicalSize ComputeAutoSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
       const mozilla::LogicalSize& aMargin,
       const mozilla::LogicalSize& aBorderPadding,
+      const mozilla::StyleSizeOverrides& aSizeOverrides,
       mozilla::ComputeSizeFlags aFlags) override;
 
   /** process a reflow command for the table.
@@ -207,18 +208,15 @@ class nsTableWrapperFrame : public nsContainerFrame {
 
   mozilla::StyleVerticalAlignKeyword GetCaptionVerticalAlign() const;
 
-  void SetDesiredSize(uint8_t aCaptionSide,
-                      const mozilla::LogicalSize& aInnerSize,
-                      const mozilla::LogicalSize& aCaptionSize,
-                      const mozilla::LogicalMargin& aInnerMargin,
-                      const mozilla::LogicalMargin& aCaptionMargin,
-                      nscoord& aISize, nscoord& aBSize,
-                      mozilla::WritingMode aWM);
+  nscoord ComputeFinalBSize(uint8_t aCaptionSide,
+                            const mozilla::LogicalSize& aInnerSize,
+                            const mozilla::LogicalSize& aCaptionSize,
+                            const mozilla::LogicalMargin& aCaptionMargin,
+                            const mozilla::WritingMode aWM) const;
 
   nsresult GetCaptionOrigin(uint32_t aCaptionSide,
                             const mozilla::LogicalSize& aContainBlockSize,
                             const mozilla::LogicalSize& aInnerSize,
-                            const mozilla::LogicalMargin& aInnerMargin,
                             const mozilla::LogicalSize& aCaptionSize,
                             mozilla::LogicalMargin& aCaptionMargin,
                             mozilla::LogicalPoint& aOrigin,
@@ -229,7 +227,6 @@ class nsTableWrapperFrame : public nsContainerFrame {
                           const mozilla::LogicalSize& aCaptionSize,
                           const mozilla::LogicalMargin& aCaptionMargin,
                           const mozilla::LogicalSize& aInnerSize,
-                          mozilla::LogicalMargin& aInnerMargin,
                           mozilla::LogicalPoint& aOrigin,
                           mozilla::WritingMode aWM);
 
@@ -246,11 +243,6 @@ class nsTableWrapperFrame : public nsContainerFrame {
   // Set the overflow areas in our reflow metrics
   void UpdateOverflowAreas(ReflowOutput& aMet);
 
-  // Get the margin.
-  void GetChildMargin(nsPresContext* aPresContext, const ReflowInput& aOuterRI,
-                      nsIFrame* aChildFrame, nscoord aAvailableWidth,
-                      mozilla::LogicalMargin& aMargin);
-
   virtual bool IsFrameOfType(uint32_t aFlags) const override {
     return nsContainerFrame::IsFrameOfType(aFlags &
                                            (~eCanContainOverflowContainers));
@@ -266,11 +258,12 @@ class nsTableWrapperFrame : public nsContainerFrame {
    * If aMarginResult is non-null, fill it with the part of the
    * margin-isize that was contributed by the margin.
    */
-  nscoord ChildShrinkWrapISize(gfxContext* aRenderingContext,
-                               nsIFrame* aChildFrame, mozilla::WritingMode aWM,
-                               mozilla::LogicalSize aCBSize,
-                               nscoord aAvailableISize,
-                               nscoord* aMarginResult = nullptr) const;
+  nscoord ChildShrinkWrapISize(
+      gfxContext* aRenderingContext, nsIFrame* aChildFrame,
+      mozilla::WritingMode aWM, mozilla::LogicalSize aCBSize,
+      nscoord aAvailableISize,
+      const mozilla::StyleSizeOverrides& aSizeOverrides,
+      nscoord* aMarginResult = nullptr) const;
 
  private:
   nsFrameList mCaptionFrames;

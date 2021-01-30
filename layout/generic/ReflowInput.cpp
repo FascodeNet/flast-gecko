@@ -156,7 +156,9 @@ ReflowInput::ReflowInput(nsPresContext* aPresContext,
                          const ReflowInput& aParentReflowInput,
                          nsIFrame* aFrame, const LogicalSize& aAvailableSpace,
                          const Maybe<LogicalSize>& aContainingBlockSize,
-                         InitFlags aFlags, ComputeSizeFlags aComputeSizeFlags)
+                         InitFlags aFlags,
+                         const StyleSizeOverrides& aSizeOverrides,
+                         ComputeSizeFlags aComputeSizeFlags)
     : SizeComputationInput(aFrame, aParentReflowInput.mRenderingContext),
       mParentReflowInput(&aParentReflowInput),
       mFloatManager(aParentReflowInput.mFloatManager),
@@ -169,6 +171,7 @@ ReflowInput::ReflowInput(nsPresContext* aPresContext,
               ? aParentReflowInput.mPercentBSizeObserver
               : nullptr),
       mFlags(aParentReflowInput.mFlags),
+      mStyleSizeOverrides(aSizeOverrides),
       mComputeSizeFlags(aComputeSizeFlags),
       mReflowDepth(aParentReflowInput.mReflowDepth + 1),
       mAvailableSize(aAvailableSpace) {
@@ -747,16 +750,6 @@ void ReflowInput::InitDynamicReflowRoot() {
   } else {
     mFrame->RemoveStateBits(NS_FRAME_DYNAMIC_REFLOW_ROOT);
   }
-}
-
-nscoord ReflowInput::GetContainingBlockContentISize(
-    WritingMode aWritingMode) const {
-  if (!mCBReflowInput) {
-    return 0;
-  }
-  return mCBReflowInput->GetWritingMode().IsOrthogonalTo(aWritingMode)
-             ? mCBReflowInput->ComputedBSize()
-             : mCBReflowInput->ComputedISize();
 }
 
 /* static */
@@ -1630,7 +1623,7 @@ void ReflowInput::InitAbsoluteConstraints(nsPresContext* aPresContext,
         cbSize.ConvertTo(wm, cbwm).ISize(wm),  // XXX or AvailableISize()?
         ComputedLogicalMargin(wm).Size(wm) +
             ComputedLogicalOffsets(wm).Size(wm),
-        ComputedLogicalBorderPadding(wm).Size(wm), mComputeSizeFlags);
+        ComputedLogicalBorderPadding(wm).Size(wm), {}, mComputeSizeFlags);
     ComputedISize() = sizeResult.mLogicalSize.ISize(wm);
     ComputedBSize() = sizeResult.mLogicalSize.BSize(wm);
     NS_ASSERTION(ComputedISize() >= 0, "Bogus inline-size");
@@ -2356,10 +2349,11 @@ void ReflowInput::InitConstraints(
         cbSize.ISize(wm) = AvailableISize();
       }
 
-      auto size = mFrame->ComputeSize(
-          mRenderingContext, wm, cbSize, AvailableISize(),
-          ComputedLogicalMargin(wm).Size(wm),
-          ComputedLogicalBorderPadding(wm).Size(wm), mComputeSizeFlags);
+      auto size =
+          mFrame->ComputeSize(mRenderingContext, wm, cbSize, AvailableISize(),
+                              ComputedLogicalMargin(wm).Size(wm),
+                              ComputedLogicalBorderPadding(wm).Size(wm),
+                              mStyleSizeOverrides, mComputeSizeFlags);
 
       ComputedISize() = size.mLogicalSize.ISize(wm);
       ComputedBSize() = size.mLogicalSize.BSize(wm);
@@ -2375,11 +2369,11 @@ void ReflowInput::InitConstraints(
       // items from block margin calculations.
       if (isBlockLevel && !IsSideCaption(mFrame, mStyleDisplay, cbwm) &&
           mStyleDisplay->mDisplay != StyleDisplay::InlineTable &&
-          !alignCB->IsFlexOrGridContainer() &&
+          !mFrame->IsTableFrame() && !alignCB->IsFlexOrGridContainer() &&
           !(mFrame->Style()->GetPseudoType() == PseudoStyleType::marker &&
             mFrame->GetParent()->StyleList()->mListStylePosition ==
                 NS_STYLE_LIST_STYLE_POSITION_OUTSIDE)) {
-        CalculateBlockSideMargins(aFrameType);
+        CalculateBlockSideMargins();
       }
     }
   }
@@ -2540,7 +2534,10 @@ void SizeComputationInput::InitOffsets(WritingMode aCBWM, nscoord aPercentBasis,
 //   = width of containing block
 //
 // Note: the width unit is not auto when this is called
-void ReflowInput::CalculateBlockSideMargins(LayoutFrameType aFrameType) {
+void ReflowInput::CalculateBlockSideMargins() {
+  MOZ_ASSERT(!mFrame->IsTableFrame(),
+             "Inner table frame cannot have computed margins!");
+
   // Calculations here are done in the containing block's writing mode,
   // which is where margins will eventually be applied: we're calculating
   // margins that will be used by the container in its inline direction,
@@ -2601,13 +2598,6 @@ void ReflowInput::CalculateBlockSideMargins(LayoutFrameType aFrameType) {
     // ignore
     // First check if there is an HTML alignment that we should honor
     const ReflowInput* pri = mParentReflowInput;
-    if (aFrameType == LayoutFrameType::Table) {
-      NS_ASSERTION(pri->mFrame->IsTableWrapperFrame(),
-                   "table not inside table wrapper");
-      // Center the table within the table wrapper based on the alignment
-      // of the table wrapper's parent.
-      pri = pri->mParentReflowInput;
-    }
     if (pri && (pri->mStyleText->mTextAlign == StyleTextAlign::MozLeft ||
                 pri->mStyleText->mTextAlign == StyleTextAlign::MozCenter ||
                 pri->mStyleText->mTextAlign == StyleTextAlign::MozRight)) {

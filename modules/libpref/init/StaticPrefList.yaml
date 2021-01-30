@@ -775,12 +775,6 @@
   value: 256000
   mirror: always
 
-# Enable/Disable Origin based cache isolation
-- name: browser.cache.cache_isolation
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
 # -1 = determine dynamically, 0 = none, n = memory capacity in kilobytes.
 - name: browser.cache.memory.capacity
   type: RelaxedAtomicInt32
@@ -8765,6 +8759,30 @@
   value: true
   mirror: always
 
+# Whether to enable odoh.
+- name: network.trr.odoh.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# The uri of Oblivious Proxy.
+- name: network.trr.odoh.proxy_uri
+  type: String
+  value: ""
+  mirror: never
+
+# The host name of Oblivious Target.
+- name: network.trr.odoh.target_host
+  type: String
+  value: ""
+  mirror: never
+
+# The uri path of the odoh uri.
+- name: network.trr.odoh.target_path
+  type: String
+  value: ""
+  mirror: never
+
 # Allow the network changed event to get sent when a network topology or setup
 # change is noticed while running.
 - name: network.notify.changed
@@ -9830,7 +9848,7 @@
 # for this pref means we call _exit(0) earlier during shutdown.
 - name: toolkit.shutdown.fastShutdownStage
   type: int32_t
-#if !defined(DEBUG) && !defined(MOZ_ASAN) && !defined(MOZ_TSAN) && !defined(MOZ_CODE_COVERAGE) && !defined(MOZ_VALGRIND) && !defined(MOZ_PROFILE_GENERATE)
+#if !defined(DEBUG) && !defined(MOZ_ASAN) && !defined(MOZ_TSAN) && !defined(MOZ_CODE_COVERAGE) && !defined(MOZ_VALGRIND) && !defined(MOZ_PROFILE_GENERATE) && !defined(JS_STRUCTURED_SPEW)
   #ifdef NIGHTLY_BUILD
   value: 3
   #else

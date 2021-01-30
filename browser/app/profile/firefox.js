@@ -332,6 +332,10 @@ pref("browser.urlbar.suggest.searches",             true);
 pref("browser.urlbar.suggest.topsites",             true);
 pref("browser.urlbar.suggest.engines",              true);
 
+// Whether to show search suggestions before general results like history and
+// bookmarks.
+pref("browser.urlbar.showSearchSuggestionsFirst", true);
+
 // As a user privacy measure, don't fetch search suggestions if a pasted string
 // is longer than this.
 pref("browser.urlbar.maxCharsForSearchSuggestions", 100);
@@ -378,7 +382,7 @@ pref("browser.urlbar.extension.timeout", 400);
 pref("browser.urlbar.dnsResolveSingleWordsAfterSearch", 1);
 
 // Whether the results panel should be kept open during IME composition.
-// The default value is true because some IME open a picker panel, and we end
+// The default value is false because some IME open a picker panel, and we end
 // up with two panels on top of each other. Since for now we can't detect that
 // we leave this choice to the user, hopefully in the future this can be flipped
 // for everyone.
@@ -1260,6 +1264,7 @@ pref("services.sync.prefs.sync.browser.tabs.warnOnOpen", true);
 pref("services.sync.prefs.sync.browser.taskbar.previews.enable", true);
 pref("services.sync.prefs.sync.browser.urlbar.matchBuckets", true);
 pref("services.sync.prefs.sync.browser.urlbar.maxRichResults", true);
+pref("services.sync.prefs.sync.browser.urlbar.showSearchSuggestionsFirst", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.bookmark", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.history", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.openpage", true);
@@ -1370,7 +1375,7 @@ pref("browser.newtabpage.activity-stream.newNewtabExperience.enabled", false);
 // A preference which allows us to enable the fly out customization overlay
 // on the newtab page.
 pref("browser.newtabpage.activity-stream.customizationMenu.enabled", false);
-pref("browser.newtabpage.activity-stream.newNewtabExperience.colors", "#0090ED,#FF4F5F,#2AC3A2,#FF7139,#A172FF,#FFA437,#FF2A8A,#FFD567");
+pref("browser.newtabpage.activity-stream.newNewtabExperience.colors", "#0090ED,#FF4F5F,#2AC3A2,#FF7139,#A172FF,#FFA437,#FF2A8A");
 
 // Activity Stream prefs that control to which page to redirect
 #ifndef RELEASE_OR_BETA

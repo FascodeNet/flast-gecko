@@ -44,6 +44,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 
 #include "nr_socket_proxy_config.h"
+#include "nsXULAppAPI.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 
@@ -205,35 +206,37 @@ nsresult NrIceStunServer::ToNicerStunStruct(nr_ice_stun_server* server) const {
   int r;
 
   memset(server, 0, sizeof(nr_ice_stun_server));
+  uint8_t protocol;
   if (transport_ == kNrIceTransportUdp) {
-    server->transport = IPPROTO_UDP;
+    protocol = IPPROTO_UDP;
   } else if (transport_ == kNrIceTransportTcp) {
-    server->transport = IPPROTO_TCP;
+    protocol = IPPROTO_TCP;
   } else if (transport_ == kNrIceTransportTls) {
-    server->transport = IPPROTO_TCP;
+    protocol = IPPROTO_TCP;
     if (has_addr_) {
       // Refuse to try TLS without an FQDN
       return NS_ERROR_INVALID_ARG;
     }
-    server->tls = 1;
+    server->addr.tls = 1;
   } else {
     MOZ_MTLOG(ML_ERROR, "Unsupported STUN server transport: " << transport_);
     return NS_ERROR_FAILURE;
   }
 
   if (has_addr_) {
-    r = nr_praddr_to_transport_addr(&addr_, &server->u.addr, server->transport,
-                                    0);
+    r = nr_praddr_to_transport_addr(&addr_, &server->addr, protocol, 0);
     if (r) {
       return NS_ERROR_FAILURE;
     }
-    server->type = NR_ICE_STUN_SERVER_TYPE_ADDR;
   } else {
-    MOZ_ASSERT(sizeof(server->u.dnsname.host) > host_.size());
-    PL_strncpyz(server->u.dnsname.host, host_.c_str(),
-                sizeof(server->u.dnsname.host));
-    server->u.dnsname.port = port_;
-    server->type = NR_ICE_STUN_SERVER_TYPE_DNSNAME;
+    MOZ_ASSERT(sizeof(server->addr.fqdn) > host_.size());
+    // Dummy information to keep nICEr happy
+    if (use_ipv6_if_fqdn_) {
+      nr_str_port_to_transport_addr("::", port_, protocol, &server->addr);
+    } else {
+      nr_str_port_to_transport_addr("0.0.0.0", port_, protocol, &server->addr);
+    }
+    PL_strncpyz(server->addr.fqdn, host_.c_str(), sizeof(server->addr.fqdn));
   }
 
   return NS_OK;
@@ -495,6 +498,14 @@ void NrIceCtx::InitializeGlobals(const GlobalConfig& aConfig) {
     if (!aConfig.mForceNetInterface.Length()) {
       NR_reg_set_string((char*)NR_ICE_REG_PREF_FORCE_INTERFACE_NAME,
                         const_cast<char*>(aConfig.mForceNetInterface.get()));
+    }
+
+    // For now, always use nr_resolver for UDP.
+    NR_reg_set_char((char*)NR_ICE_REG_USE_NR_RESOLVER_FOR_UDP, 1);
+
+    // Use nr_resolver for TCP only when not in e10s mode (for unit-tests)
+    if (XRE_IsParentProcess()) {
+      NR_reg_set_char((char*)NR_ICE_REG_USE_NR_RESOLVER_FOR_TCP, 1);
     }
   }
 }

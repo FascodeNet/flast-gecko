@@ -2108,6 +2108,46 @@ class LMinMaxF : public LMinMaxBase {
       : LMinMaxBase(classOpcode, first, second) {}
 };
 
+class LMinMaxArrayI : public LInstructionHelper<1, 1, 3> {
+ public:
+  LIR_HEADER(MinMaxArrayI);
+  LMinMaxArrayI(const LAllocation& array, const LDefinition& temp0,
+                const LDefinition& temp1, const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, array);
+    setTemp(0, temp0);
+    setTemp(1, temp1);
+    setTemp(2, temp2);
+  }
+
+  const LAllocation* array() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+  const LDefinition* temp3() { return getTemp(2); }
+
+  bool isMax() const { return mir_->toMinMaxArray()->isMax(); }
+};
+
+class LMinMaxArrayD : public LInstructionHelper<1, 1, 3> {
+ public:
+  LIR_HEADER(MinMaxArrayD);
+  LMinMaxArrayD(const LAllocation& array, const LDefinition& floatTemp,
+                const LDefinition& temp1, const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, array);
+    setTemp(0, floatTemp);
+    setTemp(1, temp1);
+    setTemp(2, temp2);
+  }
+
+  const LAllocation* array() { return getOperand(0); }
+  const LDefinition* floatTemp() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(1); }
+  const LDefinition* temp2() { return getTemp(2); }
+
+  bool isMax() const { return mir_->toMinMaxArray()->isMax(); }
+};
+
 // Negative of an integer
 class LNegI : public LInstructionHelper<1, 1, 0> {
  public:
@@ -3993,6 +4033,10 @@ class LArrayBufferViewLength : public LInstructionHelper<1, 1, 0> {
   }
 
   const LAllocation* object() { return getOperand(0); }
+
+  const MArrayBufferViewLength* mir() const {
+    return mir_->toArrayBufferViewLength();
+  }
 };
 
 // Read the byteOffset of an array buffer view.
@@ -4033,21 +4077,21 @@ class LTypedArrayElementShift : public LInstructionHelper<1, 1, 0> {
   const LAllocation* object() { return getOperand(0); }
 };
 
-// Double to Int32, eligible for accessing into a TypedArray. If the index isn't
-// exactly representable as an Int32, produce any Int32 which is equivalent to
-// an OOB access into a TypedArray.
-class LTypedArrayIndexToInt32 : public LInstructionHelper<1, 1, 0> {
+// Double to IntPtr, eligible for accessing into a TypedArray or DataView. If
+// the index isn't exactly representable as an IntPtr, depending on the
+// supportOOB flag on the MIR instruction, either bail out or produce an IntPtr
+// which is equivalent to an OOB access.
+class LGuardNumberToIntPtrIndex : public LInstructionHelper<1, 1, 0> {
  public:
-  LIR_HEADER(TypedArrayIndexToInt32)
+  LIR_HEADER(GuardNumberToIntPtrIndex)
 
-  explicit LTypedArrayIndexToInt32(const LAllocation& obj)
+  explicit LGuardNumberToIntPtrIndex(const LAllocation& obj)
       : LInstructionHelper(classOpcode) {
     setOperand(0, obj);
   }
 
-  const LAllocation* index() { return getOperand(0); }
-  const MTypedArrayIndexToInt32* mir() const {
-    return mir_->toTypedArrayIndexToInt32();
+  const MGuardNumberToIntPtrIndex* mir() const {
+    return mir_->toGuardNumberToIntPtrIndex();
   }
 };
 
@@ -4107,6 +4151,8 @@ class LSpectreMaskIndex : public LInstructionHelper<1, 2, 0> {
   }
   const LAllocation* index() { return getOperand(0); }
   const LAllocation* length() { return getOperand(1); }
+
+  const MSpectreMaskIndex* mir() const { return mir_->toSpectreMaskIndex(); }
 };
 
 // Load a value from a dense array's elements vector. Bail out if it's the hole
@@ -5559,6 +5605,32 @@ class LRest : public LCallInstructionHelper<1, 1, 3> {
   }
   const LAllocation* numActuals() { return getOperand(0); }
   MRest* mir() const { return mir_->toRest(); }
+};
+
+class LInt32ToIntPtr : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(Int32ToIntPtr)
+
+  explicit LInt32ToIntPtr(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+
+  MInt32ToIntPtr* mir() const { return mir_->toInt32ToIntPtr(); }
+};
+
+class LAdjustDataViewLength : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(AdjustDataViewLength)
+
+  explicit LAdjustDataViewLength(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+
+  const MAdjustDataViewLength* mir() const {
+    return mir_->toAdjustDataViewLength();
+  }
 };
 
 // Convert a Boolean to an Int64, following ToBigInt.

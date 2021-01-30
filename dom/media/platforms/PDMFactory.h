@@ -9,6 +9,7 @@
 
 #  include <utility>
 #  include "DecoderDoctorDiagnostics.h"
+#  include "PlatformDecoderModule.h"
 #  include "mozilla/AlreadyAddRefed.h"
 #  include "mozilla/EnumSet.h"
 #  include "mozilla/MozPromise.h"
@@ -22,21 +23,15 @@ namespace mozilla {
 class CDMProxy;
 class MediaDataDecoder;
 class MediaResult;
-class PDMFactoryImpl;
-class PlatformDecoderModule;
 class StaticMutex;
 template <typename T>
 struct MaxEnumValue;
-template <class T>
-class StaticAutoPtr;
 struct CreateDecoderParams;
 struct CreateDecoderParamsForAsync;
 struct SupportDecoderParams;
 enum class RemoteDecodeIn;
 
-using PDMCreateDecoderPromise =
-    MozPromise<RefPtr<MediaDataDecoder>, MediaResult,
-               /* IsExclusive = */ true>;
+using PDMCreateDecoderPromise = PlatformDecoderModule::CreateDecoderPromise;
 
 class PDMFactory final {
  public:
@@ -127,10 +122,6 @@ class PDMFactory final {
 
   friend class RemoteVideoDecoderParent;
   static void EnsureInit();
-  template <class T>
-  friend class StaticAutoPtr;
-  static StaticAutoPtr<PDMFactoryImpl> sInstance;
-  static StaticMutex sMonitor;
 };
 
 // Used for IPDL serialization.

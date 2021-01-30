@@ -22,6 +22,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   NewTabPagePreloading: "resource:///modules/NewTabPagePreloading.jsm",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
+  BrowserTelemetryUtils: "resource://gre/modules/BrowserTelemetryUtils.jsm",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   CFRPageActions: "resource://activity-stream/lib/CFRPageActions.jsm",
@@ -4931,7 +4933,7 @@ var XULBrowserWindow = {
       );
 
       if (UrlbarPrefs.get("trimURLs")) {
-        url = BrowserUtils.trimURL(url);
+        url = BrowserUIUtils.trimURL(url);
       }
     }
 
@@ -5120,7 +5122,7 @@ var XULBrowserWindow = {
         aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT;
       if (
         (location == "about:blank" &&
-          BrowserUtils.checkEmptyPageOrigin(gBrowser.selectedBrowser)) ||
+          BrowserUIUtils.checkEmptyPageOrigin(gBrowser.selectedBrowser)) ||
         location == ""
       ) {
         // Second condition is for new tabs, otherwise
@@ -5583,7 +5585,7 @@ var CombinedStopReload = {
 
     this._cancelTransition();
     if (shouldAnimate) {
-      BrowserUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
+      BrowserUIUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
       this.stopReloadContainer.setAttribute("animate", "true");
     } else {
       this.stopReloadContainer.removeAttribute("animate");
@@ -5606,7 +5608,7 @@ var CombinedStopReload = {
       this.stopReloadContainer.closest("#nav-bar-customization-target");
 
     if (shouldAnimate) {
-      BrowserUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
+      BrowserUIUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
       this.stopReloadContainer.setAttribute("animate", "true");
     } else {
       this.stopReloadContainer.removeAttribute("animate");
@@ -5717,7 +5719,7 @@ var TabsProgressListener = {
         ) {
           if (recordLoadTelemetry) {
             TelemetryStopwatch.finish(histogram, aBrowser);
-            BrowserUtils.recordSiteOriginTelemetry(browserWindows());
+            BrowserTelemetryUtils.recordSiteOriginTelemetry(browserWindows());
           }
         }
       } else if (
@@ -6566,6 +6568,7 @@ const nodeToTooltipMap = {
   "downloads-button": "downloads.tooltip",
   "fullscreen-button": "fullscreenButton.tooltip",
   "appMenu-fullscreen-button": "fullscreenButton.tooltip",
+  "appMenu-fullscreen-button2": "fullscreenButton.tooltip",
   "new-window-button": "newWindowButton.tooltip",
   "new-tab-button": "newTabButton.tooltip",
   "tabs-newtab-button": "newTabButton.tooltip",
@@ -6576,8 +6579,11 @@ const nodeToTooltipMap = {
   "appMenu-copy-button": "copy-button.tooltip",
   "appMenu-paste-button": "paste-button.tooltip",
   "appMenu-zoomEnlarge-button": "zoomEnlarge-button.tooltip",
+  "appMenu-zoomEnlarge-button2": "zoomEnlarge-button.tooltip",
   "appMenu-zoomReset-button": "zoomReset-button.tooltip",
+  "appMenu-zoomReset-button2": "zoomReset-button.tooltip",
   "appMenu-zoomReduce-button": "zoomReduce-button.tooltip",
+  "appMenu-zoomReduce-button2": "zoomReduce-button.tooltip",
   "reader-mode-button": "reader-mode-button.tooltip",
   "print-button": "printButton.tooltip",
 };
@@ -6588,6 +6594,7 @@ const nodeToShortcutMap = {
   "downloads-button": "key_openDownloads",
   "fullscreen-button": "key_fullScreen",
   "appMenu-fullscreen-button": "key_fullScreen",
+  "appMenu-fullscreen-button2": "key_fullScreen",
   "new-window-button": "key_newNavigator",
   "new-tab-button": "key_newNavigatorTab",
   "tabs-newtab-button": "key_newNavigatorTab",
@@ -6598,8 +6605,11 @@ const nodeToShortcutMap = {
   "appMenu-copy-button": "key_copy",
   "appMenu-paste-button": "key_paste",
   "appMenu-zoomEnlarge-button": "key_fullZoomEnlarge",
+  "appMenu-zoomEnlarge-button2": "key_fullZoomEnlarge",
   "appMenu-zoomReset-button": "key_fullZoomReset",
+  "appMenu-zoomReset-button2": "key_fullZoomReset",
   "appMenu-zoomReduce-button": "key_fullZoomReduce",
+  "appMenu-zoomReduce-button2": "key_fullZoomReduce",
   "reader-mode-button": "key_toggleReaderMode",
   "print-button": "printKb",
 };

@@ -240,6 +240,9 @@ NameLocation EmitterScope::searchInEnclosingScope(JSAtom* name, Scope* scope,
         break;
 
       case ScopeKind::Module:
+        // This case is used only when delazifying a function inside
+        // module.
+        // Initial compilation of module doesn't have enlcosing scope.
         if (hasEnv) {
           for (BindingIter bi(si.scope()); bi; bi++) {
             if (bi.name() != name) {
@@ -339,6 +342,10 @@ NameLocation EmitterScope::searchAndCache(BytecodeEmitter* bce,
     if (!jsname) {
       oomUnsafe.crash("EmitterScope::searchAndCache");
     }
+
+    // Outside of delazification, we should set fallbackFreeNameLocation_,
+    // and lookupInCache should return the fallback location.
+    MOZ_ASSERT(bce->stencil.input.lazy);
 
     inCurrentScript = false;
     loc = Some(searchInEnclosingScope(jsname, bce->stencil.input.enclosingScope,
@@ -661,6 +668,14 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
   // we don't know if the name will become a 'var' binding due to direct eval.
   if (funbox->funHasExtensibleScope()) {
     fallbackFreeNameLocation_ = Some(NameLocation::Dynamic());
+  } else if (funbox->isStandalone) {
+    // If the function is standalone, the enclosing scope is either an empty
+    // global or non-syntactic scope, and there's no static bindings.
+    if (funbox->hasNonSyntacticEnclosingScopeForStandalone) {
+      fallbackFreeNameLocation_ = Some(NameLocation::Dynamic());
+    } else {
+      fallbackFreeNameLocation_ = Some(NameLocation::Global(BindingKind::Var));
+    }
   }
 
   // In case of parameter expressions, the parameters are lexical

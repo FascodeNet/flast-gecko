@@ -44,7 +44,7 @@
 #include "mozilla/LoadContext.h"
 #include "mozilla/MozPromise.h"
 #include "nsPrintfCString.h"
-#include "nsHTMLDNSPrefetch.h"
+#include "mozilla/dom/HTMLDNSPrefetch.h"
 #include "nsEscape.h"
 #include "SerializedLoadContext.h"
 #include "nsAuthInformationHolder.h"
@@ -540,7 +540,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvSpeculativeConnect(
 mozilla::ipc::IPCResult NeckoParent::RecvHTMLDNSPrefetch(
     const nsString& hostname, const bool& isHttps,
     const OriginAttributes& aOriginAttributes, const uint32_t& flags) {
-  nsHTMLDNSPrefetch::Prefetch(hostname, isHttps, aOriginAttributes, flags);
+  HTMLDNSPrefetch::Prefetch(hostname, isHttps, aOriginAttributes, flags);
   return IPC_OK();
 }
 
@@ -548,8 +548,8 @@ mozilla::ipc::IPCResult NeckoParent::RecvCancelHTMLDNSPrefetch(
     const nsString& hostname, const bool& isHttps,
     const OriginAttributes& aOriginAttributes, const uint32_t& flags,
     const nsresult& reason) {
-  nsHTMLDNSPrefetch::CancelPrefetch(hostname, isHttps, aOriginAttributes, flags,
-                                    reason);
+  HTMLDNSPrefetch::CancelPrefetch(hostname, isHttps, aOriginAttributes, flags,
+                                  reason);
   return IPC_OK();
 }
 
@@ -829,35 +829,50 @@ mozilla::ipc::IPCResult NeckoParent::RecvInitSocketProcessBridge(
     InitSocketProcessBridgeResolver&& aResolver) {
   MOZ_ASSERT(NS_IsMainThread());
 
-  Endpoint<PSocketProcessBridgeChild> invalidEndpoint;
-  if (NS_WARN_IF(mSocketProcessBridgeInited)) {
-    aResolver(std::move(invalidEndpoint));
-    return IPC_OK();
-  }
+  // Initing the socket process bridge must be async here in order to
+  // wait for the socket process launch before executing.
+  auto task = [self = this, resolver = std::move(aResolver)]() {
+    Endpoint<PSocketProcessBridgeChild> invalidEndpoint;
+    if (NS_WARN_IF(self->mSocketProcessBridgeInited)) {
+      resolver(std::move(invalidEndpoint));
+      return;
+    }
 
-  SocketProcessParent* parent = SocketProcessParent::GetSingleton();
-  if (NS_WARN_IF(!parent)) {
-    aResolver(std::move(invalidEndpoint));
-    return IPC_OK();
-  }
+    SocketProcessParent* parent = SocketProcessParent::GetSingleton();
+    if (NS_WARN_IF(!parent)) {
+      resolver(std::move(invalidEndpoint));
+      return;
+    }
 
-  Endpoint<PSocketProcessBridgeParent> parentEndpoint;
-  Endpoint<PSocketProcessBridgeChild> childEndpoint;
-  if (NS_WARN_IF(NS_FAILED(PSocketProcessBridge::CreateEndpoints(
-          parent->OtherPid(), Manager()->OtherPid(), &parentEndpoint,
-          &childEndpoint)))) {
-    aResolver(std::move(invalidEndpoint));
-    return IPC_OK();
-  }
+    Endpoint<PSocketProcessBridgeParent> parentEndpoint;
+    Endpoint<PSocketProcessBridgeChild> childEndpoint;
+    if (NS_WARN_IF(NS_FAILED(PSocketProcessBridge::CreateEndpoints(
+            parent->OtherPid(), self->Manager()->OtherPid(), &parentEndpoint,
+            &childEndpoint)))) {
+      resolver(std::move(invalidEndpoint));
+      return;
+    }
 
-  if (NS_WARN_IF(!parent->SendInitSocketProcessBridgeParent(
-          Manager()->OtherPid(), std::move(parentEndpoint)))) {
-    aResolver(std::move(invalidEndpoint));
-    return IPC_OK();
-  }
+    if (NS_WARN_IF(!parent->SendInitSocketProcessBridgeParent(
+            self->Manager()->OtherPid(), std::move(parentEndpoint)))) {
+      resolver(std::move(invalidEndpoint));
+      return;
+    }
 
-  aResolver(std::move(childEndpoint));
-  mSocketProcessBridgeInited = true;
+    resolver(std::move(childEndpoint));
+    self->mSocketProcessBridgeInited = true;
+  };
+  gIOService->CallOrWaitForSocketProcess(std::move(task));
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult NeckoParent::RecvResetSocketProcessBridge() {
+  // SendResetSocketProcessBridge is called from
+  // SocketProcessBridgeChild::ActorDestroy if the socket process
+  // crashes.  This is necessary in order to properly initialize the
+  // restarted socket process.
+  mSocketProcessBridgeInited = false;
   return IPC_OK();
 }
 

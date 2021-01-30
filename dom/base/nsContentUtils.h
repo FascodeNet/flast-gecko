@@ -2445,14 +2445,6 @@ class nsContentUtils {
    */
   static Document* GetRootDocument(Document* aDoc);
 
-  /**
-   * Returns true if aContext and the current pointer lock document
-   * have common top BrowsingContext.
-   * Note that this method returns true only if caller is in the same process
-   * as pointer lock document.
-   */
-  static bool IsInPointerLockContext(mozilla::dom::BrowsingContext* aContext);
-
   static void GetShiftText(nsAString& text);
   static void GetControlText(nsAString& text);
   static void GetMetaText(nsAString& text);
@@ -2788,6 +2780,11 @@ class nsContentUtils {
    * Returns the inner window ID for the window associated with a load group.
    */
   static uint64_t GetInnerWindowID(nsILoadGroup* aLoadGroup);
+
+  /**
+   * Encloses aHost in brackets if it is an IPv6 address.
+   */
+  static void MaybeFixIPv6Host(nsACString& aHost);
 
   /**
    * If the hostname for aURI is an IPv6 it encloses it in brackets,

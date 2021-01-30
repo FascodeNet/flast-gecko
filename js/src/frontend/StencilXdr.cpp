@@ -312,25 +312,13 @@ template <XDRMode mode>
 template <XDRMode mode>
 /* static */ XDRResult StencilXDR::BigInt(XDRState<mode>* xdr,
                                           BigIntStencil& stencil) {
-  uint64_t length;
-
+  uint32_t size;
   if (mode == XDR_ENCODE) {
-    length = stencil.length_;
+    size = stencil.source_.size();
   }
+  MOZ_TRY(xdr->codeUint32(&size));
 
-  MOZ_TRY(xdr->codeUint64(&length));
-
-  XDRTranscodeString<char16_t> chars;
-
-  if (mode == XDR_DECODE) {
-    stencil.buf_ = xdr->cx()->template make_pod_array<char16_t>(length);
-    if (!stencil.buf_) {
-      return xdr->fail(JS::TranscodeResult_Throw);
-    }
-    stencil.length_ = length;
-  }
-
-  return xdr->codeChars(stencil.buf_.get(), stencil.length_);
+  return XDRSpanContent(xdr, stencil.source_, size);
 }
 
 template <XDRMode mode>
@@ -580,8 +568,8 @@ XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
     MOZ_ASSERT(scopeSize == stencil.scopeNames.size());
 
     regExpSize = stencil.regExpData.size();
-    bigIntSize = stencil.bigIntData.length();
-    objLiteralSize = stencil.objLiteralData.length();
+    bigIntSize = stencil.bigIntData.size();
+    objLiteralSize = stencil.objLiteralData.size();
   }
   MOZ_TRY(XDRBaseCompilationStencilSpanSize(xdr, &scriptSize, &gcThingSize,
                                             &scopeSize, &regExpSize,
@@ -600,12 +588,12 @@ XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
 
   MOZ_TRY(XDRSpanContent(xdr, stencil.regExpData, regExpSize));
 
-  MOZ_TRY(XDRVectorInitialized(xdr, stencil.bigIntData, bigIntSize));
+  MOZ_TRY(XDRSpanInitialized(xdr, stencil.bigIntData, bigIntSize));
   for (auto& entry : stencil.bigIntData) {
     MOZ_TRY(StencilXDR::BigInt(xdr, entry));
   }
 
-  MOZ_TRY(XDRVectorInitialized(xdr, stencil.objLiteralData, objLiteralSize));
+  MOZ_TRY(XDRSpanInitialized(xdr, stencil.objLiteralData, objLiteralSize));
   for (auto& entry : stencil.objLiteralData) {
     MOZ_TRY(StencilXDR::ObjLiteral(xdr, entry));
   }

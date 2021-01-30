@@ -684,6 +684,7 @@ void LIRGenerator::visitTest(MTest* test) {
     // Compare and branch Int32, Symbol or Object pointers.
     if (comp->isInt32Comparison() ||
         comp->compareType() == MCompare::Compare_UInt32 ||
+        comp->compareType() == MCompare::Compare_UIntPtr ||
         comp->compareType() == MCompare::Compare_Object ||
         comp->compareType() == MCompare::Compare_Symbol) {
       JSOp op = ReorderComparison(comp->jsop(), &left, &right);
@@ -929,6 +930,7 @@ void LIRGenerator::visitCompare(MCompare* comp) {
   // Compare Int32, Symbol, Object or Wasm pointers.
   if (comp->isInt32Comparison() ||
       comp->compareType() == MCompare::Compare_UInt32 ||
+      comp->compareType() == MCompare::Compare_UIntPtr ||
       comp->compareType() == MCompare::Compare_Object ||
       comp->compareType() == MCompare::Compare_Symbol ||
       comp->compareType() == MCompare::Compare_RefOrNull) {
@@ -1269,6 +1271,20 @@ void LIRGenerator::visitMinMax(MMinMax* ins) {
   }
 
   defineReuseInput(lir, ins, 0);
+}
+
+void LIRGenerator::visitMinMaxArray(MMinMaxArray* ins) {
+  LInstructionHelper<1, 1, 3>* lir;
+  if (ins->type() == MIRType::Int32) {
+    lir = new (alloc())
+        LMinMaxArrayI(useRegisterAtStart(ins->array()), temp(), temp(), temp());
+  } else {
+    MOZ_ASSERT(ins->type() == MIRType::Double);
+    lir = new (alloc()) LMinMaxArrayD(useRegisterAtStart(ins->array()),
+                                      tempDouble(), temp(), temp());
+  }
+  assignSnapshot(lir, ins->bailoutKind());
+  define(lir, ins);
 }
 
 void LIRGenerator::visitAbs(MAbs* ins) {
@@ -2206,6 +2222,45 @@ void LIRGenerator::visitTruncateToInt32(MTruncateToInt32* truncate) {
   }
 }
 
+void LIRGenerator::visitInt32ToIntPtr(MInt32ToIntPtr* ins) {
+  MDefinition* input = ins->input();
+  MOZ_ASSERT(input->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->type() == MIRType::IntPtr);
+
+  // If the result is only used by instructions that expect a bounds-checked
+  // index, we must have eliminated or hoisted a bounds check and we can assume
+  // the index is non-negative. This lets us generate more efficient code.
+  // In debug builds we verify this non-negative assumption at runtime.
+  if (ins->canBeNegative()) {
+    bool canBeNegative = false;
+    for (MUseDefIterator iter(ins); iter; iter++) {
+      if (!iter.def()->isSpectreMaskIndex() &&
+          !iter.def()->isLoadUnboxedScalar() &&
+          !iter.def()->isStoreUnboxedScalar() &&
+          !iter.def()->isLoadDataViewElement() &&
+          !iter.def()->isStoreDataViewElement()) {
+        canBeNegative = true;
+        break;
+      }
+    }
+    if (!canBeNegative) {
+      ins->setCanNotBeNegative();
+    }
+  }
+
+  auto* lir = new (alloc()) LInt32ToIntPtr(useRegisterAtStart(input));
+  define(lir, ins);
+}
+
+void LIRGenerator::visitAdjustDataViewLength(MAdjustDataViewLength* ins) {
+  MDefinition* input = ins->input();
+  MOZ_ASSERT(input->type() == MIRType::IntPtr);
+
+  auto* lir = new (alloc()) LAdjustDataViewLength(useRegisterAtStart(input));
+  assignSnapshot(lir, ins->bailoutKind());
+  defineReuseInput(lir, ins, 0);
+}
+
 void LIRGenerator::visitToBigInt(MToBigInt* ins) {
   MDefinition* opd = ins->input();
 
@@ -2870,24 +2925,39 @@ void LIRGenerator::visitGetNextEntryForIterator(MGetNextEntryForIterator* ins) {
 void LIRGenerator::visitArrayBufferByteLengthInt32(
     MArrayBufferByteLengthInt32* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->type() == MIRType::Int32);
+
   auto* lir = new (alloc())
       LArrayBufferByteLengthInt32(useRegisterAtStart(ins->object()));
+#ifdef JS_64BIT
+  assignSnapshot(lir, ins->bailoutKind());
+#endif
   define(lir, ins);
 }
 
 void LIRGenerator::visitArrayBufferViewLength(MArrayBufferViewLength* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-  define(new (alloc())
-             LArrayBufferViewLength(useRegisterAtStart(ins->object())),
-         ins);
+  MOZ_ASSERT(ins->type() == MIRType::Int32 || ins->type() == MIRType::IntPtr);
+
+  auto* lir =
+      new (alloc()) LArrayBufferViewLength(useRegisterAtStart(ins->object()));
+  if (ins->fallible()) {
+    assignSnapshot(lir, ins->bailoutKind());
+  }
+  define(lir, ins);
 }
 
 void LIRGenerator::visitArrayBufferViewByteOffset(
     MArrayBufferViewByteOffset* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-  define(new (alloc())
-             LArrayBufferViewByteOffset(useRegisterAtStart(ins->object())),
-         ins);
+  MOZ_ASSERT(ins->type() == MIRType::Int32);
+
+  auto* lir = new (alloc())
+      LArrayBufferViewByteOffset(useRegisterAtStart(ins->object()));
+#ifdef JS_64BIT
+  assignSnapshot(lir, ins->bailoutKind());
+#endif
+  define(lir, ins);
 }
 
 void LIRGenerator::visitArrayBufferViewElements(MArrayBufferViewElements* ins) {
@@ -2904,14 +2974,16 @@ void LIRGenerator::visitTypedArrayElementShift(MTypedArrayElementShift* ins) {
          ins);
 }
 
-void LIRGenerator::visitTypedArrayIndexToInt32(MTypedArrayIndexToInt32* ins) {
+void LIRGenerator::visitGuardNumberToIntPtrIndex(
+    MGuardNumberToIntPtrIndex* ins) {
   MDefinition* input = ins->input();
-  if (input->type() == MIRType::Int32) {
-    redefine(ins, input);
-  } else {
-    MOZ_ASSERT(input->type() == MIRType::Double);
-    define(new (alloc()) LTypedArrayIndexToInt32(useRegister(input)), ins);
+  MOZ_ASSERT(input->type() == MIRType::Double);
+
+  auto* lir = new (alloc()) LGuardNumberToIntPtrIndex(useRegister(input));
+  if (!ins->supportOOB()) {
+    assignSnapshot(lir, ins->bailoutKind());
   }
+  define(lir, ins);
 }
 
 void LIRGenerator::visitInitializedLength(MInitializedLength* ins) {
@@ -2985,9 +3057,9 @@ void LIRGenerator::visitNot(MNot* ins) {
 }
 
 void LIRGenerator::visitBoundsCheck(MBoundsCheck* ins) {
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
-  MOZ_ASSERT(ins->length()->type() == MIRType::Int32);
-  MOZ_ASSERT(ins->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->type() == MIRType::Int32 || ins->type() == MIRType::IntPtr);
+  MOZ_ASSERT(ins->index()->type() == ins->type());
+  MOZ_ASSERT(ins->length()->type() == ins->type());
 
   if (!ins->fallible()) {
     return;
@@ -2995,20 +3067,21 @@ void LIRGenerator::visitBoundsCheck(MBoundsCheck* ins) {
 
   LInstruction* check;
   if (ins->minimum() || ins->maximum()) {
-    check = new (alloc()) LBoundsCheckRange(useRegisterOrConstant(ins->index()),
-                                            useAny(ins->length()), temp());
+    check = new (alloc())
+        LBoundsCheckRange(useRegisterOrInt32Constant(ins->index()),
+                          useAny(ins->length()), temp());
   } else {
-    check = new (alloc()) LBoundsCheck(useRegisterOrConstant(ins->index()),
-                                       useAnyOrConstant(ins->length()));
+    check = new (alloc()) LBoundsCheck(useRegisterOrInt32Constant(ins->index()),
+                                       useAnyOrInt32Constant(ins->length()));
   }
   assignSnapshot(check, ins->bailoutKind());
   add(check, ins);
 }
 
 void LIRGenerator::visitSpectreMaskIndex(MSpectreMaskIndex* ins) {
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
-  MOZ_ASSERT(ins->length()->type() == MIRType::Int32);
-  MOZ_ASSERT(ins->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->type() == MIRType::Int32 || ins->type() == MIRType::IntPtr);
+  MOZ_ASSERT(ins->index()->type() == ins->type());
+  MOZ_ASSERT(ins->length()->type() == ins->type());
 
   auto* lir = new (alloc())
       LSpectreMaskIndex(useRegister(ins->index()), useAny(ins->length()));
@@ -3238,10 +3311,11 @@ void LIRGenerator::visitStringSplit(MStringSplit* ins) {
 
 void LIRGenerator::visitLoadUnboxedScalar(MLoadUnboxedScalar* ins) {
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   const LUse elements = useRegister(ins->elements());
-  const LAllocation index = useRegisterOrConstant(ins->index());
+  const LAllocation index = useRegisterOrIndexConstant(
+      ins->index(), ins->storageType(), ins->offsetAdjustment());
 
   MOZ_ASSERT(IsNumericType(ins->type()) || ins->type() == MIRType::Boolean);
 
@@ -3281,7 +3355,7 @@ void LIRGenerator::visitLoadUnboxedScalar(MLoadUnboxedScalar* ins) {
 
 void LIRGenerator::visitLoadDataViewElement(MLoadDataViewElement* ins) {
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   MOZ_ASSERT(IsNumericType(ins->type()));
 
@@ -3367,7 +3441,7 @@ void LIRGenerator::visitClampToUint8(MClampToUint8* ins) {
 void LIRGenerator::visitLoadTypedArrayElementHole(
     MLoadTypedArrayElementHole* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   MOZ_ASSERT(ins->type() == MIRType::Value);
 
@@ -3396,7 +3470,7 @@ void LIRGenerator::visitLoadTypedArrayElementHole(
 
 void LIRGenerator::visitStoreUnboxedScalar(MStoreUnboxedScalar* ins) {
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   if (ins->isFloatWrite()) {
     MOZ_ASSERT_IF(ins->writeType() == Scalar::Float32,
@@ -3410,7 +3484,8 @@ void LIRGenerator::visitStoreUnboxedScalar(MStoreUnboxedScalar* ins) {
   }
 
   LUse elements = useRegister(ins->elements());
-  LAllocation index = useRegisterOrConstant(ins->index());
+  LAllocation index =
+      useRegisterOrIndexConstant(ins->index(), ins->writeType());
   LAllocation value;
 
   // For byte arrays, the value has to be in a byte register on x86.
@@ -3445,7 +3520,7 @@ void LIRGenerator::visitStoreUnboxedScalar(MStoreUnboxedScalar* ins) {
 
 void LIRGenerator::visitStoreDataViewElement(MStoreDataViewElement* ins) {
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
   MOZ_ASSERT(ins->littleEndian()->type() == MIRType::Boolean);
 
   if (ins->isFloatWrite()) {
@@ -3485,8 +3560,8 @@ void LIRGenerator::visitStoreDataViewElement(MStoreDataViewElement* ins) {
 void LIRGenerator::visitStoreTypedArrayElementHole(
     MStoreTypedArrayElementHole* ins) {
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
-  MOZ_ASSERT(ins->length()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
+  MOZ_ASSERT(ins->length()->type() == MIRType::IntPtr);
 
   if (ins->isFloatWrite()) {
     MOZ_ASSERT_IF(ins->arrayType() == Scalar::Float32,
@@ -5362,6 +5437,13 @@ void LIRGenerator::visitConstant(MConstant* ins) {
       break;
     case MIRType::Int64:
       defineInt64(new (alloc()) LInteger64(ins->toInt64()), ins);
+      break;
+    case MIRType::IntPtr:
+#ifdef JS_64BIT
+      defineInt64(new (alloc()) LInteger64(ins->toIntPtr()), ins);
+#else
+      define(new (alloc()) LInteger(ins->toIntPtr()), ins);
+#endif
       break;
     case MIRType::String:
       define(new (alloc()) LPointer(ins->toString()), ins);

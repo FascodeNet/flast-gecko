@@ -806,11 +806,11 @@ class MOZ_RAII CacheIRCompiler {
 
   bool emitDoubleIncDecResult(bool isInc, NumberOperandId inputId);
 
-  using AtomicsReadWriteModifyFn = int32_t (*)(TypedArrayObject*, int32_t,
+  using AtomicsReadWriteModifyFn = int32_t (*)(TypedArrayObject*, size_t,
                                                int32_t);
 
   [[nodiscard]] bool emitAtomicsReadModifyWriteResult(
-      ObjOperandId objId, Int32OperandId indexId, Int32OperandId valueId,
+      ObjOperandId objId, IntPtrOperandId indexId, Int32OperandId valueId,
       Scalar::Type elementType, AtomicsReadWriteModifyFn fn);
 
   CACHE_IR_COMPILER_SHARED_GENERATED

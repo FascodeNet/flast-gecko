@@ -103,11 +103,10 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
                                CompilationStencil& stencil,
                                SourceText<Unit>& sourceBuffer,
                                InheritThis inheritThis = InheritThis::No,
-                               js::Scope* enclosingScope = nullptr,
                                JSObject* enclosingEnv = nullptr)
       : sourceBuffer_(sourceBuffer),
         compilationState_(cx, allocScope, options, stencil, inheritThis,
-                          enclosingScope, enclosingEnv) {
+                          enclosingEnv) {
     MOZ_ASSERT(sourceBuffer_.get() != nullptr);
   }
 
@@ -165,10 +164,9 @@ class MOZ_STACK_CLASS frontend::ScriptCompiler
                           CompilationStencil& stencil,
                           SourceText<Unit>& sourceBuffer,
                           InheritThis inheritThis = InheritThis::No,
-                          js::Scope* enclosingScope = nullptr,
                           JSObject* enclosingEnv = nullptr)
       : Base(cx, allocScope, options, stencil, sourceBuffer, inheritThis,
-             enclosingScope, enclosingEnv) {}
+             enclosingEnv) {}
 
   using Base::createSourceAndParser;
 
@@ -433,7 +431,7 @@ static JSScript* CompileEvalScriptImpl(
 
   frontend::ScriptCompiler<Unit> compiler(
       cx, allocScope, stencil.get().input.options, stencil.get(), srcBuf,
-      InheritThis::Yes, enclosingScope, enclosingEnv);
+      InheritThis::Yes, enclosingEnv);
   if (!compiler.createSourceAndParser(cx, stencil.get())) {
     return nullptr;
   }
@@ -481,11 +479,8 @@ class MOZ_STACK_CLASS frontend::ModuleCompiler final
   explicit ModuleCompiler(JSContext* cx, LifoAllocScope& allocScope,
                           const JS::ReadOnlyCompileOptions& options,
                           CompilationStencil& stencil,
-                          SourceText<Unit>& sourceBuffer,
-                          js::Scope* enclosingScope = nullptr,
-                          JSObject* enclosingEnv = nullptr)
-      : Base(cx, allocScope, options, stencil, sourceBuffer, InheritThis::No,
-             enclosingScope, enclosingEnv) {}
+                          SourceText<Unit>& sourceBuffer)
+      : Base(cx, allocScope, options, stencil, sourceBuffer, InheritThis::No) {}
 
   bool compile(JSContext* cx, CompilationStencil& stencil);
 };
@@ -510,11 +505,8 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
                                       const JS::ReadOnlyCompileOptions& options,
                                       CompilationStencil& stencil,
                                       SourceText<Unit>& sourceBuffer,
-                                      InheritThis inheritThis = InheritThis::No,
-                                      js::Scope* enclosingScope = nullptr,
-                                      JSObject* enclosingEnv = nullptr)
-      : Base(cx, allocScope, options, stencil, sourceBuffer, inheritThis,
-             enclosingScope, enclosingEnv) {}
+                                      InheritThis inheritThis = InheritThis::No)
+      : Base(cx, allocScope, options, stencil, sourceBuffer, inheritThis) {}
 
   using Base::createSourceAndParser;
 
@@ -608,7 +600,8 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
     syntaxParser.emplace(cx, stencil.input.options, sourceBuffer_.units(),
                          sourceBuffer_.length(),
                          /* foldConstants = */ false, stencil,
-                         compilationState_, nullptr, nullptr);
+                         compilationState_,
+                         /* syntaxParser = */ nullptr);
     if (!syntaxParser->checkOptions()) {
       return false;
     }
@@ -617,7 +610,7 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
   parser.emplace(cx, stencil.input.options, sourceBuffer_.units(),
                  sourceBuffer_.length(),
                  /* foldConstants = */ true, stencil, compilationState_,
-                 syntaxParser.ptrOr(nullptr), nullptr);
+                 syntaxParser.ptrOr(nullptr));
   parser->ss = stencil.input.source();
   return parser->checkOptions();
 }
@@ -1005,6 +998,7 @@ static bool CompileLazyFunctionToStencilImpl(JSContext* cx,
                                              Handle<BaseScript*> lazy,
                                              const Unit* units, size_t length) {
   MOZ_ASSERT(cx->compartment() == lazy->compartment());
+  MOZ_ASSERT(!stencil.isInitialStencil());
 
   // We can only compile functions whose parents have previously been
   // compiled, because compilation requires full information about the
@@ -1019,12 +1013,12 @@ static bool CompileLazyFunctionToStencilImpl(JSContext* cx,
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(
-      cx, allocScope, stencil.input.options, stencil, inheritThis,
-      fun->enclosingScope());
+      cx, allocScope, stencil.input.options, stencil, inheritThis);
 
   Parser<FullParseHandler, Unit> parser(
       cx, stencil.input.options, units, length,
-      /* foldConstants = */ true, stencil, compilationState, nullptr, lazy);
+      /* foldConstants = */ true, stencil, compilationState,
+      /* syntaxParser = */ nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -1061,10 +1055,6 @@ static bool CompileLazyFunctionToStencilImpl(JSContext* cx,
   if (!compilationState.finish(cx, stencil)) {
     return false;
   }
-
-  // Record the FunctionKey in the BaseCompilationStencil since it does not
-  // contain any of the SourceExtents itself.
-  stencil.functionKey = BaseCompilationStencil::toFunctionKey(lazy->extent());
 
   assertException.reset();
   return true;
@@ -1111,14 +1101,16 @@ static JSFunction* CompileStandaloneFunction(
     FunctionAsyncKind asyncKind, HandleScope enclosingScope = nullptr) {
   AutoAssertReportedException assertException(cx);
 
-  RootedScope scope(cx, enclosingScope);
-  if (!scope) {
-    scope = &cx->global()->emptyGlobalScope();
-  }
-
   Rooted<CompilationStencil> stencil(cx, CompilationStencil(cx, options));
-  if (!stencil.get().input.initForStandaloneFunction(cx, scope)) {
-    return nullptr;
+  if (enclosingScope) {
+    if (!stencil.get().input.initForStandaloneFunctionInNonSyntacticScope(
+            cx, enclosingScope)) {
+      return nullptr;
+    }
+  } else {
+    if (!stencil.get().input.initForStandaloneFunction(cx)) {
+      return nullptr;
+    }
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
@@ -1127,7 +1119,7 @@ static JSFunction* CompileStandaloneFunction(
                                 : InheritThis::No;
   StandaloneFunctionCompiler<char16_t> compiler(
       cx, allocScope, stencil.get().input.options, stencil.get(), srcBuf,
-      inheritThis, enclosingScope);
+      inheritThis);
   if (!compiler.createSourceAndParser(cx, stencil.get())) {
     return nullptr;
   }
@@ -1167,11 +1159,10 @@ static JSFunction* CompileStandaloneFunction(
 JSFunction* frontend::CompileStandaloneFunction(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf, const Maybe<uint32_t>& parameterListEnd,
-    FunctionSyntaxKind syntaxKind, HandleScope enclosingScope /* = nullptr */) {
+    FunctionSyntaxKind syntaxKind) {
   return CompileStandaloneFunction(cx, options, srcBuf, parameterListEnd,
                                    syntaxKind, GeneratorKind::NotGenerator,
-                                   FunctionAsyncKind::SyncFunction,
-                                   enclosingScope);
+                                   FunctionAsyncKind::SyncFunction);
 }
 
 JSFunction* frontend::CompileStandaloneGenerator(
@@ -1199,6 +1190,17 @@ JSFunction* frontend::CompileStandaloneAsyncGenerator(
   return CompileStandaloneFunction(cx, options, srcBuf, parameterListEnd,
                                    syntaxKind, GeneratorKind::Generator,
                                    FunctionAsyncKind::AsyncFunction);
+}
+
+JSFunction* frontend::CompileStandaloneFunctionInNonSyntacticScope(
+    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+    JS::SourceText<char16_t>& srcBuf, const Maybe<uint32_t>& parameterListEnd,
+    FunctionSyntaxKind syntaxKind, HandleScope enclosingScope) {
+  MOZ_ASSERT(enclosingScope);
+  return CompileStandaloneFunction(cx, options, srcBuf, parameterListEnd,
+                                   syntaxKind, GeneratorKind::NotGenerator,
+                                   FunctionAsyncKind::SyncFunction,
+                                   enclosingScope);
 }
 
 bool frontend::CompilationInput::initScriptSource(JSContext* cx) {

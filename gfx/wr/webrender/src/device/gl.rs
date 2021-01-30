@@ -954,6 +954,8 @@ pub struct Capabilities {
     pub supports_multisampling: bool,
     /// Whether the function `glCopyImageSubData` is available.
     pub supports_copy_image_sub_data: bool,
+    /// Whether the RGBAF32 textures can be bound to framebuffers.
+    pub supports_color_buffer_float: bool,
     /// Whether the device supports persistently mapped buffers, via glBufferStorage.
     pub supports_buffer_storage: bool,
     /// Whether we are able to use `glBlitFramebuffers` with the draw fbo
@@ -981,6 +983,9 @@ pub struct Capabilities {
     /// Whether the driver prefers fewer and larger texture uploads
     /// over many smaller updates.
     pub prefers_batched_texture_uploads: bool,
+    /// Whether clip-masking is supported natively by the GL implementation
+    /// rather than emulated in shaders.
+    pub uses_native_clip_mask: bool,
     /// The name of the renderer, as reported by GL
     pub renderer_name: String,
 }
@@ -1537,6 +1542,11 @@ impl Device {
             supports_extension(&extensions, "GL_ARB_copy_image")
         };
 
+        let supports_color_buffer_float = match gl.get_type() {
+            gl::GlType::Gl => true,
+            gl::GlType::Gles => supports_extension(&extensions, "GL_EXT_color_buffer_float"),
+        };
+
         let is_adreno = renderer_name.starts_with("Adreno");
 
         // There appears to be a driver bug on older versions of the Adreno
@@ -1627,6 +1637,12 @@ impl Device {
             gl::GlType::Gles => gl_version >= [3, 1],
         };
 
+        // SWGL uses swgl_clipMask() instead of implementing clip-masking in shaders.
+        // This allows certain shaders to potentially bypass the more expensive alpha-
+        // pass variants if they know the alpha-pass was only required to deal with
+        // clip-masking.
+        let uses_native_clip_mask = is_software_webrender;
+
         // On Mali-Gxx the driver really struggles with many small texture uploads,
         // and handles fewer, larger uploads better.
         let prefers_batched_texture_uploads = is_mali_g;
@@ -1643,6 +1659,7 @@ impl Device {
             capabilities: Capabilities {
                 supports_multisampling: false, //TODO
                 supports_copy_image_sub_data,
+                supports_color_buffer_float,
                 supports_buffer_storage,
                 supports_blit_to_texture_array,
                 supports_advanced_blend_equation,
@@ -1654,6 +1671,7 @@ impl Device {
                 supports_render_target_partial_update,
                 supports_shader_storage_object,
                 prefers_batched_texture_uploads,
+                uses_native_clip_mask,
                 renderer_name,
             },
 

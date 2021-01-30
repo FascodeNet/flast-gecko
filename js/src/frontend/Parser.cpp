@@ -192,19 +192,19 @@ template <class ParseHandler>
 PerHandlerParser<ParseHandler>::PerHandlerParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, bool foldConstants,
     CompilationStencil& stencil, CompilationState& compilationState,
-    BaseScript* lazyOuterFunction, void* internalSyntaxParser)
+    void* internalSyntaxParser)
     : ParserBase(cx, options, foldConstants, stencil, compilationState),
-      handler_(cx, compilationState.allocScope.alloc(), lazyOuterFunction),
-      internalSyntaxParser_(internalSyntaxParser) {}
+      handler_(cx, compilationState.allocScope.alloc(), stencil.input.lazy),
+      internalSyntaxParser_(internalSyntaxParser) {
+  MOZ_ASSERT(stencil.isInitialStencil() == !stencil.input.lazy);
+}
 
 template <class ParseHandler, typename Unit>
 GeneralParser<ParseHandler, Unit>::GeneralParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, const Unit* units,
     size_t length, bool foldConstants, CompilationStencil& stencil,
-    CompilationState& compilationState, SyntaxParser* syntaxParser,
-    BaseScript* lazyOuterFunction)
-    : Base(cx, options, foldConstants, stencil, compilationState, syntaxParser,
-           lazyOuterFunction),
+    CompilationState& compilationState, SyntaxParser* syntaxParser)
+    : Base(cx, options, foldConstants, stencil, compilationState, syntaxParser),
       tokenStream(cx, &compilationState.parserAtoms, options, units, length) {}
 
 template <typename Unit>
@@ -266,7 +266,7 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     return nullptr;
   }
 
-  if (!handler_.canSkipLazyInnerFunctions()) {
+  if (this->stencil_.isInitialStencil()) {
     if (!compilationState_.scriptExtra.emplaceBack()) {
       js::ReportOutOfMemory(cx_);
       return nullptr;
@@ -354,9 +354,8 @@ typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   SourceExtent extent = SourceExtent::makeGlobalExtent(
       /* len = */ 0, options().lineno, options().column);
   Directives directives(options().forceStrictMode());
-  GlobalSharedContext globalsc(cx_, ScopeKind::Global,
-                               this->getCompilationStencil(), directives,
-                               extent);
+  GlobalSharedContext globalsc(cx_, ScopeKind::Global, this->stencil_,
+                               directives, extent);
   SourceParseContext globalpc(this, &globalsc, /* newDirectives = */ nullptr);
   if (!globalpc.init()) {
     return null();
@@ -849,8 +848,8 @@ bool PerHandlerParser<ParseHandler>::
       //   After closed-over-bindings are snapshotted in the handler,
       //   remove this.
       const ParserAtom* parserAtom =
-          this->compilationState_.parserAtoms.internJSAtom(
-              cx_, this->getCompilationStencil(), name);
+          this->compilationState_.parserAtoms.internJSAtom(cx_, this->stencil_,
+                                                           name);
       if (!parserAtom) {
         return false;
       }
@@ -1471,7 +1470,7 @@ LexicalScopeNode* PerHandlerParser<FullParseHandler>::finishLexicalScope(
 template <class ParseHandler>
 bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     EvalSharedContext* evalSc) {
-  if (handler_.canSkipLazyClosedOverBindings()) {
+  if (!this->stencil_.isInitialStencil()) {
     // We're delazifying -- so we already checked private names during first
     // parse.
     return true;
@@ -1594,12 +1593,12 @@ LexicalScopeNode* Parser<FullParseHandler, Unit>::evalBody(
 
 #ifdef DEBUG
   if (evalpc.superScopeNeedsHomeObject() &&
-      this->getCompilationStencil().input.enclosingScope) {
+      this->stencil_.input.enclosingScope) {
     // If superScopeNeedsHomeObject_ is set and we are an entry-point
     // ParseContext, then we must be emitting an eval script, and the
     // outer function must already be marked as needing a home object
     // since it contains an eval.
-    ScopeIter si(this->getCompilationStencil().input.enclosingScope);
+    ScopeIter si(this->stencil_.input.enclosingScope);
     for (; si; si++) {
       if (si.kind() == ScopeKind::Function) {
         JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
@@ -1969,9 +1968,8 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
 
   funbox->finishScriptFlags();
   funbox->copyFunctionFields(script);
-  funbox->copyScriptFields(script);
 
-  if (!handler_.canSkipLazyInnerFunctions()) {
+  if (this->stencil_.isInitialStencil()) {
     ScriptStencilExtra& scriptExtra = funbox->functionExtraStencil();
     funbox->copyFunctionExtraFields(scriptExtra);
     funbox->copyScriptExtraFields(scriptExtra);
@@ -1997,7 +1995,6 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
 
   funbox->finishScriptFlags();
   funbox->copyFunctionFields(script);
-  funbox->copyScriptFields(script);
 
   ScriptStencilExtra& scriptExtra = funbox->functionExtraStencil();
   funbox->copyFunctionExtraFields(scriptExtra);
@@ -2795,9 +2792,8 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   }
 
   ScriptStencil& script = funbox->functionStencil();
-  funbox->initFromLazyFunction(fun);
+  funbox->initFromLazyFunctionToSkip(fun);
   funbox->copyFunctionFields(script);
-  funbox->copyScriptFields(script);
 
   MOZ_ASSERT_IF(pc_->isFunctionBox(),
                 pc_->functionBox()->index() < funbox->index());
@@ -3282,9 +3278,8 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
   if (!funbox) {
     return null();
   }
-  funbox->initFromLazyFunction(fun);
-  funbox->initStandalone(this->compilationState_.scopeContext, fun->flags(),
-                         syntaxKind);
+  funbox->initFromLazyFunction(fun, this->compilationState_.scopeContext,
+                               fun->flags(), syntaxKind);
   if (funbox->useMemberInitializers()) {
     funbox->setMemberInitializers(fun->baseScript()->getMemberInitializers());
   }
@@ -7271,10 +7266,6 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
       }
     }
 
-    if (!abortIfSyntaxParser()) {
-      return false;
-    }
-
     if (isStatic) {
       classInitializedMembers.staticFields++;
     } else {
@@ -7407,10 +7398,6 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
     if (propAtom == cx_->parserNames().hashConstructor) {
       // #constructor is an invalid private name.
       errorAt(propNameOffset, JSMSG_BAD_METHOD_DEF);
-      return false;
-    }
-
-    if (!abortIfSyntaxParser()) {
       return false;
     }
 
@@ -7775,6 +7762,10 @@ typename ParseHandler::FunctionNodeType
 GeneralParser<ParseHandler, Unit>::synthesizeConstructor(
     const ParserAtom* className, TokenPos synthesizedBodyPos,
     HasHeritage hasHeritage) {
+  if (!abortIfSyntaxParser()) {
+    return null();
+  }
+
   FunctionSyntaxKind functionSyntaxKind =
       hasHeritage == HasHeritage::Yes
           ? FunctionSyntaxKind::DerivedClassConstructor
@@ -7931,6 +7922,10 @@ typename ParseHandler::FunctionNodeType
 GeneralParser<ParseHandler, Unit>::privateMethodInitializer(
     TokenPos propNamePos, const ParserAtom* propAtom,
     const ParserAtom* storedMethodAtom) {
+  if (!abortIfSyntaxParser()) {
+    return null();
+  }
+
   // Synthesize an initializer function that the constructor can use to stamp a
   // private method onto an instance object.
   FunctionSyntaxKind syntaxKind = FunctionSyntaxKind::FieldInitializer;
@@ -8029,6 +8024,10 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
     TokenPos propNamePos, Node propName, const ParserAtom* propAtom,
     ClassInitializedMembers& classInitializedMembers, bool isStatic,
     HasHeritage hasHeritage) {
+  if (!abortIfSyntaxParser()) {
+    return null();
+  }
+
   bool hasInitializer = false;
   if (!tokenStream.matchToken(&hasInitializer, TokenKind::Assign,
                               TokenStream::SlashIsDiv)) {
@@ -10464,24 +10463,31 @@ BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   // BigIntLiteralSuffix (the trailing "n").  Note that NonDecimalIntegerLiteral
   // productions start with 0[bBoOxX], indicating binary/octal/hex.
   const auto& chars = tokenStream.getCharBuffer();
+  if (chars.length() > UINT32_MAX) {
+    ReportAllocationOverflow(cx_);
+    return null();
+  }
 
-  BigIntIndex index(this->getCompilationStencil().bigIntData.length());
+  BigIntIndex index(this->compilationState_.bigIntData.length());
   if (uint32_t(index) >= TaggedScriptThingIndex::IndexLimit) {
     ReportAllocationOverflow(cx_);
     return null();
   }
-  if (!this->getCompilationStencil().bigIntData.emplaceBack()) {
+  if (!this->compilationState_.bigIntData.emplaceBack()) {
     js::ReportOutOfMemory(cx_);
     return null();
   }
 
-  if (!this->getCompilationStencil().bigIntData[index].init(this->cx_, chars)) {
+  if (!this->compilationState_.bigIntData[index].init(
+          this->cx_, this->stencilAlloc(), chars)) {
     return null();
   }
 
+  bool isZero = this->compilationState_.bigIntData[index].isZero();
+
   // Should the operations below fail, the buffer held by data will
   // be cleaned up by the CompilationStencil destructor.
-  return handler_.newBigInt(index, this->getCompilationStencil(), pos());
+  return handler_.newBigInt(index, isZero, pos());
 }
 
 template <typename Unit>

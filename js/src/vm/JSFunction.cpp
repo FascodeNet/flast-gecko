@@ -1548,6 +1548,7 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
 
     Rooted<frontend::CompilationStencil> stencil(
         cx, frontend::CompilationStencil(cx, options));
+    stencil.get().setFunctionKey(lazy);
     stencil.get().input.initFromLazy(lazy);
 
     if (!frontend::CompileLazyFunctionToStencil(cx, stencil.get(), lazy,
@@ -2231,22 +2232,6 @@ JSFunction* js::CloneFunctionAndScript(JSContext* cx, HandleFunction fun,
 
   clone->initScript(nullptr);
   clone->initEnvironment(enclosingEnv);
-
-  /*
-   * Across compartments or if we have to introduce a non-syntactic scope we
-   * have to clone the script for interpreted functions. Cross-compartment
-   * cloning only happens via JSAPI (JS::CloneFunctionObject) which
-   * dynamically ensures that 'script' has no enclosing lexical scope (only
-   * the global scope or other non-lexical scope).
-   */
-#ifdef DEBUG
-  RootedObject terminatingEnv(cx, enclosingEnv);
-  while (IsSyntacticEnvironment(terminatingEnv)) {
-    terminatingEnv = terminatingEnv->enclosingEnvironment();
-  }
-  MOZ_ASSERT_IF(!terminatingEnv->is<GlobalObject>(),
-                newScope->hasOnChain(ScopeKind::NonSyntactic));
-#endif
 
   RootedScript script(cx, fun->nonLazyScript());
   MOZ_ASSERT(script->realm() == fun->realm());

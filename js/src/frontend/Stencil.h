@@ -191,7 +191,7 @@ class RegExpStencil {
   JS::RegExpFlags flags() const { return JS::RegExpFlags(flags_); }
 
   RegExpObject* createRegExp(JSContext* cx,
-                             CompilationAtomCache& atomCache) const;
+                             const CompilationAtomCache& atomCache) const;
 
   // This is used by `Reflect.parse` when we need the RegExpObject but are not
   // doing a complete instantiation of the BaseCompilationStencil.
@@ -212,33 +212,23 @@ class RegExpStencil {
 class BigIntStencil {
   friend class StencilXDR;
 
-  UniqueTwoByteChars buf_;
-  size_t length_ = 0;
+  // Source of the BigInt literal.
+  // It's not null-terminated, and also trailing 'n' suffix is not included.
+  mozilla::Span<char16_t> source_;
 
  public:
   BigIntStencil() = default;
 
-  MOZ_MUST_USE bool init(JSContext* cx, const Vector<char16_t, 32>& buf) {
-#ifdef DEBUG
-    // Assert we have no separators; if we have a separator then the algorithm
-    // used in BigInt::literalIsZero will be incorrect.
-    for (char16_t c : buf) {
-      MOZ_ASSERT(c != '_');
-    }
-#endif
-    length_ = buf.length();
-    buf_ = js::DuplicateString(cx, buf.begin(), buf.length());
-    return buf_ != nullptr;
-  }
+  MOZ_MUST_USE bool init(JSContext* cx, LifoAlloc& alloc,
+                         const Vector<char16_t, 32>& buf);
 
   BigInt* createBigInt(JSContext* cx) const {
-    mozilla::Range<const char16_t> source(buf_.get(), length_);
-
+    mozilla::Range<const char16_t> source(source_.data(), source_.size());
     return js::ParseBigIntLiteral(cx, source);
   }
 
   bool isZero() const {
-    mozilla::Range<const char16_t> source(buf_.get(), length_);
+    mozilla::Range<const char16_t> source(source_.data(), source_.size());
     return js::BigIntLiteralIsZero(source);
   }
 
@@ -749,7 +739,7 @@ class ScriptStencil {
 
   // This is set by the BytecodeEmitter of the enclosing script when a reference
   // to this function is generated.
-  static constexpr uint16_t WasFunctionEmittedFlag = 1 << 0;
+  static constexpr uint16_t WasEmittedByEnclosingScriptFlag = 1 << 0;
 
   // If this is for the root of delazification, this represents
   // MutableScriptFlagsEnum::AllowRelazify value of the script *after*
@@ -783,9 +773,13 @@ class ScriptStencil {
   mozilla::Span<TaggedScriptThingIndex> gcthings(
       const BaseCompilationStencil& stencil) const;
 
-  bool wasFunctionEmitted() const { return flags_ & WasFunctionEmittedFlag; }
+  bool wasEmittedByEnclosingScript() const {
+    return flags_ & WasEmittedByEnclosingScriptFlag;
+  }
 
-  void setWasFunctionEmitted() { flags_ |= WasFunctionEmittedFlag; }
+  void setWasEmittedByEnclosingScript() {
+    flags_ |= WasEmittedByEnclosingScriptFlag;
+  }
 
   bool allowRelazify() const { return flags_ & AllowRelazifyFlag; }
 

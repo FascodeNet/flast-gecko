@@ -133,7 +133,8 @@ void CodeGeneratorX86Shared::emitCompare(MCompare::CompareType type,
                                          const LAllocation* left,
                                          const LAllocation* right) {
 #ifdef JS_CODEGEN_X64
-  if (type == MCompare::Compare_Object || type == MCompare::Compare_Symbol) {
+  if (type == MCompare::Compare_Object || type == MCompare::Compare_Symbol ||
+      type == MCompare::Compare_UIntPtr) {
     masm.cmpPtr(ToRegister(left), ToOperand(right));
     return;
   }
@@ -1998,13 +1999,13 @@ void CodeGenerator::visitCompareExchangeTypedArrayElement(
   Register newval = ToRegister(lir->newval());
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address dest(elements, ToInt32(lir->index()) * width);
+    Address dest = ToAddress(elements, lir->index(), arrayType);
     masm.compareExchangeJS(arrayType, Synchronization::Full(), dest, oldval,
                            newval, temp, output);
   } else {
+    size_t width = Scalar::byteSize(arrayType);
     BaseIndex dest(elements, ToRegister(lir->index()),
                    ScaleFromElemWidth(width));
     masm.compareExchangeJS(arrayType, Synchronization::Full(), dest, oldval,
@@ -2022,13 +2023,13 @@ void CodeGenerator::visitAtomicExchangeTypedArrayElement(
   Register value = ToRegister(lir->value());
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address dest(elements, ToInt32(lir->index()) * width);
+    Address dest = ToAddress(elements, lir->index(), arrayType);
     masm.atomicExchangeJS(arrayType, Synchronization::Full(), dest, value, temp,
                           output);
   } else {
+    size_t width = Scalar::byteSize(arrayType);
     BaseIndex dest(elements, ToRegister(lir->index()),
                    ScaleFromElemWidth(width));
     masm.atomicExchangeJS(arrayType, Synchronization::Full(), dest, value, temp,
@@ -2064,13 +2065,13 @@ void CodeGenerator::visitAtomicTypedArrayElementBinop(
   const LAllocation* value = lir->value();
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address mem(elements, ToInt32(lir->index()) * width);
+    Address mem = ToAddress(elements, lir->index(), arrayType);
     AtomicBinopToTypedArray(masm, lir->mir()->operation(), arrayType, value,
                             mem, temp1, temp2, output);
   } else {
+    size_t width = Scalar::byteSize(arrayType);
     BaseIndex mem(elements, ToRegister(lir->index()),
                   ScaleFromElemWidth(width));
     AtomicBinopToTypedArray(masm, lir->mir()->operation(), arrayType, value,
@@ -2099,13 +2100,13 @@ void CodeGenerator::visitAtomicTypedArrayElementBinopForEffect(
   Register elements = ToRegister(lir->elements());
   const LAllocation* value = lir->value();
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address mem(elements, ToInt32(lir->index()) * width);
+    Address mem = ToAddress(elements, lir->index(), arrayType);
     AtomicBinopToTypedArray(masm, arrayType, lir->mir()->operation(), value,
                             mem);
   } else {
+    size_t width = Scalar::byteSize(arrayType);
     BaseIndex mem(elements, ToRegister(lir->index()),
                   ScaleFromElemWidth(width));
     AtomicBinopToTypedArray(masm, arrayType, lir->mir()->operation(), value,

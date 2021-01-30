@@ -1171,20 +1171,33 @@ async function expandContainer(inspector, container) {
 }
 
 /**
- * Expand the provided markup container by clicking on the expand arrow and waiting for
- * inspector and children to update. Similar to expandContainer helper, but this method
+ * Toggle the provided markup container by clicking on the expand arrow and waiting for
+ * children to update. Similar to expandContainer helper, but this method
  * uses a click rather than programatically calling expandNode().
+ *
+ * @param {InspectorPanel} inspector
+ *        The current inspector instance.
+ * @param {MarkupContainer} container
+ *        The markup container to click on.
+ * @param {Object} modifiers
+ *        options.altKey {Boolean} Use the altKey modifier, to recursively apply
+ *        the action to all the children of the container.
  */
-async function expandContainerByClick(inspector, container) {
-  const onChildren = waitForChildrenUpdated(inspector);
-  const onUpdated = inspector.once("inspector-updated");
+async function toggleContainerByClick(
+  inspector,
+  container,
+  { altKey = false } = {}
+) {
   EventUtils.synthesizeMouseAtCenter(
     container.expander,
-    {},
+    {
+      altKey,
+    },
     inspector.markup.doc.defaultView
   );
-  await onChildren;
-  await onUpdated;
+
+  // Wait for any pending children updates
+  await waitForMultipleChildrenUpdates(inspector);
 }
 
 /**

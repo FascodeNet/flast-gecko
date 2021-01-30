@@ -22,6 +22,7 @@
 #include "gc/MaybeRooted.h"
 #include "util/StringBuffer.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/ErrorReporting.h"  // MaybePrintAndClearPendingException
 #include "vm/JSScript.h"
 #include "wasm/WasmInstance.h"
 
@@ -661,11 +662,15 @@ size_t Scope::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
 }
 
 void Scope::dump() {
-  for (ScopeIter si(this); si; si++) {
-    fprintf(stderr, "%s [%p]", ScopeKindString(si.kind()), si.scope());
-    if (si.scope()->enclosing()) {
-      fprintf(stderr, " -> ");
-    }
+  JSContext* cx = TlsContext.get();
+  if (!cx) {
+    fprintf(stderr, "*** can't get JSContext for current thread\n");
+    return;
+  }
+  for (Rooted<ScopeIter> si(cx, ScopeIter(this)); si; si++) {
+    fprintf(stderr, "- %s [%p]\n", ScopeKindString(si.kind()), si.scope());
+    DumpBindings(cx, si.scope());
+    fprintf(stderr, "\n");
   }
   fprintf(stderr, "\n");
 }
@@ -1192,15 +1197,15 @@ GlobalScope* GlobalScope::createWithData(
 }
 
 /* static */
-GlobalScope* GlobalScope::clone(JSContext* cx, Handle<GlobalScope*> scope,
-                                ScopeKind kind) {
+GlobalScope* GlobalScope::clone(JSContext* cx, Handle<GlobalScope*> scope) {
   Rooted<RuntimeData*> dataOriginal(cx, &scope->as<GlobalScope>().data());
   Rooted<UniquePtr<RuntimeData>> dataClone(
       cx, CopyScopeData<GlobalScope>(cx, dataOriginal));
   if (!dataClone) {
     return nullptr;
   }
-  return Scope::create<GlobalScope>(cx, kind, nullptr, nullptr, &dataClone);
+  return Scope::create<GlobalScope>(cx, scope->kind(), nullptr, nullptr,
+                                    &dataClone);
 }
 
 template <XDRMode mode>
@@ -1883,9 +1888,10 @@ void js::DumpBindings(JSContext* cx, Scope* scopeArg) {
   for (Rooted<BindingIter> bi(cx, BindingIter(scope)); bi; bi++) {
     UniqueChars bytes = AtomToPrintableString(cx, bi.name());
     if (!bytes) {
+      MaybePrintAndClearPendingException(cx);
       return;
     }
-    fprintf(stderr, "%s %s ", BindingKindString(bi.kind()), bytes.get());
+    fprintf(stderr, "    %s %s ", BindingKindString(bi.kind()), bytes.get());
     switch (bi.location().kind()) {
       case BindingLocation::Kind::Global:
         if (bi.isTopLevelFunction()) {

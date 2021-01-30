@@ -88,7 +88,6 @@ NS_INTERFACE_MAP_END_INHERITING(HttpBaseChannel)
 
 TRRServiceChannel::TRRServiceChannel()
     : HttpAsyncAborter<TRRServiceChannel>(this),
-      mTopWindowOriginComputed(false),
       mPushedStreamId(0),
       mProxyRequest(nullptr, "TRRServiceChannel::mProxyRequest"),
       mCurrentEventTarget(GetCurrentEventTarget()) {
@@ -343,18 +342,6 @@ TRRServiceChannel::OnProxyAvailable(nsICancelable* request, nsIChannel* channel,
   return rv;
 }
 
-const nsCString& TRRServiceChannel::GetTopWindowOrigin() {
-  if (mTopWindowOriginComputed) {
-    return mTopWindowOrigin;
-  }
-
-  nsresult rv = nsContentUtils::GetASCIIOrigin(mURI, mTopWindowOrigin);
-  NS_ENSURE_SUCCESS(rv, mTopWindowOrigin);
-
-  mTopWindowOriginComputed = true;
-  return mTopWindowOrigin;
-}
-
 nsresult TRRServiceChannel::BeginConnect() {
   LOG(("TRRServiceChannel::BeginConnect [this=%p]\n", this));
   nsresult rv;
@@ -391,8 +378,7 @@ nsresult TRRServiceChannel::BeginConnect() {
   mRequestHead.SetOrigin(scheme, host, port);
 
   RefPtr<nsHttpConnectionInfo> connInfo = new nsHttpConnectionInfo(
-      host, port, ""_ns, mUsername, GetTopWindowOrigin(), proxyInfo,
-      OriginAttributes(), isHttps);
+      host, port, ""_ns, mUsername, proxyInfo, OriginAttributes(), isHttps);
   // TODO: Bug 1622778 for using AltService in socket process.
   StoreAllowAltSvc(XRE_IsParentProcess() && LoadAllowAltSvc());
   bool http2Allowed = !gHttpHandler->IsHttp2Excluded(connInfo);
@@ -406,9 +392,8 @@ nsresult TRRServiceChannel::BeginConnect() {
       AltSvcMapping::AcceptableProxy(proxyInfo) &&
       (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https")) &&
       (mapping = gHttpHandler->GetAltServiceMapping(
-           scheme, host, port, mPrivateBrowsing, IsIsolated(),
-           GetTopWindowOrigin(), OriginAttributes(), http2Allowed,
-           http3Allowed))) {
+           scheme, host, port, mPrivateBrowsing, OriginAttributes(),
+           http2Allowed, http3Allowed))) {
     LOG(("TRRServiceChannel %p Alt Service Mapping Found %s://%s:%d [%s]\n",
          this, scheme.get(), mapping->AlternateHost().get(),
          mapping->AlternatePort(), mapping->HashKey().get()));
@@ -523,7 +508,6 @@ nsresult TRRServiceChannel::ContinueOnBeforeConnect() {
   // Finalize ConnectionInfo flags before SpeculativeConnect
   mConnectionInfo->SetAnonymous((mLoadFlags & LOAD_ANONYMOUS) != 0);
   mConnectionInfo->SetPrivate(mPrivateBrowsing);
-  mConnectionInfo->SetIsolated(IsIsolated());
   mConnectionInfo->SetNoSpdy(mCaps & NS_HTTP_DISALLOW_SPDY);
   mConnectionInfo->SetBeConservative((mCaps & NS_HTTP_BE_CONSERVATIVE) ||
                                      LoadBeConservative());
@@ -968,24 +952,21 @@ void TRRServiceChannel::ProcessAltService() {
     proxyInfo = do_QueryInterface(mProxyInfo);
   }
 
-  nsCString topWindowOrigin = GetTopWindowOrigin();
-  bool isIsolated = IsIsolated();
   auto processHeaderTask = [altSvc, scheme, originHost, originPort,
-                            userName(mUsername), topWindowOrigin,
-                            privateBrowsing(mPrivateBrowsing), isIsolated,
-                            callbacks, proxyInfo, caps(mCaps)]() {
+                            userName(mUsername),
+                            privateBrowsing(mPrivateBrowsing), callbacks,
+                            proxyInfo, caps(mCaps)]() {
     if (XRE_IsSocketProcess()) {
-      AltServiceChild::ProcessHeader(
-          altSvc, scheme, originHost, originPort, userName, topWindowOrigin,
-          privateBrowsing, isIsolated, callbacks, proxyInfo,
-          caps & NS_HTTP_DISALLOW_SPDY, OriginAttributes());
+      AltServiceChild::ProcessHeader(altSvc, scheme, originHost, originPort,
+                                     userName, privateBrowsing, callbacks,
+                                     proxyInfo, caps & NS_HTTP_DISALLOW_SPDY,
+                                     OriginAttributes());
       return;
     }
 
     AltSvcMapping::ProcessHeader(
-        altSvc, scheme, originHost, originPort, userName, topWindowOrigin,
-        privateBrowsing, isIsolated, callbacks, proxyInfo,
-        caps & NS_HTTP_DISALLOW_SPDY, OriginAttributes());
+        altSvc, scheme, originHost, originPort, userName, privateBrowsing,
+        callbacks, proxyInfo, caps & NS_HTTP_DISALLOW_SPDY, OriginAttributes());
   };
 
   if (NS_IsMainThread()) {
@@ -1170,10 +1151,16 @@ nsresult TRRServiceChannel::SetupReplacementChannel(nsIURI* aNewURI,
     encodedChannel->SetApplyConversion(LoadApplyConversion());
   }
 
-  // Apply TRR specific settings.
+  // Make sure we set content-type on the old channel properly.
+  MOZ_ASSERT(mContentTypeHint.Equals("application/dns-message") ||
+             mContentTypeHint.Equals("application/oblivious-dns-message"));
+
+  // Apply TRR specific settings. Note that we already know mContentTypeHint is
+  // "application/dns-message" or "application/oblivious-dns-message" here.
   return TRR::SetupTRRServiceChannelInternal(
       httpChannel,
-      mRequestHead.ParsedMethod() == nsHttpRequestHead::kMethod_Get);
+      mRequestHead.ParsedMethod() == nsHttpRequestHead::kMethod_Get,
+      mContentTypeHint);
 }
 
 NS_IMETHODIMP

@@ -2954,6 +2954,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Int64:
     case MIRType::RefOrNull:
     case MIRType::StackResults:
+    case MIRType::IntPtr:
       return false;
   }
   MOZ_CRASH("Unknown MIRType.");
@@ -3188,9 +3189,17 @@ SimpleLinearSum jit::ExtractLinearSum(MDefinition* ins, MathSpace space,
     return SimpleLinearSum(ins, 0);
   }
 
+  // Unwrap Int32ToIntPtr. This instruction only changes the representation
+  // (int32_t to intptr_t) without affecting the value.
+  if (ins->isInt32ToIntPtr()) {
+    ins = ins->toInt32ToIntPtr()->input();
+  }
+
   if (ins->isBeta()) {
     ins = ins->getOperand(0);
   }
+
+  MOZ_ASSERT(!ins->isInt32ToIntPtr());
 
   if (ins->type() != MIRType::Int32) {
     return SimpleLinearSum(ins, 0);

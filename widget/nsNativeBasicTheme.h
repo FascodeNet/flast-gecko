@@ -113,7 +113,6 @@ static const CSSCoord kMinimumSpinnerButtonHeight = 9.0f;
 static const CSSCoord kButtonBorderWidth = 1.0f;
 static const CSSCoord kMenulistBorderWidth = 1.0f;
 static const CSSCoord kTextFieldBorderWidth = 1.0f;
-static const CSSCoord kSpinnerBorderWidth = 1.0f;
 static const CSSCoord kRangeHeight = 6.0f;
 static const CSSCoord kProgressbarHeight = 6.0f;
 static const CSSCoord kMeterHeight = 12.0f;
@@ -187,14 +186,18 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
   bool WidgetIsContainer(StyleAppearance aAppearance) override;
   bool ThemeDrawsFocusForWidget(StyleAppearance aAppearance) override;
   bool ThemeNeedsComboboxDropmarker() override;
+  ScrollbarSizes GetScrollbarSizes(nsPresContext*,
+                                   StyleScrollbarWidth,
+                                   Overlay) override;
 
  protected:
   nsNativeBasicTheme() = default;
   virtual ~nsNativeBasicTheme() = default;
 
-  static DPIRatio GetDPIRatio(nsIFrame* aFrame);
+  static DPIRatio GetDPIRatioForScrollbarPart(nsPresContext*);
+  static DPIRatio GetDPIRatio(nsPresContext*, StyleAppearance);
+  static DPIRatio GetDPIRatio(nsIFrame* aFrame, StyleAppearance);
   static bool IsDateTimeResetButton(nsIFrame* aFrame);
-  static bool IsDateTimeTextField(nsIFrame* aFrame);
   static bool IsColorPickerButton(nsIFrame* aFrame);
   static bool IsRootScrollbar(nsIFrame* aFrame);
   static LayoutDeviceRect FixAspectRatio(const LayoutDeviceRect& aRect);
@@ -237,10 +240,6 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
   void PaintRoundedFocusRect(DrawTarget* aDrawTarget,
                              const LayoutDeviceRect& aRect, DPIRatio aDpiRatio,
                              CSSCoord aRadius, CSSCoord aOffset);
-  void PaintRoundedRect(DrawTarget* aDrawTarget, const LayoutDeviceRect& aRect,
-                        const sRGBColor& aBackgroundColor,
-                        const sRGBColor& aBorderColor, CSSCoord aBorderWidth,
-                        RectCornerRadii aDpiAdjustedRadii, DPIRatio aDpiRatio);
   void PaintRoundedRectWithRadius(DrawTarget* aDrawTarget,
                                   const LayoutDeviceRect& aRect,
                                   const sRGBColor& aBackgroundColor,
@@ -288,15 +287,9 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
   void PaintRange(nsIFrame* aFrame, DrawTarget* aDrawTarget,
                   const LayoutDeviceRect& aRect, const EventStates& aState,
                   DPIRatio aDpiRatio, bool aHorizontal);
-  void PaintProgressBar(DrawTarget* aDrawTarget, const LayoutDeviceRect& aRect,
-                        const EventStates& aState, DPIRatio aDpiRatio);
-  void PaintProgresschunk(nsIFrame* aFrame, DrawTarget* aDrawTarget,
-                          const LayoutDeviceRect& aRect,
-                          const EventStates& aState, DPIRatio aDpiRatio);
-  void PaintMeter(DrawTarget* aDrawTarget, const LayoutDeviceRect& aRect,
-                  const EventStates& aState, DPIRatio aDpiRatio);
-  void PaintMeterchunk(nsIFrame* aFrame, DrawTarget* aDrawTarget,
-                       const LayoutDeviceRect& aRect, DPIRatio aDpiRatio);
+  void PaintProgress(nsIFrame* aFrame, DrawTarget* aDrawTarget,
+                     const LayoutDeviceRect& aRect, const EventStates& aState,
+                     DPIRatio aDpiRatio, bool aIsMeter, bool aBar);
   void PaintButton(nsIFrame* aFrame, DrawTarget* aDrawTarget,
                    const LayoutDeviceRect& aRect, const EventStates& aState,
                    DPIRatio aDpiRatio);

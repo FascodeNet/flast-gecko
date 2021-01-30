@@ -31,7 +31,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.jsm",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
-  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
@@ -82,6 +82,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TelemetryUtils: "resource://gre/modules/TelemetryUtils.jsm",
   TRRRacer: "resource:///modules/TRRPerformance.jsm",
   UIState: "resource://services-sync/UIState.jsm",
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   WebChannel: "resource://gre/modules/WebChannel.jsm",
   WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
 });
@@ -189,6 +190,7 @@ let JSWINDOWACTORS = {
         AboutLoginsDismissBreachAlert: { wantUntrusted: true },
         AboutLoginsImportFromBrowser: { wantUntrusted: true },
         AboutLoginsImportFromFile: { wantUntrusted: true },
+        AboutLoginsImportReportInit: { wantUntrusted: true },
         AboutLoginsInit: { wantUntrusted: true },
         AboutLoginsGetHelp: { wantUntrusted: true },
         AboutLoginsOpenPreferences: { wantUntrusted: true },
@@ -202,7 +204,7 @@ let JSWINDOWACTORS = {
         AboutLoginsExportPasswords: { wantUntrusted: true },
       },
     },
-    matches: ["about:logins", "about:logins?*"],
+    matches: ["about:logins", "about:logins?*", "about:loginsimportreport"],
   },
 
   AboutNewInstall: {
@@ -3284,7 +3286,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 105;
+    const UI_VERSION = 106;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3838,6 +3840,11 @@ BrowserGlue.prototype = {
       Services.prefs.clearUserPref(oldPrefName);
     }
 
+    // Initialize the new browser.urlbar.showSuggestionsBeforeGeneral pref.
+    if (currentUIVersion < 106) {
+      UrlbarPrefs.initializeShowSearchSuggestionsFirstPref();
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -3949,7 +3956,7 @@ BrowserGlue.prototype = {
         // same way that the url bar would.
         body = URIs[0].uri.replace(/([?#]).*$/, "$1");
         let wasTruncated = body.length < URIs[0].uri.length;
-        body = BrowserUtils.trimURL(body);
+        body = BrowserUIUtils.trimURL(body);
         if (wasTruncated) {
           body = bundle.formatStringFromName(
             "singleTabArrivingWithTruncatedURL.body",

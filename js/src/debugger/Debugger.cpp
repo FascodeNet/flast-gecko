@@ -1253,7 +1253,7 @@ bool DebugAPI::slowPathOnNewGenerator(JSContext* cx, AbstractFramePtr frame,
 
         AutoRealm ar(cx, frameObj);
 
-        if (!frameObj->setGeneratorInfo(cx, genObj)) {
+        if (!DebuggerFrame::setGeneratorInfo(cx, frameObj, genObj)) {
           // This leaves `genObj` and `frameObj` unassociated. It's OK
           // because we won't pause again with this generator on the stack:
           // the caller will immediately discard `genObj` and unwind `frame`.
@@ -6045,8 +6045,8 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, stencil.get(), compilationState, nullptr,
-      nullptr);
+      /* foldConstants = */ true, stencil.get(), compilationState,
+      /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.

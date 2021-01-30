@@ -1251,7 +1251,6 @@ void nsHTMLScrollFrame::Reflow(nsPresContext* aPresContext,
   }
 
   if (mHelper.mIsRoot) {
-    mHelper.mCollapsedResizer = true;
     reflowScrollCorner = false;
 
     // Hide the scrollbar when the scrollbar-width is set to none.
@@ -1502,17 +1501,12 @@ nscoord ScrollFrameHelper::GetNondisappearingScrollbarWidth(
   // we're using e.g. scrollbar-width: thin, or overlay scrollbars. That's why
   // we use ScrollbarNonDisappearing.
   nsIFrame* box = verticalWM ? mHScrollbarBox : mVScrollbarBox;
-  nsITheme* theme = aState->PresContext()->Theme();
-  if (box &&
-      theme->ThemeSupportsWidget(aState->PresContext(), box,
-                                 StyleAppearance::ScrollbarNonDisappearing)) {
-    LayoutDeviceIntSize size;
-    bool canOverride = true;
-    theme->GetMinimumWidgetSize(aState->PresContext(), box,
-                                StyleAppearance::ScrollbarNonDisappearing,
-                                &size, &canOverride);
-    return aState->PresContext()->DevPixelsToAppUnits(verticalWM ? size.height
-                                                                 : size.width);
+  if (box) {
+    auto sizes = aState->PresContext()->Theme()->GetScrollbarSizes(
+        aState->PresContext(), StyleScrollbarWidth::Auto,
+        nsITheme::Overlay::No);
+    return aState->PresContext()->DevPixelsToAppUnits(
+        verticalWM ? sizes.mHorizontal : sizes.mVertical);
   }
 
   nsMargin sizes(GetDesiredScrollbarSizes(aState));
@@ -2208,7 +2202,6 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter, bool aIsRoot)
       mMayHaveDirtyFixedChildren(false),
       mUpdateScrollbarAttributes(false),
       mHasBeenScrolledRecently(false),
-      mCollapsedResizer(false),
       mWillBuildScrollableLayer(false),
       mIsScrollParent(false),
       mAddClipRectToLayer(false),
@@ -5341,6 +5334,8 @@ nsresult ScrollFrameHelper::CreateAnonymousContent(
   }
 
   if (isResizable) {
+    MOZ_ASSERT(!mIsRoot, "Root scroll frame shouldn't be resizable");
+
     AnonymousContentKey key = AnonymousContentKey::Type_Resizer;
 
     RefPtr<NodeInfo> nodeInfo;
@@ -5383,20 +5378,10 @@ nsresult ScrollFrameHelper::CreateAnonymousContent(
         NS_WARNING("only resizable types should have resizers");
     }
     mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, dir, false);
-
-    if (mIsRoot) {
-      mResizerContent->SetProperty(nsGkAtoms::docLevelNativeAnonymousContent,
-                                   reinterpret_cast<void*>(true));
-
-      mCollapsedResizer = true;
-    } else {
-      mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::element,
-                               u"_parent"_ns, false);
-    }
-
+    mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::element,
+                             u"_parent"_ns, false);
     mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::clickthrough,
                              u"always"_ns, false);
-
     aElements.AppendElement(ContentInfo(mResizerContent, key));
   }
 
@@ -6762,23 +6747,25 @@ void ScrollFrameHelper::LayoutScrollbars(nsBoxLayoutState& aState,
     }
 
     if (hasResizer) {
-      // if a resizer is present, get its size. Assume a default size of 15
-      // pixels.
-      nscoord defaultSize = nsPresContext::CSSPixelsToAppUnits(15);
+      // If a resizer is present, get its size.
+      //
+      // TODO(emilio): Should this really account for scrollbar-width?
+      nsPresContext* pc = aState.PresContext();
+      auto scrollbarWidth = nsLayoutUtils::StyleForScrollbar(mOuter)
+                                ->StyleUIReset()
+                                ->mScrollbarWidth;
+      auto sizes = pc->Theme()->GetScrollbarSizes(pc, scrollbarWidth,
+                                                  nsITheme::Overlay::No);
       nsSize resizerMinSize = mResizerBox->GetXULMinSize(aState);
 
-      nscoord vScrollbarWidth =
-          mVScrollbarBox ? mVScrollbarBox->GetXULPrefSize(aState).width
-                         : defaultSize;
+      nscoord vScrollbarWidth = pc->DevPixelsToAppUnits(sizes.mVertical);
       r.width =
           std::max(std::max(r.width, vScrollbarWidth), resizerMinSize.width);
       if (aContentArea.x == mScrollPort.x && !scrollbarOnLeft) {
         r.x = aContentArea.XMost() - r.width;
       }
 
-      nscoord hScrollbarHeight =
-          mHScrollbarBox ? mHScrollbarBox->GetXULPrefSize(aState).height
-                         : defaultSize;
+      nscoord hScrollbarHeight = pc->DevPixelsToAppUnits(sizes.mHorizontal);
       r.height =
           std::max(std::max(r.height, hScrollbarHeight), resizerMinSize.height);
       if (aContentArea.y == mScrollPort.y) {

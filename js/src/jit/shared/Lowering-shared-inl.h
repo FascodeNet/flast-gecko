@@ -228,7 +228,12 @@ void LIRGeneratorShared::defineInt64(
     LDefinition::Policy policy) {
   // Call instructions should use defineReturn.
   MOZ_ASSERT(!lir->isCall());
+
+#ifdef JS_64BIT
+  MOZ_ASSERT(mir->type() == MIRType::Int64 || mir->type() == MIRType::IntPtr);
+#else
   MOZ_ASSERT(mir->type() == MIRType::Int64);
+#endif
 
   uint32_t vreg = getVirtualRegister();
 
@@ -440,6 +445,32 @@ LAllocation LIRGeneratorShared::useRegisterOrConstantAtStart(MDefinition* mir) {
     return LAllocation(mir->toConstant());
   }
   return useRegisterAtStart(mir);
+}
+
+inline bool CanUseInt32Constant(MDefinition* mir) {
+  if (!mir->isConstant()) {
+    return false;
+  }
+  MConstant* cst = mir->toConstant();
+  if (cst->type() == MIRType::IntPtr) {
+    return INT32_MIN <= cst->toIntPtr() && cst->toIntPtr() <= INT32_MAX;
+  }
+  MOZ_ASSERT(cst->type() == MIRType::Int32);
+  return true;
+}
+
+LAllocation LIRGeneratorShared::useRegisterOrInt32Constant(MDefinition* mir) {
+  if (CanUseInt32Constant(mir)) {
+    return LAllocation(mir->toConstant());
+  }
+  return useRegister(mir);
+}
+
+LAllocation LIRGeneratorShared::useAnyOrInt32Constant(MDefinition* mir) {
+  if (CanUseInt32Constant(mir)) {
+    return LAllocation(mir->toConstant());
+  }
+  return useAny(mir);
 }
 
 LAllocation LIRGeneratorShared::useRegisterOrZero(MDefinition* mir) {

@@ -75,7 +75,7 @@ struct NurseryChunk : public ChunkBase {
                    MemCheckKind checkKind);
   void poisonAfterEvict(size_t extent = ChunkSize);
 
-  // The end of the range is always ChunkSize - ArenaSize.
+  // The end of the range is always ChunkSize.
   void markPagesUnusedHard(size_t from);
   // The start of the range is always the beginning of the chunk.
   MOZ_MUST_USE bool markPagesInUseHard(size_t to);
@@ -358,38 +358,50 @@ bool js::Nursery::isEmpty() const {
 
 #ifdef JS_GC_ZEAL
 void js::Nursery::enterZealMode() {
-  if (isEnabled()) {
-    MOZ_ASSERT(isEmpty());
-    if (isSubChunkMode()) {
-      // The poisoning call below must not race with background decommit,
-      // which could be attempting to decommit the currently-unused part of this
-      // chunk.
-      decommitTask.join();
-      {
-        AutoEnterOOMUnsafeRegion oomUnsafe;
-        if (!chunk(0).markPagesInUseHard(ChunkSize)) {
-          oomUnsafe.crash("Out of memory trying to extend chunk for zeal mode");
-        }
-      }
-
-      // It'd be simpler to poison the whole chunk, but we can't do that
-      // because the nursery might be partially used.
-      chunk(0).poisonRange(capacity_, ChunkSize - capacity_,
-                           JS_FRESH_NURSERY_PATTERN,
-                           MemCheckKind::MakeUndefined);
-    }
-    capacity_ = RoundUp(tunables().gcMaxNurseryBytes(), ChunkSize);
-    setCurrentEnd();
+  if (!isEnabled()) {
+    return;
   }
+
+  MOZ_ASSERT(isEmpty());
+
+  AutoEnterOOMUnsafeRegion oomUnsafe;
+
+  if (isSubChunkMode()) {
+    // The poisoning call below must not race with background decommit,
+    // which could be attempting to decommit the currently-unused part of this
+    // chunk.
+    decommitTask.join();
+    {
+      if (!chunk(0).markPagesInUseHard(ChunkSize)) {
+        oomUnsafe.crash("Out of memory trying to extend chunk for zeal mode");
+      }
+    }
+
+    // It'd be simpler to poison the whole chunk, but we can't do that
+    // because the nursery might be partially used.
+    chunk(0).poisonRange(capacity_, ChunkSize - capacity_,
+                         JS_FRESH_NURSERY_PATTERN, MemCheckKind::MakeUndefined);
+  }
+
+  capacity_ = RoundUp(tunables().gcMaxNurseryBytes(), ChunkSize);
+
+  if (!decommitTask.reserveSpaceForBytes(capacity_)) {
+    oomUnsafe.crash("Nursery::enterZealMode");
+  }
+
+  setCurrentEnd();
 }
 
 void js::Nursery::leaveZealMode() {
-  if (isEnabled()) {
-    MOZ_ASSERT(isEmpty());
-    setCurrentChunk(0);
-    setStartPosition();
-    poisonAndInitCurrentChunk();
+  if (!isEnabled()) {
+    return;
   }
+
+  MOZ_ASSERT(isEmpty());
+
+  setCurrentChunk(0);
+  setStartPosition();
+  poisonAndInitCurrentChunk();
 }
 #endif  // JS_GC_ZEAL
 
@@ -1650,10 +1662,10 @@ void js::Nursery::clearRecentGrowthData() {
 
 /* static */
 size_t js::Nursery::roundSize(size_t size) {
-  size_t step = size >= ChunkSize ? ChunkSize : SubChunkStep;
+  size_t step = size >= ChunkSize ? ChunkSize : SystemPageSize();
   size = Round(size, step);
 
-  MOZ_ASSERT(size >= ArenaSize);
+  MOZ_ASSERT(size >= SystemPageSize());
 
   return size;
 }

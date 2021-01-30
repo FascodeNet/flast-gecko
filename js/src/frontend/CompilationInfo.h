@@ -130,6 +130,17 @@ struct CompilationAtomCache {
 
 // Input of the compilation, including source and enclosing context.
 struct CompilationInput {
+  enum class CompilationTarget {
+    Global,
+    SelfHosting,
+    StandaloneFunction,
+    StandaloneFunctionInNonSyntacticScope,
+    Eval,
+    Module,
+    Delazification,
+  };
+  CompilationTarget target = CompilationTarget::Global;
+
   const JS::ReadOnlyCompileOptions& options;
 
   CompilationAtomCache atomCache;
@@ -138,8 +149,9 @@ struct CompilationInput {
 
   ScriptSourceHolder source_;
 
-  //  * If we're compiling standalone function, the non-null enclosing scope of
-  //    the function
+  //  * If we're compiling standalone function, an empty global scope.
+  //  * If we're compiling standalone function in scope, the non-null enclosing
+  //    scope of the function
   //  * If we're compiling eval, the non-null enclosing scope of the `eval`.
   //  * If we're compiling module, null that means empty global scope
   //    (See EmitterScope::checkEnvironmentChainLength)
@@ -157,9 +169,13 @@ struct CompilationInput {
   bool initScriptSource(JSContext* cx);
 
  public:
-  bool initForGlobal(JSContext* cx) { return initScriptSource(cx); }
+  bool initForGlobal(JSContext* cx) {
+    target = CompilationTarget::Global;
+    return initScriptSource(cx);
+  }
 
   bool initForSelfHostingGlobal(JSContext* cx) {
+    target = CompilationTarget::SelfHosting;
     if (!initScriptSource(cx)) {
       return false;
     }
@@ -174,8 +190,18 @@ struct CompilationInput {
     return true;
   }
 
-  bool initForStandaloneFunction(JSContext* cx,
-                                 HandleScope functionEnclosingScope) {
+  bool initForStandaloneFunction(JSContext* cx) {
+    target = CompilationTarget::StandaloneFunction;
+    if (!initScriptSource(cx)) {
+      return false;
+    }
+    enclosingScope = &cx->global()->emptyGlobalScope();
+    return true;
+  }
+
+  bool initForStandaloneFunctionInNonSyntacticScope(
+      JSContext* cx, HandleScope functionEnclosingScope) {
+    target = CompilationTarget::StandaloneFunctionInNonSyntacticScope;
     if (!initScriptSource(cx)) {
       return false;
     }
@@ -184,6 +210,7 @@ struct CompilationInput {
   }
 
   bool initForEval(JSContext* cx, HandleScope evalEnclosingScope) {
+    target = CompilationTarget::Eval;
     if (!initScriptSource(cx)) {
       return false;
     }
@@ -192,6 +219,7 @@ struct CompilationInput {
   }
 
   bool initForModule(JSContext* cx) {
+    target = CompilationTarget::Module;
     if (!initScriptSource(cx)) {
       return false;
     }
@@ -200,8 +228,26 @@ struct CompilationInput {
   }
 
   void initFromLazy(BaseScript* lazyScript) {
+    target = CompilationTarget::Delazification;
     lazy = lazyScript;
     enclosingScope = lazy->function()->enclosingScope();
+  }
+
+  // Returns true if enclosingScope field is provided to init* function,
+  // instead of setting to empty global internally.
+  bool hasNonDefaultEnclosingScope() const {
+    return target == CompilationTarget::StandaloneFunctionInNonSyntacticScope ||
+           target == CompilationTarget::Eval ||
+           target == CompilationTarget::Delazification;
+  }
+
+  // Returns the enclosing scope provided to init* function.
+  // nullptr otherwise.
+  Scope* maybeNonDefaultEnclosingScope() const {
+    if (hasNonDefaultEnclosingScope()) {
+      return enclosingScope;
+    }
+    return nullptr;
   }
 
   ScriptSource* source() { return source_.get(); }
@@ -236,6 +282,8 @@ struct MOZ_RAII CompilationState {
   //
   // See corresponding BaseCompilationStencil fields for desription.
   Vector<RegExpStencil, 0, js::SystemAllocPolicy> regExpData;
+  Vector<BigIntStencil, 0, js::SystemAllocPolicy> bigIntData;
+  Vector<ObjLiteralStencil, 0, js::SystemAllocPolicy> objLiteralData;
   Vector<ScriptStencil, 0, js::SystemAllocPolicy> scriptData;
   Vector<ScriptStencilExtra, 0, js::SystemAllocPolicy> scriptExtra;
   Vector<ScopeStencil, 0, js::SystemAllocPolicy> scopeData;
@@ -256,7 +304,6 @@ struct MOZ_RAII CompilationState {
                    const JS::ReadOnlyCompileOptions& options,
                    CompilationStencil& stencil,
                    InheritThis inheritThis = InheritThis::No,
-                   Scope* enclosingScope = nullptr,
                    JSObject* enclosingEnv = nullptr);
 
   bool finish(JSContext* cx, CompilationStencil& stencil);
@@ -357,8 +404,8 @@ struct BaseCompilationStencil {
   // Hold onto the RegExpStencil, BigIntStencil, and ObjLiteralStencil that are
   // allocated during parse to ensure correct destruction.
   mozilla::Span<RegExpStencil> regExpData;
-  Vector<BigIntStencil, 0, js::SystemAllocPolicy> bigIntData;
-  Vector<ObjLiteralStencil, 0, js::SystemAllocPolicy> objLiteralData;
+  mozilla::Span<BigIntStencil> bigIntData;
+  mozilla::Span<ObjLiteralStencil> objLiteralData;
 
   // Stencil for all function and non-function scripts. The TopLevelIndex is
   // reserved for the top-level script. This top-level may or may not be a
@@ -418,7 +465,6 @@ struct BaseCompilationStencil {
 
   bool isInitialStencil() const { return functionKey == NullFunctionKey; }
 
-  bool isCompilationStencil() const { return isInitialStencil(); }
   inline CompilationStencil& asCompilationStencil();
   inline const CompilationStencil& asCompilationStencil() const;
 
@@ -628,6 +674,10 @@ struct CompilationStencil : public BaseCompilationStencil {
     return ScriptStencilIterable(stencil, gcOutput);
   }
 
+  void setFunctionKey(BaseScript* lazy) {
+    functionKey = toFunctionKey(lazy->extent());
+  }
+
   void trace(JSTracer* trc);
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
@@ -638,14 +688,18 @@ struct CompilationStencil : public BaseCompilationStencil {
 };
 
 inline CompilationStencil& BaseCompilationStencil::asCompilationStencil() {
-  MOZ_ASSERT(isCompilationStencil());
+  MOZ_ASSERT(isInitialStencil(),
+             "cast from BaseCompilationStencil to CompilationStencil is "
+             "allowed only for initial stencil");
   return *static_cast<CompilationStencil*>(this);
 }
 
 inline const CompilationStencil& BaseCompilationStencil::asCompilationStencil()
     const {
-  MOZ_ASSERT(isCompilationStencil());
-  return *reinterpret_cast<const CompilationStencil*>(this);
+  MOZ_ASSERT(isInitialStencil(),
+             "cast from BaseCompilationStencil to CompilationStencil is "
+             "allowed only for initial stencil");
+  return *static_cast<const CompilationStencil*>(this);
 }
 
 inline ScriptStencilIterable::ScriptAndFunction

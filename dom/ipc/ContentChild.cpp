@@ -3378,12 +3378,6 @@ mozilla::ipc::IPCResult ContentChild::RecvFlushCodeCoverageCounters(
 #endif
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvGetMemoryUniqueSetSize(
-    GetMemoryUniqueSetSizeResolver&& aResolver) {
-  MemoryTelemetry::Get().GetUniqueSetSize(std::move(aResolver));
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult ContentChild::RecvSetInputEventQueueEnabled() {
   nsThreadManager::get().EnableMainThreadEventPrioritization();
   return IPC_OK();
@@ -4101,6 +4095,10 @@ mozilla::ipc::IPCResult ContentChild::RecvScriptError(
 mozilla::ipc::IPCResult ContentChild::RecvReportFrameTimingData(
     uint64_t innerWindowId, const nsString& entryName,
     const nsString& initiatorType, UniquePtr<PerformanceTimingData>&& aData) {
+  if (!aData) {
+    return IPC_FAIL(this, "aData should not be null");
+  }
+
   auto* innerWindow = nsGlobalWindowInner::GetInnerWindowWithId(innerWindowId);
   if (!innerWindow) {
     return IPC_OK();

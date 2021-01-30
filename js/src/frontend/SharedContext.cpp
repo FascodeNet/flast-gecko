@@ -38,7 +38,7 @@ SharedContext::SharedContext(JSContext* cx, Kind kind,
       inClass_(false),
       localStrict(false),
       hasExplicitUseStrict_(false),
-      isScriptFieldCopiedToStencil(false) {
+      isScriptExtraFieldCopiedToStencil(false) {
   // Compute the script kind "input" flags.
   if (kind == Kind::FunctionBox) {
     setFlag(ImmutableFlags::IsFunction);
@@ -235,16 +235,31 @@ FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
       funcDataIndex_(index),
       flags_(FunctionFlags::clearMutableflags(flags)),
       emitBytecode(false),
-      wasEmitted_(false),
+      wasEmittedByEnclosingScript_(false),
       isAnnexB(false),
       useAsm(false),
       hasParameterExprs(false),
       hasDestructuringArgs(false),
       hasDuplicateParameters(false),
       hasExprBody_(false),
-      isFunctionFieldCopiedToStencil(false) {}
+      isFunctionFieldCopiedToStencil(false),
+      isInitialCompilation(stencil.isInitialStencil()),
+      isStandalone(false),
+      hasNonSyntacticEnclosingScopeForStandalone(false) {}
 
-void FunctionBox::initFromLazyFunction(JSFunction* fun) {
+void FunctionBox::initFromLazyFunction(JSFunction* fun,
+                                       ScopeContext& scopeContext,
+                                       FunctionFlags flags,
+                                       FunctionSyntaxKind kind) {
+  initFromLazyFunctionShared(fun);
+  initStandaloneOrLazy(scopeContext, flags, kind);
+}
+
+void FunctionBox::initFromLazyFunctionToSkip(JSFunction* fun) {
+  initFromLazyFunctionShared(fun);
+}
+
+void FunctionBox::initFromLazyFunctionShared(JSFunction* fun) {
   BaseScript* lazy = fun->baseScript();
   immutableFlags_ = lazy->immutableFlags();
   extent_ = lazy->extent();
@@ -314,6 +329,18 @@ void FunctionBox::initWithEnclosingParseContext(ParseContext* enclosing,
 
 void FunctionBox::initStandalone(ScopeContext& scopeContext,
                                  FunctionFlags flags, FunctionSyntaxKind kind) {
+  initStandaloneOrLazy(scopeContext, flags, kind);
+
+  isStandalone = true;
+  if (scopeContext.effectiveScope) {
+    hasNonSyntacticEnclosingScopeForStandalone =
+        !scopeContext.effectiveScope->as<GlobalScope>().isSyntactic();
+  }
+}
+
+void FunctionBox::initStandaloneOrLazy(ScopeContext& scopeContext,
+                                       FunctionFlags flags,
+                                       FunctionSyntaxKind kind) {
   if (flags.isArrow()) {
     allowNewTarget_ = scopeContext.allowNewTarget;
     allowSuperProperty_ = scopeContext.allowSuperProperty;
@@ -392,33 +419,20 @@ ScriptStencilExtra& FunctionBox::functionExtraStencil() const {
   return compilationState_.scriptExtra[funcDataIndex_];
 }
 
-bool FunctionBox::hasFunctionExtraStencil() const {
-  return funcDataIndex_ < compilationState_.scriptExtra.length();
-}
-
-void SharedContext::copyScriptFields(ScriptStencil& script) {
-  MOZ_ASSERT(!isScriptFieldCopiedToStencil);
-  isScriptFieldCopiedToStencil = true;
-}
-
 void SharedContext::copyScriptExtraFields(ScriptStencilExtra& scriptExtra) {
+  MOZ_ASSERT(!isScriptExtraFieldCopiedToStencil);
+
   scriptExtra.immutableFlags = immutableFlags_;
   scriptExtra.extent = extent_;
+
+  isScriptExtraFieldCopiedToStencil = true;
 }
 
 void FunctionBox::finishScriptFlags() {
-  MOZ_ASSERT(!isScriptFieldCopiedToStencil);
+  MOZ_ASSERT(!isScriptExtraFieldCopiedToStencil);
 
   using ImmutableFlags = ImmutableScriptFlagsEnum;
   immutableFlags_.setFlag(ImmutableFlags::HasMappedArgsObj, hasMappedArgsObj());
-}
-
-void FunctionBox::copyScriptFields(ScriptStencil& script) {
-  MOZ_ASSERT(&script == &functionStencil());
-
-  SharedContext::copyScriptFields(script);
-
-  isScriptFieldCopiedToStencil = true;
 }
 
 void FunctionBox::copyFunctionFields(ScriptStencil& script) {
@@ -433,8 +447,8 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
   if (enclosingScopeIndex_) {
     script.setLazyFunctionEnclosingScopeIndex(*enclosingScopeIndex_);
   }
-  if (wasEmitted_) {
-    script.setWasFunctionEmitted();
+  if (wasEmittedByEnclosingScript_) {
+    script.setWasEmittedByEnclosingScript();
   }
 
   isFunctionFieldCopiedToStencil = true;
@@ -449,7 +463,7 @@ void FunctionBox::copyFunctionExtraFields(ScriptStencilExtra& scriptExtra) {
 }
 
 void FunctionBox::copyUpdatedImmutableFlags() {
-  if (hasFunctionExtraStencil()) {
+  if (isInitialCompilation) {
     ScriptStencilExtra& scriptExtra = functionExtraStencil();
     scriptExtra.immutableFlags = immutableFlags_;
   }
@@ -462,7 +476,7 @@ void FunctionBox::copyUpdatedExtent() {
 
 void FunctionBox::copyUpdatedMemberInitializers() {
   MOZ_ASSERT(useMemberInitializers());
-  if (hasFunctionExtraStencil()) {
+  if (isInitialCompilation) {
     ScriptStencilExtra& scriptExtra = functionExtraStencil();
     scriptExtra.setMemberInitializers(memberInitializers());
   } else {
@@ -489,8 +503,8 @@ void FunctionBox::copyUpdatedAtomAndFlags() {
 
 void FunctionBox::copyUpdatedWasEmitted() {
   ScriptStencil& script = functionStencil();
-  if (wasEmitted_) {
-    script.setWasFunctionEmitted();
+  if (wasEmittedByEnclosingScript_) {
+    script.setWasEmittedByEnclosingScript();
   }
 }
 

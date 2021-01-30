@@ -1406,7 +1406,7 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
 
   static bool InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::CompilationInput& input,
+      const js::frontend::CompilationInput& input,
       const js::frontend::BaseCompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput,
       const js::frontend::ScriptIndex scriptIndex);
@@ -1564,6 +1564,17 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
     MOZ_ASSERT(extent_.toStringStart <= extent_.sourceStart);
     MOZ_ASSERT(extent_.sourceStart <= extent_.sourceEnd);
     MOZ_ASSERT(extent_.sourceEnd <= extent_.toStringEnd);
+
+    // The immutableFlags determine if the arguments-analysis will need to be
+    // run. We track if we need to run the analysis and the result of the
+    // analysis on the mutableFlags. The analysis is deterministic so we only
+    // need it once, even if we relazify, etc.
+    if (argumentsHasVarBinding()) {
+      setFlag(MutableFlags::NeedsArgsObj, alwaysNeedsArgsObj());
+      setFlag(MutableFlags::NeedsArgsAnalysis, !alwaysNeedsArgsObj());
+    } else {
+      MOZ_ASSERT(!alwaysNeedsArgsObj());
+    }
   }
 
   void setJitCodeRaw(uint8_t* code) { setHeaderPtr(code); }
@@ -1840,12 +1851,9 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
     //  - Scripts with inner-functions or direct-eval (which can add
     //    inner-functions) should not be relazified as their Scopes may be part
     //    of another scope-chain.
-    //  - Generators and async functions may be re-entered in complex ways so
-    //    don't discard bytecode. The JIT resume code assumes this.
     //  - Functions with template literals must always return the same object
     //    instance so must not discard it by relazifying.
-    return !hasInnerFunctions() && !hasDirectEval() && !isGenerator() &&
-           !isAsync() && !hasCallSiteObj();
+    return !hasInnerFunctions() && !hasDirectEval() && !hasCallSiteObj();
   }
 
  public:
@@ -1905,7 +1913,7 @@ class JSScript : public js::BaseScript {
 
   friend bool js::PrivateScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::CompilationInput& input,
+      const js::frontend::CompilationInput& input,
       const js::frontend::BaseCompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput,
       const js::frontend::ScriptIndex scriptIndex);
@@ -1933,7 +1941,7 @@ class JSScript : public js::BaseScript {
 
  public:
   static bool fullyInitFromStencil(
-      JSContext* cx, js::frontend::CompilationInput& input,
+      JSContext* cx, const js::frontend::CompilationInput& input,
       const js::frontend::BaseCompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput, js::HandleScript script,
       const js::frontend::ScriptIndex scriptIndex);
@@ -1941,7 +1949,6 @@ class JSScript : public js::BaseScript {
   // Allocate a JSScript and initialize it with bytecode. This consumes
   // allocations within the stencil.
   static JSScript* fromStencil(JSContext* cx,
-                               js::frontend::CompilationInput& input,
                                const js::frontend::CompilationStencil& stencil,
                                js::frontend::CompilationGCOutput& gcOutput,
                                const js::frontend::ScriptIndex scriptIndex);
@@ -2083,10 +2090,6 @@ class JSScript : public js::BaseScript {
   void setNeedsArgsObj(bool needsArgsObj);
   static void argumentsOptimizationFailed(JSContext* cx,
                                           js::HandleScript script);
-
-  // Update the the arguments analysis flags based on the frontend
-  // derived information.
-  void resetArgsUsageAnalysis();
 
   /*
    * Arguments access (via JSOp::*Arg* opcodes) must access the canonical
@@ -2481,8 +2484,7 @@ JSScript* CloneScriptIntoFunction(JSContext* cx, HandleScope enclosingScope,
                                   Handle<ScriptSourceObject*> sourceObject,
                                   SourceExtent* maybeClassExtent = nullptr);
 
-JSScript* CloneGlobalScript(JSContext* cx, ScopeKind scopeKind,
-                            HandleScript src);
+JSScript* CloneGlobalScript(JSContext* cx, HandleScript src);
 
 bool CheckCompileOptionsMatch(const JS::ReadOnlyCompileOptions& options,
                               js::ImmutableScriptFlags flags,

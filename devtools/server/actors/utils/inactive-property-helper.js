@@ -302,7 +302,7 @@ class InactivePropertyHelper {
       // https://bugzilla.mozilla.org/show_bug.cgi?id=1551578
       {
         invalidProperties: ["text-overflow"],
-        when: () => !this.checkComputedStyle("overflow", ["hidden"]),
+        when: () => !this.hasInlineOverflow,
         fixId: "inactive-text-overflow-when-no-overflow-fix",
         msgId: "inactive-text-overflow-when-no-overflow",
         numFixProps: 1,
@@ -363,6 +363,15 @@ class InactivePropertyHelper {
           "inactive-css-not-for-internal-table-elements-except-table-cells-fix",
         msgId:
           "inactive-css-not-for-internal-table-elements-except-table-cells",
+        numFixProps: 1,
+      },
+      // table-layout used on non-table elements.
+      {
+        invalidProperties: ["table-layout"],
+        when: () =>
+          !this.checkComputedStyle("display", ["table", "inline-table"]),
+        fixId: "inactive-css-not-table-fix",
+        msgId: "inactive-css-not-table",
         numFixProps: 1,
       },
     ];
@@ -654,10 +663,11 @@ class InactivePropertyHelper {
       return false;
     }
 
-    const wm = this.getTableTrackParentWritingMode();
-    const isVertical = wm.includes("vertical") || wm.includes("sideways");
+    const tableTrackParent = this.getTableTrackParent();
 
-    return isVertical ? this.tableColumn : this.tableRow;
+    return this.hasVerticalWritingMode(tableTrackParent)
+      ? this.tableColumn
+      : this.tableRow;
   }
 
   /**
@@ -670,10 +680,11 @@ class InactivePropertyHelper {
       return false;
     }
 
-    const wm = this.getTableTrackParentWritingMode();
-    const isVertical = wm.includes("vertical") || wm.includes("sideways");
+    const tableTrackParent = this.getTableTrackParent();
 
-    return isVertical ? this.tableRow : this.tableColumn;
+    return this.hasVerticalWritingMode(tableTrackParent)
+      ? this.tableRow
+      : this.tableColumn;
   }
 
   /**
@@ -700,8 +711,8 @@ class InactivePropertyHelper {
       return false;
     }
 
-    const wm = this.getTableTrackParentWritingMode(true);
-    const isVertical = wm.includes("vertical") || wm.includes("sideways");
+    const tableTrackParent = this.getTableTrackParent(true);
+    const isVertical = this.hasVerticalWritingMode(tableTrackParent);
 
     const isHorizontalRowGroup = this.rowGroup && !isVertical;
     const isHorizontalColumnGroup = this.columnGroup && isVertical;
@@ -719,8 +730,8 @@ class InactivePropertyHelper {
       return false;
     }
 
-    const wm = this.getTableTrackParentWritingMode(true);
-    const isVertical = wm.includes("vertical") || wm.includes("sideways");
+    const tableTrackParent = this.getTableTrackParent(true);
+    const isVertical = this.hasVerticalWritingMode(tableTrackParent);
 
     const isVerticalRowGroup = this.rowGroup && isVertical;
     const isVerticalColumnGroup = this.columnGroup && !isVertical;
@@ -780,6 +791,17 @@ class InactivePropertyHelper {
    */
   get isFloated() {
     return this.style && this.style.cssFloat !== "none";
+  }
+
+  /**
+   * Check if the current node has inline overflow
+   */
+  get hasInlineOverflow() {
+    const property = this.hasVerticalWritingMode(this.node)
+      ? "overflow-y"
+      : "overflow-x";
+
+    return !this.checkComputedStyle(property, ["visible"]);
   }
 
   /**
@@ -1018,17 +1040,25 @@ class InactivePropertyHelper {
   }
 
   /**
+   * Check if the given node's writing mode is vertical
+   */
+  hasVerticalWritingMode(node) {
+    const writingMode = computedStyle(node).writingMode;
+    return writingMode.includes("vertical") || writingMode.includes("sideways");
+  }
+
+  /**
    * Assuming the current element is a table track (row or column) or table track group,
-   * get the parent table writing mode.
+   * get the parent table.
    * This is either going to be the table element if there is one, or the parent element.
-   * If the current element is not a table track, this returns its own writing mode.
+   * If the current element is not a table track, this returns the current element.
    *
    * @param  {Boolean} isGroup
    *         Whether the element is a table track group, instead of a table track.
-   * @return {String}
-   *         The writing-mode value
+   * @return {DOMNode}
+   *         The parent table, the parent element, or the element itself.
    */
-  getTableTrackParentWritingMode(isGroup) {
+  getTableTrackParent(isGroup) {
     let current = this.node.parentNode;
 
     // Skip over unrendered elements.
@@ -1046,7 +1076,7 @@ class InactivePropertyHelper {
       current = current.parentNode;
     }
 
-    return computedStyle(current).writingMode;
+    return current;
   }
 }
 

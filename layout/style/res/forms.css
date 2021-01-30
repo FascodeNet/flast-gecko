@@ -236,13 +236,13 @@ select {
   display: inline-block;
   page-break-inside: avoid;
   overflow-clip-box: padding-box !important; /* bug 992447 */
+  padding-block: 1px;
 
   /* Set some styles for drop down selects. These are overridden below for
    * list box selects. */
   background-color: -moz-Combobox;
   color: -moz-ComboboxText;
   vertical-align: baseline;
-  padding-block: 0;
   appearance: auto;
   -moz-default-appearance: menulist;
 }
@@ -252,7 +252,6 @@ select:-moz-select-list-box {
   background-color: Field;
   color: FieldText;
   vertical-align: text-bottom;
-  padding-block: 1px;
   appearance: auto;
   -moz-default-appearance: listbox;
 }
@@ -301,9 +300,6 @@ select > button[orientation="right"]:active {
 
 *|*::-moz-display-comboboxcontrol-frame {
   overflow: clip;
-  /* This block-start/end padding plus the combobox block-start/end border need to
-     add up to the block-start/end borderpadding of text inputs and buttons */
-  padding-block: 1px;
   padding-inline: 4px;
   color: unset;
   white-space: nowrap;
@@ -529,7 +525,7 @@ input:is([type=color], [type=reset], [type=button], [type=submit]) {
   /* The sum of border and padding on block-start and block-end
      must be the same here, for text inputs, and for <select>.
      Note -moz-focus-inner padding does not affect button size. */
-  padding-block: 0;
+  padding-block: 1px;
   padding-inline: 8px;
   border: 2px outset ThreeDLightShadow;
   background-color: ButtonFace;
@@ -625,12 +621,7 @@ input:is([type=reset], [type=button], [type=submit]):hover {
 ::file-selector-button:active:hover,
 button:active:hover,
 input:is([type=reset], [type=button], [type=submit], [type=color]):active:hover {
-%ifndef XP_MACOSX
-  padding-block: 0;
-  padding-inline: 9px 7px;
-%endif
   border-style: inset;
-  background-color: ButtonFace;
 }
 
 ::file-selector-button:active:hover,
@@ -658,11 +649,7 @@ input:is([type=reset], [type=button], [type=submit]):active:hover {
 button:is(:disabled, :disabled:active),
 input:is([type=reset], [type=button], [type=submit], [type=color]):is(:disabled, :disabled:active),
 select:is(:disabled, :disabled:active) > button {
-  /* The sum of border and padding on block-start and block-end
-     must be the same here and for text inputs */
-  padding-block: 0;
-  padding-inline: 8px;
-  border: 2px outset ThreeDLightShadow;
+  border-style: outset;
   cursor: unset;
 }
 
@@ -1042,14 +1029,6 @@ input:is([type=date], [type=time]) {
 
 input:is([type=date], [type=time]):is(:disabled, :read-only) {
   color: GrayText;
-}
-
-@media (-moz-non-native-content-theme) {
-  /* TODO(emilio): This is an odd special-case... */
-  input:is([type=date], [type=time]) {
-    padding-inline: 3px;
-    padding-block: 2px 0;
-  }
 }
 
 input:autofill, input:-moz-autofill-preview {

@@ -7,9 +7,11 @@
 #include "frontend/Stencil.h"
 
 #include "mozilla/OperatorNewExtensions.h"  // mozilla::KnownNotNull
+#include "mozilla/PodOperations.h"          // mozilla::PodCopy
 #include "mozilla/RefPtr.h"                 // RefPtr
 #include "mozilla/Sprintf.h"                // SprintfLiteral
 
+#include "ds/LifoAlloc.h"                  // LifoAlloc
 #include "frontend/AbstractScopePtr.h"     // ScopeIndex
 #include "frontend/BytecodeCompilation.h"  // CanLazilyParse
 #include "frontend/BytecodeSection.h"      // EmitScriptThingsVector
@@ -132,7 +134,7 @@ Scope* ScopeStencil::createScope(JSContext* cx, CompilationInput& input,
   return scope;
 }
 
-static bool CreateLazyScript(JSContext* cx, CompilationInput& input,
+static bool CreateLazyScript(JSContext* cx, const CompilationInput& input,
                              const BaseCompilationStencil& stencil,
                              CompilationGCOutput& gcOutput,
                              const ScriptStencil& script,
@@ -421,10 +423,10 @@ static bool InstantiateScopes(JSContext* cx, CompilationInput& input,
 // Instantiate js::BaseScripts from ScriptStencils for inner functions of the
 // compilation. Note that standalone functions and functions being delazified
 // are handled below with other top-levels.
-static bool InstantiateScriptStencils(JSContext* cx, CompilationInput& input,
+static bool InstantiateScriptStencils(JSContext* cx,
                                       const CompilationStencil& stencil,
                                       CompilationGCOutput& gcOutput) {
-  MOZ_ASSERT(input.lazy == nullptr);
+  MOZ_ASSERT(stencil.isInitialStencil());
 
   Rooted<JSFunction*> fun(cx);
   for (auto item :
@@ -437,20 +439,18 @@ static bool InstantiateScriptStencils(JSContext* cx, CompilationInput& input,
       // If the function was not referenced by enclosing script's bytecode, we
       // do not generate a BaseScript for it. For example, `(function(){});`.
       //
-      // `wasFunctionEmitted` is false also for standalone functions. They are
-      // handled in InstantiateTopLevel.
-      if (!scriptStencil.wasFunctionEmitted()) {
+      // `wasEmittedByEnclosingScript` is false also for standalone
+      // functions. They are handled in InstantiateTopLevel.
+      if (!scriptStencil.wasEmittedByEnclosingScript()) {
         continue;
       }
 
-      RootedScript script(
-          cx, JSScript::fromStencil(cx, input, stencil, gcOutput, index));
+      RootedScript script(cx,
+                          JSScript::fromStencil(cx, stencil, gcOutput, index));
       if (!script) {
         return false;
       }
 
-      // NOTE: Inner functions can be marked `allowRelazify` after merging
-      // a stencil for delazification into the top-level stencil.
       if (scriptStencil.allowRelazify()) {
         MOZ_ASSERT(script->isRelazifiable());
         script->setAllowRelazify();
@@ -459,7 +459,7 @@ static bool InstantiateScriptStencils(JSContext* cx, CompilationInput& input,
       MOZ_ASSERT(fun->isAsmJSNative());
     } else {
       MOZ_ASSERT(fun->isIncomplete());
-      if (!CreateLazyScript(cx, input, stencil, gcOutput, scriptStencil,
+      if (!CreateLazyScript(cx, stencil.input, stencil, gcOutput, scriptStencil,
                             *scriptExtra, index, fun)) {
         return false;
       }
@@ -485,7 +485,8 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInput& input,
   MOZ_ASSERT(scriptStencil.hasSharedData());
   MOZ_ASSERT(stencil.sharedData.get(CompilationStencil::TopLevelIndex));
 
-  if (input.lazy) {
+  if (!stencil.isInitialStencil()) {
+    MOZ_ASSERT(input.lazy);
     RootedScript script(cx, JSScript::CastFromLazy(input.lazy));
     if (!JSScript::fullyInitFromStencil(cx, input, stencil, gcOutput, script,
                                         CompilationStencil::TopLevelIndex)) {
@@ -501,8 +502,9 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInput& input,
     return true;
   }
 
+  MOZ_ASSERT(&stencil.asCompilationStencil().input == &input);
   gcOutput.script =
-      JSScript::fromStencil(cx, input, stencil.asCompilationStencil(), gcOutput,
+      JSScript::fromStencil(cx, stencil.asCompilationStencil(), gcOutput,
                             CompilationStencil::TopLevelIndex);
   if (!gcOutput.script) {
     return false;
@@ -552,7 +554,7 @@ static void UpdateEmittedInnerFunctions(JSContext* cx, CompilationInput& input,
        CompilationStencil::functionScriptStencils(stencil, gcOutput)) {
     auto& scriptStencil = item.script;
     auto& fun = item.function;
-    if (!scriptStencil.wasFunctionEmitted()) {
+    if (!scriptStencil.wasEmittedByEnclosingScript()) {
       continue;
     }
 
@@ -690,7 +692,8 @@ bool CompilationStencil::instantiateStencilsAfterPreparation(
     const BaseCompilationStencil& stencil, CompilationGCOutput& gcOutput) {
   // Distinguish between the initial (possibly lazy) compile and any subsequent
   // delazification compiles. Delazification will update existing GC things.
-  bool isInitialParse = (input.lazy == nullptr);
+  bool isInitialParse = stencil.isInitialStencil();
+  MOZ_ASSERT(stencil.isInitialStencil() == !input.lazy);
 
   // Phase 1: Instantate JSAtoms.
   if (!InstantiateAtoms(cx, input, stencil)) {
@@ -746,7 +749,8 @@ bool CompilationStencil::instantiateStencilsAfterPreparation(
 
   // Phase 4: Instantiate (inner) BaseScripts.
   if (isInitialParse) {
-    if (!InstantiateScriptStencils(cx, input, stencil.asCompilationStencil(),
+    MOZ_ASSERT(&stencil.asCompilationStencil().input == &input);
+    if (!InstantiateScriptStencils(cx, stencil.asCompilationStencil(),
                                    gcOutput)) {
       return false;
     }
@@ -1021,10 +1025,10 @@ CompilationState::CompilationState(
     JSContext* cx, LifoAllocScope& frontendAllocScope,
     const JS::ReadOnlyCompileOptions& options, CompilationStencil& stencil,
     InheritThis inheritThis /* = InheritThis::No */,
-    Scope* enclosingScope /* = nullptr */,
     JSObject* enclosingEnv /* = nullptr */)
     : directives(options.forceStrictMode()),
-      scopeContext(cx, inheritThis, enclosingScope, enclosingEnv),
+      scopeContext(cx, inheritThis,
+                   stencil.input.maybeNonDefaultEnclosingScope(), enclosingEnv),
       usedNames(cx),
       allocScope(frontendAllocScope),
       input(stencil.input),
@@ -1177,6 +1181,15 @@ bool CompilationState::finish(JSContext* cx, CompilationStencil& stencil) {
     return false;
   }
 
+  if (!CopyVectorToSpan(cx, stencil.alloc, stencil.bigIntData, bigIntData)) {
+    return false;
+  }
+
+  if (!CopyVectorToSpan(cx, stencil.alloc, stencil.objLiteralData,
+                        objLiteralData)) {
+    return false;
+  }
+
   if (!CopyVectorToSpan(cx, stencil.alloc, stencil.scriptData, scriptData)) {
     return false;
   }
@@ -1208,6 +1221,26 @@ bool CompilationState::finish(JSContext* cx, CompilationStencil& stencil) {
 mozilla::Span<TaggedScriptThingIndex> ScriptStencil::gcthings(
     const BaseCompilationStencil& stencil) const {
   return stencil.gcThingData.Subspan(gcThingsOffset, gcThingsLength);
+}
+
+MOZ_MUST_USE bool BigIntStencil::init(JSContext* cx, LifoAlloc& alloc,
+                                      const Vector<char16_t, 32>& buf) {
+#ifdef DEBUG
+  // Assert we have no separators; if we have a separator then the algorithm
+  // used in BigInt::literalIsZero will be incorrect.
+  for (char16_t c : buf) {
+    MOZ_ASSERT(c != '_');
+  }
+#endif
+  size_t length = buf.length();
+  char16_t* p = alloc.template newArrayUninitialized<char16_t>(length);
+  if (!p) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  mozilla::PodCopy(p, buf.begin(), length);
+  source_ = mozilla::Span(p, length);
+  return true;
 }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
@@ -1342,8 +1375,8 @@ void BigIntStencil::dump(js::JSONPrinter& json) {
 }
 
 void BigIntStencil::dumpCharsNoQuote(GenericPrinter& out) {
-  for (size_t i = 0; i < length_; i++) {
-    out.putChar(char(buf_[i]));
+  for (char16_t c : source_) {
+    out.putChar(char(c));
   }
 }
 
@@ -1845,8 +1878,8 @@ void ScriptStencil::dumpFields(js::JSONPrinter& json,
   }
 
   json.beginListProperty("flags");
-  if (flags_ & WasFunctionEmittedFlag) {
-    json.value("WasFunctionEmittedFlag");
+  if (flags_ & WasEmittedByEnclosingScriptFlag) {
+    json.value("WasEmittedByEnclosingScriptFlag");
   }
   if (flags_ & AllowRelazifyFlag) {
     json.value("AllowRelazifyFlag");
@@ -1991,7 +2024,7 @@ void BaseCompilationStencil::dumpFields(js::JSONPrinter& json) {
   json.endObject();
 
   json.beginObjectProperty("bigIntData");
-  for (size_t i = 0; i < bigIntData.length(); i++) {
+  for (size_t i = 0; i < bigIntData.size(); i++) {
     SprintfLiteral(index, "BigIntIndex(%zu)", i);
     GenericPrinter& out = json.beginStringProperty(index);
     bigIntData[i].dumpCharsNoQuote(out);
@@ -2000,7 +2033,7 @@ void BaseCompilationStencil::dumpFields(js::JSONPrinter& json) {
   json.endObject();
 
   json.beginObjectProperty("objLiteralData");
-  for (size_t i = 0; i < objLiteralData.length(); i++) {
+  for (size_t i = 0; i < objLiteralData.size(); i++) {
     SprintfLiteral(index, "ObjLiteralIndex(%zu)", i);
     json.beginObjectProperty(index);
     objLiteralData[i].dumpFields(json, this);

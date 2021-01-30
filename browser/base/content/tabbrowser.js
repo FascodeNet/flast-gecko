@@ -292,11 +292,10 @@
         gSharedTabWarning.willShowSharedTabWarning(val) ||
         (gNavToolbox.collapsed && !this._allowTabChange)
       ) {
-        return this.tabbox.selectedTab;
+        return;
       }
       // Update the tab
       this.tabbox.selectedTab = val;
-      return val;
     },
 
     get selectedTab() {
@@ -1302,7 +1301,9 @@
 
       if (newBrowser.hasAttribute("tabDialogShowing")) {
         newBrowser.tabDialogBox.focus();
-      } else if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
+        return;
+      }
+      if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
         // If there's a tabmodal prompt showing, focus it.
         let prompts = newBrowser.tabModalPromptBox.listPrompts();
         let prompt = prompts[prompts.length - 1];
@@ -6448,8 +6449,6 @@ var StatusPanel = {
       this.panel.setAttribute("inactive", "true");
       MousePosTracker.removeListener(this);
     }
-
-    return val;
   },
 
   getMouseTargetRect() {

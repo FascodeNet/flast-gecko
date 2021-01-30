@@ -682,7 +682,6 @@ nsresult nsHttpChannel::ContinueOnBeforeConnect(bool aShouldUpgrade,
   // Finalize ConnectionInfo flags before SpeculativeConnect
   mConnectionInfo->SetAnonymous((mLoadFlags & LOAD_ANONYMOUS) != 0);
   mConnectionInfo->SetPrivate(mPrivateBrowsing);
-  mConnectionInfo->SetIsolated(IsIsolated());
   mConnectionInfo->SetNoSpdy(mCaps & NS_HTTP_DISALLOW_SPDY);
   mConnectionInfo->SetBeConservative((mCaps & NS_HTTP_BE_CONSERVATIVE) ||
                                      LoadBeConservative());
@@ -2094,9 +2093,8 @@ void nsHttpChannel::ProcessAltService() {
   }
 
   AltSvcMapping::ProcessHeader(
-      altSvc, scheme, originHost, originPort, mUsername, GetTopWindowOrigin(),
-      mPrivateBrowsing, IsIsolated(), callbacks, proxyInfo,
-      mCaps & NS_HTTP_DISALLOW_SPDY, originAttributes);
+      altSvc, scheme, originHost, originPort, mUsername, mPrivateBrowsing,
+      callbacks, proxyInfo, mCaps & NS_HTTP_DISALLOW_SPDY, originAttributes);
 }
 
 nsresult nsHttpChannel::ProcessResponse() {
@@ -3656,43 +3654,6 @@ nsresult nsHttpChannel::OpenCacheEntry(bool isHttps) {
   return OpenCacheEntryInternal(isHttps, mApplicationCache, true);
 }
 
-bool nsHttpChannel::IsIsolated() {
-  if (LoadHasBeenIsolatedChecked()) {
-    return LoadIsIsolated();
-  }
-  StoreIsIsolated(
-      StaticPrefs::browser_cache_cache_isolation() ||
-      (IsThirdPartyTrackingResource() &&
-       !ContentBlocking::ShouldAllowAccessFor(this, mURI, nullptr)));
-  StoreHasBeenIsolatedChecked(true);
-  return LoadIsIsolated();
-}
-
-const nsCString& nsHttpChannel::GetTopWindowOrigin() {
-  if (LoadTopWindowOriginComputed()) {
-    return mTopWindowOrigin;
-  }
-
-  nsCOMPtr<nsIURI> topWindowURI;
-  nsresult rv = GetTopWindowURI(getter_AddRefs(topWindowURI));
-  bool isDocument = false;
-  if (NS_FAILED(rv) && NS_SUCCEEDED(GetIsMainDocumentChannel(&isDocument)) &&
-      isDocument) {
-    // For top-level documents, use the document channel's origin to compute
-    // the unique storage space identifier instead of the top Window URI.
-    rv = NS_GetFinalChannelURI(this, getter_AddRefs(topWindowURI));
-    NS_ENSURE_SUCCESS(rv, mTopWindowOrigin);
-  }
-
-  rv = nsContentUtils::GetASCIIOrigin(topWindowURI ? topWindowURI : mURI,
-                                      mTopWindowOrigin);
-  NS_ENSURE_SUCCESS(rv, mTopWindowOrigin);
-
-  StoreTopWindowOriginComputed(true);
-
-  return mTopWindowOrigin;
-}
-
 nsresult nsHttpChannel::OpenCacheEntryInternal(
     bool isHttps, nsIApplicationCache* applicationCache,
     bool allowApplicationCache) {
@@ -3813,16 +3774,6 @@ nsresult nsHttpChannel::OpenCacheEntryInternal(
   }
   if (mRequestHead.IsHead()) {
     mCacheIdExtension.Append("HEAD");
-  }
-
-  if (IsIsolated()) {
-    auto& topWindowOrigin = GetTopWindowOrigin();
-    if (topWindowOrigin.IsEmpty()) {
-      return NS_ERROR_FAILURE;
-    }
-
-    mCacheIdExtension.Append("-unique:");
-    mCacheIdExtension.Append(topWindowOrigin);
   }
 
   mCacheOpenWithPriority = cacheEntryOpenFlags & nsICacheStorage::OPEN_PRIORITY;
@@ -6579,13 +6530,11 @@ nsresult nsHttpChannel::BeginConnect() {
     StoreAllowHttp3(false);
   }
 
-  gHttpHandler->MaybeAddAltSvcForTesting(mURI, mUsername, GetTopWindowOrigin(),
-                                         mPrivateBrowsing, IsIsolated(),
+  gHttpHandler->MaybeAddAltSvcForTesting(mURI, mUsername, mPrivateBrowsing,
                                          mCallbacks, originAttributes);
 
   RefPtr<nsHttpConnectionInfo> connInfo = new nsHttpConnectionInfo(
-      host, port, ""_ns, mUsername, GetTopWindowOrigin(), proxyInfo,
-      originAttributes, isHttps);
+      host, port, ""_ns, mUsername, proxyInfo, originAttributes, isHttps);
   bool http2Allowed = !gHttpHandler->IsHttp2Excluded(connInfo);
   if (!LoadAllowHttp3()) {
     mCaps |= NS_HTTP_DISALLOW_HTTP3;
@@ -6605,8 +6554,7 @@ nsresult nsHttpChannel::BeginConnect() {
       AltSvcMapping::AcceptableProxy(proxyInfo) &&
       (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https")) &&
       (mapping = gHttpHandler->GetAltServiceMapping(
-           scheme, host, port, mPrivateBrowsing, IsIsolated(),
-           GetTopWindowOrigin(), originAttributes, http2Allowed,
+           scheme, host, port, mPrivateBrowsing, originAttributes, http2Allowed,
            http3Allowed))) {
     LOG(("nsHttpChannel %p Alt Service Mapping Found %s://%s:%d [%s]\n", this,
          scheme.get(), mapping->AlternateHost().get(), mapping->AlternatePort(),
@@ -6663,7 +6611,8 @@ nsresult nsHttpChannel::BeginConnect() {
 
   // Need to re-ask the handler, since mConnectionInfo may not be the connInfo
   // we used earlier
-  if (gHttpHandler->IsHttp2Excluded(mConnectionInfo)) {
+  if (!mConnectionInfo->IsHttp3() &&
+      gHttpHandler->IsHttp2Excluded(mConnectionInfo)) {
     StoreAllowSpdy(0);
     mCaps |= NS_HTTP_DISALLOW_SPDY;
     mConnectionInfo->SetNoSpdy(true);
@@ -6832,7 +6781,10 @@ nsresult nsHttpChannel::MaybeStartDNSPrefetch() {
     // When LoadUseHTTPSSVC() is true, we should really "fetch" the HTTPS RR,
     // not "prefetch", since DNS prefetch can be disabled by the pref.
     if (LoadUseHTTPSSVC() ||
-        gHttpHandler->UseHTTPSRRForSpeculativeConnection()) {
+        (gHttpHandler->UseHTTPSRRForSpeculativeConnection() &&
+         !mHTTPSSVCRecord)) {
+      MOZ_ASSERT(!mHTTPSSVCRecord);
+
       OriginAttributes originAttributes;
       StoragePrincipalHelper::GetOriginAttributesForHTTPSRR(this,
                                                             originAttributes);
@@ -9028,7 +8980,11 @@ void nsHttpChannel::OnHTTPSRRAvailable(nsIDNSHTTPSSVCRecord* aRecord) {
   LOG(("nsHttpChannel::OnHTTPSRRAvailable [this=%p, aRecord=%p]\n", this,
        aRecord));
 
-  MOZ_ASSERT(!mHTTPSSVCRecord);
+  if (mHTTPSSVCRecord) {
+    MOZ_ASSERT(false, "OnHTTPSRRAvailable called twice!");
+    return;
+  }
+
   nsCOMPtr<nsIDNSHTTPSSVCRecord> record = aRecord;
   mHTTPSSVCRecord.emplace(std::move(record));
   const nsCOMPtr<nsIDNSHTTPSSVCRecord>& httprr = mHTTPSSVCRecord.ref();
@@ -9744,8 +9700,11 @@ nsresult nsHttpChannel::MaybeRaceCacheWithNetwork() {
   rv = netLinkSvc->GetLinkType(&linkType);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!(linkType == nsINetworkLinkService::LINK_TYPE_UNKNOWN ||
-        linkType == nsINetworkLinkService::LINK_TYPE_ETHERNET ||
+  if (!(linkType == nsINetworkLinkService::LINK_TYPE_ETHERNET ||
+#ifndef MOZ_WIDGET_ANDROID
+        // On Android we don't assume an unknown link type is unmetered
+        linkType == nsINetworkLinkService::LINK_TYPE_UNKNOWN ||
+#endif
         linkType == nsINetworkLinkService::LINK_TYPE_USB ||
         linkType == nsINetworkLinkService::LINK_TYPE_WIFI)) {
     return NS_OK;

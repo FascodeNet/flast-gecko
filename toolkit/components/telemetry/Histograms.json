@@ -340,12 +340,47 @@
   "CONTENT_PROCESS_LAUNCH_IS_SYNC" : {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "alert_emails": ["jld@mozilla.com", "jimm@mozilla.com", "mconley@mozilla.com"],
+    "alert_emails": ["jld@mozilla.com", "jimm@mozilla.  com", "mconley@mozilla.com"],
     "expires_in_version": "never",
     "bug_numbers": [1474991],
     "kind": "boolean",
     "releaseChannelCollection": "opt-out",
     "description": "Whether a content process was launched synchronously (unnecessarily delaying UI response)."
+  },
+  "CONTENT_PROCESS_COUNT": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["barret@mozilla.com", "perf-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "98",
+    "bug_numbers": [1688078],
+    "kind": "linear",
+    "high": 500,
+    "n_buckets": 100,
+    "releaseChannelCollection": "opt-out",
+    "description": "A count of the number of content processes, collected every five minutes."
+  },
+  "CONTENT_PROCESS_MAX": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["barret@mozilla.com", "perf-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "98",
+    "bug_numbers": [1688079],
+    "kind": "linear",
+    "high": 500,
+    "n_buckets": 100,
+    "releaseChannelCollection": "opt-out",
+    "description": "The maximum number of content processes, submitted when a new maximum is reached."
+  },
+  "CONTENT_PROCESS_TIME_SINCE_LAST_LAUNCH_MS": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["barret@mozilla.com", "perf-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "98",
+    "bug_numbers": [1688082],
+    "kind": "exponential",
+    "high": 600000,
+    "n_buckets": 100,
+    "description": "The time (in milliseconds) since the last content process was launched."
   },
   "CYCLE_COLLECTOR": {
     "record_in_processes": ["main", "content"],
@@ -9648,7 +9683,7 @@
     "kind": "count",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
-    "alert_emails": ["fx-search@mozilla.com", "teon@mozilla.com"],
+    "alert_emails": ["fx-search@mozilla.com", "rev-data@mozilla.com"],
     "bug_numbers": [1089670, 1475571, 1482158, 1499193, 1545172, 1572500, 1654680],
     "description": "Records search counts for search access points and in-content searches. For search access points in general, the format is: <engine-name>.<search-access-point> For the urlbar when in search mode, the format is <engine name>.urlbar-searchmode For the urlbar when an internal @engine shortcut is used, the format is: <engine-name>.alias For in-content searches, the format is <provider>.in-content:[sap|sap-follow-on|organic]:[code|none]",
     "record_into_store": ["main", "account-ecosystem"]

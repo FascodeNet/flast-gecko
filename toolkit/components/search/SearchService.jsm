@@ -965,7 +965,8 @@ SearchService.prototype = {
       if (this._engines.has(name)) {
         logConsole.debug(
           "_loadEnginesMetadataFromSettings, transfering metadata for",
-          name
+          name,
+          engine._metaData
         );
         let eng = this._engines.get(name);
         // We used to store the alias in metadata.alias, in 1621892 that was
@@ -2546,10 +2547,8 @@ SearchService.prototype = {
         });
         break;
       case Region.REGION_TOPIC:
-        if (verb == Region.REGION_UPDATED) {
-          logConsole.debug("Region updated:", Region.home);
-          this._maybeReloadEngines().catch(Cu.reportError);
-        }
+        logConsole.debug("Region updated:", Region.home);
+        this._maybeReloadEngines().catch(Cu.reportError);
         break;
     }
   },
