@@ -112,16 +112,16 @@ namespace js {
 namespace frontend {
 
 JSAtom* GetWellKnownAtom(JSContext* cx, WellKnownAtomId atomId) {
-#define ASSERT_OFFSET_(idpart, id, text)       \
-  static_assert(offsetof(JSAtomState, id) ==   \
-                int32_t(WellKnownAtomId::id) * \
+#define ASSERT_OFFSET_(_, NAME, _2)              \
+  static_assert(offsetof(JSAtomState, NAME) ==   \
+                int32_t(WellKnownAtomId::NAME) * \
                     sizeof(js::ImmutablePropertyNamePtr));
   FOR_EACH_COMMON_PROPERTYNAME(ASSERT_OFFSET_);
 #undef ASSERT_OFFSET_
 
-#define ASSERT_OFFSET_(name, clasp)              \
-  static_assert(offsetof(JSAtomState, name) ==   \
-                int32_t(WellKnownAtomId::name) * \
+#define ASSERT_OFFSET_(NAME, _)                  \
+  static_assert(offsetof(JSAtomState, NAME) ==   \
+                int32_t(WellKnownAtomId::NAME) * \
                     sizeof(js::ImmutablePropertyNamePtr));
   JS_FOR_EACH_PROTOTYPE(ASSERT_OFFSET_);
 #undef ASSERT_OFFSET_
@@ -219,7 +219,10 @@ UniqueChars ToPrintableStringImpl(JSContext* cx, mozilla::Range<CharT> str) {
   return sprinter.release();
 }
 
-UniqueChars ParserAtomToPrintableString(JSContext* cx, const ParserAtom* atom) {
+UniqueChars ParserAtomToPrintableString(JSContext* cx,
+                                        ParserAtomsTable& parserAtoms,
+                                        TaggedParserAtomIndex atomIndex) {
+  const ParserAtom* atom = parserAtoms.getParserAtom(atomIndex);
   size_t length = atom->length();
 
   return atom->hasLatin1Chars()
@@ -243,61 +246,39 @@ bool ParserAtomEntry::isIndex(uint32_t* indexp) const {
 }
 
 bool ParserAtomEntry::isPrivateName() const {
-  return length() > 0 &&
-         (hasLatin1Chars()
-             ? latin1Chars()[0] == '#'
-             : twoByteChars()[0] == '#');
+  return length() > 0 && (hasLatin1Chars() ? latin1Chars()[0] == '#'
+                                           : twoByteChars()[0] == '#');
 }
 
-JSAtom* ParserAtomEntry::toJSAtom(JSContext* cx,
+JSAtom* ParserAtomEntry::toJSAtom(JSContext* cx, TaggedParserAtomIndex index,
                                   CompilationAtomCache& atomCache) const {
-  if (isParserAtomIndex()) {
-    JSAtom* atom = atomCache.getAtomAt(toParserAtomIndex());
+  if (index.isParserAtomIndex()) {
+    JSAtom* atom = atomCache.getAtomAt(index.toParserAtomIndex());
     if (atom) {
       return atom;
     }
 
-    return instantiate(cx, atomCache);
+    return instantiate(cx, index, atomCache);
   }
 
-  if (isWellKnownAtomId()) {
-    return GetWellKnownAtom(cx, toWellKnownAtomId());
+  if (index.isWellKnownAtomId()) {
+    return GetWellKnownAtom(cx, index.toWellKnownAtomId());
   }
 
-  if (isStaticParserString1()) {
-    char16_t ch = static_cast<char16_t>(toStaticParserString1());
+  if (index.isStaticParserString1()) {
+    char16_t ch = static_cast<char16_t>(index.toStaticParserString1());
     return cx->staticStrings().getUnit(ch);
   }
 
-  MOZ_ASSERT(isStaticParserString2());
-  size_t s = static_cast<size_t>(toStaticParserString2());
+  MOZ_ASSERT(index.isStaticParserString2());
+  size_t s = static_cast<size_t>(index.toStaticParserString2());
   return cx->staticStrings().getLength2FromIndex(s);
 }
 
-JSAtom* ParserAtomEntry::toExistingJSAtom(
-    JSContext* cx, CompilationAtomCache& atomCache) const {
-  if (isParserAtomIndex()) {
-    JSAtom* atom = atomCache.getExistingAtomAt(toParserAtomIndex());
-    MOZ_ASSERT(atom);
-    return atom;
-  }
-
-  if (isWellKnownAtomId()) {
-    return GetWellKnownAtom(cx, toWellKnownAtomId());
-  }
-
-  if (isStaticParserString1()) {
-    char16_t ch = static_cast<char16_t>(toStaticParserString1());
-    return cx->staticStrings().getUnit(ch);
-  }
-
-  MOZ_ASSERT(isStaticParserString2());
-  size_t s = static_cast<size_t>(toStaticParserString2());
-  return cx->staticStrings().getLength2FromIndex(s);
-}
-
-JSAtom* ParserAtomEntry::instantiate(JSContext* cx,
+JSAtom* ParserAtomEntry::instantiate(JSContext* cx, TaggedParserAtomIndex index,
                                      CompilationAtomCache& atomCache) const {
+  MOZ_ASSERT(index.isParserAtomIndex());
+
   JSAtom* atom;
   if (hasLatin1Chars()) {
     atom = AtomizeChars(cx, hash(), latin1Chars(), length());
@@ -308,7 +289,7 @@ JSAtom* ParserAtomEntry::instantiate(JSContext* cx,
     js::ReportOutOfMemory(cx);
     return nullptr;
   }
-  if (!atomCache.setAtomAt(cx, toParserAtomIndex(), atom)) {
+  if (!atomCache.setAtomAt(cx, index.toParserAtomIndex(), atom)) {
     return nullptr;
   }
 
@@ -340,70 +321,69 @@ void ParserAtomEntry::dumpCharsNoQuote(js::GenericPrinter& out) const {
 ParserAtomsTable::ParserAtomsTable(JSRuntime* rt, LifoAlloc& alloc)
     : wellKnownTable_(*rt->commonParserNames), alloc_(alloc) {}
 
-const ParserAtom* ParserAtomsTable::addEntry(JSContext* cx,
-                                             EntrySet::AddPtr& addPtr,
-                                             ParserAtomEntry* entry) {
+TaggedParserAtomIndex ParserAtomsTable::addEntry(JSContext* cx,
+                                                 EntryMap::AddPtr& addPtr,
+                                                 ParserAtomEntry* entry) {
   MOZ_ASSERT(!addPtr);
   ParserAtomIndex index = ParserAtomIndex(entries_.length());
   if (size_t(index) >= TaggedParserAtomIndex::IndexLimit) {
     ReportAllocationOverflow(cx);
-    return nullptr;
+    return TaggedParserAtomIndex::null();
   }
   if (!entries_.append(entry)) {
     js::ReportOutOfMemory(cx);
-    return nullptr;
+    return TaggedParserAtomIndex::null();
   }
-  entry->setParserAtomIndex(index);
-  if (!entrySet_.add(addPtr, entry)) {
+  auto taggedIndex = TaggedParserAtomIndex(index);
+  if (!entryMap_.add(addPtr, entry, taggedIndex)) {
     js::ReportOutOfMemory(cx);
-    return nullptr;
+    return TaggedParserAtomIndex::null();
   }
-  return entry->asAtom();
+  return taggedIndex;
 }
 
 template <typename AtomCharT, typename SeqCharT>
-const ParserAtom* ParserAtomsTable::internChar16Seq(
-    JSContext* cx, EntrySet::AddPtr& addPtr, HashNumber hash,
+TaggedParserAtomIndex ParserAtomsTable::internChar16Seq(
+    JSContext* cx, EntryMap::AddPtr& addPtr, HashNumber hash,
     InflatedChar16Sequence<SeqCharT> seq, uint32_t length) {
   MOZ_ASSERT(!addPtr);
 
   ParserAtomEntry* entry =
       ParserAtomEntry::allocate<AtomCharT>(cx, alloc_, seq, length, hash);
   if (!entry) {
-    return nullptr;
+    return TaggedParserAtomIndex::null();
   }
   return addEntry(cx, addPtr, entry);
 }
 
 static const uint16_t MAX_LATIN1_CHAR = 0xff;
 
-const ParserAtom* ParserAtomsTable::internAscii(JSContext* cx,
-                                                const char* asciiPtr,
-                                                uint32_t length) {
+TaggedParserAtomIndex ParserAtomsTable::internAscii(JSContext* cx,
+                                                    const char* asciiPtr,
+                                                    uint32_t length) {
   // ASCII strings are strict subsets of Latin1 strings.
   const Latin1Char* latin1Ptr = reinterpret_cast<const Latin1Char*>(asciiPtr);
   return internLatin1(cx, latin1Ptr, length);
 }
 
-const ParserAtom* ParserAtomsTable::internLatin1(JSContext* cx,
-                                                 const Latin1Char* latin1Ptr,
-                                                 uint32_t length) {
+TaggedParserAtomIndex ParserAtomsTable::internLatin1(
+    JSContext* cx, const Latin1Char* latin1Ptr, uint32_t length) {
   // Check for tiny strings which are abundant in minified code.
-  if (const ParserAtom* tiny = wellKnownTable_.lookupTiny(latin1Ptr, length)) {
+  if (auto tiny = wellKnownTable_.lookupTinyIndex(latin1Ptr, length)) {
     return tiny;
   }
 
   // Check for well-known atom.
   InflatedChar16Sequence<Latin1Char> seq(latin1Ptr, length);
   SpecificParserAtomLookup<Latin1Char> lookup(seq);
-  if (const ParserAtom* wk = wellKnownTable_.lookupChar16Seq(lookup)) {
+  if (auto wk = wellKnownTable_.lookupChar16Seq(lookup)) {
     return wk;
   }
 
   // Check for existing atom.
-  auto addPtr = entrySet_.lookupForAdd(lookup);
+  auto addPtr = entryMap_.lookupForAdd(lookup);
   if (addPtr) {
-    return (*addPtr)->asAtom();
+    return addPtr->value();
   }
 
   return internChar16Seq<Latin1Char>(cx, addPtr, lookup.hash(), seq, length);
@@ -431,13 +411,12 @@ bool ParserAtomSpanBuilder::allocate(JSContext* cx, LifoAlloc& alloc,
   return true;
 }
 
-const ParserAtom* ParserAtomsTable::internUtf8(JSContext* cx,
-                                               const mozilla::Utf8Unit* utf8Ptr,
-                                               uint32_t nbyte) {
+TaggedParserAtomIndex ParserAtomsTable::internUtf8(
+    JSContext* cx, const mozilla::Utf8Unit* utf8Ptr, uint32_t nbyte) {
   // Check for tiny strings which are abundant in minified code.
   // NOTE: The tiny atoms are all ASCII-only so we can directly look at the
   //        UTF-8 data without worrying about surrogates.
-  if (const ParserAtom* tiny = wellKnownTable_.lookupTiny(
+  if (auto tiny = wellKnownTable_.lookupTinyIndex(
           reinterpret_cast<const Latin1Char*>(utf8Ptr), nbyte)) {
     return tiny;
   }
@@ -459,10 +438,10 @@ const ParserAtom* ParserAtomsTable::internUtf8(JSContext* cx,
   // NOTE: Well-known are all ASCII so have been handled above.
   InflatedChar16Sequence<mozilla::Utf8Unit> seq(utf8Ptr, nbyte);
   SpecificParserAtomLookup<mozilla::Utf8Unit> lookup(seq);
-  MOZ_ASSERT(wellKnownTable_.lookupChar16Seq(lookup) == nullptr);
-  EntrySet::AddPtr addPtr = entrySet_.lookupForAdd(lookup);
+  MOZ_ASSERT(!wellKnownTable_.lookupChar16Seq(lookup));
+  EntryMap::AddPtr addPtr = entryMap_.lookupForAdd(lookup);
   if (addPtr) {
-    return (*addPtr)->asAtom();
+    return addPtr->value();
   }
 
   // Compute length in code-points.
@@ -481,25 +460,25 @@ const ParserAtom* ParserAtomsTable::internUtf8(JSContext* cx,
                                            length);
 }
 
-const ParserAtom* ParserAtomsTable::internChar16(JSContext* cx,
-                                                 const char16_t* char16Ptr,
-                                                 uint32_t length) {
+TaggedParserAtomIndex ParserAtomsTable::internChar16(JSContext* cx,
+                                                     const char16_t* char16Ptr,
+                                                     uint32_t length) {
   // Check for tiny strings which are abundant in minified code.
-  if (const ParserAtom* tiny = wellKnownTable_.lookupTiny(char16Ptr, length)) {
+  if (auto tiny = wellKnownTable_.lookupTinyIndex(char16Ptr, length)) {
     return tiny;
   }
 
   // Check against well-known.
   InflatedChar16Sequence<char16_t> seq(char16Ptr, length);
   SpecificParserAtomLookup<char16_t> lookup(seq);
-  if (const ParserAtom* wk = wellKnownTable_.lookupChar16Seq(lookup)) {
+  if (auto wk = wellKnownTable_.lookupChar16Seq(lookup)) {
     return wk;
   }
 
   // Check for existing atom.
-  EntrySet::AddPtr addPtr = entrySet_.lookupForAdd(lookup);
+  EntryMap::AddPtr addPtr = entryMap_.lookupForAdd(lookup);
   if (addPtr) {
-    return (*addPtr)->asAtom();
+    return addPtr->value();
   }
 
   // Compute the target encoding.
@@ -521,10 +500,9 @@ const ParserAtom* ParserAtomsTable::internChar16(JSContext* cx,
                                            length);
 }
 
-const ParserAtom* ParserAtomsTable::internJSAtom(JSContext* cx,
-                                                 CompilationStencil& stencil,
-                                                 JSAtom* atom) {
-  const ParserAtom* parserAtom;
+TaggedParserAtomIndex ParserAtomsTable::internJSAtom(
+    JSContext* cx, CompilationStencil& stencil, JSAtom* atom) {
+  TaggedParserAtomIndex parserAtom;
   {
     JS::AutoCheckCannotGC nogc;
 
@@ -533,28 +511,29 @@ const ParserAtom* ParserAtomsTable::internJSAtom(JSContext* cx,
             ? internLatin1(cx, atom->latin1Chars(nogc), atom->length())
             : internChar16(cx, atom->twoByteChars(nogc), atom->length());
     if (!parserAtom) {
-      return nullptr;
+      return TaggedParserAtomIndex::null();
     }
   }
 
-  if (parserAtom->isParserAtomIndex()) {
-    ParserAtomIndex index = parserAtom->toParserAtomIndex();
+  if (parserAtom.isParserAtomIndex()) {
+    ParserAtomIndex index = parserAtom.toParserAtomIndex();
     auto& atomCache = stencil.input.atomCache;
 
     if (!atomCache.hasAtomAt(index)) {
       if (!atomCache.setAtomAt(cx, index, atom)) {
-        return nullptr;
+        return TaggedParserAtomIndex::null();
       }
     }
   }
 
   // We should (infallibly) map back to the same JSAtom.
-  MOZ_ASSERT(parserAtom->toJSAtom(cx, stencil.input.atomCache) == atom);
+  MOZ_ASSERT(getParserAtom(parserAtom)
+                 ->toJSAtom(cx, parserAtom, stencil.input.atomCache) == atom);
 
   return parserAtom;
 }
 
-const ParserAtom* ParserAtomsTable::concatAtoms(
+TaggedParserAtomIndex ParserAtomsTable::concatAtoms(
     JSContext* cx, mozilla::Range<const ParserAtom*> atoms) {
   MOZ_ASSERT(atoms.length() >= 2,
              "concatAtoms should only be used for multiple inputs");
@@ -569,7 +548,7 @@ const ParserAtom* ParserAtomsTable::concatAtoms(
     // Overflow check here, length
     if (atom->length() >= (ParserAtomEntry::MAX_LENGTH - catLen)) {
       js::ReportOutOfMemory(cx);
-      return nullptr;
+      return TaggedParserAtomIndex::null();
     }
     catLen += atom->length();
   }
@@ -592,9 +571,9 @@ const ParserAtom* ParserAtomsTable::concatAtoms(
   SpecificParserAtomLookup<const ParserAtom*> lookup(seq);
 
   // Check for existing atom.
-  auto addPtr = entrySet_.lookupForAdd(lookup);
+  auto addPtr = entryMap_.lookupForAdd(lookup);
   if (addPtr) {
-    return (*addPtr)->asAtom();
+    return addPtr->value();
   }
 
   // Otherwise, add new entry.
@@ -606,15 +585,15 @@ const ParserAtom* ParserAtomsTable::concatAtoms(
 
 const ParserAtom* WellKnownParserAtoms::getWellKnown(
     WellKnownAtomId atomId) const {
-#define ASSERT_OFFSET_(idpart, id, text)              \
-  static_assert(offsetof(WellKnownParserAtoms, id) == \
-                int32_t(WellKnownAtomId::id) * sizeof(ParserAtom*));
+#define ASSERT_OFFSET_(_, NAME, _2)                     \
+  static_assert(offsetof(WellKnownParserAtoms, NAME) == \
+                int32_t(WellKnownAtomId::NAME) * sizeof(ParserAtom*));
   FOR_EACH_COMMON_PROPERTYNAME(ASSERT_OFFSET_);
 #undef ASSERT_OFFSET_
 
-#define ASSERT_OFFSET_(name, clasp)                     \
-  static_assert(offsetof(WellKnownParserAtoms, name) == \
-                int32_t(WellKnownAtomId::name) * sizeof(ParserAtom*));
+#define ASSERT_OFFSET_(NAME, _)                         \
+  static_assert(offsetof(WellKnownParserAtoms, NAME) == \
+                int32_t(WellKnownAtomId::NAME) * sizeof(ParserAtom*));
   JS_FOR_EACH_PROTOTYPE(ASSERT_OFFSET_);
 #undef ASSERT_OFFSET_
 
@@ -702,16 +681,23 @@ const ParserAtom* ParserAtomsTable::getParserAtom(
   return GetParserAtom(this, index);
 }
 
+void ParserAtomsTable::markUsedByStencil(TaggedParserAtomIndex index) const {
+  GetParserAtom(this, index)->markUsedByStencil();
+}
+
 bool InstantiateMarkedAtoms(JSContext* cx, const ParserAtomSpan& entries,
                             CompilationAtomCache& atomCache) {
-  for (const auto& entry : entries) {
+  for (size_t i = 0; i < entries.size(); i++) {
+    const auto& entry = entries[i];
     if (!entry) {
       continue;
     }
-    if (entry->isUsedByStencil() && entry->isParserAtomIndex() &&
-        !atomCache.hasAtomAt(entry->toParserAtomIndex())) {
-      if (!entry->instantiate(cx, atomCache)) {
-        return false;
+    if (entry->isUsedByStencil()) {
+      auto index = ParserAtomIndex(i);
+      if (!atomCache.hasAtomAt(index)) {
+        if (!entry->instantiate(cx, TaggedParserAtomIndex(index), atomCache)) {
+          return false;
+        }
       }
     }
   }
@@ -719,17 +705,18 @@ bool InstantiateMarkedAtoms(JSContext* cx, const ParserAtomSpan& entries,
 }
 
 template <typename CharT>
-const ParserAtom* WellKnownParserAtoms::lookupChar16Seq(
+TaggedParserAtomIndex WellKnownParserAtoms::lookupChar16Seq(
     const SpecificParserAtomLookup<CharT>& lookup) const {
-  EntrySet::Ptr get = wellKnownSet_.readonlyThreadsafeLookup(lookup);
-  if (get) {
-    return (*get)->asAtom();
+  EntryMap::Ptr ptr = wellKnownMap_.readonlyThreadsafeLookup(lookup);
+  if (ptr) {
+    return ptr->value();
   }
-  return nullptr;
+  return TaggedParserAtomIndex::null();
 }
 
 bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
-                                      const ParserAtomEntry& romEntry) {
+                                      const ParserAtomEntry& romEntry,
+                                      TaggedParserAtomIndex index) {
   MOZ_ASSERT(name != nullptr);
 
   unsigned int len = romEntry.length();
@@ -741,7 +728,7 @@ bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
 
   // Strings matched by lookupTiny are stored in static table and aliases should
   // only be added using initTinyStringAlias.
-  MOZ_ASSERT(lookupTiny(str, len) == nullptr,
+  MOZ_ASSERT(lookupTinyIndex(str, len) == TaggedParserAtomIndex::null(),
              "Well-known atom matches a tiny StaticString. Did you add it to "
              "the wrong CommonPropertyNames.h list?");
 
@@ -749,7 +736,7 @@ bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserName** name,
   SpecificParserAtomLookup<Latin1Char> lookup(seq, romEntry.hash());
 
   // Save name for returning after moving entry into set.
-  if (!wellKnownSet_.putNew(lookup, &romEntry)) {
+  if (!wellKnownMap_.putNew(lookup, &romEntry, index)) {
     js::ReportOutOfMemory(cx);
     return false;
   }
@@ -772,7 +759,7 @@ bool WellKnownParserAtoms::initTinyStringAlias(JSContext* cx,
 
   // NOTE: If this assert fails, you may need to change which list is it belongs
   //       to in CommonPropertyNames.h.
-  const ParserAtom* tiny = lookupTiny(str, len);
+  auto tiny = lookupTiny(str, len);
   MOZ_ASSERT(tiny, "Tiny common name was not found");
 
   // Set alias to existing atom.
@@ -783,25 +770,27 @@ bool WellKnownParserAtoms::initTinyStringAlias(JSContext* cx,
 bool WellKnownParserAtoms::init(JSContext* cx) {
   // Tiny strings with a common name need a named alias to an entry in the
   // WellKnownParserAtoms_ROM.
-#define COMMON_NAME_INIT_(_, name, text)         \
-  if (!initTinyStringAlias(cx, &(name), text)) { \
+#define COMMON_NAME_INIT_(_, NAME, TEXT)         \
+  if (!initTinyStringAlias(cx, &(NAME), TEXT)) { \
     return false;                                \
   }
   FOR_EACH_TINY_PROPERTYNAME(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_
 
   // Initialize the named fields to point to entries in the ROM. This also adds
-  // the atom to the lookup HashSet. The HashSet is used for dynamic lookups
+  // the atom to the lookup HashMap. The HashMap is used for dynamic lookups
   // later and does not change once this init method is complete.
-#define COMMON_NAME_INIT_(_, name, _2)       \
-  if (!initSingle(cx, &(name), rom_.name)) { \
-    return false;                            \
+#define COMMON_NAME_INIT_(_, NAME, _2)                         \
+  if (!initSingle(cx, &(NAME), rom_.NAME,                      \
+                  TaggedParserAtomIndex::WellKnown::NAME())) { \
+    return false;                                              \
   }
   FOR_EACH_NONTINY_COMMON_PROPERTYNAME(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_
-#define COMMON_NAME_INIT_(name, _)           \
-  if (!initSingle(cx, &(name), rom_.name)) { \
-    return false;                            \
+#define COMMON_NAME_INIT_(NAME, _)                             \
+  if (!initSingle(cx, &(NAME), rom_.NAME,                      \
+                  TaggedParserAtomIndex::WellKnown::NAME())) { \
+    return false;                                              \
   }
   JS_FOR_EACH_PROTOTYPE(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_

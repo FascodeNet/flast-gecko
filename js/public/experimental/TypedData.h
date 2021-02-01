@@ -40,24 +40,23 @@ class JS_PUBLIC_API AutoRequireNoGC;
  * zeros.
  */
 
-extern JS_FRIEND_API JSObject* JS_NewInt8Array(JSContext* cx,
-                                               uint32_t nelements);
+extern JS_FRIEND_API JSObject* JS_NewInt8Array(JSContext* cx, size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewUint8Array(JSContext* cx,
-                                                uint32_t nelements);
+                                                size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewUint8ClampedArray(JSContext* cx,
-                                                       uint32_t nelements);
+                                                       size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewInt16Array(JSContext* cx,
-                                                uint32_t nelements);
+                                                size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewUint16Array(JSContext* cx,
-                                                 uint32_t nelements);
+                                                 size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewInt32Array(JSContext* cx,
-                                                uint32_t nelements);
+                                                size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewUint32Array(JSContext* cx,
-                                                 uint32_t nelements);
+                                                 size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewFloat32Array(JSContext* cx,
-                                                  uint32_t nelements);
+                                                  size_t nelements);
 extern JS_FRIEND_API JSObject* JS_NewFloat64Array(JSContext* cx,
-                                                  uint32_t nelements);
+                                                  size_t nelements);
 
 /*
  * Create a new typed array and copy in values from the given object. The
@@ -209,15 +208,15 @@ const size_t TypedArrayLengthSlot = 1;
 
 }  // namespace detail
 
-#define JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Type, type)                      \
-  inline void Get##Type##ArrayLengthAndData(                                \
-      JSObject* obj, uint32_t* length, bool* isSharedMemory, type** data) { \
-    MOZ_ASSERT(JS::GetClass(obj) == detail::Type##ArrayClassPtr);           \
-    const JS::Value& lenSlot =                                              \
-        JS::GetReservedSlot(obj, detail::TypedArrayLengthSlot);             \
-    *length = mozilla::AssertedCast<uint32_t>(size_t(lenSlot.toPrivate())); \
-    *isSharedMemory = JS_GetTypedArraySharedness(obj);                      \
-    *data = static_cast<type*>(JS::GetPrivate(obj));                        \
+#define JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Type, type)                    \
+  inline void Get##Type##ArrayLengthAndData(                              \
+      JSObject* obj, size_t* length, bool* isSharedMemory, type** data) { \
+    MOZ_ASSERT(JS::GetClass(obj) == detail::Type##ArrayClassPtr);         \
+    const JS::Value& lenSlot =                                            \
+        JS::GetReservedSlot(obj, detail::TypedArrayLengthSlot);           \
+    *length = size_t(lenSlot.toPrivate());                                \
+    *isSharedMemory = JS_GetTypedArraySharedness(obj);                    \
+    *data = static_cast<type*>(JS::GetPrivate(obj));                      \
   }
 
 JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Int8, int8_t)
@@ -235,7 +234,7 @@ JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float64, double)
 // This one isn't inlined because it's rather tricky (by dint of having to deal
 // with a dozen-plus classes and varying slot layouts.
 extern JS_FRIEND_API void GetArrayBufferViewLengthAndData(JSObject* obj,
-                                                          uint32_t* length,
+                                                          size_t* length,
                                                           bool* isSharedMemory,
                                                           uint8_t** data);
 
@@ -310,7 +309,7 @@ extern JS_FRIEND_API uint32_t JS_GetTypedArrayLength(JSObject* obj);
  * be known that it would pass such a test: it is a typed array or a wrapper of
  * a typed array, and the unwrapping will succeed.
  */
-extern JS_FRIEND_API uint32_t JS_GetTypedArrayByteOffset(JSObject* obj);
+extern JS_FRIEND_API size_t JS_GetTypedArrayByteOffset(JSObject* obj);
 
 /**
  * Return the byte length of a typed array.
@@ -319,17 +318,17 @@ extern JS_FRIEND_API uint32_t JS_GetTypedArrayByteOffset(JSObject* obj);
  * be known that it would pass such a test: it is a typed array or a wrapper of
  * a typed array, and the unwrapping will succeed.
  */
-extern JS_FRIEND_API uint32_t JS_GetTypedArrayByteLength(JSObject* obj);
+extern JS_FRIEND_API size_t JS_GetTypedArrayByteLength(JSObject* obj);
 
 /**
  * More generic name for JS_GetTypedArrayByteLength to cover DataViews as well
  */
-extern JS_FRIEND_API uint32_t JS_GetArrayBufferViewByteLength(JSObject* obj);
+extern JS_FRIEND_API size_t JS_GetArrayBufferViewByteLength(JSObject* obj);
 
 /**
  * More generic name for JS_GetTypedArrayByteOffset to cover DataViews as well
  */
-extern JS_FRIEND_API uint32_t JS_GetArrayBufferViewByteOffset(JSObject* obj);
+extern JS_FRIEND_API size_t JS_GetArrayBufferViewByteOffset(JSObject* obj);
 
 /*
  * Return a pointer to the start of the data referenced by a typed array. The
@@ -418,5 +417,17 @@ extern JS_FRIEND_API JSObject* JS_GetArrayBufferViewBuffer(
 JS_FRIEND_API JSObject* JS_NewDataView(JSContext* cx,
                                        JS::Handle<JSObject*> buffer,
                                        size_t byteOffset, size_t byteLength);
+
+namespace JS {
+
+/*
+ * Returns whether the passed array buffer view is 'large': its byteLength >= 2
+ * GB. See also SetLargeArrayBuffersEnabled.
+ *
+ * |obj| must pass a JS_IsArrayBufferViewObject test.
+ */
+JS_FRIEND_API bool IsLargeArrayBufferView(JSObject* obj);
+
+}  // namespace JS
 
 #endif  // js_experimental_TypedData_h

@@ -17,6 +17,7 @@
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/NameCollections.h"
 #include "frontend/ParseContext.h"
+#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/SharedContext.h"
 #include "js/TypeDecls.h"
 #include "vm/BytecodeUtil.h"   // JSOp
@@ -73,21 +74,22 @@ class EmitterScope : public Nestable<EmitterScope> {
 
   void updateFrameFixedSlots(BytecodeEmitter* bce, const ParserBindingIter& bi);
 
-  MOZ_MUST_USE bool putNameInCache(BytecodeEmitter* bce, const ParserAtom* name,
+  MOZ_MUST_USE bool putNameInCache(BytecodeEmitter* bce,
+                                   TaggedParserAtomIndex name,
                                    NameLocation loc);
 
   mozilla::Maybe<NameLocation> lookupInCache(BytecodeEmitter* bce,
-                                             const ParserAtom* name);
+                                             TaggedParserAtomIndex name);
 
   EmitterScope* enclosing(BytecodeEmitter** bce) const;
 
   mozilla::Maybe<ScopeIndex> enclosingScopeIndex(BytecodeEmitter* bce) const;
 
-  static bool nameCanBeFree(BytecodeEmitter* bce, const ParserAtom* name);
+  static bool nameCanBeFree(BytecodeEmitter* bce, TaggedParserAtomIndex name);
 
   static NameLocation searchInEnclosingScope(JSAtom* name, Scope* scope,
                                              uint8_t hops);
-  NameLocation searchAndCache(BytecodeEmitter* bce, const ParserAtom* name);
+  NameLocation searchAndCache(BytecodeEmitter* bce, TaggedParserAtomIndex name);
 
   MOZ_MUST_USE bool internEmptyGlobalScopeAsBody(BytecodeEmitter* bce);
 
@@ -159,9 +161,9 @@ class EmitterScope : public Nestable<EmitterScope> {
     return Nestable<EmitterScope>::enclosing();
   }
 
-  NameLocation lookup(BytecodeEmitter* bce, const ParserAtom* name);
+  NameLocation lookup(BytecodeEmitter* bce, TaggedParserAtomIndex name);
 
-  mozilla::Maybe<NameLocation> locationBoundInScope(const ParserAtom* name,
+  mozilla::Maybe<NameLocation> locationBoundInScope(TaggedParserAtomIndex name,
                                                     EmitterScope* target);
 };
 

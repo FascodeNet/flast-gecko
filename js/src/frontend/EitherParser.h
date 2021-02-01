@@ -150,14 +150,14 @@ class EitherParser : public BCEParserHandle {
     return parser.match(std::move(matcher));
   }
 
-  JSAtom* liftParserAtomToJSAtom(const ParserAtom* parserAtom) {
-    ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
-    return base.liftParserAtomToJSAtom(parserAtom);
-  }
-
   CompilationStencil& getCompilationStencil() {
     ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
     return base.getCompilationStencil();
+  }
+
+  CompilationState& getCompilationState() {
+    ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
+    return base.getCompilationState();
   }
 };
 

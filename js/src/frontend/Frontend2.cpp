@@ -21,8 +21,8 @@
 #include "frontend/BytecodeSection.h"   // EmitScriptThingsVector
 #include "frontend/CompilationInfo.h"   // CompilationState, CompilationStencil
 #include "frontend/Parser.h"  // NewEmptyLexicalScopeData, NewEmptyGlobalScopeData, NewEmptyVarScopeData, NewEmptyFunctionScopeData
-#include "frontend/ParserAtom.h"        // ParserAtomsTable
-#include "frontend/ScriptIndex.h"       // ScriptIndex
+#include "frontend/ParserAtom.h"   // ParserAtomsTable, TaggedParserAtomIndex
+#include "frontend/ScriptIndex.h"  // ScriptIndex
 #include "frontend/smoosh_generated.h"  // CVec, Smoosh*, smoosh_*
 #include "frontend/SourceNotes.h"       // SrcNote
 #include "frontend/Stencil.h"           // ScopeStencil, RegExpIndex
@@ -54,7 +54,7 @@ namespace frontend {
 // the list of ParserAtoms.
 bool ConvertAtoms(JSContext* cx, const SmooshResult& result,
                   CompilationState& compilationState,
-                  Vector<const ParserAtom*>& allAtoms) {
+                  Vector<TaggedParserAtomIndex>& allAtoms) {
   size_t numAtoms = result.all_atoms_len;
 
   if (!allAtoms.reserve(numAtoms)) {
@@ -65,12 +65,11 @@ bool ConvertAtoms(JSContext* cx, const SmooshResult& result,
     auto s = reinterpret_cast<const mozilla::Utf8Unit*>(
         smoosh_get_atom_at(result, i));
     auto len = smoosh_get_atom_len_at(result, i);
-    const ParserAtom* atom =
-        compilationState.parserAtoms.internUtf8(cx, s, len);
+    auto atom = compilationState.parserAtoms.internUtf8(cx, s, len);
     if (!atom) {
       return false;
     }
-    atom->markUsedByStencil();
+    compilationState.parserAtoms.markUsedByStencil(atom);
     allAtoms.infallibleAppend(atom);
   }
 
@@ -78,7 +77,7 @@ bool ConvertAtoms(JSContext* cx, const SmooshResult& result,
 }
 
 void CopyBindingNames(JSContext* cx, CVec<SmooshBindingName>& from,
-                      Vector<const ParserAtom*>& allAtoms,
+                      Vector<TaggedParserAtomIndex>& allAtoms,
                       ParserBindingName* to) {
   // We're setting trailing array's content before setting its length.
   JS::AutoCheckCannotGC nogc(cx);
@@ -86,14 +85,13 @@ void CopyBindingNames(JSContext* cx, CVec<SmooshBindingName>& from,
   size_t numBindings = from.len;
   for (size_t i = 0; i < numBindings; i++) {
     SmooshBindingName& name = from.data[i];
-    new (mozilla::KnownNotNull, &to[i])
-        ParserBindingName(allAtoms[name.name]->toIndex(), name.is_closed_over,
-                          name.is_top_level_function);
+    new (mozilla::KnownNotNull, &to[i]) ParserBindingName(
+        allAtoms[name.name], name.is_closed_over, name.is_top_level_function);
   }
 }
 
 void CopyBindingNames(JSContext* cx, CVec<COption<SmooshBindingName>>& from,
-                      Vector<const ParserAtom*>& allAtoms,
+                      Vector<TaggedParserAtomIndex>& allAtoms,
                       ParserBindingName* to) {
   // We're setting trailing array's content before setting its length.
   JS::AutoCheckCannotGC nogc(cx);
@@ -103,9 +101,8 @@ void CopyBindingNames(JSContext* cx, CVec<COption<SmooshBindingName>>& from,
     COption<SmooshBindingName>& maybeName = from.data[i];
     if (maybeName.IsSome()) {
       SmooshBindingName& name = maybeName.AsSome();
-      new (mozilla::KnownNotNull, &to[i])
-          ParserBindingName(allAtoms[name.name]->toIndex(), name.is_closed_over,
-                            name.is_top_level_function);
+      new (mozilla::KnownNotNull, &to[i]) ParserBindingName(
+          allAtoms[name.name], name.is_closed_over, name.is_top_level_function);
     } else {
       new (mozilla::KnownNotNull, &to[i])
           ParserBindingName(TaggedParserAtomIndex::null(), false, false);
@@ -116,7 +113,7 @@ void CopyBindingNames(JSContext* cx, CVec<COption<SmooshBindingName>>& from,
 // Given the result of SmooshMonkey's parser, convert a list of scope data
 // into a list of ScopeStencil.
 bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
-                         Vector<const ParserAtom*>& allAtoms,
+                         Vector<TaggedParserAtomIndex>& allAtoms,
                          CompilationStencil& stencil,
                          CompilationState& compilationState) {
   LifoAlloc& alloc = stencil.alloc;
@@ -330,15 +327,14 @@ bool ConvertRegExpData(JSContext* cx, const SmooshResult& result,
 
     const mozilla::Utf8Unit* sUtf8 =
         reinterpret_cast<const mozilla::Utf8Unit*>(s);
-    const ParserAtom* atom =
-        compilationState.parserAtoms.internUtf8(cx, sUtf8, len);
+    auto atom = compilationState.parserAtoms.internUtf8(cx, sUtf8, len);
     if (!atom) {
       return false;
     }
-    atom->markUsedByStencil();
 
+    compilationState.parserAtoms.markUsedByStencil(atom);
     new (mozilla::KnownNotNull, &stencil.regExpData[i])
-        RegExpStencil(atom->toIndex(), JS::RegExpFlags(flags));
+        RegExpStencil(atom, JS::RegExpFlags(flags));
   }
 
   return true;
@@ -376,7 +372,7 @@ bool ConvertGCThings(JSContext* cx, const SmooshResult& result,
                      const SmooshScriptStencil& smooshScript,
                      CompilationStencil& stencil,
                      CompilationState& compilationState,
-                     Vector<const ParserAtom*>& allAtoms,
+                     Vector<TaggedParserAtomIndex>& allAtoms,
                      ScriptIndex scriptIndex) {
   size_t ngcthings = smooshScript.gcthings.len;
 
@@ -403,7 +399,7 @@ bool ConvertGCThings(JSContext* cx, const SmooshResult& result,
         break;
       }
       case SmooshGCThing::Tag::Atom: {
-        new (raw) TaggedScriptThingIndex(allAtoms[item.AsAtom()]->toIndex());
+        new (raw) TaggedScriptThingIndex(allAtoms[item.AsAtom()]);
         break;
       }
       case SmooshGCThing::Tag::Function: {
@@ -431,7 +427,7 @@ bool ConvertGCThings(JSContext* cx, const SmooshResult& result,
 // (until GC things gets removed from stencil) tracing API of the GC.
 bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
                           const SmooshScriptStencil& smooshScript,
-                          Vector<const ParserAtom*>& allAtoms,
+                          Vector<TaggedParserAtomIndex>& allAtoms,
                           CompilationStencil& stencil,
                           CompilationState& compilationState,
                           ScriptIndex scriptIndex) {
@@ -492,7 +488,7 @@ bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
 
   if (isFunction) {
     if (smooshScript.fun_name.IsSome()) {
-      script.functionAtom = allAtoms[smooshScript.fun_name.AsSome()]->toIndex();
+      script.functionAtom = allAtoms[smooshScript.fun_name.AsSome()];
     }
     script.functionFlags = FunctionFlags(smooshScript.fun_flags);
     scriptExtra.nargs = smooshScript.fun_nargs;
@@ -595,7 +591,7 @@ bool Smoosh::compileGlobalScriptToStencil(JSContext* cx,
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
 
-  Vector<const ParserAtom*> allAtoms(cx);
+  Vector<TaggedParserAtomIndex> allAtoms(cx);
   CompilationState compilationState(cx, allocScope, stencil.input.options,
                                     stencil);
   if (!ConvertAtoms(cx, result, compilationState, allAtoms)) {

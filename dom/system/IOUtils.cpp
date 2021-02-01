@@ -47,6 +47,10 @@
 #include "prtime.h"
 #include "prtypes.h"
 
+#ifndef ANDROID
+#  include "nsSystemInfo.h"
+#endif
+
 #define REJECT_IF_SHUTTING_DOWN(aJSPromise)                       \
   do {                                                            \
     if (sShutdownStarted) {                                       \
@@ -588,7 +592,8 @@ already_AddRefed<Promise> IOUtils::GetChildren(GlobalObject& aGlobal,
 /* static */
 already_AddRefed<Promise> IOUtils::SetPermissions(GlobalObject& aGlobal,
                                                   const nsAString& aPath,
-                                                  const uint32_t aPermissions) {
+                                                  uint32_t aPermissions,
+                                                  const bool aHonorUmask) {
   MOZ_ASSERT(XRE_IsParentProcess());
   RefPtr<Promise> promise = CreateJSPromise(aGlobal);
   if (!promise) {
@@ -597,6 +602,12 @@ already_AddRefed<Promise> IOUtils::SetPermissions(GlobalObject& aGlobal,
 
   nsCOMPtr<nsIFile> file = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
+
+#if defined(XP_UNIX) && !defined(ANDROID)
+  if (aHonorUmask) {
+    aPermissions &= ~nsSystemInfo::gUserUmask;
+  }
+#endif
 
   RunOnBackgroundThreadAndResolve<Ok>(
       promise, [file = std::move(file), permissions = aPermissions]() {
@@ -814,40 +825,35 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
   }
 
   JsBuffer buffer = JsBuffer::CreateEmpty(aBufferKind);
-  Span<char> toRead;
 
-  if (aDecompress || bufSize > 0) {
+  if (bufSize > 0) {
     auto result = JsBuffer::Create(aBufferKind, bufSize);
     if (result.isErr()) {
       return result.propagateErr();
     }
     buffer = result.unwrap();
-  } else {
-    // No need to read an empty file.
-    return buffer;
-  }
+    Span<char> toRead = buffer.BeginWriting();
 
-  toRead = buffer.BeginWriting();
-
-  // Read the file from disk.
-  uint32_t totalRead = 0;
-  while (totalRead != bufSize) {
-    uint32_t bytesRead = 0;
-    if (nsresult rv =
-            stream->Read(toRead.Elements(), bufSize - totalRead, &bytesRead);
-        NS_FAILED(rv)) {
-      return Err(IOError(rv).WithMessage(
-          "Encountered an unexpected error while reading file(%s)",
-          aFile->HumanReadablePath().get()));
+    // Read the file from disk.
+    uint32_t totalRead = 0;
+    while (totalRead != bufSize) {
+      uint32_t bytesRead = 0;
+      if (nsresult rv =
+              stream->Read(toRead.Elements(), bufSize - totalRead, &bytesRead);
+          NS_FAILED(rv)) {
+        return Err(IOError(rv).WithMessage(
+            "Encountered an unexpected error while reading file(%s)",
+            aFile->HumanReadablePath().get()));
+      }
+      if (bytesRead == 0) {
+        break;
+      }
+      totalRead += bytesRead;
+      toRead = toRead.From(bytesRead);
     }
-    if (bytesRead == 0) {
-      break;
-    }
-    totalRead += bytesRead;
-    toRead = toRead.From(bytesRead);
-  }
 
-  buffer.SetLength(totalRead);
+    buffer.SetLength(totalRead);
+  }
 
   // Decompress the file contents, if required.
   if (aDecompress) {
@@ -1135,6 +1141,9 @@ Result<Ok, IOUtils::IOError> IOUtils::CopyOrMoveSync(CopyOrMoveFn aMethod,
   MOZ_TRY(aDest->GetLeafName(destName));
   MOZ_TRY(aDest->GetParent(getter_AddRefs(destDir)));
 
+  // We know `destName` is a file and therefore must have a parent directory.
+  MOZ_RELEASE_ASSERT(destDir);
+
   // NB: if destDir doesn't exist, then |CopyToFollowingLinks| or
   // |MoveToFollowingLinks| will create it.
   rv = (aSource->*aMethod)(destDir, destName);
@@ -1189,14 +1198,33 @@ Result<Ok, IOUtils::IOError> IOUtils::MakeDirectorySync(nsIFile* aFile,
   if (!aCreateAncestors) {
     nsCOMPtr<nsIFile> parent;
     MOZ_TRY(aFile->GetParent(getter_AddRefs(parent)));
-    bool parentExists = false;
-    MOZ_TRY(parent->Exists(&parentExists));
-    if (!parentExists) {
-      return Err(IOError(NS_ERROR_FILE_NOT_FOUND)
-                     .WithMessage("Could not create directory at %s because "
-                                  "the path has missing "
-                                  "ancestor components",
-                                  aFile->HumanReadablePath().get()));
+    if (parent) {
+      bool parentExists = false;
+      MOZ_TRY(parent->Exists(&parentExists));
+      if (!parentExists) {
+        return Err(IOError(NS_ERROR_FILE_NOT_FOUND)
+                       .WithMessage("Could not create directory at %s because "
+                                    "the path has missing "
+                                    "ancestor components",
+                                    aFile->HumanReadablePath().get()));
+      }
+    } else {
+      // If we don't have a parent directory, which means this was called with a
+      // root directory. If the directory doesn't already exist (e.g., asking
+      // for a drive on Windows that does not exist), we will not be able to
+      // create it.
+      //
+      // Calling `nsLocalFile::Create()` on Windows can fail with
+      // `NS_ERROR_ACCESS_DENIED` trying to create a root directory, but we
+      // would rather the call succeed, so return early if the directory exists.
+      //
+      // Otherwise, we fall through to `nsiFile::Create()` and let it fail there
+      // instead.
+      bool exists = false;
+      MOZ_TRY(aFile->Exists(&exists));
+      if (exists) {
+        return Ok();
+      }
     }
   }
 

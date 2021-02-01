@@ -696,7 +696,9 @@ void MacroAssembler::initTypedArraySlots(Register obj, Register temp,
       "typed array inline buffer is limited by the maximum object byte size");
 
   // Initialise data elements to zero.
-  int32_t length = templateObj->length().deprecatedGetUint32();
+  size_t length = templateObj->length().get();
+  MOZ_ASSERT(length <= INT32_MAX,
+             "Template objects are only created for int32 lengths");
   size_t nbytes = length * templateObj->bytesPerElement();
 
   if (lengthKind == TypedArrayLength::Fixed &&
@@ -2472,11 +2474,13 @@ void MacroAssembler::convertValueToInt(
   }
 
   // The value is null or undefined in truncation contexts - just emit 0.
-  if (isNull.used()) {
-    bind(&isNull);
+  if (conversion == IntConversionInputKind::Any) {
+    if (isNull.used()) {
+      bind(&isNull);
+    }
+    mov(ImmWord(0), output);
+    jump(&done);
   }
-  mov(ImmWord(0), output);
-  jump(&done);
 
   // |output| needs to be different from |stringReg| to load string indices.
   bool handleStringIndices = handleStrings && output != stringReg;

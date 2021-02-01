@@ -70,120 +70,6 @@ SharedContext::SharedContext(JSContext* cx, Kind kind,
   setFlag(ImmutableFlags::Strict, directives.strict());
 }
 
-void ScopeContext::computeThisEnvironment(Scope* scope) {
-  uint32_t envCount = 0;
-  for (ScopeIter si(scope); si; si++) {
-    if (si.kind() == ScopeKind::Function) {
-      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
-
-      // Arrow function inherit the "this" environment of the enclosing script,
-      // so continue ignore them.
-      if (!fun->isArrow()) {
-        allowNewTarget = true;
-
-        if (fun->allowSuperProperty()) {
-          allowSuperProperty = true;
-          enclosingThisEnvironmentHops = envCount;
-        }
-
-        if (fun->isClassConstructor()) {
-          memberInitializers =
-              fun->baseScript()->useMemberInitializers()
-                  ? mozilla::Some(fun->baseScript()->getMemberInitializers())
-                  : mozilla::Some(MemberInitializers::Empty());
-          MOZ_ASSERT(memberInitializers->valid);
-        }
-
-        if (fun->isDerivedClassConstructor()) {
-          allowSuperCall = true;
-        }
-
-        if (fun->isFieldInitializer()) {
-          allowArguments = false;
-        }
-
-        // Found the effective "this" environment, so stop.
-        return;
-      }
-    }
-
-    if (si.scope()->hasEnvironment()) {
-      envCount++;
-    }
-  }
-}
-
-void ScopeContext::computeThisBinding(Scope* scope) {
-  // Inspect the scope-chain.
-  for (ScopeIter si(scope); si; si++) {
-    if (si.kind() == ScopeKind::Module) {
-      thisBinding = ThisBinding::Module;
-      return;
-    }
-
-    if (si.kind() == ScopeKind::Function) {
-      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
-
-      // Arrow functions don't have their own `this` binding.
-      if (fun->isArrow()) {
-        continue;
-      }
-
-      // Derived class constructors (and their nested arrow functions and evals)
-      // use ThisBinding::DerivedConstructor, which ensures TDZ checks happen
-      // when accessing |this|.
-      if (fun->isDerivedClassConstructor()) {
-        thisBinding = ThisBinding::DerivedConstructor;
-      } else {
-        thisBinding = ThisBinding::Function;
-      }
-
-      return;
-    }
-  }
-
-  thisBinding = ThisBinding::Global;
-}
-
-void ScopeContext::computeInScope(Scope* scope) {
-  for (ScopeIter si(scope); si; si++) {
-    if (si.kind() == ScopeKind::ClassBody) {
-      inClass = true;
-    }
-
-    if (si.kind() == ScopeKind::With) {
-      inWith = true;
-    }
-  }
-}
-
-/* static */
-Scope* ScopeContext::determineEffectiveScope(Scope* scope,
-                                             JSObject* environment) {
-  // If the scope-chain is non-syntactic, we may still determine a more precise
-  // effective-scope to use instead.
-  if (environment && scope->hasOnChain(ScopeKind::NonSyntactic)) {
-    JSObject* env = environment;
-    while (env) {
-      // Look at target of any DebugEnvironmentProxy, but be sure to use
-      // enclosingEnvironment() of the proxy itself.
-      JSObject* unwrapped = env;
-      if (env->is<DebugEnvironmentProxy>()) {
-        unwrapped = &env->as<DebugEnvironmentProxy>().environment();
-      }
-
-      if (unwrapped->is<CallObject>()) {
-        JSFunction* callee = &unwrapped->as<CallObject>().callee();
-        return callee->nonLazyScript()->bodyScope();
-      }
-
-      env = env->enclosingEnvironment();
-    }
-  }
-
-  return scope;
-}
-
 GlobalSharedContext::GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
                                          CompilationStencil& stencil,
                                          Directives directives,
@@ -225,8 +111,9 @@ FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
                          CompilationStencil& stencil,
                          CompilationState& compilationState,
                          Directives directives, GeneratorKind generatorKind,
-                         FunctionAsyncKind asyncKind, const ParserAtom* atom,
-                         FunctionFlags flags, ScriptIndex index)
+                         FunctionAsyncKind asyncKind,
+                         TaggedParserAtomIndex atom, FunctionFlags flags,
+                         ScriptIndex index)
     : SuspendableContext(cx, Kind::FunctionBox, stencil, directives, extent,
                          generatorKind == GeneratorKind::Generator,
                          asyncKind == FunctionAsyncKind::AsyncFunction),
@@ -440,8 +327,8 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
   MOZ_ASSERT(!isFunctionFieldCopiedToStencil);
 
   if (atom_) {
-    atom_->markUsedByStencil();
-    script.functionAtom = atom_->toIndex();
+    compilationState_.parserAtoms.markUsedByStencil(atom_);
+    script.functionAtom = atom_;
   }
   script.functionFlags = flags_;
   if (enclosingScopeIndex_) {
@@ -495,8 +382,8 @@ void FunctionBox::copyUpdatedEnclosingScopeIndex() {
 void FunctionBox::copyUpdatedAtomAndFlags() {
   ScriptStencil& script = functionStencil();
   if (atom_) {
-    atom_->markUsedByStencil();
-    script.functionAtom = atom_->toIndex();
+    compilationState_.parserAtoms.markUsedByStencil(atom_);
+    script.functionAtom = atom_;
   }
   script.functionFlags = flags_;
 }

@@ -17,6 +17,7 @@
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/NameAnalysisTypes.h"   // PrivateNameKind
 #include "frontend/ParseNode.h"
+#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/SharedContext.h"
 #include "frontend/Stencil.h"
 #include "vm/JSContext.h"
@@ -143,8 +144,7 @@ class FullParseHandler {
   // these assumptions.
   SourceKind sourceKind() const { return sourceKind_; }
 
-  NameNodeType newName(const ParserName* name, const TokenPos& pos,
-                       JSContext* cx) {
+  NameNodeType newName(TaggedParserAtomIndex name, const TokenPos& pos) {
     return new_<NameNode>(ParseNodeKind::Name, name, pos);
   }
 
@@ -164,12 +164,12 @@ class FullParseHandler {
     return node;
   }
 
-  NameNodeType newObjectLiteralPropertyName(const ParserAtom* atom,
+  NameNodeType newObjectLiteralPropertyName(TaggedParserAtomIndex atom,
                                             const TokenPos& pos) {
     return new_<NameNode>(ParseNodeKind::ObjectPropertyName, atom, pos);
   }
 
-  NameNodeType newPrivateName(const ParserAtom* atom, const TokenPos& pos) {
+  NameNodeType newPrivateName(TaggedParserAtomIndex atom, const TokenPos& pos) {
     return new_<NameNode>(ParseNodeKind::PrivateName, atom, pos);
   }
 
@@ -187,11 +187,12 @@ class FullParseHandler {
     return new_<BooleanLiteral>(cond, pos);
   }
 
-  NameNodeType newStringLiteral(const ParserAtom* atom, const TokenPos& pos) {
+  NameNodeType newStringLiteral(TaggedParserAtomIndex atom,
+                                const TokenPos& pos) {
     return new_<NameNode>(ParseNodeKind::StringExpr, atom, pos);
   }
 
-  NameNodeType newTemplateStringLiteral(const ParserAtom* atom,
+  NameNodeType newTemplateStringLiteral(TaggedParserAtomIndex atom,
                                         const TokenPos& pos) {
     return new_<NameNode>(ParseNodeKind::TemplateStringExpr, atom, pos);
   }
@@ -742,12 +743,12 @@ class FullParseHandler {
     return new_<CaseClause>(expr, body, begin);
   }
 
-  ContinueStatementType newContinueStatement(const ParserName* label,
+  ContinueStatementType newContinueStatement(TaggedParserAtomIndex label,
                                              const TokenPos& pos) {
     return new_<ContinueStatement>(label, pos);
   }
 
-  BreakStatementType newBreakStatement(const ParserName* label,
+  BreakStatementType newBreakStatement(TaggedParserAtomIndex label,
                                        const TokenPos& pos) {
     return new_<BreakStatement>(label, pos);
   }
@@ -767,8 +768,8 @@ class FullParseHandler {
                             TokenPos(begin, body->pn_pos.end), expr, body);
   }
 
-  LabeledStatementType newLabeledStatement(const ParserName* label, Node stmt,
-                                           uint32_t begin) {
+  LabeledStatementType newLabeledStatement(TaggedParserAtomIndex label,
+                                           Node stmt, uint32_t begin) {
     return new_<LabeledStatement>(label, stmt, begin);
   }
 
@@ -787,7 +788,8 @@ class FullParseHandler {
     return new_<DebuggerStatement>(pos);
   }
 
-  NameNodeType newPropertyName(const ParserName* name, const TokenPos& pos) {
+  NameNodeType newPropertyName(TaggedParserAtomIndex name,
+                               const TokenPos& pos) {
     return new_<NameNode>(ParseNodeKind::PropertyNameExpr, name, pos);
   }
 
@@ -1040,18 +1042,21 @@ class FullParseHandler {
 
   bool isArgumentsName(Node node, JSContext* cx) {
     return node->isKind(ParseNodeKind::Name) &&
-           node->as<NameNode>().atom() == cx->parserNames().arguments;
+           node->as<NameNode>().atom() ==
+               TaggedParserAtomIndex::WellKnown::arguments();
   }
 
   bool isEvalName(Node node, JSContext* cx) {
     return node->isKind(ParseNodeKind::Name) &&
-           node->as<NameNode>().atom() == cx->parserNames().eval;
+           node->as<NameNode>().atom() ==
+               TaggedParserAtomIndex::WellKnown::eval();
   }
 
   bool isAsyncKeyword(Node node, JSContext* cx) {
     return node->isKind(ParseNodeKind::Name) &&
            node->pn_pos.begin + strlen("async") == node->pn_pos.end &&
-           node->as<NameNode>().atom() == cx->parserNames().async;
+           node->as<NameNode>().atom() ==
+               TaggedParserAtomIndex::WellKnown::async();
   }
 
   bool isPrivateName(Node node) {
@@ -1072,19 +1077,19 @@ class FullParseHandler {
     return false;
   }
 
-  const ParserName* maybeDottedProperty(Node pn) {
+  TaggedParserAtomIndex maybeDottedProperty(Node pn) {
     return pn->is<PropertyAccessBase>() ? pn->as<PropertyAccessBase>().name()
-                                        : nullptr;
+                                        : TaggedParserAtomIndex::null();
   }
-  const ParserAtom* isStringExprStatement(Node pn, TokenPos* pos) {
+  TaggedParserAtomIndex isStringExprStatement(Node pn, TokenPos* pos) {
     if (pn->is<UnaryNode>()) {
       UnaryNode* unary = &pn->as<UnaryNode>();
-      if (const ParserAtom* atom = unary->isStringExprStatement()) {
+      if (auto atom = unary->isStringExprStatement()) {
         *pos = unary->kid()->pn_pos;
         return atom;
       }
     }
-    return nullptr;
+    return TaggedParserAtomIndex::null();
   }
 
   bool canSkipLazyInnerFunctions() { return !!lazyOuterFunction_; }

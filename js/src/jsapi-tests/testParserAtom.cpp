@@ -18,6 +18,7 @@ BEGIN_TEST(testParserAtom_empty) {
   using js::frontend::ParserAtom;
   using js::frontend::ParserAtomsTable;
   using js::frontend::ParserAtomVector;
+  using js::frontend::TaggedParserAtomIndex;
 
   js::LifoAlloc alloc(512);
   ParserAtomsTable atomTable(cx->runtime(), alloc);
@@ -31,12 +32,11 @@ BEGIN_TEST(testParserAtom_empty) {
   const js::LittleEndianChars leTwoByte(bytes);
 
   // Check that the well-known empty atom matches for different entry points.
-  const ParserAtom* ref = cx->parserNames().empty;
-  CHECK(ref);
-  CHECK(atomTable.internAscii(cx, ascii, 0) == ref);
-  CHECK(atomTable.internLatin1(cx, latin1, 0) == ref);
-  CHECK(atomTable.internUtf8(cx, utf8, 0) == ref);
-  CHECK(atomTable.internChar16(cx, char16, 0) == ref);
+  auto refIndex = TaggedParserAtomIndex::WellKnown::empty();
+  CHECK(atomTable.internAscii(cx, ascii, 0) == refIndex);
+  CHECK(atomTable.internLatin1(cx, latin1, 0) == refIndex);
+  CHECK(atomTable.internUtf8(cx, utf8, 0) == refIndex);
+  CHECK(atomTable.internChar16(cx, char16, 0) == refIndex);
 
   // Check concatenation works on empty atoms.
   const ParserAtom* concat[] = {
@@ -44,7 +44,7 @@ BEGIN_TEST(testParserAtom_empty) {
       cx->parserNames().empty,
   };
   mozilla::Range<const ParserAtom*> concatRange(concat, 2);
-  CHECK(atomTable.concatAtoms(cx, concatRange) == ref);
+  CHECK(atomTable.concatAtoms(cx, concatRange) == refIndex);
 
   return true;
 }
@@ -68,19 +68,21 @@ BEGIN_TEST(testParserAtom_tiny1) {
   const uint8_t bytes[] = {'a', 0};
   const js::LittleEndianChars leTwoByte(bytes);
 
-  const ParserAtom* ref = cx->parserNames().lookupTiny(&a, 1);
+  auto ref = cx->parserNames().lookupTiny(&a, 1);
   CHECK(ref);
-  CHECK(atomTable.internAscii(cx, ascii, 1) == ref);
-  CHECK(atomTable.internLatin1(cx, latin1, 1) == ref);
-  CHECK(atomTable.internUtf8(cx, utf8, 1) == ref);
-  CHECK(atomTable.internChar16(cx, char16, 1) == ref);
+  auto refIndex = cx->parserNames().lookupTinyIndex(&a, 1);
+  CHECK(refIndex);
+  CHECK(atomTable.internAscii(cx, ascii, 1) == refIndex);
+  CHECK(atomTable.internLatin1(cx, latin1, 1) == refIndex);
+  CHECK(atomTable.internUtf8(cx, utf8, 1) == refIndex);
+  CHECK(atomTable.internChar16(cx, char16, 1) == refIndex);
 
   const ParserAtom* concat[] = {
       ref,
       cx->parserNames().empty,
   };
   mozilla::Range<const ParserAtom*> concatRange(concat, 2);
-  CHECK(atomTable.concatAtoms(cx, concatRange) == ref);
+  CHECK(atomTable.concatAtoms(cx, concatRange) == refIndex);
 
   // Note: If Latin1-Extended characters become supported, then UTF-8 behaviour
   // should be tested.
@@ -109,19 +111,19 @@ BEGIN_TEST(testParserAtom_tiny2) {
   const uint8_t bytes[] = {'a', 0, '0', 0};
   const js::LittleEndianChars leTwoByte(bytes);
 
-  const ParserAtom* ref = cx->parserNames().lookupTiny(ascii, 2);
-  CHECK(ref);
-  CHECK(atomTable.internAscii(cx, ascii, 2) == ref);
-  CHECK(atomTable.internLatin1(cx, latin1, 2) == ref);
-  CHECK(atomTable.internUtf8(cx, utf8, 2) == ref);
-  CHECK(atomTable.internChar16(cx, char16, 2) == ref);
+  auto refIndex = cx->parserNames().lookupTinyIndex(ascii, 2);
+  CHECK(refIndex);
+  CHECK(atomTable.internAscii(cx, ascii, 2) == refIndex);
+  CHECK(atomTable.internLatin1(cx, latin1, 2) == refIndex);
+  CHECK(atomTable.internUtf8(cx, utf8, 2) == refIndex);
+  CHECK(atomTable.internChar16(cx, char16, 2) == refIndex);
 
   const ParserAtom* concat[] = {
       cx->parserNames().lookupTiny(ascii + 0, 1),
       cx->parserNames().lookupTiny(ascii + 1, 1),
   };
   mozilla::Range<const ParserAtom*> concatRange(concat, 2);
-  CHECK(atomTable.concatAtoms(cx, concatRange) == ref);
+  CHECK(atomTable.concatAtoms(cx, concatRange) == refIndex);
 
   // Note: If Latin1-Extended characters become supported, then UTF-8 behaviour
   // should be tested.
@@ -146,21 +148,22 @@ BEGIN_TEST(testParserAtom_concat) {
     std::vector<const ParserAtom*> inputs;
     for (const char16_t* arg : args) {
       size_t len = std::char_traits<char16_t>::length(arg);
-      const ParserAtom* atom = atomTable.internChar16(cx, arg, len);
-      inputs.push_back(atom);
+      auto index = atomTable.internChar16(cx, arg, len);
+      inputs.push_back(atomTable.getParserAtom(index));
     }
 
     // Concatenate twice to test new vs existing pathways.
     mozilla::Range<const ParserAtom*> range(inputs.data(), inputs.size());
-    const ParserAtom* once = atomTable.concatAtoms(cx, range);
-    const ParserAtom* twice = atomTable.concatAtoms(cx, range);
+    auto once = atomTable.concatAtoms(cx, range);
+    auto twice = atomTable.concatAtoms(cx, range);
 
     // Intern expected value literal _after_ the concat code to allow
     // allocation pathways a chance to be tested.
     size_t exp_len = std::char_traits<char16_t>::length(exp);
-    const ParserAtom* ref = atomTable.internChar16(cx, exp, exp_len);
+    auto refIndex = atomTable.internChar16(cx, exp, exp_len);
+    CHECK(refIndex);
 
-    return (once == ref) && (twice == ref);
+    return (once == refIndex) && (twice == refIndex);
   };
 
   // Checks empty strings

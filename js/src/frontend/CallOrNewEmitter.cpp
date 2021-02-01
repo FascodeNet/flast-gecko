@@ -28,7 +28,7 @@ CallOrNewEmitter::CallOrNewEmitter(BytecodeEmitter* bce, JSOp op,
   MOZ_ASSERT(isCall() || isNew() || isSuperCall());
 }
 
-bool CallOrNewEmitter::emitNameCallee(const ParserAtom* name) {
+bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
   MOZ_ASSERT(state_ == State::Start);
 
   NameOpEmitter noe(

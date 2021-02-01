@@ -223,7 +223,7 @@ dependencies = [
  "bindgen",
  "cranelift-codegen",
  "cranelift-wasm",
- "env_logger 0.8.2",
+ "env_logger",
  "log",
  "smallvec",
 ]
@@ -1312,25 +1312,12 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
-dependencies = [
- "atty",
- "humantime 1.3.0",
- "log",
- "regex",
- "termcolor",
-]
-
-[[package]]
-name = "env_logger"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f26ecb66b4bdca6c1409b40fb255eefc2bd4f6d135dab3c3124f80ffa2a9661e"
 dependencies = [
  "atty",
- "humantime 2.0.1",
+ "humantime",
  "log",
  "regex",
  "termcolor",
@@ -1790,7 +1777,7 @@ name = "gecko_logger"
 version = "0.1.0"
 dependencies = [
  "app_services_logger",
- "env_logger 0.8.2",
+ "env_logger",
  "lazy_static",
  "log",
 ]
@@ -2098,9 +2085,9 @@ dependencies = [
 
 [[package]]
 name = "glean"
-version = "33.10.2"
+version = "33.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71de6b7b89292c8b80a4706600aa6d3ceeaac43fb7c91f7bd10c63bc4079252a"
+checksum = "28d73a3c2543c7c54a7e6b8a376b72e94f43892065691093168557473d4194f8"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -2117,9 +2104,9 @@ dependencies = [
 
 [[package]]
 name = "glean-core"
-version = "33.10.2"
+version = "33.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1d724cc540f6ee8b8f4a7e2cdf357dd409fe585e453e2e6750c10bd92d5b64f"
+checksum = "470ffc8413e0b28b1f1e093af664aec05bf36303c4cefdeffa38f445385c8d41"
 dependencies = [
  "bincode",
  "chrono",
@@ -2391,15 +2378,6 @@ checksum = "e8734b0cfd3bc3e101ec59100e101c2eecd19282202e87808b3037b442777a83"
 
 [[package]]
 name = "humantime"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df004cfca50ef23c36850aaaa59ad52cc70d0e90243c3c7737a4dd32dc7a3c4f"
-dependencies = [
- "quick-error",
-]
-
-[[package]]
-name = "humantime"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c1ad908cc71012b7bea4d0c53ba96a8cba9962f048fa68d143376143d863b7a"
@@ -2583,7 +2561,7 @@ version = "0.1.4"
 dependencies = [
  "bindgen",
  "cmake",
- "env_logger 0.8.2",
+ "env_logger",
  "glob",
  "lazy_static",
  "libc",
@@ -2731,7 +2709,6 @@ dependencies = [
  "atomic_refcell",
  "crossbeam-utils 0.6.5",
  "cstr",
- "failure",
  "lazy_static",
  "libc",
  "log",
@@ -2742,6 +2719,7 @@ dependencies = [
  "storage_variant",
  "tempfile",
  "thin-vec",
+ "thiserror",
  "xpcom",
 ]
 
@@ -3334,12 +3312,12 @@ dependencies = [
 
 [[package]]
 name = "mp4parse"
-version = "0.11.4"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=3d9efdc868ce8c5767cea28708fa6512c0ab6d17#3d9efdc868ce8c5767cea28708fa6512c0ab6d17"
+version = "0.11.5"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=3011a2b923c8b0f1b392bcdd008cd8b95ffd846b#3011a2b923c8b0f1b392bcdd008cd8b95ffd846b"
 dependencies = [
  "bitreader",
  "byteorder",
- "env_logger 0.7.1",
+ "env_logger",
  "fallible_collections",
  "hashbrown",
  "log",
@@ -3353,8 +3331,8 @@ version = "0.1.0"
 
 [[package]]
 name = "mp4parse_capi"
-version = "0.11.4"
-source = "git+https://github.com/mozilla/mp4parse-rust?rev=3d9efdc868ce8c5767cea28708fa6512c0ab6d17#3d9efdc868ce8c5767cea28708fa6512c0ab6d17"
+version = "0.11.5"
+source = "git+https://github.com/mozilla/mp4parse-rust?rev=3011a2b923c8b0f1b392bcdd008cd8b95ffd846b#3011a2b923c8b0f1b392bcdd008cd8b95ffd846b"
 dependencies = [
  "byteorder",
  "fallible_collections",
@@ -3399,7 +3377,7 @@ version = "0.4.21"
 source = "git+https://github.com/mozilla/neqo?tag=v0.4.21#0e6040cd6385c038f8b7f604bcb09ad74d29e0d6"
 dependencies = [
  "chrono",
- "env_logger 0.8.2",
+ "env_logger",
  "lazy_static",
  "log",
  "qlog",
@@ -3638,11 +3616,11 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.10"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4c81ffc11c212fa327657cb19dd85eb7419e163b5b076bede2bdb5c974c07e4"
+checksum = "9a64b1ec5cda2586e284722486d802acf1f7dbdc623e2bfc57e65ca1cd099290"
 dependencies = [
- "autocfg 0.1.6",
+ "autocfg 1.0.1",
 ]
 
 [[package]]
@@ -3715,7 +3693,7 @@ version = "0.1.4"
 dependencies = [
  "byteorder",
  "core-foundation",
- "env_logger 0.8.2",
+ "env_logger",
  "lazy_static",
  "libloading 0.5.2",
  "log",
@@ -3991,7 +3969,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50ce7c785e06e3a9e6f546c1a30d3d59111a31a21bc294fb1496241a572c9a00"
 dependencies = [
  "base64 0.10.1",
- "humantime 2.0.1",
+ "humantime",
  "indexmap",
  "line-wrap",
  "serde",
@@ -4377,15 +4355,14 @@ checksum = "7c2b29d87cfbdce39849012bb5020fff88b8f01f4f5b55846a0b6ef360774eae"
 
 [[package]]
 name = "rkv"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917d7a01f8c1ae46226e9d8dd24314279be7b04dfd0b24340d420e6927c2e687"
+checksum = "28e2e15d3fff125cfc4fb3f1b226ff83af057c4715061ded16193b7142beefc9"
 dependencies = [
  "arrayref",
  "bincode",
  "bitflags",
  "byteorder",
- "failure",
  "id-arena",
  "lazy_static",
  "lmdb-rkv",
@@ -4394,6 +4371,7 @@ dependencies = [
  "paste",
  "serde",
  "serde_derive",
+ "thiserror",
  "url",
  "uuid",
 ]
@@ -4814,7 +4792,7 @@ name = "smoosh"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
- "env_logger 0.8.2",
+ "env_logger",
  "jsparagus",
  "log",
 ]
@@ -5014,7 +4992,7 @@ dependencies = [
  "atomic_refcell",
  "cssparser",
  "cstr",
- "env_logger 0.8.2",
+ "env_logger",
  "geckoservo",
  "libc",
  "log",
@@ -6161,7 +6139,6 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-utils 0.6.5",
  "cstr",
- "failure",
  "libc",
  "log",
  "moz_task",
@@ -6171,6 +6148,7 @@ dependencies = [
  "rkv",
  "serde_json",
  "tempfile",
+ "thiserror",
  "xpcom",
 ]
 

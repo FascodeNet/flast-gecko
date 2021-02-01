@@ -16,6 +16,7 @@
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/NameAnalysisTypes.h"   // PrivateNameKind
 #include "frontend/ParseNode.h"
+#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/TokenStream.h"
 #include "js/GCAnnotations.h"
 #include "vm/JSContext.h"
@@ -36,7 +37,7 @@ namespace frontend {
 // amounts of code that never executes (which happens often).
 class SyntaxParseHandler {
   // Remember the last encountered name or string literal during syntax parses.
-  const ParserAtom* lastAtom;
+  TaggedParserAtomIndex lastAtom;
   TokenPos lastStringPos;
 
  public:
@@ -171,8 +172,7 @@ class SyntaxParseHandler {
 
  public:
   SyntaxParseHandler(JSContext* cx, LifoAlloc& alloc,
-                     BaseScript* lazyOuterFunction)
-      : lastAtom(nullptr) {}
+                     BaseScript* lazyOuterFunction) {}
 
   static NullNode null() { return NodeFailure; }
 
@@ -181,17 +181,16 @@ class SyntaxParseHandler {
   FOR_EACH_PARSENODE_SUBCLASS(DECLARE_AS)
 #undef DECLARE_AS
 
-  NameNodeType newName(const ParserName* name, const TokenPos& pos,
-                       JSContext* cx) {
+  NameNodeType newName(TaggedParserAtomIndex name, const TokenPos& pos) {
     lastAtom = name;
-    if (name == cx->parserNames().arguments) {
+    if (name == TaggedParserAtomIndex::WellKnown::arguments()) {
       return NodeArgumentsName;
     }
     if (pos.begin + strlen("async") == pos.end &&
-        name == cx->parserNames().async) {
+        name == TaggedParserAtomIndex::WellKnown::async()) {
       return NodePotentialAsyncKeyword;
     }
-    if (name == cx->parserNames().eval) {
+    if (name == TaggedParserAtomIndex::WellKnown::eval()) {
       return NodeEvalName;
     }
     return NodeName;
@@ -206,12 +205,12 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  NameNodeType newObjectLiteralPropertyName(const ParserAtom* atom,
+  NameNodeType newObjectLiteralPropertyName(TaggedParserAtomIndex atom,
                                             const TokenPos& pos) {
     return NodeName;
   }
 
-  NameNodeType newPrivateName(const ParserAtom* atom, const TokenPos& pos) {
+  NameNodeType newPrivateName(TaggedParserAtomIndex atom, const TokenPos& pos) {
     return NodePrivateName;
   }
 
@@ -226,13 +225,14 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  NameNodeType newStringLiteral(const ParserAtom* atom, const TokenPos& pos) {
+  NameNodeType newStringLiteral(TaggedParserAtomIndex atom,
+                                const TokenPos& pos) {
     lastAtom = atom;
     lastStringPos = pos;
     return NodeUnparenthesizedString;
   }
 
-  NameNodeType newTemplateStringLiteral(const ParserAtom* atom,
+  NameNodeType newTemplateStringLiteral(TaggedParserAtomIndex atom,
                                         const TokenPos& pos) {
     return NodeGeneric;
   }
@@ -455,11 +455,11 @@ class SyntaxParseHandler {
   CaseClauseType newCaseOrDefault(uint32_t begin, Node expr, Node body) {
     return NodeGeneric;
   }
-  ContinueStatementType newContinueStatement(const ParserName* label,
+  ContinueStatementType newContinueStatement(TaggedParserAtomIndex label,
                                              const TokenPos& pos) {
     return NodeGeneric;
   }
-  BreakStatementType newBreakStatement(const ParserName* label,
+  BreakStatementType newBreakStatement(TaggedParserAtomIndex label,
                                        const TokenPos& pos) {
     return NodeBreak;
   }
@@ -471,8 +471,8 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  LabeledStatementType newLabeledStatement(const ParserName* label, Node stmt,
-                                           uint32_t begin) {
+  LabeledStatementType newLabeledStatement(TaggedParserAtomIndex label,
+                                           Node stmt, uint32_t begin) {
     return NodeGeneric;
   }
 
@@ -488,7 +488,8 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  NameNodeType newPropertyName(const ParserName* name, const TokenPos& pos) {
+  NameNodeType newPropertyName(TaggedParserAtomIndex name,
+                               const TokenPos& pos) {
     lastAtom = name;
     return NodeGeneric;
   }
@@ -697,24 +698,24 @@ class SyntaxParseHandler {
   bool isPrivateName(Node node) { return node == NodePrivateName; }
   bool isPrivateField(Node node) { return node == NodePrivateElement; }
 
-  const ParserName* maybeDottedProperty(Node node) {
+  TaggedParserAtomIndex maybeDottedProperty(Node node) {
     // Note: |super.apply(...)| is a special form that calls an "apply"
     // method retrieved from one value, but using a *different* value as
     // |this|.  It's not really eligible for the funapply/funcall
     // optimizations as they're currently implemented (assuming a single
     // value is used for both retrieval and |this|).
     if (node != NodeDottedProperty && node != NodeOptionalDottedProperty) {
-      return nullptr;
+      return TaggedParserAtomIndex::null();
     }
-    return lastAtom->asName();
+    return lastAtom;
   }
 
-  const ParserAtom* isStringExprStatement(Node pn, TokenPos* pos) {
+  TaggedParserAtomIndex isStringExprStatement(Node pn, TokenPos* pos) {
     if (pn == NodeStringExprStatement) {
       *pos = lastStringPos;
       return lastAtom;
     }
-    return nullptr;
+    return TaggedParserAtomIndex::null();
   }
 
   bool canSkipLazyInnerFunctions() { return false; }

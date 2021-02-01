@@ -245,6 +245,11 @@ button > hbox > label {
 
 /* General Pane */
 
+.is-default > #isNotDefaultPane,
+:not(.is-default) > #isDefaultPane {
+  visibility: hidden;
+}
+
 #isDefaultLabel,
 #isNotDefaultLabel {
   font-weight: 600;
@@ -333,6 +338,10 @@ button > hbox > label {
 
 #updateBox {
   margin-block: 4px 32px;
+}
+
+#updateDeck > *:not(.selected) {
+  visibility: hidden;
 }
 
 #updateDeck > hbox > button {

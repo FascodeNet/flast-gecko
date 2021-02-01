@@ -18,6 +18,8 @@
 #include "frontend/CompilationInfo.h"  // CompilationStencil, CompilationStencilSet, CompilationGCOutput
 #include "frontend/SharedContext.h"
 #include "gc/AllocKind.h"    // gc::AllocKind
+#include "gc/Rooting.h"      // RootedAtom
+#include "gc/Tracer.h"       // TraceNullableRoot
 #include "js/CallArgs.h"     // JSNative
 #include "js/RootingAPI.h"   // Rooted
 #include "js/Transcoding.h"  // JS::TranscodeBuffer
@@ -32,17 +34,196 @@
 #include "vm/JSScript.h"      // BaseScript, JSScript
 #include "vm/ObjectGroup.h"   // TenuredObject
 #include "vm/Printer.h"       // js::Fprinter
-#include "vm/Scope.h"         // Scope, ScopeKindString
+#include "vm/RegExpObject.h"  // js::RegExpObject
+#include "vm/Scope.h"         // Scope, ScopeKindString, ScopeIter
+#include "vm/ScopeKind.h"     // ScopeKind
 #include "vm/StencilEnums.h"  // ImmutableScriptFlagsEnum
 #include "vm/StringType.h"    // JSAtom, js::CopyChars
 #include "vm/Xdr.h"           // XDRMode, XDRResult, XDREncoder
 #include "wasm/AsmJS.h"       // InstantiateAsmJS
 #include "wasm/WasmModule.h"  // wasm::Module
 
-#include "vm/JSFunction-inl.h"  // JSFunction::create
+#include "vm/EnvironmentObject-inl.h"  // JSObject::enclosingEnvironment
+#include "vm/JSFunction-inl.h"         // JSFunction::create
 
 using namespace js;
 using namespace js::frontend;
+
+void ScopeContext::computeThisEnvironment(Scope* enclosingScope) {
+  uint32_t envCount = 0;
+  for (ScopeIter si(enclosingScope); si; si++) {
+    if (si.kind() == ScopeKind::Function) {
+      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
+
+      // Arrow function inherit the "this" environment of the enclosing script,
+      // so continue ignore them.
+      if (!fun->isArrow()) {
+        allowNewTarget = true;
+
+        if (fun->allowSuperProperty()) {
+          allowSuperProperty = true;
+          enclosingThisEnvironmentHops = envCount;
+        }
+
+        if (fun->isClassConstructor()) {
+          memberInitializers =
+              fun->baseScript()->useMemberInitializers()
+                  ? mozilla::Some(fun->baseScript()->getMemberInitializers())
+                  : mozilla::Some(MemberInitializers::Empty());
+          MOZ_ASSERT(memberInitializers->valid);
+        }
+
+        if (fun->isDerivedClassConstructor()) {
+          allowSuperCall = true;
+        }
+
+        if (fun->isFieldInitializer()) {
+          allowArguments = false;
+        }
+
+        // Found the effective "this" environment, so stop.
+        return;
+      }
+    }
+
+    if (si.scope()->hasEnvironment()) {
+      envCount++;
+    }
+  }
+}
+
+void ScopeContext::computeThisBinding(Scope* scope) {
+  // Inspect the scope-chain.
+  for (ScopeIter si(scope); si; si++) {
+    if (si.kind() == ScopeKind::Module) {
+      thisBinding = ThisBinding::Module;
+      return;
+    }
+
+    if (si.kind() == ScopeKind::Function) {
+      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
+
+      // Arrow functions don't have their own `this` binding.
+      if (fun->isArrow()) {
+        continue;
+      }
+
+      // Derived class constructors (and their nested arrow functions and evals)
+      // use ThisBinding::DerivedConstructor, which ensures TDZ checks happen
+      // when accessing |this|.
+      if (fun->isDerivedClassConstructor()) {
+        thisBinding = ThisBinding::DerivedConstructor;
+      } else {
+        thisBinding = ThisBinding::Function;
+      }
+
+      return;
+    }
+  }
+
+  thisBinding = ThisBinding::Global;
+}
+
+void ScopeContext::computeInScope(Scope* enclosingScope) {
+  if (enclosingScope) {
+    enclosingScopeKind = enclosingScope->kind();
+    if (enclosingScope->is<FunctionScope>()) {
+      MOZ_ASSERT(enclosingScope->as<FunctionScope>().canonicalFunction());
+      enclosingScopeIsArrow =
+          enclosingScope->as<FunctionScope>().canonicalFunction()->isArrow();
+    }
+    enclosingScopeHasEnvironment = enclosingScope->hasEnvironment();
+
+#ifdef DEBUG
+    hasNonSyntacticScopeOnChain =
+        enclosingScope->hasOnChain(ScopeKind::NonSyntactic);
+#endif
+  }
+
+  for (ScopeIter si(enclosingScope); si; si++) {
+    if (si.kind() == ScopeKind::ClassBody) {
+      inClass = true;
+    }
+
+    if (si.kind() == ScopeKind::With) {
+      inWith = true;
+    }
+  }
+}
+
+/* static */
+Scope* ScopeContext::determineEffectiveScope(Scope* scope,
+                                             JSObject* environment) {
+  // If the scope-chain is non-syntactic, we may still determine a more precise
+  // effective-scope to use instead.
+  if (environment && scope->hasOnChain(ScopeKind::NonSyntactic)) {
+    JSObject* env = environment;
+    while (env) {
+      // Look at target of any DebugEnvironmentProxy, but be sure to use
+      // enclosingEnvironment() of the proxy itself.
+      JSObject* unwrapped = env;
+      if (env->is<DebugEnvironmentProxy>()) {
+        unwrapped = &env->as<DebugEnvironmentProxy>().environment();
+      }
+
+      if (unwrapped->is<CallObject>()) {
+        JSFunction* callee = &unwrapped->as<CallObject>().callee();
+        return callee->nonLazyScript()->bodyScope();
+      }
+
+      env = env->enclosingEnvironment();
+    }
+  }
+
+  return scope;
+}
+
+bool CompilationInput::initScriptSource(JSContext* cx) {
+  ScriptSource* ss = cx->new_<ScriptSource>();
+  if (!ss) {
+    return false;
+  }
+  setSource(ss);
+
+  return ss->initFromOptions(cx, options);
+}
+
+void CompilationInput::trace(JSTracer* trc) {
+  atomCache.trace(trc);
+  TraceNullableRoot(trc, &lazy, "compilation-input-lazy");
+  source_.trace(trc);
+  TraceNullableRoot(trc, &enclosingScope, "compilation-input-enclosing-scope");
+}
+
+void CompilationAtomCache::trace(JSTracer* trc) { atoms_.trace(trc); }
+
+void CompilationStencil::trace(JSTracer* trc) { input.trace(trc); }
+
+void CompilationGCOutput::trace(JSTracer* trc) {
+  TraceNullableRoot(trc, &script, "compilation-gc-output-script");
+  TraceNullableRoot(trc, &module, "compilation-gc-output-module");
+  TraceNullableRoot(trc, &sourceObject, "compilation-gc-output-source");
+  functions.trace(trc);
+  scopes.trace(trc);
+}
+
+RegExpObject* RegExpStencil::createRegExp(
+    JSContext* cx, const CompilationAtomCache& atomCache) const {
+  RootedAtom atom(cx, atomCache.getExistingAtomAt(cx, atom_));
+  return RegExpObject::createSyntaxChecked(cx, atom, flags(), TenuredObject);
+}
+
+RegExpObject* RegExpStencil::createRegExpAndEnsureAtom(
+    JSContext* cx, CompilationAtomCache& atomCache,
+    BaseCompilationStencil& stencil) const {
+  const ParserAtom* parserAtom = stencil.getParserAtomAt(cx, atom_);
+  MOZ_ASSERT(parserAtom);
+  RootedAtom atom(cx, parserAtom->toJSAtom(cx, atom_, atomCache));
+  if (!atom) {
+    return nullptr;
+  }
+  return RegExpObject::createSyntaxChecked(cx, atom, flags(), TenuredObject);
+}
 
 AbstractScopePtr ScopeStencil::enclosing(
     CompilationState& compilationState) const {
@@ -50,7 +231,7 @@ AbstractScopePtr ScopeStencil::enclosing(
     return AbstractScopePtr(compilationState, enclosing());
   }
 
-  return AbstractScopePtr(compilationState.input.enclosingScope);
+  return AbstractScopePtr::compilationEnclosingScope(compilationState);
 }
 
 Scope* ScopeStencil::enclosingExistingScope(
@@ -1319,6 +1500,66 @@ void frontend::DumpTaggedParserAtomIndex(js::JSONPrinter& json,
   json.property("tag", "null");
 }
 
+void frontend::DumpTaggedParserAtomIndexNoQuote(
+    GenericPrinter& out, TaggedParserAtomIndex taggedIndex,
+    BaseCompilationStencil* stencil) {
+  if (taggedIndex.isParserAtomIndex()) {
+    auto index = taggedIndex.toParserAtomIndex();
+    if (stencil && stencil->parserAtomData[index]) {
+      stencil->parserAtomData[index]->dumpCharsNoQuote(out);
+    } else {
+      out.printf("AtomIndex#%zu", size_t(index));
+    }
+    return;
+  }
+
+  if (taggedIndex.isWellKnownAtomId()) {
+    auto index = taggedIndex.toWellKnownAtomId();
+    switch (index) {
+      case WellKnownAtomId::empty:
+        out.put("#<zero-length name>");
+        break;
+
+#  define CASE_(_, name, _2)                                 \
+    case WellKnownAtomId::name: {                            \
+      WellKnownParserAtoms::rom_.name.dumpCharsNoQuote(out); \
+      break;                                                 \
+    }
+        FOR_EACH_NONTINY_COMMON_PROPERTYNAME(CASE_)
+#  undef CASE_
+
+#  define CASE_(name, _)                                     \
+    case WellKnownAtomId::name: {                            \
+      WellKnownParserAtoms::rom_.name.dumpCharsNoQuote(out); \
+      break;                                                 \
+    }
+        JS_FOR_EACH_PROTOTYPE(CASE_)
+#  undef CASE_
+
+      default:
+        // This includes tiny WellKnownAtomId atoms, which is invalid.
+        out.printf("WellKnown#%zu", size_t(index));
+        break;
+    }
+    return;
+  }
+
+  if (taggedIndex.isStaticParserString1()) {
+    auto index = taggedIndex.toStaticParserString1();
+    WellKnownParserAtoms::getStatic1(index)->dumpCharsNoQuote(out);
+    return;
+  }
+
+  if (taggedIndex.isStaticParserString2()) {
+    auto index = taggedIndex.toStaticParserString2();
+    WellKnownParserAtoms::getStatic2(index)->dumpCharsNoQuote(out);
+    return;
+  }
+
+  MOZ_ASSERT(taggedIndex.isNull());
+  out.put("#<null name>");
+}
+
 void RegExpStencil::dump() {
   js::Fprinter out(stderr);
   js::JSONPrinter json(out);
@@ -2210,17 +2451,6 @@ const ParserAtom* GetWellKnownParserAtomAt(JSContext* cx,
   return WellKnownParserAtoms::getStatic2(index);
 }
 
-const ParserAtom* CompilationState::getParserAtomAt(
-    JSContext* cx, TaggedParserAtomIndex taggedIndex) const {
-  if (taggedIndex.isParserAtomIndex()) {
-    auto index = taggedIndex.toParserAtomIndex();
-    MOZ_ASSERT(index < parserAtoms.entries().length());
-    return parserAtoms.entries()[index]->asAtom();
-  }
-
-  return GetWellKnownParserAtomAt(cx, taggedIndex);
-}
-
 bool CompilationState::allocateGCThingsUninitialized(
     JSContext* cx, ScriptIndex scriptIndex, size_t length,
     TaggedScriptThingIndex** cursor) {
@@ -2290,4 +2520,20 @@ const ParserAtom* BaseCompilationStencil::getParserAtomAt(
   }
 
   return GetWellKnownParserAtomAt(cx, taggedIndex);
+}
+
+CompilationStencil::RewindToken CompilationStencil::getRewindToken(
+    CompilationState& state) {
+  return RewindToken{state.scriptData.length(), asmJS.count()};
+}
+
+void CompilationStencil::rewind(CompilationState& state,
+                                const CompilationStencil::RewindToken& pos) {
+  if (asmJS.count() != pos.asmJSCount) {
+    for (size_t i = pos.scriptDataLength; i < state.scriptData.length(); i++) {
+      asmJS.remove(ScriptIndex(i));
+    }
+    MOZ_ASSERT(asmJS.count() == pos.asmJSCount);
+  }
+  state.scriptData.shrinkTo(pos.scriptDataLength);
 }

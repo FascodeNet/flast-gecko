@@ -55,10 +55,6 @@
 
 /* Miscellaneous form elements */
 
-fieldset > legend {
-  inline-size: -moz-fit-content;
-}
-
 legend {
   display: block;
   padding-inline: 2px;
@@ -127,7 +123,7 @@ textarea {
   resize: both;
   white-space: pre-wrap;
   word-wrap: break-word;
-  overflow-clip-box: content-box;
+  overflow-clip-box: padding-box content-box;
 }
 
 /* A few properties that we don't want to inherit by default: */
@@ -999,12 +995,6 @@ input[type=number]::-moz-number-spin-down {
 input[type=number] > div > div > div:hover {
   /* Give some indication of hover state for the up/down buttons */
   background-color: lightblue;
-}
-
-@media (-moz-non-native-content-theme) {
-  input[type=number] {
-    padding-inline-end: 0;
-  }
 }
 
 input[type=search]::-moz-search-clear-button {

@@ -16,6 +16,7 @@
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
 #include "frontend/Parser.h"
+#include "frontend/ParserAtom.h"  // ParserAtom, ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
 #include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
 #include "js/Vector.h"
@@ -464,7 +465,9 @@ static bool FoldType(FoldInfo info, ParseNode** pnp, ParseNodeKind kind) {
       case ParseNodeKind::NumberExpr:
         if (pn->isKind(ParseNodeKind::StringExpr)) {
           double d;
-          if (!pn->as<NameNode>().atom()->toNumber(info.cx, &d)) {
+          const ParserAtom* atom =
+              info.parserAtoms.getParserAtom(pn->as<NameNode>().atom());
+          if (!atom->toNumber(info.cx, &d)) {
             return false;
           }
           if (!TryReplaceNode(
@@ -476,7 +479,7 @@ static bool FoldType(FoldInfo info, ParseNode** pnp, ParseNodeKind kind) {
 
       case ParseNodeKind::StringExpr:
         if (pn->isKind(ParseNodeKind::NumberExpr)) {
-          const ParserAtom* atom =
+          TaggedParserAtomIndex atom =
               pn->as<NumericLiteral>().toAtom(info.cx, info.parserAtoms);
           if (!atom) {
             return false;
@@ -522,7 +525,10 @@ static Truthiness Boolish(ParseNode* pn) {
 
     case ParseNodeKind::StringExpr:
     case ParseNodeKind::TemplateStringExpr:
-      return (pn->as<NameNode>().atom()->length() > 0) ? Truthy : Falsy;
+      return (pn->as<NameNode>().atom() ==
+              TaggedParserAtomIndex::WellKnown::empty())
+                 ? Falsy
+                 : Truthy;
 
     case ParseNodeKind::TrueExpr:
     case ParseNodeKind::Function:
@@ -579,21 +585,21 @@ static bool FoldTypeOfExpr(FoldInfo info, ParseNode** nodePtr) {
   ParseNode* expr = node->kid();
 
   // Constant-fold the entire |typeof| if given a constant with known type.
-  const ParserName* result = nullptr;
+  TaggedParserAtomIndex result;
   if (expr->isKind(ParseNodeKind::StringExpr) ||
       expr->isKind(ParseNodeKind::TemplateStringExpr)) {
-    result = info.cx->parserNames().string;
+    result = TaggedParserAtomIndex::WellKnown::string();
   } else if (expr->isKind(ParseNodeKind::NumberExpr)) {
-    result = info.cx->parserNames().number;
+    result = TaggedParserAtomIndex::WellKnown::number();
   } else if (expr->isKind(ParseNodeKind::BigIntExpr)) {
-    result = info.cx->parserNames().bigint;
+    result = TaggedParserAtomIndex::WellKnown::bigint();
   } else if (expr->isKind(ParseNodeKind::NullExpr)) {
-    result = info.cx->parserNames().object;
+    result = TaggedParserAtomIndex::WellKnown::object();
   } else if (expr->isKind(ParseNodeKind::TrueExpr) ||
              expr->isKind(ParseNodeKind::FalseExpr)) {
-    result = info.cx->parserNames().boolean;
+    result = TaggedParserAtomIndex::WellKnown::boolean();
   } else if (expr->is<FunctionNode>()) {
-    result = info.cx->parserNames().function;
+    result = TaggedParserAtomIndex::WellKnown::function();
   }
 
   if (result) {
@@ -1084,9 +1090,10 @@ static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
 
   ParseNode* expr = &elem->expression();
   ParseNode* key = &elem->key();
-  const ParserName* name = nullptr;
+  TaggedParserAtomIndex name;
   if (key->isKind(ParseNodeKind::StringExpr)) {
-    const ParserAtom* atom = key->as<NameNode>().atom();
+    auto keyIndex = key->as<NameNode>().atom();
+    const ParserAtom* atom = info.parserAtoms.getParserAtom(keyIndex);
     uint32_t index;
 
     if (atom->isIndex(&index)) {
@@ -1099,7 +1106,7 @@ static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
       }
       key = &elem->key();
     } else {
-      name = atom->asName();
+      name = keyIndex;
     }
   } else if (key->isKind(ParseNodeKind::NumberExpr)) {
     auto* numeric = &key->as<NumericLiteral>();
@@ -1108,11 +1115,10 @@ static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
       // Optimization 2: We have something like expr[3.14]. The number
       // isn't an array index, so it converts to a string ("3.14"),
       // enabling optimization 3 below.
-      const ParserAtom* atom = numeric->toAtom(info.cx, info.parserAtoms);
-      if (!atom) {
+      name = numeric->toAtom(info.cx, info.parserAtoms);
+      if (!name) {
         return false;
       }
-      name = atom->asName();
     }
   }
 
@@ -1211,7 +1217,8 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
       MOZ_ASSERT((*current)->isKind(ParseNodeKind::StringExpr));
 
       accum.clear();
-      const ParserAtom* atom = (*current)->as<NameNode>().atom();
+      const auto* atom =
+          info.parserAtoms.getParserAtom((*current)->as<NameNode>().atom());
       if (!accum.append(atom)) {
         return false;
       }
@@ -1228,7 +1235,8 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
         }
 
         // Add this string to the accumulator and remove the node.
-        const ParserAtom* nextAtom = (*next)->as<NameNode>().atom();
+        const auto* nextAtom =
+            info.parserAtoms.getParserAtom((*next)->as<NameNode>().atom());
         if (!accum.append(nextAtom)) {
           return false;
         }
@@ -1242,7 +1250,7 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
       // Replace with concatenation if we multiple nodes.
       if (accum.length() > 1) {
         // Construct the concatenated atom.
-        const ParserAtom* combination = info.parserAtoms.concatAtoms(
+        auto combination = info.parserAtoms.concatAtoms(
             info.cx, mozilla::Range(accum.begin(), accum.length()));
         if (!combination) {
           return false;

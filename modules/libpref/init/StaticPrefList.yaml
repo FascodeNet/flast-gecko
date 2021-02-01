@@ -5341,6 +5341,11 @@
   mirror: always
 #endif
 
+- name: javascript.options.large_arraybuffers
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "layers."
 #---------------------------------------------------------------------------
@@ -9628,6 +9633,36 @@
     value: true
     mirror: always
 
+  # Whether CET Shadow Stacks Strict mode is enabled for the content processes.
+-   name: security.sandbox.content.shadow-stacks-strict
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
+
+  # Whether CET Shadow Stacks Strict mode is enabled for the RDD processes.
+-   name: security.sandbox.rdd.shadow-stacks-strict
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
+
+  # Whether CET Shadow Stacks Strict mode is enabled for the socket processes.
+-   name: security.sandbox.socket.shadow-stacks-strict
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
+
+  # Whether CET Shadow Stacks Strict mode is enabled for the GPU processes.
+-   name: security.sandbox.gpu.shadow-stacks-strict
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
+
+  # Whether CET Shadow Stacks Strict mode is enabled for the GMP processes.
+-   name: security.sandbox.gmp.shadow-stacks-strict
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
+
   # This controls the depth of stack trace that is logged when Windows sandbox
   # logging is turned on. This is only currently available for the content
   # process because the only other sandbox (for GMP) has too strict a policy to
@@ -10410,7 +10445,11 @@
 # Global user preference for disabling native theme in content processes.
 - name: widget.disable-native-theme-for-content
   type: RelaxedAtomicBool
+#if defined(XP_LINUX) && defined(NIGHTLY_BUILD) && !defined(ANDROID)
+  value: true
+#else
   value: false
+#endif
   mirror: always
 
 # Preference to disable dark scrollbar implementation.

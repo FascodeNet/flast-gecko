@@ -5350,7 +5350,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
 
 #if defined(DEBUG)
   js::Fprinter out(stderr);
-  DumpParseTree(pn, out);
+  DumpParseTree(&parser, pn, out);
 #endif
 
   return true;
@@ -10852,7 +10852,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   }
 
   if (op.getBoolOption("enable-large-buffers")) {
-    ArrayBufferObject::supportLargeBuffers = true;
+    JS::SetLargeArrayBuffersEnabled(true);
   }
 
   if (op.getBoolOption("disable-bailout-loop-check")) {

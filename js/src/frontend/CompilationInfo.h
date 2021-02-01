@@ -32,6 +32,7 @@
 #include "vm/JSFunction.h"  // JSFunction
 #include "vm/JSScript.h"    // SourceExtent
 #include "vm/Realm.h"
+#include "vm/ScopeKind.h"      // ScopeKind
 #include "vm/SharedStencil.h"  // SharedImmutableScriptData
 
 namespace js {
@@ -54,6 +55,22 @@ struct ScopeContext {
   //       actual scope passed to the compile.
   JS::Rooted<Scope*> effectiveScope;
 
+  // Class field initializer info if we are nested within a class constructor.
+  // We may be an combination of arrow and eval context within the constructor.
+  mozilla::Maybe<MemberInitializers> memberInitializers = {};
+
+  // Eval and arrow scripts also inherit the "this" environment -- used by
+  // `super` expressions -- from their enclosing script. We count the number of
+  // environment hops needed to get from enclosing scope to the nearest
+  // appropriate environment. This value is undefined if the script we are
+  // compiling is not an eval or arrow-function.
+  uint32_t enclosingThisEnvironmentHops = 0;
+
+  // If non-null enclosingScope is passed to constructor, the kind of the scope.
+  // If null enclosingScope is passed instead, the compilation should use
+  // empty global scope.
+  ScopeKind enclosingScopeKind = ScopeKind::Global;
+
   // The type of binding required for `this` of the top level context, as
   // indicated by the enclosing scopes of this parse.
   //
@@ -67,35 +84,36 @@ struct ScopeContext {
   bool allowSuperCall = false;
   bool allowArguments = true;
 
-  // Eval and arrow scripts also inherit the "this" environment -- used by
-  // `super` expressions -- from their enclosing script. We count the number of
-  // environment hops needed to get from enclosing scope to the nearest
-  // appropriate environment. This value is undefined if the script we are
-  // compiling is not an eval or arrow-function.
-  uint32_t enclosingThisEnvironmentHops = 0;
-
-  // Class field initializer info if we are nested within a class constructor.
-  // We may be an combination of arrow and eval context within the constructor.
-  mozilla::Maybe<MemberInitializers> memberInitializers = {};
-
   // Indicates there is a 'class' or 'with' scope on enclosing scope chain.
   bool inClass = false;
   bool inWith = false;
 
-  explicit ScopeContext(JSContext* cx, InheritThis inheritThis, Scope* scope,
-                        JSObject* enclosingEnv = nullptr)
-      : effectiveScope(cx, determineEffectiveScope(scope, enclosingEnv)) {
+  // True if the passed enclosingScope is for FunctionScope of arrow function.
+  bool enclosingScopeIsArrow = false;
+
+  // True if the passed enclosingScope has environment.
+  bool enclosingScopeHasEnvironment = false;
+
+#ifdef DEBUG
+  // True if the passed enclosingScope has non-syntactic scope on chain.
+  bool hasNonSyntacticScopeOnChain = false;
+#endif
+
+  explicit ScopeContext(JSContext* cx, InheritThis inheritThis,
+                        Scope* enclosingScope, JSObject* enclosingEnv = nullptr)
+      : effectiveScope(cx,
+                       determineEffectiveScope(enclosingScope, enclosingEnv)) {
     if (inheritThis == InheritThis::Yes) {
       computeThisBinding(effectiveScope);
-      computeThisEnvironment(scope);
+      computeThisEnvironment(enclosingScope);
     }
-    computeInScope(scope);
+    computeInScope(enclosingScope);
   }
 
  private:
   void computeThisBinding(Scope* scope);
-  void computeThisEnvironment(Scope* scope);
-  void computeInScope(Scope* scope);
+  void computeThisEnvironment(Scope* enclosingScope);
+  void computeInScope(Scope* enclosingScope);
 
   static Scope* determineEffectiveScope(Scope* scope, JSObject* environment);
 };
@@ -307,9 +325,6 @@ struct MOZ_RAII CompilationState {
                    JSObject* enclosingEnv = nullptr);
 
   bool finish(JSContext* cx, CompilationStencil& stencil);
-
-  const ParserAtom* getParserAtomAt(JSContext* cx,
-                                    TaggedParserAtomIndex taggedIndex) const;
 
   // Allocate space for `length` gcthings, and return the address of the
   // first element to `cursor` to initialize on the caller.

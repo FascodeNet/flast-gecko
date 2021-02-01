@@ -1474,6 +1474,21 @@ void CodeGenerator::testValueTruthy(const ValueOperand& value,
   masm.jump(ifTruthy);
 }
 
+void CodeGenerator::visitTestBIAndBranch(LTestBIAndBranch* lir) {
+  Label* ifTrueLabel = getJumpLabelForBranch(lir->ifTrue());
+  Label* ifFalseLabel = getJumpLabelForBranch(lir->ifFalse());
+  Register input = ToRegister(lir->input());
+
+  if (isNextBlock(lir->ifFalse()->lir())) {
+    masm.branchIfBigIntIsNonZero(input, ifTrueLabel);
+  } else if (isNextBlock(lir->ifTrue()->lir())) {
+    masm.branchIfBigIntIsZero(input, ifFalseLabel);
+  } else {
+    masm.branchIfBigIntIsZero(input, ifFalseLabel);
+    jumpToBlock(lir->ifTrue());
+  }
+}
+
 void CodeGenerator::visitTestOAndBranch(LTestOAndBranch* lir) {
   Label* truthy = getJumpLabelForBranch(lir->ifTruthy());
   Label* falsy = getJumpLabelForBranch(lir->ifFalsy());
@@ -6728,7 +6743,10 @@ void CodeGenerator::visitNewTypedArray(LNewTypedArray* lir) {
   gc::InitialHeap initialHeap = lir->mir()->initialHeap();
 
   TypedArrayObject* ttemplate = &templateObject->as<TypedArrayObject>();
-  uint32_t n = ttemplate->length().deprecatedGetUint32();
+
+  size_t n = ttemplate->length().get();
+  MOZ_ASSERT(n <= INT32_MAX,
+             "Template objects are only created for int32 lengths");
 
   using Fn = TypedArrayObject* (*)(JSContext*, HandleObject, int32_t length);
   OutOfLineCode* ool = oolCallVM<Fn, NewTypedArrayWithTemplateAndLength>(
@@ -10243,6 +10261,14 @@ void CodeGenerator::visitSetInitializedLength(LSetInitializedLength* lir) {
   Address initLength(ToRegister(lir->elements()),
                      ObjectElements::offsetOfInitializedLength());
   SetLengthFromIndex(masm, lir->index(), initLength);
+}
+
+void CodeGenerator::visitNotBI(LNotBI* lir) {
+  Register input = ToRegister(lir->input());
+  Register output = ToRegister(lir->output());
+
+  masm.cmp32Set(Assembler::Equal, Address(input, BigInt::offsetOfLength()),
+                Imm32(0), output);
 }
 
 void CodeGenerator::visitNotO(LNotO* lir) {

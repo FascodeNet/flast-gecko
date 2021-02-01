@@ -12,8 +12,9 @@
 #include "frontend/CompilationInfo.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/ModuleSharedContext.h"
-#include "frontend/NameAnalysisTypes.h"  // DeclaredNameInfo
+#include "frontend/NameAnalysisTypes.h"  // DeclaredNameInfo, FunctionBoxVector
 #include "frontend/NameCollections.h"
+#include "frontend/ParserAtom.h"   // TaggedParserAtomIndex
 #include "frontend/ScriptIndex.h"  // ScriptIndex
 #include "frontend/SharedContext.h"
 #include "frontend/UsedNameTracker.h"
@@ -74,13 +75,13 @@ class ParseContext : public Nestable<ParseContext> {
   };
 
   class LabelStatement : public Statement {
-    const ParserAtom* label_;
+    TaggedParserAtomIndex label_;
 
    public:
-    LabelStatement(ParseContext* pc, const ParserAtom* label)
+    LabelStatement(ParseContext* pc, TaggedParserAtomIndex label)
         : Statement(pc, StatementKind::Label), label_(label) {}
 
-    const ParserAtom* label() const { return label_; }
+    TaggedParserAtomIndex label() const { return label_; }
   };
 
   struct ClassStatement : public Statement {
@@ -107,7 +108,6 @@ class ParseContext : public Nestable<ParseContext> {
     // FunctionBoxes in this scope that need to be considered for Annex
     // B.3.3 semantics. This is checked on Scope exit, as by then we have
     // all the declared names and would know if Annex B.3.3 is applicable.
-    using FunctionBoxVector = Vector<FunctionBox*, 24, SystemAllocPolicy>;
     PooledVectorPtr<FunctionBoxVector> possibleAnnexBFunctionBoxes_;
 
     // Monotonically increasing id.
@@ -137,7 +137,7 @@ class ParseContext : public Nestable<ParseContext> {
     explicit inline Scope(JSContext* cx, ParseContext* pc,
                           UsedNameTracker& usedNames);
 
-    void dump(ParseContext* pc);
+    void dump(ParseContext* pc, ParserBase* parser);
 
     uint32_t id() const { return id_; }
 
@@ -158,16 +158,16 @@ class ParseContext : public Nestable<ParseContext> {
       return uint32_t(count);
     }
 
-    DeclaredNamePtr lookupDeclaredName(const ParserAtom* name) {
+    DeclaredNamePtr lookupDeclaredName(TaggedParserAtomIndex name) {
       return declared_->lookup(name);
     }
 
-    AddDeclaredNamePtr lookupDeclaredNameForAdd(const ParserAtom* name) {
+    AddDeclaredNamePtr lookupDeclaredNameForAdd(TaggedParserAtomIndex name) {
       return declared_->lookupForAdd(name);
     }
 
     MOZ_MUST_USE bool addDeclaredName(ParseContext* pc, AddDeclaredNamePtr& p,
-                                      const ParserAtom* name,
+                                      TaggedParserAtomIndex name,
                                       DeclarationKind kind, uint32_t pos,
                                       ClosedOver closedOver = ClosedOver::No) {
       return maybeReportOOM(
@@ -180,7 +180,8 @@ class ParseContext : public Nestable<ParseContext> {
 
     // Check if the candidate function boxes for Annex B.3.3 should in
     // fact get Annex B semantics. Checked on Scope exit.
-    MOZ_MUST_USE bool propagateAndMarkAnnexBFunctionBoxes(ParseContext* pc);
+    MOZ_MUST_USE bool propagateAndMarkAnnexBFunctionBoxes(ParseContext* pc,
+                                                          ParserBase* parser);
 
     // Add and remove catch parameter names. Used to implement the odd
     // semantics of catch bodies.
@@ -260,7 +261,7 @@ class ParseContext : public Nestable<ParseContext> {
 
       explicit operator bool() const { return !done(); }
 
-      const ParserAtom* name() {
+      TaggedParserAtomIndex name() {
         MOZ_ASSERT(!done());
         return declaredRange_.front().key();
       }
@@ -450,14 +451,14 @@ class ParseContext : public Nestable<ParseContext> {
   // Return Err(true) if we have encountered at least one loop,
   // Err(false) otherwise.
   MOZ_MUST_USE inline JS::Result<Ok, BreakStatementError> checkBreakStatement(
-      const ParserName* label);
+      TaggedParserAtomIndex label);
 
   enum class ContinueStatementError {
     NotInALoop,
     LabelNotFound,
   };
   MOZ_MUST_USE inline JS::Result<Ok, ContinueStatementError>
-  checkContinueStatement(const ParserName* label);
+  checkContinueStatement(TaggedParserAtomIndex label);
 
   // True if we are at the topmost level of a entire script or function body.
   // For example, while parsing this code we would encounter f1 and f2 at
@@ -551,16 +552,17 @@ class ParseContext : public Nestable<ParseContext> {
   uint32_t scriptId() const { return scriptId_; }
 
   bool computeAnnexBAppliesToLexicalFunctionInInnermostScope(
-      FunctionBox* funbox, bool* annexBApplies);
+      FunctionBox* funbox, ParserBase* parser, bool* annexBApplies);
 
-  bool tryDeclareVar(const ParserName* name, DeclarationKind kind,
-                     uint32_t beginPos,
+  bool tryDeclareVar(TaggedParserAtomIndex name, ParserBase* parser,
+                     DeclarationKind kind, uint32_t beginPos,
                      mozilla::Maybe<DeclarationKind>* redeclaredKind,
                      uint32_t* prevPos);
 
-  bool hasUsedName(const UsedNameTracker& usedNames, const ParserName* name);
+  bool hasUsedName(const UsedNameTracker& usedNames,
+                   TaggedParserAtomIndex name);
   bool hasUsedFunctionSpecialName(const UsedNameTracker& usedNames,
-                                  const ParserName* name);
+                                  TaggedParserAtomIndex name);
 
   bool declareFunctionThis(const UsedNameTracker& usedNames,
                            bool canSkipLazyClosedOverBindings);
@@ -571,17 +573,18 @@ class ParseContext : public Nestable<ParseContext> {
 
  private:
   MOZ_MUST_USE bool isVarRedeclaredInInnermostScope(
-      const ParserName* name, DeclarationKind kind,
+      TaggedParserAtomIndex name, ParserBase* parser, DeclarationKind kind,
       mozilla::Maybe<DeclarationKind>* out);
 
-  MOZ_MUST_USE bool isVarRedeclaredInEval(const ParserName* name,
+  MOZ_MUST_USE bool isVarRedeclaredInEval(TaggedParserAtomIndex name,
+                                          ParserBase* parser,
                                           DeclarationKind kind,
                                           mozilla::Maybe<DeclarationKind>* out);
 
   enum DryRunOption { NotDryRun, DryRunInnermostScopeOnly };
   template <DryRunOption dryRunOption>
-  bool tryDeclareVarHelper(const ParserName* name, DeclarationKind kind,
-                           uint32_t beginPos,
+  bool tryDeclareVarHelper(TaggedParserAtomIndex name, ParserBase* parser,
+                           DeclarationKind kind, uint32_t beginPos,
                            mozilla::Maybe<DeclarationKind>* redeclaredKind,
                            uint32_t* prevPos);
 };

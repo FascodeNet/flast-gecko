@@ -107,7 +107,6 @@ use std::{
     f32,
     mem,
     num::NonZeroUsize,
-    os::raw::c_void,
     path::PathBuf,
     rc::Rc,
     sync::Arc,
@@ -1955,6 +1954,14 @@ impl Renderer {
                 let compositor = self.compositor_config.compositor().unwrap();
                 let surface_size = self.debug_overlay_state.current_size.unwrap();
 
+                // Ensure old surface is invalidated before binding
+                compositor.invalidate_tile(
+                    NativeTileId::DEBUG_OVERLAY,
+                    DeviceIntRect::new(
+                        DeviceIntPoint::zero(),
+                        surface_size,
+                    ),
+                );
                 // Bind the native surface
                 let surface_info = compositor.bind(
                     NativeTileId::DEBUG_OVERLAY,
@@ -5286,8 +5293,8 @@ impl Renderer {
     }
 
     fn size_of<T>(&self, ptr: *const T) -> usize {
-        let op = self.size_of_ops.as_ref().unwrap().size_of_op;
-        unsafe { op(ptr as *const c_void) }
+        let ops = self.size_of_ops.as_ref().unwrap();
+        unsafe { ops.malloc_size_of(ptr) }
     }
 
     /// Collects a memory report.

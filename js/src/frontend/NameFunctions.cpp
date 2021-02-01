@@ -13,7 +13,7 @@
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
-#include "frontend/ParserAtom.h"
+#include "frontend/ParserAtom.h"  // ParserAtom, ParserAtomsTable
 #include "frontend/SharedContext.h"
 #include "util/Poison.h"
 #include "util/StringBuffer.h"
@@ -98,13 +98,17 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
         if (!*foundName) {
           return true;
         }
-        return appendPropertyReference(prop->right()->as<NameNode>().atom());
+        const auto* name =
+            parserAtoms_.getParserAtom(prop->right()->as<NameNode>().atom());
+        return appendPropertyReference(name);
       }
 
       case ParseNodeKind::Name:
-      case ParseNodeKind::PrivateName:
+      case ParseNodeKind::PrivateName: {
         *foundName = true;
-        return buf_.append(n->as<NameNode>().atom());
+        const auto* name = parserAtoms_.getParserAtom(n->as<NameNode>().atom());
+        return buf_.append(name);
+      }
 
       case ParseNodeKind::ThisExpr:
         *foundName = true;
@@ -220,7 +224,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
    * assign to the function's displayAtom field.
    */
   MOZ_MUST_USE bool resolveFun(FunctionNode* funNode,
-                               const ParserAtom** retId) {
+                               TaggedParserAtomIndex* retId) {
     MOZ_ASSERT(funNode != nullptr);
 
     FunctionBox* funbox = funNode->funbox();
@@ -228,7 +232,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
     MOZ_ASSERT(buf_.empty());
     auto resetBuf = mozilla::MakeScopeExit([&] { buf_.clear(); });
 
-    *retId = nullptr;
+    *retId = TaggedParserAtomIndex::null();
 
     // If the function already has a name, use that.
     if (funbox->displayAtom()) {
@@ -237,7 +241,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
         return true;
       }
       if (!buf_.append(prefix_) || !buf_.append('/') ||
-          !buf_.append(funbox->displayAtom())) {
+          !buf_.append(parserAtoms_.getParserAtom(funbox->displayAtom()))) {
         return false;
       }
       *retId = buf_.finishParserAtom(parserAtoms_);
@@ -281,7 +285,9 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
         ParseNode* left = node->as<BinaryNode>().left();
         if (left->isKind(ParseNodeKind::ObjectPropertyName) ||
             left->isKind(ParseNodeKind::StringExpr)) {
-          if (!appendPropertyReference(left->as<NameNode>().atom())) {
+          const auto* name =
+              parserAtoms_.getParserAtom(left->as<NameNode>().atom());
+          if (!appendPropertyReference(name)) {
             return false;
           }
         } else if (left->isKind(ParseNodeKind::NumberExpr)) {
@@ -341,7 +347,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
  public:
   MOZ_MUST_USE bool visitFunction(FunctionNode* pn) {
     const ParserAtom* savedPrefix = prefix_;
-    const ParserAtom* newPrefix = nullptr;
+    TaggedParserAtomIndex newPrefix;
     if (!resolveFun(pn, &newPrefix)) {
       return false;
     }
@@ -351,7 +357,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
     // contribute anything to the namespace, so don't bother updating
     // the prefix to whatever was returned.
     if (!isDirectCall(nparents_ - 2, pn)) {
-      prefix_ = newPrefix;
+      prefix_ = parserAtoms_.getParserAtom(newPrefix);
     }
 
     bool ok = Base::visitFunction(pn);

@@ -26,7 +26,7 @@ namespace JS {
 /**
  * Create a new ArrayBuffer with the given byte length.
  */
-extern JS_PUBLIC_API JSObject* NewArrayBuffer(JSContext* cx, uint32_t nbytes);
+extern JS_PUBLIC_API JSObject* NewArrayBuffer(JSContext* cx, size_t nbytes);
 
 /**
  * Create a new ArrayBuffer with the given |contents|, which may be null only
@@ -215,7 +215,7 @@ extern JS_PUBLIC_API uint32_t GetArrayBufferByteLength(JSObject* obj);
 // There is an isShared out argument for API consistency (eases use from DOM).
 // It will always be set to false.
 extern JS_PUBLIC_API void GetArrayBufferLengthAndData(JSObject* obj,
-                                                      uint32_t* length,
+                                                      size_t* length,
                                                       bool* isSharedMemory,
                                                       uint8_t** data);
 
@@ -258,6 +258,12 @@ extern JS_PUBLIC_API bool DetachArrayBuffer(JSContext* cx,
  */
 extern JS_PUBLIC_API void* StealArrayBufferContents(JSContext* cx,
                                                     Handle<JSObject*> obj);
+
+/**
+ * Enable or disable support for large (>= 2 GB) ArrayBuffers on 64-bit builds.
+ * Has no effect on 32-bit builds.
+ */
+extern JS_PUBLIC_API void SetLargeArrayBuffersEnabled(bool enable);
 
 }  // namespace JS
 
