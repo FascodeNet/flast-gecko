@@ -8269,6 +8269,15 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
       metrics.SetCriticalDisplayPort(CSSRect::FromAppUnits(dp));
     }
 
+    metrics.SetHasNonZeroDisplayPortMargins(false);
+    if (DisplayPortMarginsPropertyData* currentData =
+            static_cast<DisplayPortMarginsPropertyData*>(
+                aContent->GetProperty(nsGkAtoms::DisplayPortMargins))) {
+      if (currentData->mMargins.mMargins != ScreenMargin()) {
+        metrics.SetHasNonZeroDisplayPortMargins(true);
+      }
+    }
+
     // Log the high-resolution display port (which is either the displayport
     // or the critical displayport) for test purposes.
     if (IsAPZTestLoggingEnabled()) {
@@ -9273,53 +9282,43 @@ void nsLayoutUtils::ComputeSystemFont(nsFont* aSystemFont,
                                       const Document* aDocument) {
   gfxFontStyle fontStyle;
   nsAutoString systemFontName;
-  if (LookAndFeel::GetFont(aFontID, systemFontName, fontStyle)) {
-    systemFontName.Trim("\"'");
-    aSystemFont->fontlist =
-        FontFamilyList(NS_ConvertUTF16toUTF8(systemFontName),
-                       StyleFontFamilyNameSyntax::Identifiers);
-    aSystemFont->fontlist.SetDefaultFontType(StyleGenericFontFamily::None);
-    aSystemFont->style = fontStyle.style;
-    aSystemFont->systemFont = fontStyle.systemFont;
-    aSystemFont->weight = fontStyle.weight;
-    aSystemFont->stretch = fontStyle.stretch;
-    aSystemFont->size = Length::FromPixels(fontStyle.size);
+  if (!LookAndFeel::GetFont(aFontID, systemFontName, fontStyle)) {
+    return;
+  }
+  systemFontName.Trim("\"'");
+  aSystemFont->fontlist =
+      FontFamilyList(NS_ConvertUTF16toUTF8(systemFontName),
+                     StyleFontFamilyNameSyntax::Identifiers);
+  aSystemFont->fontlist.SetDefaultFontType(StyleGenericFontFamily::None);
+  aSystemFont->style = fontStyle.style;
+  aSystemFont->systemFont = fontStyle.systemFont;
+  aSystemFont->weight = fontStyle.weight;
+  aSystemFont->stretch = fontStyle.stretch;
+  aSystemFont->size = Length::FromPixels(fontStyle.size);
 
-    if (aDocument->ShouldAvoidNativeTheme() &&
-        (aFontID == LookAndFeel::FontID::Field ||
-         aFontID == LookAndFeel::FontID::Button ||
-         aFontID == LookAndFeel::FontID::List)) {
-      auto newSize = aDefaultVariableFont->size.ToCSSPixels() - CSSCoord(3.0f);
-      aSystemFont->size = Length::FromPixels(std::max(float(newSize), 0.0f));
-    }
-    // aSystemFont->langGroup = fontStyle.langGroup;
-    aSystemFont->sizeAdjust = fontStyle.sizeAdjust;
+  // aSystemFont->langGroup = fontStyle.langGroup;
+  aSystemFont->sizeAdjust = fontStyle.sizeAdjust;
 
+  if (aFontID == LookAndFeel::FontID::Field ||
+      aFontID == LookAndFeel::FontID::Button ||
+      aFontID == LookAndFeel::FontID::List) {
+    const bool isWindowsOrNonNativeTheme =
 #ifdef XP_WIN
-    // XXXldb This platform-specific stuff should be in the
-    // LookAndFeel implementation, not here.
-    // XXXzw Should we even still *have* this code?  It looks to be making
-    // old, probably obsolete assumptions.
+        true ||
+#endif
+        aDocument->ShouldAvoidNativeTheme();
 
-    if (aFontID == LookAndFeel::FontID::Field ||
-        aFontID == LookAndFeel::FontID::Button ||
-        aFontID == LookAndFeel::FontID::List) {
-      // As far as I can tell the system default fonts and sizes
-      // on MS-Windows for Buttons, Listboxes/Comboxes and Text Fields are
-      // all pre-determined and cannot be changed by either the control panel
-      // or programmatically.
-      // Fields (text fields)
-      // Button and Selects (listboxes/comboboxes)
-      //    We use whatever font is defined by the system. Which it appears
-      //    (and the assumption is) it is always a proportional font. Then we
-      //    always use 2 points smaller than what the browser has defined as
-      //    the default proportional font.
-      // Assumption: system defined font is proportional
+    if (isWindowsOrNonNativeTheme) {
+      // For textfields, buttons and selects, we use whatever font is defined by
+      // the system. Which it appears (and the assumption is) it is always a
+      // proportional font. Then we always use 2 points smaller than what the
+      // browser has defined as the default proportional font.
+      //
+      // This matches historical Windows behavior and other browsers.
       auto newSize =
           aDefaultVariableFont->size.ToCSSPixels() - CSSPixel::FromPoints(2.0f);
       aSystemFont->size = Length::FromPixels(std::max(float(newSize), 0.0f));
     }
-#endif
   }
 }
 
@@ -9489,13 +9488,20 @@ nsSize nsLayoutUtils::ExpandHeightForViewportUnits(nsPresContext* aPresContext,
 template <typename SizeType>
 /* static */ SizeType ExpandHeightForDynamicToolbarImpl(
     const nsPresContext* aPresContext, const SizeType& aSize) {
-  RefPtr<MobileViewportManager> MVM =
-      aPresContext->PresShell()->GetMobileViewportManager();
-  MOZ_ASSERT(MVM);
+  MOZ_ASSERT(aPresContext);
+
+  LayoutDeviceIntSize displaySize;
+  if (RefPtr<MobileViewportManager> MVM =
+          aPresContext->PresShell()->GetMobileViewportManager()) {
+    displaySize = MVM->DisplaySize();
+  } else if (!nsLayoutUtils::GetContentViewerSize(aPresContext, displaySize)) {
+    return aSize;
+  }
+
   float toolbarHeightRatio =
       mozilla::ScreenCoord(aPresContext->GetDynamicToolbarMaxHeight()) /
       mozilla::ViewAs<mozilla::ScreenPixel>(
-          MVM->DisplaySize(),
+          displaySize,
           mozilla::PixelCastJustification::LayoutDeviceIsScreenForBounds)
           .height;
 

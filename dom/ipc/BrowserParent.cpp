@@ -54,6 +54,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/TextEventDispatcher.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/UniquePtr.h"
@@ -1690,7 +1691,12 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestNativeKeyBindings(
     return IPC_OK();
   }
 
-  if (localEvent.InitEditCommandsFor(keyBindingsType)) {
+  Maybe<WritingMode> writingMode;
+  if (RefPtr<widget::TextEventDispatcher> dispatcher =
+          widget->GetTextEventDispatcher()) {
+    writingMode = dispatcher->MaybeWritingModeAtSelection();
+  }
+  if (localEvent.InitEditCommandsFor(keyBindingsType, writingMode)) {
     *aCommands = localEvent.EditCommandsConstRef(keyBindingsType).Clone();
   }
 
@@ -1850,10 +1856,20 @@ void BrowserParent::SendRealKeyEvent(WidgetKeyboardEvent& aEvent) {
   }
   aEvent.mRefPoint = TransformParentToChild(aEvent.mRefPoint);
 
+  // NOTE: If you call `InitAllEditCommands()` for the other messages too,
+  //       you also need to update
+  //       TextEventDispatcher::DispatchKeyboardEventInternal().
   if (aEvent.mMessage == eKeyPress) {
     // XXX Should we do this only when input context indicates an editor having
     //     focus and the key event won't cause inputting text?
-    aEvent.InitAllEditCommands();
+    Maybe<WritingMode> writingMode;
+    if (aEvent.mWidget) {
+      if (RefPtr<widget::TextEventDispatcher> dispatcher =
+              aEvent.mWidget->GetTextEventDispatcher()) {
+        writingMode = dispatcher->MaybeWritingModeAtSelection();
+      }
+    }
+    aEvent.InitAllEditCommands(writingMode);
   } else {
     aEvent.PreventNativeKeyBindings();
   }

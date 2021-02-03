@@ -4737,8 +4737,18 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       sampledState.UpdateZoomProperties(Metrics());
     }
 
-    // Make sure we have an up-to-date set of displayport margins.
-    needContentRepaint = true;
+    if (aLayerMetrics.HasNonZeroDisplayPortMargins()) {
+      // A non-zero display port margin here indicates a displayport has
+      // been set by a previous APZC for the content at this guid. The
+      // scrollable rect may have changed since then, making the margins
+      // wrong, so we need to calculate a new display port.
+      // It is important that we request a repaint here only when we need to
+      // otherwise we will end up setting a display port on every frame that
+      // gets a view id.
+      APZC_LOG("%p detected non-empty margins which probably need updating\n",
+               this);
+      needContentRepaint = true;
+    }
   } else {
     // If we're not taking the aLayerMetrics wholesale we still need to pull
     // in some things into our local Metrics() because these things are
@@ -4832,6 +4842,8 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     mScrollMetadata.SetIsAutoDirRootContentRTL(
         aScrollMetadata.IsAutoDirRootContentRTL());
     Metrics().SetIsScrollInfoLayer(aLayerMetrics.IsScrollInfoLayer());
+    Metrics().SetHasNonZeroDisplayPortMargins(
+        aLayerMetrics.HasNonZeroDisplayPortMargins());
     mScrollMetadata.SetForceDisableApz(aScrollMetadata.IsApzForceDisabled());
     mScrollMetadata.SetIsRDMTouchSimulationActive(
         aScrollMetadata.GetIsRDMTouchSimulationActive());
@@ -4863,10 +4875,10 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     // in this loop don't get dropped by the check above. Need to add a test
     // that exercises this scenario, as we don't currently have one.
 
-    scrollOffsetUpdated = true;
-
     if (scrollUpdate.GetMode() == ScrollMode::Smooth ||
         scrollUpdate.GetMode() == ScrollMode::SmoothMsd) {
+      scrollOffsetUpdated = true;
+
       // Requests to animate the visual scroll position override requests to
       // simply update the visual scroll offset to a particular point. Since
       // we have an animation request, we set ignoreVisualUpdate to true to
@@ -4933,6 +4945,8 @@ void AsyncPanZoomController::NotifyLayersUpdated(
           ToString(scrollUpdate.GetDestination() - scrollUpdate.GetSource())
               .c_str());
 
+      scrollOffsetUpdated = true;
+
       // It's possible that the main thread has ignored an APZ scroll offset
       // update for the pending relative scroll that we have just received.
       // When this happens, we need to send a new scroll offset update with
@@ -4950,6 +4964,8 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       APZC_LOG("%p pure-relative updating scroll offset from %s by %s\n", this,
                ToString(Metrics().GetVisualScrollOffset()).c_str(),
                ToString(scrollUpdate.GetDelta()).c_str());
+
+      scrollOffsetUpdated = true;
 
       // Always need a repaint request with a repaint type for pure relative
       // scrolls because apz is doing the scroll at the main thread's request.
@@ -4974,8 +4990,18 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       APZC_LOG("%p updating scroll offset from %s to %s\n", this,
                ToString(Metrics().GetVisualScrollOffset()).c_str(),
                ToString(scrollUpdate.GetDestination()).c_str());
-      Metrics().ApplyScrollUpdateFrom(scrollUpdate);
+      bool offsetChanged = Metrics().ApplyScrollUpdateFrom(scrollUpdate);
       Metrics().RecalculateLayoutViewportOffset();
+
+      if (offsetChanged || scrollUpdate.GetMode() != ScrollMode::Instant ||
+          scrollUpdate.GetType() != ScrollUpdateType::Absolute ||
+          scrollUpdate.GetOrigin() != ScrollOrigin::None) {
+        // We get a NewScrollFrame update for newly created scroll frames. Only
+        // if this was not a NewScrollFrame update or the offset changed do we
+        // request repaint. This is important so that we don't request repaint
+        // for every new content and set a full display port on it.
+        scrollOffsetUpdated = true;
+      }
     }
 
     // If an animation is underway, tell it about the scroll offset update.
@@ -5039,9 +5065,20 @@ void AsyncPanZoomController::NotifyLayersUpdated(
              this, ToString(Metrics().GetVisualScrollOffset()).c_str(),
              ToString(aLayerMetrics.GetVisualDestination()).c_str(),
              (int)aLayerMetrics.GetVisualScrollUpdateType());
-    Metrics().ClampAndSetVisualScrollOffset(
+    bool offsetChanged = Metrics().ClampAndSetVisualScrollOffset(
         aLayerMetrics.GetVisualDestination());
 
+    // If this is the first time we got metrics for this content (isDefault) and
+    // the update type was none and the offset didn't change then we don't have
+    // to do anything. This is important because we don't want to request
+    // repaint on the initial NotifyLayersUpdated for every content and thus set
+    // a full display port.
+    if (aLayerMetrics.GetVisualScrollUpdateType() == FrameMetrics::eNone &&
+        !offsetChanged) {
+      visualScrollOffsetUpdated = false;
+    }
+  }
+  if (visualScrollOffsetUpdated) {
     // The rest of this branch largely follows the code in the
     // |if (scrollOffsetUpdated)| branch above. Eventually it should get
     // merged into that branch.

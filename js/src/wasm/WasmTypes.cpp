@@ -21,6 +21,7 @@
 #include <algorithm>
 
 #include "jsmath.h"
+#include "jit/JitFrames.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/Printf.h"
 #include "util/Memory.h"
@@ -511,6 +512,23 @@ Value wasm::UnboxFuncRef(FuncRef val) {
   MOZ_ASSERT_IF(fn, fn->is<JSFunction>());
   result.setObjectOrNull(fn);
   return result;
+}
+
+const JSClass WasmJSExceptionObject::class_ = {
+    "WasmJSExnRefObject", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS)};
+
+WasmJSExceptionObject* WasmJSExceptionObject::create(JSContext* cx,
+                                                     MutableHandleValue value) {
+  WasmJSExceptionObject* obj =
+      NewObjectWithGivenProto<WasmJSExceptionObject>(cx, nullptr);
+
+  if (!obj) {
+    return nullptr;
+  }
+
+  obj->setFixedSlot(VALUE_SLOT, value);
+
+  return obj;
 }
 
 bool wasm::IsRoundingFunction(SymbolicAddress callee, jit::RoundingMode* mode) {

@@ -523,6 +523,25 @@ struct ParserAtomLookupHasher {
 // We use this class to build a read-only constexpr table of ParserAtoms for the
 // well-known atoms set. This should be resolved at compile-time (including hash
 // computation) thanks to C++ constexpr.
+//
+// This table contains similar information as JSAtomState+StaticStrings,
+// with some differences:
+//
+//   | frontend                   | VM                                |
+//   |----------------------------|-----------------------------------|
+//   | emptyAtom                  | JSAtomState.empty                 |
+//   | length1Table (*1)          | StaticStrings.unitStaticTable     |
+//   | length2Table               | StaticStrings.length2StaticTable  |
+//   | -                          | StaticStrings.intStaticTable      |
+//   | non-tiny common names (*2) | JSAtomState common property names |
+//   | prototype names            | JSAtomState prototype names       |
+//   | -                          | JSAtomState symbol names          |
+//
+// *1: StaticStrings.unitStaticTable uses entire Latin1 range, but
+//     WellKnownParserAtoms_ROM.length2Table uses only ASCII range,
+//     given non-ASCII chars won't appear frequently inside source code
+// *2: tiny common property names are stored in length1/length2 tables
+//
 class WellKnownParserAtoms_ROM {
   // NOTE: While the well-known strings are all Latin1, we must use char16_t in
   //       some places in order to have constexpr mozilla::HashString.
@@ -530,9 +549,9 @@ class WellKnownParserAtoms_ROM {
   using Char16Traits = std::char_traits<char16_t>;
 
  public:
-  static const size_t ASCII_STATIC_LIMIT = 128U;
-  static const size_t NUM_SMALL_CHARS = StaticStrings::NUM_SMALL_CHARS;
-  static const size_t NUM_LENGTH2_ENTRIES = NUM_SMALL_CHARS * NUM_SMALL_CHARS;
+  static constexpr size_t ASCII_STATIC_LIMIT = 128U;
+  static constexpr size_t NUM_LENGTH2_ENTRIES =
+      StaticStrings::NUM_LENGTH2_ENTRIES;
 
   StaticParserAtomEntry<0> emptyAtom;
   StaticParserAtomEntry<1> length1Table[ASCII_STATIC_LIMIT];
@@ -590,8 +609,8 @@ class WellKnownParserAtoms_ROM {
 
   static constexpr void init(StaticParserAtomEntry<2>& entry, size_t i) {
     size_t len = 2;
-    char16_t buf[] = {StaticStrings::fromSmallChar(i >> 6),
-                      StaticStrings::fromSmallChar(i & 0x003F),
+    char16_t buf[] = {StaticStrings::firstCharOfLength2(i),
+                      StaticStrings::secondCharOfLength2(i),
                       /* null-terminator */ 0};
     entry.setHashAndLength(mozilla::HashString(buf), len);
     entry.setWellKnownOrStatic();

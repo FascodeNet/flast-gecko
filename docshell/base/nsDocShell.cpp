@@ -743,6 +743,22 @@ nsDocShell::SetCancelContentJSEpoch(int32_t aEpoch) {
   return NS_OK;
 }
 
+nsresult nsDocShell::CheckDisallowedJavascriptLoad(
+    nsDocShellLoadState* aLoadState) {
+  if (!net::SchemeIsJavascript(aLoadState->URI())) {
+    return NS_OK;
+  }
+
+  if (nsCOMPtr<nsIPrincipal> targetPrincipal =
+          GetInheritedPrincipal(/* aConsiderCurrentDocument */ true)) {
+    if (!aLoadState->TriggeringPrincipal()->Subsumes(targetPrincipal)) {
+      return NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI;
+    }
+    return NS_OK;
+  }
+  return NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI;
+}
+
 NS_IMETHODIMP
 nsDocShell::LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating) {
   return LoadURI(aLoadState, aSetNavigating, false);
@@ -767,6 +783,8 @@ nsresult nsDocShell::LoadURI(nsDocShellLoadState* aLoadState,
     return NS_ERROR_FAILURE;
   }
 
+  MOZ_TRY(CheckDisallowedJavascriptLoad(aLoadState));
+
   bool oldIsNavigating = mIsNavigating;
   auto cleanupIsNavigating =
       MakeScopeExit([&]() { mIsNavigating = oldIsNavigating; });
@@ -774,12 +792,16 @@ nsresult nsDocShell::LoadURI(nsDocShellLoadState* aLoadState,
     mIsNavigating = true;
   }
 
-  PopupBlocker::PopupControlState popupState;
+  PopupBlocker::PopupControlState popupState = PopupBlocker::openOverridden;
   if (aLoadState->HasLoadFlags(LOAD_FLAGS_ALLOW_POPUPS)) {
     popupState = PopupBlocker::openAllowed;
-  } else {
-    popupState = PopupBlocker::openOverridden;
+    // If we allow popups as part of the navigation, ensure we fake a user
+    // interaction, so that popups can, in fact, be allowed to open.
+    if (WindowContext* wc = mBrowsingContext->GetCurrentWindowContext()) {
+      wc->NotifyUserGestureActivation();
+    }
   }
+
   AutoPopupStatePusher statePusher(popupState);
 
   if (aLoadState->GetCancelContentJSEpoch().isSome()) {
@@ -6248,32 +6270,28 @@ already_AddRefed<nsIURI> nsDocShell::AttemptURIFixup(
   // https://foo and https://www.foo.com.
   //
   if (aStatus == NS_ERROR_UNKNOWN_HOST || aStatus == NS_ERROR_NET_RESET) {
-    bool doCreateAlternate = true;
-
     // Skip fixup for anything except a normal document load
     // operation on the topframe.
+    bool doCreateAlternate = aLoadType == LOAD_NORMAL && aIsTopFrame;
 
-    if (aLoadType != LOAD_NORMAL || !aIsTopFrame) {
-      doCreateAlternate = false;
-    } else {
-      // Test if keyword lookup produced a new URI or not
-      if (newURI) {
-        bool sameURI = false;
-        url->Equals(newURI, &sameURI);
-        if (!sameURI) {
-          // Keyword lookup made a new URI so no need to try
-          // an alternate one.
-          doCreateAlternate = false;
-        }
-      }
-
-      if (doCreateAlternate) {
-        nsCOMPtr<nsILoadInfo> info = aChannel->LoadInfo();
-        // Skip doing this if our channel was redirected, because we
-        // shouldn't be guessing things about the post-redirect URI.
-        if (!info->RedirectChain().IsEmpty()) {
-          doCreateAlternate = false;
-        }
+    if (doCreateAlternate) {
+      nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+      nsIPrincipal* principal = loadInfo->TriggeringPrincipal();
+      // Only do this if our channel was loaded directly by the user from the
+      // URL bar or similar (system principal) and not redirected, because we
+      // shouldn't be guessing things about links from other sites, or a
+      // post-redirect URI.
+      doCreateAlternate = principal && principal->IsSystemPrincipal() &&
+                          loadInfo->RedirectChain().IsEmpty();
+    }
+    // Test if keyword lookup produced a new URI or not
+    if (doCreateAlternate && newURI) {
+      bool sameURI = false;
+      url->Equals(newURI, &sameURI);
+      if (!sameURI) {
+        // Keyword lookup made a new URI so no need to try
+        // an alternate one.
+        doCreateAlternate = false;
       }
     }
     if (doCreateAlternate) {
@@ -9052,6 +9070,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
       if (LOAD_TYPE_HAS_FLAGS(mLoadType, LOAD_FLAGS_REPLACE_HISTORY)) {
         mBrowsingContext->ReplaceActiveSessionHistoryEntry(mActiveEntry.get());
       } else {
+        mBrowsingContext->IncrementHistoryEntryCountForBrowsingContext();
         // FIXME We should probably just compute mChildOffset in the parent
         //       instead of passing it over IPC here.
         mBrowsingContext->SetActiveSessionHistoryEntry(
@@ -9156,6 +9175,14 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
     return NS_ERROR_NOT_AVAILABLE;
   }
 
+  // Take loadDivertedInBackground into account so the behavior would be the
+  // same as how the tab first opened.
+  const bool shouldTakeFocus =
+      aLoadState->SourceBrowsingContext() &&
+      aLoadState->SourceBrowsingContext()->IsActive() &&
+      !mBrowsingContext->IsActive() &&
+      !Preferences::GetBool("browser.tabs.loadDivertedInBackground", false);
+
   mOriginalUriString.Truncate();
 
   MOZ_LOG(gDocShellLeakLog, LogLevel::Debug,
@@ -9177,13 +9204,17 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
   // If we have a target to move to, do that now.
   if (!aLoadState->Target().IsEmpty()) {
     return PerformRetargeting(aLoadState);
-  } else if (aLoadState->TargetBrowsingContext().IsNull()) {
+  }
+
+  if (aLoadState->TargetBrowsingContext().IsNull()) {
     aLoadState->SetTargetBrowsingContext(GetBrowsingContext());
   }
 
   MOZ_DIAGNOSTIC_ASSERT(
       aLoadState->TargetBrowsingContext() == GetBrowsingContext(),
       "Load must be targeting this BrowsingContext");
+
+  MOZ_TRY(CheckDisallowedJavascriptLoad(aLoadState));
 
   // If we don't have a target, we're loading into ourselves, and our load
   // delegate may want to intercept that load.
@@ -9295,8 +9326,13 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
   // document. If the process fails, or if we successfully navigate within the
   // same document, return.
   if (sameDocument) {
-    return HandleSameDocumentNavigation(aLoadState,
-                                        sameDocumentNavigationState);
+    nsresult rv =
+        HandleSameDocumentNavigation(aLoadState, sameDocumentNavigationState);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (shouldTakeFocus) {
+      mBrowsingContext->Focus(CallerType::System, IgnoreErrors());
+    }
+    return rv;
   }
 
   // mContentViewer->PermitUnload can destroy |this| docShell, which
@@ -9507,6 +9543,12 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
 
   nsCOMPtr<nsIRequest> req;
   rv = DoURILoad(aLoadState, aCacheKey, getter_AddRefs(req));
+
+  if (NS_SUCCEEDED(rv)) {
+    if (shouldTakeFocus) {
+      mBrowsingContext->Focus(CallerType::System, IgnoreErrors());
+    }
+  }
 
   if (NS_FAILED(rv)) {
     nsCOMPtr<nsIChannel> chan(do_QueryInterface(req));
@@ -10088,7 +10130,8 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
           //
           // We consume the flag now even if there's no user activation.
           const bool hasFreePass = [&] {
-            if (!active || !context->SameOriginWithTop()) {
+            if (!active ||
+                !(context->IsInProcess() && context->SameOriginWithTop())) {
               return false;
             }
             nsGlobalWindowInner* win =
@@ -10096,7 +10139,8 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
             return win && win->TryOpenExternalProtocolIframe();
           }();
 
-          if (context->ConsumeTransientUserGestureActivation()) {
+          if (context->IsInProcess() &&
+              context->ConsumeTransientUserGestureActivation()) {
             // If the user has interacted with the page, consume it.
             return false;
           }
@@ -10294,7 +10338,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
                          sandboxFlags);
   RefPtr<WindowContext> context = mBrowsingContext->GetCurrentWindowContext();
 
-  if (mLoadType != LOAD_ERROR_PAGE && context &&
+  if (mLoadType != LOAD_ERROR_PAGE && context && context->IsInProcess() &&
       context->HasValidTransientUserGestureActivation()) {
     aLoadState->SetHasValidUserGestureActivation(true);
   }
@@ -11781,6 +11825,7 @@ void nsDocShell::UpdateActiveEntry(
   if (replace) {
     mBrowsingContext->ReplaceActiveSessionHistoryEntry(mActiveEntry.get());
   } else {
+    mBrowsingContext->IncrementHistoryEntryCountForBrowsingContext();
     // FIXME We should probably just compute mChildOffset in the parent
     //       instead of passing it over IPC here.
     mBrowsingContext->SetActiveSessionHistoryEntry(
@@ -13418,6 +13463,9 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aPersist) {
              this, mLoadingEntry->mInfo.GetURI()->GetSpecOrDefault().get()));
     mActiveEntry = MakeUnique<SessionHistoryInfo>(mLoadingEntry->mInfo);
     mLoadingEntry.swap(loadingEntry);
+    if (!mActiveEntryIsLoadingFromSessionHistory) {
+      mBrowsingContext->IncrementHistoryEntryCountForBrowsingContext();
+    }
   }
 
   if (mActiveEntry) {

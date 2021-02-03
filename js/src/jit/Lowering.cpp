@@ -687,10 +687,11 @@ void LIRGenerator::visitTest(MTest* test) {
       LAllocation lhs = useRegister(left);
       LAllocation rhs;
       if (comp->isInt32Comparison() ||
-          comp->compareType() == MCompare::Compare_UInt32) {
-        rhs = useAnyOrConstant(right);
+          comp->compareType() == MCompare::Compare_UInt32 ||
+          comp->compareType() == MCompare::Compare_UIntPtr) {
+        rhs = useAnyOrInt32Constant(right);
       } else {
-        rhs = useRegister(right);
+        rhs = useAny(right);
       }
       LCompareAndBranch* lir =
           new (alloc()) LCompareAndBranch(comp, op, lhs, rhs, ifTrue, ifFalse);
@@ -937,10 +938,11 @@ void LIRGenerator::visitCompare(MCompare* comp) {
     LAllocation lhs = useRegister(left);
     LAllocation rhs;
     if (comp->isInt32Comparison() ||
-        comp->compareType() == MCompare::Compare_UInt32) {
-      rhs = useAnyOrConstant(right);
+        comp->compareType() == MCompare::Compare_UInt32 ||
+        comp->compareType() == MCompare::Compare_UIntPtr) {
+      rhs = useAnyOrInt32Constant(right);
     } else {
-      rhs = useRegister(right);
+      rhs = useAny(right);
     }
     define(new (alloc()) LCompare(op, lhs, rhs), comp);
     return;
@@ -2251,6 +2253,20 @@ void LIRGenerator::visitInt32ToIntPtr(MInt32ToIntPtr* ins) {
   define(lir, ins);
 }
 
+void LIRGenerator::visitNonNegativeIntPtrToInt32(
+    MNonNegativeIntPtrToInt32* ins) {
+  MDefinition* input = ins->input();
+  MOZ_ASSERT(input->type() == MIRType::IntPtr);
+  MOZ_ASSERT(ins->type() == MIRType::Int32);
+
+  auto* lir =
+      new (alloc()) LNonNegativeIntPtrToInt32(useRegisterAtStart(input));
+#ifdef JS_64BIT
+  assignSnapshot(lir, ins->bailoutKind());
+#endif
+  defineReuseInput(lir, ins, 0);
+}
+
 void LIRGenerator::visitAdjustDataViewLength(MAdjustDataViewLength* ins) {
   MDefinition* input = ins->input();
   MOZ_ASSERT(input->type() == MIRType::IntPtr);
@@ -2936,13 +2952,10 @@ void LIRGenerator::visitArrayBufferByteLengthInt32(
 
 void LIRGenerator::visitArrayBufferViewLength(MArrayBufferViewLength* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-  MOZ_ASSERT(ins->type() == MIRType::Int32 || ins->type() == MIRType::IntPtr);
+  MOZ_ASSERT(ins->type() == MIRType::IntPtr);
 
   auto* lir =
       new (alloc()) LArrayBufferViewLength(useRegisterAtStart(ins->object()));
-  if (ins->fallible()) {
-    assignSnapshot(lir, ins->bailoutKind());
-  }
   define(lir, ins);
 }
 
@@ -4128,6 +4141,7 @@ void LIRGenerator::visitAssertRange(MAssertRange* ins) {
   switch (input->type()) {
     case MIRType::Boolean:
     case MIRType::Int32:
+    case MIRType::IntPtr:
       lir = new (alloc()) LAssertRangeI(useRegisterAtStart(input));
       break;
 

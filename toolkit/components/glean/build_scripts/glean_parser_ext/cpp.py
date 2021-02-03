@@ -11,7 +11,7 @@ Outputter to generate C++ code for metrics.
 import jinja2
 import json
 
-from util import generate_metric_ids, generate_ping_ids, is_implemented_metric_type
+from util import generate_metric_ids, generate_ping_ids
 from glean_parser import util
 
 
@@ -48,6 +48,9 @@ def type_name(obj):
     Returns the C++ type to use for a given metric object.
     """
 
+    if getattr(obj, "labeled", False):
+        class_name = util.Camelize(obj.type[8:])  # strips "labeled_" off the front.
+        return "Labeled<impl::{}Metric>".format(class_name)
     generate_enums = getattr(obj, "_generate_enums", [])  # Extra Keys? Reasons?
     if len(generate_enums):
         for name, suffix in generate_enums:
@@ -103,7 +106,6 @@ def output_cpp(objs, output_fd, options={}):
             ("type_name", type_name),
             ("metric_id", get_metric_id),
             ("ping_id", get_ping_id),
-            ("is_implemented_type", is_implemented_metric_type),
             ("Camelize", util.Camelize),
         ),
     )

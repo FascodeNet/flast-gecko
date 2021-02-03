@@ -507,6 +507,9 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       break;
     case DeviceFamily::IntelRolloutWebRender:
 #ifdef EARLY_BETA_OR_EARLIER
+      // gen4.5 - G45
+      APPEND_DEVICE(0x2e22);
+
       // gen5 (ironlake)
       APPEND_DEVICE(0x0042);
       APPEND_DEVICE(0x0046);
@@ -735,9 +738,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x9b41);
       APPEND_DEVICE(0x9bc0);
       APPEND_DEVICE(0x9bc2);
-      APPEND_RANGE(0x9bc4, 0x9bc5);
-      APPEND_DEVICE(0x9bc8);
-      APPEND_RANGE(0x9bca, 0x9bcc);
+      APPEND_RANGE(0x9bc4, 0x9bf6);
 
       // icelake gt1,gt1.5,gt2
       APPEND_RANGE(0x8a50, 0x8a5d);

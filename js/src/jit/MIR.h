@@ -3072,7 +3072,6 @@ class MCreateArgumentsObject : public MUnaryInstruction,
   MCreateArgumentsObject(MDefinition* callObj, ArgumentsObject* templateObj)
       : MUnaryInstruction(classOpcode, callObj), templateObj_(templateObj) {
     setResultType(MIRType::Object);
-    setGuard();
   }
 
  public:
@@ -3646,6 +3645,26 @@ class MInt32ToIntPtr : public MUnaryInstruction,
   void collectRangeInfoPreTrunc() override;
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
+// Converts an IntPtr value >= 0 to Int32. Bails out if the value > INT32_MAX.
+class MNonNegativeIntPtrToInt32 : public MUnaryInstruction,
+                                  public NoTypePolicy::Data {
+  explicit MNonNegativeIntPtrToInt32(MDefinition* def)
+      : MUnaryInstruction(classOpcode, def) {
+    MOZ_ASSERT(def->type() == MIRType::IntPtr);
+    setResultType(MIRType::Int32);
+    setMovable();
+  }
+
+ public:
+  INSTRUCTION_HEADER(NonNegativeIntPtrToInt32)
+  TRIVIAL_NEW_WRAPPERS
 
   bool congruentTo(const MDefinition* ins) const override {
     return congruentIfOperandsEqual(ins);
@@ -7328,10 +7347,9 @@ class MArrayBufferByteLengthInt32 : public MUnaryInstruction,
 // Read the length of an array buffer view.
 class MArrayBufferViewLength : public MUnaryInstruction,
                                public SingleObjectPolicy::Data {
-  explicit MArrayBufferViewLength(MDefinition* obj, MIRType type)
+  explicit MArrayBufferViewLength(MDefinition* obj)
       : MUnaryInstruction(classOpcode, obj) {
-    MOZ_ASSERT(type == MIRType::Int32 || type == MIRType::IntPtr);
-    setResultType(type);
+    setResultType(MIRType::IntPtr);
     setMovable();
   }
 
@@ -7339,16 +7357,6 @@ class MArrayBufferViewLength : public MUnaryInstruction,
   INSTRUCTION_HEADER(ArrayBufferViewLength)
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, object))
-
-  bool fallible() const {
-    // On 64-bit platforms we need to bail out for lengths > INT32_MAX if we're
-    // returning an int32.
-#ifdef JS_64BIT
-    return type() == MIRType::Int32;
-#else
-    return false;
-#endif
-  }
 
   bool congruentTo(const MDefinition* ins) const override {
     return congruentIfOperandsEqual(ins);
@@ -11245,6 +11253,10 @@ class MGuardToClass : public MUnaryInstruction,
   NAMED_OPERANDS((0, object))
 
   const JSClass* getClass() const { return class_; }
+  bool isArgumentsObjectClass() const {
+    return class_ == &MappedArgumentsObject::class_ ||
+           class_ == &UnmappedArgumentsObject::class_;
+  }
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override { return AliasSet::None(); }

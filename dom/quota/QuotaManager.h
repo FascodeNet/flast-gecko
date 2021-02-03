@@ -73,6 +73,8 @@ class NS_NO_VTABLE RefCountedObject {
   NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
 };
 
+class OpenDirectoryListener;
+
 class DirectoryLock : public RefCountedObject {
   friend class DirectoryLockImpl;
 
@@ -88,10 +90,11 @@ class DirectoryLock : public RefCountedObject {
 
   Client::Type ClientType() const;
 
-  already_AddRefed<DirectoryLock> Specialize(
-      PersistenceType aPersistenceType,
-      const quota::GroupAndOrigin& aGroupAndOrigin,
-      Client::Type aClientType) const;
+  void Acquire(RefPtr<OpenDirectoryListener> aOpenListener);
+
+  RefPtr<DirectoryLock> Specialize(PersistenceType aPersistenceType,
+                                   const quota::GroupAndOrigin& aGroupAndOrigin,
+                                   Client::Type aClientType) const;
 
   void Log() const;
 
@@ -109,14 +112,6 @@ class NS_NO_VTABLE OpenDirectoryListener : public RefCountedObject {
 
  protected:
   virtual ~OpenDirectoryListener() = default;
-};
-
-struct OriginParams {
-  OriginParams(PersistenceType aPersistenceType, const nsACString& aOrigin)
-      : mOrigin(aOrigin), mPersistenceType(aPersistenceType) {}
-
-  nsCString mOrigin;
-  PersistenceType mPersistenceType;
 };
 
 class QuotaManager final : public BackgroundThreadObject {
@@ -259,6 +254,10 @@ class QuotaManager final : public BackgroundThreadObject {
 
   void PersistOrigin(const GroupAndOrigin& aGroupAndOrigin);
 
+  using DirectoryLockIdTableArray =
+      AutoTArray<Client::DirectoryLockIdTable, Client::TYPE_MAX>;
+  void AbortOperationsForLocks(const DirectoryLockIdTableArray& aLockIds);
+
   // Called when a process is being shot down. Aborts any running operations
   // for the given process.
   void AbortOperationsForProcess(ContentParentId aContentParentId);
@@ -305,17 +304,15 @@ class QuotaManager final : public BackgroundThreadObject {
   // Unlocking is simply done by dropping all references to the lock object.
   // In other words, protection which the lock represents dies with the lock
   // object itself.
-  already_AddRefed<DirectoryLock> OpenDirectory(
+  RefPtr<DirectoryLock> CreateDirectoryLock(
       PersistenceType aPersistenceType, const GroupAndOrigin& aGroupAndOrigin,
-      Client::Type aClientType, bool aExclusive,
-      RefPtr<OpenDirectoryListener> aOpenListener);
+      Client::Type aClientType, bool aExclusive);
 
   // XXX RemoveMe once bug 1170279 gets fixed.
-  already_AddRefed<DirectoryLock> OpenDirectoryInternal(
+  RefPtr<DirectoryLock> CreateDirectoryLockInternal(
       const Nullable<PersistenceType>& aPersistenceType,
       const OriginScope& aOriginScope,
-      const Nullable<Client::Type>& aClientType, bool aExclusive,
-      OpenDirectoryListener* aOpenListener);
+      const Nullable<Client::Type>& aClientType, bool aExclusive);
 
   // Collect inactive and the least recently used origins.
   uint64_t CollectOriginsForEviction(
@@ -480,19 +477,20 @@ class QuotaManager final : public BackgroundThreadObject {
 
   void Shutdown();
 
-  already_AddRefed<DirectoryLockImpl> CreateDirectoryLock(
+  RefPtr<DirectoryLockImpl> CreateDirectoryLock(
       const Nullable<PersistenceType>& aPersistenceType,
       const nsACString& aGroup, const OriginScope& aOriginScope,
       const Nullable<Client::Type>& aClientType, bool aExclusive,
-      bool aInternal, RefPtr<OpenDirectoryListener> aOpenListener,
-      bool& aBlockedOut);
+      bool aInternal);
 
-  already_AddRefed<DirectoryLockImpl> CreateDirectoryLockForEviction(
+  RefPtr<DirectoryLockImpl> CreateDirectoryLockForEviction(
       PersistenceType aPersistenceType, const GroupAndOrigin& aGroupAndOrigin);
 
   void RegisterDirectoryLock(DirectoryLockImpl& aLock);
 
   void UnregisterDirectoryLock(DirectoryLockImpl& aLock);
+
+  void AddPendingDirectoryLock(DirectoryLockImpl& aLock);
 
   void RemovePendingDirectoryLock(DirectoryLockImpl& aLock);
 
@@ -560,7 +558,19 @@ class QuotaManager final : public BackgroundThreadObject {
                             int64_t aAccessTime, bool aPersisted,
                             nsIFile* aDirectory);
 
-  void CheckTemporaryStorageLimits();
+  using OriginInfosFlatTraversable =
+      nsTArray<NotNull<RefPtr<const OriginInfo>>>;
+
+  using OriginInfosNestedTraversable =
+      nsTArray<nsTArray<NotNull<RefPtr<const OriginInfo>>>>;
+
+  OriginInfosNestedTraversable GetOriginInfosExceedingGroupLimit() const;
+
+  OriginInfosNestedTraversable GetOriginInfosExceedingGlobalLimit() const;
+
+  void ClearOrigins(const OriginInfosNestedTraversable& aDoomedOriginInfos);
+
+  void CleanupTemporaryStorage();
 
   void DeleteFilesForOrigin(PersistenceType aPersistenceType,
                             const nsACString& aOrigin);
@@ -584,6 +594,15 @@ class QuotaManager final : public BackgroundThreadObject {
   void MaybeRecordShutdownStep(Maybe<Client::Type> aClientType,
                                const nsACString& aStepDescription);
 
+  template <typename Iterator>
+  static void MaybeInsertNonPersistedOriginInfos(
+      Iterator aDest, const RefPtr<GroupInfo>& aTemporaryGroupInfo,
+      const RefPtr<GroupInfo>& aDefaultGroupInfo);
+
+  template <typename Collect, typename Pred>
+  static OriginInfosFlatTraversable CollectLRUOriginInfosUntil(
+      Collect&& aCollect, Pred&& aPred);
+
   // Thread on which IO is performed.
   LazyInitializedOnceNotNull<const nsCOMPtr<nsIThread>> mIOThread;
 
@@ -599,7 +618,7 @@ class QuotaManager final : public BackgroundThreadObject {
   // Accesses to mQuotaManagerShutdownSteps must be protected by mQuotaMutex.
   nsCString mQuotaManagerShutdownSteps;
 
-  mozilla::Mutex mQuotaMutex;
+  mutable mozilla::Mutex mQuotaMutex;
 
   nsClassHashtable<nsCStringHashKey, GroupInfoPair> mGroupInfoPairs;
 
@@ -608,13 +627,14 @@ class QuotaManager final : public BackgroundThreadObject {
 
   // Maintains a list of directory locks that are acquired or queued. It can be
   // accessed on the owning (PBackground) thread only.
-  nsTArray<DirectoryLockImpl*> mDirectoryLocks;
+  nsTArray<NotNull<DirectoryLockImpl*>> mDirectoryLocks;
 
   // Only modifed on the owning thread, but read on multiple threads. Therefore
   // all modifications (including those on the owning thread) and all reads off
   // the owning thread must be protected by mQuotaMutex. In other words, only
   // reads on the owning thread don't have to be protected by mQuotaMutex.
-  nsDataHashtable<nsUint64HashKey, DirectoryLockImpl*> mDirectoryLockIdTable;
+  nsDataHashtable<nsUint64HashKey, NotNull<DirectoryLockImpl*>>
+      mDirectoryLockIdTable;
 
   // Directory lock tables that are used to update origin access time.
   DirectoryLockTable mTemporaryDirectoryLockTable;

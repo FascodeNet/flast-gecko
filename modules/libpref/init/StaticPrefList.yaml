@@ -778,11 +778,7 @@
 # -1 = determine dynamically, 0 = none, n = memory capacity in kilobytes.
 - name: browser.cache.memory.capacity
   type: RelaxedAtomicInt32
-#ifdef ANDROID
-  value: 1024
-#else
   value: -1
-#endif
   mirror: always
 
 # When smartsizing is disabled we could potentially fill all disk space by
@@ -1978,7 +1974,7 @@
 
 - name: dom.input_events.beforeinput.enabled
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 # Whether innerWidth / innerHeight return rounded or fractional sizes.
@@ -3665,8 +3661,6 @@
 # Callers which cannot use `useRemoteSubframes` must use
 # `Services.appinfo.fissionAutostart` or `mozilla::FissionAutostart()` to check
 # if fission is enabled by default.
-# Note: This is overridden in all.js on RELEASE_OR_BETA in order to add the
-# locked attribute.
 - name: fission.autostart
   type: bool
   value: false
@@ -4684,6 +4678,26 @@
   value: true
   mirror: once
 
+# Whether or not to fallback from WebRender/WebRender Software to Basic.
+- name: gfx.webrender.fallback.basic
+  type: bool
+  value: true
+  mirror: once
+
+# Whether or not to fallback from WebRender to Software WebRender.
+- name: gfx.webrender.fallback.software
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: once
+
+#ifdef XP_WIN
+  # Whether or not to fallback from WebRender to Software WebRender + D3D11.
+-   name: gfx.webrender.fallback.software-d3d11
+    type: bool
+    value: @IS_NIGHTLY_BUILD@
+    mirror: once
+#endif
+
 - name: gfx.webrender.use-optimized-shaders
   type: bool
   value: true
@@ -5303,14 +5317,6 @@
   value: 2 * 1024 * 1024
 #endif
   mirror: always
-
-# True if off-thread parsing should use a parse GlobalObject in order to
-# directly allocate to the GC from a helper thread. If false, transfer the
-# CompilationStencil back to main thread before allocating GC objects.
-- name: javascript.options.off_thread_parse_global
-  type: bool
-  value: false
-  mirror: once
 
 - name: javascript.options.wasm_optimizingjit
   type: bool
