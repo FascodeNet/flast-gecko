@@ -1248,11 +1248,13 @@ const browsingContextTargetPrototype = {
     ) {
       this._setPaintFlashingEnabled(options.paintFlashing);
     }
-    if (
-      typeof options.serviceWorkersTestingEnabled !== "undefined" &&
-      options.serviceWorkersTestingEnabled !==
-        this._getServiceWorkersTestingEnabled()
-    ) {
+    if (typeof options.colorSchemeSimulation !== "undefined") {
+      this._setColorSchemeSimulation(options.colorSchemeSimulation);
+    }
+    if (typeof options.printSimulationEnabled !== "undefined") {
+      this._setPrintSimulationEnabled(options.printSimulationEnabled);
+    }
+    if (typeof options.serviceWorkersTestingEnabled !== "undefined") {
       this._setServiceWorkersTestingEnabled(
         options.serviceWorkersTestingEnabled
       );
@@ -1260,7 +1262,6 @@ const browsingContextTargetPrototype = {
     if (typeof options.restoreFocus == "boolean") {
       this._restoreFocus = options.restoreFocus;
     }
-
     // Reload if:
     //  - there's an explicit `performReload` flag and it's true
     //  - there's no `performReload` flag, but it makes sense to do so
@@ -1282,6 +1283,8 @@ const browsingContextTargetPrototype = {
     this._setCacheDisabled(false);
     this._setServiceWorkersTestingEnabled(false);
     this._setPaintFlashingEnabled(false);
+    this._setPrintSimulationEnabled(false);
+    this._setColorSchemeSimulation(null);
 
     if (this._restoreFocus && this.browsingContext?.isActive) {
       this.window.focus();
@@ -1335,8 +1338,29 @@ const browsingContextTargetPrototype = {
    * Disable or enable the service workers testing features.
    */
   _setServiceWorkersTestingEnabled(enabled) {
-    const windowUtils = this.window.windowUtils;
-    windowUtils.serviceWorkersTestingEnabled = enabled;
+    if (this.browsingContext.serviceWorkersTestingEnabled != enabled) {
+      this.browsingContext.serviceWorkersTestingEnabled = enabled;
+    }
+  },
+
+  /**
+   * Disable or enable the print simulation.
+   */
+  _setPrintSimulationEnabled(enabled) {
+    const value = enabled ? "print" : "";
+    if (this.browsingContext.mediumOverride != value) {
+      this.browsingContext.mediumOverride = value;
+    }
+  },
+
+  /**
+   * Disable or enable the color-scheme simulation.
+   */
+  _setColorSchemeSimulation(override) {
+    const value = override || "none";
+    if (this.browsingContext.prefersColorSchemeOverride != value) {
+      this.browsingContext.prefersColorSchemeOverride = value;
+    }
   },
 
   /**
@@ -1370,19 +1394,6 @@ const browsingContextTargetPrototype = {
     }
 
     return this.window.windowUtils.paintFlashing;
-  },
-
-  /**
-   * Return service workers testing allowed status.
-   */
-  _getServiceWorkersTestingEnabled() {
-    if (!this.docShell) {
-      // The browsing context is already closed.
-      return null;
-    }
-
-    const windowUtils = this.window.windowUtils;
-    return windowUtils.serviceWorkersTestingEnabled;
   },
 
   _changeTopLevelDocument(window) {

@@ -42,6 +42,15 @@ enum DisplayMode {
 };
 
 /**
+ * CSS prefers-color-scheme values.
+ */
+enum PrefersColorSchemeOverride {
+  "none",
+  "light",
+  "dark",
+};
+
+/**
  * Allowed overrides of platform/pref default behaviour for touch events.
  */
 enum TouchEventsOverride {
@@ -144,6 +153,15 @@ interface BrowsingContext {
   // The watchedByDevTools flag indicates whether or not DevTools are currently
   // debugging this browsing context.
   [SetterThrows] attribute boolean watchedByDevTools;
+
+  // Enable some service workers testing features, for DevTools.
+  [SetterThrows] attribute boolean serviceWorkersTestingEnabled;
+
+  // Enable media query medium override, for DevTools.
+  [SetterThrows] attribute DOMString mediumOverride;
+
+  // Color-scheme simulation, for DevTools.
+  [SetterThrows] attribute PrefersColorSchemeOverride prefersColorSchemeOverride;
 
   /**
    * A unique identifier for the browser element that is hosting this

@@ -31,6 +31,7 @@
 #include "nsGlobalWindowOuter.h"
 
 using namespace mozilla;
+using mozilla::dom::DisplayMode;
 using mozilla::dom::Document;
 
 static nsTArray<const nsStaticAtom*>* sSystemMetrics = nullptr;
@@ -213,7 +214,7 @@ StyleDisplayMode Gecko_MediaFeatures_GetDisplayMode(const Document* aDocument) {
                         static_cast<int32_t>(StyleDisplayMode::Fullscreen),
                 "DisplayMode must mach nsStyleConsts.h");
 
-  BrowsingContext* browsingContext = aDocument->GetBrowsingContext();
+  dom::BrowsingContext* browsingContext = aDocument->GetBrowsingContext();
   if (!browsingContext) {
     return StyleDisplayMode::Browser;
   }
@@ -297,11 +298,10 @@ static PointerCapabilities GetPointerCapabilities(const Document* aDocument,
              aID == LookAndFeel::IntID::AllPointerCapabilities);
   MOZ_ASSERT(aDocument);
 
-  if (BrowsingContext* bc = aDocument->GetBrowsingContext()) {
+  if (dom::BrowsingContext* bc = aDocument->GetBrowsingContext()) {
     // The touch-events-override happens only for the Responsive Design Mode so
     // that we don't need to care about ResistFingerprinting.
-    if (bc->TouchEventsOverride() ==
-        mozilla::dom::TouchEventsOverride::Enabled) {
+    if (bc->TouchEventsOverride() == dom::TouchEventsOverride::Enabled) {
       return PointerCapabilities::Coarse;
     }
   }

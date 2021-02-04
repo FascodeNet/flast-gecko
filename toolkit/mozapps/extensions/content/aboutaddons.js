@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 /* eslint max-len: ["error", 80] */
-/* exported hide, initialize, show */
+/* exported hideView, initializeView, showView */
 /* import-globals-from aboutaddonsCommon.js */
 /* import-globals-from abuse-reports.js */
 /* global MozXULElement, MessageBarStackElement, windowRoot */
@@ -1388,8 +1388,7 @@ class AddonPageHeader extends HTMLElement {
     this.heading.hidden = viewType === "detail";
     this.backButton.hidden = viewType !== "detail" && viewType !== "shortcuts";
 
-    let { contentWindow } = getBrowserElement();
-    this.backButton.disabled = !contentWindow.history.state?.previousView;
+    this.backButton.disabled = !history.state?.previousView;
 
     if (viewType !== "detail") {
       document.l10n.setAttributes(this.heading, `${viewType}-heading`);
@@ -1763,12 +1762,6 @@ class CategoriesBox extends customElements.get("button-group") {
     this.promiseRendered = new Promise(resolve => {
       this._resolveRendered = resolve;
     });
-    // This will resolve when the final category states have been set by
-    // checking the AddonManager state and showing/hiding categories. The page
-    // won't be "initialized" until this resolves.
-    this.promiseInitialized = new Promise(resolve => {
-      this._resolveInitialized = resolve;
-    });
   }
 
   async initialize() {
@@ -1811,7 +1804,6 @@ class CategoriesBox extends customElements.get("button-group") {
 
     this._resolveRendered();
     await hiddenUpdated;
-    this._resolveInitialized();
   }
 
   get initialViewId() {
@@ -2259,6 +2251,10 @@ class InlineOptionsBrowser extends HTMLElement {
         this.browser.frameLoader.requestUpdatePosition();
       }
     }, 100);
+
+    this._promiseDisconnected = new Promise(
+      resolve => (this._resolveDisconnected = resolve)
+    );
   }
 
   connectedCallback() {
@@ -2274,6 +2270,7 @@ class InlineOptionsBrowser extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._resolveDisconnected();
     window.removeEventListener("scroll", this, true);
     top.browsingContext.embedderElement.removeEventListener(
       "FullZoomChange",
@@ -2436,11 +2433,30 @@ class InlineOptionsBrowser extends HTMLElement {
 
       mm.sendAsyncMessage("Extension:InitBrowser", browserOptions);
 
-      // prettier-ignore
-      browser.loadURI(optionsURL, {
-        triggeringPrincipal:
-          Services.scriptSecurityManager.getSystemPrincipal(),
-      });
+      if (browser.isConnectedAndReady) {
+        this.loadURI(optionsURL);
+      } else {
+        // browser custom element does opt-in the delayConnectedCallback
+        // behavior (see connectedCallback in the custom element definition
+        // from browser-custom-element.js) and so calling browser.loadURI
+        // would fail if the about:addons document is not yet fully loaded.
+        Promise.race([
+          promiseEvent("DOMContentLoaded", document),
+          this._promiseDisconnected,
+        ]).then(() => {
+          this.loadURI(optionsURL);
+        });
+      }
+    });
+  }
+
+  loadURI(uri) {
+    if (!this.browser || !this.browser.isConnectedAndReady) {
+      throw new Error("Fail to loadURI");
+    }
+
+    this.browser.loadURI(uri, {
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
     });
   }
 }
@@ -4721,9 +4737,9 @@ var ScrollOffsets = {
 };
 
 /**
- * Called from extensions.js once, when about:addons is loading.
+ * Called automatically when about:addons is loading by view-controller.js.
  */
-function initialize(opts) {
+async function initializeView(opts) {
   mainEl = document.getElementById("main");
   addonPageHeader = document.getElementById("page-header");
   categoriesBox = document.querySelector("categories-box");
@@ -4731,9 +4747,6 @@ function initialize(opts) {
   loadViewFn = opts.loadViewFn;
   replaceWithDefaultViewFn = opts.replaceWithDefaultViewFn;
 
-  if (opts.shouldLoadInitialView) {
-    opts.loadInitialViewFn(categoriesBox.initialViewId);
-  }
   categoriesBox.initialize();
 
   AddonManagerListenerHandler.startup();
@@ -4755,7 +4768,7 @@ function initialize(opts) {
  * resolve once the view has been updated to conform with other about:addons
  * views.
  */
-async function show(type, param, { historyEntryId }) {
+async function showView(type, param, { historyEntryId }) {
   let container = document.createElement("div");
   container.setAttribute("current-view", type);
   addonPageHeader.setViewInfo({ type, param });
@@ -4804,7 +4817,10 @@ async function show(type, param, { historyEntryId }) {
   });
 }
 
-function hide() {
+async function hideView() {
+  if (!mainEl) {
+    return;
+  }
   ScrollOffsets.save();
   ScrollOffsets.setView(null);
   mainEl.textContent = "";

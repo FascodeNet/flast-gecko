@@ -405,10 +405,8 @@ typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
  * 'let', 'static', 'yield', or for any strict mode reserved word.
  */
 bool ParserBase::isValidStrictBinding(TaggedParserAtomIndex name) {
-  const ParserName* atom =
-      this->compilationState_.parserAtoms.getParserAtom(name)->asName();
-  TokenKind tt = ReservedWordTokenKind(atom);
-  if (tt == TokenKind::Name) {
+  TokenKind tt = ReservedWordTokenKind(name);
+  if (tt == TokenKind::Limit) {
     return name != TaggedParserAtomIndex::WellKnown::eval() &&
            name != TaggedParserAtomIndex::WellKnown::arguments();
   }
@@ -853,7 +851,7 @@ bool PerHandlerParser<ParseHandler>::
       //   After closed-over-bindings are snapshotted in the handler,
       //   remove this.
       auto parserAtom = this->compilationState_.parserAtoms.internJSAtom(
-          cx_, this->getCompilationStencil(), name);
+          cx_, this->getCompilationStencil().input.atomCache, name);
       if (!parserAtom) {
         return false;
       }
@@ -1482,9 +1480,12 @@ bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     return true;
   }
 
+  if (!this->stencil_.input.options.privateClassFields) {
+    return true;
+  }
+
   Vector<UnboundPrivateName, 8> unboundPrivateNames(cx_);
-  if (!this->compilationState_.usedNames.getUnboundPrivateNames(
-          unboundPrivateNames)) {
+  if (!usedNames_.getUnboundPrivateNames(unboundPrivateNames)) {
     return false;
   }
 
@@ -1509,41 +1510,6 @@ bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     return false;
   }
 
-  // For the given private name, search the enclosing scope chain
-  // to see if there's an associated binding, and if not, issue an error.
-  auto verifyPrivateName = [](JSContext* cx, auto* parser,
-                              HandleScope enclosingScope,
-                              UnboundPrivateName unboundName) {
-    const ParserAtom* unboundAtom =
-        parser->compilationState_.parserAtoms.getParserAtom(unboundName.atom);
-
-    // Walk the enclosing scope chain looking for this private name;
-    for (ScopeIter si(enclosingScope); si; si++) {
-      // Private names are only found within class body scopes.
-      if (si.scope()->kind() != ScopeKind::ClassBody) {
-        continue;
-      }
-
-      // Look for a matching binding.
-      for (js::BindingIter bi(si.scope()); bi; bi++) {
-        if (unboundAtom->equalsJSAtom(bi.name())) {
-          // Awesome. We found it, we're done here!
-          return true;
-        }
-      }
-    }
-
-    // Didn't find a matching binding, so issue an error.
-    UniqueChars str = ParserAtomToPrintableString(
-        cx, parser->compilationState_.parserAtoms, unboundName.atom);
-    if (!str) {
-      return false;
-    }
-    parser->errorAt(unboundName.position.begin, JSMSG_MISSING_PRIVATE_DECL,
-                    str.get());
-    return false;
-  };
-
   // It's important that the unbound private names are sorted, as we
   // want our errors to always be issued to the first textually.
   for (UnboundPrivateName unboundName : unboundPrivateNames) {
@@ -1551,9 +1517,15 @@ bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     // Debugger.Frame.prototype.eval call. In order to find the declared private
     // names, we must use the effective scope that was determined when creating
     // the scopeContext.
-    if (!verifyPrivateName(cx_, this,
-                           compilationState_.scopeContext.effectiveScope,
-                           unboundName)) {
+    if (!this->compilationState_.scopeContext
+             .effectiveScopePrivateFieldCacheHas(unboundName.atom)) {
+      UniqueChars str = ParserAtomToPrintableString(
+          cx_, this->compilationState_.parserAtoms, unboundName.atom);
+      if (!str) {
+        return false;
+      }
+      errorAt(unboundName.position.begin, JSMSG_MISSING_PRIVATE_DECL,
+              str.get());
       return false;
     }
   }
@@ -1609,21 +1581,10 @@ LexicalScopeNode* Parser<FullParseHandler, Unit>::evalBody(
     // ParseContext, then we must be emitting an eval script, and the
     // outer function must already be marked as needing a home object
     // since it contains an eval.
-    ScopeIter si(this->stencil_.input.enclosingScope);
-    for (; si; si++) {
-      if (si.kind() == ScopeKind::Function) {
-        JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
-        if (fun->isArrow()) {
-          continue;
-        }
-        MOZ_ASSERT(fun->allowSuperProperty());
-        MOZ_ASSERT(fun->baseScript()->needsHomeObject());
-        break;
-      }
-    }
-    MOZ_ASSERT(!si.done(),
-               "Eval must have found an enclosing function box scope that "
-               "allows super.property");
+    MOZ_ASSERT(
+        this->compilationState_.scopeContext.hasFunctionNeedsHomeObjectOnChain,
+        "Eval must have found an enclosing function box scope that "
+        "allows super.property");
   }
 #endif
 
@@ -2787,7 +2748,7 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   TaggedParserAtomIndex displayAtom;
   if (fun->displayAtom()) {
     displayAtom = this->compilationState_.parserAtoms.internJSAtom(
-        cx_, this->stencil_, fun->displayAtom());
+        cx_, this->stencil_.input.atomCache, fun->displayAtom());
     if (!displayAtom) {
       return false;
     }
@@ -3277,7 +3238,7 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
   TaggedParserAtomIndex displayAtom;
   if (fun->displayAtom()) {
     displayAtom = this->compilationState_.parserAtoms.internJSAtom(
-        cx_, this->stencil_, fun->displayAtom());
+        cx_, this->stencil_.input.atomCache, fun->displayAtom());
     if (!displayAtom) {
       return null();
     }
@@ -4818,11 +4779,8 @@ bool Parser<FullParseHandler, Unit>::namedImportsOrNamespaceImport(
         // that is a keyword is a syntax error if it is not followed
         // by the keyword 'as'.
         // See the ImportSpecifier production in ES6 section 15.2.2.
-        const ParserName* name =
-            this->compilationState_.parserAtoms.getParserAtom(importName)
-                ->asName();
-        if (IsKeyword(name)) {
-          error(JSMSG_AS_AFTER_RESERVED_WORD, ReservedWordToCharZ(name));
+        if (IsKeyword(importName)) {
+          error(JSMSG_AS_AFTER_RESERVED_WORD, ReservedWordToCharZ(importName));
           return false;
         }
       }
@@ -7761,8 +7719,7 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
   // We're leaving a class definition that was not itself nested within a class
   if (!isInClass) {
     mozilla::Maybe<UnboundPrivateName> maybeUnboundName;
-    if (!this->compilationState_.usedNames.hasUnboundPrivateNames(
-            cx_, maybeUnboundName)) {
+    if (!usedNames_.hasUnboundPrivateNames(cx_, maybeUnboundName)) {
       return null();
     }
     if (maybeUnboundName) {
@@ -10220,13 +10177,16 @@ template <class ParseHandler, typename Unit>
 bool GeneralParser<ParseHandler, Unit>::checkLabelOrIdentifierReference(
     TaggedParserAtomIndex ident, uint32_t offset, YieldHandling yieldHandling,
     TokenKind hint /* = TokenKind::Limit */) {
-  const ParserName* identAtom =
-      this->compilationState_.parserAtoms.getParserAtom(ident)->asName();
   TokenKind tt;
   if (hint == TokenKind::Limit) {
-    tt = ReservedWordTokenKind(identAtom);
+    tt = ReservedWordTokenKind(ident);
   } else {
-    MOZ_ASSERT(hint == ReservedWordTokenKind(identAtom),
+    // All non-reserved word kinds are folded into TokenKind::Limit in
+    // ReservedWordTokenKind and the following code.
+    if (hint == TokenKind::Name || hint == TokenKind::PrivateName) {
+      hint = TokenKind::Limit;
+    }
+    MOZ_ASSERT(hint == ReservedWordTokenKind(ident),
                "hint doesn't match actual token kind");
     tt = hint;
   }
@@ -10237,7 +10197,8 @@ bool GeneralParser<ParseHandler, Unit>::checkLabelOrIdentifierReference(
     return false;
   }
 
-  if (tt == TokenKind::Name) {
+  if (tt == TokenKind::Limit) {
+    // Either TokenKind::Name or TokenKind::PrivateName
     return true;
   }
   if (TokenKindIsContextualKeyword(tt)) {
