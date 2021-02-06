@@ -275,8 +275,8 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
       case JSOp::Not:
       case JSOp::And:
       case JSOp::Or:
-      case JSOp::IfEq:
-      case JSOp::IfNe: {
+      case JSOp::JumpIfFalse:
+      case JSOp::JumpIfTrue: {
         auto* stub = alloc.newStub<ICToBool_Fallback>(Kind::ToBool);
         if (!addIC(loc, stub)) {
           return false;

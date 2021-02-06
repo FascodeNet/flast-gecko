@@ -1,6 +1,6 @@
 "use strict";
 
-const { ExperimentAPI } = ChromeUtils.import(
+const { ExperimentAPI, ExperimentFeature } = ChromeUtils.import(
   "resource://messaging-system/experiments/ExperimentAPI.jsm"
 );
 const { ExperimentFakes } = ChromeUtils.import(
@@ -87,6 +87,36 @@ add_task(async function test_getExperimentMetaData() {
   sandbox.restore();
 });
 
+add_task(function test_getExperimentMetaData_safe() {
+  const sandbox = sinon.createSandbox();
+
+  sandbox.stub(ExperimentAPI._store, "get").throws();
+  sandbox.stub(ExperimentAPI._store, "getExperimentForFeature").throws();
+
+  try {
+    let metadata = ExperimentAPI.getExperimentMetaData({ slug: "foo" });
+    Assert.equal(metadata, null, "Should not throw");
+  } catch (e) {
+    Assert.ok(false, "Error should be caught in ExperimentAPI");
+  }
+
+  Assert.ok(ExperimentAPI._store.get.calledOnce, "Sanity check");
+
+  try {
+    let metadata = ExperimentAPI.getExperimentMetaData({ featureId: "foo" });
+    Assert.equal(metadata, null, "Should not throw");
+  } catch (e) {
+    Assert.ok(false, "Error should be caught in ExperimentAPI");
+  }
+
+  Assert.ok(
+    ExperimentAPI._store.getExperimentForFeature.calledOnce,
+    "Sanity check"
+  );
+
+  sandbox.restore();
+});
+
 add_task(async function test_getExperiment_feature() {
   const sandbox = sinon.createSandbox();
   const manager = ExperimentFakes.manager();
@@ -119,141 +149,19 @@ add_task(async function test_getExperiment_feature() {
   sandbox.restore();
 });
 
-/**
- * #getValue
- */
-add_task(async function test_getValue() {
+add_task(async function test_getExperiment_safe() {
   const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
-  const feature = {
-    featureId: "aboutwelcome",
-    enabled: true,
-    value: { title: "hi" },
-  };
-  const expected = ExperimentFakes.experiment("foo", {
-    branch: { slug: "treatment", feature },
-  });
+  sandbox.stub(ExperimentAPI._store, "getExperimentForFeature").throws();
 
-  await manager.onStartup();
-
-  sandbox.stub(ExperimentAPI, "_store").get(() => ExperimentFakes.childStore());
-
-  manager.store.addExperiment(expected);
-
-  await TestUtils.waitForCondition(
-    () => ExperimentAPI.getExperiment({ slug: "foo" }),
-    "Wait for child to sync"
-  );
-
-  Assert.deepEqual(
-    ExperimentAPI.getFeatureValue({ featureId: "aboutwelcome" }),
-    feature.value,
-    "should return a Branch by feature"
-  );
-
-  Assert.deepEqual(
-    ExperimentAPI.activateBranch({ featureId: "aboutwelcome" }),
-    expected.branch,
-    "should return an experiment branch by feature"
-  );
-
-  Assert.equal(
-    ExperimentAPI.activateBranch({ featureId: "doesnotexist" }),
-    undefined,
-    "should return undefined if the experiment is not found"
-  );
-
-  sandbox.restore();
-});
-
-/**
- * #isFeatureEnabled
- */
-
-add_task(async function test_isFeatureEnabledDefault() {
-  const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
-  const FEATURE_ENABLED_DEFAULT = true;
-  const expected = ExperimentFakes.experiment("foo");
-
-  await manager.onStartup();
-
-  sandbox.stub(ExperimentAPI, "_store").get(() => manager.store);
-
-  manager.store.addExperiment(expected);
-
-  Assert.deepEqual(
-    ExperimentAPI.isFeatureEnabled("aboutwelcome", FEATURE_ENABLED_DEFAULT),
-    FEATURE_ENABLED_DEFAULT,
-    "should return enabled true as default"
-  );
-  sandbox.restore();
-});
-
-add_task(async function test_isFeatureEnabled() {
-  const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
-  const feature = {
-    featureId: "aboutwelcome",
-    enabled: false,
-    value: null,
-  };
-  const expected = ExperimentFakes.experiment("foo", {
-    branch: { slug: "treatment", feature },
-  });
-
-  await manager.onStartup();
-
-  sandbox.stub(ExperimentAPI, "_store").get(() => manager.store);
-
-  manager.store.addExperiment(expected);
-
-  const emitSpy = sandbox.spy(manager.store, "emit");
-  const actual = ExperimentAPI.isFeatureEnabled("aboutwelcome", true);
-
-  Assert.deepEqual(
-    actual,
-    feature.enabled,
-    "should return feature as disabled"
-  );
-
-  Assert.ok(emitSpy.calledWith("exposure"), "should emit an exposure event");
-
-  sandbox.restore();
-});
-
-add_task(async function test_isFeatureEnabled_no_exposure() {
-  const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
-  const feature = {
-    featureId: "aboutwelcome",
-    enabled: false,
-    value: null,
-  };
-  const expected = ExperimentFakes.experiment("foo", {
-    branch: { slug: "treatment", feature },
-  });
-
-  await manager.onStartup();
-
-  sandbox.stub(ExperimentAPI, "_store").get(() => manager.store);
-
-  manager.store.addExperiment(expected);
-
-  const emitSpy = sandbox.spy(manager.store, "emit");
-  const actual = ExperimentAPI.isFeatureEnabled("aboutwelcome", true, {
-    sendExposurePing: false,
-  });
-
-  Assert.deepEqual(
-    actual,
-    feature.enabled,
-    "should return feature as disabled"
-  );
-  Assert.ok(
-    emitSpy.neverCalledWith("exposure"),
-    "should not emit an exposure event when options = { sendExposurePing: false}"
-  );
+  try {
+    Assert.equal(
+      ExperimentAPI.getExperiment({ featureId: "foo" }),
+      null,
+      "It should not fail even when it throws."
+    );
+  } catch (e) {
+    Assert.ok(false, "Error should be caught by ExperimentAPI");
+  }
 
   sandbox.restore();
 });
@@ -345,9 +253,17 @@ add_task(async function test_addExperiment_eventEmit_add() {
 
   store.addExperiment(experiment);
 
-  Assert.equal(slugStub.callCount, 1);
+  Assert.equal(
+    slugStub.callCount,
+    1,
+    "should call 'update' callback for slug when experiment is added"
+  );
   Assert.equal(slugStub.firstCall.args[1].slug, experiment.slug);
-  Assert.equal(featureStub.callCount, 1);
+  Assert.equal(
+    featureStub.callCount,
+    1,
+    "should call 'update' callback for featureId when an experiment is added"
+  );
   Assert.equal(featureStub.firstCall.args[1].slug, experiment.slug);
 });
 
@@ -434,6 +350,23 @@ add_task(async function test_activateBranch() {
     experiment.branch,
     "Should return feature of active experiment"
   );
+
+  sandbox.restore();
+});
+
+add_task(async function test_activateBranch_safe() {
+  const sandbox = sinon.createSandbox();
+  sandbox.stub(ExperimentAPI._store, "getAllActive").throws();
+
+  try {
+    Assert.equal(
+      ExperimentAPI.activateBranch({ featureId: "green" }),
+      null,
+      "Should not throw"
+    );
+  } catch (e) {
+    Assert.ok(false, "Should catch error in ExperimentAPI");
+  }
 
   sandbox.restore();
 });

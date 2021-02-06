@@ -1302,10 +1302,10 @@ static JSObject* NewOuterWindowProxy(JSContext* cx,
   js::WrapperOptions options;
   options.setClass(&OuterWindowProxyClass);
   JSObject* obj =
-      js::Wrapper::NewSingleton(cx, global,
-                                isChrome ? &nsChromeOuterWindowProxy::singleton
-                                         : &nsOuterWindowProxy::singleton,
-                                options);
+      js::Wrapper::New(cx, global,
+                       isChrome ? &nsChromeOuterWindowProxy::singleton
+                                : &nsOuterWindowProxy::singleton,
+                       options);
   MOZ_ASSERT_IF(obj, js::IsWindowProxy(obj));
   return obj;
 }
@@ -4783,12 +4783,19 @@ void nsGlobalWindowOuter::MakeScriptDialogTitle(
   // right thing for javascript: and data: documents.
 
   nsAutoCString prepath;
-  nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
-  if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
-    NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
-    nsContentUtils::FormatLocalizedString(
-        aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
-        "ScriptDlgHeading", ucsPrePath);
+
+  if (aSubjectPrincipal->GetIsNullPrincipal()) {
+    nsContentUtils::GetLocalizedString(
+        nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+        "ScriptDlgNullPrincipalHeading", aOutTitle);
+  } else {
+    nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
+    if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
+      NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
+      nsContentUtils::FormatLocalizedString(
+          aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+          "ScriptDlgHeading", ucsPrePath);
+    }
   }
 
   if (aOutTitle.IsEmpty()) {

@@ -4,12 +4,42 @@
 
 "use strict";
 
-/**
- * @typedef {import("./@types/ExperimentManager").Enrollment} Enrollment
- * @typedef {import("./@types/ExperimentManager").FeatureConfig} FeatureConfig
- */
+const EXPORTED_SYMBOLS = ["ExperimentAPI", "ExperimentFeature"];
 
-const EXPORTED_SYMBOLS = ["ExperimentAPI"];
+/**
+ * FEATURE MANIFEST
+ * =================
+ * Features must be added here to be accessible through the ExperimentFeature() API.
+ * In the future, this will be moved to a configuration file.
+ */
+const MANIFEST = {
+  aboutwelcome: {
+    description: "The about:welcome page",
+    enabledFallbackPref: "browser.aboutwelcome.enabled",
+    variables: {
+      value: {
+        type: "json",
+        fallbackPref: "browser.aboutwelcome.overrideContent",
+      },
+    },
+  },
+  newtab: {
+    description: "The about:newtab page",
+    variables: {
+      value: {
+        type: "json",
+        fallbackPref: "browser.newtab.experiments.value",
+      },
+    },
+  },
+  "password-autocomplete": {
+    description: "A special autocomplete UI for password fields.",
+  },
+};
+
+function isBooleanValueDefined(value) {
+  return typeof value === "boolean";
+}
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
@@ -36,6 +66,17 @@ XPCOMUtils.defineLazyPreferenceGetter(
   COLLECTION_ID_FALLBACK
 );
 
+function parseJSON(value) {
+  if (value) {
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      Cu.reportError(e);
+    }
+  }
+  return null;
+}
+
 const ExperimentAPI = {
   /**
    * @returns {Promise} Resolves when the API has synchronized to the main store
@@ -59,10 +100,14 @@ const ExperimentAPI = {
       );
     }
     let experimentData;
-    if (slug) {
-      experimentData = this._store.get(slug);
-    } else if (featureId) {
-      experimentData = this._store.getExperimentForFeature(featureId);
+    try {
+      if (slug) {
+        experimentData = this._store.get(slug);
+      } else if (featureId) {
+        experimentData = this._store.getExperimentForFeature(featureId);
+      }
+    } catch (e) {
+      Cu.reportError(e);
     }
     if (experimentData) {
       return {
@@ -88,10 +133,14 @@ const ExperimentAPI = {
     }
 
     let experimentData;
-    if (slug) {
-      experimentData = this._store.get(slug);
-    } else if (featureId) {
-      experimentData = this._store.getExperimentForFeature(featureId);
+    try {
+      if (slug) {
+        experimentData = this._store.get(slug);
+      } else if (featureId) {
+        experimentData = this._store.getExperimentForFeature(featureId);
+      }
+    } catch (e) {
+      Cu.reportError(e);
     }
     if (experimentData) {
       return {
@@ -111,51 +160,32 @@ const ExperimentAPI = {
    * @returns {Branch | null}
    */
   activateBranch({ slug, featureId, sendExposurePing = true }) {
-    for (let experiment of this._store.getAllActive()) {
-      if (
-        experiment?.branch.feature.featureId === featureId ||
-        experiment.slug === slug
-      ) {
-        if (sendExposurePing) {
-          this._store._emitExperimentExposure({
-            experimentSlug: experiment.slug,
-            branchSlug: experiment.branch.slug,
-            featureId,
-          });
-        }
-        // Default to null for feature-less experiments where we're only
-        // interested in exposure.
-        return experiment?.branch || null;
+    let experiment = null;
+    try {
+      if (slug) {
+        experiment = this._store.get(slug);
+      } else if (featureId) {
+        experiment = this._store.getExperimentForFeature(featureId);
       }
+    } catch (e) {
+      Cu.reportError(e);
     }
 
-    return null;
-  },
-
-  /**
-   * Lookup feature in active experiments and return status.
-   * Sends exposure ping
-   * @param {string} featureId Feature to lookup
-   * @param {boolean} defaultValue
-   * @param {{sendExposurePing: boolean}} options
-   * @returns {boolean}
-   */
-  isFeatureEnabled(featureId, defaultValue, { sendExposurePing = true } = {}) {
-    const branch = this.activateBranch({ featureId, sendExposurePing });
-    if (branch?.feature.enabled !== undefined) {
-      return branch.feature.enabled;
+    if (!experiment) {
+      return null;
     }
-    return defaultValue;
-  },
 
-  /**
-   * Lookup feature in active experiments and return value.
-   * By default, this will send an exposure event.
-   * @param {{featureId: string, sendExposurePing: boolean}} options
-   * @returns {obj} The feature value
-   */
-  getFeatureValue(options) {
-    return this.activateBranch(options)?.feature.value;
+    if (sendExposurePing) {
+      this._store._emitExperimentExposure({
+        experimentSlug: experiment.slug,
+        branchSlug: experiment?.branch?.slug,
+        featureId,
+      });
+    }
+
+    // Default to null for feature-less experiments where we're only
+    // interested in exposure.
+    return experiment?.branch || null;
   },
 
   /**
@@ -274,6 +304,116 @@ const ExperimentAPI = {
     return true;
   },
 };
+
+class ExperimentFeature {
+  static MANIFEST = MANIFEST;
+  constructor(featureId, manifest) {
+    this.featureId = featureId;
+    this.defaultPrefValues = {};
+    this.manifest = manifest || ExperimentFeature.MANIFEST[featureId];
+    if (!this.manifest) {
+      Cu.reportError(
+        `No manifest entry for ${featureId}. Please add one to toolkit/components/messaging-system/experiments/ExperimentAPI.jsm`
+      );
+    }
+    const variables = this.manifest?.variables || {};
+
+    // Add special default variable.
+    if (!variables.enabled) {
+      variables.enabled = {
+        type: "boolean",
+        fallbackPref: this.manifest?.enabledFallbackPref,
+      };
+    }
+
+    Object.keys(variables).forEach(key => {
+      const { type, fallbackPref } = variables[key];
+      if (fallbackPref) {
+        XPCOMUtils.defineLazyPreferenceGetter(
+          this.defaultPrefValues,
+          key,
+          fallbackPref,
+          null,
+          () => {
+            ExperimentAPI._store._emitFeatureUpdate(
+              this.featureId,
+              "pref-updated"
+            );
+          },
+          type === "json" ? parseJSON : val => val
+        );
+      }
+    });
+  }
+
+  /**
+   * Lookup feature in active experiments and return enabled.
+   * By default, this will send an exposure event.
+   * @param {{sendExposurePing: boolean, defaultValue?: any}} options
+   * @returns {obj} The feature value
+   */
+  isEnabled({ sendExposurePing, defaultValue = null } = {}) {
+    const branch = ExperimentAPI.activateBranch({
+      featureId: this.featureId,
+      sendExposurePing,
+    });
+
+    // First, try to return an experiment value if it exists.
+    if (isBooleanValueDefined(branch?.feature.enabled)) {
+      return branch.feature.enabled;
+    }
+
+    // Then check the fallback pref, if it is defined
+    if (isBooleanValueDefined(this.defaultPrefValues.enabled)) {
+      return this.defaultPrefValues.enabled;
+    }
+
+    // Finally, return options.defaulValue if neither was found
+    return defaultValue;
+  }
+
+  /**
+   * Lookup feature in active experiments and return value.
+   * By default, this will send an exposure event.
+   * @param {{sendExposurePing: boolean, defaultValue?: any}} options
+   * @returns {obj} The feature value
+   */
+  getValue({ sendExposurePing, defaultValue = null } = {}) {
+    const branch = ExperimentAPI.activateBranch({
+      featureId: this.featureId,
+      sendExposurePing,
+    });
+    if (branch?.feature?.value) {
+      return branch.feature.value;
+    }
+
+    return this.defaultPrefValues.value || defaultValue;
+  }
+
+  onUpdate(callback) {
+    ExperimentAPI._store._onFeatureUpdate(this.featureId, callback);
+  }
+
+  off(callback) {
+    ExperimentAPI._store._offFeatureUpdate(this.featureId, callback);
+  }
+
+  debug() {
+    return {
+      enabled: this.isEnabled(),
+      value: this.getValue(),
+      experiment: ExperimentAPI.getExperimentMetaData({
+        featureId: this.featureId,
+      }),
+      fallbackPrefs:
+        this.defaultPrefValues &&
+        Object.keys(this.defaultPrefValues).map(prefName => [
+          prefName,
+          this.defaultPrefValues[prefName],
+        ]),
+    };
+  }
+}
 
 XPCOMUtils.defineLazyGetter(ExperimentAPI, "_store", function() {
   return IS_MAIN_PROCESS ? ExperimentManager.store : new ExperimentStore();

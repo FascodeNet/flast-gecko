@@ -210,8 +210,7 @@ class Selection final : public nsSupportsWeakReference,
     CollapseInternal(InLimiter::eYes, aPoint, aRv);
   }
 
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  nsresult Extend(nsINode* aContainer, int32_t aOffset);
+  MOZ_CAN_RUN_SCRIPT nsresult Extend(nsINode* aContainer, int32_t aOffset);
 
   /**
    * See mStyledRanges.mRanges.
@@ -329,11 +328,11 @@ class Selection final : public nsSupportsWeakReference,
   MOZ_CAN_RUN_SCRIPT void CollapseToStartJS(mozilla::ErrorResult& aRv);
   MOZ_CAN_RUN_SCRIPT void CollapseToEndJS(mozilla::ErrorResult& aRv);
 
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void ExtendJS(nsINode& aContainer, uint32_t aOffset,
-                mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void ExtendJS(nsINode& aContainer, uint32_t aOffset,
+                                   mozilla::ErrorResult& aRv);
 
-  void SelectAllChildrenJS(nsINode& aNode, mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void SelectAllChildrenJS(nsINode& aNode,
+                                              mozilla::ErrorResult& aRv);
 
   /**
    * Deletes this selection from document the nodes belong to.
@@ -355,7 +354,7 @@ class Selection final : public nsSupportsWeakReference,
   MOZ_CAN_RUN_SCRIPT void RemoveRangeAndUnselectFramesAndNotifyListeners(
       nsRange& aRange, mozilla::ErrorResult& aRv);
 
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void RemoveAllRanges(mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void RemoveAllRanges(mozilla::ErrorResult& aRv);
 
   /**
    * Whether Stringify should flush layout or not.
@@ -504,8 +503,8 @@ class Selection final : public nsSupportsWeakReference,
    * @param aOffset    Where in aContainer to place the offset of the new
    *                   selection end.
    */
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void Extend(nsINode& aContainer, uint32_t aOffset, ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void Extend(nsINode& aContainer, uint32_t aOffset,
+                                 ErrorResult& aRv);
 
   MOZ_CAN_RUN_SCRIPT void AddRangeAndSelectFramesAndNotifyListeners(
       nsRange& aRange, mozilla::ErrorResult& aRv);
@@ -514,8 +513,8 @@ class Selection final : public nsSupportsWeakReference,
    * Adds all children of the specified node to the selection.
    * @param aNode the parent of the children to be added to the selection.
    */
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void SelectAllChildren(nsINode& aNode, mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void SelectAllChildren(nsINode& aNode,
+                                            mozilla::ErrorResult& aRv);
 
   /**
    * SetStartAndEnd() removes all ranges and sets new range as given range.
@@ -860,7 +859,7 @@ class Selection final : public nsSupportsWeakReference,
      */
     Element* GetCommonEditingHost() const;
 
-    MOZ_CAN_RUN_SCRIPT_BOUNDARY void MaybeFocusCommonEditingHost(
+    MOZ_CAN_RUN_SCRIPT void MaybeFocusCommonEditingHost(
         PresShell* aPresShell) const;
 
     static nsresult SubtractRange(StyledRange& aRange, nsRange& aSubtract,

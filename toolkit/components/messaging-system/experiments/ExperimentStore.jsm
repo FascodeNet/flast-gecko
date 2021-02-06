@@ -102,11 +102,14 @@ class ExperimentStore extends SharedDataMap {
    * @returns {Enrollment[]}
    */
   getAll() {
-    if (!this._data) {
-      return Object.values(syncDataStore);
+    let data = [];
+    try {
+      data = Object.values(this._data || syncDataStore);
+    } catch (e) {
+      Cu.reportError(e);
     }
 
-    return Object.values(this._data);
+    return data;
   }
 
   /**
@@ -120,7 +123,23 @@ class ExperimentStore extends SharedDataMap {
     this.emit(`update:${experiment.slug}`, experiment);
     if (experiment.branch.feature) {
       this.emit(`update:${experiment.branch.feature.featureId}`, experiment);
+      this._emitFeatureUpdate(
+        experiment.branch.feature.featureId,
+        "experiment-updated"
+      );
     }
+  }
+
+  _emitFeatureUpdate(featureId, reason) {
+    this.emit(`featureUpdate:${featureId}`, reason);
+  }
+
+  _onFeatureUpdate(featureId, callback) {
+    this.on(`featureUpdate:${featureId}`, callback);
+  }
+
+  _offFeatureUpdate(featureId, callback) {
+    this.off(`featureUpdate:${featureId}`, callback);
   }
 
   /**

@@ -354,10 +354,9 @@ bool MDefinition::mightBeMagicType() const {
 
 bool MDefinition::definitelyType(std::initializer_list<MIRType> types) const {
 #ifdef DEBUG
-  // Only support specialized, non-magic types. Also disallow Int64, because
-  // TypeSet only supports types representable as JSValue.
+  // Only support specialized, non-magic types.
   auto isSpecializedNonMagic = [](MIRType type) {
-    return type <= MIRType::Object && type != MIRType::Int64;
+    return type <= MIRType::Object;
   };
 #endif
 
@@ -602,6 +601,12 @@ void MDefinition::dumpLocation() const {
   Fprinter out(stderr);
   dumpLocation(out);
   out.finish();
+}
+#endif
+
+#ifdef DEBUG
+bool MDefinition::trackedSiteMatchesBlock(const BytecodeSite* site) const {
+  return site == block()->trackedSite();
 }
 #endif
 

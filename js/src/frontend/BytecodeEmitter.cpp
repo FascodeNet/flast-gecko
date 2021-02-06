@@ -116,6 +116,22 @@ static bool NeedsMethodInitializer(ParseNode* member, bool isStatic) {
          !member->as<ClassMethod>().isStatic();
 }
 
+static bool ShouldSuppressBreakpointsAndSourceNotes(
+    SharedContext* sc, BytecodeEmitter::EmitterMode emitterMode) {
+  // Suppress for all self-hosting code.
+  if (emitterMode == BytecodeEmitter::EmitterMode::SelfHosting) {
+    return true;
+  }
+
+  // Suppress for synthesized class constructors.
+  if (sc->isFunctionBox()) {
+    FunctionBox* funbox = sc->asFunctionBox();
+    return funbox->isSyntheticFunction() && funbox->isClassConstructor();
+  }
+
+  return false;
+}
+
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
                                  CompilationStencil& stencil,
                                  CompilationState& compilationState,
@@ -127,6 +143,8 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
       perScriptData_(cx, compilationState),
       stencil(stencil),
       compilationState(compilationState),
+      suppressBreakpointsAndSourceNotes(
+          ShouldSuppressBreakpointsAndSourceNotes(sc, emitterMode)),
       emitterMode(emitterMode) {}
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
@@ -1511,6 +1529,7 @@ restart:
     case ParseNodeKind::ForIn:                // by ParseNodeKind::For
     case ParseNodeKind::ForOf:                // by ParseNodeKind::For
     case ParseNodeKind::ForHead:              // by ParseNodeKind::For
+    case ParseNodeKind::DefaultConstructor:   // by ParseNodeKind::ClassDecl
     case ParseNodeKind::ClassMethod:          // by ParseNodeKind::ClassDecl
     case ParseNodeKind::ClassField:           // by ParseNodeKind::ClassDecl
     case ParseNodeKind::ClassNames:           // by ParseNodeKind::ClassDecl
@@ -5388,7 +5407,7 @@ bool BytecodeEmitter::emitSpread(bool allowSelfHosted) {
       //            [stack] NEXT ITER ARR I RESULT DONE
       return false;
     }
-    if (!emitJump(JSOp::IfNe, &loopInfo.breaks)) {
+    if (!emitJump(JSOp::JumpIfTrue, &loopInfo.breaks)) {
       //            [stack] NEXT ITER ARR I RESULT
       return false;
     }
@@ -6775,7 +6794,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     //              [stack] NEXT ITER RESULT DONE
     return false;
   }
-  if (!emitJump(JSOp::IfNe, &loopInfo.breaks)) {
+  if (!emitJump(JSOp::JumpIfTrue, &loopInfo.breaks)) {
     //              [stack] NEXT ITER RESULT
     return false;
   }
@@ -8676,8 +8695,8 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
     if (propdef->is<LexicalScopeNode>()) {
       // Constructors are sometimes wrapped in LexicalScopeNodes. As we
       // already handled emitting the constructor, skip it.
-      MOZ_ASSERT(propdef->as<LexicalScopeNode>().scopeBody()->isKind(
-          ParseNodeKind::ClassMethod));
+      MOZ_ASSERT(
+          propdef->as<LexicalScopeNode>().scopeBody()->is<ClassMethod>());
       continue;
     }
 
@@ -10338,78 +10357,71 @@ bool BytecodeEmitter::emitClass(
 
   // Stack currently has HOMEOBJ followed by optional HERITAGE. When HERITAGE
   // is not used, an implicit value of %FunctionPrototype% is implied.
-  if (constructor) {
-    // See |Parser::classMember(...)| for the reason why |.initializers| is
-    // created within its own scope.
-    Maybe<LexicalScopeEmitter> lse;
-    FunctionNode* ctor;
-    if (constructor->is<LexicalScopeNode>()) {
-      LexicalScopeNode* constructorScope = &constructor->as<LexicalScopeNode>();
 
-      // The constructor scope should only contain the |.initializers| binding.
-      MOZ_ASSERT(!constructorScope->isEmptyScope());
-      MOZ_ASSERT(constructorScope->scopeBindings()->slotInfo.length == 1);
-      MOZ_ASSERT(constructorScope->scopeBindings()->trailingNames[0].name() ==
-                 TaggedParserAtomIndex::WellKnown::dotInitializers());
+  // See |Parser::classMember(...)| for the reason why |.initializers| is
+  // created within its own scope.
+  Maybe<LexicalScopeEmitter> lse;
+  FunctionNode* ctor;
+  if (constructor->is<LexicalScopeNode>()) {
+    LexicalScopeNode* constructorScope = &constructor->as<LexicalScopeNode>();
 
-      auto needsInitializer = [](ParseNode* propdef) {
-        return NeedsFieldInitializer(propdef, false) ||
-               NeedsMethodInitializer(propdef, false);
-      };
+    // The constructor scope should only contain the |.initializers| binding.
+    MOZ_ASSERT(!constructorScope->isEmptyScope());
+    MOZ_ASSERT(constructorScope->scopeBindings()->slotInfo.length == 1);
+    MOZ_ASSERT(constructorScope->scopeBindings()->trailingNames[0].name() ==
+               TaggedParserAtomIndex::WellKnown::dotInitializers());
 
-      // As an optimization omit the |.initializers| binding when no instance
-      // fields or private methods are present.
-      bool needsInitializers =
-          std::any_of(classMembers->contents().begin(),
-                      classMembers->contents().end(), needsInitializer);
-      if (needsInitializers) {
-        lse.emplace(this);
-        if (!lse->emitScope(ScopeKind::Lexical,
-                            constructorScope->scopeBindings())) {
-          return false;
-        }
+    auto needsInitializer = [](ParseNode* propdef) {
+      return NeedsFieldInitializer(propdef, false) ||
+             NeedsMethodInitializer(propdef, false);
+    };
 
-        // Any class with field initializers will have a constructor
-        if (!emitCreateMemberInitializers(ce, classMembers,
-                                          FieldPlacement::Instance)) {
-          return false;
-        }
+    // As an optimization omit the |.initializers| binding when no instance
+    // fields or private methods are present.
+    bool needsInitializers =
+        std::any_of(classMembers->contents().begin(),
+                    classMembers->contents().end(), needsInitializer);
+    if (needsInitializers) {
+      lse.emplace(this);
+      if (!lse->emitScope(ScopeKind::Lexical,
+                          constructorScope->scopeBindings())) {
+        return false;
       }
 
-      ctor = &constructorScope->scopeBody()->as<ClassMethod>().method();
-    } else {
-      // The |.initializers| binding is never emitted when in self-hosting mode.
-      MOZ_ASSERT(emitterMode == BytecodeEmitter::SelfHosting);
-      ctor = &constructor->as<ClassMethod>().method();
-    }
-
-    bool needsHomeObject = ctor->funbox()->needsHomeObject();
-    // HERITAGE is consumed inside emitFunction.
-    if (nameKind == ClassNameKind::InferredName) {
-      if (!setFunName(ctor->funbox(), nameForAnonymousClass)) {
+      // Any class with field initializers will have a constructor
+      if (!emitCreateMemberInitializers(ce, classMembers,
+                                        FieldPlacement::Instance)) {
         return false;
       }
     }
-    if (!emitFunction(ctor, isDerived)) {
-      //            [stack] HOMEOBJ CTOR
-      return false;
-    }
-    if (lse.isSome()) {
-      if (!lse->emitEnd()) {
-        return false;
-      }
-      lse.reset();
-    }
-    if (!ce.emitInitConstructor(needsHomeObject)) {
-      //            [stack] CTOR HOMEOBJ
-      return false;
-    }
+
+    ctor = &constructorScope->scopeBody()->as<ClassMethod>().method();
   } else {
-    if (!ce.emitInitDefaultConstructor(classNode->pn_pos.begin,
-                                       classNode->pn_pos.end)) {
-      //            [stack] CTOR HOMEOBJ
+    // The |.initializers| binding is never emitted when in self-hosting mode.
+    MOZ_ASSERT(emitterMode == BytecodeEmitter::SelfHosting);
+    ctor = &constructor->as<ClassMethod>().method();
+  }
+
+  bool needsHomeObject = ctor->funbox()->needsHomeObject();
+  // HERITAGE is consumed inside emitFunction.
+  if (nameKind == ClassNameKind::InferredName) {
+    if (!setFunName(ctor->funbox(), nameForAnonymousClass)) {
       return false;
     }
+  }
+  if (!emitFunction(ctor, isDerived)) {
+    //            [stack] HOMEOBJ CTOR
+    return false;
+  }
+  if (lse.isSome()) {
+    if (!lse->emitEnd()) {
+      return false;
+    }
+    lse.reset();
+  }
+  if (!ce.emitInitConstructor(needsHomeObject)) {
+    //            [stack] CTOR HOMEOBJ
+    return false;
   }
 
   if (!emitCreateFieldKeys(classMembers, FieldPlacement::Instance)) {

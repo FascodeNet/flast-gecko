@@ -7,7 +7,6 @@
 #include "jit/CodeGenerator.h"
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/EndianUtils.h"
@@ -3383,27 +3382,6 @@ void CodeGenerator::visitUnaryCache(LUnaryCache* lir) {
   addIC(lir, allocateIC(ic));
 }
 
-void CodeGenerator::visitClassConstructor(LClassConstructor* lir) {
-  pushArg(ImmPtr(nullptr));
-  pushArg(ImmPtr(lir->mir()->pc()));
-  pushArg(ImmGCPtr(current->mir()->info().script()));
-
-  using Fn =
-      JSFunction* (*)(JSContext*, HandleScript, jsbytecode*, HandleObject);
-  callVM<Fn, js::MakeDefaultConstructor>(lir);
-}
-
-void CodeGenerator::visitDerivedClassConstructor(
-    LDerivedClassConstructor* lir) {
-  pushArg(ToRegister(lir->prototype()));
-  pushArg(ImmPtr(lir->mir()->pc()));
-  pushArg(ImmGCPtr(current->mir()->info().script()));
-
-  using Fn =
-      JSFunction* (*)(JSContext*, HandleScript, jsbytecode*, HandleObject);
-  callVM<Fn, js::MakeDefaultConstructor>(lir);
-}
-
 void CodeGenerator::visitModuleMetadata(LModuleMetadata* lir) {
   pushArg(ImmPtr(lir->mir()->module()));
 
@@ -6422,9 +6400,11 @@ bool CodeGenerator::generateBody() {
   JitSpew(JitSpew_Codegen, "==== BEGIN CodeGenerator::generateBody ====");
   IonScriptCounts* counts = maybeCreateScriptCounts();
 
+  const bool compilingWasm = gen->compilingWasm();
+
 #if defined(JS_ION_PERF)
   PerfSpewer* perfSpewer = &perfSpewer_;
-  if (gen->compilingWasm()) {
+  if (compilingWasm) {
     perfSpewer = &gen->perfSpewer();
   }
 #endif
@@ -6460,7 +6440,7 @@ bool CodeGenerator::generateBody() {
             current->mir()->isLoopHeader() ? " (loop header)" : "");
 #endif
 
-    if (current->mir()->isLoopHeader() && gen->compilingWasm()) {
+    if (current->mir()->isLoopHeader() && compilingWasm) {
       masm.nopAlign(CodeAlignment);
     }
 
@@ -6499,15 +6479,14 @@ bool CodeGenerator::generateBody() {
       }
 
 #ifdef CHECK_OSIPOINT_REGISTERS
-      if (iter->safepoint() && !gen->compilingWasm()) {
+      if (iter->safepoint() && !compilingWasm) {
         resetOsiPointRegs(iter->safepoint());
       }
 #endif
 
-      if (iter->mirRaw()) {
-        // Only add instructions that have a tracked inline script tree.
-        if (iter->mirRaw()->trackedTree()) {
-          if (!addNativeToBytecodeEntry(iter->mirRaw()->trackedSite())) {
+      if (!compilingWasm) {
+        if (MDefinition* mir = iter->mirRaw()) {
+          if (!addNativeToBytecodeEntry(mir->trackedSite())) {
             return false;
           }
         }

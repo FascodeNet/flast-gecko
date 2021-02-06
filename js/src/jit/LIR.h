@@ -892,26 +892,18 @@ const LInstruction* LNode::toInstruction() const {
 }
 
 class LElementVisitor {
-  LNode* ins_;
+#ifdef TRACK_SNAPSHOTS
+  LInstruction* ins_ = nullptr;
+#endif
 
  protected:
-  jsbytecode* lastPC_;
-  jsbytecode* lastNotInlinedPC_;
+#ifdef TRACK_SNAPSHOTS
+  LInstruction* instruction() { return ins_; }
 
-  LNode* instruction() { return ins_; }
-
-  void setElement(LNode* ins) {
-    ins_ = ins;
-    if (ins->mirRaw()) {
-      lastPC_ = ins->mirRaw()->trackedPc();
-      if (ins->mirRaw()->trackedTree()) {
-        lastNotInlinedPC_ = ins->mirRaw()->profilerLeavePc();
-      }
-    }
-  }
-
-  LElementVisitor()
-      : ins_(nullptr), lastPC_(nullptr), lastNotInlinedPC_(nullptr) {}
+  void setElement(LInstruction* ins) { ins_ = ins; }
+#else
+  void setElement(LInstruction* ins) {}
+#endif
 };
 
 using LInstructionIterator = InlineList<LInstruction>::iterator;

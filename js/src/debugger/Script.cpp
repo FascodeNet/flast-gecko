@@ -1390,8 +1390,8 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Lineno:
     case JSOp::JumpTarget:
     case JSOp::Undefined:
-    case JSOp::IfNe:
-    case JSOp::IfEq:
+    case JSOp::JumpIfTrue:
+    case JSOp::JumpIfFalse:
     case JSOp::Return:
     case JSOp::RetRval:
     case JSOp::And:
@@ -1516,7 +1516,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::RegExp:
     case JSOp::CallSiteObj:
     case JSOp::Object:
-    case JSOp::ClassConstructor:
     case JSOp::Typeof:
     case JSOp::TypeofExpr:
     case JSOp::ToAsyncIter:
@@ -1559,7 +1558,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::FunWithProto:
     case JSOp::ObjWithProto:
     case JSOp::BuiltinObject:
-    case JSOp::DerivedConstructor:
     case JSOp::CheckThis:
     case JSOp::CheckReturn:
     case JSOp::CheckThisReinit:
