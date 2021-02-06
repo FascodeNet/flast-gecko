@@ -15,22 +15,32 @@ import type {
 } from "./types";
 
 import { clientCommands } from "./commands";
+import { hasSourceActor, getSourceActor } from "../../selectors";
+import { stringToSourceActorId } from "../../reducers/source-actors";
+
+type Dependencies = {
+  store: any,
+};
+
+let store: any;
+
+/**
+ * This function is to be called first before any other
+ * and allow having access to any instances of classes that are
+ * useful for this module
+ *
+ * @param {Object} dependencies
+ * @param {Object} dependencies.store
+ *                 The redux store object of the debugger frontend.
+ */
+export function setupCreate(dependencies: Dependencies): void {
+  store = dependencies.store;
+}
 
 export function prepareSourcePayload(
   threadFront: ThreadFront,
   source: SourcePayload
 ): GeneratedSourceData {
-  const { isServiceWorker } = threadFront.parentFront;
-
-  // We populate the set of sources as soon as we hear about them. Note that
-  // this means that we have seen an actor, but it might still be in the
-  // debounced queue for creation, so the Redux store itself might not have
-  // a source actor with this ID yet.
-  clientCommands.registerSourceActor(
-    source.actor,
-    makeSourceId(source, isServiceWorker)
-  );
-
   source = { ...source };
 
   // Maintain backward-compat with servers that only return introductionUrl and
@@ -44,20 +54,25 @@ export function prepareSourcePayload(
     delete (source: any).introductionUrl;
   }
 
-  return { thread: threadFront.actor, isServiceWorker, source };
+  return { thread: threadFront.actor, source };
 }
 
-export function createFrame(
+export async function createFrame(
   thread: ThreadId,
   frame: FrameFront,
   index: number = 0
-): ?Frame {
+): Promise<?Frame> {
   if (!frame) {
     return null;
   }
 
+  // Because of throttling, the source may be available a bit late.
+  const source = await waitForSourceActorToBeRegisteredInStore(
+    frame.where.actor
+  );
+
   const location = {
-    sourceId: clientCommands.getSourceForActor(frame.where.actor),
+    sourceId: makeSourceId(source, thread),
     line: frame.where.line,
     column: frame.where.column,
   };
@@ -77,22 +92,55 @@ export function createFrame(
   };
 }
 
-export function makeSourceId(source: SourcePayload, isServiceWorker: boolean) {
-  // Source actors with the same URL will be given the same source ID and
-  // grouped together under the same source in the client. There is an exception
-  // for sources from service workers, where there may be multiple service
-  // worker threads running at the same time which use different versions of the
-  // same URL.
-  return source.url && !isServiceWorker
-    ? `sourceURL-${source.url}`
-    : `source-${source.actor}`;
+/**
+ * This method wait for the given source to be registered in Redux store.
+ *
+ * @param {String} sourceActor
+ *                 Actor ID of the source to be waiting for.
+ */
+async function waitForSourceActorToBeRegisteredInStore(
+  sourceActorIdString: string
+): Promise<any> {
+  const sourceActorId = stringToSourceActorId(sourceActorIdString);
+  if (!hasSourceActor(store.getState(), sourceActorId)) {
+    await new Promise(resolve => {
+      const unsubscribe = store.subscribe(check);
+      let currentState = null;
+      function check() {
+        const previousState = currentState;
+        currentState = store.getState().sourceActors.values;
+        // For perf reason, avoid any extra computation if sources did not change
+        if (previousState == currentState) {
+          return;
+        }
+        if (hasSourceActor(store.getState(), sourceActorId)) {
+          unsubscribe();
+          resolve();
+        }
+      }
+    });
+  }
+  return getSourceActor(store.getState(), sourceActorId);
 }
 
-export function createPause(thread: string, packet: PausedPacket): any {
+export function makeSourceId(source: SourcePayload, threadActorId: ThreadId) {
+  // Source actors with the same URL will be given the same source ID and
+  // grouped together under the same source in the client. There is an exception
+  // for sources from distinct target types, where there may be multiple processes/threads
+  // running at the same time which use different versions of the same URL.
+  const target = clientCommands.lookupTarget(threadActorId);
+  if (target.isTopLevel && source.url) {
+    return `source-${source.url}`;
+  }
+  return `source-${source.actor}`;
+}
+
+export async function createPause(thread: string, packet: PausedPacket): any {
+  const frame = await createFrame(thread, packet.frame);
   return {
     ...packet,
     thread,
-    frame: createFrame(thread, packet.frame),
+    frame,
   };
 }
 

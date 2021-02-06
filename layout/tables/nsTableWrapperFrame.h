@@ -194,9 +194,9 @@ class nsTableWrapperFrame : public nsContainerFrame {
   // Get a NS_STYLE_CAPTION_SIDE_* value, or NO_SIDE if no caption is present.
   // (Remember that caption-side values are interpreted logically, despite
   // having "physical" names.)
-  uint8_t GetCaptionSide();
+  uint8_t GetCaptionSide() const;
 
-  bool HasSideCaption() {
+  bool HasSideCaption() const {
     uint8_t captionSide = GetCaptionSide();
     return captionSide == NS_STYLE_CAPTION_SIDE_LEFT ||
            captionSide == NS_STYLE_CAPTION_SIDE_RIGHT;
@@ -226,15 +226,23 @@ class nsTableWrapperFrame : public nsContainerFrame {
                           mozilla::LogicalPoint& aOrigin,
                           mozilla::WritingMode aWM);
 
-  // reflow the child (caption or innertable frame)
-  void OuterBeginReflowChild(nsPresContext* aPresContext, nsIFrame* aChildFrame,
-                             const ReflowInput& aOuterRI,
-                             mozilla::Maybe<ReflowInput>& aChildRI,
-                             nscoord aAvailISize);
+  // Create and init the child reflow input, using passed-in aChildRI, so that
+  // caller can use it after we return.
+  void CreateReflowInputForInnerTable(nsPresContext* aPresContext,
+                                      nsTableFrame* aTableFrame,
+                                      const ReflowInput& aOuterRI,
+                                      Maybe<ReflowInput>& aChildRI,
+                                      const nscoord aAvailISize) const;
+  void CreateReflowInputForCaption(nsPresContext* aPresContext,
+                                   nsIFrame* aCaptionFrame,
+                                   const ReflowInput& aOuterRI,
+                                   Maybe<ReflowInput>& aChildRI,
+                                   const nscoord aAvailISize) const;
 
-  void OuterDoReflowChild(nsPresContext* aPresContext, nsIFrame* aChildFrame,
-                          const ReflowInput& aChildRI, ReflowOutput& aMetrics,
-                          nsReflowStatus& aStatus);
+  // Reflow the child (caption or inner table frame).
+  void ReflowChild(nsPresContext* aPresContext, nsIFrame* aChildFrame,
+                   const ReflowInput& aChildRI, ReflowOutput& aMetrics,
+                   nsReflowStatus& aStatus);
 
   // Set the overflow areas in our reflow metrics
   void UpdateOverflowAreas(ReflowOutput& aMet);

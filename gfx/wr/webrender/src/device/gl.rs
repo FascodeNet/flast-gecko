@@ -982,7 +982,9 @@ pub struct Capabilities {
     pub supports_shader_storage_object: bool,
     /// Whether to enforce that texture uploads be batched regardless of what
     /// the pref says.
-    pub requires_batched_texture_uploads: bool,
+    pub requires_batched_texture_uploads: Option<bool>,
+    /// Whether the driver can reliably upload data to R8 format textures.
+    pub supports_r8_texture_upload: bool,
     /// Whether clip-masking is supported natively by the GL implementation
     /// rather than emulated in shaders.
     pub uses_native_clip_mask: bool,
@@ -1649,9 +1651,26 @@ impl Device {
         // clip-masking.
         let uses_native_clip_mask = is_software_webrender;
 
-        // On Mali-Gxx the driver really struggles with many small texture uploads,
-        // and handles fewer, larger uploads better.
-        let requires_batched_texture_uploads = is_mali_g;
+        let mut requires_batched_texture_uploads = None;
+        if is_software_webrender {
+            // No benefit to batching texture uploads with swgl.
+            requires_batched_texture_uploads = Some(false);
+        } else if is_mali_g {
+            // On Mali-Gxx the driver really struggles with many small texture uploads,
+            // and handles fewer, larger uploads better.
+            requires_batched_texture_uploads = Some(true);
+        }
+
+        // On Linux we we have seen uploads to R8 format textures result in
+        // corruption on some AMD cards.
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=1687554#c13
+        let supports_r8_texture_upload = if cfg!(target_os = "linux")
+            && renderer_name.starts_with("AMD Radeon RX")
+        {
+            false
+        } else {
+            true
+        };
 
         Device {
             gl,
@@ -1660,7 +1679,7 @@ impl Device {
             resource_override_path,
             use_optimized_shaders,
             upload_method,
-            use_batched_texture_uploads: requires_batched_texture_uploads,
+            use_batched_texture_uploads: requires_batched_texture_uploads.unwrap_or(false),
             use_draw_calls_for_texture_copy: false,
 
             inside_frame: false,
@@ -1680,6 +1699,7 @@ impl Device {
                 supports_render_target_partial_update,
                 supports_shader_storage_object,
                 requires_batched_texture_uploads,
+                supports_r8_texture_upload,
                 uses_native_clip_mask,
                 renderer_name,
             },
@@ -1807,7 +1827,10 @@ impl Device {
     }
 
     pub fn set_use_batched_texture_uploads(&mut self, enabled: bool) {
-        self.use_batched_texture_uploads = self.capabilities.requires_batched_texture_uploads | enabled;
+        if self.capabilities.requires_batched_texture_uploads.is_some() {
+            return;
+        }
+        self.use_batched_texture_uploads = enabled;
     }
 
     pub fn set_use_draw_calls_for_texture_copy(&mut self, enabled: bool) {

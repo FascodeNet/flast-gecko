@@ -31,8 +31,7 @@
 
 using namespace mozilla::dom;
 
-namespace mozilla {
-namespace css {
+namespace mozilla::css {
 
 // This is a singleton observer which looks in the `GlobalRequestTable` to look
 // at which loaders to notify.
@@ -410,6 +409,16 @@ already_AddRefed<imgRequestProxy> ImageLoader::LoadImage(
     return nullptr;
   }
 
+  if (aImage.HasRef()) {
+    bool isEqualExceptRef = false;
+    nsIURI* docURI = aDocument.GetDocumentURI();
+    if (NS_SUCCEEDED(uri->EqualsExceptRef(docURI, &isEqualExceptRef)) &&
+        isEqualExceptRef) {
+      // Prevent loading an internal resource.
+      return nullptr;
+    }
+  }
+
   int32_t loadFlags =
       nsIRequest::LOAD_NORMAL |
       nsContentUtils::CORSModeToLoadImageFlags(EffectiveCorsMode(uri, aImage));
@@ -709,9 +718,6 @@ void ImageLoader::OnSizeAvailable(imgIRequest* aRequest,
       fwf.mFrame->PresShell()->FrameNeedsReflow(
           fwf.mFrame, IntrinsicDirty::StyleChange, NS_FRAME_IS_DIRTY);
     }
-    if (fwf.mFrame->StyleVisibility()->IsVisible()) {
-      fwf.mFrame->SchedulePaint();
-    }
   }
 }
 
@@ -784,23 +790,28 @@ void ImageLoader::OnLoadComplete(imgIRequest* aRequest) {
     return;
   }
 
+  uint32_t status = 0;
+  if (NS_FAILED(aRequest->GetImageStatus(&status))) {
+    return;
+  }
+
   FrameSet* frameSet = mRequestToFrameMap.Get(aRequest);
   if (!frameSet) {
     return;
   }
 
-  // Check if aRequest has an error state. If it does, we need to unblock
-  // Document onload for all the frames associated with this request that
-  // have blocked onload. This is what happens in a CORS mode violation, and
-  // may happen during other network events.
-  uint32_t status = 0;
-  if (NS_SUCCEEDED(aRequest->GetImageStatus(&status)) &&
-      status & imgIRequest::STATUS_ERROR) {
-    for (FrameWithFlags& fwf : *frameSet) {
+  for (FrameWithFlags& fwf : *frameSet) {
+    if (status & imgIRequest::STATUS_ERROR) {
+      // Check if aRequest has an error state. If it does, we need to unblock
+      // Document onload for all the frames associated with this request that
+      // have blocked onload. This is what happens in a CORS mode violation, and
+      // may happen during other network events.
       UnblockOnloadIfNeeded(fwf);
+    }
+    if (fwf.mFrame->StyleVisibility()->IsVisible()) {
+      fwf.mFrame->SchedulePaint();
     }
   }
 }
 
-}  // namespace css
-}  // namespace mozilla
+}  // namespace mozilla::css

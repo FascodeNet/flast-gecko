@@ -263,10 +263,12 @@ using namespace mozilla::a11y;
   // we override this method.
   AccessibleOrProxy parentAcc = [parent geckoAccessible];
   if (!parentAcc.IsNull()) {
-    mozAccessible* directGrandparent =
-        GetNativeFromGeckoAccessible(parentAcc.Parent());
-    if ([directGrandparent isKindOfClass:[MOXWebAreaAccessible class]]) {
-      return [parent moxIgnoreWithParent:directGrandparent];
+    AccessibleOrProxy grandparentAcc = parentAcc.Parent();
+    if (mozAccessible* directGrandparent =
+            GetNativeFromGeckoAccessible(grandparentAcc)) {
+      if ([directGrandparent isKindOfClass:[MOXWebAreaAccessible class]]) {
+        return [parent moxIgnoreWithParent:directGrandparent];
+      }
     }
   }
 
@@ -317,6 +319,7 @@ using namespace mozilla::a11y;
 - (void)handleAccessibleEvent:(uint32_t)eventType {
   switch (eventType) {
     case nsIAccessibleEvent::EVENT_FOCUS:
+      [self invalidateState];
       // Our focused state is equivelent to native selected states for menus.
       mozAccessible* parent = (mozAccessible*)[self moxUnignoredParent];
       [parent moxPostNotification:
@@ -325,6 +328,13 @@ using namespace mozilla::a11y;
   }
 
   [super handleAccessibleEvent:eventType];
+}
+
+- (void)moxPerformPress {
+  [super moxPerformPress];
+  // when a menu item is pressed (chosen), we need to tell
+  // VoiceOver about it, so we send this notification
+  [self moxPostNotification:@"AXMenuItemSelected"];
 }
 
 @end

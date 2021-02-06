@@ -35,7 +35,13 @@ class nsNativeBasicThemeGTK : public nsNativeBasicTheme {
                          nsIFrame* aFrame, const ComputedStyle& aStyle,
                          const EventStates& aDocumentState,
                          DPIRatio aDpiRatio) override;
-  bool ThemeSupportsScrollbarButtons() override { return false; }
+  bool ThemeSupportsScrollbarButtons() override;
+  sRGBColor ComputeScrollbarThumbColor(
+      nsIFrame*, const ComputedStyle&, const EventStates& aElementState,
+      const EventStates& aDocumentState) override;
+  std::pair<sRGBColor, sRGBColor> ComputeScrollbarColors(
+      nsIFrame*, const ComputedStyle&,
+      const EventStates& aDocumentState) override;
   ScrollbarSizes GetScrollbarSizes(nsPresContext*, StyleScrollbarWidth,
                                    Overlay) override;
 

@@ -1313,11 +1313,62 @@ SearchService.prototype = {
   },
 
   /**
+   * Runs background checks for the search service. This is called from
+   * BrowserGlue and may be run once per session if the user is idle for
+   * long enough.
+   */
+  async runBackgroundChecks() {
+    await this.init();
+    await this._migrateLegacyEngines();
+    await this._checkWebExtensionEngines();
+  },
+
+  /**
+   * Migrates legacy add-ons which used the OpenSearch definitions to
+   * WebExtensions, if an equivalent WebExtension is installed.
+   *
+   * Run during the background checks.
+   */
+  async _migrateLegacyEngines() {
+    logConsole.debug("Running migrate legacy engines");
+
+    const matchRegExp = /extensions\/(.*?)\.xpi!/i;
+    for (let engine of this._engines.values()) {
+      if (
+        !engine.isAppProvided &&
+        !engine._extensionID &&
+        engine._loadPath.includes("[profile]/extensions/")
+      ) {
+        let match = engine._loadPath.match(matchRegExp);
+        if (match?.[1]) {
+          // There's a chance here that the WebExtension might not be
+          // installed any longer, even though the engine is. We'll deal
+          // with that in `checkWebExtensionEngines`.
+          let engines = await this.getEnginesByExtensionID(match[1]);
+          if (engines.length) {
+            logConsole.debug(
+              `Migrating ${engine.name} to WebExtension install`
+            );
+
+            if (this.defaultEngine == engine) {
+              this.defaultEngine = engines[0];
+            }
+            await this.removeEngine(engine);
+          }
+        }
+      }
+    }
+
+    logConsole.debug("Migrate legacy engines complete");
+  },
+
+  /**
    * Checks if Search Engines associated with WebExtensions are valid and
    * up-to-date, and reports them via telemetry if not.
+   *
+   * Run during the background checks.
    */
-  async checkWebExtensionEngines() {
-    await this.init();
+  async _checkWebExtensionEngines() {
     logConsole.debug("Running check on WebExtension engines");
 
     for (let engine of this._engines.values()) {
@@ -1569,23 +1620,28 @@ SearchService.prototype = {
     if (!this._initialized && !isAppProvided && !initEngine) {
       await this.init();
     }
+    // Special search engines (policy and user) are skipped for migration as
+    // there would never have been an OpenSearch engine associated with those.
+    if (extensionID && !extensionID.startsWith("set-via")) {
+      for (let engine of this._engines.values()) {
+        if (
+          !engine.extensionID &&
+          engine._loadPath.startsWith(`jar:[profile]/extensions/${extensionID}`)
+        ) {
+          // This is a legacy extension engine that needs to be migrated to WebExtensions.
+          logConsole.debug("Migrating existing engine");
+          isCurrent = isCurrent || this.defaultEngine == engine;
+          await this.removeEngine(engine);
+        }
+      }
+    }
+
     let existingEngine = this._engines.get(name);
     if (existingEngine) {
-      if (
-        extensionID &&
-        existingEngine._loadPath.startsWith(
-          `jar:[profile]/extensions/${extensionID}`
-        )
-      ) {
-        // This is a legacy extension engine that needs to be migrated to WebExtensions.
-        isCurrent = this.defaultEngine == existingEngine;
-        await this.removeEngine(existingEngine);
-      } else {
-        throw Components.Exception(
-          "An engine with that name already exists!",
-          Cr.NS_ERROR_FILE_ALREADY_EXISTS
-        );
-      }
+      throw Components.Exception(
+        "An engine with that name already exists!",
+        Cr.NS_ERROR_FILE_ALREADY_EXISTS
+      );
     }
 
     let newEngine = new SearchEngine({
