@@ -88,6 +88,7 @@ mod clip;
 mod space;
 mod spatial_tree;
 mod composite;
+mod compositor;
 mod debug_colors;
 mod debug_font_data;
 mod debug_item;
@@ -212,7 +213,7 @@ extern crate webrender_build;
 #[doc(hidden)]
 pub use crate::composite::{CompositorConfig, Compositor, CompositorCapabilities, CompositorSurfaceTransform};
 pub use crate::composite::{NativeSurfaceId, NativeTileId, NativeSurfaceInfo, PartialPresentCompositor};
-pub use crate::composite::{MappableCompositor, MappedTileInfo};
+pub use crate::composite::{MappableCompositor, MappedTileInfo, SWGLCompositeSurfaceInfo};
 pub use crate::device::{UploadMethod, VertexUsageHint, get_gl_target, get_unoptimized_shader_source};
 pub use crate::device::{ProgramBinary, ProgramCache, ProgramCacheObserver, FormatDesc};
 pub use crate::device::Device;
@@ -237,3 +238,6 @@ pub use crate::picture::{TileNode, TileNodeKind, TileSerializer, TileCacheInstan
 pub use crate::intern::ItemUid;
 pub use crate::render_api::*;
 pub use crate::tile_cache::{PictureCacheDebugInfo, DirtyTileDebugInfo, TileDebugInfo, SliceDebugInfo};
+
+#[cfg(feature = "sw_compositor")]
+pub use crate::compositor::sw_compositor;

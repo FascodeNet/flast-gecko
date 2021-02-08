@@ -10,17 +10,6 @@ with Files("**"):
 with Files("Event*"):
     BUG_COMPONENT = ("Core", "DOM: Events")
 
-if CONFIG["OS_ARCH"] == "WINNT":
-    DIRS += ["win"]
-elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
-    DIRS += ["mac"]
-elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
-    DIRS += ["android"]
-elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
-    DIRS += ["unix"]
-else:
-    DIRS += ["emacs"]
-
 BROWSER_CHROME_MANIFESTS += [
     "test/browser.ini",
 ]
@@ -31,6 +20,8 @@ MOCHITEST_MANIFESTS += [
 ]
 
 MOCHITEST_CHROME_MANIFESTS += ["test/chrome.ini"]
+
+TEST_DIRS += ["test/gtest"]
 
 XPIDL_SOURCES += [
     "nsIEventListenerService.idl",
@@ -150,6 +141,7 @@ UNIFIED_SOURCES += [
     "PointerEventHandler.cpp",
     "RemoteDragStartData.cpp",
     "ScrollAreaEvent.cpp",
+    "ShortcutKeyDefinitions.cpp",
     "ShortcutKeys.cpp",
     "SimpleGestureEvent.cpp",
     "StorageEvent.cpp",
