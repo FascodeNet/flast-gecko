@@ -1144,7 +1144,7 @@ async function toggleShapesHighlighter(
 
   if (show) {
     const onHighlighterShown = highlighters.once("shapes-highlighter-shown");
-    await EventUtils.sendMouseEvent(
+    EventUtils.sendMouseEvent(
       { type: "click", metaKey, ctrlKey },
       shapesToggle,
       view.styleWindow
@@ -1152,7 +1152,7 @@ async function toggleShapesHighlighter(
     await onHighlighterShown;
   } else {
     const onHighlighterHidden = highlighters.once("shapes-highlighter-hidden");
-    await EventUtils.sendMouseEvent(
+    EventUtils.sendMouseEvent(
       { type: "click", metaKey, ctrlKey },
       shapesToggle,
       view.styleWindow
@@ -1386,4 +1386,37 @@ function waitForNMutations(inspector, type, count) {
       }
     });
   });
+}
+
+/**
+ * Move the mouse on the content page at the x,y position and check the color displayed
+ * in the eyedropper label.
+ *
+ * @param {TestActorFront} testActorFront
+ * @param {String} inspectorActorID: The inspector actorID we'll use to retrieve the eyedropper
+ * @param {Number} x
+ * @param {Number} y
+ * @param {String} expectedColor: Hexa string of the expected color
+ * @param {String} assertionDescription
+ */
+async function checkEyeDropperColorAt(
+  testActorFront,
+  inspectorActorID,
+  x,
+  y,
+  expectedColor,
+  assertionDescription
+) {
+  info(`Move mouse to ${x},${y}`);
+  await testActorFront.synthesizeMouse({
+    selector: ":root",
+    x,
+    y,
+    options: { type: "mousemove" },
+  });
+
+  const colorValue = await testActorFront.getEyeDropperColorValue(
+    inspectorActorID
+  );
+  is(colorValue, expectedColor, assertionDescription);
 }

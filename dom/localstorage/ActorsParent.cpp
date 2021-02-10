@@ -74,6 +74,8 @@
 #include "mozilla/dom/quota/CachingDatabaseConnection.h"
 #include "mozilla/dom/quota/CheckedUnsafePtr.h"
 #include "mozilla/dom/quota/Client.h"
+#include "mozilla/dom/quota/ClientImpl.h"
+#include "mozilla/dom/quota/DirectoryLock.h"
 #include "mozilla/dom/quota/OriginScope.h"
 #include "mozilla/dom/quota/PersistenceType.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
@@ -2032,15 +2034,13 @@ class LSRequestBase : public DatastoreOperationBase,
     Completed
   };
 
-  nsCOMPtr<nsIEventTarget> mMainEventTarget;
   const LSRequestParams mParams;
   Maybe<ContentParentId> mContentParentId;
   State mState;
   bool mWaitingForFinish;
 
  public:
-  LSRequestBase(nsIEventTarget* aMainEventTarget,
-                const LSRequestParams& aParams,
+  LSRequestBase(const LSRequestParams& aParams,
                 const Maybe<ContentParentId>& aContentParentId);
 
   void Dispatch();
@@ -2148,7 +2148,6 @@ class PrepareDatastoreOp
     AfterNesting
   };
 
-  nsCOMPtr<nsIEventTarget> mMainEventTarget;
   RefPtr<PrepareDatastoreOp> mDelayedOp;
   RefPtr<DirectoryLock> mPendingDirectoryLock;
   RefPtr<DirectoryLock> mDirectoryLock;
@@ -2183,8 +2182,7 @@ class PrepareDatastoreOp
 #endif
 
  public:
-  PrepareDatastoreOp(nsIEventTarget* aMainEventTarget,
-                     const LSRequestParams& aParams,
+  PrepareDatastoreOp(const LSRequestParams& aParams,
                      const Maybe<ContentParentId>& aContentParentId);
 
   Maybe<DirectoryLock&> MaybeDirectoryLockRef() const {
@@ -2320,8 +2318,7 @@ class PrepareObserverOp : public LSRequestBase {
   nsCString mOrigin;
 
  public:
-  PrepareObserverOp(nsIEventTarget* aMainEventTarget,
-                    const LSRequestParams& aParams,
+  PrepareObserverOp(const LSRequestParams& aParams,
                     const Maybe<ContentParentId>& aContentParentId);
 
  private:
@@ -3254,20 +3251,13 @@ PBackgroundLSRequestParent* AllocPBackgroundLSRequestParent(
     contentParentId = Some(ContentParentId(childID));
   }
 
-  // If we're in the same process as the actor, we need to get the target event
-  // queue from the current RequestHelper.
-  nsCOMPtr<nsIEventTarget> mainEventTarget;
-  if (!BackgroundParent::IsOtherProcessActor(aBackgroundActor)) {
-    mainEventTarget = LSObject::GetSyncLoopEventTarget();
-  }
-
   RefPtr<LSRequestBase> actor;
 
   switch (aParams.type()) {
     case LSRequestParams::TLSRequestPreloadDatastoreParams:
     case LSRequestParams::TLSRequestPrepareDatastoreParams: {
       RefPtr<PrepareDatastoreOp> prepareDatastoreOp =
-          new PrepareDatastoreOp(mainEventTarget, aParams, contentParentId);
+          new PrepareDatastoreOp(aParams, contentParentId);
 
       if (!gPrepareDatastoreOps) {
         gPrepareDatastoreOps = new PrepareDatastoreOpArray();
@@ -3282,7 +3272,7 @@ PBackgroundLSRequestParent* AllocPBackgroundLSRequestParent(
 
     case LSRequestParams::TLSRequestPrepareObserverParams: {
       RefPtr<PrepareObserverOp> prepareObserverOp =
-          new PrepareObserverOp(mainEventTarget, aParams, contentParentId);
+          new PrepareObserverOp(aParams, contentParentId);
 
       actor = std::move(prepareObserverOp);
 
@@ -5946,11 +5936,9 @@ mozilla::ipc::IPCResult Observer::RecvDeleteMe() {
  * LSRequestBase
  ******************************************************************************/
 
-LSRequestBase::LSRequestBase(nsIEventTarget* aMainEventTarget,
-                             const LSRequestParams& aParams,
+LSRequestBase::LSRequestBase(const LSRequestParams& aParams,
                              const Maybe<ContentParentId>& aContentParentId)
-    : mMainEventTarget(aMainEventTarget),
-      mParams(aParams),
+    : mParams(aParams),
       mContentParentId(aContentParentId),
       mState(State::Initial),
       mWaitingForFinish(false) {}
@@ -6317,10 +6305,9 @@ mozilla::ipc::IPCResult LSRequestBase::RecvFinish() {
  ******************************************************************************/
 
 PrepareDatastoreOp::PrepareDatastoreOp(
-    nsIEventTarget* aMainEventTarget, const LSRequestParams& aParams,
+    const LSRequestParams& aParams,
     const Maybe<ContentParentId>& aContentParentId)
-    : LSRequestBase(aMainEventTarget, aParams, aContentParentId),
-      mMainEventTarget(aMainEventTarget),
+    : LSRequestBase(aParams, aContentParentId),
       mLoadDataOp(nullptr),
       mPrivateBrowsingId(0),
       mUsage(0),
@@ -6652,7 +6639,7 @@ nsresult PrepareDatastoreOp::BeginDatastorePreparationInternal() {
   }
 
   mNestedState = NestedState::QuotaManagerPending;
-  QuotaManager::GetOrCreate(this, mMainEventTarget);
+  QuotaManager::GetOrCreate(this);
 
   return NS_OK;
 }
@@ -7591,9 +7578,9 @@ PrepareDatastoreOp::CompressibleFunction::OnFunctionCall(
  ******************************************************************************/
 
 PrepareObserverOp::PrepareObserverOp(
-    nsIEventTarget* aMainEventTarget, const LSRequestParams& aParams,
+    const LSRequestParams& aParams,
     const Maybe<ContentParentId>& aContentParentId)
-    : LSRequestBase(aMainEventTarget, aParams, aContentParentId) {
+    : LSRequestBase(aParams, aContentParentId) {
   MOZ_ASSERT(aParams.type() ==
              LSRequestParams::TLSRequestPrepareObserverParams);
 }
@@ -8158,26 +8145,34 @@ Result<UsageInfo, nsresult> QuotaClient::InitOrigin(
   LS_TRY(CollectEachFileAtomicCancelable(
       *directory, aCanceled,
       [](const nsCOMPtr<nsIFile>& file) -> Result<Ok, nsresult> {
-        LS_TRY_INSPECT(const bool& isDirectory,
-                       MOZ_TO_RESULT_INVOKE(file, IsDirectory));
+        LS_TRY_INSPECT(const auto& dirEntryKind, GetDirEntryKind(*file));
 
-        if (isDirectory) {
-          Unused << WARN_IF_FILE_IS_UNKNOWN(*file);
-          return Ok{};
+        switch (dirEntryKind) {
+          case nsIFileKind::ExistsAsDirectory:
+            Unused << WARN_IF_FILE_IS_UNKNOWN(*file);
+            break;
+
+          case nsIFileKind::ExistsAsFile: {
+            LS_TRY_INSPECT(
+                const auto& leafName,
+                MOZ_TO_RESULT_INVOKE_TYPED(nsString, file, GetLeafName));
+
+            if (leafName.Equals(kDataFileName) ||
+                leafName.Equals(kJournalFileName) ||
+                leafName.Equals(kUsageFileName) ||
+                leafName.Equals(kUsageJournalFileName)) {
+              return Ok{};
+            }
+
+            Unused << WARN_IF_FILE_IS_UNKNOWN(*file);
+
+            break;
+          }
+
+          case nsIFileKind::DoesNotExist:
+            // Ignore files that got removed externally while iterating.
+            break;
         }
-
-        LS_TRY_INSPECT(const auto& leafName,
-                       MOZ_TO_RESULT_INVOKE_TYPED(nsString, file, GetLeafName));
-
-        if (leafName.Equals(kDataFileName) ||
-            leafName.Equals(kJournalFileName) ||
-            leafName.Equals(kUsageFileName) ||
-            leafName.Equals(kUsageJournalFileName)) {
-          return Ok{};
-        }
-
-        Unused << WARN_IF_FILE_IS_UNKNOWN(*file);
-
         return Ok{};
       }));
 #endif

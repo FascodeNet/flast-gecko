@@ -54,7 +54,8 @@ NS_IMETHODIMP
 TRR::Notify(nsITimer* aTimer) {
   if (aTimer == mTimeout) {
     mTimeout = nullptr;
-    Cancel();
+    RecordReason(nsHostRecord::TRR_TIMEOUT);
+    Cancel(NS_ERROR_NET_TIMEOUT_EXTERNAL);
   } else {
     MOZ_CRASH("Unknown timer");
   }
@@ -576,6 +577,7 @@ TRR::OnStartRequest(nsIRequest* aRequest) {
         RecordReason(nsHostRecord::TRR_NET_RESET);
         break;
       case NS_ERROR_NET_TIMEOUT:
+      case NS_ERROR_NET_TIMEOUT_EXTERNAL:
         RecordReason(nsHostRecord::TRR_NET_TIMEOUT);
         break;
       case NS_ERROR_PROXY_CONNECTION_REFUSED:
@@ -752,10 +754,19 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
          cname.get()));
     nsClassHashtable<nsCStringHashKey, DOHresp> additionalRecords;
     rv = GetOrCreateDNSPacket()->Decode(
-        cname, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(),
-        mTRRSkippedReason, mDNS, mResult, additionalRecords, mTTL);
+        cname, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(), mDNS,
+        mResult, additionalRecords, mTTL);
     if (NS_FAILED(rv)) {
       LOG(("TRR::On200Response DohDecode %x\n", (int)rv));
+
+      auto rcode = mPacket->GetRCode();
+      if (rcode.isOk() && rcode.unwrap() != 0) {
+        RecordReason(nsHostRecord::TRR_RCODE_FAIL);
+      } else if (rv == NS_ERROR_UNKNOWN_HOST || rv == NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
+        RecordReason(nsHostRecord::TRR_NO_ANSWERS);
+      } else {
+        RecordReason(nsHostRecord::TRR_DECODE_FAILED);
+      }
     }
   }
 
@@ -785,12 +796,18 @@ nsresult TRR::On200Response(nsIChannel* aChannel) {
   // decode body and create an AddrInfo struct for the response
   nsClassHashtable<nsCStringHashKey, DOHresp> additionalRecords;
   nsresult rv = GetOrCreateDNSPacket()->Decode(
-      mHost, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(),
-      mTRRSkippedReason, mDNS, mResult, additionalRecords, mTTL);
-
+      mHost, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(), mDNS,
+      mResult, additionalRecords, mTTL);
   if (NS_FAILED(rv)) {
     LOG(("TRR::On200Response DohDecode %x\n", (int)rv));
-    RecordReason(nsHostRecord::TRR_DECODE_FAILED);
+    auto rcode = mPacket->GetRCode();
+    if (rcode.isOk() && rcode.unwrap() != 0) {
+      RecordReason(nsHostRecord::TRR_RCODE_FAIL);
+    } else if (rv == NS_ERROR_UNKNOWN_HOST || rv == NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
+      RecordReason(nsHostRecord::TRR_NO_ANSWERS);
+    } else {
+      RecordReason(nsHostRecord::TRR_DECODE_FAILED);
+    }
     return rv;
   }
   SaveAdditionalRecords(additionalRecords);
@@ -851,7 +868,9 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
     }
   }
 
-  if (UseDefaultServer()) {
+  // If the TRR was cancelled by nsHostResolver, then we don't need to report
+  // it as failed; otherwise it can cause the confirmation to fail.
+  if (UseDefaultServer() && aStatusCode != NS_ERROR_ABORT) {
     // Bad content is still considered "okay" if the HTTP response is okay
     gTRRService->TRRIsOkay(NS_SUCCEEDED(aStatusCode) ? TRRService::OKAY_NORMAL
                                                      : TRRService::OKAY_BAD);
@@ -916,46 +935,32 @@ TRR::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
   return NS_OK;
 }
 
-class ProxyCancel : public Runnable {
- public:
-  explicit ProxyCancel(TRR* aTRR) : Runnable("proxyTrrCancel"), mTRR(aTRR) {}
-
-  NS_IMETHOD Run() override {
-    mTRR->Cancel();
-    mTRR = nullptr;
-    return NS_OK;
-  }
-
- private:
-  RefPtr<TRR> mTRR;
-};
-
-void TRR::Cancel() {
+void TRR::Cancel(nsresult aStatus) {
   RefPtr<TRRServiceChannel> trrServiceChannel = do_QueryObject(mChannel);
   if (trrServiceChannel && !XRE_IsSocketProcess()) {
     if (gTRRService) {
       nsCOMPtr<nsIThread> thread = gTRRService->TRRThread();
       if (thread && !thread->IsOnCurrentThread()) {
-        nsCOMPtr<nsIRunnable> r = new ProxyCancel(this);
-        thread->Dispatch(r.forget());
+        thread->Dispatch(NS_NewRunnableFunction(
+            "TRR::Cancel",
+            [self = RefPtr(this), aStatus]() { self->Cancel(aStatus); }));
         return;
       }
     }
   } else {
     if (!NS_IsMainThread()) {
-      NS_DispatchToMainThread(new ProxyCancel(this));
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+          "TRR::Cancel",
+          [self = RefPtr(this), aStatus]() { self->Cancel(aStatus); }));
       return;
     }
   }
 
   if (mChannel) {
-    RecordReason(nsHostRecord::TRR_TIMEOUT);
-    LOG(("TRR: %p canceling Channel %p %s %d\n", this, mChannel.get(),
-         mHost.get(), mType));
-    mChannel->Cancel(NS_ERROR_ABORT);
-    if (UseDefaultServer()) {
-      gTRRService->TRRIsOkay(TRRService::OKAY_TIMEOUT);
-    }
+    RecordReason(nsHostRecord::TRR_REQ_CANCELLED);
+    LOG(("TRR: %p canceling Channel %p %s %d status=%" PRIx32 "\n", this,
+         mChannel.get(), mHost.get(), mType, static_cast<uint32_t>(aStatus)));
+    mChannel->Cancel(aStatus);
   }
 }
 

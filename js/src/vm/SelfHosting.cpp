@@ -43,8 +43,7 @@
 #include "builtin/String.h"
 #include "builtin/WeakMapObject.h"
 #include "frontend/BytecodeCompilation.h"  // CompileGlobalScriptToStencil
-#include "frontend/CompilationInfo.h"      // js::frontend::CompilationStencil
-#include "frontend/ParserAtom.h"           // js::frontend::ParserAtom
+#include "frontend/CompilationStencil.h"   // js::frontend::CompilationStencil
 #include "gc/Marking.h"
 #include "gc/Policy.h"
 #include "jit/AtomicOperations.h"
@@ -963,17 +962,8 @@ bool js::IsExtendedUnclonedSelfHostedFunctionName(JSAtom* name) {
   if (name->length() < 2) {
     return false;
   }
-  return name->latin1OrTwoByteChar(0) == '$';
-}
-bool js::IsExtendedUnclonedSelfHostedFunctionName(
-    const frontend::ParserAtom* id) {
-  if (id->length() < 2) {
-    return false;
-  }
-
-  char16_t ch =
-      id->hasLatin1Chars() ? id->latin1Chars()[0] : id->twoByteChars()[0];
-  return ch == '$';
+  return name->latin1OrTwoByteChar(0) ==
+         ExtendedUnclonedSelfHostedFunctionNamePrefix;
 }
 
 static void SetUnclonedSelfHostedFunctionName(JSFunction* fun, JSAtom* name) {
@@ -2781,10 +2771,10 @@ static bool VerifyGlobalNames(JSContext* cx, Handle<GlobalObject*> shg) {
   return true;
 }
 
-bool JSRuntime::initSelfHostingFromXDR(
-    JSContext* cx, const CompileOptions& options,
-    frontend::CompilationStencilSet& stencilSet,
-    MutableHandle<JSScript*> scriptOut) {
+bool JSRuntime::initSelfHostingFromXDR(JSContext* cx,
+                                       const CompileOptions& options,
+                                       frontend::CompilationStencil& stencil,
+                                       MutableHandle<JSScript*> scriptOut) {
   MOZ_ASSERT(selfHostingGlobal_);
   MOZ_ASSERT(selfHostedXDR.length() > 0);
   scriptOut.set(nullptr);
@@ -2792,7 +2782,7 @@ bool JSRuntime::initSelfHostingFromXDR(
   // Deserialize the stencil from XDR.
   JS::TranscodeRange xdrRange(selfHostedXDR);
   bool decodeOk = false;
-  if (!stencilSet.deserializeStencils(cx, xdrRange, &decodeOk)) {
+  if (!stencil.deserializeStencils(cx, xdrRange, &decodeOk)) {
     return false;
   }
   // If XDR decode failed, it's not a propagated error.
@@ -2803,7 +2793,7 @@ bool JSRuntime::initSelfHostingFromXDR(
 
   // Instantiate the stencil.
   Rooted<frontend::CompilationGCOutput> output(cx);
-  if (!frontend::CompilationStencil::instantiateStencils(cx, stencilSet,
+  if (!frontend::CompilationStencil::instantiateStencils(cx, stencil,
                                                          output.get())) {
     return false;
   }
@@ -2846,13 +2836,13 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
   // Try initializing from Stencil XDR.
   if (selfHostedXDR.length() > 0) {
     // Initialize the compilation info that houses the stencil.
-    Rooted<frontend::CompilationStencilSet> stencilSet(
-        cx, frontend::CompilationStencilSet(cx, options));
-    if (!stencilSet.get().input.initForSelfHostingGlobal(cx)) {
+    Rooted<frontend::CompilationStencil> stencil(
+        cx, frontend::CompilationStencil(cx, options));
+    if (!stencil.get().input.initForSelfHostingGlobal(cx)) {
       return false;
     }
 
-    if (!initSelfHostingFromXDR(cx, options, stencilSet.get(), &script)) {
+    if (!initSelfHostingFromXDR(cx, options, stencil.get(), &script)) {
       return false;
     }
   }
@@ -3069,7 +3059,7 @@ static ScriptSourceObject* SelfHostingScriptSourceObject(JSContext* cx) {
   if (!ss) {
     return nullptr;
   }
-  Rooted<ScriptSourceHolder> ssHolder(cx, ss);
+  ScriptSourceHolder ssHolder(ss);
 
   if (!ss->initFromOptions(cx, options)) {
     return nullptr;

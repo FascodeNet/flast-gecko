@@ -126,6 +126,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   friend class AutoCheckUnstableEmitterScope;
 #endif
 
+  ParserAtomsTable& parserAtoms() { return compilationState.parserAtoms; }
+  const ParserAtomsTable& parserAtoms() const {
+    return compilationState.parserAtoms;
+  }
+
   EmitterScope* innermostEmitterScope() const {
     MOZ_ASSERT(!unstableEmitterScope);
     return innermostEmitterScopeNoCheck();
@@ -893,6 +898,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   MOZ_MUST_USE bool emitSelfHostedGetBuiltinConstructorOrPrototype(
       BinaryNode* callNode, bool isConstructor);
+
+ public:
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dumpAtom(TaggedParserAtomIndex index) const;
+#endif
 };
 
 class MOZ_RAII AutoCheckUnstableEmitterScope {

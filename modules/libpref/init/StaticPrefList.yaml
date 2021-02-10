@@ -6699,6 +6699,12 @@
   value: true
   mirror: always
 
+# Whether outline should follow the border radius.
+- name: layout.css.outline-follows-border-radius.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
 # Pref to control enabling scroll anchoring.
 - name: layout.css.scroll-anchoring.enabled
   type: bool
@@ -8609,6 +8615,13 @@
   value: false
   mirror: always
 
+# When receiving a network change event, the time (in ms) we wait to reload the
+# PAC url.
+- name: network.proxy.reload_pac_delay
+  type: RelaxedAtomicUint32
+  value: 2000
+  mirror: always
+
 # Some requests during a page load are marked as "tail", mainly trackers, but not only.
 # This pref controls whether such requests are put to the tail, behind other requests
 # emerging during page loading process.
@@ -8716,12 +8729,6 @@
   value: false
   mirror: always
 
-# Allow AAAA entries to be used "early", before the A results are in
-- name: network.trr.early-AAAA
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
 # When true, it only sends AAAA when the system has IPv6 connectivity
 - name: network.trr.skip-AAAA-when-not-supported
   type: RelaxedAtomicBool
@@ -8731,14 +8738,6 @@
 # Whether to apply split horizon mitigations when using TRR.
 # These include adding the DNS suffix to the excluded domains
 - name: network.trr.split_horizon_mitigations
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
-# When true, the DNS request will wait for both A and AAAA responses
-# (if both have been requested) before notifying the listeners.
-# When true, it effectively cancels `network.trr.early-AAAA`
-- name: network.trr.wait-for-A-and-AAAA
   type: RelaxedAtomicBool
   value: true
   mirror: always
@@ -8895,7 +8894,7 @@
 # available.
 - name: network.dns.upgrade_with_https_rr
   type: RelaxedAtomicBool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Whether to use HTTPS RR as AltSvc

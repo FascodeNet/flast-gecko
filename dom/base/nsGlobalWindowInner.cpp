@@ -3723,9 +3723,10 @@ void nsGlobalWindowInner::Prompt(const nsAString& aMessage,
 }
 
 void nsGlobalWindowInner::Focus(CallerType aCallerType, ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(
-      FocusOuter, (aCallerType, nsFocusManager::GenerateFocusActionId()),
-      aError, );
+  FORWARD_TO_OUTER_OR_THROW(FocusOuter,
+                            (aCallerType, /* aFromOtherProcess */ false,
+                             nsFocusManager::GenerateFocusActionId()),
+                            aError, );
 }
 
 nsresult nsGlobalWindowInner::Focus(CallerType aCallerType) {
@@ -3735,8 +3736,8 @@ nsresult nsGlobalWindowInner::Focus(CallerType aCallerType) {
   return rv.StealNSResult();
 }
 
-void nsGlobalWindowInner::Blur(ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(BlurOuter, (), aError, );
+void nsGlobalWindowInner::Blur(CallerType aCallerType, ErrorResult& aError) {
+  FORWARD_TO_OUTER_OR_THROW(BlurOuter, (aCallerType), aError, );
 }
 
 void nsGlobalWindowInner::Stop(ErrorResult& aError) {

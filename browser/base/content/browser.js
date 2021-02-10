@@ -167,6 +167,11 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 XPCOMUtils.defineLazyScriptGetter(
   this,
+  "gPermissionPanel",
+  "chrome://browser/content/browser-sitePermissionPanel.js"
+);
+XPCOMUtils.defineLazyScriptGetter(
+  this,
   "gProtectionsHandler",
   "chrome://browser/content/browser-siteProtections.js"
 );
@@ -473,6 +478,9 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "browser.toolbars.keyboard_navigation",
   false,
   (aPref, aOldVal, aNewVal) => {
+    if (window.closed) {
+      return;
+    }
     if (aNewVal) {
       ToolbarKeyboardNavigator.init();
     } else {
@@ -1035,7 +1043,7 @@ var gPopupBlockerObserver = {
       return;
     }
 
-    gIdentityHandler.refreshIdentityBlock();
+    gPermissionPanel.refreshPermissionIcons();
 
     let popupCount = gBrowser.selectedBrowser.popupBlocker.getBlockedPopupCount();
 
@@ -3494,6 +3502,7 @@ function BrowserReloadWithFlags(reloadFlags) {
     delete tab.linkedBrowser.authPromptAbuseCounter;
   }
   gIdentityHandler.hidePopup();
+  gPermissionPanel.hidePopup();
 
   let handlingUserInput = window.windowUtils.isHandlingUserInput;
 
@@ -5164,7 +5173,7 @@ var XULBrowserWindow = {
         );
       }
 
-      gIdentityHandler.onLocationChange();
+      gPermissionPanel.onLocationChange();
 
       gProtectionsHandler.onLocationChange();
 

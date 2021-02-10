@@ -130,7 +130,11 @@ struct SizeComputationInput {
 
   SizeComputationInput(nsIFrame* aFrame, gfxContext* aRenderingContext,
                        mozilla::WritingMode aContainingBlockWritingMode,
-                       nscoord aContainingBlockISize);
+                       nscoord aContainingBlockISize,
+                       const mozilla::Maybe<mozilla::LogicalMargin>& aBorder =
+                           mozilla::Nothing(),
+                       const mozilla::Maybe<mozilla::LogicalMargin>& aPadding =
+                           mozilla::Nothing());
 
 #ifdef DEBUG
   // Reflow trace methods.  Defined in nsFrame.cpp so they have access
@@ -157,7 +161,8 @@ struct SizeComputationInput {
    *    for resolving percentage margin values in the inline and block axes.
    * @return true if the margin is dependent on the containing block size.
    */
-  bool ComputeMargin(mozilla::WritingMode aCBWM, nscoord aPercentBasis);
+  bool ComputeMargin(mozilla::WritingMode aCBWM, nscoord aPercentBasis,
+                     mozilla::LayoutFrameType aFrameType);
 
   /**
    * Computes padding values from the specified padding style information, and

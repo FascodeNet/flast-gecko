@@ -17,7 +17,7 @@
 #include "jstypes.h"  // JS_PUBLIC_API
 
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
-#include "frontend/CompilationInfo.h"  // for frontened::CompilationStencil, frontened::CompilationGCOutput
+#include "frontend/CompilationStencil.h"  // for frontened::CompilationStencil, frontened::CompilationGCOutput
 #include "frontend/FullParseHandler.h"  // frontend::FullParseHandler
 #include "frontend/ParseContext.h"      // frontend::UsedNameTracker
 #include "frontend/Parser.h"            // frontend::Parser, frontend::ParseGoal
@@ -111,20 +111,16 @@ static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
     return nullptr;
   }
 
-  if (options.useStencilXDR) {
-    UniquePtr<XDRIncrementalEncoderBase> xdrEncoder;
+  MOZ_DIAGNOSTIC_ASSERT(options.useStencilXDR);
 
-    if (!stencil.get().input.source()->xdrEncodeInitialStencil(
-            cx, stencil.get(), xdrEncoder)) {
-      return nullptr;
-    }
+  UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
 
-    script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
-  } else {
-    if (!script->scriptSource()->xdrEncodeTopLevel(cx, script)) {
-      return nullptr;
-    }
+  if (!stencil.get().input.source()->xdrEncodeInitialStencil(cx, stencil.get(),
+                                                             xdrEncoder)) {
+    return nullptr;
   }
+
+  script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
 
   return script;
 }

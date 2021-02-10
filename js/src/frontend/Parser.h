@@ -177,7 +177,7 @@
 
 #include "ds/Nestable.h"
 #include "frontend/BytecodeCompiler.h"
-#include "frontend/CompilationInfo.h"
+#include "frontend/CompilationStencil.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/FullParseHandler.h"
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
@@ -270,12 +270,20 @@ class MOZ_STACK_CLASS ParserSharedBase {
   CompilationStencil& getCompilationStencil() { return stencil_; }
   CompilationState& getCompilationState() { return compilationState_; }
 
+  ParserAtomsTable& parserAtoms() { return compilationState_.parserAtoms; }
+  const ParserAtomsTable& parserAtoms() const {
+    return compilationState_.parserAtoms;
+  }
+
   LifoAlloc& stencilAlloc() { return stencil_.alloc; }
 
   JSAtom* liftParserAtomToJSAtom(TaggedParserAtomIndex index) {
-    const auto* atom = compilationState_.parserAtoms.getParserAtom(index);
-    return atom->toJSAtom(cx_, index, stencil_.input.atomCache);
+    return parserAtoms().toJSAtom(cx_, index, stencil_.input.atomCache);
   }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dumpAtom(TaggedParserAtomIndex index) const;
+#endif
 };
 
 class MOZ_STACK_CLASS ParserBase : public ParserSharedBase,

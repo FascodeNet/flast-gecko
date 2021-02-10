@@ -3,15 +3,11 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 DIRS += [
-    "startup",
+    "components",
     "test",
 ]
 
-XPCOM_MANIFESTS += ["components.conf"]
 JAR_MANIFESTS += ["jar.mn"]
-
-XPIDL_MODULE = "remote"
-XPIDL_SOURCES += ["nsIRemoteAgent.idl"]
 
 with Files("**"):
     BUG_COMPONENT = ("Remote Protocol", "Agent")

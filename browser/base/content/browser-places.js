@@ -731,7 +731,9 @@ HistoryMenu.prototype = {
     // populate menu
     let tabsFragment = RecentlyClosedTabsAndWindowsMenuUtils.getTabsFragment(
       window,
-      "menuitem"
+      "menuitem",
+      /* aPrefixRestoreAll = */ false,
+      "menu-history-reopen-all-tabs"
     );
     undoPopup.appendChild(tabsFragment);
   },
@@ -769,7 +771,9 @@ HistoryMenu.prototype = {
     // populate menu
     let windowsFragment = RecentlyClosedTabsAndWindowsMenuUtils.getWindowsFragment(
       window,
-      "menuitem"
+      "menuitem",
+      /* aPrefixRestoreAll = */ false,
+      "menu-history-reopen-all-windows"
     );
     undoPopup.appendChild(windowsFragment);
   },
@@ -2311,6 +2315,9 @@ var BookmarkingUI = {
   },
 
   handlePlacesEvents(aEvents) {
+    let isStarUpdateNeeded = false;
+    let affectsOtherBookmarksFolder = false;
+
     for (let ev of aEvents) {
       switch (ev.type) {
         case "bookmark-added":
@@ -2320,7 +2327,7 @@ var BookmarkingUI = {
               // If a new bookmark has been added to the tracked uri, register it.
               if (!this._itemGuids.has(ev.guid)) {
                 this._itemGuids.add(ev.guid);
-                this._updateStar();
+                isStarUpdateNeeded = true;
               }
             }
           }
@@ -2331,17 +2338,26 @@ var BookmarkingUI = {
             this._itemGuids.delete(ev.guid);
             // Only need to update the UI if the page is no longer starred
             if (this._itemGuids.size == 0) {
-              this._updateStar();
+              isStarUpdateNeeded = true;
             }
           }
           break;
       }
 
       if (ev.parentGuid === PlacesUtils.bookmarks.unfiledGuid) {
-        this.maybeShowOtherBookmarksFolder();
+        affectsOtherBookmarksFolder = true;
       }
-      this.updateEmptyToolbarMessage();
     }
+
+    if (isStarUpdateNeeded) {
+      this._updateStar();
+    }
+
+    if (affectsOtherBookmarksFolder) {
+      this.maybeShowOtherBookmarksFolder();
+    }
+
+    this.updateEmptyToolbarMessage();
   },
 
   onItemChanged(
@@ -2434,11 +2450,10 @@ var BookmarkingUI = {
       SHOW_OTHER_BOOKMARKS &&
       placement?.area == CustomizableUI.AREA_BOOKMARKS
     ) {
-      let result = PlacesUtils.getFolderContents(unfiledGuid);
-      let node = result.root;
-
       // Build the "Other Bookmarks" button if it doesn't exist.
       if (!otherBookmarks) {
+        const result = PlacesUtils.getFolderContents(unfiledGuid);
+        const node = result.root;
         this.buildOtherBookmarksFolder(node);
       }
 

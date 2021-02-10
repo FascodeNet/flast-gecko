@@ -5040,6 +5040,7 @@ void nsGlobalWindowOuter::PromptOuter(const nsAString& aMessage,
 }
 
 void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
+                                     bool aFromOtherProcess,
                                      uint64_t aActionId) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
@@ -5047,6 +5048,16 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
   }
 
   auto [canFocus, isActive] = GetBrowsingContext()->CanFocusCheck(aCallerType);
+  if (aFromOtherProcess) {
+    // We trust that the check passed in a process that's, in principle,
+    // untrusted, because we don't have the required caller context available
+    // here. Also, the worst that the other process can do in this case is to
+    // raise a window it's not supposed to be allowed to raise.
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1677899
+    MOZ_ASSERT(XRE_IsContentProcess(),
+               "Parent should not trust other processes.");
+    canFocus = true;
+  }
 
   nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = GetTreeOwnerWindow();
   if (treeOwnerAsWin && (canFocus || isActive)) {
@@ -5106,10 +5117,8 @@ nsresult nsGlobalWindowOuter::Focus(CallerType aCallerType) {
   FORWARD_TO_INNER(Focus, (aCallerType), NS_ERROR_UNEXPECTED);
 }
 
-void nsGlobalWindowOuter::BlurOuter() {
-  // If dom.disable_window_flip == true, then content should not be allowed
-  // to call this function (this would allow popunders, bug 369306)
-  if (!CanSetProperty("dom.disable_window_flip")) {
+void nsGlobalWindowOuter::BlurOuter(CallerType aCallerType) {
+  if (!GetBrowsingContext()->CanBlurCheck(aCallerType)) {
     return;
   }
 

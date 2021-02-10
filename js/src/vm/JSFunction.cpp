@@ -602,10 +602,6 @@ XDRResult js::XDRInterpretedFunction(XDRState<mode>* xdr,
     atom = fun->displayAtom();
   }
 
-  // Everything added below can substituted by the non-lazy-script version of
-  // this function later.
-  js::AutoXDRTree funTree(xdr, xdr->getTreeKey(fun));
-
   MOZ_TRY(xdr->codeUint8(&xdrFlags));
 
   MOZ_TRY(xdr->codeUint16(&nargs));
@@ -1569,20 +1565,9 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
     }
 
     if (ss->hasEncoder()) {
-      // NOTE: Currently we rely on the UseOffThreadParseGlobal to decide which
-      //       format to use for incremental encoding.
-      bool useStencilXDR = !js::UseOffThreadParseGlobal();
-      if (useStencilXDR) {
-        if (!ss->xdrEncodeFunctionStencil(cx, stencil.get())) {
-          return false;
-        }
-      } else {
-        // XDR the newly delazified function.
-        RootedScriptSourceObject sourceObject(
-            cx, fun->nonLazyScript()->sourceObject());
-        if (!ss->xdrEncodeFunction(cx, fun, sourceObject)) {
-          return false;
-        }
+      MOZ_ASSERT(!js::UseOffThreadParseGlobal());
+      if (!ss->xdrEncodeFunctionStencil(cx, stencil.get())) {
+        return false;
       }
     }
   }

@@ -214,7 +214,7 @@ void nsHostRecord::Cancel() {
   }
 
   if (query) {
-    query->Cancel();
+    query->Cancel(NS_ERROR_ABORT);
   }
 }
 
@@ -2134,9 +2134,10 @@ void nsHostResolver::CancelAsyncRequest(
 
     for (const RefPtr<nsResolveHostCallback>& c : rec->mCallbacks) {
       if (c->EqualsAsyncListener(aListener)) {
+        RefPtr<nsResolveHostCallback> callback = c;
         c->remove();
         recPtr = rec;
-        c->OnResolveHostComplete(this, recPtr, status);
+        callback->OnResolveHostComplete(this, recPtr, status);
         break;
       }
     }

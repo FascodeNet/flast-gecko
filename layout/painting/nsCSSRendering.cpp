@@ -810,16 +810,9 @@ static nsCSSBorderRenderer ConstructBorderRenderer(
       static_cast<int>(borderStyles[1]), static_cast<int>(borderStyles[2]),
       static_cast<int>(borderStyles[3]));
 
-  Document* document = nullptr;
-  nsIContent* content = aForFrame->GetContent();
-  if (content) {
-    document = content->OwnerDoc();
-  }
-
   return nsCSSBorderRenderer(
-      aPresContext, document, aDrawTarget, dirtyRect, joinedBorderAreaPx,
-      borderStyles, borderWidths, bgRadii, borderColors,
-      !aForFrame->BackfaceIsHidden(),
+      aPresContext, aDrawTarget, dirtyRect, joinedBorderAreaPx, borderStyles,
+      borderWidths, bgRadii, borderColors, !aForFrame->BackfaceIsHidden(),
       *aNeedsClip ? Some(NSRectToRect(aBorderArea, oneDevPixel)) : Nothing());
 }
 
@@ -963,8 +956,6 @@ Maybe<nsCSSBorderRenderer> nsCSSRendering::CreateBorderRendererForOutline(
     nsPresContext* aPresContext, gfxContext* aRenderingContext,
     nsIFrame* aForFrame, const nsRect& aDirtyRect, const nsRect& aBorderArea,
     ComputedStyle* aStyle) {
-  nscoord twipsRadii[8];
-
   // Get our ComputedStyle's color struct.
   const nsStyleOutline* ourOutline = aStyle->StyleOutline();
 
@@ -996,24 +987,6 @@ Maybe<nsCSSBorderRenderer> nsCSSRendering::CreateBorderRendererForOutline(
 
   nscoord width = ourOutline->GetOutlineWidth();
 
-  nsRect outerRect = innerRect;
-  outerRect.Inflate(width);
-
-  // get the radius for our outline
-  nsIFrame::ComputeBorderRadii(ourOutline->mOutlineRadius, aBorderArea.Size(),
-                               outerRect.Size(), Sides(), twipsRadii);
-
-  // Get our conversion values
-  nscoord oneDevPixel = aPresContext->DevPixelsToAppUnits(1);
-
-  // get the outer rectangles
-  Rect oRect(NSRectToRect(outerRect, oneDevPixel));
-
-  // convert the radii
-  nsMargin outlineMargin(width, width, width, width);
-  RectCornerRadii outlineRadii;
-  ComputePixelRadii(twipsRadii, oneDevPixel, &outlineRadii);
-
   StyleBorderStyle outlineStyle;
   if (ourOutline->mOutlineStyle.IsAuto()) {
     if (StaticPrefs::layout_css_outline_style_auto_enabled()) {
@@ -1036,6 +1009,38 @@ Maybe<nsCSSBorderRenderer> nsCSSRendering::CreateBorderRendererForOutline(
     outlineStyle = ourOutline->mOutlineStyle.AsBorderStyle();
   }
 
+  RectCornerRadii outlineRadii;
+  nsRect outerRect = innerRect;
+  outerRect.Inflate(width);
+
+  const nscoord oneDevPixel = aPresContext->AppUnitsPerDevPixel();
+  Rect oRect(NSRectToRect(outerRect, oneDevPixel));
+
+  const Float outlineWidths[4] = {
+      Float(width) / oneDevPixel, Float(width) / oneDevPixel,
+      Float(width) / oneDevPixel, Float(width) / oneDevPixel};
+
+  // convert the radii
+  nscoord twipsRadii[8];
+
+  // get the radius for our outline
+  if (StaticPrefs::layout_css_outline_follows_border_radius_enabled()) {
+    if (aForFrame->GetBorderRadii(twipsRadii)) {
+      RectCornerRadii innerRadii;
+      ComputePixelRadii(twipsRadii, oneDevPixel, &innerRadii);
+
+      Float devPixelOffset = aPresContext->AppUnitsToFloatDevPixels(offset);
+      const Float widths[4] = {
+          outlineWidths[0] + devPixelOffset, outlineWidths[1] + devPixelOffset,
+          outlineWidths[2] + devPixelOffset, outlineWidths[3] + devPixelOffset};
+      nsCSSBorderRenderer::ComputeOuterRadii(innerRadii, widths, &outlineRadii);
+    }
+  } else {
+    nsIFrame::ComputeBorderRadii(ourOutline->mOutlineRadius, aBorderArea.Size(),
+                                 outerRect.Size(), Sides(), twipsRadii);
+    ComputePixelRadii(twipsRadii, oneDevPixel, &outlineRadii);
+  }
+
   StyleBorderStyle outlineStyles[4] = {outlineStyle, outlineStyle, outlineStyle,
                                        outlineStyle};
 
@@ -1046,26 +1051,13 @@ Maybe<nsCSSBorderRenderer> nsCSSRendering::CreateBorderRendererForOutline(
   nscolor outlineColors[4] = {outlineColor, outlineColor, outlineColor,
                               outlineColor};
 
-  // convert the border widths
-  Float outlineWidths[4] = {
-      Float(width) / oneDevPixel, Float(width) / oneDevPixel,
-      Float(width) / oneDevPixel, Float(width) / oneDevPixel};
   Rect dirtyRect = NSRectToRect(aDirtyRect, oneDevPixel);
-
-  Document* document = nullptr;
-  nsIContent* content = aForFrame->GetContent();
-  if (content) {
-    document = content->OwnerDoc();
-  }
 
   DrawTarget* dt =
       aRenderingContext ? aRenderingContext->GetDrawTarget() : nullptr;
-  nsCSSBorderRenderer br(aPresContext, document, dt, dirtyRect, oRect,
-                         outlineStyles, outlineWidths, outlineRadii,
-                         outlineColors, !aForFrame->BackfaceIsHidden(),
-                         Nothing());
-
-  return Some(br);
+  return Some(nsCSSBorderRenderer(
+      aPresContext, dt, dirtyRect, oRect, outlineStyles, outlineWidths,
+      outlineRadii, outlineColors, !aForFrame->BackfaceIsHidden(), Nothing()));
 }
 
 void nsCSSRendering::PaintOutline(nsPresContext* aPresContext,
@@ -1117,9 +1109,9 @@ void nsCSSRendering::PaintFocus(nsPresContext* aPresContext,
   //
   // WebRender layers-free mode don't use PaintFocus function. Just assign
   // the backface-visibility to true for this case.
-  nsCSSBorderRenderer br(aPresContext, nullptr, aDrawTarget, focusRect,
-                         focusRect, focusStyles, focusWidths, focusRadii,
-                         focusColors, true, Nothing());
+  nsCSSBorderRenderer br(aPresContext, aDrawTarget, focusRect, focusRect,
+                         focusStyles, focusWidths, focusRadii, focusColors,
+                         true, Nothing());
   br.DrawBorders();
 
   PrintAsStringNewline();

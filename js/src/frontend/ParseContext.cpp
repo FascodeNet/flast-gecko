@@ -6,9 +6,9 @@
 
 #include "frontend/ParseContext-inl.h"
 
-#include "frontend/CompilationInfo.h"  // ScopeContext
-#include "frontend/Parser.h"           // ParserBase
-#include "js/friend/ErrorMessages.h"   // JSMSG_*
+#include "frontend/CompilationStencil.h"  // ScopeContext
+#include "frontend/Parser.h"              // ParserBase
+#include "js/friend/ErrorMessages.h"      // JSMSG_*
 #include "vm/EnvironmentObject-inl.h"
 
 using mozilla::Maybe;
@@ -181,9 +181,7 @@ void ParseContext::Scope::dump(ParseContext* pc, ParserBase* parser) {
   fprintf(stdout, "\n  decls:\n");
   for (DeclaredNameMap::Range r = declared_->all(); !r.empty(); r.popFront()) {
     auto index = r.front().key();
-    const auto* name =
-        parser->compilationState_.parserAtoms.getParserAtom(index);
-    UniqueChars bytes = QuoteString(cx, name);
+    UniqueChars bytes = parser->parserAtoms().toPrintableString(cx, index);
     if (!bytes) {
       return;
     }

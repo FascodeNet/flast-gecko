@@ -2638,12 +2638,6 @@ class Document : public nsINode,
    */
   bool IsVisible() const { return mVisible; }
 
-  /**
-   * Return whether the document and all its ancestors are visible in the sense
-   * of pageshow / hide.
-   */
-  bool IsVisibleConsideringAncestors() const;
-
   void SetSuppressedEventListener(EventListener* aListener);
 
   EventListener* GetSuppressedEventListener() {
@@ -3528,6 +3522,14 @@ class Document : public nsINode,
   already_AddRefed<nsIURI> GetMozDocumentURIIfNotForErrorPages();
 
   Promise* GetDocumentReadyForIdle(ErrorResult& aRv);
+
+  void BlockUnblockOnloadForPDFJS(bool aBlock) {
+    if (aBlock) {
+      BlockOnload();
+    } else {
+      UnblockOnload(/* aFireSync = */ false);
+    }
+  }
 
   nsIDOMXULCommandDispatcher* GetCommandDispatcher();
   bool HasXULBroadcastManager() const { return mXULBroadcastManager; };
@@ -5253,14 +5255,33 @@ class MOZ_STACK_CLASS mozAutoSubtreeModified {
 
 enum class SyncOperationBehavior { eSuspendInput, eAllowInput };
 
-class MOZ_STACK_CLASS nsAutoSyncOperation {
+class AutoWalkBrowsingContextGroup {
+ public:
+  virtual ~AutoWalkBrowsingContextGroup() = default;
+
+ protected:
+  void SuppressBrowsingContextGroup(BrowsingContextGroup* aGroup);
+  void UnsuppressDocuments() {
+    for (const auto& doc : mDocuments) {
+      UnsuppressDocument(doc);
+    }
+  }
+  virtual void SuppressDocument(Document* aDocument) = 0;
+  virtual void UnsuppressDocument(Document* aDocument) = 0;
+  AutoTArray<RefPtr<Document>, 16> mDocuments;
+};
+
+class MOZ_RAII nsAutoSyncOperation : private AutoWalkBrowsingContextGroup {
  public:
   explicit nsAutoSyncOperation(Document* aDocument,
                                SyncOperationBehavior aSyncBehavior);
   ~nsAutoSyncOperation();
 
+ protected:
+  void SuppressDocument(Document* aDocument) override;
+  void UnsuppressDocument(Document* aDocument) override;
+
  private:
-  nsTArray<RefPtr<Document>> mDocuments;
   uint32_t mMicroTaskLevel;
   const SyncOperationBehavior mSyncBehavior;
   RefPtr<BrowsingContext> mBrowsingContext;

@@ -21,6 +21,7 @@ import sys
 import tarfile
 from contextlib import contextmanager
 from distutils.dir_util import copy_tree
+from distutils.file_util import copy_file
 
 from shutil import which
 
@@ -196,10 +197,13 @@ def install_libgcc(gcc_dir, clang_dir, is_final_stage):
     mkdir_p(clang_lib_dir)
     copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
     libgcc_dir = os.path.join(gcc_dir, "lib64")
-    clang_lib_dir = os.path.join(clang_dir, "lib")
+    # This is necessary as long as CI runs on debian8 docker images.
+    copy_file(
+        os.path.join(libgcc_dir, "libstdc++.so.6"), os.path.join(clang_dir, "lib")
+    )
     copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
     libgcc_dir = os.path.join(gcc_dir, "lib32")
-    clang_lib_dir = os.path.join(clang_dir, "lib32")
+    clang_lib_dir = os.path.join(clang_lib_dir, "32")
     copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
     include_dir = os.path.join(gcc_dir, "include")
     clang_include_dir = os.path.join(clang_dir, "include")
@@ -319,6 +323,9 @@ def build_one_stage(
         if is_linux():
             cmake_args += ["-DLLVM_BINUTILS_INCDIR=%s/include" % gcc_dir]
             cmake_args += ["-DLLVM_ENABLE_LIBXML2=FORCE_ON"]
+            sysroot = os.path.join(os.environ.get("MOZ_FETCHES_DIR", ""), "sysroot")
+            if os.path.exists(sysroot):
+                cmake_args += ["-DCMAKE_SYSROOT=%s" % sysroot]
         if is_windows():
             cmake_args.insert(-1, "-DLLVM_EXPORT_SYMBOLS_FOR_PLUGINS=ON")
             cmake_args.insert(-1, "-DLLVM_USE_CRT_RELEASE=MT")

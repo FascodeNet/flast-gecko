@@ -135,8 +135,7 @@ inline NSString* ToNSString(id aValue) {
 }
 
 - (NSString*)moxRole {
-  if ([self ARIARole] == nsGkAtoms::textbox ||
-      [self stateWithMask:states::MULTI_LINE]) {
+  if ([self stateWithMask:states::MULTI_LINE]) {
     return NSAccessibilityTextAreaRole;
   }
 
@@ -283,8 +282,13 @@ inline NSString* ToNSString(id aValue) {
 }
 
 - (NSAttributedString*)moxAttributedStringForRange:(NSValue*)range {
-  return [[[NSAttributedString alloc]
-      initWithString:[self moxStringForRange:range]] autorelease];
+  GeckoTextMarkerRange markerRange = [self textMarkerRangeFromRange:range];
+
+  if (!markerRange.IsValid()) {
+    return nil;
+  }
+
+  return markerRange.AttributedText();
 }
 
 - (NSValue*)moxRangeForLine:(NSNumber*)line {
@@ -429,8 +433,15 @@ inline NSString* ToNSString(id aValue) {
 }
 
 - (NSAttributedString*)moxAttributedStringForRange:(NSValue*)range {
-  return [[[NSAttributedString alloc]
-      initWithString:[self moxStringForRange:range]] autorelease];
+  MOZ_ASSERT(!mGeckoAccessible.IsNull());
+
+  NSRange r = [range rangeValue];
+  GeckoTextMarkerRange textMarkerRange(mGeckoAccessible);
+  textMarkerRange.mStart.mOffset += r.location;
+  textMarkerRange.mEnd.mOffset =
+      textMarkerRange.mStart.mOffset + r.location + r.length;
+
+  return textMarkerRange.AttributedText();
 }
 
 - (NSValue*)moxBoundsForRange:(NSValue*)range {

@@ -20,7 +20,7 @@
 #include "frontend/AbstractScopePtr.h"    // AbstractScopePtr, ScopeIndex
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ObjLiteral.h"          // ObjLiteralStencil
-#include "frontend/ParserAtom.h"          // ParserAtom, TaggedParserAtomIndex
+#include "frontend/ParserAtom.h"          // TaggedParserAtomIndex
 #include "frontend/ScriptIndex.h"         // ScriptIndex
 #include "frontend/TypedIndex.h"          // TypedIndex
 #include "js/AllocPolicy.h"               // SystemAllocPolicy
@@ -126,24 +126,24 @@ using ParserBindingIter = AbstractBindingIter<TaggedParserAtomIndex>;
 //      ...
 //  }
 //
+//  struct StencilDelazificationSet {
+//      Span<BaseCompilationStencil>    delazifications;
+//      ...
+//  }
+//
 //  struct CompilationStencil : BaseCompilationStencil {
 //      LifoAlloc                       alloc;
 //      CompilationInput                input;
 //      Span<ScriptStencilExtra>        scriptExtra;
-//      ...
-//  }
-//
-//  struct CompilationStencilSet : CompilationStencil {
-//      Span<BaseCompilationStencil>    delazifications;
+//      StencilDelazifcationSet*        delazificationSet;
 //      ...
 //  }
 //
 // When we delazify a function that was lazily parsed, we generate a new Stencil
 // at the point too. These delazifications can be cached as well. When loading
-// back from a cache we group these together in a `CompilationStencilSet`. Note
-// that the base class we inherit from provides storage for the initial lazy
-// parse and the `delazifications` field is the collection of delazified
-// function data that are available.
+// back from a cache we group these together in a `StencilDelazificationSet`
+// structure that hangs off the `CompilationStencil`. This delazification data
+// is only meaningful if we also have the initial parse stencil.
 //
 //
 // CompilationGCOutput
@@ -196,13 +196,14 @@ class RegExpStencil {
   // This is used by `Reflect.parse` when we need the RegExpObject but are not
   // doing a complete instantiation of the BaseCompilationStencil.
   RegExpObject* createRegExpAndEnsureAtom(
-      JSContext* cx, CompilationAtomCache& atomCache,
-      BaseCompilationStencil& stencil) const;
+      JSContext* cx, ParserAtomsTable& parserAtoms,
+      CompilationAtomCache& atomCache) const;
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();
-  void dump(JSONPrinter& json, BaseCompilationStencil* stencil);
-  void dumpFields(JSONPrinter& json, BaseCompilationStencil* stencil);
+  void dump() const;
+  void dump(JSONPrinter& json, const BaseCompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json,
+                  const BaseCompilationStencil* stencil) const;
 #endif
 };
 
@@ -233,9 +234,9 @@ class BigIntStencil {
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();
-  void dump(JSONPrinter& json);
-  void dumpCharsNoQuote(GenericPrinter& out);
+  void dump() const;
+  void dump(JSONPrinter& json) const;
+  void dumpCharsNoQuote(GenericPrinter& out) const;
 #endif
 };
 
@@ -395,11 +396,11 @@ class ScopeStencil {
                      BaseParserScopeData* baseScopeData) const;
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();
-  void dump(JSONPrinter& json, BaseParserScopeData* baseScopeData,
-            BaseCompilationStencil* stencil);
-  void dumpFields(JSONPrinter& json, BaseParserScopeData* baseScopeData,
-                  BaseCompilationStencil* stencil);
+  void dump() const;
+  void dump(JSONPrinter& json, const BaseParserScopeData* baseScopeData,
+            const BaseCompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json, const BaseParserScopeData* baseScopeData,
+                  const BaseCompilationStencil* stencil) const;
 #endif
 
  private:
@@ -565,9 +566,10 @@ class StencilModuleMetadata {
                   JS::Handle<ModuleObject*> module) const;
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();
-  void dump(JSONPrinter& json, BaseCompilationStencil* stencil);
-  void dumpFields(JSONPrinter& json, BaseCompilationStencil* stencil);
+  void dump() const;
+  void dump(JSONPrinter& json, const BaseCompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json,
+                  const BaseCompilationStencil* stencil) const;
 #endif
 };
 
@@ -814,9 +816,10 @@ class ScriptStencil {
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();
-  void dump(JSONPrinter& json, BaseCompilationStencil* stencil);
-  void dumpFields(JSONPrinter& json, BaseCompilationStencil* stencil);
+  void dump() const;
+  void dump(JSONPrinter& json, const BaseCompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json,
+                  const BaseCompilationStencil* stencil) const;
 #endif
 };
 
@@ -861,20 +864,20 @@ class ScriptStencilExtra {
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();
-  void dump(JSONPrinter& json);
-  void dumpFields(JSONPrinter& json);
+  void dump() const;
+  void dump(JSONPrinter& json) const;
+  void dumpFields(JSONPrinter& json) const;
 #endif
 };
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
 void DumpTaggedParserAtomIndex(js::JSONPrinter& json,
                                TaggedParserAtomIndex taggedIndex,
-                               BaseCompilationStencil* stencil);
+                               const BaseCompilationStencil* stencil);
 
 void DumpTaggedParserAtomIndexNoQuote(GenericPrinter& out,
                                       TaggedParserAtomIndex taggedIndex,
-                                      BaseCompilationStencil* stencil);
+                                      const BaseCompilationStencil* stencil);
 #endif
 
 } /* namespace frontend */

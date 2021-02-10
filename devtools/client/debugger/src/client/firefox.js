@@ -20,15 +20,12 @@ let targetList;
 let resourceWatcher;
 
 export async function onConnect(
-  connection: any,
+  devToolsClient: any,
+  _targetList: any,
+  _resourceWatcher: any,
   _actions: Object,
   store: any
 ): Promise<void> {
-  const {
-    devToolsClient,
-    targetList: _targetList,
-    resourceWatcher: _resourceWatcher,
-  } = connection;
   actions = _actions;
   targetList = _targetList;
   resourceWatcher = _resourceWatcher;
@@ -60,6 +57,9 @@ export async function onConnect(
   await resourceWatcher.watchResources([resourceWatcher.TYPES.THREAD_STATE], {
     onAvailable: onBreakpointAvailable,
   });
+  await resourceWatcher.watchResources([resourceWatcher.TYPES.ERROR_MESSAGE], {
+    onAvailable: actions.addExceptionFromResources,
+  });
 }
 
 export function onDisconnect() {
@@ -74,6 +74,10 @@ export function onDisconnect() {
   resourceWatcher.unwatchResources([resourceWatcher.TYPES.THREAD_STATE], {
     onAvailable: onBreakpointAvailable,
   });
+  resourceWatcher.unwatchResources([resourceWatcher.TYPES.ERROR_MESSAGE], {
+    onAvailable: actions.addExceptionFromResources,
+  });
+  sourceQueue.clear();
 }
 
 async function onTargetAvailable({
@@ -130,11 +134,9 @@ async function onTargetAvailable({
   // they are active once attached.
   actions.addEventListenerBreakpoints([]).catch(e => console.error(e));
 
-  const { traits } = targetFront;
   await actions.connect(
     targetFront.url,
     threadFront.actor,
-    traits,
     targetFront.isWebExtension
   );
 

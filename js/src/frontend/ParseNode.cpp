@@ -12,8 +12,8 @@
 
 #include "frontend/FullParseHandler.h"
 #include "frontend/ParseContext.h"
-#include "frontend/Parser.h"  // ParserBase
-#include "frontend/ParserAtom.h"  // ParserAtom, ParserAtomsTable, TaggedParserAtomIndex
+#include "frontend/Parser.h"      // ParserBase
+#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "frontend/SharedContext.h"
 #include "vm/BigIntType.h"
 #include "vm/Printer.h"
@@ -207,28 +207,15 @@ void RegExpLiteral::dumpImpl(ParserBase* parser, GenericPrinter& out,
   out.printf("(%s)", parseNodeNames[getKindAsIndex()]);
 }
 
-static void DumpCharsNoNewline(const ParserAtom* atom,
-                               js::GenericPrinter& out) {
-  if (atom->hasLatin1Chars()) {
-    out.put("[Latin 1]");
-    JSString::dumpChars(atom->latin1Chars(), atom->length(), out);
-  } else {
-    out.put("[2 byte]");
-    JSString::dumpChars(atom->twoByteChars(), atom->length(), out);
-  }
-}
-
 static void DumpCharsNoNewline(ParserBase* parser, TaggedParserAtomIndex index,
                                GenericPrinter& out) {
+  out.put("\"");
   if (parser) {
-    const auto* atom =
-        parser->getCompilationState().parserAtoms.getParserAtom(index);
-    DumpCharsNoNewline(atom, out);
+    parser->parserAtoms().dumpCharsNoQuote(out, index);
   } else {
-    out.put("\"");
     DumpTaggedParserAtomIndexNoQuote(out, index, nullptr);
-    out.put("\"");
   }
+  out.put("\"");
 }
 
 void LoopControlStatement::dumpImpl(ParserBase* parser, GenericPrinter& out,
@@ -320,24 +307,6 @@ void ListNode::dumpImpl(ParserBase* parser, GenericPrinter& out, int indent) {
   out.printf("])");
 }
 
-template <typename CharT>
-static void DumpName(GenericPrinter& out, const CharT* s, size_t len) {
-  if (len == 0) {
-    out.put("#<zero-length name>");
-  }
-
-  for (size_t i = 0; i < len; i++) {
-    char16_t c = s[i];
-    if (c > 32 && c < 127) {
-      out.putChar(c);
-    } else if (c <= 255) {
-      out.printf("\\x%02x", unsigned(c));
-    } else {
-      out.printf("\\u%04x", unsigned(c));
-    }
-  }
-}
-
 void NameNode::dumpImpl(ParserBase* parser, GenericPrinter& out, int indent) {
   switch (getKind()) {
     case ParseNodeKind::StringExpr:
@@ -353,12 +322,10 @@ void NameNode::dumpImpl(ParserBase* parser, GenericPrinter& out, int indent) {
       if (!atom_) {
         out.put("#<null name>");
       } else if (parser) {
-        const auto* atom =
-            parser->getCompilationState().parserAtoms.getParserAtom(atom_);
-        if (atom->hasLatin1Chars()) {
-          DumpName(out, atom->latin1Chars(), atom->length());
+        if (atom_ == TaggedParserAtomIndex::WellKnown::empty()) {
+          out.put("#<zero-length name>");
         } else {
-          DumpName(out, atom->twoByteChars(), atom->length());
+          parser->parserAtoms().dumpCharsNoQuote(out, atom_);
         }
       } else {
         DumpTaggedParserAtomIndexNoQuote(out, atom_, nullptr);
@@ -383,13 +350,8 @@ void LabeledStatement::dumpImpl(ParserBase* parser, GenericPrinter& out,
   const char* name = parseNodeNames[getKindAsIndex()];
   out.printf("(%s ", name);
   DumpCharsNoNewline(parser, label(), out);
-  out.printf(" ");
-  indent += strlen(name) + 3;
-  if (parser) {
-    const auto* labelAtom =
-        parser->getCompilationState().parserAtoms.getParserAtom(label());
-    indent += labelAtom->length();
-  }
+  indent += strlen(name) + 2;
+  IndentNewLine(out, indent);
   DumpParseTree(parser, statement(), out, indent);
   out.printf(")");
 }
@@ -404,12 +366,10 @@ void LexicalScopeNode::dumpImpl(ParserBase* parser, GenericPrinter& out,
     for (uint32_t i = 0; i < bindings->slotInfo.length; i++) {
       auto index = bindings->trailingNames[i].name();
       if (parser) {
-        const auto* name =
-            parser->getCompilationState().parserAtoms.getParserAtom(index);
-        if (name->hasLatin1Chars()) {
-          DumpName(out, name->latin1Chars(), name->length());
+        if (index == TaggedParserAtomIndex::WellKnown::empty()) {
+          out.put("#<zero-length name>");
         } else {
-          DumpName(out, name->twoByteChars(), name->length());
+          parser->parserAtoms().dumpCharsNoQuote(out, index);
         }
       } else {
         DumpTaggedParserAtomIndexNoQuote(out, index, nullptr);
@@ -433,10 +393,11 @@ TaggedParserAtomIndex NumericLiteral::toAtom(
 }
 
 RegExpObject* RegExpLiteral::create(JSContext* cx,
+                                    ParserAtomsTable& parserAtoms,
                                     CompilationAtomCache& atomCache,
                                     BaseCompilationStencil& stencil) const {
-  return stencil.regExpData[index_].createRegExpAndEnsureAtom(cx, atomCache,
-                                                              stencil);
+  return stencil.regExpData[index_].createRegExpAndEnsureAtom(cx, parserAtoms,
+                                                              atomCache);
 }
 
 bool js::frontend::IsAnonymousFunctionDefinition(ParseNode* pn) {

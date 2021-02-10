@@ -73,7 +73,7 @@
 #include "frontend/BytecodeCompilation.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
-#include "frontend/CompilationInfo.h"
+#include "frontend/CompilationStencil.h"
 #ifdef JS_ENABLE_SMOOSH
 #  include "frontend/Frontend2.h"
 #endif
@@ -1612,6 +1612,47 @@ static MOZ_MUST_USE bool Process(JSContext* cx, const char* filename,
 #  define GET_FD_FROM_FILE(a) fileno(a)
 #endif
 
+static void freeExternalCallback(void* contents, void* userData) {
+  MOZ_ASSERT(!userData);
+  js_free(contents);
+}
+
+static bool CreateExternalArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (args.length() != 1) {
+    JS_ReportErrorNumberASCII(
+        cx, my_GetErrorMessage, nullptr,
+        args.length() < 1 ? JSSMSG_NOT_ENOUGH_ARGS : JSSMSG_TOO_MANY_ARGS,
+        "createExternalArrayBuffer");
+    return false;
+  }
+
+  int32_t bytes = 0;
+  if (!ToInt32(cx, args[0], &bytes)) {
+    return false;
+  }
+
+  if (bytes <= 0) {
+    JS_ReportErrorASCII(cx, "Size must be positive");
+    return false;
+  }
+
+  void* buffer = js_malloc(bytes);
+  if (!buffer) {
+    JS_ReportOutOfMemory(cx);
+    return false;
+  }
+
+  RootedObject arrayBuffer(
+      cx, JS::NewExternalArrayBuffer(cx, bytes, buffer, &freeExternalCallback));
+  if (!arrayBuffer) {
+    return false;
+  }
+
+  args.rval().setObject(*arrayBuffer);
+  return true;
+}
+
 static bool CreateMappedArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -2310,6 +2351,11 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
             cx,
             "saveIncrementalBytecode and saveBytecode cannot be used"
             " at the same time.");
+        return false;
+      }
+      if (saveIncrementalBytecode && js::UseOffThreadParseGlobal()) {
+        JS_ReportErrorASCII(
+            cx, "saveIncrementalBytecode cannot be used with legacy XDR.");
         return false;
       }
     }
@@ -9112,6 +9158,10 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("wrapWithProto", WrapWithProto, 2, 0,
 "wrapWithProto(obj)",
 "  Wrap an object into a noop wrapper with prototype semantics."),
+
+    JS_FN_HELP("createExternalArrayBuffer", CreateExternalArrayBuffer, 1, 0,
+"createExternalArrayBuffer(size)",
+"  Create an array buffer that has external data of size."),
 
     JS_FN_HELP("createMappedArrayBuffer", CreateMappedArrayBuffer, 1, 0,
 "createMappedArrayBuffer(filename, [offset, [size]])",

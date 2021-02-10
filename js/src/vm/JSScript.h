@@ -553,7 +553,7 @@ class ScriptSource {
   // function should be recorded before their first execution.
   // This value is logically owned by the canonical ScriptSourceObject, and
   // will be released in the canonical SSO's finalizer.
-  UniquePtr<XDRIncrementalEncoderBase> xdrEncoder_ = nullptr;
+  UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder_ = nullptr;
 
   // A string indicating how this source code was introduced into the system.
   // This is a constant, statically allocated C string, so does not need memory
@@ -1019,12 +1019,6 @@ class ScriptSource {
   // Return wether an XDR encoder is present or not.
   bool hasEncoder() const { return bool(xdrEncoder_); }
 
-  // Create a new XDR encoder, and encode the top-level JSScript. The result
-  // of the encoding would be available in the |buffer| provided as argument,
-  // as soon as |xdrFinalize| is called and all xdr function calls returned
-  // successfully.
-  bool xdrEncodeTopLevel(JSContext* cx, HandleScript script);
-
   // Create a new XDR encoder, and encode the stencil for the initial
   // compilation. The created XDR encoder isn't stored into `xdrEncoder_`
   // field. Caller is responsible for calling `setIncrementalEncoder` after
@@ -1032,27 +1026,17 @@ class ScriptSource {
   // gets created).
   bool xdrEncodeInitialStencil(
       JSContext* cx, frontend::CompilationStencil& stencil,
-      UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+      UniquePtr<XDRIncrementalStencilEncoder>& xdrEncoder);
 
   // Create a new XDR encoder, and encode the stencils.
   // The created XDR encoder isn't stored into `xdrEncoder_` field.
   // Caller is responsible for calling `setIncrementalEncoder` after
   // instantiating stencil (so, corresponding canonical ScriptSourceObject
   // gets created).
-  bool xdrEncodeStencils(JSContext* cx,
-                         frontend::CompilationStencilSet& stencilSet,
-                         UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+  bool xdrEncodeStencils(JSContext* cx, frontend::CompilationStencil& stencil,
+                         UniquePtr<XDRIncrementalStencilEncoder>& xdrEncoder);
 
-  void setIncrementalEncoder(XDRIncrementalEncoderBase* xdrEncoder);
-
-  // Encode a delazified JSFunction.  In case of errors, the XDR encoder is
-  // freed and the |buffer| provided as argument to |xdrEncodeTopLevel| is
-  // considered undefined.
-  //
-  // The |sourceObject| argument is the object holding the current
-  // ScriptSource.
-  bool xdrEncodeFunction(JSContext* cx, HandleFunction fun,
-                         HandleScriptSourceObject sourceObject);
+  void setIncrementalEncoder(XDRIncrementalStencilEncoder* xdrEncoder);
 
   // Encode a delazified function's stencil.  In case of errors, the XDR
   // encoder is freed.
@@ -1064,7 +1048,7 @@ class ScriptSource {
   // XDR encoder is freed.
   bool xdrEncodeFunctionStencilWith(
       JSContext* cx, frontend::BaseCompilationStencil& stencil,
-      UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+      UniquePtr<XDRIncrementalStencilEncoder>& xdrEncoder);
 
  public:
   // Linearize the encoded content in the |buffer| provided as argument to
@@ -1097,9 +1081,7 @@ class ScriptSource {
   template <XDRMode mode>
   static MOZ_MUST_USE XDRResult
   XDR(XDRState<mode>* xdr, const JS::ReadOnlyCompileOptions* maybeOptions,
-      MutableHandle<ScriptSourceHolder> holder);
-
-  void trace(JSTracer* trc);
+      ScriptSourceHolder& holder);
 };
 
 class ScriptSourceHolder {
@@ -1124,12 +1106,6 @@ class ScriptSourceHolder {
     ss = newss;
   }
   ScriptSource* get() const { return ss; }
-
-  void trace(JSTracer* trc) {
-    if (ss) {
-      ss->trace(trc);
-    }
-  }
 };
 
 // [SMDOC] ScriptSourceObject
@@ -1165,7 +1141,6 @@ class ScriptSourceObject : public NativeObject {
  public:
   static const JSClass class_;
 
-  static void trace(JSTracer* trc, JSObject* obj);
   static void finalize(JSFreeOp* fop, JSObject* obj);
 
   static ScriptSourceObject* create(JSContext* cx, ScriptSource* source);

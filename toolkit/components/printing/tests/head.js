@@ -56,6 +56,7 @@ class PrintHelper {
       Services.prefs.clearUserPref(name);
     }
     Services.prefs.clearUserPref("print_printer");
+    Services.prefs.clearUserPref("print.more-settings.open");
   }
 
   static getTestPageUrl(pathName) {
@@ -304,6 +305,10 @@ class PrintHelper {
 
   get(id) {
     return this.doc.getElementById(id);
+  }
+
+  get sheetCount() {
+    return this.doc.l10n.getAttributes(this.get("sheet-count")).args.sheetCount;
   }
 
   get sourceURI() {
