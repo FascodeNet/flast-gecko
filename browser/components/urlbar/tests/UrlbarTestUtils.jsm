@@ -27,6 +27,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
 
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "uuidGenerator",
+  "@mozilla.org/uuid-generator;1",
+  "nsIUUIDGenerator"
+);
+
 var UrlbarTestUtils = {
   /**
    * This maps the categories used by the FX_URLBAR_SELECTED_RESULT_METHOD and
@@ -56,6 +63,7 @@ var UrlbarTestUtils = {
       this.Assert = scope.Assert;
       this.EventUtils = scope.EventUtils;
     }
+    // If you add other properties to `this`, null them in uninit().
   },
 
   /**
@@ -65,6 +73,8 @@ var UrlbarTestUtils = {
    */
   uninit() {
     this._testScope = null;
+    this.Assert = null;
+    this.EventUtils = null;
   },
 
   /**
@@ -193,6 +203,7 @@ var UrlbarTestUtils = {
     details.image = element.getElementsByClassName("urlbarView-favicon")[0].src;
     details.title = result.title;
     details.tags = "tags" in result.payload ? result.payload.tags : [];
+    details.isSponsored = result.payload.isSponsored;
     let actions = element.getElementsByClassName("urlbarView-action");
     let urls = element.getElementsByClassName("urlbarView-url");
     let typeIcon = element.querySelector(".urlbarView-type-icon");
@@ -857,7 +868,7 @@ class TestProvider extends UrlbarProvider {
    */
   constructor({
     results,
-    name = Math.floor(Math.random() * 100000),
+    name = "TestProvider" + uuidGenerator.generateUUID(),
     type = UrlbarUtils.PROVIDER_TYPE.PROFILE,
     priority = 0,
     addTimeout = 0,
@@ -874,7 +885,7 @@ class TestProvider extends UrlbarProvider {
     this._onSelection = onSelection;
   }
   get name() {
-    return "TestProvider" + this._name;
+    return this._name;
   }
   get type() {
     return this._type;

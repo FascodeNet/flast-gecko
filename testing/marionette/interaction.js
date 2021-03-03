@@ -184,8 +184,6 @@ async function webdriverClickElement(el, a11y) {
       clickPoint.y,
       {
         type: "mousemove",
-        // Remove buttons attribute with https://bugzilla.mozilla.org/show_bug.cgi?id=1686361
-        buttons: 0,
       },
       win
     );
@@ -198,7 +196,7 @@ async function webdriverClickElement(el, a11y) {
 
   // step 10
   // if the click causes navigation, the post-navigation checks are
-  // handled by the load listener in listener.js
+  // handled by navigate.js
 }
 
 async function chromeClick(el, a11y) {

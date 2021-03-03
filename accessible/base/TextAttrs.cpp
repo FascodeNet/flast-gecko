@@ -5,7 +5,7 @@
 
 #include "TextAttrs.h"
 
-#include "Accessible-inl.h"
+#include "LocalAccessible-inl.h"
 #include "nsAccUtils.h"
 #include "nsCoreUtils.h"
 #include "StyleInfo.h"
@@ -44,7 +44,7 @@ void TextAttrsMgr::GetAttributes(nsIPersistentProperties* aAttributes,
   // Embedded objects are combined into own range with empty attributes set.
   if (mOffsetAcc && !mOffsetAcc->IsText()) {
     for (int32_t childIdx = mOffsetAccIdx - 1; childIdx >= 0; childIdx--) {
-      Accessible* currAcc = mHyperTextAcc->GetChildAt(childIdx);
+      LocalAccessible* currAcc = mHyperTextAcc->LocalChildAt(childIdx);
       if (currAcc->IsText()) break;
 
       (*aStartOffset)--;
@@ -53,7 +53,7 @@ void TextAttrsMgr::GetAttributes(nsIPersistentProperties* aAttributes,
     uint32_t childCount = mHyperTextAcc->ChildCount();
     for (uint32_t childIdx = mOffsetAccIdx + 1; childIdx < childCount;
          childIdx++) {
-      Accessible* currAcc = mHyperTextAcc->GetChildAt(childIdx);
+      LocalAccessible* currAcc = mHyperTextAcc->LocalChildAt(childIdx);
       if (currAcc->IsText()) break;
 
       (*aEndOffset)++;
@@ -65,8 +65,9 @@ void TextAttrsMgr::GetAttributes(nsIPersistentProperties* aAttributes,
   // Get the content and frame of the accessible. In the case of document
   // accessible it's role content and root frame.
   nsIContent* hyperTextElm = mHyperTextAcc->GetContent();
-  if (!hyperTextElm)
+  if (!hyperTextElm) {
     return;  // XXX: we don't support text attrs on document with no body
+  }
 
   nsIFrame* rootFrame = mHyperTextAcc->GetFrame();
   MOZ_ASSERT(rootFrame, "No frame for accessible!");
@@ -124,20 +125,22 @@ void TextAttrsMgr::GetAttributes(nsIPersistentProperties* aAttributes,
 
   // Expose text attributes if applicable.
   if (aAttributes) {
-    for (uint32_t idx = 0; idx < ArrayLength(attrArray); idx++)
+    for (uint32_t idx = 0; idx < ArrayLength(attrArray); idx++) {
       attrArray[idx]->Expose(aAttributes, mIncludeDefAttrs);
+    }
   }
 
   // Expose text attributes range where they are applied if applicable.
-  if (mOffsetAcc)
+  if (mOffsetAcc) {
     GetRange(attrArray, ArrayLength(attrArray), aStartOffset, aEndOffset);
+  }
 }
 
 void TextAttrsMgr::GetRange(TextAttr* aAttrArray[], uint32_t aAttrArrayLen,
                             uint32_t* aStartOffset, uint32_t* aEndOffset) {
   // Navigate backward from anchor accessible to find start offset.
   for (int32_t childIdx = mOffsetAccIdx - 1; childIdx >= 0; childIdx--) {
-    Accessible* currAcc = mHyperTextAcc->GetChildAt(childIdx);
+    LocalAccessible* currAcc = mHyperTextAcc->LocalChildAt(childIdx);
 
     // Stop on embedded accessible since embedded accessibles are combined into
     // own range.
@@ -163,7 +166,7 @@ void TextAttrsMgr::GetRange(TextAttr* aAttrArray[], uint32_t aAttrArrayLen,
   // Navigate forward from anchor accessible to find end offset.
   uint32_t childLen = mHyperTextAcc->ChildCount();
   for (uint32_t childIdx = mOffsetAccIdx + 1; childIdx < childLen; childIdx++) {
-    Accessible* currAcc = mHyperTextAcc->GetChildAt(childIdx);
+    LocalAccessible* currAcc = mHyperTextAcc->LocalChildAt(childIdx);
     if (!currAcc->IsText()) break;
 
     MOZ_ASSERT(nsCoreUtils::GetDOMElementFor(currAcc->GetContent()),
@@ -205,7 +208,7 @@ TextAttrsMgr::LangTextAttr::LangTextAttr(HyperTextAccessible* aRoot,
 
 TextAttrsMgr::LangTextAttr::~LangTextAttr() {}
 
-bool TextAttrsMgr::LangTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::LangTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                              nsString* aValue) {
   nsCoreUtils::GetLanguageFor(aAccessible->GetContent(), mRootContent, *aValue);
   return !aValue->IsEmpty();
@@ -227,7 +230,7 @@ TextAttrsMgr::InvalidTextAttr::InvalidTextAttr(nsIContent* aRootElm,
   if (aElm) mIsDefined = GetValue(aElm, &mNativeValue);
 }
 
-bool TextAttrsMgr::InvalidTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::InvalidTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                 uint32_t* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   return elm ? GetValue(elm, aValue) : false;
@@ -295,7 +298,7 @@ TextAttrsMgr::BGColorTextAttr::BGColorTextAttr(nsIFrame* aRootFrame,
   if (aFrame) mIsDefined = GetColor(aFrame, &mNativeValue);
 }
 
-bool TextAttrsMgr::BGColorTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::BGColorTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                 nscolor* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {
@@ -353,7 +356,7 @@ TextAttrsMgr::ColorTextAttr::ColorTextAttr(nsIFrame* aRootFrame,
   }
 }
 
-bool TextAttrsMgr::ColorTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::ColorTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                               nscolor* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {
@@ -384,7 +387,7 @@ TextAttrsMgr::FontFamilyTextAttr::FontFamilyTextAttr(nsIFrame* aRootFrame,
   if (aFrame) mIsDefined = GetFontFamily(aFrame, mNativeValue);
 }
 
-bool TextAttrsMgr::FontFamilyTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::FontFamilyTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                    nsString* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {
@@ -431,7 +434,7 @@ TextAttrsMgr::FontSizeTextAttr::FontSizeTextAttr(nsIFrame* aRootFrame,
   }
 }
 
-bool TextAttrsMgr::FontSizeTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::FontSizeTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                  nscoord* aValue) {
   nsIContent* el = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (el) {
@@ -481,7 +484,7 @@ TextAttrsMgr::FontStyleTextAttr::FontStyleTextAttr(nsIFrame* aRootFrame,
   }
 }
 
-bool TextAttrsMgr::FontStyleTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::FontStyleTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                   FontSlantStyle* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {
@@ -517,7 +520,7 @@ TextAttrsMgr::FontWeightTextAttr::FontWeightTextAttr(nsIFrame* aRootFrame,
   }
 }
 
-bool TextAttrsMgr::FontWeightTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::FontWeightTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                    FontWeight* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {
@@ -571,19 +574,20 @@ FontWeight TextAttrsMgr::FontWeightTextAttr::GetFontWeight(nsIFrame* aFrame) {
 // AutoGeneratedTextAttr
 ////////////////////////////////////////////////////////////////////////////////
 TextAttrsMgr::AutoGeneratedTextAttr::AutoGeneratedTextAttr(
-    HyperTextAccessible* aHyperTextAcc, Accessible* aAccessible)
+    HyperTextAccessible* aHyperTextAcc, LocalAccessible* aAccessible)
     : TTextAttr<bool>(!aAccessible) {
   mRootNativeValue = false;
   mIsRootDefined = false;
 
-  if (aAccessible)
+  if (aAccessible) {
     mIsDefined = mNativeValue =
         ((aAccessible->NativeRole() == roles::STATICTEXT) ||
          (aAccessible->NativeRole() == roles::LISTITEM_MARKER));
+  }
 }
 
-bool TextAttrsMgr::AutoGeneratedTextAttr::GetValueFor(Accessible* aAccessible,
-                                                      bool* aValue) {
+bool TextAttrsMgr::AutoGeneratedTextAttr::GetValueFor(
+    LocalAccessible* aAccessible, bool* aValue) {
   return *aValue = (aAccessible->NativeRole() == roles::STATICTEXT);
 }
 
@@ -618,7 +622,7 @@ TextAttrsMgr::TextDecorTextAttr::TextDecorTextAttr(nsIFrame* aRootFrame,
   }
 }
 
-bool TextAttrsMgr::TextDecorTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::TextDecorTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                   TextDecorValue* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {
@@ -675,7 +679,7 @@ TextAttrsMgr::TextPosTextAttr::TextPosTextAttr(nsIFrame* aRootFrame,
   }
 }
 
-bool TextAttrsMgr::TextPosTextAttr::GetValueFor(Accessible* aAccessible,
+bool TextAttrsMgr::TextPosTextAttr::GetValueFor(LocalAccessible* aAccessible,
                                                 TextPosValue* aValue) {
   nsIContent* elm = nsCoreUtils::GetDOMElementFor(aAccessible->GetContent());
   if (elm) {

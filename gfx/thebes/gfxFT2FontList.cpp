@@ -636,28 +636,29 @@ void gfxFT2FontList::CollectInitData(const FontListEntry& aFLE,
                                      StandardFile aStdFile) {
   nsAutoCString key(aFLE.familyName());
   BuildKeyNameFromFontName(key);
-  auto faceList = mFaceInitData.Get(key);
-  if (!faceList) {
-    faceList = new nsTArray<fontlist::Face::InitData>;
-    mFaceInitData.Put(key, faceList);
-    mFamilyInitData.AppendElement(
-        fontlist::Family::InitData{key, aFLE.familyName()});
-  }
-  faceList->AppendElement(
-      fontlist::Face::InitData{aFLE.filepath(), aFLE.index(), false,
-                               WeightRange::FromScalar(aFLE.weightRange()),
-                               StretchRange::FromScalar(aFLE.stretchRange()),
-                               SlantStyleRange::FromScalar(aFLE.styleRange())});
+  mFaceInitData
+      .LookupOrInsertWith(
+          key,
+          [&] {
+            mFamilyInitData.AppendElement(
+                fontlist::Family::InitData{key, aFLE.familyName()});
+            return MakeUnique<nsTArray<fontlist::Face::InitData>>();
+          })
+      ->AppendElement(fontlist::Face::InitData{
+          aFLE.filepath(), aFLE.index(), false,
+          WeightRange::FromScalar(aFLE.weightRange()),
+          StretchRange::FromScalar(aFLE.stretchRange()),
+          SlantStyleRange::FromScalar(aFLE.styleRange())});
   nsAutoCString psname(aPSName), fullname(aFullName);
   if (!psname.IsEmpty()) {
     ToLowerCase(psname);
-    mLocalNameTable.Put(psname,
-                        fontlist::LocalFaceRec::InitData(key, aFLE.filepath()));
+    mLocalNameTable.InsertOrUpdate(
+        psname, fontlist::LocalFaceRec::InitData(key, aFLE.filepath()));
   }
   if (!fullname.IsEmpty()) {
     ToLowerCase(fullname);
     if (fullname != psname) {
-      mLocalNameTable.Put(
+      mLocalNameTable.InsertOrUpdate(
           fullname, fontlist::LocalFaceRec::InitData(key, aFLE.filepath()));
     }
   }
@@ -1282,17 +1283,17 @@ void gfxFT2FontList::AddFaceToList(const nsCString& aEntryName, uint32_t aIndex,
                         visibility);
       CollectInitData(fle, psname, fullname, aStdFile);
     } else {
-      RefPtr<gfxFontFamily> family = mFontFamilies.GetWeak(familyKey);
-      if (!family) {
-        family = new FT2FontFamily(familyName, visibility);
-        mFontFamilies.Put(familyKey, RefPtr{family});
-        if (mSkipSpaceLookupCheckFamilies.Contains(familyKey)) {
-          family->SetSkipSpaceFeatureCheck(true);
-        }
-        if (mBadUnderlineFamilyNames.ContainsSorted(familyKey)) {
-          family->SetBadUnderlineFamily();
-        }
-      }
+      RefPtr<gfxFontFamily> family =
+          mFontFamilies.LookupOrInsertWith(familyKey, [&] {
+            auto family = MakeRefPtr<FT2FontFamily>(familyName, visibility);
+            if (mSkipSpaceLookupCheckFamilies.Contains(familyKey)) {
+              family->SetSkipSpaceFeatureCheck(true);
+            }
+            if (mBadUnderlineFamilyNames.ContainsSorted(familyKey)) {
+              family->SetBadUnderlineFamily();
+            }
+            return family;
+          });
       family->AddFontEntry(fe);
       fe->CheckForBrokenFont(family);
     }
@@ -1591,17 +1592,17 @@ void gfxFT2FontList::AppendFaceFromFontListEntry(const FontListEntry& aFLE,
     nsAutoCString key(aFLE.familyName());
     BuildKeyNameFromFontName(key);
     fe->mStandardFace = (aStdFile == kStandard);
-    RefPtr<gfxFontFamily> family = mFontFamilies.GetWeak(key);
-    if (!family) {
-      family = new FT2FontFamily(aFLE.familyName(), aFLE.visibility());
-      mFontFamilies.Put(key, RefPtr{family});
+    RefPtr<gfxFontFamily> family = mFontFamilies.LookupOrInsertWith(key, [&] {
+      auto family =
+          MakeRefPtr<FT2FontFamily>(aFLE.familyName(), aFLE.visibility());
       if (mSkipSpaceLookupCheckFamilies.Contains(key)) {
         family->SetSkipSpaceFeatureCheck(true);
       }
       if (mBadUnderlineFamilyNames.ContainsSorted(key)) {
         family->SetBadUnderlineFamily();
       }
-    }
+      return family;
+    });
     family->AddFontEntry(fe);
 
     fe->CheckForBrokenFont(family);
@@ -1735,7 +1736,7 @@ gfxFontEntry* gfxFT2FontList::LookupLocalFont(const nsACString& aFontName,
 
     // if so, iterate over faces in this family to see if there is a match
     if (family.Equals(fullNameFamily, nsCaseInsensitiveCStringComparator)) {
-      nsTArray<RefPtr<gfxFontEntry> >& fontList = fontFamily->GetFontList();
+      nsTArray<RefPtr<gfxFontEntry>>& fontList = fontFamily->GetFontList();
       int index, len = fontList.Length();
       for (index = 0; index < len; index++) {
         gfxFontEntry* fe = fontList[index];

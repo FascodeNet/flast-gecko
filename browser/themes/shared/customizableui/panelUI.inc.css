@@ -7,7 +7,9 @@
 %define menuPanelWidth 22.35em
 %define wideMenuPanelWidth 29em
 %define standaloneSubviewWidth 30em
-%define buttonStateHover :not([disabled],[open],:active):is(:hover,:focus)
+%define buttonStateHoverOrFocus :not([disabled],[open],:active):is(:hover,:focus)
+%define buttonStateHover :not([disabled],[open],:active):is(:hover)
+%define buttonStateFocus :not([disabled],[open],:active):is(:focus)
 %define menuStateHover :not([disabled],:active)[_moz-menuactive]
 %define buttonStateActive :not([disabled]):is([open],:hover:active)
 %define menuStateActive :not([disabled])[_moz-menuactive]:active
@@ -30,34 +32,43 @@
   --arrowpanel-menuitem-margin: 0;
   --arrowpanel-menuitem-padding: 4px 12px;
   --arrowpanel-menuitem-border-radius: unset;
+  --panel-separator-margin: 6px 0;
+  --panel-subview-body-padding: 6px 0;
 
   --panelview-toolbarbutton-hover-bgcolor: var(--arrowpanel-dimmed);
   --panelview-toolbarbutton-hover-color: inherit;
   --panelview-toolbarbutton-active-bgcolor: var(--arrowpanel-dimmed-further);
   --panelview-toolbarbutton-active-color: inherit;
-}
-
-@supports -moz-bool-pref("browser.proton.appmenu.enabled") {
-:root {
-  --panelview-toolbarbutton-hover-bgcolor: #0250BB;
-  --panelview-toolbarbutton-hover-color: #FFFFFF;
-  --panelview-toolbarbutton-active-bgcolor: #053E94;
-  --panelview-toolbarbutton-active-color: #FFFFFF;
-
-  --arrowpanel-menuitem-margin: 0 8px;
-  --arrowpanel-menuitem-padding: 8px 12px;
-  --arrowpanel-menuitem-border-radius: 4px;
+  --panel-banner-item-color: black;
+  --panel-banner-item-background-color: hsla(96,65%,75%,.5);
+  --panel-banner-item-hover-bgcolor: hsla(96,65%,75%,.8);
+  --panel-banner-item-active-bgcolor: hsl(96,65%,75%);
+  --panel-banner-item-update-supported-bgcolor: #74BF43;
+  --panel-banner-item-update-unsupported-bgcolor: #FFE900;
+  --panel-separator-zap-gradient: linear-gradient(90deg, #9059FF 0%, #FF4AA2 52.08%, #FFBD4F 100%);
+  --panel-shortcut-color: inherit;
+  --panelview-toolbarbutton-focus-box-shadow: inset 0 0 0 2px -moz-accent-color;
 }
 
 :root[lwt-popup-brighttext] {
-  --panelview-toolbarbutton-hover-bgcolor: #00B4F5;
-  --panelview-toolbarbutton-hover-color: #FFFFFF;
-  --panelview-toolbarbutton-active-bgcolor: #008DEB;
-  --panelview-toolbarbutton-active-color: #FFFFFF;
+  --panel-banner-item-color: @appmenuWarningColorBrightText@;
+  --panel-banner-item-background-color: rgba(48,230,11,.1);
+  --panel-banner-item-hover-bgcolor: rgba(48,230,11,.15);
+  --panel-banner-item-active-bgcolor: rgba(48,230,11,.2);
+}
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+:root {
+  --arrowpanel-menuitem-margin: 0 8px;
+  --arrowpanel-menuitem-padding: 8px;
+  --arrowpanel-menuitem-border-radius: 4px;
+  --panel-separator-margin: 4px 8px;
+  --panel-subview-body-padding: 8px 0;
 }
 
 } /*** END proton ***/
 
+@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
 :root:not([uidensity=compact], [chromehidden~="toolbar"]) #PanelUI-button {
   margin-inline-start: 3px;
   border-inline-start: 1px solid;
@@ -78,6 +89,7 @@
     transparent calc(100% - 4px)
   );
 }
+} /*** END !proton ***/
 
 #PanelUI-menu-button[badge-status] > .toolbarbutton-badge-stack > .toolbarbutton-badge {
   display: -moz-box;
@@ -119,23 +131,40 @@
   background: #FFE900 url(chrome://browser/skin/update-badge.svg) no-repeat center;
 }
 
+@supports -moz-bool-pref("browser.proton.enabled") {
+.panel-banner-item[notificationid="update-available"] > .toolbarbutton-icon,
+.panel-banner-item[notificationid="update-downloading"] > .toolbarbutton-icon,
+.panel-banner-item[notificationid="update-manual"] > .toolbarbutton-icon,
+.panel-banner-item[notificationid="update-other-instance"] > .toolbarbutton-icon,
+.panel-banner-item[notificationid="update-restart"] > .toolbarbutton-icon {
+  background: var(--panel-banner-item-update-supported-bgcolor) url(chrome://browser/skin/update-badge.svg) no-repeat center;
+  border-radius: 50%;
+}
+
+.panel-banner-item[notificationid="update-unsupported"] > .toolbarbutton-icon {
+  background: var(--panel-banner-item-update-unsupported-bgcolor) url(chrome://browser/skin/update-badge.svg) no-repeat center;
+  border-radius: 50%;
+}
+}
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
 .panel-banner-item[notificationid="update-available"]::after,
 .panel-banner-item[notificationid="update-downloading"]::after,
 .panel-banner-item[notificationid="update-manual"]::after,
 .panel-banner-item[notificationid="update-other-instance"]::after,
 .panel-banner-item[notificationid="update-restart"]::after {
-  background: #74BF43 url(chrome://browser/skin/update-badge.svg) no-repeat center;
+  background: var(--panel-banner-item-update-supported-bgcolor) url(chrome://browser/skin/update-badge.svg) no-repeat center;
   border-radius: 50%;
 }
 
 .panel-banner-item[notificationid="update-unsupported"]::after {
-  background: #FFE900 url(chrome://browser/skin/update-badge.svg) no-repeat center;
+  background: var(--panel-banner-item-update-unsupported-bgcolor) url(chrome://browser/skin/update-badge.svg) no-repeat center;
   border-radius: 50%;
 }
-
 .panel-banner-item[notificationid^=update] {
   list-style-image: url(chrome://branding/content/icon16.png);
 }
+} /** END not Proton **/
 
 #PanelUI-menu-button[badge-status="addon-alert"] > .toolbarbutton-badge-stack > .toolbarbutton-badge,
 #PanelUI-menu-button[badge-status="fxa-needs-authentication"] > .toolbarbutton-badge-stack > .toolbarbutton-badge {
@@ -239,8 +268,15 @@ panelmultiview[transitioning] > .panel-viewcontainer > .panel-viewstack > panelv
   overflow-y: auto;
   overflow-x: hidden;
   -moz-box-flex: 1;
-  padding: 6px 0;
+  padding: var(--panel-subview-body-padding);
 }
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+  toolbarseparator + .panel-subview-body,
+  .subview-subheader + .panel-subview-body {
+    padding: 0;
+  }
+} /** END Proton **/
 
 .panel-view-body-unscrollable {
   overflow: hidden;
@@ -271,7 +307,7 @@ panelmultiview[transitioning] > .panel-viewcontainer > .panel-viewstack > panelv
   visibility: hidden;
 }
 
-.panel-info-button@buttonStateHover@ {
+.panel-info-button@buttonStateHoverOrFocus@ {
   background-color: var(--arrowpanel-dimmed);
 }
 
@@ -562,6 +598,7 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   background-color: @appmenuWarningBackgroundColorActive@;
 }
 
+.panel-banner-item > .toolbarbutton-icon,
 .addon-banner-item > .toolbarbutton-icon {
   width: 16px;
   height: 16px;
@@ -591,6 +628,19 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   -moz-box-orient: horizontal;
 }
 
+@supports -moz-bool-pref("browser.proton.enabled") {
+.addon-banner-item,
+.panel-banner-item {
+  margin: 0 8px 4px;
+  padding: 8px;
+  min-height: unset;
+  border-radius: 4px;
+  -moz-box-align: start;
+}
+
+} /** END Proton **/
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
 .panel-banner-item {
   border-block: 1px solid var(--panel-separator-color);
   padding-inline-start: 12px;
@@ -609,14 +659,11 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   width: 0; /* Fancy cropping solution for flexbox. */
 }
 
-.panel-banner-item > .toolbarbutton-icon {
-  width: 16px;
-}
-
 #appMenu-addon-banners:not(:empty) ~ #appMenu-fxa-status,
 .panel-banner-item:not([hidden]) + #appMenu-fxa-status {
   margin-top: 6px;
 }
+} /** END not Proton **/
 
 /* FxAccount indicator bits. */
 
@@ -635,10 +682,21 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   to { transform: rotate(360deg); }
 }
 
+@media (prefers-reduced-motion: no-preference) {
 #PanelUI-fxa-menu-syncnow-button[syncstatus="active"] > .toolbarbutton-icon,
-#PanelUI-remotetabs-syncnow[syncstatus="active"] > .toolbarbutton-icon {
+#PanelUI-remotetabs-syncnow[syncstatus="active"] > .toolbarbutton-icon,
+#PanelUI-appMenu-fxa-image-last-synced[syncstatus="active"] {
   animation: syncRotate 0.8s linear infinite;
+  -moz-context-properties: fill;
   fill: var(--toolbarbutton-icon-fill-attention);
+}
+}
+
+#PanelUI-appMenu-fxa-image-last-synced {
+  -moz-context-properties: fill;
+  fill: var(--panel-description-color);
+  height: 8px;
+  width: 8px;
 }
 
 #appMenu-fxa-status {
@@ -655,10 +713,6 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   list-style-image: var(--avatar-image-url);
   -moz-context-properties: fill;
   fill: currentColor;
-}
-
-#PanelUI-fxa-menu-account-signout-button {
-  list-style-image: url(chrome://browser/skin/sign-out.svg);
 }
 
 /* Handle different UI states. */
@@ -708,6 +762,53 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   background-color: @appmenuWarningBackgroundColorActive@;
 }
 
+@supports -moz-bool-pref("browser.proton.enabled") {
+  #appMenu-fxa-status2[fxastatus] {
+    margin: 0;
+    padding: 0;
+  }
+
+  #appMenu-fxa-status2[fxastatus] > #appMenu-fxa-label2,
+  #appMenu-fxa-text {
+    font-weight: 600;
+  }
+
+  #appMenu-fxa-status2[fxastatus] > #appMenu-fxa-label2 {
+    padding-block: 16px;
+    -moz-box-flex: 1;
+  }
+
+  #appMenu-fxa-status2:not([fxastatus]) > #appMenu-fxa-label2 {
+    padding: 6px 12px;
+    background-color: var(--buttons-secondary-bgcolor);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  #appMenu-fxa-status2:not([fxastatus]) > #appMenu-fxa-label2:hover {
+    background-color: var(--buttons-secondary-hover-bgcolor);
+  }
+
+  #appMenu-fxa-status2:not([fxastatus]) > #appMenu-fxa-label2:active {
+    background-color: var(--buttons-secondary-active-bgcolor);
+  }
+
+  #fxa-manage-account-button > vbox > label,
+  #PanelUI-fxa-menu-syncnow-button > vbox > label,
+  #PanelUI-fxa-menu-syncnow-button > vbox > hbox > label {
+    margin-inline-start: 0;
+  }
+
+  #PanelUI-appMenu-fxa-image-last-synced {
+    height: 8px;
+    width: 8px;
+  }
+
+  .PanelUI-remotetabs-clientcontainer > label[itemtype="client"] {
+    font-size: 11px;
+  }
+} /** END Proton **/
+
 /* Tracking Protection Button & Toggle */
 
 #appMenu-protection-report-text {
@@ -729,10 +830,24 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
 
 .addon-banner-item > .toolbarbutton-text,
 .panel-banner-item > .toolbarbutton-text {
-  margin: 0;
-  padding: 0 6px;
   text-align: start;
 }
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+.addon-banner-item > .toolbarbutton-text,
+.panel-banner-item > .toolbarbutton-text {
+  margin: 0;
+  padding: 0 6px;
+}
+} /** END not Proton **/
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+.addon-banner-item > .toolbarbutton-text,
+.panel-banner-item > .toolbarbutton-text {
+  margin-inline-start: 8px;
+  padding: 0;
+}
+} /** END Proton **/
 
 .addon-banner-item > .toolbarbutton-icon,
 .panel-banner-item > .toolbarbutton-icon {
@@ -845,6 +960,13 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
 
 #fxa-menu-header-description {
   color: var(--panel-description-color);
+  font-weight: 600;
+}
+
+#PanelUI-appMenu-fxa-label-last-synced {
+  font-size: 10px;
+  font-style: italic;
+  color: var(--panel-description-color);
 }
 
 #fxa-menu-avatar {
@@ -880,9 +1002,15 @@ panelmultiview[mainViewId="PanelUI-fxa"] #PanelUI-remotetabs-syncnow {
   display: none;
 }
 
-#PanelUI-fxa-menu-sendtab-button {
-  list-style-image: url("chrome://browser/skin/send-to-device.svg");
-}
+@supports not -moz-bool-pref("browser.proton.enabled") {
+  #PanelUI-fxa-menu-account-signout-button {
+    list-style-image: url(chrome://browser/skin/sign-out.svg);
+  }
+
+  #PanelUI-fxa-menu-sendtab-button {
+    list-style-image: url("chrome://browser/skin/send-to-device.svg");
+  }
+} /** END not Proton **/
 
 #PanelUI-fxa-menu-sendtab-button:-moz-locale-dir(rtl) > .toolbarbutton-icon {
   transform: scaleX(-1);
@@ -1038,32 +1166,22 @@ panelmultiview[mainViewId="PanelUI-fxa"] #PanelUI-remotetabs-syncnow {
   display: none;
 }
 
+#PanelUI-fxa-remotetabs-deck:not([syncingtabs]) {
+  display: none;
+}
+
 .panel-banner-item {
-  color: black !important /* !important overrides the toolbarbutton:hover default style on Linux */;
-  background-color: hsla(96,65%,75%,.5);
+  color: var(--panel-banner-item-color) !important /* !important overrides the toolbarbutton:hover default style on Linux */;
+  background-color: var(--panel-banner-item-background-color);
 }
 
 .panel-banner-item:not([disabled]):focus,
 .panel-banner-item:not([disabled]):hover {
-  background-color: hsla(96,65%,75%,.8);
+  background-color: var(--panel-banner-item-hover-bgcolor);
 }
 
 .panel-banner-item:not([disabled]):hover:active {
-  background-color: hsl(96,65%,75%);
-}
-
-:root[lwt-popup-brighttext] .panel-banner-item:not([disabled]) {
-  background-color: rgba(48,230,11,.1);
-  color: @appmenuWarningColorBrightText@ !important;
-}
-
-:root[lwt-popup-brighttext] .panel-banner-item:not([disabled]):focus,
-:root[lwt-popup-brighttext] .panel-banner-item:not([disabled]):hover {
-  background-color: rgba(48,230,11,.15);
-}
-
-:root[lwt-popup-brighttext] .panel-banner-item:not([disabled]):active {
-  background-color: rgba(48,230,11,.2);
+  background-color: var(--panel-banner-item-active-bgcolor);
 }
 
 .panel-banner-item[notificationid="update-unsupported"] {
@@ -1116,10 +1234,12 @@ panelview .toolbarbutton-1,
   color: var(--panel-disabled-color);
 }
 
+@supports not -moz-bool-pref("browser.proton.enabled") {
 .subviewbutton > .toolbarbutton-text {
   padding: 0;
   padding-inline-start: 24px; /* This is 16px for the icon + 8px for the padding as defined below. */
 }
+} /** END not Proton **/
 
 .subviewbutton > .menu-right {
   appearance: none;
@@ -1161,15 +1281,56 @@ panelview .toolbarbutton-1,
   fill: currentColor;
 }
 
-@supports -moz-bool-pref("browser.proton.appmenu.enabled") {
-.subviewbutton-iconic:not(.subviewbutton-back) > .toolbarbutton-icon {
-  display: none;
+@supports -moz-bool-pref("browser.proton.enabled") {
+#appMenu-zoomReduce-button2@buttonStateHoverOrFocus@,
+#appMenu-zoomReduce-button2@buttonStateActive@,
+#appMenu-zoomEnlarge-button2@buttonStateHoverOrFocus@,
+#appMenu-zoomEnlarge-button2@buttonStateActive@,
+#appMenu-fullscreen-button2@buttonStateHoverOrFocus@,
+#appMenu-fullscreen-button2@buttonStateActive@ {
+  color: unset;
+  background-color: unset;
+  box-shadow: unset;
 }
 
 #appMenu-zoomReduce-button2 > .toolbarbutton-icon,
 #appMenu-zoomEnlarge-button2 > .toolbarbutton-icon,
 #appMenu-fullscreen-button2 > .toolbarbutton-icon {
-  display: unset;
+  -moz-context-properties: fill;
+  fill: var(--buttons-secondary-color);
+}
+
+#appMenu-zoomReduce-button2 > .toolbarbutton-icon,
+#appMenu-zoomEnlarge-button2 > .toolbarbutton-icon {
+  border-radius: 500px;
+}
+
+#appMenu-fullscreen-button2 > .toolbarbutton-icon {
+  border-radius: 2px;
+}
+
+#appMenu-zoomReduce-button2 > .toolbarbutton-icon,
+#appMenu-zoomEnlarge-button2 > .toolbarbutton-icon,
+#appMenu-fullscreen-button2 > .toolbarbutton-icon {
+  background-color: var(--buttons-secondary-bgcolor);
+}
+
+#appMenu-zoomReduce-button2@buttonStateHover@ > .toolbarbutton-icon,
+#appMenu-zoomEnlarge-button2@buttonStateHover@ > .toolbarbutton-icon,
+#appMenu-fullscreen-button2@buttonStateHover@ > .toolbarbutton-icon {
+  background-color: var(--buttons-secondary-hover-bgcolor);
+}
+
+#appMenu-zoomReduce-button2@buttonStateActive@ > .toolbarbutton-icon,
+#appMenu-zoomEnlarge-button2@buttonStateActive@ > .toolbarbutton-icon,
+#appMenu-fullscreen-button2@buttonStateActive@ > .toolbarbutton-icon {
+  background-color: var(--buttons-secondary-active-bgcolor);
+}
+
+#appMenu-zoomReduce-button2@buttonStateFocus@ > .toolbarbutton-icon,
+#appMenu-zoomEnlarge-button2@buttonStateFocus@ > .toolbarbutton-icon,
+#appMenu-fullscreen-button2@buttonStateFocus@ > .toolbarbutton-icon {
+  box-shadow: var(--panelview-toolbarbutton-focus-box-shadow);
 }
 
 #appMenu-zoom-controls2 > .subviewbutton {
@@ -1212,6 +1373,7 @@ panelview .toolbarbutton-1,
 .subviewbutton[shortcut]::after {
   content: attr(shortcut);
   float: inline-end;
+  color: var(--panel-shortcut-color);
 }
 
 .PanelUI-subView .subviewbutton-nav::after {
@@ -1221,6 +1383,10 @@ panelview .toolbarbutton-1,
   fill-opacity: 0.6;
   float: inline-end;
   transform: translateY(1px);
+}
+
+.PanelUI-subView .subviewbutton-nav-down::after {
+  transform: translateY(1px) rotate(90deg);
 }
 
 .PanelUI-subView .subviewbutton-nav:-moz-locale-dir(rtl)::after {
@@ -1336,8 +1502,8 @@ panelmultiview .toolbaritem-combined-buttons > spacer.after-label {
   background-color: var(--arrowpanel-dimmed);
 }
 
-#appMenu-zoomReset-button@buttonStateHover@,
-#appMenu-zoomReset-button2@buttonStateHover@ {
+#appMenu-zoomReset-button@buttonStateHoverOrFocus@,
+#appMenu-zoomReset-button2@buttonStateHoverOrFocus@ {
   background-color: var(--arrowpanel-dimmed-further);
 }
 
@@ -1367,6 +1533,8 @@ panelmultiview .toolbaritem-combined-buttons > spacer.after-label {
 }
 
 .subview-subheader {
+  font-size: inherit;
+  font-weight: inherit;
   color: var(--panel-description-color);
 }
 
@@ -1374,16 +1542,49 @@ panelview .toolbarbutton-1 {
   margin-top: 6px;
 }
 
-panelview .toolbarbutton-1@buttonStateHover@,
-toolbarbutton.subviewbutton@buttonStateHover@,
-.navigable.subviewbutton@buttonStateHover@,
-menu.subviewbutton@menuStateHover@,
-menuitem.subviewbutton@menuStateHover@,
-.widget-overflow-list .toolbarbutton-1@buttonStateHover@,
-.toolbaritem-combined-buttons@inAnyPanel@ > toolbarbutton@buttonStateHover@ {
-  color: var(--panelview-toolbarbutton-hover-color);
-  background-color: var(--panelview-toolbarbutton-hover-bgcolor);
-}
+@supports not -moz-bool-pref("browser.proton.enabled") {
+  panelview .toolbarbutton-1@buttonStateHoverOrFocus@,
+  toolbarbutton.subviewbutton@buttonStateHoverOrFocus@,
+  .navigable.subviewbutton@buttonStateHoverOrFocus@,
+  menu.subviewbutton@menuStateHover@,
+  menuitem.subviewbutton@menuStateHover@,
+  .widget-overflow-list .toolbarbutton-1@buttonStateHoverOrFocus@,
+  .toolbaritem-combined-buttons@inAnyPanel@ > toolbarbutton@buttonStateHoverOrFocus@ {
+    color: var(--panelview-toolbarbutton-hover-color);
+    background-color: var(--panelview-toolbarbutton-hover-bgcolor);
+  }
+} /** END not Proton **/
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+  /**
+   * Focus in Proton uses a box-shadow because we want the stroke to be
+   * internal to the rect without affecting the surrounding layout. This
+   * seemed to be the simplest way to do that.
+   */
+  panelview .toolbarbutton-1@buttonStateFocus@,
+  toolbarbutton.subviewbutton@buttonStateFocus@,
+  .navigable.subviewbutton@buttonStateFocus@,
+  .widget-overflow-list .toolbarbutton-1@buttonStateFocus@,
+  .toolbaritem-combined-buttons@inAnyPanel@ > toolbarbutton@buttonStateFocus@ {
+    box-shadow: var(--panelview-toolbarbutton-focus-box-shadow);
+  }
+
+  panelview .toolbarbutton-1@buttonStateHover@,
+  toolbarbutton.subviewbutton@buttonStateHover@,
+  .navigable.subviewbutton@buttonStateHover@,
+  menu.subviewbutton@menuStateHover@,
+  menuitem.subviewbutton@menuStateHover@,
+  .widget-overflow-list .toolbarbutton-1@buttonStateHover@,
+  .toolbaritem-combined-buttons@inAnyPanel@ > toolbarbutton@buttonStateHover@ {
+    color: var(--panelview-toolbarbutton-hover-color);
+    background-color: var(--panelview-toolbarbutton-hover-bgcolor);
+  }
+
+  .subview-subheader {
+    font-size: 11px;
+    padding-block: 4px;
+  }
+} /** END Proton **/
 
 panelview .toolbarbutton-1@buttonStateActive@,
 toolbarbutton.subviewbutton@buttonStateActive@,
@@ -1405,7 +1606,7 @@ menuitem.subviewbutton@menuStateActive@,
 }
 
 menuitem.panel-subview-footer@menuStateHover@,
-.subviewbutton.panel-subview-footer@buttonStateHover@ {
+.subviewbutton.panel-subview-footer@buttonStateHoverOrFocus@ {
   background-color: var(--arrowpanel-dimmed-further);
 }
 
@@ -1441,8 +1642,14 @@ menuitem.panel-subview-footer@menuStateActive@,
   min-height: 0;
   border-top: 1px solid var(--panel-separator-color);
   border-bottom: none;
-  margin: 6px 0;
+  margin: var(--panel-separator-margin);
   padding: 0;
+}
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+.PanelUI-subView toolbarseparator.proton-zap {
+  border-image: var(--panel-separator-zap-gradient) 1;
+}
 }
 
 .PanelUI-subView toolbarseparator.small-separator {
@@ -1650,7 +1857,7 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
   border: 1px solid transparent;
 }
 
-.subviewradio@buttonStateHover@ {
+.subviewradio@buttonStateHoverOrFocus@ {
   background-color: var(--arrowpanel-dimmed);
   border-color: var(--panel-separator-color);
 }
@@ -1769,9 +1976,11 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
 }
 
 @media (min-resolution: 1.1dppx) {
-  .panel-banner-item[notificationid^=update] {
-    list-style-image: url(chrome://branding/content/icon32.png);
-  }
+  @supports not -moz-bool-pref("browser.proton.enabled") {
+    .panel-banner-item[notificationid^=update] {
+      list-style-image: url(chrome://branding/content/icon32.png);
+    }
+  } /** END not Proton **/
 
   #panic-button-success-icon,
   #PanelUI-panic-timeframe-icon {
@@ -1797,25 +2006,38 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
 
 .panel-header {
   align-items: center;
-  border-bottom: 1px solid var(--panel-separator-color);
   display: flex;
   flex: 1 auto;
   padding: 4px;
 }
 
-.panel-header > label {
+@supports -moz-bool-pref("browser.proton.enabled") {
+  .panel-header {
+    padding-top: 8px;
+  }
+} /** END Proton **/
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+  .panel-header {
+    border-bottom: 1px solid var(--panel-separator-color);
+  }
+} /** END not Proton **/
+
+.panel-header > h1 {
+  display: inline;
   flex: auto;
+  font-size: inherit;
   font-weight: 600;
   margin: 4px 0;
   text-align: center;
 }
 
-.panel-header > label > span {
+.panel-header > h1 > span {
   display: inline-block;
   white-space: pre-wrap;
 }
 
-.panel-header > .subviewbutton-back + label {
+.panel-header > .subviewbutton-back + h1 {
   /* Add the size of the back button to center properly. */
   margin-inline-end: 32px;
 }
@@ -1882,7 +2104,7 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
   fill-opacity: 0.4;
 }
 
-.subviewbutton.download:is([canShow],[canRetry]) > .action-button@buttonStateHover@ {
+.subviewbutton.download:is([canShow],[canRetry]) > .action-button@buttonStateHoverOrFocus@ {
   background-color: var(--arrowpanel-dimmed-further);
 }
 
@@ -2277,8 +2499,8 @@ panelview:not([mainview]) #PanelUI-whatsNew-title {
   position: relative; /* Ensure there is a stacking context for the dropdown arrow. */
   width: 100%;
   min-height: 24px;
-  background-color: #EDEDF0;
-  color: inherit !important;
+  background-color: #ededf0;
+  color: #0c0c0d !important;
   border: 1px solid transparent;
   border-radius: 2px;
   font-weight: 400;

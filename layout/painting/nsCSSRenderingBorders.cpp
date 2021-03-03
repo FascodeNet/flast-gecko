@@ -21,7 +21,6 @@
 #include "nsCSSRendering.h"
 #include "nsCSSRenderingGradients.h"
 #include "nsDisplayList.h"
-#include "GeckoProfiler.h"
 #include "nsExpirationTracker.h"
 #include "nsIScriptError.h"
 #include "nsClassHashtable.h"
@@ -32,6 +31,7 @@
 #include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/layers/RenderRootStateManager.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/Range.h"
 #include <algorithm>
 
@@ -3342,11 +3342,7 @@ void nsCSSBorderRenderer::CreateWebRenderCommands(
         wr::ToBorderSide(ToDeviceColor(mBorderColors[i]), mBorderStyles[i]);
   }
 
-  wr::BorderRadius borderRadius =
-      wr::ToBorderRadius(LayoutDeviceSize::FromUnknownSize(mBorderRadii[0]),
-                         LayoutDeviceSize::FromUnknownSize(mBorderRadii[1]),
-                         LayoutDeviceSize::FromUnknownSize(mBorderRadii[3]),
-                         LayoutDeviceSize::FromUnknownSize(mBorderRadii[2]));
+  wr::BorderRadius borderRadius = wr::ToBorderRadius(mBorderRadii);
 
   if (mLocalClip) {
     LayoutDeviceRect localClip =

@@ -100,52 +100,69 @@ function nativeScrollUnits(aTarget, aDimen) {
   return aDimen;
 }
 
-function nativeMouseDownEventMsg() {
-  switch (getPlatform()) {
-    case "windows":
-      return 2; // MOUSEEVENTF_LEFTDOWN
-    case "mac":
-      return 1; // NSEventTypeLeftMouseDown
-    case "linux":
-      return 4; // GDK_BUTTON_PRESS
-    case "android":
-      return 5; // ACTION_POINTER_DOWN
+function parseNativeModifiers(aModifiers, aWindow = window) {
+  let modifiers = 0;
+  if (aModifiers.capsLockKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CAPS_LOCK;
   }
-  throw new Error(
-    "Native mouse-down events not supported on platform " + getPlatform()
-  );
-}
+  if (aModifiers.numLockKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_NUM_LOCK;
+  }
+  if (aModifiers.shiftKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_SHIFT_LEFT;
+  }
+  if (aModifiers.shiftRightKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_SHIFT_RIGHT;
+  }
+  if (aModifiers.ctrlKey) {
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_LEFT;
+  }
+  if (aModifiers.ctrlRightKey) {
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_RIGHT;
+  }
+  if (aModifiers.altKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_LEFT;
+  }
+  if (aModifiers.altRightKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_RIGHT;
+  }
+  if (aModifiers.metaKey) {
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_LEFT;
+  }
+  if (aModifiers.metaRightKey) {
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_RIGHT;
+  }
+  if (aModifiers.helpKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_HELP;
+  }
+  if (aModifiers.fnKey) {
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_FUNCTION;
+  }
+  if (aModifiers.numericKeyPadKey) {
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_NUMERIC_KEY_PAD;
+  }
 
-function nativeMouseMoveEventMsg() {
-  switch (getPlatform()) {
-    case "windows":
-      return 1; // MOUSEEVENTF_MOVE
-    case "mac":
-      return 5; // NSEventTypeMouseMoved
-    case "linux":
-      return 3; // GDK_MOTION_NOTIFY
-    case "android":
-      return 7; // ACTION_HOVER_MOVE
+  if (aModifiers.accelKey) {
+    modifiers |= _EU_isMac(aWindow)
+      ? SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_LEFT
+      : SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_LEFT;
   }
-  throw new Error(
-    "Native mouse-move events not supported on platform " + getPlatform()
-  );
-}
-
-function nativeMouseUpEventMsg() {
-  switch (getPlatform()) {
-    case "windows":
-      return 4; // MOUSEEVENTF_LEFTUP
-    case "mac":
-      return 2; // NSEventTypeLeftMouseUp
-    case "linux":
-      return 7; // GDK_BUTTON_RELEASE
-    case "android":
-      return 6; // ACTION_POINTER_UP
+  if (aModifiers.accelRightKey) {
+    modifiers |= _EU_isMac(aWindow)
+      ? SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_RIGHT
+      : SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_RIGHT;
   }
-  throw new Error(
-    "Native mouse-up events not supported on platform " + getPlatform()
-  );
+  if (aModifiers.altGrKey) {
+    modifiers |= _EU_isMac(aWindow)
+      ? SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_LEFT
+      : SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_GRAPH;
+  }
+  return modifiers;
 }
 
 function getBoundingClientRectRelativeToVisualViewport(aElement) {
@@ -175,39 +192,68 @@ function getBoundingClientRectRelativeToVisualViewport(aElement) {
 // a subdocument) or, as a special case, the root content window.
 // FIXME: Support iframe windows as targets.
 function getTargetOrigin(aTarget) {
-  let origin = { left: 0, top: 0 };
+  const rect = getTargetRect(aTarget);
+  return { left: rect.left, top: rect.top };
+}
+
+function getTargetRect(aTarget) {
+  let rect = { left: 0, top: 0, width: 0, height: 0 };
 
   // If the target is the root content window, its origin relative
   // to the visual viewport is (0, 0).
   if (aTarget instanceof Window) {
     // FIXME: Assert that it's not an iframe window.
-    return origin;
+    return rect;
   }
 
   // Otherwise, we have an element. Start with the origin of
   // its bounding client rect which is relative to the enclosing
   // document's layout viewport. Note that for iframes, the
   // layout viewport is also the visual viewport.
-  let rect = aTarget.getBoundingClientRect();
-  origin.left += rect.left;
-  origin.top += rect.top;
+  const boundingClientRect = aTarget.getBoundingClientRect();
+  rect.left = boundingClientRect.left;
+  rect.top = boundingClientRect.top;
+  rect.width = boundingClientRect.width;
+  rect.height = boundingClientRect.height;
 
   // Iterate up the window hierarchy until we reach the root
   // content window, adding the offsets of any iframe windows
   // relative to their parent window.
   while (aTarget.ownerDocument.defaultView.frameElement) {
-    let iframe = aTarget.ownerDocument.defaultView.frameElement;
+    const iframe = aTarget.ownerDocument.defaultView.frameElement;
     // The offset of the iframe window relative to the parent window
     // includes the iframe's border, and the iframe's origin in its
     // containing document.
-    let style = iframe.ownerDocument.defaultView.getComputedStyle(iframe);
-    let borderLeft = parseFloat(style.borderLeftWidth) || 0;
-    let borderTop = parseFloat(style.borderTopWidth) || 0;
-    let paddingLeft = parseFloat(style.paddingLeft) || 0;
-    let paddingTop = parseFloat(style.paddingTop) || 0;
-    rect = iframe.getBoundingClientRect();
-    origin.left += rect.left + borderLeft + paddingLeft;
-    origin.top += rect.top + borderTop + paddingTop;
+    const style = iframe.ownerDocument.defaultView.getComputedStyle(iframe);
+    const borderLeft = parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = parseFloat(style.borderTopWidth) || 0;
+    const borderRight = parseFloat(style.borderRightWidth) || 0;
+    const borderBottom = parseFloat(style.borderBottomWidth) || 0;
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingTop = parseFloat(style.paddingTop) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    const paddingBottom = parseFloat(style.paddingBottom) || 0;
+    const iframeRect = iframe.getBoundingClientRect();
+    rect.left += iframeRect.left + borderLeft + paddingLeft;
+    rect.top += iframeRect.top + borderTop + paddingTop;
+    if (
+      rect.left + rect.width >
+      iframeRect.right - borderRight - paddingRight
+    ) {
+      rect.width = Math.max(
+        iframeRect.right - borderRight - paddingRight - rect.left,
+        0
+      );
+    }
+    if (
+      rect.top + rect.height >
+      iframeRect.bottom - borderBottom - paddingBottom
+    ) {
+      rect.height = Math.max(
+        iframeRect.bottom - borderBottom - paddingBottom - rect.top,
+        0
+      );
+    }
     aTarget = iframe;
   }
 
@@ -219,16 +265,22 @@ function getTargetOrigin(aTarget) {
     offsetY = {};
   let rootUtils = SpecialPowers.getDOMWindowUtils(window.top);
   rootUtils.getVisualViewportOffsetRelativeToLayoutViewport(offsetX, offsetY);
-  origin.left -= offsetX.value;
-  origin.top -= offsetY.value;
-  return origin;
+  rect.left -= offsetX.value;
+  rect.top -= offsetY.value;
+  return rect;
 }
 
-// Convert (aX, aY), in CSS pixels relative to aTarget's bounding rect
-// to device pixels relative to the screen.
+// Convert (offsetX, offsetY) of target or center of it, in CSS pixels to device
+// pixels relative to the screen.
 // TODO: this function currently does not incorporate some CSS transforms on
-// elements enclosing aTarget, e.g. scale transforms.
-function coordinatesRelativeToScreen(aX, aY, aTarget) {
+// elements enclosing target, e.g. scale transforms.
+function coordinatesRelativeToScreen(aParams) {
+  const {
+    target, // The target element or window
+    offsetX, // X offset relative to `target`
+    offsetY, // Y offset relative to `target`
+    atCenter, // Instead of offsetX/offsetY, return center of `target`
+  } = aParams;
   // Note that |window| might not be the root content window, for two
   // possible reasons:
   //  1. The mochitest that's calling into this function is not using a mechanism
@@ -241,11 +293,11 @@ function coordinatesRelativeToScreen(aX, aY, aTarget) {
   // the mozInnerScreen{X,Y} of the root content window (window.top) only,
   // and factor any offsets between iframe windows and the root content window
   // into |origin|.
-  var utils = SpecialPowers.getDOMWindowUtils(window);
-  var deviceScale = utils.screenPixelsPerCSSPixel;
-  var deviceScaleNoOverride = utils.screenPixelsPerCSSPixelNoOverride;
-  var resolution = getResolution();
-  var origin = getTargetOrigin(aTarget);
+  const utils = SpecialPowers.getDOMWindowUtils(window);
+  const deviceScale = utils.screenPixelsPerCSSPixel;
+  const deviceScaleNoOverride = utils.screenPixelsPerCSSPixelNoOverride;
+  const resolution = getResolution();
+  const rect = getTargetRect(target);
   // moxInnerScreen{X,Y} are in CSS coordinates of the browser chrome.
   // The device scale applies to them, but the resolution only zooms the content.
   // In addition, if we're inside RDM, RDM overrides the device scale;
@@ -254,10 +306,14 @@ function coordinatesRelativeToScreen(aX, aY, aTarget) {
   return {
     x:
       window.top.mozInnerScreenX * deviceScaleNoOverride +
-      (origin.left + aX) * resolution * deviceScale,
+      (rect.left + (atCenter ? rect.width / 2 : offsetX)) *
+        resolution *
+        deviceScale,
     y:
       window.top.mozInnerScreenY * deviceScaleNoOverride +
-      (origin.top + aY) * resolution * deviceScale,
+      (rect.top + (atCenter ? rect.height / 2 : offsetY)) *
+        resolution *
+        deviceScale,
   };
 }
 
@@ -285,7 +341,11 @@ function rectRelativeToScreen(aElement) {
 // aDeltaX and aDeltaY are pixel deltas, and aObserver can be left undefined
 // if not needed.
 function synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY, aObserver) {
-  var pt = coordinatesRelativeToScreen(aX, aY, aTarget);
+  var pt = coordinatesRelativeToScreen({
+    offsetX: aX,
+    offsetY: aY,
+    target: aTarget,
+  });
   if (aDeltaX && aDeltaY) {
     throw new Error(
       "Simultaneous wheeling of horizontal and vertical is not supported on all platforms."
@@ -436,51 +496,6 @@ function promiseNativeWheelAndWaitForScrollEvent(
   });
 }
 
-// Synthesizes a native mouse move event and returns immediately.
-// aX and aY are relative to the top-left of |aTarget|'s bounding rect.
-function synthesizeNativeMouseMove(aTarget, aX, aY) {
-  var pt = coordinatesRelativeToScreen(aX, aY, aTarget);
-  var utils = utilsForTarget(aTarget);
-  var element = elementForTarget(aTarget);
-  utils.sendNativeMouseEvent(pt.x, pt.y, nativeMouseMoveEventMsg(), 0, element);
-  return true;
-}
-
-// Synthesizes a native mouse move event and invokes the callback once the
-// mouse move event is dispatched to |aTarget|'s containing window. If the event
-// targets content in a subdocument, |aTarget| should be inside the
-// subdocument (or the subdocument window). See synthesizeNativeMouseMove for
-// details on the other parameters.
-function synthesizeNativeMouseMoveAndWaitForMoveEvent(
-  aTarget,
-  aX,
-  aY,
-  aCallback
-) {
-  promiseNativeMouseMoveAndWaitForMoveEvent(aTarget, aX, aY).then(aCallback);
-  return true;
-}
-
-// Same as synthesizeNativeMouseMoveAndWaitForMoveEvent but returns a promise
-// instead of taking a callback.
-function promiseNativeMouseMoveAndWaitForMoveEvent(aTarget, aX, aY) {
-  return new Promise((resolve, reject) => {
-    var targetWindow = windowForTarget(aTarget);
-    targetWindow.addEventListener(
-      "mousemove",
-      function(e) {
-        setTimeout(resolve, 0);
-      },
-      { once: true }
-    );
-    try {
-      synthesizeNativeMouseMove(aTarget, aX, aY);
-    } catch (e) {
-      reject();
-    }
-  });
-}
-
 // Synthesizes a native touch event and dispatches it. aX and aY in CSS pixels
 // relative to the top-left of |aTarget|'s bounding rect.
 function synthesizeNativeTouch(
@@ -491,7 +506,11 @@ function synthesizeNativeTouch(
   aObserver = null,
   aTouchId = 0
 ) {
-  var pt = coordinatesRelativeToScreen(aX, aY, aTarget);
+  var pt = coordinatesRelativeToScreen({
+    offsetX: aX,
+    offsetY: aY,
+    target: aTarget,
+  });
   var utils = utilsForTarget(aTarget);
   utils.sendNativeTouchPoint(aTouchId, aType, pt.x, pt.y, 1, 90, aObserver);
   return true;
@@ -538,11 +557,11 @@ function synthesizeNativeTouchSequences(
         // Do the conversion to screen space before actually synthesizing
         // the events, otherwise the screen space may change as a result of
         // the touch inputs and the conversion may not work as intended.
-        aPositions[i][j] = coordinatesRelativeToScreen(
-          aPositions[i][j].x,
-          aPositions[i][j].y,
-          aTarget
-        );
+        aPositions[i][j] = coordinatesRelativeToScreen({
+          offsetX: aPositions[i][j].x,
+          offsetY: aPositions[i][j].y,
+          target: aTarget,
+        });
       }
     }
   }
@@ -655,7 +674,11 @@ function promiseNativeTouchDrag(
 }
 
 function synthesizeNativeTap(aElement, aX, aY, aObserver = null) {
-  var pt = coordinatesRelativeToScreen(aX, aY, aElement);
+  var pt = coordinatesRelativeToScreen({
+    offsetX: aX,
+    offsetY: aY,
+    target: aElement,
+  });
   var utils = SpecialPowers.getDOMWindowUtils(
     aElement.ownerDocument.defaultView
   );
@@ -663,74 +686,144 @@ function synthesizeNativeTap(aElement, aX, aY, aObserver = null) {
   return true;
 }
 
-function synthesizeNativeMouseEvent(aTarget, aX, aY, aType, aObserver = null) {
-  var pt = coordinatesRelativeToScreen(aX, aY, aTarget);
-  var utils = utilsForTarget(aTarget);
-  var element = elementForTarget(aTarget);
-  utils.sendNativeMouseEvent(pt.x, pt.y, aType, 0, element, aObserver);
-  return true;
-}
+// If the event targets content in a subdocument, |aTarget| should be inside the
+// subdocument (or the subdocument window).
+function synthesizeNativeMouseEventWithAPZ(aParams, aObserver = null) {
+  if (aParams.win !== undefined) {
+    throw Error(
+      "Are you trying to use EventUtils' API? `win` won't be used with synthesizeNativeMouseClickWithAPZ."
+    );
+  }
+  if (aParams.scale !== undefined) {
+    throw Error(
+      "Are you trying to use EventUtils' API? `scale` won't be used with synthesizeNativeMouseClickWithAPZ."
+    );
+  }
+  if (aParams.elementOnWidget !== undefined) {
+    throw Error(
+      "Are you trying to use EventUtils' API? `elementOnWidget` won't be used with synthesizeNativeMouseClickWithAPZ."
+    );
+  }
+  const {
+    type, // "click", "mousedown", "mouseup" or "mousemove"
+    target, // Origin of offsetX and offsetY, must be an element
+    offsetX, // X offset in `target` in CSS Pixels
+    offsetY, // Y offset in `target` in CSS pixels
+    atCenter, // Instead of offsetX/Y, synthesize the event at center of `target`
+    screenX, // X offset in screen in device pixels, offsetX/Y nor atCenter must not be set if this is set
+    screenY, // Y offset in screen in device pixels, offsetX/Y nor atCenter must not be set if this is set
+    button = 0, // if "click", "mousedown", "mouseup", set same value as DOM MouseEvent.button
+    modifiers = {}, // Active modifiers, see `parseNativeModifiers`
+  } = aParams;
+  if (atCenter) {
+    if (offsetX != undefined || offsetY != undefined) {
+      throw Error(
+        `atCenter is specified, but offsetX (${offsetX}) and/or offsetY (${offsetY}) are also specified`
+      );
+    }
+    if (screenX != undefined || screenY != undefined) {
+      throw Error(
+        `atCenter is specified, but screenX (${screenX}) and/or screenY (${screenY}) are also specified`
+      );
+    }
+  } else if (offsetX != undefined && offsetY != undefined) {
+    if (screenX != undefined || screenY != undefined) {
+      throw Error(
+        `offsetX/Y are specified, but screenX (${screenX}) and/or screenY (${screenY}) are also specified`
+      );
+    }
+  } else if (screenX != undefined && screenY != undefined) {
+    if (offsetX != undefined || offsetY != undefined) {
+      throw Error(
+        `screenX/Y are specified, but offsetX (${offsetX}) and/or offsetY (${offsetY}) are also specified`
+      );
+    }
+  }
+  const pt = (() => {
+    if (screenX != undefined) {
+      return { x: screenX, y: screenY };
+    }
+    return coordinatesRelativeToScreen({
+      offsetX,
+      offsetY,
+      atCenter,
+      target,
+    });
+  })();
+  const utils = utilsForTarget(target);
+  const element = elementForTarget(target);
+  const modifierFlags = parseNativeModifiers(modifiers);
+  if (type === "click") {
+    utils.sendNativeMouseEvent(
+      pt.x,
+      pt.y,
+      utils.NATIVE_MOUSE_MESSAGE_BUTTON_DOWN,
+      button,
+      modifierFlags,
+      element,
+      function() {
+        utils.sendNativeMouseEvent(
+          pt.x,
+          pt.y,
+          utils.NATIVE_MOUSE_MESSAGE_BUTTON_UP,
+          button,
+          modifierFlags,
+          element,
+          aObserver
+        );
+      }
+    );
+    return;
+  }
 
-// Promise-returning variant of synthesizeNativeMouseEvent
-function promiseNativeMouseEvent(aTarget, aX, aY, aType) {
-  return new Promise(resolve => {
-    synthesizeNativeMouseEvent(aTarget, aX, aY, aType, resolve);
-  });
-}
-
-function synthesizeNativeClick(aElement, aX, aY, aObserver = null) {
-  var pt = coordinatesRelativeToScreen(aX, aY, aElement);
-  var utils = SpecialPowers.getDOMWindowUtils(
-    aElement.ownerDocument.defaultView
-  );
   utils.sendNativeMouseEvent(
     pt.x,
     pt.y,
-    nativeMouseDownEventMsg(),
-    0,
-    aElement,
-    function() {
-      utils.sendNativeMouseEvent(
-        pt.x,
-        pt.y,
-        nativeMouseUpEventMsg(),
-        0,
-        aElement,
-        aObserver
-      );
-    }
+    (() => {
+      switch (type) {
+        case "mousedown":
+          return utils.NATIVE_MOUSE_MESSAGE_BUTTON_DOWN;
+        case "mouseup":
+          return utils.NATIVE_MOUSE_MESSAGE_BUTTON_UP;
+        case "mousemove":
+          return utils.NATIVE_MOUSE_MESSAGE_MOVE;
+        default:
+          throw Error(`Invalid type is specified: ${type}`);
+      }
+    })(),
+    button,
+    modifierFlags,
+    element,
+    aObserver
   );
-  return true;
 }
 
-// Promise-returning variant of synthesizeNativeClick.
-function promiseNativeClick(aElement, aX, aY) {
-  return new Promise(resolve => {
-    synthesizeNativeClick(aElement, aX, aY, resolve);
-  });
+function promiseNativeMouseEventWithAPZ(aParams) {
+  return new Promise(resolve =>
+    synthesizeNativeMouseEventWithAPZ(aParams, resolve)
+  );
 }
 
-function synthesizeNativeClickAndWaitForClickEvent(
-  aElement,
-  aX,
-  aY,
-  aCallback
+// See synthesizeNativeMouseEventWithAPZ for the detail of aParams.
+function synthesizeNativeMouseEventWithAPZAndWaitForEvent(
+  aParams,
+  aCallback = null
 ) {
-  var targetWindow = windowForTarget(aElement);
+  const targetWindow = windowForTarget(aParams.target);
+  const eventType = aParams.eventTypeToWait || aParams.type;
   targetWindow.addEventListener(
-    "click",
+    eventType,
     function(e) {
       setTimeout(aCallback, 0);
     },
     { capture: true, once: true }
   );
-  return synthesizeNativeClick(aElement, aX, aY);
+  return synthesizeNativeMouseEventWithAPZ(aParams);
 }
 
-// Promise-returning variant of synthesizeNativeClickAndWaitForClickEvent
-function promiseNativeClickAndClickEvent(aElement, aX, aY) {
+function promiseNativeMouseEventWithAPZAndWaitForEvent(aParams) {
   return new Promise(resolve => {
-    synthesizeNativeClickAndWaitForClickEvent(aElement, aX, aY, resolve);
+    synthesizeNativeMouseEventWithAPZAndWaitForEvent(aParams, resolve);
   });
 }
 
@@ -769,7 +862,12 @@ function promiseMoveMouseAndScrollWheelOver(
   waitForScroll = true,
   scrollDelta = 10
 ) {
-  let p = promiseNativeMouseMoveAndWaitForMoveEvent(target, dx, dy);
+  let p = promiseNativeMouseEventWithAPZAndWaitForEvent({
+    type: "mousemove",
+    target,
+    offsetX: dx,
+    offsetY: dy,
+  });
   if (waitForScroll) {
     p = p.then(() =>
       promiseNativeWheelAndWaitForScrollEvent(target, dx, dy, 0, -scrollDelta)
@@ -829,44 +927,44 @@ async function promiseVerticalScrollbarDrag(
   );
 
   // Move the mouse to the scrollbar thumb and drag it down
-  await promiseNativeMouseEvent(
+  await promiseNativeMouseEventWithAPZ({
     target,
-    mouseX,
-    mouseY,
-    nativeMouseMoveEventMsg()
-  );
+    offsetX: mouseX,
+    offsetY: mouseY,
+    type: "mousemove",
+  });
   // mouse down
-  await promiseNativeMouseEvent(
+  await promiseNativeMouseEventWithAPZ({
     target,
-    mouseX,
-    mouseY,
-    nativeMouseDownEventMsg()
-  );
+    offsetX: mouseX,
+    offsetY: mouseY,
+    type: "mousedown",
+  });
   // drag vertically by |increment| until we reach the specified distance
   for (var y = increment; y < distance; y += increment) {
-    await promiseNativeMouseEvent(
+    await promiseNativeMouseEventWithAPZ({
       target,
-      mouseX,
-      mouseY + y,
-      nativeMouseMoveEventMsg()
-    );
+      offsetX: mouseX,
+      offsetY: mouseY + y,
+      type: "mousemove",
+    });
   }
-  await promiseNativeMouseEvent(
+  await promiseNativeMouseEventWithAPZ({
     target,
-    mouseX,
-    mouseY + distance,
-    nativeMouseMoveEventMsg()
-  );
+    offsetX: mouseX,
+    offsetY: mouseY + distance,
+    type: "mousemove",
+  });
 
   // and return an async function to call afterwards to finish up the drag
   return async function() {
     dump("Finishing drag of #" + targetElement.id + "\n");
-    await promiseNativeMouseEvent(
+    await promiseNativeMouseEventWithAPZ({
       target,
-      mouseX,
-      mouseY + distance,
-      nativeMouseUpEventMsg()
-    );
+      offsetX: mouseX,
+      offsetY: mouseY + distance,
+      type: "mouseup",
+    });
   };
 }
 
@@ -902,40 +1000,40 @@ async function promiseNativeMouseDrag(
   );
 
   // Move the mouse to the target position
-  await promiseNativeMouseEvent(
+  await promiseNativeMouseEventWithAPZ({
     target,
-    mouseX,
-    mouseY,
-    nativeMouseMoveEventMsg()
-  );
+    offsetX: mouseX,
+    offsetY: mouseY,
+    type: "mousemove",
+  });
   // mouse down
-  await promiseNativeMouseEvent(
+  await promiseNativeMouseEventWithAPZ({
     target,
-    mouseX,
-    mouseY,
-    nativeMouseDownEventMsg()
-  );
+    offsetX: mouseX,
+    offsetY: mouseY,
+    type: "mousedown",
+  });
   // drag vertically by |increment| until we reach the specified distance
   for (var s = 1; s <= steps; s++) {
     let dx = distanceX * (s / steps);
     let dy = distanceY * (s / steps);
     dump(`Dragging to ${mouseX + dx}, ${mouseY + dy} from target\n`);
-    await promiseNativeMouseEvent(
+    await promiseNativeMouseEventWithAPZ({
       target,
-      mouseX + dx,
-      mouseY + dy,
-      nativeMouseMoveEventMsg()
-    );
+      offsetX: mouseX + dx,
+      offsetY: mouseY + dy,
+      type: "mousemove",
+    });
   }
 
   // and return a function-wrapped promise to call afterwards to finish the drag
   return function() {
-    return promiseNativeMouseEvent(
+    return promiseNativeMouseEventWithAPZ({
       target,
-      mouseX + distanceX,
-      mouseY + distanceY,
-      nativeMouseUpEventMsg()
-    );
+      offsetX: mouseX + distanceX,
+      offsetY: mouseY + distanceY,
+      type: "mouseup",
+    });
   };
 }
 
@@ -1015,7 +1113,65 @@ async function pinchZoomInWithTouch(focusX, focusY) {
   // Wait for TransformEnd to fire.
   await transformEndPromise;
 }
+// This generates a touchpad pinch zoom-in gesture that is expected
+// to succeed. It returns after APZ has completed the zoom and reaches the end
+// of the transform. The focus point is expected to be in CSS coordinates
+// relative to the document body.
+async function pinchZoomInWithTouchpad(focusX, focusY) {
+  // Register the listener for the TransformEnd observer topic
+  let transformEndPromise = promiseTopic("APZ:TransformEnd");
 
+  var scales = [
+    1.0,
+    1.019531,
+    1.035156,
+    1.054688,
+    1.070312,
+    1.089844,
+    1.109375,
+    1.128906,
+    1.144531,
+    1.160156,
+    1.175781,
+    1.191406,
+    1.207031,
+    1.222656,
+    1.234375,
+    1.246094,
+    1.261719,
+    1.273438,
+    1.285156,
+    1.296875,
+    1.3125,
+    1.328125,
+    1.347656,
+    1.363281,
+    1.382812,
+    1.402344,
+    1.421875,
+    1.0,
+  ];
+  var modifierFlags = 0;
+  var pt = coordinatesRelativeToScreen({
+    offsetX: focusX,
+    offsetY: focusY,
+    target: document.body,
+  });
+  var utils = utilsForTarget(document.body);
+  for (let i = 0; i < scales.length; i++) {
+    var phase;
+    if (i === 0) {
+      phase = SpecialPowers.DOMWindowUtils.PHASE_BEGIN;
+    } else if (i === scales.length - 1) {
+      phase = SpecialPowers.DOMWindowUtils.PHASE_END;
+    } else {
+      phase = SpecialPowers.DOMWindowUtils.PHASE_UPDATE;
+    }
+    utils.sendNativeTouchpadPinch(phase, scales[i], pt.x, pt.y, modifierFlags);
+  }
+  // Wait for TransformEnd to fire.
+  await transformEndPromise;
+}
 // This generates a touch-based pinch gesture that is expected to succeed
 // and trigger an APZ:TransformEnd observer notification.
 // It returns after that notification has been dispatched.

@@ -720,7 +720,7 @@ impl SwCompositeThread {
         }
     }
 
-    fn start_compositing(&self) {
+    fn prepare_for_composites(&self) {
         // Initialize the job count to 1 to prevent spurious signaling of job completion
         // in the middle of queuing compositing jobs until we're actually waiting for
         // composition.
@@ -751,8 +751,12 @@ impl SwCompositeThread {
             if let Some(band) = current_job.take_band() {
                 return Some((current_job, band));
             }
-            self.current_job
-                .compare_and_swap(current_job_ptr, ptr::null_mut(), Ordering::Relaxed);
+            let _ = self.current_job.compare_exchange(
+                current_job_ptr,
+                ptr::null_mut(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
         }
         return None;
     }
@@ -1689,7 +1693,8 @@ impl Compositor for SwCompositor {
 
             self.locked_framebuffer = self.gl.lock_framebuffer(0);
 
-            composite_thread.start_compositing();
+            composite_thread.prepare_for_composites();
+
             // Issue any initial composite jobs for the SwComposite thread.
             let mut lock = composite_thread.lock();
             for &(ref id, ref transform, ref clip_rect, filter) in &self.frame_surfaces {
@@ -1757,7 +1762,7 @@ impl Compositor for SwCompositor {
                 // phase. These late surfaces don't have any overlap/dependency tracking,
                 // so we just queue them directly and wait synchronously for the composite
                 // thread to process them in order.
-                composite_thread.start_compositing();
+                composite_thread.prepare_for_composites();
                 {
                     let mut lock = composite_thread.lock();
                     for &(ref id, ref transform, ref clip_rect, filter) in &self.late_surfaces {

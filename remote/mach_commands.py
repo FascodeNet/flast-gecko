@@ -405,6 +405,8 @@ class PuppeteerRunner(MozbuildObject):
         `extra_prefs`:
           Dictionary of extra preferences to write to the profile,
           before invoking npm.  Overrides default preferences.
+        `enable_webrender`:
+          Boolean to indicate whether to enable WebRender compositor in Gecko.
         `write_results`:
           Path to write the results json file
         `subset`
@@ -442,6 +444,9 @@ class PuppeteerRunner(MozbuildObject):
         if product == "firefox":
             env["BINARY"] = binary
             env["PUPPETEER_PRODUCT"] = "firefox"
+
+            env["MOZ_WEBRENDER"] = "%d" % params.get("enable_webrender", False)
+
         command = ["run", "unit", "--"] + mocha_options
 
         env["HEADLESS"] = str(params.get("headless", False))
@@ -457,7 +462,7 @@ class PuppeteerRunner(MozbuildObject):
             env["EXTRA_LAUNCH_OPTIONS"] = json.dumps(extra_options)
 
         expected_path = os.path.join(
-            os.path.dirname(__file__), "puppeteer-expected.json"
+            os.path.dirname(__file__), "test", "puppeteer-expected.json"
         )
         if product == "firefox" and os.path.exists(expected_path):
             with open(expected_path) as f:
@@ -518,6 +523,11 @@ def create_parser_puppeteer():
         help="Enable Fission (site isolation) in Gecko.",
     )
     p.add_argument(
+        "--enable-webrender",
+        action="store_true",
+        help="Enable the WebRender compositor in Gecko.",
+    )
+    p.add_argument(
         "-z", "--headless", action="store_true", help="Run browser in headless mode."
     )
     p.add_argument(
@@ -548,7 +558,9 @@ def create_parser_puppeteer():
         action="store",
         nargs="?",
         default=None,
-        const=os.path.join(os.path.dirname(__file__), "puppeteer-expected.json"),
+        const=os.path.join(
+            os.path.dirname(__file__), "test", "puppeteer-expected.json"
+        ),
         help="Path to write updated results to (defaults to the "
         "expectations file if the argument is provided but "
         "no path is passed)",
@@ -578,6 +590,7 @@ class PuppeteerTest(MachCommandBase):
         binary=None,
         ci=False,
         enable_fission=False,
+        enable_webrender=False,
         headless=False,
         extra_prefs=None,
         extra_options=None,
@@ -642,6 +655,7 @@ class PuppeteerTest(MachCommandBase):
         params = {
             "binary": binary,
             "headless": headless,
+            "enable_webrender": enable_webrender,
             "extra_prefs": prefs,
             "product": product,
             "extra_launcher_options": options,

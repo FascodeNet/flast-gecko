@@ -16,35 +16,18 @@ const PAGECONTENT_TRANSLATED =
   "</iframe>" +
   "</div></body></html>";
 
-function synthesizeNativeMouseClick(aWin, aScreenX, aScreenY) {
-  const utils = SpecialPowers.getDOMWindowUtils(aWin);
-  const scale = utils.screenPixelsPerCSSPixel;
-
-  utils.sendNativeMouseEvent(
-    aScreenX * scale,
-    aScreenY * scale,
-    nativeMouseDownEventMsg(),
-    0,
-    aWin.document.documentElement,
-    () => {
-      utils.sendNativeMouseEvent(
-        aScreenX * scale,
-        aScreenY * scale,
-        nativeMouseUpEventMsg(),
-        0,
-        aWin.document.documentElement
-      );
-    }
-  );
-}
-
 function openSelectPopup(selectPopup, x, y, win) {
   const popupShownPromise = BrowserTestUtils.waitForEvent(
     selectPopup,
     "popupshown"
   );
 
-  synthesizeNativeMouseClick(win, x, y);
+  EventUtils.synthesizeNativeMouseEvent({
+    type: "click",
+    target: win.document.documentElement,
+    screenX: x,
+    screenY: y,
+  });
 
   return popupShownPromise;
 }
@@ -135,7 +118,12 @@ add_task(async function() {
     expectedYPosition += selectRect.height;
   }
 
-  is(popupRect.y, expectedYPosition, "y position of the popup");
+  isfuzzy(
+    popupRect.y,
+    expectedYPosition,
+    window.windowUtils.screenPixelsPerCSSPixel,
+    "y position of the popup"
+  );
 
   await hideSelectPopup(selectPopup, "enter", newWin);
 

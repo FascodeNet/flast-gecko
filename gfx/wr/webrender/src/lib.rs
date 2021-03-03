@@ -98,7 +98,6 @@ mod device;
 mod ellipse;
 mod filterdata;
 mod frame_builder;
-mod frame_graph;
 mod freelist;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod gamma_lut;
@@ -133,6 +132,7 @@ mod util;
 mod visibility;
 mod api_resources;
 mod image_tiling;
+mod image_source;
 pub mod host_utils;
 
 ///

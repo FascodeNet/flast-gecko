@@ -35,8 +35,8 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "TargetFactory",
-  "devtools/client/framework/target",
+  "TabTargetFactory",
+  "devtools/client/framework/tab-target-factory",
   true
 );
 loader.lazyRequireGetter(
@@ -65,7 +65,7 @@ loader.lazyRequireGetter(
 exports.menuitems = [
   {
     id: "menu_devToolbox",
-    l10nKey: "devToolboxMenuItem",
+    l10nKey: "webDeveloperToolsMenu",
     async oncommand(event) {
       try {
         const window = event.target.ownerDocument.defaultView;
@@ -77,7 +77,6 @@ exports.menuitems = [
     keyId: "toggleToolbox",
     checkbox: true,
   },
-  { id: "menu_devtools_separator", separator: true },
   {
     id: "menu_devtools_remotedebugging",
     l10nKey: "devtoolsRemoteDebugging",
@@ -130,7 +129,7 @@ exports.menuitems = [
     l10nKey: "eyedropper",
     async oncommand(event) {
       const window = event.target.ownerDocument.defaultView;
-      const target = await TargetFactory.forTab(window.gBrowser.selectedTab);
+      const target = await TabTargetFactory.forTab(window.gBrowser.selectedTab);
       await target.attach();
       const inspectorFront = await target.getFront("inspector");
 
@@ -162,10 +161,9 @@ exports.menuitems = [
     },
     checkbox: true,
   },
-  { separator: true, id: "devToolsEndSeparator" },
   {
-    id: "getMoreDevtools",
-    l10nKey: "getMoreDevtoolsCmd",
+    id: "extensionsForDevelopers",
+    l10nKey: "extensionsForDevelopersCmd",
     oncommand(event) {
       openDocLink(
         "https://addons.mozilla.org/firefox/collections/mozilla/webdeveloper/"

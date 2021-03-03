@@ -75,14 +75,14 @@ DocAccessible* DocManager::GetDocAccessible(const PresShell* aPresShell) {
   return GetDocAccessible(aPresShell->GetDocument());
 }
 
-Accessible* DocManager::FindAccessibleInCache(nsINode* aNode) const {
+LocalAccessible* DocManager::FindAccessibleInCache(nsINode* aNode) const {
   for (auto iter = mDocAccessibleCache.ConstIter(); !iter.Done(); iter.Next()) {
     DocAccessible* docAccessible = iter.UserData();
     NS_ASSERTION(docAccessible,
                  "No doc accessible for the object in doc accessible cache!");
 
     if (docAccessible) {
-      Accessible* accessible = docAccessible->GetAccessible(aNode);
+      LocalAccessible* accessible = docAccessible->GetAccessible(aNode);
       if (accessible) {
         return accessible;
       }
@@ -140,12 +140,8 @@ void DocManager::NotifyOfRemoteDocShutdown(DocAccessibleParent* aDoc) {
 xpcAccessibleDocument* DocManager::GetXPCDocument(DocAccessible* aDocument) {
   if (!aDocument) return nullptr;
 
-  xpcAccessibleDocument* xpcDoc = mXPCDocumentCache.GetWeak(aDocument);
-  if (!xpcDoc) {
-    xpcDoc = new xpcAccessibleDocument(aDocument);
-    mXPCDocumentCache.Put(aDocument, RefPtr{xpcDoc});
-  }
-  return xpcDoc;
+  return mXPCDocumentCache.LookupOrInsertWith(
+      aDocument, [&] { return MakeRefPtr<xpcAccessibleDocument>(aDocument); });
 }
 
 xpcAccessibleDocument* DocManager::GetXPCDocument(DocAccessibleParent* aDoc) {
@@ -164,7 +160,7 @@ xpcAccessibleDocument* DocManager::GetXPCDocument(DocAccessibleParent* aDoc) {
   MOZ_ASSERT(!aDoc->IsShutdown(), "Adding a shutdown doc to remote XPC cache");
   doc = new xpcAccessibleDocument(aDoc,
                                   Interfaces::DOCUMENT | Interfaces::HYPERTEXT);
-  sRemoteXPCDocumentCache->Put(aDoc, RefPtr{doc});
+  sRemoteXPCDocumentCache->InsertOrUpdate(aDoc, RefPtr{doc});
 
   return doc;
 }
@@ -202,9 +198,10 @@ bool DocManager::Init() {
 void DocManager::Shutdown() {
   nsCOMPtr<nsIWebProgress> progress = components::DocLoader::Service();
 
-  if (progress)
+  if (progress) {
     progress->RemoveProgressListener(
         static_cast<nsIWebProgressListener*>(this));
+  }
 
   ClearDocCache();
 }
@@ -224,8 +221,9 @@ DocManager::OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
   NS_ASSERTION(aStateFlags & STATE_IS_DOCUMENT, "Other notifications excluded");
 
   if (nsAccessibilityService::IsShutdown() || !aWebProgress ||
-      (aStateFlags & (STATE_START | STATE_STOP)) == 0)
+      (aStateFlags & (STATE_START | STATE_STOP)) == 0) {
     return NS_OK;
+  }
 
   nsCOMPtr<mozIDOMWindowProxy> DOMWindow;
   aWebProgress->GetDOMWindow(getter_AddRefs(DOMWindow));
@@ -240,8 +238,9 @@ DocManager::OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
   // Document was loaded.
   if (aStateFlags & STATE_STOP) {
 #ifdef A11Y_LOG
-    if (logging::IsEnabled(logging::eDocLoad))
+    if (logging::IsEnabled(logging::eDocLoad)) {
       logging::DocLoad("document loaded", aWebProgress, aRequest, aStateFlags);
+    }
 #endif
 
     // Figure out an event type to notify the document has been loaded.
@@ -250,8 +249,9 @@ DocManager::OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
     // Some XUL documents get start state and then stop state with failure
     // status when everything is ok. Fire document load complete event in this
     // case.
-    if (NS_SUCCEEDED(aStatus) || !nsCoreUtils::IsContentDocument(document))
+    if (NS_SUCCEEDED(aStatus) || !nsCoreUtils::IsContentDocument(document)) {
       eventType = nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE;
+    }
 
     // If end consumer has been retargeted for loaded content then do not fire
     // any event because it means no new document has been loaded, for example,
@@ -268,9 +268,10 @@ DocManager::OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
 
   // Document loading was started.
 #ifdef A11Y_LOG
-  if (logging::IsEnabled(logging::eDocLoad))
+  if (logging::IsEnabled(logging::eDocLoad)) {
     logging::DocLoad("start document loading", aWebProgress, aRequest,
                      aStateFlags);
+  }
 #endif
 
   DocAccessible* docAcc = GetExistingDocAccessible(document);
@@ -350,8 +351,9 @@ DocManager::HandleEvent(Event* aEvent) {
     // processing.
 
 #ifdef A11Y_LOG
-    if (logging::IsEnabled(logging::eDocDestroy))
+    if (logging::IsEnabled(logging::eDocDestroy)) {
       logging::DocDestroy("received 'pagehide' event", document);
+    }
 #endif
 
     // Shutdown this one and sub document accessibles.
@@ -370,8 +372,9 @@ DocManager::HandleEvent(Event* aEvent) {
   if (type.EqualsLiteral("DOMContentLoaded") &&
       nsCoreUtils::IsErrorPage(document)) {
 #ifdef A11Y_LOG
-    if (logging::IsEnabled(logging::eDocLoad))
+    if (logging::IsEnabled(logging::eDocLoad)) {
       logging::DocLoad("handled 'DOMContentLoaded' event", document);
+    }
 #endif
 
     HandleDOMDocumentLoad(document,
@@ -405,16 +408,18 @@ void DocManager::AddListeners(Document* aDocument,
   elm->AddEventListenerByType(this, u"pagehide"_ns, TrustedEventsAtCapture());
 
 #ifdef A11Y_LOG
-  if (logging::IsEnabled(logging::eDocCreate))
+  if (logging::IsEnabled(logging::eDocCreate)) {
     logging::Text("added 'pagehide' listener");
+  }
 #endif
 
   if (aAddDOMContentLoadedListener) {
     elm->AddEventListenerByType(this, u"DOMContentLoaded"_ns,
                                 TrustedEventsAtCapture());
 #ifdef A11Y_LOG
-    if (logging::IsEnabled(logging::eDocCreate))
+    if (logging::IsEnabled(logging::eDocCreate)) {
       logging::Text("added 'DOMContentLoaded' listener");
+    }
 #endif
   }
 }
@@ -477,7 +482,7 @@ DocAccessible* DocManager::CreateDocOrRootAccessible(Document* aDocument) {
                 : new DocAccessibleWrap(aDocument, presShell);
 
   // Cache the document accessible into document cache.
-  mDocAccessibleCache.Put(aDocument, RefPtr{docAcc});
+  mDocAccessibleCache.InsertOrUpdate(aDocument, RefPtr{docAcc});
 
   // Initialize the document accessible.
   docAcc->Init();

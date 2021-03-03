@@ -49,6 +49,7 @@
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 using mozilla::AsciiAlphanumericToNumber;
 using mozilla::AssertedCast;
@@ -226,6 +227,13 @@ bool IsIdentifier(const Latin1Char* chars, size_t length) {
   }
 
   return true;
+}
+
+bool IsIdentifierASCII(char c) { return unicode::IsIdentifierStartASCII(c); }
+
+bool IsIdentifierASCII(char c1, char c2) {
+  return unicode::IsIdentifierStartASCII(c1) &&
+         unicode::IsIdentifierPartASCII(c2);
 }
 
 bool IsIdentifierNameOrPrivateName(const Latin1Char* chars, size_t length) {
@@ -620,7 +628,7 @@ void TokenStreamAnyChars::reportErrorNoOffsetVA(unsigned errorNumber,
 #  define fast_getc getc
 #endif
 
-MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
+[[nodiscard]] MOZ_ALWAYS_INLINE bool
 TokenStreamAnyChars::internalUpdateLineInfoForEOL(uint32_t lineStartOffset) {
   prevLinebase = linebase;
   linebase = lineStartOffset;
@@ -1137,7 +1145,7 @@ TokenStreamChars<Utf8Unit, AnyCharsAccess>::badStructurallyValidCodePoint(
 }
 
 template <class AnyCharsAccess>
-MOZ_MUST_USE bool
+[[nodiscard]] bool
 TokenStreamChars<Utf8Unit, AnyCharsAccess>::getNonAsciiCodePointDontNormalize(
     Utf8Unit lead, char32_t* codePoint) {
   auto onBadLeadUnit = [this, &lead]() { this->badLeadUnit(lead); };
@@ -1910,7 +1918,7 @@ bool GeneralTokenStreamChars<Unit, AnyCharsAccess>::matchUnicodeEscapeIdent(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool
+[[nodiscard]] bool
 TokenStreamSpecific<Unit, AnyCharsAccess>::matchIdentifierStart(
     IdentifierEscapes* sawEscape) {
   int32_t unit = getCodeUnit();
@@ -1966,7 +1974,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirectives(
   return res;
 }
 
-MOZ_MUST_USE bool TokenStreamCharsShared::copyCharBufferTo(
+[[nodiscard]] bool TokenStreamCharsShared::copyCharBufferTo(
     JSContext* cx, UniquePtr<char16_t[], JS::FreePolicy>* destination) {
   size_t length = charBuffer.length();
 
@@ -1981,7 +1989,7 @@ MOZ_MUST_USE bool TokenStreamCharsShared::copyCharBufferTo(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirective(
+[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirective(
     bool isMultiline, bool shouldWarnDeprecated, const char* directive,
     uint8_t directiveLength, const char* errorMsgPragma,
     UniquePtr<char16_t[], JS::FreePolicy>* destination) {
@@ -2202,7 +2210,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::putIdentInCharBuffer(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::identifierName(
+[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::identifierName(
     TokenStart start, const Unit* identStart, IdentifierEscapes escaping,
     Modifier modifier, NameVisibility visibility, TokenKind* out) {
   // Run the bad-token code for every path out of this function except the
@@ -2414,7 +2422,7 @@ void SourceUnits<Utf8Unit>::consumeRestOfSingleLineComment() {
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
+[[nodiscard]] MOZ_ALWAYS_INLINE bool
 TokenStreamSpecific<Unit, AnyCharsAccess>::matchInteger(
     IsIntegerUnit isIntegerUnit, int32_t* nextUnit) {
   int32_t unit = getCodeUnit();
@@ -2426,7 +2434,7 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchInteger(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
+[[nodiscard]] MOZ_ALWAYS_INLINE bool
 TokenStreamSpecific<Unit, AnyCharsAccess>::matchIntegerAfterFirstDigit(
     IsIntegerUnit isIntegerUnit, int32_t* nextUnit) {
   int32_t unit;
@@ -2454,7 +2462,7 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchIntegerAfterFirstDigit(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::decimalNumber(
+[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::decimalNumber(
     int32_t unit, TokenStart start, const Unit* numStart, Modifier modifier,
     TokenKind* out) {
   // Run the bad-token code for every path out of this function except the
@@ -2557,7 +2565,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::decimalNumber(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::regexpLiteral(
+[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::regexpLiteral(
     TokenStart start, TokenKind* out) {
   MOZ_ASSERT(this->sourceUnits.previousCodeUnit() == Unit('/'));
   this->charBuffer.clear();
@@ -2684,7 +2692,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::regexpLiteral(
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::bigIntLiteral(
+[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::bigIntLiteral(
     TokenStart start, Modifier modifier, TokenKind* out) {
   MOZ_ASSERT(this->sourceUnits.previousCodeUnit() == toUnit('n'));
   MOZ_ASSERT(this->sourceUnits.offset() > start.offset());
@@ -2740,7 +2748,7 @@ void GeneralTokenStreamChars<Unit,
 }
 
 template <typename Unit, class AnyCharsAccess>
-MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
+[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
     TokenKind* const ttp, const Modifier modifier) {
   // Assume we'll fail: success cases will overwrite this.
 #ifdef DEBUG
@@ -2948,11 +2956,15 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
           return badToken();
         }
       } else if (IsAsciiDigit(unit)) {
-        // Octal integer literals are not permitted in strict mode code.
-        if (!strictModeError(JSMSG_DEPRECATED_OCTAL)) {
+        // Reject octal literals that appear in strict mode code.
+        if (!strictModeError(JSMSG_DEPRECATED_OCTAL_LITERAL)) {
           return badToken();
         }
-        anyCharsAccess().flags.sawDeprecatedOctal = true;
+
+        // The above test doesn't catch a few edge cases; see
+        // |GeneralParser::maybeParseDirective|.  Record the violation so that
+        // that function can handle them.
+        anyCharsAccess().setSawDeprecatedOctalLiteral();
 
         radix = 8;
         // one past the '0'
@@ -3609,6 +3621,38 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
 
         default: {
           if (!IsAsciiOctal(unit)) {
+            // \8 or \9 in an untagged template literal is a syntax error,
+            // reported in GeneralParser::noSubstitutionUntaggedTemplate.
+            //
+            // Tagged template literals, however, may contain \8 and \9.  The
+            // "cooked" representation of such a part will be |undefined|, and
+            // the "raw" representation will contain the literal characters.
+            //
+            //   function f(parts) {
+            //     assertEq(parts[0], undefined);
+            //     assertEq(parts.raw[0], "\\8");
+            //     return "composed";
+            //   }
+            //   assertEq(f`\8`, "composed");
+            if (unit == '8' || unit == '9') {
+              TokenStreamAnyChars& anyChars = anyCharsAccess();
+              if (parsingTemplate) {
+                anyChars.setInvalidTemplateEscape(
+                    this->sourceUnits.offset() - 2,
+                    InvalidEscapeType::EightOrNine);
+                continue;
+              }
+
+              // \8 and \9 are forbidden in string literals in strict mode code.
+              if (!strictModeError(JSMSG_DEPRECATED_EIGHT_OR_NINE_ESCAPE)) {
+                return false;
+              }
+
+              // The above test doesn't catch a few edge cases; see
+              // |GeneralParser::maybeParseDirective|.  Record the violation so
+              // that that function can handle them.
+              anyChars.setSawDeprecatedEightOrNineEscape();
+            }
             break;
           }
 
@@ -3621,7 +3665,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
             return false;
           }
 
-          // Strict mode code allows only \0, then a non-digit.
+          // Strict mode code allows only \0 followed by a non-digit.
           if (val != 0 || IsAsciiDigit(unit)) {
             TokenStreamAnyChars& anyChars = anyCharsAccess();
             if (parsingTemplate) {
@@ -3629,10 +3673,15 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
                                                 InvalidEscapeType::Octal);
               continue;
             }
-            if (!strictModeError(JSMSG_DEPRECATED_OCTAL)) {
+
+            if (!strictModeError(JSMSG_DEPRECATED_OCTAL_ESCAPE)) {
               return false;
             }
-            anyChars.flags.sawDeprecatedOctal = true;
+
+            // The above test doesn't catch a few edge cases; see
+            // |GeneralParser::maybeParseDirective|.  Record the violation so
+            // that that function can handle them.
+            anyChars.setSawDeprecatedOctalEscape();
           }
 
           if (IsAsciiOctal(unit)) {

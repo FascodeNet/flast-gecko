@@ -19,7 +19,9 @@ namespace a11y {
 class ChildrenEnumVariant final : public IEnumVARIANT {
  public:
   explicit ChildrenEnumVariant(AccessibleWrap* aAnchor)
-      : mAnchorAcc(aAnchor), mCurAcc(mAnchorAcc->GetChildAt(0)), mCurIndex(0) {}
+      : mAnchorAcc(aAnchor),
+        mCurAcc(mAnchorAcc->LocalChildAt(0)),
+        mCurIndex(0) {}
 
   // IUnknown
   DECL_IUNKNOWN
@@ -50,7 +52,7 @@ class ChildrenEnumVariant final : public IEnumVARIANT {
 
  protected:
   RefPtr<AccessibleWrap> mAnchorAcc;
-  Accessible* mCurAcc;
+  LocalAccessible* mCurAcc;
   uint32_t mCurIndex;
 };
 

@@ -1959,7 +1959,9 @@ JS_PUBLIC_API JSObject* JS_NewObjectForConstructor(JSContext* cx,
   return CreateThis(cx, clasp, newTarget);
 }
 
-JS_PUBLIC_API bool JS_IsNative(JSObject* obj) { return obj->isNative(); }
+JS_PUBLIC_API bool JS_IsNative(JSObject* obj) {
+  return obj->is<NativeObject>();
+}
 
 JS_PUBLIC_API void JS::AssertObjectBelongsToCurrentThread(JSObject* obj) {
   JSRuntime* rt = obj->compartment()->runtimeFromAnyThread();
@@ -2919,13 +2921,13 @@ JS_PUBLIC_API bool JS_AlreadyHasOwnPropertyById(JSContext* cx, HandleObject obj,
   CHECK_THREAD(cx);
   cx->check(obj, id);
 
-  if (!obj->isNative()) {
+  if (!obj->is<NativeObject>()) {
     return js::HasOwnProperty(cx, obj, id, foundp);
   }
 
-  RootedNativeObject nativeObj(cx, &obj->as<NativeObject>());
-  Rooted<PropertyResult> prop(cx);
-  if (!NativeLookupOwnPropertyNoResolve(cx, nativeObj, id, &prop)) {
+  PropertyResult prop;
+  if (!NativeLookupOwnPropertyNoResolve(cx, &obj->as<NativeObject>(), id,
+                                        &prop)) {
     return false;
   }
   *foundp = prop.isFound();
@@ -2999,7 +3001,7 @@ JS_PUBLIC_API bool JS_DeepFreezeObject(JSContext* cx, HandleObject obj) {
   }
 
   // Walk slots in obj and if any value is a non-null object, seal it.
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     RootedNativeObject nobj(cx, &obj->as<NativeObject>());
     for (uint32_t i = 0, n = nobj->slotSpan(); i < n; ++i) {
       if (!DeepFreezeSlot(cx, nobj->getSlot(i))) {
@@ -3181,7 +3183,7 @@ JS_PUBLIC_API bool JS::ObjectToCompletePropertyDescriptor(
 }
 
 JS_PUBLIC_API void JS_SetAllNonReservedSlotsToUndefined(JS::HandleObject obj) {
-  if (!obj->isNative()) {
+  if (!obj->is<NativeObject>()) {
     return;
   }
 
@@ -3413,7 +3415,7 @@ JS_PUBLIC_API bool JS_IsNativeFunction(JSObject* funobj, JSNative call) {
     return false;
   }
   JSFunction* fun = &funobj->as<JSFunction>();
-  return fun->isNative() && fun->native() == call;
+  return fun->isNativeFun() && fun->native() == call;
 }
 
 extern JS_PUBLIC_API bool JS_IsConstructor(JSFunction* fun) {
@@ -3643,7 +3645,7 @@ JS_PUBLIC_API unsigned JS_GetScriptBaseLineNumber(JSContext* cx,
 
 JS_PUBLIC_API JSScript* JS_GetFunctionScript(JSContext* cx,
                                              HandleFunction fun) {
-  if (fun->isNative()) {
+  if (fun->isNativeFun()) {
     return nullptr;
   }
 
@@ -3723,32 +3725,6 @@ JS_PUBLIC_API void JS::SetWaitCallback(JSRuntime* rt,
   MOZ_RELEASE_ASSERT((beforeWait == nullptr) == (afterWait == nullptr));
   rt->beforeWaitCallback = beforeWait;
   rt->afterWaitCallback = afterWait;
-}
-
-JS_PUBLIC_API JSObject* JS_New(JSContext* cx, HandleObject ctor,
-                               const JS::HandleValueArray& inputArgs) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(ctor, inputArgs);
-
-  RootedValue ctorVal(cx, ObjectValue(*ctor));
-  if (!IsConstructor(ctorVal)) {
-    ReportValueError(cx, JSMSG_NOT_CONSTRUCTOR, JSDVG_IGNORE_STACK, ctorVal,
-                     nullptr);
-    return nullptr;
-  }
-
-  ConstructArgs args(cx);
-  if (!FillArgumentsFromArraylike(cx, args, inputArgs)) {
-    return nullptr;
-  }
-
-  RootedObject obj(cx);
-  if (!js::Construct(cx, ctorVal, args, ctorVal, &obj)) {
-    return nullptr;
-  }
-
-  return obj;
 }
 
 JS_PUBLIC_API bool JS_CheckForInterrupt(JSContext* cx) {
@@ -3979,11 +3955,11 @@ JS_PUBLIC_API JSObject* JS::CallOriginalPromiseThen(
   return OriginalPromiseThen(cx, promiseObj, onFulfilled, onRejected);
 }
 
-static MOZ_MUST_USE bool ReactToPromise(JSContext* cx,
-                                        JS::Handle<JSObject*> promiseObj,
-                                        JS::Handle<JSObject*> onFulfilled,
-                                        JS::Handle<JSObject*> onRejected,
-                                        UnhandledRejectionBehavior behavior) {
+[[nodiscard]] static bool ReactToPromise(JSContext* cx,
+                                         JS::Handle<JSObject*> promiseObj,
+                                         JS::Handle<JSObject*> onFulfilled,
+                                         JS::Handle<JSObject*> onRejected,
+                                         UnhandledRejectionBehavior behavior) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(promiseObj, onFulfilled, onRejected);
@@ -5489,7 +5465,7 @@ namespace JS {
 
 void AutoFilename::reset() {
   if (ss_) {
-    ss_->decref();
+    ss_->Release();
     ss_ = nullptr;
   }
   if (filename_.is<const char*>()) {
@@ -5504,7 +5480,7 @@ void AutoFilename::setScriptSource(js::ScriptSource* p) {
   MOZ_ASSERT(!get());
   ss_ = p;
   if (p) {
-    p->incref();
+    p->AddRef();
     setUnowned(p->filename());
   }
 }
@@ -5715,7 +5691,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::EncodeScript(JSContext* cx,
   // but for consistency with `CopyScriptImpl` we always disallow.
   MOZ_ASSERT(!scriptArg->isFunction());
   if (scriptArg->treatAsRunOnce()) {
-    return JS::TranscodeResult_Failure_RunOnceNotSupported;
+    return JS::TranscodeResult::Failure_RunOnceNotSupported;
   }
 
   XDREncoder encoder(cx, buffer, buffer.length());
@@ -5726,7 +5702,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::EncodeScript(JSContext* cx,
     return res.unwrapErr();
   }
   MOZ_ASSERT(!buffer.empty());
-  return JS::TranscodeResult_Ok;
+  return JS::TranscodeResult::Ok;
 }
 
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
@@ -5737,32 +5713,33 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
       cx, js::MakeUnique<XDRDecoder>(cx, &options, buffer, cursorIndex));
   if (!decoder) {
     ReportOutOfMemory(cx);
-    return JS::TranscodeResult_Throw;
+    return JS::TranscodeResult::Throw;
   }
   XDRResult res = decoder->codeScript(scriptp);
   MOZ_ASSERT(bool(scriptp) == res.isOk());
   if (res.isErr()) {
     return res.unwrapErr();
   }
-  return JS::TranscodeResult_Ok;
+  return JS::TranscodeResult::Ok;
 }
 
 static JS::TranscodeResult DecodeStencil(JSContext* cx,
                                          JS::TranscodeBuffer& buffer,
+                                         frontend::CompilationInput& input,
                                          frontend::CompilationStencil& stencil,
                                          size_t cursorIndex) {
-  XDRStencilDecoder decoder(cx, &stencil.input.options, buffer, cursorIndex);
+  XDRStencilDecoder decoder(cx, &input.options, buffer, cursorIndex);
 
-  if (!stencil.input.initForGlobal(cx)) {
-    return JS::TranscodeResult_Throw;
+  if (!input.initForGlobal(cx)) {
+    return JS::TranscodeResult::Throw;
   }
 
-  XDRResult res = decoder.codeStencils(stencil);
+  XDRResult res = decoder.codeStencils(input, stencil);
   if (res.isErr()) {
     return res.unwrapErr();
   }
 
-  return JS::TranscodeResult_Ok;
+  return JS::TranscodeResult::Ok;
 }
 
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
@@ -5779,26 +5756,27 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
 
   // The buffer contains stencil.
 
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  frontend::CompilationStencil stencil(nullptr);
 
   JS::TranscodeResult res =
-      DecodeStencil(cx, buffer, stencil.get(), cursorIndex);
-  if (res != JS::TranscodeResult_Ok) {
+      DecodeStencil(cx, buffer, input.get(), stencil, cursorIndex);
+  if (res != JS::TranscodeResult::Ok) {
     return res;
   }
 
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
   Rooted<frontend::CompilationGCOutput> gcOutputForDelazification(cx);
-  if (!frontend::InstantiateStencils(cx, stencil.get(), gcOutput.get(),
+  if (!frontend::InstantiateStencils(cx, input.get(), stencil, gcOutput.get(),
                                      gcOutputForDelazification.address())) {
-    return JS::TranscodeResult_Throw;
+    return JS::TranscodeResult::Throw;
   }
 
   MOZ_ASSERT(gcOutput.get().script);
   scriptp.set(gcOutput.get().script);
 
-  return JS::TranscodeResult_Ok;
+  return JS::TranscodeResult::Ok;
 }
 
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
@@ -5808,14 +5786,14 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
       cx, js::MakeUnique<XDRDecoder>(cx, &options, range));
   if (!decoder) {
     ReportOutOfMemory(cx);
-    return JS::TranscodeResult_Throw;
+    return JS::TranscodeResult::Throw;
   }
   XDRResult res = decoder->codeScript(scriptp);
   MOZ_ASSERT(bool(scriptp) == res.isOk());
   if (res.isErr()) {
     return res.unwrapErr();
   }
-  return JS::TranscodeResult_Ok;
+  return JS::TranscodeResult::Ok;
 }
 
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
@@ -5824,26 +5802,27 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
     size_t cursorIndex) {
   MOZ_DIAGNOSTIC_ASSERT(options.useStencilXDR);
 
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  frontend::CompilationStencil stencil(nullptr);
 
   JS::TranscodeResult res =
-      DecodeStencil(cx, buffer, stencil.get(), cursorIndex);
-  if (res != JS::TranscodeResult_Ok) {
+      DecodeStencil(cx, buffer, input.get(), stencil, cursorIndex);
+  if (res != JS::TranscodeResult::Ok) {
     return res;
   }
 
   UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
-  if (!stencil.get().input.source()->xdrEncodeStencils(cx, stencil.get(),
-                                                       xdrEncoder)) {
-    return JS::TranscodeResult_Throw;
+  if (!stencil.source->xdrEncodeStencils(cx, input.get(), stencil,
+                                         xdrEncoder)) {
+    return JS::TranscodeResult::Throw;
   }
 
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
   Rooted<frontend::CompilationGCOutput> gcOutputForDelazification(cx);
-  if (!frontend::InstantiateStencils(cx, stencil.get(), gcOutput.get(),
+  if (!frontend::InstantiateStencils(cx, input.get(), stencil, gcOutput.get(),
                                      gcOutputForDelazification.address())) {
-    return JS::TranscodeResult_Throw;
+    return JS::TranscodeResult::Throw;
   }
 
   MOZ_ASSERT(gcOutput.get().script);
@@ -5852,7 +5831,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
 
   scriptp.set(gcOutput.get().script);
 
-  return JS::TranscodeResult_Ok;
+  return JS::TranscodeResult::Ok;
 }
 
 JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,

@@ -12,7 +12,6 @@
 #ifndef frontend_EitherParser_h
 #define frontend_EitherParser_h
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Tuple.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Variant.h"
@@ -148,11 +147,6 @@ class EitherParser : public BCEParserHandle {
                          uint32_t*, uint32_t*>
         matcher{offset, line, column};
     return parser.match(std::move(matcher));
-  }
-
-  CompilationStencil& getCompilationStencil() {
-    ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
-    return base.getCompilationStencil();
   }
 
   CompilationState& getCompilationState() {

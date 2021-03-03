@@ -332,7 +332,7 @@ function runSubtestsSeriallyInFreshWindows(aSubtests) {
       advanceSubtestExecution();
     }
 
-    function advanceSubtestExecution() {
+    async function advanceSubtestExecution() {
       var test = aSubtests[testIndex];
       if (w) {
         // Run any cleanup functions registered in the subtest
@@ -346,18 +346,23 @@ function runSubtestsSeriallyInFreshWindows(aSubtests) {
             !test.dp_suppression
           );
         }
+
+        let promiseFocus = SimpleTest.promiseFocus(window);
+
         if (test.prefs) {
           // We pushed some prefs for this test, pop them, and re-invoke
           // advanceSubtestExecution() after that's been processed
-          SpecialPowers.popPrefEnv(function() {
+          SpecialPowers.popPrefEnv(async function() {
             w.close();
             w = null;
+            await promiseFocus;
             advanceSubtestExecution();
           });
           return;
         }
 
         w.close();
+        await promiseFocus;
       }
 
       testIndex++;
@@ -744,7 +749,7 @@ async function injectScript(aScript, aWindow = window) {
 function getHitTestConfig() {
   if (!("hitTestConfig" in window)) {
     var utils = SpecialPowers.getDOMWindowUtils(window);
-    var isWebRender = utils.layerManagerType == "WebRender";
+    var isWebRender = utils.layerManagerType.startsWith("WebRender");
     var isWindows = getPlatform() == "windows";
     let activateAllScrollFrames = false;
     if (isWebRender) {
@@ -1153,5 +1158,11 @@ function waitToClearOutAnyPotentialScrolls(aWindow) {
         }, aWindow);
       });
     });
+  });
+}
+
+function waitForScrollEvent(target) {
+  return new Promise(resolve => {
+    target.addEventListener("scroll", resolve, { once: true });
   });
 }

@@ -1236,17 +1236,17 @@ static bool intrinsic_TypedArrayByteOffset(JSContext* cx, unsigned argc,
   return true;
 }
 
-static bool intrinsic_TypedArrayElementShift(JSContext* cx, unsigned argc,
-                                             Value* vp) {
+static bool intrinsic_TypedArrayElementSize(JSContext* cx, unsigned argc,
+                                            Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
   MOZ_ASSERT(TypedArrayObject::is(args[0]));
 
-  unsigned shift =
-      TypedArrayShift(args[0].toObject().as<TypedArrayObject>().type());
-  MOZ_ASSERT(shift == 0 || shift == 1 || shift == 2 || shift == 3);
+  unsigned size =
+      TypedArrayElemSize(args[0].toObject().as<TypedArrayObject>().type());
+  MOZ_ASSERT(size == 1 || size == 2 || size == 4 || size == 8);
 
-  args.rval().setInt32(mozilla::AssertedCast<int32_t>(shift));
+  args.rval().setInt32(mozilla::AssertedCast<int32_t>(size));
   return true;
 }
 
@@ -1951,12 +1951,21 @@ static bool intrinsic_IsTopLevelAwaitEnabled(JSContext* cx, unsigned argc,
   return true;
 }
 
-static bool intrinsic_GetAsyncCycleRoot(JSContext* cx, unsigned argc,
-                                        Value* vp) {
+static bool intrinsic_SetCycleRoot(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
+  RootedModuleObject cycleRoot(cx, &args[1].toObject().as<ModuleObject>());
+  module->setCycleRoot(cycleRoot);
+  args.rval().setUndefined();
+  return true;
+}
+
+static bool intrinsic_GetCycleRoot(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
   RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
-  JSObject* result = js::GetAsyncCycleRoot(module);
+  JSObject* result = module->getCycleRoot();
   if (!result) {
     return false;
   }
@@ -2076,7 +2085,7 @@ static bool intrinsic_CopyDataPropertiesOrGetOwnKeys(JSContext* cx,
   RootedObject from(cx, &args[1].toObject());
   RootedObject excludedItems(cx, args[2].toObjectOrNull());
 
-  if (from->isNative() && target->is<PlainObject>() &&
+  if (from->is<NativeObject>() && target->is<PlainObject>() &&
       (!excludedItems || excludedItems->is<PlainObject>())) {
     bool optimized;
     if (!CopyDataPropertiesNative(
@@ -2206,6 +2215,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("std_Map_entries", MapObject::entries, 0, 0),
 
     JS_INLINABLE_FN("std_Object_create", obj_create, 2, 0, ObjectCreate),
+    JS_INLINABLE_FN("std_Object_isPrototypeOf", obj_isPrototypeOf, 1, 0,
+                    ObjectIsPrototypeOf),
     JS_FN("std_Object_propertyIsEnumerable", obj_propertyIsEnumerable, 1, 0),
     JS_FN("std_Object_toString", obj_toString, 0, 0),
     JS_FN("std_Object_setProto", obj_setProto, 1, 0),
@@ -2416,8 +2427,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("TypedArrayBuffer", intrinsic_TypedArrayBuffer, 1, 0),
     JS_INLINABLE_FN("TypedArrayByteOffset", intrinsic_TypedArrayByteOffset, 1,
                     0, IntrinsicTypedArrayByteOffset),
-    JS_INLINABLE_FN("TypedArrayElementShift", intrinsic_TypedArrayElementShift,
-                    1, 0, IntrinsicTypedArrayElementShift),
+    JS_INLINABLE_FN("TypedArrayElementSize", intrinsic_TypedArrayElementSize, 1,
+                    0, IntrinsicTypedArrayElementSize),
 
     JS_INLINABLE_FN("TypedArrayLength", intrinsic_TypedArrayLength, 1, 0,
                     IntrinsicTypedArrayLength),
@@ -2595,7 +2606,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
           intrinsic_InstantiateModuleFunctionDeclarations, 1, 0),
     JS_FN("ExecuteModule", intrinsic_ExecuteModule, 1, 0),
     JS_FN("IsTopLevelAwaitEnabled", intrinsic_IsTopLevelAwaitEnabled, 0, 0),
-    JS_FN("GetAsyncCycleRoot", intrinsic_GetAsyncCycleRoot, 1, 0),
+    JS_FN("SetCycleRoot", intrinsic_SetCycleRoot, 2, 0),
+    JS_FN("GetCycleRoot", intrinsic_GetCycleRoot, 1, 0),
     JS_FN("AppendAsyncParentModule", intrinsic_AppendAsyncParentModule, 2, 0),
     JS_FN("CreateTopLevelCapability", intrinsic_CreateTopLevelCapability, 1, 0),
     JS_FN("ModuleTopLevelCapabilityResolve",
@@ -2771,34 +2783,35 @@ static bool VerifyGlobalNames(JSContext* cx, Handle<GlobalObject*> shg) {
   return true;
 }
 
-bool JSRuntime::initSelfHostingFromXDR(JSContext* cx,
-                                       const CompileOptions& options,
-                                       frontend::CompilationStencil& stencil,
-                                       MutableHandle<JSScript*> scriptOut) {
-  MOZ_ASSERT(selfHostingGlobal_);
-  MOZ_ASSERT(selfHostedXDR.length() > 0);
-  scriptOut.set(nullptr);
+[[nodiscard]] bool InitSelfHostingFromStencil(
+    JSContext* cx, Handle<GlobalObject*> shg, frontend::CompilationInput& input,
+    const frontend::CompilationStencil& stencil) {
+  // Instantiate the stencil and run the script.
+  // NOTE: Use a block here so the GC roots are dropped before freezing the Zone
+  //       below.
+  {
+    Rooted<frontend::CompilationGCOutput> output(cx);
+    if (!frontend::CompilationStencil::instantiateStencils(cx, input, stencil,
+                                                           output.get())) {
+      return false;
+    }
 
-  // Deserialize the stencil from XDR.
-  JS::TranscodeRange xdrRange(selfHostedXDR);
-  bool decodeOk = false;
-  if (!stencil.deserializeStencils(cx, xdrRange, &decodeOk)) {
+    // Run the script
+    RootedScript script(cx, output.get().script);
+    RootedValue rval(cx);
+    if (!JS_ExecuteScript(cx, script, &rval)) {
+      return false;
+    }
+  }
+
+  if (!VerifyGlobalNames(cx, shg)) {
     return false;
   }
-  // If XDR decode failed, it's not a propagated error.
-  // Fall back to regular text parse.
-  if (!decodeOk) {
-    return true;
-  }
 
-  // Instantiate the stencil.
-  Rooted<frontend::CompilationGCOutput> output(cx);
-  if (!frontend::CompilationStencil::instantiateStencils(cx, stencil,
-                                                         output.get())) {
-    return false;
-  }
+  // Garbage collect the self hosting zone once when it is created. It should
+  // not be modified after this point.
+  cx->runtime()->gc.freezeSelfHostingZone();
 
-  scriptOut.set(output.get().script);
   return true;
 }
 
@@ -2831,93 +2844,67 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
   CompileOptions options(cx);
   FillSelfHostingCompileOptions(options);
 
-  RootedScript script(cx);
-
   // Try initializing from Stencil XDR.
+  bool decodeOk = false;
+  Rooted<frontend::CompilationGCOutput> output(cx);
   if (selfHostedXDR.length() > 0) {
-    // Initialize the compilation info that houses the stencil.
-    Rooted<frontend::CompilationStencil> stencil(
-        cx, frontend::CompilationStencil(cx, options));
-    if (!stencil.get().input.initForSelfHostingGlobal(cx)) {
+    Rooted<frontend::CompilationInput> input(
+        cx, frontend::CompilationInput(options));
+    if (!input.get().initForSelfHostingGlobal(cx)) {
       return false;
     }
 
-    if (!initSelfHostingFromXDR(cx, options, stencil.get(), &script)) {
+    frontend::CompilationStencil stencil(input.get().source);
+    if (!stencil.deserializeStencils(cx, input.get(), selfHostedXDR,
+                                     &decodeOk)) {
       return false;
+    }
+
+    if (decodeOk) {
+      return InitSelfHostingFromStencil(cx, shg, input.get(), stencil);
     }
   }
 
   // If script wasn't generated, it means XDR was either not provided or that it
   // failed the decoding phase. Parse from text as before.
-  if (!script) {
-    Rooted<frontend::CompilationStencil> stencil(
-        cx, frontend::CompilationStencil(cx, options));
-    if (!stencil.get().input.initForSelfHostingGlobal(cx)) {
-      return false;
-    }
-
-    uint32_t srcLen = GetRawScriptsSize();
-    const unsigned char* compressed = compressedSources;
-    uint32_t compressedLen = GetCompressedSize();
-    auto src = cx->make_pod_array<char>(srcLen);
-    if (!src) {
-      return false;
-    }
-    if (!DecompressString(compressed, compressedLen,
-                          reinterpret_cast<unsigned char*>(src.get()),
-                          srcLen)) {
-      return false;
-    }
-
-    JS::SourceText<mozilla::Utf8Unit> srcBuf;
-    if (!srcBuf.init(cx, std::move(src), srcLen)) {
-      return false;
-    }
-
-    if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
-                                                ScopeKind::Global)) {
-      return false;
-    }
-
-    // Serialize the stencil to XDR.
-    if (selfHostedXDRWriter) {
-      JS::TranscodeBuffer xdrBuffer;
-      if (!stencil.get().serializeStencils(cx, xdrBuffer)) {
-        return false;
-      }
-
-      if (!selfHostedXDRWriter(cx, xdrBuffer)) {
-        return false;
-      }
-    }
-
-    // Instantiate the stencil.
-    Rooted<frontend::CompilationGCOutput> output(cx);
-    if (!frontend::CompilationStencil::instantiateStencils(cx, stencil.get(),
-                                                           output.get())) {
-      return false;
-    }
-
-    script.set(output.get().script);
+  uint32_t srcLen = GetRawScriptsSize();
+  const unsigned char* compressed = compressedSources;
+  uint32_t compressedLen = GetCompressedSize();
+  auto src = cx->make_pod_array<char>(srcLen);
+  if (!src) {
+    return false;
   }
-
-  MOZ_ASSERT(script);
-  RootedValue rval(cx);
-  if (!JS_ExecuteScript(cx, script, &rval)) {
+  if (!DecompressString(compressed, compressedLen,
+                        reinterpret_cast<unsigned char*>(src.get()), srcLen)) {
     return false;
   }
 
-  if (!VerifyGlobalNames(cx, shg)) {
+  JS::SourceText<mozilla::Utf8Unit> srcBuf;
+  if (!srcBuf.init(cx, std::move(src), srcLen)) {
     return false;
   }
 
-  // Garbage collect the self hosting zone once when it is created. It should
-  // not be modified after this point. Drop top-level script reference before we
-  // do this collection.
-  script.set(nullptr);
-  cx->runtime()->gc.freezeSelfHostingZone();
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  auto stencil = frontend::CompileGlobalScriptToStencil(cx, input.get(), srcBuf,
+                                                        ScopeKind::Global);
+  if (!stencil) {
+    return false;
+  }
 
-  return true;
+  // Serialize the stencil to XDR.
+  if (selfHostedXDRWriter) {
+    JS::TranscodeBuffer xdrBuffer;
+    if (!stencil->serializeStencils(cx, input.get(), xdrBuffer)) {
+      return false;
+    }
+
+    if (!selfHostedXDRWriter(cx, xdrBuffer)) {
+      return false;
+    }
+  }
+
+  return InitSelfHostingFromStencil(cx, shg, input.get(), *stencil);
 }
 
 void JSRuntime::finishSelfHosting() { selfHostingGlobal_ = nullptr; }
@@ -3055,17 +3042,17 @@ static ScriptSourceObject* SelfHostingScriptSourceObject(JSContext* cx) {
   CompileOptions options(cx);
   FillSelfHostingCompileOptions(options);
 
-  ScriptSource* ss = cx->new_<ScriptSource>();
-  if (!ss) {
-    return nullptr;
-  }
-  ScriptSourceHolder ssHolder(ss);
-
-  if (!ss->initFromOptions(cx, options)) {
+  RefPtr<ScriptSource> source(cx->new_<ScriptSource>());
+  if (!source) {
     return nullptr;
   }
 
-  RootedScriptSourceObject sourceObject(cx, ScriptSourceObject::create(cx, ss));
+  if (!source->initFromOptions(cx, options)) {
+    return nullptr;
+  }
+
+  RootedScriptSourceObject sourceObject(
+      cx, ScriptSourceObject::create(cx, source.get()));
   if (!sourceObject) {
     return nullptr;
   }
@@ -3165,7 +3152,7 @@ static JSObject* CloneObject(JSContext* cx,
   } else if (selfHostedObject->is<ArrayObject>()) {
     clone = NewTenuredDenseEmptyArray(cx, nullptr);
   } else {
-    MOZ_ASSERT(selfHostedObject->isNative());
+    MOZ_ASSERT(selfHostedObject->is<NativeObject>());
     clone = NewObjectWithGivenProto(
         cx, selfHostedObject->getClass(), nullptr,
         selfHostedObject->asTenured().getAllocKind(), TenuredObject);

@@ -703,6 +703,7 @@ static bool IsInternalDotName(JSContext* cx, HandleId id) {
          JSID_IS_ATOM(id, cx->names().dotFieldKeys) ||
          JSID_IS_ATOM(id, cx->names().dotStaticInitializers) ||
          JSID_IS_ATOM(id, cx->names().dotStaticFieldKeys) ||
+         JSID_IS_ATOM(id, cx->names().dotArgs) ||
          JSID_IS_ATOM(id, cx->names().starNamespaceStar);
 }
 #endif
@@ -747,7 +748,7 @@ static bool with_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
     return false;
   }
 
-  if (propp) {
+  if (propp.isFound()) {
     bool scopable;
     if (!CheckUnscopables(cx, actual, id, &scopable)) {
       return false;
@@ -3485,7 +3486,7 @@ bool js::CheckLexicalNameConflict(JSContext* cx,
   } else if ((shape = lexicalEnv->lookup(cx, name))) {
     // ES 15.1.11 step 5.b
     redeclKind = shape->writable() ? "let" : "const";
-  } else if (varObj->isNative() &&
+  } else if (varObj->is<NativeObject>() &&
              (shape = varObj->as<NativeObject>().lookup(cx, name))) {
     // Faster path for ES 15.1.11 step 5.c-d when the shape can be found
     // without going through a resolve hook.
@@ -3601,7 +3602,8 @@ static bool InitGlobalOrEvalDeclarations(
           return false;
         }
 
-        if (!prop || (obj2 != varObj && varObj->is<GlobalObject>())) {
+        if (prop.isNotFound() ||
+            (obj2 != varObj && varObj->is<GlobalObject>())) {
           if (!DefineDataProperty(cx, varObj, name, UndefinedHandleValue,
                                   attrs)) {
             return false;
@@ -3681,7 +3683,7 @@ static bool InitHoistedFunctionDeclarations(JSContext* cx, HandleScript script,
     unsigned attrs = script->isForEval() ? JSPROP_ENUMERATE
                                          : JSPROP_ENUMERATE | JSPROP_PERMANENT;
 
-    if (!prop || pobj != varObj) {
+    if (prop.isNotFound() || pobj != varObj) {
       if (!DefineDataProperty(cx, varObj, name, rval, attrs)) {
         return false;
       }
@@ -3703,7 +3705,8 @@ static bool InitHoistedFunctionDeclarations(JSContext* cx, HandleScript script,
      * storing the function in the stack frame (for non-aliased variables) or on
      * the scope object (for aliased).
      */
-    MOZ_ASSERT(varObj->isNative() || varObj->is<DebugEnvironmentProxy>());
+    MOZ_ASSERT(varObj->is<NativeObject>() ||
+               varObj->is<DebugEnvironmentProxy>());
     if (varObj->is<GlobalObject>()) {
       Shape* shape = prop.shape();
       if (shape->configurable()) {

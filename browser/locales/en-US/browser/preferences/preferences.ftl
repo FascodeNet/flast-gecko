@@ -139,14 +139,6 @@ search-results-help-link = Need help? Visit <a data-l10n-name="url">{ -brand-sho
 
 startup-header = Startup
 
-# { -brand-short-name } will be 'Firefox Developer Edition',
-# since this setting is only exposed in Firefox Developer Edition
-separate-profile-mode =
-    .label = Allow { -brand-short-name } and Firefox to run at the same time
-use-firefox-sync = Tip: This uses separate profiles. Use { -sync-brand-short-name } to share data between them.
-get-started-not-logged-in = Sign in to { -sync-brand-short-name }…
-get-started-configured = Open { -sync-brand-short-name } preferences
-
 always-check-default =
     .label = Always check if { -brand-short-name } is your default browser
     .accesskey = y
@@ -230,7 +222,6 @@ containers-remove-alert-msg =
 
 containers-remove-ok-button = Remove this Container
 containers-remove-cancel-button = Don’t remove this Container
-
 
 ## General Section - Language & Appearance
 
@@ -634,6 +625,7 @@ home-prefs-recommended-by-header =
     .label = Recommended by { $provider }
 home-prefs-recommended-by-description-update = Exceptional content from across the web, curated by { $provider }
 home-prefs-recommended-by-description-new = Exceptional content curated by { $provider }, part of the { -brand-product-name } family
+
 ##
 
 home-prefs-recommended-by-learn-more = How it works
@@ -1148,6 +1140,7 @@ enhanced-tracking-protection-setting-strict =
 enhanced-tracking-protection-setting-custom =
   .label = Custom
   .accesskey = C
+
 ##
 
 content-blocking-etp-standard-desc = Balanced for protection and performance. Pages will load normally.
@@ -1337,10 +1330,6 @@ certs-devices =
     .label = Security Devices…
     .accesskey = D
 
-space-alert-learn-more-button =
-    .label = Learn More
-    .accesskey = L
-
 space-alert-over-5gb-pref-button =
     .label =
         { PLATFORM() ->
@@ -1358,10 +1347,6 @@ space-alert-over-5gb-message =
         [windows] { -brand-short-name } is running out of disk space. Website contents may not display properly. You can clear stored data in Options > Privacy & Security > Cookies and Site Data.
        *[other] { -brand-short-name } is running out of disk space. Website contents may not display properly. You can clear stored data in Preferences > Privacy & Security > Cookies and Site Data.
     }
-
-space-alert-under-5gb-ok-button =
-    .label = OK, Got it
-    .accesskey = K
 
 space-alert-under-5gb-message = { -brand-short-name } is running out of disk space. Website contents may not display properly. Visit “Learn More” to optimize your disk usage for better browsing experience.
 
@@ -1383,6 +1368,7 @@ httpsonly-radio-disabled =
     .label = Don’t enable HTTPS-Only Mode
 
 ## The following strings are used in the Download section of settings
+
 desktop-folder-name = Desktop
 downloads-folder-name = Downloads
 choose-download-folder-title = Choose Download Folder:

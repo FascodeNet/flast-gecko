@@ -13,6 +13,7 @@
 #include "gc/GCProbes.h"
 #include "js/CharacterEncoding.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -52,6 +53,7 @@ inline JSFunction* CloneFunctionObject(JSContext* cx, HandleFunction fun,
   debugCheckNewObject(group, shape, kind, heap);
 
   const JSClass* clasp = group->clasp();
+  MOZ_ASSERT(clasp->isNativeObject());
   MOZ_ASSERT(clasp->isJSFunction());
 
   static constexpr size_t NumDynamicSlots = 0;

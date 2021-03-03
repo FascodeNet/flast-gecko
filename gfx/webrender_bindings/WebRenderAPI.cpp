@@ -217,8 +217,10 @@ class RemoveRenderer : public RendererEvent {
   layers::SynchronousTask* mTask;
 };
 
-TransactionBuilder::TransactionBuilder(bool aUseSceneBuilderThread)
-    : mUseSceneBuilderThread(aUseSceneBuilderThread) {
+TransactionBuilder::TransactionBuilder(WebRenderAPI* aApi,
+                                       bool aUseSceneBuilderThread)
+    : mUseSceneBuilderThread(aUseSceneBuilderThread),
+      mApiBackend(aApi->GetBackendType()) {
   mTxn = wr_transaction_new(mUseSceneBuilderThread);
 }
 
@@ -673,15 +675,24 @@ void WebRenderAPI::Capture() {
   wr_api_capture(mDocHandle, path, bits);
 }
 
-void WebRenderAPI::ToggleCaptureSequence() {
-  mCaptureSequence = !mCaptureSequence;
+void WebRenderAPI::StartCaptureSequence(const nsCString& aPath,
+                                        uint32_t aFlags) {
   if (mCaptureSequence) {
-    uint8_t bits = 9;                          // TODO: get from JavaScript
-    const char* path = "wr-capture-sequence";  // TODO: get from JavaScript
-    wr_api_start_capture_sequence(mDocHandle, path, bits);
-  } else {
     wr_api_stop_capture_sequence(mDocHandle);
   }
+
+  wr_api_start_capture_sequence(mDocHandle, PromiseFlatCString(aPath).get(),
+                                aFlags);
+
+  mCaptureSequence = true;
+}
+
+void WebRenderAPI::StopCaptureSequence() {
+  if (mCaptureSequence) {
+    wr_api_stop_capture_sequence(mDocHandle);
+  }
+
+  mCaptureSequence = false;
 }
 
 void WebRenderAPI::BeginRecording(const TimeStamp& aRecordingStart,
@@ -924,11 +935,14 @@ void WebRenderAPI::RunOnRenderThread(UniquePtr<RendererEvent> aEvent) {
   wr_api_send_external_event(mDocHandle, event);
 }
 
-DisplayListBuilder::DisplayListBuilder(PipelineId aId, size_t aCapacity,
+DisplayListBuilder::DisplayListBuilder(PipelineId aId,
+                                       WebRenderBackend aBackend,
+                                       size_t aCapacity,
                                        layers::DisplayItemCache* aCache)
     : mCurrentSpaceAndClipChain(wr::RootScrollNodeWithChain()),
       mActiveFixedPosTracker(nullptr),
       mPipelineId(aId),
+      mBackend(aBackend),
       mDisplayItemCache(aCache) {
   MOZ_COUNT_CTOR(DisplayListBuilder);
   mWrState = wr_state_new(aId, aCapacity);

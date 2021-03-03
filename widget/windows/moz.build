@@ -53,13 +53,13 @@ EXPORTS.mozilla.widget += [
     "WindowsSMTCProvider.h",
     "WinMessages.h",
     "WinModifierKeyState.h",
+    "WinTaskbar.h",
 ]
 
 UNIFIED_SOURCES += [
     "AudioSession.cpp",
     "CompositorWidgetChild.cpp",
     "GfxInfo.cpp",
-    "IconLoaderHelperWin.cpp",
     "IEnumFE.cpp",
     "IMMHandler.cpp",
     "InkCollector.cpp",

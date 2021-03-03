@@ -12,7 +12,6 @@
 
 #define __STDC_FORMAT_MACROS
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ReverseIterator.h"
 #include "mozilla/Sprintf.h"
@@ -57,7 +56,8 @@
 #include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/Shape.h"
-#include "vm/ToSource.h"  // js::ValueToSource
+#include "vm/ToSource.h"       // js::ValueToSource
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "gc/GC-inl.h"
 #include "vm/BytecodeIterator-inl.h"
@@ -110,8 +110,8 @@ static bool DecompileArgumentFromStack(JSContext* cx, int formalIndex,
 
 /* static */ const char PCCounts::numExecName[] = "interp";
 
-static MOZ_MUST_USE bool DumpIonScriptCounts(Sprinter* sp, HandleScript script,
-                                             jit::IonScriptCounts* ionCounts) {
+[[nodiscard]] static bool DumpIonScriptCounts(Sprinter* sp, HandleScript script,
+                                              jit::IonScriptCounts* ionCounts) {
   if (!sp->jsprintf("IonScript [%zu blocks]:\n", ionCounts->numBlocks())) {
     return false;
   }
@@ -146,8 +146,8 @@ static MOZ_MUST_USE bool DumpIonScriptCounts(Sprinter* sp, HandleScript script,
   return true;
 }
 
-static MOZ_MUST_USE bool DumpPCCounts(JSContext* cx, HandleScript script,
-                                      Sprinter* sp) {
+[[nodiscard]] static bool DumpPCCounts(JSContext* cx, HandleScript script,
+                                       Sprinter* sp) {
   MOZ_ASSERT(script->hasScriptCounts());
 
   // Ensure the Disassemble1 call below does not discard the script counts.
@@ -991,7 +991,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
  * current line. If showAll is true, include the source note type and the
  * entry stack depth.
  */
-static MOZ_MUST_USE bool DisassembleAtPC(
+[[nodiscard]] static bool DisassembleAtPC(
     JSContext* cx, JSScript* scriptArg, bool lines, const jsbytecode* pc,
     bool showAll, Sprinter* sp,
     DisassembleSkeptically skeptically = DisassembleSkeptically::No) {
@@ -2613,8 +2613,8 @@ JS_FRIEND_API size_t js::GetPCCountScriptCount(JSContext* cx) {
   return rt->scriptAndCountsVector->length();
 }
 
-static MOZ_MUST_USE bool JSONStringProperty(Sprinter& sp, JSONPrinter& json,
-                                            const char* name, JSString* str) {
+[[nodiscard]] static bool JSONStringProperty(Sprinter& sp, JSONPrinter& json,
+                                             const char* name, JSString* str) {
   json.beginStringProperty(name);
   if (!JSONQuoteString(&sp, str)) {
     return false;

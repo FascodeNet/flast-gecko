@@ -57,9 +57,6 @@ const tabs = [
 add_task(async function task() {
   const hud = await openNewTabAndConsole(TEST_URI);
 
-  const currentTab = gBrowser.selectedTab;
-  const target = await TargetFactory.forTab(currentTab);
-
   // Test proper UI update when request is opened.
   // For every tab (with HTTP details):
   // 1. Execute long-time request
@@ -69,12 +66,12 @@ add_task(async function task() {
   // 5. Check content of all tabs
   for (const tab of tabs) {
     info(`Test "${tab.id}" panel`);
-    await openRequestBeforeUpdates(target, hud, tab);
+    await openRequestBeforeUpdates(hud, tab);
   }
 });
 
-async function openRequestBeforeUpdates(target, hud, tab) {
-  const toolbox = gDevTools.getToolbox(target);
+async function openRequestBeforeUpdates(hud, tab) {
+  const toolbox = hud.toolbox;
 
   await clearOutput(hud);
 
@@ -223,7 +220,7 @@ async function testResponse(messageNode) {
   responseTab.click();
   const responsePanel = messageNode.querySelector("#response-panel");
   const responsePayloadHeader = await waitFor(() =>
-    responsePanel.querySelector("#responsePayload-header")
+    responsePanel.querySelector(".data-header")
   );
   // Expand the header if it wasn't yet.
   if (responsePayloadHeader.getAttribute("aria-expanded") === "false") {

@@ -7,12 +7,12 @@
 #ifndef frontend_Stencil_h
 #define frontend_Stencil_h
 
-#include "mozilla/Assertions.h"  // MOZ_ASSERT
-#include "mozilla/Attributes.h"  // MOZ_MUST_USE
-#include "mozilla/Maybe.h"       // mozilla::{Maybe, Nothing}
-#include "mozilla/Range.h"       // mozilla::Range
-#include "mozilla/Span.h"        // mozilla::Span
-#include "mozilla/Variant.h"     // mozilla::Variant
+#include "mozilla/Assertions.h"       // MOZ_ASSERT
+#include "mozilla/Maybe.h"            // mozilla::{Maybe, Nothing}
+#include "mozilla/MemoryReporting.h"  // mozilla::MallocSizeOf
+#include "mozilla/Range.h"            // mozilla::Range
+#include "mozilla/Span.h"             // mozilla::Span
+#include "mozilla/Variant.h"          // mozilla::Variant
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // char16_t, uint8_t, uint16_t, uint32_t
@@ -24,6 +24,7 @@
 #include "frontend/ScriptIndex.h"         // ScriptIndex
 #include "frontend/TypedIndex.h"          // TypedIndex
 #include "js/AllocPolicy.h"               // SystemAllocPolicy
+#include "js/RefCounted.h"                // AtomicRefCounted
 #include "js/RegExpFlags.h"               // JS::RegExpFlags
 #include "js/RootingAPI.h"                // Handle
 #include "js/TypeDecls.h"                 // JSContext
@@ -41,6 +42,7 @@
 
 namespace js {
 
+class LifoAlloc;
 class JSONPrinter;
 class RegExpObject;
 
@@ -164,7 +166,7 @@ using RegExpIndex = TypedIndex<RegExpStencil>;
 using BigIntIndex = TypedIndex<BigIntStencil>;
 using ObjLiteralIndex = TypedIndex<ObjLiteralStencil>;
 
-// Index into {CompilationState,BaseCompilationStencil}.gcThingData.
+// Index into {ExtensibleCompilationStencil,BaseCompilationStencil}.gcThingData.
 class CompilationGCThingType {};
 using CompilationGCThingIndex = TypedIndex<CompilationGCThingType>;
 
@@ -220,8 +222,8 @@ class BigIntStencil {
  public:
   BigIntStencil() = default;
 
-  MOZ_MUST_USE bool init(JSContext* cx, LifoAlloc& alloc,
-                         const Vector<char16_t, 32>& buf);
+  [[nodiscard]] bool init(JSContext* cx, LifoAlloc& alloc,
+                          const Vector<char16_t, 32>& buf);
 
   BigInt* createBigInt(JSContext* cx) const {
     mozilla::Range<const char16_t> source(source_.data(), source_.size());
@@ -232,6 +234,10 @@ class BigIntStencil {
     mozilla::Range<const char16_t> source(source_.data(), source_.size());
     return js::BigIntLiteralIsZero(source);
   }
+
+#ifdef DEBUG
+  bool isContainedIn(const LifoAlloc& alloc) const;
+#endif
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
@@ -309,45 +315,42 @@ class ScopeStencil {
 
  public:
   static bool createForFunctionScope(
-      JSContext* cx, CompilationStencil& stencil,
-      CompilationState& compilationState, FunctionScope::ParserData* dataArg,
-      bool hasParameterExprs, bool needsEnvironment, ScriptIndex functionIndex,
-      bool isArrow, mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
+      JSContext* cx, CompilationState& compilationState,
+      FunctionScope::ParserData* dataArg, bool hasParameterExprs,
+      bool needsEnvironment, ScriptIndex functionIndex, bool isArrow,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
-  static bool createForLexicalScope(JSContext* cx, CompilationStencil& stencil,
-                                    CompilationState& compilationState,
-                                    ScopeKind kind,
-                                    LexicalScope::ParserData* dataArg,
-                                    uint32_t firstFrameSlot,
-                                    mozilla::Maybe<ScopeIndex> enclosing,
-                                    ScopeIndex* index);
+  static bool createForLexicalScope(
+      JSContext* cx, CompilationState& compilationState, ScopeKind kind,
+      LexicalScope::ParserData* dataArg, uint32_t firstFrameSlot,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
-  static bool createForVarScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForVarScope(JSContext* cx,
                                 CompilationState& compilationState,
                                 ScopeKind kind, VarScope::ParserData* dataArg,
                                 uint32_t firstFrameSlot, bool needsEnvironment,
                                 mozilla::Maybe<ScopeIndex> enclosing,
                                 ScopeIndex* index);
 
-  static bool createForGlobalScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForGlobalScope(JSContext* cx,
                                    CompilationState& compilationState,
                                    ScopeKind kind,
                                    GlobalScope::ParserData* dataArg,
                                    ScopeIndex* index);
 
-  static bool createForEvalScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForEvalScope(JSContext* cx,
                                  CompilationState& compilationState,
                                  ScopeKind kind, EvalScope::ParserData* dataArg,
                                  mozilla::Maybe<ScopeIndex> enclosing,
                                  ScopeIndex* index);
 
-  static bool createForModuleScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForModuleScope(JSContext* cx,
                                    CompilationState& compilationState,
                                    ModuleScope::ParserData* dataArg,
                                    mozilla::Maybe<ScopeIndex> enclosing,
                                    ScopeIndex* index);
 
-  static bool createForWithScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForWithScope(JSContext* cx,
                                  CompilationState& compilationState,
                                  mozilla::Maybe<ScopeIndex> enclosing,
                                  ScopeIndex* index);
@@ -411,9 +414,9 @@ class ScopeStencil {
       BaseParserScopeData* baseData) const;
 
   template <typename SpecificEnvironmentType>
-  MOZ_MUST_USE bool createSpecificShape(JSContext* cx, ScopeKind kind,
-                                        BaseScopeData* scopeData,
-                                        MutableHandleShape shape) const;
+  [[nodiscard]] bool createSpecificShape(JSContext* cx, ScopeKind kind,
+                                         BaseScopeData* scopeData,
+                                         MutableHandleShape shape) const;
 
   template <typename SpecificScopeType, typename SpecificEnvironmentType>
   Scope* createSpecificScope(JSContext* cx, CompilationAtomCache& atomCache,
@@ -476,12 +479,16 @@ using FunctionDeclarationVector =
 //       for readability.
 class StencilModuleEntry {
  public:
-  //              | ModuleRequest | ImportEntry | ExportAs | ExportFrom |
-  //              |-----------------------------------------------------|
-  // specifier    | required      | required    | nullptr  | required   |
-  // localName    | null          | required    | required | nullptr    |
-  // importName   | null          | required    | nullptr  | required   |
-  // exportName   | null          | null        | required | optional   |
+  // clang-format off
+  //
+  //              | ModuleRequest | ImportEntry | ImportNamespaceEntry | ExportAs | ExportFrom | ExportNamespaceFrom | ExportBatchFrom |
+  //              |--------------------------------------------------------------------------------------------------------------------|
+  // specifier    | required      | required    | required             | null     | required   | required            | required        |
+  // localName    | null          | required    | required             | required | null       | null                | null            |
+  // importName   | null          | required    | null                 | null     | required   | null                | null            |
+  // exportName   | null          | null        | null                 | required | required   | required            | null            |
+  //
+  // clang-format on
   TaggedParserAtomIndex specifier;
   TaggedParserAtomIndex localName;
   TaggedParserAtomIndex importName;
@@ -522,6 +529,16 @@ class StencilModuleEntry {
     return entry;
   }
 
+  static StencilModuleEntry importNamespaceEntry(
+      TaggedParserAtomIndex specifier, TaggedParserAtomIndex localName,
+      uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(specifier && localName);
+    StencilModuleEntry entry(lineno, column);
+    entry.specifier = specifier;
+    entry.localName = localName;
+    return entry;
+  }
+
   static StencilModuleEntry exportAsEntry(TaggedParserAtomIndex localName,
                                           TaggedParserAtomIndex exportName,
                                           uint32_t lineno, uint32_t column) {
@@ -536,18 +553,36 @@ class StencilModuleEntry {
                                             TaggedParserAtomIndex importName,
                                             TaggedParserAtomIndex exportName,
                                             uint32_t lineno, uint32_t column) {
-    // NOTE: The `export * from "mod";` syntax generates nullptr exportName.
-    MOZ_ASSERT(specifier && importName);
+    MOZ_ASSERT(specifier && importName && exportName);
     StencilModuleEntry entry(lineno, column);
     entry.specifier = specifier;
     entry.importName = importName;
     entry.exportName = exportName;
     return entry;
   }
+
+  static StencilModuleEntry exportNamespaceFromEntry(
+      TaggedParserAtomIndex specifier, TaggedParserAtomIndex exportName,
+      uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(specifier && exportName);
+    StencilModuleEntry entry(lineno, column);
+    entry.specifier = specifier;
+    entry.exportName = exportName;
+    return entry;
+  }
+
+  static StencilModuleEntry exportBatchFromEntry(
+      TaggedParserAtomIndex specifier, uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(specifier);
+    StencilModuleEntry entry(lineno, column);
+    entry.specifier = specifier;
+    return entry;
+  }
 };
 
 // Metadata generated by parsing module scripts, including import/export tables.
-class StencilModuleMetadata {
+class StencilModuleMetadata
+    : public js::AtomicRefCounted<StencilModuleMetadata> {
  public:
   using EntryVector = Vector<StencilModuleEntry, 0, js::SystemAllocPolicy>;
 
@@ -564,6 +599,16 @@ class StencilModuleMetadata {
 
   bool initModule(JSContext* cx, CompilationAtomCache& atomCache,
                   JS::Handle<ModuleObject*> module) const;
+
+  size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
+    return mallocSizeOf(this) +
+           requestedModules.sizeOfExcludingThis(mallocSizeOf) +
+           importEntries.sizeOfExcludingThis(mallocSizeOf) +
+           localExportEntries.sizeOfExcludingThis(mallocSizeOf) +
+           indirectExportEntries.sizeOfExcludingThis(mallocSizeOf) +
+           starExportEntries.sizeOfExcludingThis(mallocSizeOf) +
+           functionDecls.sizeOfExcludingThis(mallocSizeOf);
+  }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
@@ -716,8 +761,8 @@ class ScriptStencil {
   //   * lazy Function (cannot be asm.js module)
 
   // GCThings are stored into
-  // {CompilationState,BaseCompilationStencil}.gcThingData, in [gcThingsOffset,
-  // gcThingsOffset + gcThingsLength) range.
+  // {ExtensibleCompilationStencil,BaseCompilationStencil}.gcThingData,
+  // in [gcThingsOffset, gcThingsOffset + gcThingsLength) range.
   CompilationGCThingIndex gcThingsOffset;
   uint32_t gcThingsLength = 0;
 

@@ -382,7 +382,7 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
   Mark mark() { return Mark(this, end()); }
 
   // Check if a pointer is part of the allocated data of this chunk.
-  bool contains(void* ptr) const {
+  bool contains(const void* ptr) const {
     // Note: We cannot check "ptr < end()" because the mark have a 0-size
     // length.
     return begin() <= ptr && ptr <= end();
@@ -408,8 +408,8 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
   // Given an amount, compute the total size of a chunk for it: reserved
   // space before |begin()|, space for |amount| bytes, and red-zone space
   // after those bytes that will ultimately end at |capacity_|.
-  static inline MOZ_MUST_USE bool allocSizeWithRedZone(size_t amount,
-                                                       size_t* size);
+  [[nodiscard]] static inline bool allocSizeWithRedZone(size_t amount,
+                                                        size_t* size);
 
   // Given a bump chunk pointer, find the next base/end pointers. This is
   // useful for having consistent allocations, and iterating over known size
@@ -471,7 +471,7 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
 static constexpr size_t BumpChunkReservedSpace =
     AlignBytes(sizeof(BumpChunk), LIFO_ALLOC_ALIGN);
 
-/* static */ inline MOZ_MUST_USE bool BumpChunk::allocSizeWithRedZone(
+[[nodiscard]] /* static */ inline bool BumpChunk::allocSizeWithRedZone(
     size_t amount, size_t* size) {
   constexpr size_t SpaceBefore = BumpChunkReservedSpace;
   static_assert((SpaceBefore % LIFO_ALLOC_ALIGN) == 0,
@@ -597,7 +597,7 @@ class LifoAlloc {
   }
 
   // Check for space in unused chunks or allocate a new unused chunk.
-  MOZ_MUST_USE bool ensureUnusedApproximateColdPath(size_t n, size_t total);
+  [[nodiscard]] bool ensureUnusedApproximateColdPath(size_t n, size_t total);
 
  public:
   explicit LifoAlloc(size_t defaultChunkSize)
@@ -698,8 +698,7 @@ class LifoAlloc {
   // Ensures that enough space exists to satisfy N bytes worth of
   // allocation requests, not necessarily contiguous. Note that this does
   // not guarantee a successful single allocation of N bytes.
-  MOZ_ALWAYS_INLINE
-  MOZ_MUST_USE bool ensureUnusedApproximate(size_t n) {
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool ensureUnusedApproximate(size_t n) {
     AutoFallibleScope fallibleAllocator(this);
     size_t total = 0;
     if (!chunks_.empty()) {
@@ -870,7 +869,7 @@ class LifoAlloc {
   JS_DECLARE_NEW_METHODS(newInfallible, allocInfallible, MOZ_ALWAYS_INLINE)
 
 #ifdef DEBUG
-  bool contains(void* ptr) const {
+  bool contains(const void* ptr) const {
     for (const detail::BumpChunk& chunk : chunks_) {
       if (chunk.contains(ptr)) {
         return true;
@@ -1021,7 +1020,7 @@ class LifoAllocPolicy {
   template <typename T>
   void free_(T* p, size_t numElems) {}
   void reportAllocOverflow() const {}
-  MOZ_MUST_USE bool checkSimulatedOOM() const {
+  [[nodiscard]] bool checkSimulatedOOM() const {
     return fb == Infallible || !js::oom::ShouldFailWithOOM();
   }
 };

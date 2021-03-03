@@ -363,7 +363,7 @@ add_task(async function sendToDevice_syncNotReady_other_states() {
     sandbox
       .stub(UIState, "get")
       .returns({ status: UIState.STATUS_NOT_VERIFIED });
-    sandbox.stub(gSync, "isSendableURI").returns(true);
+    sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
 
     let cleanUp = () => {
       sandbox.restore();
@@ -422,7 +422,7 @@ add_task(async function sendToDevice_syncNotReady_configured() {
       .stub(fxAccounts.device, "recentDeviceList")
       .get(() => null);
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
-    sandbox.stub(gSync, "isSendableURI").returns(true);
+    sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
 
     sandbox.stub(fxAccounts.device, "refreshDeviceList").callsFake(() => {
       recentDeviceList.get(() =>
@@ -503,16 +503,6 @@ add_task(async function sendToDevice_syncNotReady_configured() {
             attrs,
           });
         }
-        expectedItems.push(null, {
-          attrs: {
-            label: "Send to All Devices",
-          },
-        });
-        expectedItems.push(null, {
-          attrs: {
-            label: "Manage Devices...",
-          },
-        });
         checkSendToDeviceItems(expectedItems);
       } else {
         ok(false, "This should never happen");
@@ -585,7 +575,7 @@ add_task(async function sendToDevice_noDevices() {
     const sandbox = sinon.createSandbox();
     sandbox.stub(fxAccounts.device, "recentDeviceList").get(() => []);
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
-    sandbox.stub(gSync, "isSendableURI").returns(true);
+    sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
     sandbox.stub(fxAccounts.device, "refreshDeviceList").resolves(true);
     sandbox
       .stub(Weave.Service.clientsEngine, "getClientByFxaDeviceId")
@@ -665,7 +655,7 @@ add_task(async function sendToDevice_devices() {
       .stub(fxAccounts.device, "recentDeviceList")
       .get(() => mockTargets.map(({ id, name, type }) => ({ id, name, type })));
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
-    sandbox.stub(gSync, "isSendableURI").returns(true);
+    sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
     sandbox
       .stub(fxAccounts.commands.sendTab, "isDeviceCompatible")
       .returns(true);
@@ -738,17 +728,6 @@ add_task(async function sendToDevice_devices() {
           clientType: "phone",
         },
       },
-      null,
-      {
-        attrs: {
-          label: "Send to All Devices",
-        },
-      },
-      {
-        attrs: {
-          label: "Manage Devices...",
-        },
-      },
     ];
     checkSendToDeviceItems(expectedItems);
 
@@ -772,7 +751,7 @@ add_task(async function sendTabToDevice_syncEnabled() {
     sandbox
       .stub(UIState, "get")
       .returns({ status: UIState.STATUS_SIGNED_IN, syncEnabled: true });
-    sandbox.stub(gSync, "isSendableURI").returns(true);
+    sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
     sandbox.spy(fxAccounts.device, "refreshDeviceList");
     sandbox.spy(Weave.Service, "sync");
     sandbox
@@ -857,7 +836,7 @@ add_task(async function sendToDevice_title() {
         sandbox
           .stub(UIState, "get")
           .returns({ status: UIState.STATUS_SIGNED_IN });
-        sandbox.stub(gSync, "isSendableURI").returns(true);
+        sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
         sandbox.stub(fxAccounts.device, "refreshDeviceList").resolves(true);
         sandbox
           .stub(Weave.Service.clientsEngine, "getClientByFxaDeviceId")
@@ -895,8 +874,7 @@ add_task(async function sendToDevice_title() {
 
         // Add the other tab to the selection.
         gBrowser.addToMultiSelectedTabs(
-          gBrowser.getTabForBrowser(otherBrowser),
-          { isLastMultiSelectChange: true }
+          gBrowser.getTabForBrowser(otherBrowser)
         );
 
         // Open the panel again.  Now the action's title should be "Send 2 Tabs to
@@ -927,7 +905,7 @@ add_task(async function sendToDevice_inUrlbar() {
       .stub(fxAccounts.device, "recentDeviceList")
       .get(() => mockTargets.map(({ id, name, type }) => ({ id, name, type })));
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
-    sandbox.stub(gSync, "isSendableURI").returns(true);
+    sandbox.stub(BrowserUtils, "isShareableURL").returns(true);
     sandbox
       .stub(fxAccounts.commands.sendTab, "isDeviceCompatible")
       .returns(true);
@@ -1008,17 +986,6 @@ add_task(async function sendToDevice_inUrlbar() {
           clientId: "3",
           label: "no client record device",
           clientType: "phone",
-        },
-      },
-      null,
-      {
-        attrs: {
-          label: "Send to All Devices",
-        },
-      },
-      {
-        attrs: {
-          label: "Manage Devices...",
         },
       },
     ];

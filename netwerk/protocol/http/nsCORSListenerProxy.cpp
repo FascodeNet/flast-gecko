@@ -272,11 +272,7 @@ nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
 
   // This is a new entry, allocate and insert into the table now so that any
   // failures don't cause items to be removed from a full cache.
-  CacheEntry* newEntry = new CacheEntry(key);
-  if (!newEntry) {
-    NS_WARNING("Failed to allocate new cache entry!");
-    return nullptr;
-  }
+  auto newEntry = MakeUnique<CacheEntry>(key);
 
   NS_ASSERTION(mTable.Count() <= PREFLIGHT_CACHE_SIZE,
                "Something is borked, too many entries in the cache!");
@@ -310,10 +306,10 @@ nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
     }
   }
 
-  mTable.Put(key, newEntry);
-  mList.insertFront(newEntry);
+  auto* newEntryWeakRef = mTable.InsertOrUpdate(key, std::move(newEntry)).get();
+  mList.insertFront(newEntryWeakRef);
 
-  return newEntry;
+  return newEntryWeakRef;
 }
 
 void nsPreflightCache::RemoveEntries(
@@ -968,6 +964,9 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
     NS_ENSURE_SUCCESS(rv, rv);
 
     flags |= nsIRequest::LOAD_ANONYMOUS;
+    if (StaticPrefs::network_cors_preflight_allow_client_cert()) {
+      flags |= nsIRequest::LOAD_ANONYMOUS_ALLOW_CLIENT_CERT;
+    }
     rv = http->SetLoadFlags(flags);
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -1321,7 +1320,7 @@ nsresult nsCORSPreflightListener::CheckPreflightRequestApproved(
   Unused << http->GetResponseHeader("Access-Control-Allow-Headers"_ns,
                                     headerVal);
   nsTArray<nsCString> headers;
-  bool wildcard = false;
+  bool allowAllHeaders = false;
   for (const nsACString& header :
        nsCCharSeparatedTokenizer(headerVal, ',').ToRange()) {
     if (header.IsEmpty()) {
@@ -1334,27 +1333,24 @@ nsresult nsCORSPreflightListener::CheckPreflightRequestApproved(
                         parentHttpChannel);
       return NS_ERROR_DOM_BAD_URI;
     }
-
     if (header.EqualsLiteral("*") && !mWithCredentials) {
-      wildcard = true;
+      allowAllHeaders = true;
     } else {
       headers.AppendElement(header);
     }
   }
 
-  for (uint32_t i = 0; i < mPreflightHeaders.Length(); ++i) {
-    if (wildcard &&
-        !mPreflightHeaders[i].LowerCaseEqualsASCII("authorization")) {
-      continue;
-    }
-    const auto& comparator = nsCaseInsensitiveCStringArrayComparator();
-    if (!headers.Contains(mPreflightHeaders[i], comparator)) {
-      LogBlockedRequest(
-          aRequest, "CORSMissingAllowHeaderFromPreflight2",
-          NS_ConvertUTF8toUTF16(mPreflightHeaders[i]).get(),
-          nsILoadInfo::BLOCKING_REASON_CORSMISSINGALLOWHEADERFROMPREFLIGHT,
-          parentHttpChannel);
-      return NS_ERROR_DOM_BAD_URI;
+  if (!allowAllHeaders) {
+    for (uint32_t i = 0; i < mPreflightHeaders.Length(); ++i) {
+      const auto& comparator = nsCaseInsensitiveCStringArrayComparator();
+      if (!headers.Contains(mPreflightHeaders[i], comparator)) {
+        LogBlockedRequest(
+            aRequest, "CORSMissingAllowHeaderFromPreflight2",
+            NS_ConvertUTF8toUTF16(mPreflightHeaders[i]).get(),
+            nsILoadInfo::BLOCKING_REASON_CORSMISSINGALLOWHEADERFROMPREFLIGHT,
+            parentHttpChannel);
+        return NS_ERROR_DOM_BAD_URI;
+      }
     }
   }
 
@@ -1469,6 +1465,10 @@ nsresult nsCORSListenerProxy::StartCORSPreflight(
   // check won't be safe any more.
   loadFlags |=
       nsIChannel::LOAD_BYPASS_SERVICE_WORKER | nsIRequest::LOAD_ANONYMOUS;
+
+  if (StaticPrefs::network_cors_preflight_allow_client_cert()) {
+    loadFlags |= nsIRequest::LOAD_ANONYMOUS_ALLOW_CLIENT_CERT;
+  }
 
   nsCOMPtr<nsIChannel> preflightChannel;
   rv = NS_NewChannelInternal(getter_AddRefs(preflightChannel), uri, loadInfo,

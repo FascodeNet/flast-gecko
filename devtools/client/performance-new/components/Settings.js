@@ -154,7 +154,7 @@ const threadColumns = [
     {
       name: "ImgDecoder",
       id: "img-decoder",
-      l10nId: "perftools-thread-dns-resolver",
+      l10nId: "perftools-thread-img-decoder",
     },
     {
       name: "DNS Resolver",
@@ -285,7 +285,7 @@ class Settings extends PureComponent {
           label(
             {
               className:
-                "perf-settings-checkbox-label perf-settings-thread-label",
+                "perf-settings-checkbox-label perf-settings-thread-label toggle-container-with-text",
             },
             input({
               className: "perf-settings-checkbox",
@@ -316,13 +316,14 @@ class Settings extends PureComponent {
           threadColumns.map(this._renderThreadsColumns)
         ),
         div(
-          { className: "perf-settings-all-threads" },
+          {
+            className: "perf-settings-checkbox-label perf-settings-all-threads",
+          },
           label(
             {
-              className: "perf-settings-checkbox-label",
+              className: "toggle-container-with-text",
             },
             input({
-              className: "perf-settings-checkbox",
               id: "perf-settings-thread-checkbox-all-threads",
               type: "checkbox",
               value: "*",
@@ -392,9 +393,8 @@ class Settings extends PureComponent {
             key: value,
           },
           div(
-            { className: "perf-settings-checkbox-and-name" },
+            { className: "toggle-container-with-text" },
             input({
-              className: "perf-settings-checkbox",
               id: `perf-settings-feature-checkbox-${value}`,
               type: "checkbox",
               value,

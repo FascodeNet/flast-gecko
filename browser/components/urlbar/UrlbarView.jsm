@@ -301,16 +301,12 @@ class UrlbarView {
    *   null if there is no such element.
    */
   getClosestSelectableElement(element) {
-    let row = element.closest(".urlbarView-row");
-    if (!row) {
-      return null;
-    }
-    let closest = row;
-    if (
-      row.result.type == UrlbarUtils.RESULT_TYPE.TIP ||
-      row.result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC
-    ) {
-      closest = element.closest(SELECTABLE_ELEMENT_SELECTOR);
+    let closest = element.closest(SELECTABLE_ELEMENT_SELECTOR);
+    if (!closest) {
+      let row = element.closest(".urlbarView-row");
+      if (row && !row.querySelector(SELECTABLE_ELEMENT_SELECTOR)) {
+        closest = row;
+      }
     }
     return this._isElementVisible(closest) ? closest : null;
   }
@@ -437,9 +433,17 @@ class UrlbarView {
    * Closes the view, cancelling the query if necessary.
    * @param {boolean} [elementPicked]
    *   True if the view is being closed because a result was picked.
+   * @param {boolean} [showFocusBorder]
+   *   True if the Urlbar focus border should be shown after the view is closed.
    */
-  close(elementPicked = false) {
+  close({ elementPicked = false, showFocusBorder = true } = {}) {
     this.controller.cancelQuery();
+    // We do not show the focus border when an element is picked because we'd
+    // flash it just before the input is blurred. The focus border is removed
+    // in UrlbarInput._on_blur.
+    if (!elementPicked && showFocusBorder) {
+      this.input.removeAttribute("suppress-focus-border");
+    }
 
     if (!this.isOpen) {
       return;
@@ -481,28 +485,32 @@ class UrlbarView {
    * If the user abandoned a search (there is a search string) the view is
    * reopened, and we try to use cached results to reduce flickering, then a new
    * query is started to refresh results.
-   * @param {Event} queryOptions Options to use when starting a new query. The
-   *        event property is mandatory for proper telemetry tracking.
+   * @param {Event} event The event associated with the call to autoOpen.
+   * @param {boolean} [suppressFocusBorder] If true, we hide the focus border
+   *        when the panel is opened. This is true by default to avoid flashing
+   *        the border when the unfocused address bar is clicked.
    * @returns {boolean} Whether the view was opened.
    */
-  autoOpen(queryOptions = {}) {
-    if (this._pickSearchTipIfPresent(queryOptions.event)) {
+  autoOpen({ event, suppressFocusBorder = true }) {
+    if (this._pickSearchTipIfPresent(event)) {
       return false;
     }
 
-    if (!queryOptions.event) {
+    if (!event) {
       return false;
     }
+
+    let queryOptions = { event };
 
     if (
       !this.input.value ||
       this.input.getAttribute("pageproxystate") == "valid"
     ) {
-      if (
-        !this.isOpen &&
-        ["mousedown", "command"].includes(queryOptions.event.type)
-      ) {
+      if (!this.isOpen && ["mousedown", "command"].includes(event.type)) {
         this.input.startQuery(queryOptions);
+        if (suppressFocusBorder) {
+          this.input.toggleAttribute("suppress-focus-border", true);
+        }
         return true;
       }
       return false;
@@ -515,7 +523,7 @@ class UrlbarView {
 
     // Tab switch is the only case where we requery if the view is open, because
     // switching tabs doesn't necessarily close the view.
-    if (this.isOpen && queryOptions.event.type != "tabswitch") {
+    if (this.isOpen && event.type != "tabswitch") {
       return false;
     }
 
@@ -549,6 +557,9 @@ class UrlbarView {
     // If we had cached results, this will just refresh them, avoiding results
     // flicker, otherwise there may be some noise.
     this.input.startQuery(queryOptions);
+    if (suppressFocusBorder) {
+      this.input.toggleAttribute("suppress-focus-border", true);
+    }
     return true;
   }
 
@@ -635,9 +646,9 @@ class UrlbarView {
 
     if (!this.selectedElement && !this.oneOffSearchButtons.selectedButton) {
       if (firstResult.heuristic) {
-        // Select the heuristic result.  The heuristic may not be the first result
-        // added, which is why we do this check here when each result is added and
-        // not above.
+        // Select the heuristic result.  The heuristic may not be the first
+        // result added, which is why we do this check here when each result is
+        // added and not above.
         this._selectElement(this._getFirstSelectableElement(), {
           updateInput: false,
           setAccessibleFocus: this.controller._userSelectionBehavior == "arrow",
@@ -859,6 +870,7 @@ class UrlbarView {
 
     this.input.inputField.setAttribute("aria-expanded", "true");
 
+    this.input.toggleAttribute("suppress-focus-border", true);
     this.input.setAttribute("open", "true");
     this.input.startLayoutExtend();
 
@@ -991,7 +1003,7 @@ class UrlbarView {
     return item;
   }
 
-  _createRowContent(item) {
+  _createRowContent(item, result) {
     // The url is the only element that can wrap, thus all the other elements
     // are child of noWrap.
     let noWrap = this._createElement("span");
@@ -1049,6 +1061,28 @@ class UrlbarView {
     url.className = "urlbarView-url";
     item._content.appendChild(url);
     item._elements.set("url", url);
+
+    // Usually we create all child elements for the row regardless of whether
+    // the specific result will use them, but we don't expect the vast majority
+    // of results to have help URLs, so as an optimization, only create the help
+    // button if the result will use it.
+    if (result.payload.helpUrl) {
+      let helpButton = this._createElement("span");
+      helpButton.className = "urlbarView-help";
+      helpButton.setAttribute("role", "button");
+      if (result.payload.helpL10nId) {
+        helpButton.setAttribute("data-l10n-id", result.payload.helpL10nId);
+      }
+      if (result.payload.helpTitle) {
+        // Allow the payload to specify the title text directly.  Normally
+        // `helpL10nId` should be used instead, but `helpTitle` is useful for
+        // experiments with hardcoded user-facing strings.
+        helpButton.setAttribute("title", result.payload.helpTitle);
+      }
+      item.appendChild(helpButton);
+      item._elements.set("helpButton", helpButton);
+      item._content.setAttribute("selectable", "true");
+    }
   }
 
   _createRowContentForTip(item) {
@@ -1079,7 +1113,7 @@ class UrlbarView {
     item._elements.set("tipButton", tipButton);
 
     let helpIcon = this._createElement("span");
-    helpIcon.className = "urlbarView-tip-help";
+    helpIcon.className = "urlbarView-help";
     helpIcon.setAttribute("role", "button");
     helpIcon.setAttribute("data-l10n-id", "urlbar-tip-help-icon");
     item._elements.set("helpButton", helpIcon);
@@ -1150,13 +1184,14 @@ class UrlbarView {
         (result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC) ||
       (oldResultType == UrlbarUtils.RESULT_TYPE.DYNAMIC &&
         result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC &&
-        oldResult.dynamicType != result.dynamicType);
+        oldResult.dynamicType != result.dynamicType) ||
+      !!result.payload.helpUrl != item._elements.has("helpButton");
 
     if (needsNewContent) {
-      if (item._content) {
-        item._content.remove();
-        item._elements.clear();
+      while (item.lastChild) {
+        item.lastChild.remove();
       }
+      item._elements.clear();
       item._content = this._createElement("span");
       item._content.className = "urlbarView-row-inner";
       item.appendChild(item._content);
@@ -1166,7 +1201,7 @@ class UrlbarView {
       } else if (item.result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC) {
         this._createRowContentForDynamicType(item, result);
       } else {
-        this._createRowContent(item);
+        this._createRowContent(item, result);
       }
     }
 
@@ -1311,7 +1346,7 @@ class UrlbarView {
       default:
         if (result.heuristic) {
           isVisitAction = true;
-        } else {
+        } else if (result.providerName != "UrlbarProviderQuickSuggest") {
           setURL = true;
         }
         break;
@@ -1334,12 +1369,18 @@ class UrlbarView {
       result.type != UrlbarUtils.RESULT_TYPE.TAB_SWITCH
     ) {
       item.toggleAttribute("sponsored", true);
-      actionSetter = () => {
-        this.document.l10n.setAttributes(
-          action,
-          "urlbar-result-action-sponsored"
-        );
-      };
+      if (result.payload.sponsoredText) {
+        action.removeAttribute("data-l10n-id");
+        actionSetter = () =>
+          (action.textContent = result.payload.sponsoredText);
+      } else {
+        actionSetter = () => {
+          this.document.l10n.setAttributes(
+            action,
+            "urlbar-result-action-sponsored"
+          );
+        };
+      }
     } else {
       item.removeAttribute("sponsored");
     }
@@ -1388,6 +1429,12 @@ class UrlbarView {
       title.setAttribute("dir", "auto");
     } else {
       title.removeAttribute("dir");
+    }
+
+    if (item._elements.has("helpButton")) {
+      item.setAttribute("has-help", "true");
+    } else {
+      item.removeAttribute("has-help");
     }
   }
 
@@ -1593,28 +1640,36 @@ class UrlbarView {
     }
   }
 
-  _selectElement(item, { updateInput = true, setAccessibleFocus = true } = {}) {
+  _selectElement(
+    element,
+    { updateInput = true, setAccessibleFocus = true } = {}
+  ) {
     if (this._selectedElement) {
       this._selectedElement.toggleAttribute("selected", false);
       this._selectedElement.removeAttribute("aria-selected");
     }
-    if (item) {
-      item.toggleAttribute("selected", true);
-      item.setAttribute("aria-selected", "true");
+    if (element) {
+      element.toggleAttribute("selected", true);
+      element.setAttribute("aria-selected", "true");
     }
-    this._setAccessibleFocus(setAccessibleFocus && item);
-    this._selectedElement = item;
+    this._setAccessibleFocus(setAccessibleFocus && element);
+    this._selectedElement = element;
 
-    let result = item?.closest(".urlbarView-row")?.result;
+    let result = element?.closest(".urlbarView-row")?.result;
     if (updateInput) {
-      this.input.setValueFromResult(result);
+      this.input.setValueFromResult({
+        result,
+        urlOverride: element?.classList?.contains("urlbarView-help")
+          ? result.payload.helpUrl
+          : null,
+      });
     } else {
       this.input.setResultForCurrentValue(result);
     }
 
     let provider = UrlbarProvidersManager.getProvider(result?.providerName);
     if (provider) {
-      provider.tryMethod("onSelection", result, item);
+      provider.tryMethod("onSelection", result, element);
     }
   }
 
@@ -1651,7 +1706,15 @@ class UrlbarView {
    *   The last selectable element in the view.
    */
   _getLastSelectableElement() {
-    let element = this._rows.lastElementChild;
+    let row = this._rows.lastElementChild;
+    if (!row) {
+      return null;
+    }
+    let selectables = row.querySelectorAll(SELECTABLE_ELEMENT_SELECTOR);
+    let element = selectables.length
+      ? selectables[selectables.length - 1]
+      : row;
+
     if (element && !this._isSelectableElement(element)) {
       element = this._getPreviousSelectableElement(element);
     }
@@ -1674,20 +1737,13 @@ class UrlbarView {
       return null;
     }
 
-    let next;
-    if (
-      row.result.type == UrlbarUtils.RESULT_TYPE.TIP ||
-      row.result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC
-    ) {
-      let selectables = [...row.querySelectorAll(SELECTABLE_ELEMENT_SELECTOR)];
+    let next = row.nextElementSibling;
+    let selectables = [...row.querySelectorAll(SELECTABLE_ELEMENT_SELECTOR)];
+    if (selectables.length) {
       let index = selectables.indexOf(element);
-      if (index == selectables.length - 1) {
-        next = row.nextElementSibling;
-      } else {
+      if (index < selectables.length - 1) {
         next = selectables[index + 1];
       }
-    } else {
-      next = row.nextElementSibling;
     }
 
     if (next && !this._isSelectableElement(next)) {
@@ -1713,22 +1769,15 @@ class UrlbarView {
       return null;
     }
 
-    let previous;
-    if (
-      row.result.type == UrlbarUtils.RESULT_TYPE.TIP ||
-      row.result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC
-    ) {
-      let selectables = [...row.querySelectorAll(SELECTABLE_ELEMENT_SELECTOR)];
+    let previous = row.previousElementSibling;
+    let selectables = [...row.querySelectorAll(SELECTABLE_ELEMENT_SELECTOR)];
+    if (selectables.length) {
       let index = selectables.indexOf(element);
-      if (index == 0 || !selectables.length) {
-        previous = row.previousElementSibling;
-      } else if (index < 0) {
+      if (index < 0) {
         previous = selectables[selectables.length - 1];
-      } else {
+      } else if (index > 0) {
         previous = selectables[index - 1];
       }
-    } else {
-      previous = row.previousElementSibling;
     }
 
     if (previous && !this._isSelectableElement(previous)) {

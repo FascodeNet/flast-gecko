@@ -25,6 +25,7 @@
 #include "mozilla/dom/Document.h"
 
 #include "js/CompileOptions.h"  // JS::ReadOnlyCompileOptions
+#include "js/Transcoding.h"
 #include "MainThreadUtils.h"
 #include "nsDebug.h"
 #include "nsDirectoryServiceUtils.h"
@@ -570,8 +571,8 @@ Result<Ok, nsresult> ScriptPreloader::InitCacheInternal(
         script->mReadyToExecute = true;
       }
 
-      mScripts.Put(script->mCachePath, script.get());
-      Unused << script.release();
+      const auto& cachePath = script->mCachePath;
+      mScripts.InsertOrUpdate(cachePath, std::move(script));
     }
 
     if (buf.error()) {
@@ -794,7 +795,7 @@ void ScriptPreloader::NoteScript(const nsCString& url,
   }
 
   auto script =
-      mScripts.LookupOrAdd(cachePath, *this, url, cachePath, jsscript);
+      mScripts.GetOrInsertNew(cachePath, *this, url, cachePath, jsscript);
   if (isRunOnce) {
     script->mIsRunOnce = true;
   }
@@ -823,7 +824,8 @@ void ScriptPreloader::NoteScript(const nsCString& url,
     return;
   }
 
-  auto script = mScripts.LookupOrAdd(cachePath, *this, url, cachePath, nullptr);
+  auto script =
+      mScripts.GetOrInsertNew(cachePath, *this, url, cachePath, nullptr);
 
   if (!script->HasRange()) {
     MOZ_ASSERT(!script->HasArray());
@@ -1167,7 +1169,7 @@ bool ScriptPreloader::CachedScript::XDREncode(JSContext* cx) {
   mXDRData.construct<JS::TranscodeBuffer>();
 
   JS::TranscodeResult code = JS::EncodeScript(cx, Buffer(), jsscript);
-  if (code == JS::TranscodeResult_Ok) {
+  if (code == JS::TranscodeResult::Ok) {
     mXDRRange.emplace(Buffer().begin(), Buffer().length());
     mSize = Range().length();
     return true;
@@ -1205,7 +1207,8 @@ JSScript* ScriptPreloader::CachedScript::GetJSScript(
   LOG(Info, "Decoding script %s on main thread...\n", mURL.get());
 
   JS::RootedScript script(cx);
-  if (JS::DecodeScript(cx, options, Range(), &script)) {
+  if (JS::DecodeScript(cx, options, Range(), &script) ==
+      JS::TranscodeResult::Ok) {
     mScript.Set(script);
 
     if (mCache.mSaveComplete) {

@@ -17,6 +17,7 @@
 #include "prenv.h"
 #include "prprf.h"
 #include "GfxDriverInfo.h"
+#include "mozilla/Components.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/gfx/DeviceManagerDx.h"
 #include "mozilla/gfx/Logging.h"
@@ -1729,14 +1730,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_LESS_THAN,
         GfxDriverInfo::allDriverVersions, "FEATURE_FAILURE_BUG_1359416");
 
-    // bug 1419264
-    APPEND_TO_DRIVER_BLOCKLIST_RANGE(
-        OperatingSystem::Windows7, DeviceFamily::NvidiaAll,
-        nsIGfxInfo::FEATURE_ADVANCED_LAYERS,
-        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
-        V(23, 21, 13, 8569), V(23, 21, 13, 9135), "FEATURE_FAILURE_BUG_1419264",
-        "Windows 10");
-
     // Bug 1447141, for causing device creation crashes.
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows7, DeviceFamily::Bug1447141,
@@ -2015,7 +2008,7 @@ void GfxInfo::DescribeFeatures(JSContext* aCx, JS::Handle<JSObject*> aObj) {
     JS_SetProperty(aCx, obj, "textureSharing", val);
 
     bool blocklisted = false;
-    if (nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo()) {
+    if (nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service()) {
       int32_t status;
       nsCString discardFailureId;
       if (SUCCEEDED(

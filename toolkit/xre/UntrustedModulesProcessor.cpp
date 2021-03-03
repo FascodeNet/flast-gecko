@@ -492,28 +492,26 @@ RefPtr<ModuleRecord> UntrustedModulesProcessor::GetOrAddModuleRecord(
     const nsAString& aResolvedNtPath) {
   MOZ_ASSERT(XRE_IsParentProcess());
 
-  auto addPtr = aModules.LookupForAdd(aResolvedNtPath);
-  if (addPtr) {
-    return addPtr.Data();
-  }
+  return aModules.WithEntryHandle(
+      aResolvedNtPath, [&](auto&& addPtr) -> RefPtr<ModuleRecord> {
+        if (addPtr) {
+          return addPtr.Data();
+        }
 
-  RefPtr<ModuleRecord> newMod(new ModuleRecord(aResolvedNtPath));
-  if (!(*newMod)) {
-    addPtr.OrRemove();
-    return nullptr;
-  }
+        RefPtr<ModuleRecord> newMod(new ModuleRecord(aResolvedNtPath));
+        if (!(*newMod)) {
+          return nullptr;
+        }
 
-  Maybe<ModuleTrustFlags> maybeTrust = aModEval.GetTrust(*newMod);
-  if (maybeTrust.isNothing()) {
-    addPtr.OrRemove();
-    return nullptr;
-  }
+        Maybe<ModuleTrustFlags> maybeTrust = aModEval.GetTrust(*newMod);
+        if (maybeTrust.isNothing()) {
+          return nullptr;
+        }
 
-  newMod->mTrustFlags = maybeTrust.value();
+        newMod->mTrustFlags = maybeTrust.value();
 
-  addPtr.OrInsert([newMod]() { return newMod; });
-
-  return newMod;
+        return addPtr.Insert(std::move(newMod));
+      });
 }
 
 RefPtr<ModuleRecord> UntrustedModulesProcessor::GetModuleRecord(
@@ -1033,7 +1031,7 @@ RefPtr<ModulesTrustPromise> UntrustedModulesProcessor::GetModulesTrustInternal(
           NS_ERROR_ILLEGAL_DURING_SHUTDOWN, __func__);
     }
 
-    modMap.Put(resolvedNtPath, std::move(module));
+    modMap.InsertOrUpdate(resolvedNtPath, std::move(module));
   }
 
   return ModulesTrustPromise::CreateAndResolve(std::move(result), __func__);

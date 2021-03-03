@@ -40,17 +40,31 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 var UrlbarUtils = {
   // Extensions are allowed to add suggestions if they have registered a keyword
   // with the omnibox API. This is the maximum number of suggestions an extension
-  // is allowed to add for a given search string.
+  // is allowed to add for a given search string using the omnibox API.
   // This value includes the heuristic result.
-  MAXIMUM_ALLOWED_EXTENSION_MATCHES: 6,
+  MAX_OMNIBOX_RESULT_COUNT: 6,
 
-  // This is used by UnifiedComplete, the new implementation will use
-  // PROVIDER_TYPE and RESULT_TYPE
+  // Results are categorized into groups to help the muxer compose them.  See
+  // UrlbarUtils.getResultGroup.  Since result groups are stored in result
+  // buckets and result buckets are stored in prefs, additions and changes to
+  // result groups may require adding UI migrations to BrowserGlue.  Be careful
+  // about making trivial changes to existing groups, like renaming them,
+  // because we don't want to make downgrades unnecessarily hard.
   RESULT_GROUP: {
-    HEURISTIC: "heuristic",
     GENERAL: "general",
-    SUGGESTION: "suggestion",
-    EXTENSION: "extension",
+    FORM_HISTORY: "formHistory",
+    HEURISTIC_AUTOFILL: "heuristicAutofill",
+    HEURISTIC_EXTENSION: "heuristicExtension",
+    HEURISTIC_FALLBACK: "heuristicFallback",
+    HEURISTIC_OMNIBOX: "heuristicOmnibox",
+    HEURISTIC_SEARCH_TIP: "heuristicSearchTip",
+    HEURISTIC_TEST: "heuristicTest",
+    HEURISTIC_TOKEN_ALIAS_ENGINE: "heuristicTokenAliasEngine",
+    HEURISTIC_UNIFIED_COMPLETE: "heuristicUnifiedComplete",
+    OMNIBOX: "extension",
+    REMOTE_SUGGESTION: "remoteSuggestion",
+    SUGGESTED_INDEX: "suggestedIndex",
+    TAIL_SUGGESTION: "tailSuggestion",
   },
 
   // Defines provider types.
@@ -472,6 +486,65 @@ var UrlbarUtils = {
       index = hits.indexOf(1, index + len);
     }
     return ranges;
+  },
+
+  /**
+   * Returns the group for a result.
+   *
+   * @param {UrlbarResult} result
+   *   The result.
+   * @returns {UrlbarUtils.RESULT_GROUP}
+   *   The reuslt's group.
+   */
+  getResultGroup(result) {
+    if (result.suggestedIndex >= 0) {
+      return UrlbarUtils.RESULT_GROUP.SUGGESTED_INDEX;
+    }
+    if (result.heuristic) {
+      switch (result.providerName) {
+        case "Autofill":
+          return UrlbarUtils.RESULT_GROUP.HEURISTIC_AUTOFILL;
+        case "HeuristicFallback":
+          return UrlbarUtils.RESULT_GROUP.HEURISTIC_FALLBACK;
+        case "Omnibox":
+          return UrlbarUtils.RESULT_GROUP.HEURISTIC_OMNIBOX;
+        case "TokenAliasEngines":
+          return UrlbarUtils.RESULT_GROUP.HEURISTIC_TOKEN_ALIAS_ENGINE;
+        case "UnifiedComplete":
+          return UrlbarUtils.RESULT_GROUP.HEURISTIC_UNIFIED_COMPLETE;
+        case "UrlbarProviderSearchTips":
+          return UrlbarUtils.RESULT_GROUP.HEURISTIC_SEARCH_TIP;
+        default:
+          if (result.providerName.startsWith("TestProvider")) {
+            return UrlbarUtils.RESULT_GROUP.HEURISTIC_TEST;
+          }
+          break;
+      }
+      if (result.providerType == UrlbarUtils.PROVIDER_TYPE.EXTENSION) {
+        return UrlbarUtils.RESULT_GROUP.HEURISTIC_EXTENSION;
+      }
+      Cu.reportError(
+        "Returning HEURISTIC_FALLBACK for unrecognized heuristic result: " +
+          result
+      );
+      return UrlbarUtils.RESULT_GROUP.HEURISTIC_FALLBACK;
+    }
+    switch (result.type) {
+      case UrlbarUtils.RESULT_TYPE.SEARCH:
+        if (result.source == UrlbarUtils.RESULT_SOURCE.HISTORY) {
+          return UrlbarUtils.RESULT_GROUP.FORM_HISTORY;
+        }
+        if (result.payload.tail) {
+          return UrlbarUtils.RESULT_GROUP.TAIL_SUGGESTION;
+        }
+        if (result.payload.suggestion) {
+          return UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION;
+        }
+        break;
+      case UrlbarUtils.RESULT_TYPE.OMNIBOX:
+        return UrlbarUtils.RESULT_GROUP.OMNIBOX;
+    }
+    return UrlbarUtils.RESULT_GROUP.GENERAL;
   },
 
   /**
@@ -1104,6 +1177,15 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
       displayUrl: {
         type: "string",
       },
+      helpL10nId: {
+        type: "string",
+      },
+      helpTitle: {
+        type: "string",
+      },
+      helpUrl: {
+        type: "string",
+      },
       icon: {
         type: "string",
       },
@@ -1115,6 +1197,24 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
       },
       sendAttributionRequest: {
         type: "boolean",
+      },
+      sponsoredAdvertiser: {
+        type: "string",
+      },
+      sponsoredBlockId: {
+        type: "number",
+      },
+      sponsoredClickUrl: {
+        type: "string",
+      },
+      sponsoredImpressionUrl: {
+        type: "string",
+      },
+      sponsoredText: {
+        type: "string",
+      },
+      sponsoredTileId: {
+        type: "number",
       },
       tags: {
         type: "array",
@@ -1565,11 +1665,44 @@ class UrlbarProvider {
   /**
    * Called when the user starts and ends an engagement with the urlbar.
    *
-   * @param {boolean} isPrivate True if the engagement is in a private context.
-   * @param {string} state The state of the engagement, one of: start,
-   *        engagement, abandonment, discard.
+   * @param {boolean} isPrivate
+   *   True if the engagement is in a private context.
+   * @param {string} state
+   *   The state of the engagement, one of the following strings:
+   *
+   *   * start
+   *       A new query has started in the urlbar.
+   *   * engagement
+   *       The user picked a result in the urlbar or used paste-and-go.
+   *   * abandonment
+   *       The urlbar was blurred (i.e., lost focus).
+   *   * discard
+   *       This doesn't correspond to a user action, but it means that the
+   *       urlbar has discarded the engagement for some reason, and the
+   *       `onEngagement` implementation should ignore it.
+   *
+   * @param {UrlbarQueryContext} queryContext
+   *   The engagement's query context.  This is *not* guaranteed to be defined
+   *   when `state` is "start".  It will always be defined for "engagement" and
+   *   "abandonment".
+   * @param {object} details
+   *   This is defined only when `state` is "engagement" or "abandonment", and
+   *   it describes the search string and picked result.  For "engagement", it
+   *   has the following properties:
+   *
+   *   * {string} searchString
+   *       The search string for the engagement's query.
+   *   * {number} selIndex
+   *       The index of the picked result.
+   *   * {string} selType
+   *       The type of the selected result.  See TelemetryEvent.record() in
+   *       UrlbarController.jsm.
+   *   * {string} provider
+   *       The name of the provider that produced the picked result.
+   *
+   *   For "abandonment", only `searchString` is defined.
    */
-  onEngagement(isPrivate, state) {}
+  onEngagement(isPrivate, state, queryContext, details) {}
 
   /**
    * Called when a result from the provider is selected. "Selected" refers to

@@ -169,11 +169,12 @@ nsHttpConnection::~nsHttpConnection() {
 nsresult nsHttpConnection::Init(
     nsHttpConnectionInfo* info, uint16_t maxHangTime,
     nsISocketTransport* transport, nsIAsyncInputStream* instream,
-    nsIAsyncOutputStream* outstream, bool connectedTransport,
+    nsIAsyncOutputStream* outstream, bool connectedTransport, nsresult status,
     nsIInterfaceRequestor* callbacks, PRIntervalTime rtt) {
   LOG1(("nsHttpConnection::Init this=%p sockettransport=%p", this, transport));
   NS_ENSURE_ARG_POINTER(info);
   NS_ENSURE_TRUE(!mConnInfo, NS_ERROR_ALREADY_INITIALIZED);
+  MOZ_ASSERT(NS_SUCCEEDED(status) || !connectedTransport);
 
   mConnectedTransport = connectedTransport;
   mConnInfo = info;
@@ -192,8 +193,11 @@ nsresult nsHttpConnection::Init(
   mCallbacks = new nsMainThreadPtrHolder<nsIInterfaceRequestor>(
       "nsHttpConnection::mCallbacks", callbacks, false);
 
-  mSocketTransport->SetEventSink(this, nullptr);
-  mSocketTransport->SetSecurityCallbacks(this);
+  mErrorBeforeConnect = status;
+  if (NS_SUCCEEDED(mErrorBeforeConnect)) {
+    mSocketTransport->SetEventSink(this, nullptr);
+    mSocketTransport->SetSecurityCallbacks(this);
+  }
 
   return NS_OK;
 }
@@ -747,6 +751,13 @@ nsresult nsHttpConnection::Activate(nsAHttpTransaction* trans, uint32_t caps,
   // Connection failures are Activated() just like regular transacions.
   // If we don't have a confirmation of a connected socket then test it
   // with a write() to get relevant error code.
+  if (NS_FAILED(mErrorBeforeConnect)) {
+    mSocketOutCondition = mErrorBeforeConnect;
+    mTransaction = trans;
+    CloseTransaction(mTransaction, mSocketOutCondition);
+    return mSocketOutCondition;
+  }
+
   if (!mConnectedTransport) {
     uint32_t count;
     mSocketOutCondition = NS_ERROR_FAILURE;
@@ -1795,6 +1806,37 @@ nsresult nsHttpConnection::ReadFromStream(nsIInputStream* input, void* closure,
   return conn->OnReadSegment(buf, count, countRead);
 }
 
+bool nsHttpConnection::CheckCanWrite0RTTData() {
+  MOZ_ASSERT(mWaitingFor0RTTResponse);
+  nsCOMPtr<nsISupports> securityInfo;
+  GetSecurityInfo(getter_AddRefs(securityInfo));
+  if (!securityInfo) {
+    return false;
+  }
+  nsCOMPtr<nsITransportSecurityInfo> info;
+  info = do_QueryInterface(securityInfo);
+  if (!info) {
+    return false;
+  }
+  nsAutoCString negotiatedNPN;
+  // If the following code fails means that the handshake is not done
+  // yet, so continue writing 0RTT data.
+  nsresult rv = info->GetNegotiatedNPN(negotiatedNPN);
+  if (NS_FAILED(rv)) {
+    return true;
+  }
+  nsCOMPtr<nsISSLSocketControl> ssl;
+  ssl = do_QueryInterface(securityInfo);
+  if (!ssl) {
+    return false;
+  }
+  bool earlyDataAccepted = false;
+  rv = ssl->GetEarlyDataAccepted(&earlyDataAccepted);
+  // If 0RTT data is accepted we can continue writing data,
+  // if it is reject stop writing more data.
+  return NS_SUCCEEDED(rv) && earlyDataAccepted;
+}
+
 nsresult nsHttpConnection::OnReadSegment(const char* buf, uint32_t count,
                                          uint32_t* countRead) {
   LOG(("nsHttpConnection::OnReadSegment [this=%p]\n", this));
@@ -1804,6 +1846,19 @@ nsresult nsHttpConnection::OnReadSegment(const char* buf, uint32_t count,
     // or else we'd end up closing the socket prematurely.
     NS_ERROR("bad ReadSegments implementation");
     return NS_ERROR_FAILURE;  // stop iterating
+  }
+
+  // If we are waiting for 0RTT Response, check maybe nss has finished
+  // handshake already.
+  // IsAlive() calls drive the handshake and that may cause nss and necko
+  // to be out of sync.
+  if (mWaitingFor0RTTResponse && !CheckCanWrite0RTTData()) {
+    LOG(
+        ("nsHttpConnection::OnReadSegment Do not write any data, wait"
+         " for EnsureNPNComplete to be called [this=%p]",
+         this));
+    *countRead = 0;
+    return NS_BASE_STREAM_WOULD_BLOCK;
   }
 
   nsresult rv = mSocketOut->Write(buf, count, countRead);
@@ -2558,6 +2613,38 @@ void nsHttpConnection::SetLastTransactionExpectedNoContent(bool val) {
 bool nsHttpConnection::IsPersistent() { return IsKeepAlive() && !mDontReuse; }
 
 nsAHttpTransaction* nsHttpConnection::Transaction() { return mTransaction; }
+
+nsresult nsHttpConnection::GetSelfAddr(NetAddr* addr) {
+  if (!mSocketTransport) {
+    return NS_ERROR_FAILURE;
+  } else {
+    return mSocketTransport->GetSelfAddr(addr);
+  }
+}
+
+nsresult nsHttpConnection::GetPeerAddr(NetAddr* addr) {
+  if (!mSocketTransport) {
+    return NS_ERROR_FAILURE;
+  } else {
+    return mSocketTransport->GetPeerAddr(addr);
+  }
+}
+
+bool nsHttpConnection::ResolvedByTRR() {
+  bool val = false;
+  if (mSocketTransport) {
+    mSocketTransport->ResolvedByTRR(&val);
+  }
+  return val;
+}
+
+bool nsHttpConnection::GetEchConfigUsed() {
+  bool val = false;
+  if (mSocketTransport) {
+    mSocketTransport->GetEchConfigUsed(&val);
+  }
+  return val;
+}
 
 }  // namespace net
 }  // namespace mozilla

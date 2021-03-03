@@ -10,6 +10,8 @@ const { BrowserTestUtils } = ChromeUtils.import(
 );
 
 const BASE_URL = "http://example.com/browser/tools/profiler/tests/browser/";
+const BASE_URL_HTTPS =
+  "https://example.com/browser/tools/profiler/tests/browser/";
 
 registerCleanupFunction(() => {
   if (Services.profiler.IsActive()) {
@@ -21,8 +23,8 @@ registerCleanupFunction(() => {
 });
 
 /**
- * This is a helper function that will stop the profiler of the browser running
- * with PID contentPid.
+ * This is a helper function that will stop the profiler and returns the main
+ * threads for the parent process and the content process with PID contentPid.
  * This happens immediately, without waiting for any sampling to happen or
  * finish. Use stopProfilerAndGetThreads (without "Now") below instead to wait
  * for samples before stopping.
@@ -31,6 +33,7 @@ registerCleanupFunction(() => {
  * @returns {Promise}
  */
 async function stopProfilerNowAndGetThreads(contentPid) {
+  Services.profiler.Pause();
   const profile = await Services.profiler.getProfileDataAsync();
   Services.profiler.StopProfiler();
 
@@ -55,8 +58,8 @@ async function stopProfilerNowAndGetThreads(contentPid) {
 }
 
 /**
- * This is a helper function that will stop the profiler of the browser running
- * with PID contentPid.
+ * This is a helper function that will stop the profiler and returns the main
+ * threads for the parent process and the content process with PID contentPid.
  * As opposed to stopProfilerNowAndGetThreads (with "Now") above, the profiler
  * in that PID will not stop until there is at least one periodic sample taken.
  *

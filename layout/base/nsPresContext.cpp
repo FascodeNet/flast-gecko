@@ -21,7 +21,6 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/dom/ContentParent.h"
-#include "mozilla/dom/WindowGlobalChild.h"
 
 #include "base/basictypes.h"
 
@@ -773,6 +772,7 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
   }
   SetFullZoom(browsingContext->FullZoom());
   SetTextZoom(browsingContext->TextZoom());
+  SetOverrideDPPX(browsingContext->OverrideDPPX());
   if (doc == mDocument) {
     // Medium doesn't apply to resource documents, etc.
     auto* top = browsingContext->Top();
@@ -1320,14 +1320,6 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 
       if (isFirstInteraction) {
         Telemetry::Accumulate(Telemetry::TIME_TO_FIRST_INTERACTION_MS, millis);
-
-        if (Document()->ShouldIncludeInTelemetry(
-                /* aAllowExtensionURIs = */ false)) {
-          if (auto* wgc = Document()->GetWindowGlobalChild()) {
-            Unused << wgc->SendSubmitTimeToFirstInteractionPreloadTelemetry(
-                millis);
-          }
-        }
       }
     }
   } else {

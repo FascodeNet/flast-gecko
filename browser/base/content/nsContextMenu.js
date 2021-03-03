@@ -333,6 +333,7 @@ class nsContextMenu {
     this.initClickToPlayItems();
     this.initPasswordManagerItems();
     this.initSyncItems();
+    this.initViewSourceItems();
   }
 
   initPageMenuSeparator() {
@@ -619,20 +620,14 @@ class nsContextMenu {
     var showInspectA11Y =
       showInspect &&
       Services.prefs.getBoolPref("devtools.accessibility.enabled", false) &&
-      this.inTabBrowser &&
       Services.prefs.getBoolPref("devtools.enabled", true) &&
-      Services.prefs.getBoolPref("devtools.accessibility.enabled", true) &&
-      !Services.prefs.getBoolPref("devtools.policy.disabled", false);
+      (Services.prefs.getBoolPref("devtools.everOpened", false) ||
+        // Note: this is a legacy usecase, we will remove it in bug 1695257,
+        // once existing users have had time to set devtools.everOpened
+        // through normal use, and we've passed an ESR cycle (91).
+        nsContextMenu.DevToolsShim.isDevToolsUser());
 
     this.showItem("context-viewsource", shouldShow);
-    this.showItem("context-viewinfo", shouldShow);
-    // The page info is broken for WebExtension popups, as the browser is
-    // destroyed when the popup is closed.
-    this.setItemAttr(
-      "context-viewinfo",
-      "disabled",
-      this.webExtBrowserType === "popup"
-    );
     this.showItem("inspect-separator", showInspect);
     this.showItem("context-inspect", showInspect);
 
@@ -688,10 +683,7 @@ class nsContextMenu {
       (this.onLink && !this.onMailtoLink && !this.onMozExtLink) ||
         this.onPlainTextLink
     );
-    this.showItem(
-      "context-keywordfield",
-      this.onTextInput && this.onKeywordField
-    );
+    this.showItem("context-keywordfield", this.shouldShowAddKeyword());
     this.showItem("frame", this.inFrame);
 
     if (this.inFrame) {
@@ -719,13 +711,9 @@ class nsContextMenu {
 
     // Hide menu entries for images, show otherwise
     if (this.inFrame) {
-      if (
-        BrowserUtils.mimeTypeIsTextBased(this.target.ownerDocument.contentType)
-      ) {
-        this.viewFrameSourceElement.removeAttribute("hidden");
-      } else {
-        this.viewFrameSourceElement.setAttribute("hidden", "true");
-      }
+      this.viewFrameSourceElement.hidden = !BrowserUtils.mimeTypeIsTextBased(
+        this.target.ownerDocument.contentType
+      );
     }
 
     // BiDi UI
@@ -803,12 +791,12 @@ class nsContextMenu {
     goUpdateGlobalEditMenuItems();
 
     this.showItem("context-undo", this.onTextInput);
-    this.showItem("context-sep-undo", this.onTextInput);
+    this.showItem("context-redo", this.onTextInput);
+    this.showItem("context-sep-redo", this.onTextInput);
     this.showItem("context-cut", this.onTextInput);
     this.showItem("context-copy", this.isContentSelected || this.onTextInput);
     this.showItem("context-paste", this.onTextInput);
     this.showItem("context-delete", this.onTextInput);
-    this.showItem("context-sep-paste", this.onTextInput);
     this.showItem(
       "context-selectall",
       !(
@@ -821,7 +809,8 @@ class nsContextMenu {
     );
     this.showItem(
       "context-sep-selectall",
-      !this.inAboutDevtoolsToolbox && this.isContentSelected
+      !this.inAboutDevtoolsToolbox &&
+        (this.isContentSelected || this.shouldShowAddKeyword())
     );
 
     // XXX dr
@@ -968,19 +957,9 @@ class nsContextMenu {
     let showGenerate = false;
     let enableGeneration = Services.logins.isLoggedIn;
     try {
-      let loginFillInfo = this.contentData && this.contentData.loginFillInfo;
-      let documentURI = this.contentData.documentURIObject;
-
       // If we could not find a password field we
       // don't want to show the form fill option.
-      if (
-        !loginFillInfo ||
-        !loginFillInfo.passwordField.found ||
-        documentURI.schemeIs("about") ||
-        this.browser.contentPrincipal.spec ==
-          "resource://pdf.js/web/viewer.html"
-      ) {
-        // Both generation and fill will default to disabled.
+      if (!this.isLoginForm()) {
         return;
       }
       showFill = true;
@@ -988,10 +967,11 @@ class nsContextMenu {
       // Disable the fill option if the user hasn't unlocked with their master password
       // or if the password field or target field are disabled.
       // XXX: Bug 1529025 to maybe respect signon.rememberSignons.
+      let loginFillInfo = this.contentData?.loginFillInfo;
       let disableFill =
         !Services.logins.isLoggedIn ||
-        loginFillInfo.passwordField.disabled ||
-        loginFillInfo.activeField.disabled;
+        loginFillInfo?.passwordField.disabled ||
+        loginFillInfo?.activeField.disabled;
       this.setItemAttr("fill-login", "disabled", disableFill);
 
       let onPasswordLikeField = PASSWORD_FIELDNAME_HINTS.includes(
@@ -1014,7 +994,8 @@ class nsContextMenu {
         );
       }
 
-      let formOrigin = LoginHelper.getLoginOrigin(documentURI.spec);
+      let documentURI = this.contentData?.documentURIObject;
+      let formOrigin = LoginHelper.getLoginOrigin(documentURI?.spec);
       let isGeneratedPasswordEnabled =
         LoginHelper.generationAvailable && LoginHelper.generationEnabled;
       showGenerate =
@@ -1061,6 +1042,40 @@ class nsContextMenu {
     gSync.updateContentContextMenu(this);
   }
 
+  initViewSourceItems() {
+    const getString = name => {
+      const { bundle } = gViewSourceUtils.getPageActor(this.browser);
+      return bundle.GetStringFromName(name);
+    };
+    const showViewSourceItem = (id, check, accesskey) => {
+      const fullId = `context-viewsource-${id}`;
+      this.showItem(fullId, onViewSource);
+      if (!onViewSource) {
+        return;
+      }
+      check().then(checked => this.setItemAttr(fullId, "checked", checked));
+      this.setItemAttr(fullId, "label", getString(`context_${id}_label`));
+      if (accesskey) {
+        this.setItemAttr(
+          fullId,
+          "accesskey",
+          getString(`context_${id}_accesskey`)
+        );
+      }
+    };
+
+    const onViewSource = this.browser.currentURI.schemeIs("view-source");
+
+    showViewSourceItem("goToLine", async () => false, true);
+    showViewSourceItem("wrapLongLines", () =>
+      gViewSourceUtils.getPageActor(this.browser).queryIsWrapping()
+    );
+    showViewSourceItem("highlightSyntax", () =>
+      gViewSourceUtils.getPageActor(this.browser).queryIsSyntaxHighlighting()
+    );
+    this.showItem("context-sep-viewsource-commands", onViewSource);
+  }
+
   openPasswordManager() {
     LoginHelper.openPasswordManager(window, {
       entryPoint: "contextmenu",
@@ -1072,6 +1087,19 @@ class nsContextMenu {
       this.targetIdentifier,
       this.contentData.documentURIObject,
       this.browser
+    );
+  }
+
+  isLoginForm() {
+    let loginFillInfo = this.contentData?.loginFillInfo;
+    let documentURI = this.contentData?.documentURIObject;
+
+    // If we could not find a password field then
+    // don't treat this as a login form.
+    return (
+      loginFillInfo?.passwordField?.found &&
+      !documentURI?.schemeIs("about") &&
+      this.browser.contentPrincipal.spec != "resource://pdf.js/web/viewer.html"
     );
   }
 
@@ -1903,6 +1931,10 @@ class nsContextMenu {
     return false;
   }
 
+  shouldShowAddKeyword() {
+    return this.onTextInput && this.onKeywordField && !this.isLoginForm();
+  }
+
   addDictionaries() {
     var uri = formatURL("browser.dictionaries.download.url", true);
 
@@ -1955,19 +1987,15 @@ class nsContextMenu {
   }
 
   printFrame() {
-    PrintUtils.startPrintWindow(
-      "context_print_frame",
-      this.actor.browsingContext,
-      { printFrameOnly: true }
-    );
+    PrintUtils.startPrintWindow(this.actor.browsingContext, {
+      printFrameOnly: true,
+    });
   }
 
   printSelection() {
-    PrintUtils.startPrintWindow(
-      "context_print_selection",
-      this.actor.browsingContext,
-      { printSelectionOnly: true }
-    );
+    PrintUtils.startPrintWindow(this.actor.browsingContext, {
+      printSelectionOnly: true,
+    });
   }
 
   switchPageDirection() {

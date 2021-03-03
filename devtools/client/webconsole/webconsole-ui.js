@@ -147,6 +147,9 @@ class WebConsoleUI {
 
     this._initializer = (async () => {
       this._initUI();
+      // Bug 1605763: It's important to call _attachTargets once the UI is initialized, as
+      // TargetList.startListening will start fetching additional targets
+      // and may overload the Browser Console.
       await this._attachTargets();
 
       this._commands = new ConsoleCommands({
@@ -329,6 +332,18 @@ class WebConsoleUI {
    */
   async _attachTargets() {
     this.additionalProxies = new Map();
+
+    if (this.isBrowserConsole) {
+      // Bug 1605763:
+      // TargetList.startListening will start fetching additional targets
+      // and may overload the Browser Console with loads of targets and resources.
+      // We can call it from here, as `_attchTargets` is called after the UI is initialized.
+      // Bug 1642599:
+      // TargetList.startListening ought to be called before watching for resources,
+      // in order to set TargetList.watcherFront which is used by ResourceWatcher.watchResources.
+      await this.hud.targetList.startListening();
+    }
+
     // Listen for all target types, including:
     // - frames, in order to get the parent process target
     // which is considered as a frame rather than a process.
@@ -349,6 +364,7 @@ class WebConsoleUI {
         resourceWatcher.TYPES.PLATFORM_MESSAGE,
         resourceWatcher.TYPES.NETWORK_EVENT,
         resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
+        resourceWatcher.TYPES.CLONED_CONTENT_PROCESS_MESSAGE,
       ],
       {
         onAvailable: this._onResourceAvailable,
@@ -379,6 +395,17 @@ class WebConsoleUI {
           resource.pageError?.isForwardedFromContentProcess &&
           (this.isBrowserToolboxConsole || this.isBrowserConsole) &&
           this.fissionSupport)
+      ) {
+        continue;
+      }
+
+      // Don't show messages emitted from a private window before the Browser Console was
+      // opened to avoid leaking data from past usage of the browser (e.g. content message
+      // from now closed private tabs)
+      if (
+        (this.isBrowserToolboxConsole || this.isBrowserConsole) &&
+        resource.isAlreadyExistingResource &&
+        (resource.pageError?.private || resource.message?.private)
       ) {
         continue;
       }
@@ -433,15 +460,7 @@ class WebConsoleUI {
     // This is a top level target. It may update on process switches
     // when navigating to another domain.
     if (targetFront.isTopLevel) {
-      const needContentProcessMessagesListener =
-        targetFront.isParentProcess &&
-        !targetFront.isAddon &&
-        !this.fissionSupport;
-      this.proxy = new WebConsoleConnectionProxy(
-        this,
-        targetFront,
-        needContentProcessMessagesListener
-      );
+      this.proxy = new WebConsoleConnectionProxy(this, targetFront);
       await this.proxy.connect();
       dispatchTargetAvailable();
       return;
@@ -449,7 +468,7 @@ class WebConsoleUI {
 
     // Allow frame, but only in content toolbox, i.e. still ignore them in
     // the context of the browser toolbox as we inspect messages via the process targets
-    const listenForFrames = this.hud.targetList.targetFront.isLocalTab;
+    const listenForFrames = this.hud.targetList.descriptorFront.isLocalTab;
 
     const { TYPES } = this.hud.targetList;
     const isWorkerTarget =

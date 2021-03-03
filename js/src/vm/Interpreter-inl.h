@@ -78,7 +78,7 @@ static inline bool IsUninitializedLexical(const Value& val) {
 
 static inline bool IsUninitializedLexicalSlot(HandleObject obj,
                                               Handle<PropertyResult> prop) {
-  MOZ_ASSERT(prop);
+  MOZ_ASSERT(prop.isFound());
   if (obj->is<WithEnvironmentObject>()) {
     return false;
   }
@@ -140,7 +140,7 @@ template <GetNameMode mode>
 inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
                       HandlePropertyName name, Handle<PropertyResult> prop,
                       MutableHandleValue vp) {
-  if (!prop) {
+  if (prop.isNotFound()) {
     switch (mode) {
       case GetNameMode::Normal:
         ReportIsNotDefined(cx, name);
@@ -152,7 +152,7 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
   }
 
   /* Take the slow path if shape was not found in a native object. */
-  if (!receiver->isNative() || !holder->isNative()) {
+  if (!receiver->is<NativeObject>() || !holder->is<NativeObject>()) {
     Rooted<jsid> id(cx, NameToId(name));
     if (!GetProperty(cx, receiver, receiver, id, vp)) {
       return false;
@@ -185,7 +185,7 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
 }
 
 inline bool FetchNameNoGC(JSObject* pobj, PropertyResult prop, Value* vp) {
-  if (!prop || !pobj->isNative()) {
+  if (prop.isNotFound() || !pobj->is<NativeObject>()) {
     return false;
   }
 
@@ -230,8 +230,9 @@ inline bool HasOwnProperty(JSContext* cx, HandleValue val, HandleValue idValue,
       PrimitiveValueToId<NoGC>(cx, idValue, &id)) {
     JSObject* obj = &val.toObject();
     PropertyResult prop;
-    if (obj->isNative() && NativeLookupOwnProperty<NoGC>(
-                               cx, &obj->as<NativeObject>(), id, &prop)) {
+    if (obj->is<NativeObject>() &&
+        NativeLookupOwnProperty<NoGC>(cx, &obj->as<NativeObject>(), id,
+                                      &prop)) {
       *result = prop.isFound();
       return true;
     }

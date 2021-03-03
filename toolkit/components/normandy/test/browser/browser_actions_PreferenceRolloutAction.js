@@ -1,22 +1,26 @@
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/Services.jsm", this);
-ChromeUtils.import("resource://gre/modules/Preferences.jsm", this);
-ChromeUtils.import("resource://gre/modules/TelemetryEnvironment.jsm", this);
-ChromeUtils.import("resource://normandy/actions/BaseAction.jsm", this);
-ChromeUtils.import(
-  "resource://normandy/actions/PreferenceRolloutAction.jsm",
-  this
+const { TelemetryEnvironment } = ChromeUtils.import(
+  "resource://gre/modules/TelemetryEnvironment.jsm"
 );
-ChromeUtils.import("resource://normandy/lib/PreferenceRollouts.jsm", this);
-ChromeUtils.import("resource://normandy/lib/TelemetryEvents.jsm", this);
-ChromeUtils.import("resource://testing-common/NormandyTestUtils.jsm", this);
+const { BaseAction } = ChromeUtils.import(
+  "resource://normandy/actions/BaseAction.jsm"
+);
+const { PreferenceRolloutAction } = ChromeUtils.import(
+  "resource://normandy/actions/PreferenceRolloutAction.jsm"
+);
+const { PreferenceRollouts } = ChromeUtils.import(
+  "resource://normandy/lib/PreferenceRollouts.jsm"
+);
+const { NormandyTestUtils } = ChromeUtils.import(
+  "resource://testing-common/NormandyTestUtils.jsm"
+);
 
 // Test that a simple recipe enrolls as expected
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withStub(TelemetryEnvironment, "setExperimentActive"),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function simple_recipe_enrollment(
     setExperimentActiveStub,
     sendEventStub
@@ -124,8 +128,8 @@ decorate_task(
 
 // Test that an enrollment's values can change, be removed, and be added
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function update_enrollment(sendEventStub) {
     // first enrollment
     const recipe = {
@@ -237,8 +241,8 @@ decorate_task(
 
 // Test that a graduated rollout can be ungraduated
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function ungraduate_enrollment(sendEventStub) {
     Services.prefs.getDefaultBranch("").setIntPref("test.pref", 1);
     await PreferenceRollouts.add({
@@ -302,8 +306,8 @@ decorate_task(
 
 // Test when recipes conflict, only one is applied
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function conflicting_recipes(sendEventStub) {
     // create two recipes that each share a pref and have a unique pref.
     const recipe1 = {
@@ -415,8 +419,8 @@ decorate_task(
 
 // Test when the wrong value type is given, the recipe is not applied
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function wrong_preference_value(sendEventStub) {
     Services.prefs.getDefaultBranch("").setCharPref("test.pref", "not an int");
     const recipe = {
@@ -564,8 +568,8 @@ decorate_task(
 // When running a rollout a second time on a pref that doesn't have an existing
 // value, the previous value is handled correctly.
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function(sendEventStub) {
     const recipe = {
       id: 1,
@@ -617,9 +621,9 @@ decorate_task(
 
 // New rollouts that are no-ops should send errors
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withStub(TelemetryEnvironment, "setExperimentActive"),
   withSendEventSpy,
+  PreferenceRollouts.withTestMock(),
   async function no_op_new_recipe(setExperimentActiveStub, sendEventStub) {
     Services.prefs.getDefaultBranch("").setIntPref("test.pref", 1);
 

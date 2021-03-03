@@ -105,8 +105,6 @@ class JSObject
   void setGroupRaw(js::ObjectGroup* group) { setHeaderPtr(group); }
 
  public:
-  bool isNative() const { return getClass()->isNative(); }
-
   const JSClass* getClass() const { return group()->clasp(); }
   bool hasClass(const JSClass* c) const { return getClass() == c; }
 
@@ -154,8 +152,6 @@ class JSObject
     shape_ = shape;
   }
   js::Shape* shape() const { return shape_; }
-
-  void traceShape(JSTracer* trc) { TraceEdge(trc, shapePtr(), "shape"); }
 
   static JSObject* fromShapeFieldPointer(uintptr_t p) {
     return reinterpret_cast<JSObject*>(p - JSObject::offsetOfShape());
@@ -303,7 +299,7 @@ class JSObject
 
   js::TaggedProto taggedProto() const { return group()->proto(); }
 
-  bool uninlinedIsProxy() const;
+  bool uninlinedIsProxyObject() const;
 
   JSObject* staticPrototype() const {
     MOZ_ASSERT(hasStaticPrototype());
@@ -323,8 +319,7 @@ class JSObject
   // the wrapper/wrappee [[Prototype]]s consistent.)
   bool hasDynamicPrototype() const {
     bool dynamic = taggedProto().isDynamic();
-    MOZ_ASSERT_IF(dynamic, uninlinedIsProxy());
-    MOZ_ASSERT_IF(dynamic, !isNative());
+    MOZ_ASSERT_IF(dynamic, uninlinedIsProxyObject());
     return dynamic;
   }
 
@@ -854,8 +849,7 @@ bool LookupPropertyPure(JSContext* cx, JSObject* obj, jsid id, JSObject** objp,
                         PropertyResult* propp);
 
 bool LookupOwnPropertyPure(JSContext* cx, JSObject* obj, jsid id,
-                           PropertyResult* propp,
-                           bool* isTypedArrayOutOfRange = nullptr);
+                           PropertyResult* propp);
 
 bool GetPropertyPure(JSContext* cx, JSObject* obj, jsid id, Value* vp);
 
@@ -1023,11 +1017,11 @@ inline bool FreezeObject(JSContext* cx, HandleObject obj) {
 extern bool TestIntegrityLevel(JSContext* cx, HandleObject obj,
                                IntegrityLevel level, bool* resultp);
 
-extern MOZ_MUST_USE JSObject* SpeciesConstructor(
+[[nodiscard]] extern JSObject* SpeciesConstructor(
     JSContext* cx, HandleObject obj, HandleObject defaultCtor,
     bool (*isDefaultSpecies)(JSContext*, JSFunction*));
 
-extern MOZ_MUST_USE JSObject* SpeciesConstructor(
+[[nodiscard]] extern JSObject* SpeciesConstructor(
     JSContext* cx, HandleObject obj, JSProtoKey ctorKey,
     bool (*isDefaultSpecies)(JSContext*, JSFunction*));
 

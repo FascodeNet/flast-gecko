@@ -148,7 +148,7 @@ Tools.inspector = {
     const ctrlShiftC = "Ctrl+Shift+" + l10n("inspector.commandkey");
     return l10n("inspector.tooltip2", ctrlShiftC);
   },
-  inMenu: true,
+  inMenu: false,
 
   preventClosingOnKey: true,
   // preventRaisingOnKey is used to keep the focus on the content window for shortcuts
@@ -182,7 +182,7 @@ Tools.webConsole = {
         l10n("webconsole.commandkey")
     );
   },
-  inMenu: true,
+  inMenu: false,
 
   preventClosingOnKey: true,
   onkey: function(panel, toolbox) {
@@ -217,7 +217,7 @@ Tools.jsdebugger = {
         l10n("jsdebugger.commandkey2")
     );
   },
-  inMenu: true,
+  inMenu: false,
   isTargetSupported: function() {
     return true;
   },
@@ -241,7 +241,7 @@ Tools.styleEditor = {
       "Shift+" + functionkey(l10n("styleeditor.commandkey"))
     );
   },
-  inMenu: true,
+  inMenu: false,
   isTargetSupported: function(target) {
     return target.hasActor("styleSheets");
   },
@@ -265,7 +265,7 @@ Tools.performance = {
     );
   },
   accesskey: l10n("performance.accesskey"),
-  inMenu: true,
+  inMenu: false,
 };
 
 function switchPerformancePanel() {
@@ -278,12 +278,11 @@ function switchPerformancePanel() {
       return new NewPerformancePanel(frame, target);
     };
     Tools.performance.isTargetSupported = function(target) {
-      // Root actors are lazily initialized, so we can't check if the target has
-      // the perf actor yet. Also this function is not async, so we can't initialize
-      // the actor yet.
-      // We don't display the new performance panel for remote context in the
-      // toolbox, because this has an overhead. Instead we should use
-      // about:debugging.
+      // Only use the new performance panel on local tab toolboxes, as they are guaranteed
+      // to have a performance actor.
+      // Remote tab toolboxes (eg about:devtools-toolbox from about:debugging) should not
+      // use the performance panel; about:debugging provides a "Profile performance" button
+      // which can be used instead, without having the overhead of starting a remote toolbox.
       return target.isLocalTab;
     };
   } else {
@@ -349,7 +348,7 @@ Tools.netMonitor = {
         l10n("netmonitor.commandkey")
     );
   },
-  inMenu: true,
+  inMenu: false,
 
   isTargetSupported: function(target) {
     return target.getTrait("networkMonitor") && !target.isWorkerTarget;
@@ -376,7 +375,7 @@ Tools.storage = {
       "Shift+" + functionkey(l10n("storage.commandkey"))
     );
   },
-  inMenu: true,
+  inMenu: false,
 
   isTargetSupported: function(target) {
     return target.hasActor("storage");
@@ -403,7 +402,7 @@ Tools.dom = {
         l10n("dom.commandkey")
     );
   },
-  inMenu: true,
+  inMenu: false,
 
   isTargetSupported: function(target) {
     return true;
@@ -430,7 +429,7 @@ Tools.accessibility = {
       "Shift+" + functionkey(l10n("accessibilityF12.commandkey"))
     );
   },
-  inMenu: true,
+  inMenu: false,
 
   isTargetSupported(target) {
     return target.hasActor("accessibility");
@@ -450,7 +449,7 @@ Tools.application = {
   label: l10n("application.label"),
   panelLabel: l10n("application.panellabel"),
   tooltip: l10n("application.tooltip"),
-  inMenu: true,
+  inMenu: false,
 
   isTargetSupported: function(target) {
     return target.hasActor("manifest");
@@ -566,7 +565,36 @@ exports.ToolboxButtons = [
         args.clipboard = true;
       }
 
-      await captureAndSaveScreenshot(toolbox.target, toolbox.win, args);
+      const messages = await captureAndSaveScreenshot(
+        toolbox.target,
+        toolbox.win,
+        args
+      );
+      const notificationBox = toolbox.getNotificationBox();
+      const priorityMap = {
+        error: notificationBox.PRIORITY_CRITICAL_HIGH,
+        warn: notificationBox.PRIORITY_WARNING_HIGH,
+      };
+      for (const { text, level } of messages) {
+        // captureAndSaveScreenshot returns "saved" messages, that indicate where the
+        // screenshot was saved. In regular toolbox, we don't want to display them as
+        // the download UI can be used to open them.
+        // But in the browser toolbox, we can't see the download UI, so we'll display the
+        // saved message so the user knows there the file was saved.
+        if (
+          !toolbox.target.isParentProcess &&
+          level !== "warn" &&
+          level !== "error"
+        ) {
+          continue;
+        }
+        notificationBox.appendNotification(
+          text,
+          null,
+          null,
+          priorityMap[level] || notificationBox.PRIORITY_INFO_MEDIUM
+        );
+      }
     },
   },
   createHighlightButton("RulersHighlighter", "rulers"),

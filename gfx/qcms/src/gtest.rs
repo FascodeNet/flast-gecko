@@ -863,7 +863,39 @@ mod gtest {
                 src.len() / GrayA8.bytes_per_pixel(),
             );
         }
+    }
 
+    #[test]
+    fn data_create_rgb_with_gamma() {
+        let Rec709Primaries = qcms_CIE_xyYTRIPLE {
+            red: {
+                qcms_CIE_xyY {
+                    x: 0.6400,
+                    y: 0.3300,
+                    Y: 1.0,
+                }
+            },
+            green: {
+                qcms_CIE_xyY {
+                    x: 0.3000,
+                    y: 0.6000,
+                    Y: 1.0,
+                }
+            },
+            blue: {
+                qcms_CIE_xyY {
+                    x: 0.1500,
+                    y: 0.0600,
+                    Y: 1.0,
+                }
+            },
+        };
+        let D65 = qcms_white_point_sRGB();
+        let mut mem = std::ptr::null_mut();
+        let mut size = 0;
+        unsafe { qcms_data_create_rgb_with_gamma(D65, Rec709Primaries, 2.2, &mut mem, &mut size); }
+        assert_ne!(size, 0);
+        unsafe { libc::free(mem) } ;
     }
 }
 
@@ -883,5 +915,20 @@ mod test {
         let mut data = [4, 30, 80];
         xfm.apply(&mut data);
         assert_eq!(data, [4, 30, 80]);
+    }
+    #[test]
+    fn D50() {
+        let p1 = crate::Profile::new_sRGB();
+        let p2 = crate::Profile::new_XYZD50();
+        let xfm = crate::Transform::new(
+            &p1,
+            &p2,
+            crate::DataType::RGB8,
+            crate::Intent::default(),
+        )
+        .unwrap();
+        let mut data = [4, 30, 80];
+        xfm.apply(&mut data);
+        assert_eq!(data, [4, 4, 15]);
     }
 }

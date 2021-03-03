@@ -47,6 +47,7 @@
 #include "mozilla/dom/SVGUseElement.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/L10nOverlays.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "nsAttrValueOrString.h"
 #include "nsCCUncollectableMarker.h"
@@ -2859,14 +2860,11 @@ const RawServoSelectorList* nsINode::ParseSelectorList(
   Document* doc = OwnerDoc();
 
   Document::SelectorCache& cache = doc->GetSelectorCache();
-  RawServoSelectorList* list =
-      cache.GetList(aSelectorString)
-          .OrInsert([&] {
-            // Note that we want to cache even if null was returned, because we
-            // want to cache the "This is not a valid selector" result.
-            return Servo_SelectorList_Parse(&aSelectorString).Consume();
-          })
-          .get();
+  RawServoSelectorList* list = cache.GetListOrInsertFrom(aSelectorString, [&] {
+    // Note that we want to cache even if null was returned, because we
+    // want to cache the "This is not a valid selector" result.
+    return Servo_SelectorList_Parse(&aSelectorString).Consume();
+  });
 
   if (!list) {
     // Invalid selector.

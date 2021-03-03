@@ -340,6 +340,13 @@ pref("browser.triple_click_selects_paragraph", true);
 // Enable fillable forms in the PDF viewer.
 pref("pdfjs.renderInteractiveForms", true);
 
+// Enable JavaScript support in the PDF viewer.
+#ifdef NIGHTLY_BUILD
+  pref("pdfjs.enableScripting", true);
+#else
+  pref("pdfjs.enableScripting", false);
+#endif
+
 // Disable support for MathML
 pref("mathml.disabled",    false);
 
@@ -388,9 +395,9 @@ pref("media.gmp.storage.version.expected", 1);
 // Filter what triggers user notifications.
 // See DecoderDoctorDocumentWatcher::ReportAnalysis for details.
 #ifdef NIGHTLY_BUILD
-  pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMF,MediaCannotInitializePulseAudio,MediaCannotPlayNoDecoders,MediaUnsupportedLibavcodec,MediaDecodeError");
+  pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMF,MediaCannotInitializePulseAudio,MediaCannotPlayNoDecoders,MediaUnsupportedLibavcodec,MediaPlatformDecoderNotFound,MediaDecodeError");
 #else
-  pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMF,MediaCannotInitializePulseAudio,MediaCannotPlayNoDecoders,MediaUnsupportedLibavcodec");
+  pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMF,MediaCannotInitializePulseAudio,MediaCannotPlayNoDecoders,MediaUnsupportedLibavcodec,MediaPlatformDecoderNotFound");
 #endif
 pref("media.decoder-doctor.decode-errors-allowed", "");
 pref("media.decoder-doctor.decode-warnings-allowed", "");
@@ -1526,11 +1533,7 @@ pref("network.http.accept", "");
 // per Section 4.7 "Low-Latency Data Service Class".
 pref("network.ftp.data.qos", 0);
 pref("network.ftp.control.qos", 0);
-#ifdef NIGHTLY_BUILD
-  pref("network.ftp.enabled", false);
-#else
-  pref("network.ftp.enabled", true);
-#endif
+pref("network.ftp.enabled", false);
 
 // The max time to spend on xpcom events between two polls in ms.
 pref("network.sts.max_time_for_events_between_two_polls", 100);
@@ -2556,7 +2559,7 @@ pref("browser.tabs.remote.autostart", false);
 
 // Whether certain properties from origin attributes should be included as part
 // of remote types. Only in effect when fission is enabled.
-pref("browser.tabs.remote.useOriginAttributesInRemoteType", false);
+pref("browser.tabs.remote.useOriginAttributesInRemoteType", true);
 
 // Pref to control whether we use separate content processes for top-level load
 // of file:// URIs.
@@ -3785,7 +3788,6 @@ pref("network.psl.onUpdate_notify", false);
 #endif
 #ifdef MOZ_WAYLAND
   pref("widget.wayland_vsync.enabled", true);
-  pref("widget.wayland.use-opaque-region", false);
   pref("widget.use-xdg-desktop-portal", false);
 #endif
 

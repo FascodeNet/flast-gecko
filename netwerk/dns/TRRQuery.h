@@ -27,14 +27,14 @@ class TRRQuery : public AHostResolver {
   TRRState mTrrAUsed = INIT;
   TRRState mTrrAAAAUsed = INIT;
 
-  AddrHostRecord::TRRSkippedReason mTRRAFailReason = AddrHostRecord::TRR_UNSET;
-  AddrHostRecord::TRRSkippedReason mTRRAAAAFailReason =
-      AddrHostRecord::TRR_UNSET;
+  TRRSkippedReason mTRRAFailReason = TRRSkippedReason::TRR_UNSET;
+  TRRSkippedReason mTRRAAAAFailReason = TRRSkippedReason::TRR_UNSET;
 
-  virtual LookupStatus CompleteLookup(
-      nsHostRecord*, nsresult, mozilla::net::AddrInfo*, bool pb,
-      const nsACString& aOriginsuffix,
-      nsHostRecord::TRRSkippedReason aReason) override;
+  virtual LookupStatus CompleteLookup(nsHostRecord*, nsresult,
+                                      mozilla::net::AddrInfo*, bool pb,
+                                      const nsACString& aOriginsuffix,
+                                      nsHostRecord::TRRSkippedReason aReason,
+                                      TRR* aTRRRequest) override;
   virtual LookupStatus CompleteLookupByType(
       nsHostRecord*, nsresult, mozilla::net::TypeRecordResultType& aResult,
       uint32_t aTtl, bool pb) override;

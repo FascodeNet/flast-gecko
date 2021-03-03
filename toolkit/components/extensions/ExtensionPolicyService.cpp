@@ -138,8 +138,9 @@ bool ExtensionPolicyService::RegisterExtension(WebExtensionPolicy& aPolicy) {
     return false;
   }
 
-  mExtensions.Put(aPolicy.Id(), RefPtr{&aPolicy});
-  mExtensionHosts.Put(aPolicy.MozExtensionHostname(), RefPtr{&aPolicy});
+  mExtensions.InsertOrUpdate(aPolicy.Id(), RefPtr{&aPolicy});
+  mExtensionHosts.InsertOrUpdate(aPolicy.MozExtensionHostname(),
+                                 RefPtr{&aPolicy});
   return true;
 }
 
@@ -158,21 +159,16 @@ bool ExtensionPolicyService::UnregisterExtension(WebExtensionPolicy& aPolicy) {
 }
 
 bool ExtensionPolicyService::RegisterObserver(DocumentObserver& aObserver) {
-  if (mObservers.GetWeak(&aObserver)) {
-    return false;
-  }
-
-  mObservers.Put(&aObserver, RefPtr{&aObserver});
-  return true;
+  bool inserted = false;
+  mObservers.LookupOrInsertWith(&aObserver, [&] {
+    inserted = true;
+    return RefPtr{&aObserver};
+  });
+  return inserted;
 }
 
 bool ExtensionPolicyService::UnregisterObserver(DocumentObserver& aObserver) {
-  if (!mObservers.GetWeak(&aObserver)) {
-    return false;
-  }
-
-  mObservers.Remove(&aObserver);
-  return true;
+  return mObservers.Remove(&aObserver);
 }
 
 /*****************************************************************************

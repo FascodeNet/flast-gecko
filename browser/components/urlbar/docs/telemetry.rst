@@ -312,7 +312,7 @@ Event Object
   - ``drop_go``
     The user dropped text on the input field.
   - ``paste_go``
-    The user used Paste & Go feature. It is not the same as paste and Enter.
+    The user used Paste and Go feature. It is not the same as paste and Enter.
   - ``blur``
     The user unfocused the urlbar. This is only valid for ``abandonment``.
 
@@ -337,7 +337,7 @@ Event Extra
     ``history``, ``keyword``, ``searchengine``, ``searchsuggestion``,
     ``switchtab``, ``remotetab``, ``extension``, ``oneoff``, ``keywordoffer``,
     ``canonized``, ``tip``, ``tiphelp``, ``formhistory``, ``tabtosearch``,
-    ``unknown``
+    ``help``, ``unknown``
     In practice, ``tabtosearch`` should not appear in real event telemetry.
     Opening a tab-to-search result enters search mode and entering search mode
     does not currently mark the end of an engagement. It is noted here for
@@ -358,8 +358,104 @@ Event Extra
 
     .. _URLBar provider experiments: experiments.html#developing-address-bar-extensions
 
-Search probes relevant to the Address Bar
------------------------------------------
+
+Custom pings for Contextual Services
+------------------------------------
+
+Contextual Services currently has two features running within the Urlbar: TopSites
+and QuickSuggest. We send various pings as the `custom pings`_ to record the impressions
+and clicks of these two features.
+
+    .. _custom pings: https://docs.telemetry.mozilla.org/cookbooks/new_ping.html#sending-a-custom-ping
+
+TopSites Impression
+  This records an impression when a sponsored TopSite is shown.
+
+  - ``context_id``
+    A UUID representing this user. Note that it's not client_id, nor can it be used to link to a client_id.
+  - ``tile_id``
+    A unique identifier for the sponsored TopSite.
+  - ``source``
+    The browser location where the impression was displayed.
+  - ``position``
+    The placement of the TopSite (1-based).
+  - ``advertiser``
+    The Name of the advertiser.
+  - ``reporting_url``
+    The reporting URL of the sponsored TopSite, normally pointing to the ad partner's reporting endpoint.
+  - ``version``
+    Firefox version.
+  - ``release_channel``
+    Firefox release channel.
+  - ``locale``
+    User's current locale.
+
+TopSites Click
+  This records a click ping when a sponsored TopSite is clicked by the user.
+
+  - ``context_id``
+    A UUID representing this user. Note that it's not client_id, nor can it be used to link to a client_id.
+  - ``tile_id``
+    A unique identifier for the sponsored TopSite.
+  - ``source``
+    The browser location where the click was tirggered.
+  - ``position``
+    The placement of the TopSite (1-based).
+  - ``advertiser``
+    The Name of the advertiser.
+  - ``reporting_url``
+    The reporting URL of the sponsored TopSite, normally pointing to the ad partner's reporting endpoint.
+  - ``version``
+    Firefox version.
+  - ``release_channel``
+    Firefox release channel.
+  - ``locale``
+    User's current locale.
+
+QuickSuggest Impression
+  This records an impression when the following two conditions hold:
+    - A user needs to complete the search action by picking a result from the Urlbar
+    - There must be a QuickSuggest link shown at the end of that search action.
+      No impression will be recorded for any QuickSuggest links that are shown
+      during the user typing, only the last one (if any) counts
+
+  Payload:
+
+  - ``context_id``
+    A UUID representing this user. Note that it's not client_id, nor can it be used to link to a client_id.
+  - ``search_query``
+    The exact search query typed in by the user.
+  - ``matched_keywords``
+    The matched keywords that leads to the QuickSuggest link.
+  - ``is_clicked``
+    Whether or not the use has clicked on the QuickSuggest link.
+  - ``block_id``
+    A unique identifier for a QuickSuggest link (a.k.a a keywords block).
+  - ``position``
+    The placement of the QuickSuggest link in the Urlbar (1-based).
+  - ``advertiser``
+    The Name of the advertiser.
+  - ``reporting_url``
+    The reporting URL of the QuickSuggest link, normally pointing to the ad partner's reporting endpoint.
+
+QuickSuggest Click
+  This records a click ping when a QuickSuggest link is clicked by the user.
+
+  - ``context_id``
+    A UUID representing this user. Note that it's not client_id, nor can it be
+    used to link to a client_id.
+  - ``advertiser``
+    The Name of the advertiser.
+  - ``block_id``
+    A unique identifier for a QuickSuggest link (a.k.a a keywords block).
+  - ``position``
+    The placement of the QuickSuggest link in the Urlbar (1-based).
+  - ``reporting_url``
+    The reporting URL of the QuickSuggest link, normally pointing to the ad partner's reporting endpoint.
+
+
+Other telemetry relevant to the Address Bar
+-------------------------------------------
 
 SEARCH_COUNTS
   This histogram tracks search engines and Search Access Points. It is augmented
@@ -420,6 +516,55 @@ browser.engagement.navigation.*
     - ``search_suggestion``
       For ``urlbar`` or ``searchbar``, indicates the user confirmed a search
       suggestion.
+
+contextual.services.topsites.*
+  These keyed scalars instrument the impressions and clicks for sponsored TopSites
+  in the urlbar.
+  The key is a combination of the source and the placement of the TopSites link
+  (1-based) such as 'urlbar_1'. For each key, it records the counter of the
+  impression or click.
+  Note that these scalars are shared with the TopSites on the newtab page.
+
+contextual.services.quicksuggest.*
+  These keyed scalars record impressions and clicks on Quick Suggest results,
+  also called Firefox Suggests results, in the address bar. The keys for each
+  scalar are the 1-based indexes of the Quick Suggest results, and the values
+  are the number of impressions or clicks for the corresponding indexes. For
+  example, for a Quick Suggest impression at 0-based index 9, the value for key
+  ``10`` will be incremented in the
+  ``contextual.services.quicksuggest.impression`` scalar.
+
+  The keyed scalars are:
+
+    - ``contextual.services.quicksuggest.impression``
+      Incremented when a Quick Suggest result is shown in an address bar
+      engagement where the user picks any result. The particular picked result
+      doesn't matter, and it doesn't need to be the Quick Suggest result.
+    - ``contextual.services.quicksuggest.click``
+      Incremented when the user picks a Quick Suggest result (not including the
+      help button).
+    - ``contextual.services.quicksuggest.help``
+      Incremented when the user picks the onboarding help button in a Quick
+      Suggest result.
+
+contextservices.quicksuggest
+  This is event telemetry under the ``contextservices.quicksuggest`` category.
+  It's enabled only when the ``browser.urlbar.quicksuggest.enabled`` pref is
+  true. An event is recorded when the user toggles the
+  ``browser.urlbar.suggest.quicksuggest`` pref, which corresponds to the
+  checkbox in about:preferences#search labeled "Show suggested and sponsored
+  results in the address bar". If the user never toggles the pref, then this
+  event is never recorded.
+
+  The full spec for this event is:
+
+    - Category: ``contextservices.quicksuggest``
+    - Method: ``enable_toggled``
+    - Objects: ``enabled``, ``disabled`` -- ``enabled`` is recorded when the
+      pref is flipped from false to true, and ``disabled`` is recorded when the
+      pref is flipped from true to false.
+    - Value: Not used
+    - Extra: Not used
 
 Obsolete probes
 ---------------

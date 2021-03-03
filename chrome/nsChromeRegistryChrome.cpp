@@ -29,6 +29,7 @@
 
 #include "nsIAppStartup.h"
 #include "nsIObserverService.h"
+#include "mozilla/Components.h"
 #include "mozilla/Preferences.h"
 #include "nsIResProtocolHandler.h"
 #include "nsIScriptError.h"
@@ -476,7 +477,7 @@ void nsChromeRegistryChrome::ManifestContent(ManifestProcessingContext& cx,
   }
 
   nsDependentCString packageName(package);
-  PackageEntry* entry = mPackagesHash.LookupOrAdd(packageName);
+  PackageEntry* entry = mPackagesHash.GetOrInsertNew(packageName);
   entry->baseURI = resolved;
   entry->flags = flags;
 
@@ -513,7 +514,7 @@ void nsChromeRegistryChrome::ManifestLocale(ManifestProcessingContext& cx,
   }
 
   nsDependentCString packageName(package);
-  PackageEntry* entry = mPackagesHash.LookupOrAdd(packageName);
+  PackageEntry* entry = mPackagesHash.GetOrInsertNew(packageName);
   entry->locales.SetBase(nsDependentCString(provider), resolved);
 
   if (mDynamicRegistration) {
@@ -558,7 +559,7 @@ void nsChromeRegistryChrome::ManifestSkin(ManifestProcessingContext& cx,
   }
 
   nsDependentCString packageName(package);
-  PackageEntry* entry = mPackagesHash.LookupOrAdd(packageName);
+  PackageEntry* entry = mPackagesHash.GetOrInsertNew(packageName);
   entry->skins.SetBase(nsDependentCString(provider), resolved);
 
   if (mDynamicRegistration) {
@@ -609,7 +610,7 @@ void nsChromeRegistryChrome::ManifestOverride(ManifestProcessingContext& cx,
         "Cannot register non-local URI '%s' for an override.", resolved);
     return;
   }
-  mOverrideTable.Put(chromeuri, resolveduri);
+  mOverrideTable.InsertOrUpdate(chromeuri, resolveduri);
 
   if (mDynamicRegistration) {
     SerializedURI serializedChrome;
@@ -632,7 +633,7 @@ void nsChromeRegistryChrome::ManifestResource(ManifestProcessingContext& cx,
   EnsureLowerCase(package);
   nsDependentCString host(package);
 
-  nsCOMPtr<nsIIOService> io = mozilla::services::GetIOService();
+  nsCOMPtr<nsIIOService> io = mozilla::components::IO::Service();
   if (!io) {
     NS_WARNING("No IO service trying to process chrome manifests");
     return;

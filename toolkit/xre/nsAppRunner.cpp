@@ -23,7 +23,6 @@
 #include "mozilla/Printf.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Utf8.h"
@@ -302,6 +301,10 @@ bool gRestartedByOS = false;
 bool gIsGtest = false;
 
 nsString gAbsoluteArgv0Path;
+
+#if defined(XP_WIN)
+nsString gProcessStartupShortcut;
+#endif
 
 #if defined(MOZ_WIDGET_GTK)
 #  include <glib.h>
@@ -1308,6 +1311,17 @@ nsXULAppInfo::GetRestartedByOS(bool* aResult) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsXULAppInfo::GetProcessStartupShortcut(nsAString& aShortcut) {
+#if defined(XP_WIN)
+  if (XRE_IsParentProcess()) {
+    aShortcut.Assign(gProcessStartupShortcut);
+    return NS_OK;
+  }
+#endif
+  return NS_ERROR_NOT_AVAILABLE;
+}
+
 #if defined(XP_WIN) && defined(MOZ_LAUNCHER_PROCESS)
 // Forward declaration
 void SetupLauncherProcessPref();
@@ -2183,10 +2197,7 @@ void UnlockProfile() {
   }
 }
 
-// If aBlankCommandLine is true, then the application will be launched with a
-// blank command line instead of being launched with the same command line that
-// it was initially started with.
-nsresult LaunchChild(bool aBlankCommandLine) {
+nsresult LaunchChild(bool aBlankCommandLine, bool aTryExec) {
   // Restart this process by exec'ing it into the current process
   // if supported by the platform.  Otherwise, use NSPR.
 
@@ -2234,8 +2245,16 @@ nsresult LaunchChild(bool aBlankCommandLine) {
   rv = lf->GetNativePath(exePath);
   if (NS_FAILED(rv)) return rv;
 
-  if (PR_FAILURE ==
-      PR_CreateProcessDetached(exePath.get(), gRestartArgv, nullptr, nullptr)) {
+#      if defined(XP_UNIX)
+  if (aTryExec) {
+    execv(exePath.get(), gRestartArgv);
+
+    // If execv returns we know it's because it failed.
+    return NS_ERROR_FAILURE;
+  }
+#      endif
+  if (PR_CreateProcessDetached(exePath.get(), gRestartArgv, nullptr, nullptr) ==
+      PR_FAILURE) {
     return NS_ERROR_FAILURE;
   }
 
@@ -2300,7 +2319,7 @@ static nsresult ProfileMissingDialog(nsINativeAppSupport* aNative) {
   {  // extra scoping is needed so we release these components before xpcom
      // shutdown
     nsCOMPtr<nsIStringBundleService> sbs =
-        mozilla::services::GetStringBundleService();
+        mozilla::components::StringBundle::Service();
     NS_ENSURE_TRUE(sbs, NS_ERROR_FAILURE);
 
     nsCOMPtr<nsIStringBundle> sb;
@@ -2354,7 +2373,7 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
   {  // extra scoping is needed so we release these components before xpcom
      // shutdown
     nsCOMPtr<nsIStringBundleService> sbs =
-        mozilla::services::GetStringBundleService();
+        mozilla::components::StringBundle::Service();
     NS_ENSURE_TRUE(sbs, NS_ERROR_FAILURE);
 
     nsCOMPtr<nsIStringBundle> sb;
@@ -2417,7 +2436,7 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
         SaveFileToEnv("XRE_PROFILE_PATH", aProfileDir);
         SaveFileToEnv("XRE_PROFILE_LOCAL_PATH", aProfileLocalDir);
 
-        return LaunchChild(false);
+        return LaunchChild(false, true);
       }
     } else {
 #ifdef MOZ_WIDGET_ANDROID
@@ -2527,7 +2546,7 @@ static ReturnAbortOnError ShowProfileManager(
     gRestartArgv[gRestartArgc] = nullptr;
   }
 
-  return LaunchChild(false);
+  return LaunchChild(false, true);
 }
 
 static bool gDoMigration = false;
@@ -2947,7 +2966,7 @@ static ReturnAbortOnError CheckDowngrade(nsIFile* aProfileDir,
     SaveFileToEnv("XRE_PROFILE_PATH", profD);
     SaveFileToEnv("XRE_PROFILE_LOCAL_PATH", profLD);
 
-    return LaunchChild(false);
+    return LaunchChild(false, true);
   }
 
   // Cancel
@@ -4244,6 +4263,20 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
     mDesktopStartupID.Assign(desktopStartupIDEnv);
   }
 #endif
+
+#if defined(XP_WIN)
+  {
+    // Save the shortcut path before lpTitle is replaced by an AUMID,
+    // such as by WinTaskbar
+    STARTUPINFOW si;
+    GetStartupInfoW(&si);
+    if (si.dwFlags & STARTF_TITLEISAPPID) {
+      NS_WARNING("AUMID was already set, shortcut may have been lost.");
+    } else if ((si.dwFlags & STARTF_TITLEISLINKNAME) && si.lpTitle) {
+      gProcessStartupShortcut.Assign(si.lpTitle);
+    }
+  }
+#endif /* XP_WIN */
 
 #if defined(MOZ_WIDGET_GTK)
   // setup for private colormap.  Ideally we'd like to do this

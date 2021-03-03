@@ -45,9 +45,6 @@ namespace dom {
  * the object is about to die.)
  */
 
-template <typename T>
-struct Prefable;
-
 class BaseDOMProxyHandler : public js::BaseProxyHandler {
  public:
   explicit constexpr BaseDOMProxyHandler(const void* aProxyFamily,
@@ -166,8 +163,7 @@ class ShadowingDOMProxyHandler : public DOMProxyHandler {
 };
 
 inline bool IsDOMProxy(JSObject* obj) {
-  const JSClass* clasp = JS::GetClass(obj);
-  return clasp->isProxy() &&
+  return js::IsProxy(obj) &&
          js::GetProxyHandler(obj)->family() == &DOMProxyHandler::family;
 }
 

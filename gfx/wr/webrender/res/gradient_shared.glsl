@@ -14,7 +14,6 @@ flat varying float v_gradient_repeat;
 varying vec2 v_pos;
 
 #ifdef WR_FEATURE_ALPHA_PASS
-varying vec2 v_local_pos;
 flat varying vec2 v_tile_repeat;
 #endif
 
@@ -50,14 +49,13 @@ void write_gradient_vertex(
 
 #ifdef WR_FEATURE_ALPHA_PASS
     v_tile_repeat = tile_repeat;
-    v_local_pos = vi.local_pos;
 #endif
 }
 #endif //WR_VERTEX_SHADER
 
 #ifdef WR_FRAGMENT_SHADER
-vec2 compute_gradient_pos() {
-#ifdef WR_FEATURE_ALPHA_PASS
+vec2 compute_repeated_pos() {
+#if defined(WR_FEATURE_ALPHA_PASS) && !defined(SWGL_ANTIALIAS)
     // Handle top and left inflated edges (see brush_image).
     vec2 local_pos = max(v_pos, vec2(0.0));
 

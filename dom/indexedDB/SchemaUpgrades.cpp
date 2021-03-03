@@ -22,7 +22,6 @@
 #include <type_traits>
 #include <utility>
 #include "ErrorList.h"
-#include "GeckoProfiler.h"
 #include "MainThreadUtils.h"
 #include "SafeRefPtr.h"
 #include "js/RootingAPI.h"
@@ -52,6 +51,7 @@
 #include "mozilla/fallible.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/mozalloc.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/storage/Variant.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
@@ -2859,7 +2859,7 @@ nsresult UpgradeFileIdsFunction::Init(nsIFile* aFMDirectory,
   // This file manager doesn't need real origin info, etc. The only purpose is
   // to store file ids without adding more complexity or code duplication.
   auto fileManager = MakeSafeRefPtr<FileManager>(
-      PERSISTENCE_TYPE_INVALID, quota::GroupAndOrigin{}, u""_ns, false);
+      PERSISTENCE_TYPE_INVALID, quota::OriginMetadata{}, u""_ns, false);
 
   nsresult rv = fileManager->Init(aFMDirectory, aConnection);
   if (NS_WARN_IF(NS_FAILED(rv))) {

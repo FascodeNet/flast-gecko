@@ -1792,9 +1792,10 @@ void MLoadDataViewElement::computeRange(TempAllocator& alloc) {
 }
 
 void MArrayLength::computeRange(TempAllocator& alloc) {
-  // Array lengths can go up to UINT32_MAX. We do a dynamic check and we have to
-  // return the range pre-bailouts, so use UINT32_MAX.
-  setRange(Range::NewUInt32Range(alloc, 0, UINT32_MAX));
+  // Array lengths can go up to UINT32_MAX. We will bail out if the array
+  // length > INT32_MAX.
+  MOZ_ASSERT(type() == MIRType::Int32);
+  setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
 }
 
 void MInitializedLength::computeRange(TempAllocator& alloc) {
@@ -1814,18 +1815,16 @@ void MArrayBufferViewByteOffset::computeRange(TempAllocator& alloc) {
   }
 }
 
-void MTypedArrayElementShift::computeRange(TempAllocator& alloc) {
-  using mozilla::tl::FloorLog2;
+void MTypedArrayElementSize::computeRange(TempAllocator& alloc) {
+  constexpr auto MaxTypedArraySize = sizeof(double);
 
-  constexpr auto MaxTypedArrayShift = FloorLog2<sizeof(double)>::value;
-
-#define ASSERT_MAX_SHIFT(T, N)                                     \
-  static_assert(FloorLog2<sizeof(T)>::value <= MaxTypedArrayShift, \
+#define ASSERT_MAX_SIZE(T, N)                   \
+  static_assert(sizeof(T) <= MaxTypedArraySize, \
                 "unexpected typed array type exceeding 64-bits storage");
-  JS_FOR_EACH_TYPED_ARRAY(ASSERT_MAX_SHIFT)
-#undef ASSERT_MAX_SHIFT
+  JS_FOR_EACH_TYPED_ARRAY(ASSERT_MAX_SIZE)
+#undef ASSERT_MAX_SIZE
 
-  setRange(Range::NewUInt32Range(alloc, 0, MaxTypedArrayShift));
+  setRange(Range::NewUInt32Range(alloc, 0, MaxTypedArraySize));
 }
 
 void MStringLength::computeRange(TempAllocator& alloc) {
@@ -1858,9 +1857,16 @@ void MInt32ToIntPtr::computeRange(TempAllocator& alloc) {
   setRange(new (alloc) Range(input()));
 }
 
+void MNonNegativeIntPtrToInt32::computeRange(TempAllocator& alloc) {
+  // We will bail out if the IntPtr value > INT32_MAX.
+  setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
+}
+
 void MArrayPush::computeRange(TempAllocator& alloc) {
-  // MArrayPush returns the new array length.
-  setRange(Range::NewUInt32Range(alloc, 0, UINT32_MAX));
+  // MArrayPush returns the new array length. It bails out if the new length
+  // doesn't fit in an Int32.
+  MOZ_ASSERT(type() == MIRType::Int32);
+  setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
 }
 
 void MMathFunction::computeRange(TempAllocator& alloc) {
@@ -3083,8 +3089,7 @@ static void RemoveTruncatesOnOutput(MDefinition* truncated) {
   }
 }
 
-static void AdjustTruncatedInputs(TempAllocator& alloc,
-                                  MDefinition* truncated) {
+void RangeAnalysis::adjustTruncatedInputs(MDefinition* truncated) {
   MBasicBlock* block = truncated->block();
   for (size_t i = 0, e = truncated->numOperands(); i < e; i++) {
     TruncateKind kind = truncated->operandTruncateKind(i);
@@ -3102,10 +3107,11 @@ static void AdjustTruncatedInputs(TempAllocator& alloc,
     } else {
       MInstruction* op;
       if (kind == TruncateKind::TruncateAfterBailouts) {
-        op = MToNumberInt32::New(alloc, truncated->getOperand(i));
+        MOZ_ASSERT(!mir->outerInfo().hadEagerTruncationBailout());
+        op = MToNumberInt32::New(alloc(), truncated->getOperand(i));
         op->setBailoutKind(BailoutKind::EagerTruncation);
       } else {
-        op = MTruncateToInt32::New(alloc, truncated->getOperand(i));
+        op = MTruncateToInt32::New(alloc(), truncated->getOperand(i));
       }
 
       if (truncated->isPhi()) {
@@ -3142,10 +3148,10 @@ bool RangeAnalysis::canTruncate(MDefinition* def, TruncateKind kind) const {
     if (kind == TruncateKind::TruncateAfterBailouts) {
       return false;
     }
-    for (uint32_t i = 0; i < def->numOperands(); i++) {
-      if (def->operandTruncateKind(i) <= TruncateKind::TruncateAfterBailouts) {
-        return false;
-      }
+    // MDiv and MMod always require TruncateAfterBailout for their operands.
+    // See MDiv::operandTruncateKind and MMod::operandTruncateKind.
+    if (def->isDiv() || def->isMod()) {
+      return false;
     }
   }
 
@@ -3223,6 +3229,15 @@ bool RangeAnalysis::truncate() {
         return false;
       }
 
+      // TruncateAfterBailouts keeps the bailout code as-is and
+      // continues with truncated operations, with the expectation
+      // that we are unlikely to bail out. If we do bail out, then we
+      // will set a flag in FinishBailoutToBaseline to prevent eager
+      // truncation when we recompile, to avoid bailout loops.
+      if (kind == TruncateKind::TruncateAfterBailouts) {
+        iter->setBailoutKind(BailoutKind::EagerTruncation);
+      }
+
       iter->truncate();
 
       // Delay updates of inputs/outputs to avoid creating node which
@@ -3265,7 +3280,7 @@ bool RangeAnalysis::truncate() {
     MDefinition* def = worklist.popCopy();
     def->setNotInWorklist();
     RemoveTruncatesOnOutput(def);
-    AdjustTruncatedInputs(alloc(), def);
+    adjustTruncatedInputs(def);
   }
 
   return true;

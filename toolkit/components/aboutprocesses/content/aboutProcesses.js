@@ -410,10 +410,15 @@ var View = {
     // to avoid flicker when resizing.
     await document.l10n.translateFragment(this._fragment);
 
+    // Pause the DOMLocalization mutation observer, or the already translated
+    // content will be translated a second time at the next tick.
+    document.l10n.pauseObserving();
     while (tbody.firstChild) {
       tbody.firstChild.remove();
     }
     tbody.appendChild(this._fragment);
+    document.l10n.resumeObserving();
+
     this._fragment = document.createDocumentFragment();
   },
   insertAfterRow(row) {
@@ -563,7 +568,7 @@ var View = {
             deltaUnit: units.memory[formattedDelta.unit],
             deltaSign: data.deltaRamSize > 0 ? "+" : "-",
           },
-          classes: ["totalMemorySize"],
+          classes: ["memory"],
         });
       } else {
         this._addCell(row, {
@@ -572,7 +577,7 @@ var View = {
             total: formattedTotal.amount,
             totalUnit: units.memory[formattedTotal.unit],
           },
-          classes: ["totalMemorySize"],
+          classes: ["memory"],
         });
       }
     }
@@ -659,18 +664,6 @@ var View = {
       elt.insertBefore(img, elt.firstChild);
     }
 
-    // Column: Resident size
-    this._addCell(row, {
-      content: "",
-      classes: ["totalRamSize"],
-    });
-
-    // Column: CPU: User and Kernel
-    this._addCell(row, {
-      content: "",
-      classes: ["cpu"],
-    });
-
     // Column: action
     this._addCell(row, {
       content: "",
@@ -735,18 +728,6 @@ var View = {
       elt.style.backgroundImage = `url('${image}')`;
     }
 
-    // Column: Resident size (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["totalRamSize"],
-    });
-
-    // Column: CPU (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["cpu"],
-    });
-
     // Column: action
     let killButton = this._addCell(row, {
       content: "",
@@ -797,12 +778,6 @@ var View = {
         tid: "" + data.tid /* Make sure that this number is not localized */,
       },
       classes: ["name", "double_indent"],
-    });
-
-    // Column: Resident size (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["totalRamSize"],
     });
 
     // Column: CPU: User and Kernel

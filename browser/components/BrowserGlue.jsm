@@ -44,7 +44,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource:///modules/DownloadsViewableInternally.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
-  ExperimentAPI: "resource://messaging-system/experiments/ExperimentAPI.jsm",
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.jsm",
   FeatureGate: "resource://featuregates/FeatureGate.jsm",
   FirefoxMonitor: "resource:///modules/FirefoxMonitor.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
@@ -193,6 +193,7 @@ let JSWINDOWACTORS = {
         AboutLoginsImportFromBrowser: { wantUntrusted: true },
         AboutLoginsImportFromFile: { wantUntrusted: true },
         AboutLoginsImportReportInit: { wantUntrusted: true },
+        AboutLoginsImportReportReady: { wantUntrusted: true },
         AboutLoginsInit: { wantUntrusted: true },
         AboutLoginsGetHelp: { wantUntrusted: true },
         AboutLoginsOpenPreferences: { wantUntrusted: true },
@@ -259,6 +260,21 @@ let JSWINDOWACTORS = {
     },
 
     matches: ["about:plugins"],
+  },
+
+  AboutPocket: {
+    parent: {
+      moduleURI: "resource:///actors/AboutPocketParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/AboutPocketChild.jsm",
+
+      events: {
+        DOMWindowCreated: { capture: true },
+      },
+    },
+
+    matches: ["about:pocket-saved*", "about:pocket-signup*"],
   },
 
   AboutPrivateBrowsing: {
@@ -1442,168 +1458,6 @@ BrowserGlue.prototype = {
     }
   },
 
-  _trackSlowStartup() {
-    let disabled = Services.prefs.getBoolPref(
-      "browser.slowStartup.notificationDisabled"
-    );
-
-    Services.telemetry.scalarSet(
-      "browser.startup.slow_startup_notification_disabled",
-      disabled
-    );
-
-    if (Services.startup.interrupted || disabled) {
-      return;
-    }
-
-    let currentTime = Math.round(Cu.now());
-
-    Services.telemetry.scalarSet("browser.startup.recorded_time", currentTime);
-
-    let averageTime = 0;
-    let samples = 0;
-    try {
-      averageTime = Services.prefs.getIntPref(
-        "browser.slowStartup.averageTime"
-      );
-      samples = Services.prefs.getIntPref("browser.slowStartup.samples");
-    } catch (e) {}
-
-    let totalTime = averageTime * samples + currentTime;
-    samples++;
-    averageTime = totalTime / samples;
-
-    Services.telemetry.scalarSet("browser.startup.average_time", averageTime);
-    Services.telemetry.scalarSet(
-      "browser.startup.slow_startup_notified",
-      false
-    );
-    Services.telemetry.scalarSet(
-      "browser.startup.too_new_for_notification",
-      false
-    );
-
-    if (
-      samples >= Services.prefs.getIntPref("browser.slowStartup.maxSamples")
-    ) {
-      if (
-        averageTime >
-        Services.prefs.getIntPref("browser.slowStartup.timeThreshold")
-      ) {
-        this._calculateProfileAgeInDays().then(
-          this._showSlowStartupNotification,
-          null
-        );
-      }
-      averageTime = 0;
-      samples = 0;
-    }
-
-    Services.prefs.setIntPref("browser.slowStartup.averageTime", averageTime);
-    Services.prefs.setIntPref("browser.slowStartup.samples", samples);
-  },
-
-  async _calculateProfileAgeInDays() {
-    let ProfileAge = ChromeUtils.import(
-      "resource://gre/modules/ProfileAge.jsm",
-      {}
-    ).ProfileAge;
-    let profileAge = await ProfileAge();
-
-    let creationDate = await profileAge.created;
-    let resetDate = await profileAge.reset;
-
-    // if the profile was reset, consider the
-    // reset date for its age.
-    let profileDate = resetDate || creationDate;
-
-    const ONE_DAY = 24 * 60 * 60 * 1000;
-    return (Date.now() - profileDate) / ONE_DAY;
-  },
-
-  _showSlowStartupNotification(profileAge) {
-    if (profileAge < 90) {
-      // 3 months
-      Services.telemetry.scalarSet(
-        "browser.startup.too_new_for_notification",
-        true
-      );
-      return;
-    }
-
-    let win = BrowserWindowTracker.getTopWindow();
-    if (!win) {
-      return;
-    }
-
-    Services.telemetry.scalarSet("browser.startup.slow_startup_notified", true);
-
-    const NO_ACTION = 0;
-    const OPENED_SUMO = 1;
-    const NEVER_SHOW_AGAIN = 2;
-    const DISMISS_NOTIFICATION = 3;
-
-    Services.telemetry.scalarSet("browser.startup.action", NO_ACTION);
-
-    let productName = gBrandBundle.GetStringFromName("brandFullName");
-    let message = win.gNavigatorBundle.getFormattedString(
-      "slowStartup.message",
-      [productName]
-    );
-
-    let buttons = [
-      {
-        label: win.gNavigatorBundle.getString("slowStartup.helpButton.label"),
-        accessKey: win.gNavigatorBundle.getString(
-          "slowStartup.helpButton.accesskey"
-        ),
-        callback() {
-          Services.telemetry.scalarSet("browser.startup.action", OPENED_SUMO);
-          win.openTrustedLinkIn(
-            "https://support.mozilla.org/kb/reset-firefox-easily-fix-most-problems",
-            "tab"
-          );
-        },
-      },
-      {
-        label: win.gNavigatorBundle.getString(
-          "slowStartup.disableNotificationButton.label"
-        ),
-        accessKey: win.gNavigatorBundle.getString(
-          "slowStartup.disableNotificationButton.accesskey"
-        ),
-        callback() {
-          Services.telemetry.scalarSet(
-            "browser.startup.action",
-            NEVER_SHOW_AGAIN
-          );
-          Services.prefs.setBoolPref(
-            "browser.slowStartup.notificationDisabled",
-            true
-          );
-        },
-      },
-    ];
-
-    let closeCallback = closeType => {
-      if (closeType == "dismissed") {
-        Services.telemetry.scalarSet(
-          "browser.startup.action",
-          DISMISS_NOTIFICATION
-        );
-      }
-    };
-
-    win.gNotificationBox.appendNotification(
-      message,
-      "slow-startup",
-      "chrome://browser/skin/slowStartup-16.png",
-      win.gNotificationBox.PRIORITY_INFO_LOW,
-      buttons,
-      closeCallback
-    );
-  },
-
   /**
    * Show a notification bar offering a reset.
    *
@@ -1784,8 +1638,6 @@ BrowserGlue.prototype = {
         });
       }
     });
-
-    this._trackSlowStartup();
 
     // Offer to reset a user's profile if it hasn't been used for 60 days.
     const OFFER_PROFILE_RESET_INTERVAL_MS = 60 * 24 * 60 * 60 * 1000;
@@ -2068,17 +1920,6 @@ BrowserGlue.prototype = {
       "datasanitization.session_permission_exceptions",
       exceptions
     );
-  },
-
-  _sendMediaTelemetry() {
-    let win = Services.wm.getMostRecentWindow("navigator:browser");
-    if (win) {
-      let v = win.document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "video"
-      );
-      v.reportCanPlayTelemetry();
-    }
   },
 
   /**
@@ -2492,6 +2333,47 @@ BrowserGlue.prototype = {
         },
       },
 
+      // Report pinning status and the type of shortcut used to launch
+      {
+        condition: AppConstants.platform == "win",
+        task: async () => {
+          let shellService = Cc[
+            "@mozilla.org/browser/shell-service;1"
+          ].getService(Ci.nsIWindowsShellService);
+
+          try {
+            Services.telemetry.scalarSet(
+              "os.environment.is_taskbar_pinned",
+              await shellService.isCurrentAppPinnedToTaskbarAsync()
+            );
+          } catch (ex) {
+            Cu.reportError(ex);
+          }
+
+          let classification;
+          let shortcut;
+          try {
+            shortcut = Services.appinfo.processStartupShortcut;
+            classification = shellService.classifyShortcut(shortcut);
+          } catch (ex) {
+            Cu.reportError(ex);
+          }
+
+          if (!classification) {
+            if (shortcut) {
+              classification = "OtherShortcut";
+            } else {
+              classification = "Other";
+            }
+          }
+
+          Services.telemetry.scalarSet(
+            "os.environment.launch_method",
+            classification
+          );
+        },
+      },
+
       {
         condition: AppConstants.platform == "win",
         task: () => {
@@ -2711,10 +2593,6 @@ BrowserGlue.prototype = {
    */
   _scheduleBestEffortUserIdleTasks() {
     const idleTasks = [
-      () => {
-        this._sendMediaTelemetry();
-      },
-
       () => {
         // Telemetry for master-password - we do this after a delay as it
         // can cause IO if NSS/PSM has not already initialized.
@@ -3217,29 +3095,9 @@ BrowserGlue.prototype = {
     var text = placesBundle.formatStringFromName("lockPrompt.text", [
       applicationName,
     ]);
-    var buttonText = placesBundle.GetStringFromName(
-      "lockPromptInfoButton.label"
-    );
-    var accessKey = placesBundle.GetStringFromName(
-      "lockPromptInfoButton.accessKey"
-    );
-
-    var helpTopic = "places-locked";
-    var url = Services.urlFormatter.formatURLPref("app.support.baseURL");
-    url += helpTopic;
 
     var win = BrowserWindowTracker.getTopWindow();
-
-    var buttons = [
-      {
-        label: buttonText,
-        accessKey,
-        popup: null,
-        callback(aNotificationBar, aButton) {
-          win.openTrustedLinkIn(url, "tab");
-        },
-      },
-    ];
+    var buttons = [{ supportPage: "places-locked" }];
 
     var notifyBox = win.gBrowser.getNotificationBox();
     var notification = notifyBox.appendNotification(
@@ -3290,7 +3148,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 106;
+    const UI_VERSION = 107;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3849,6 +3707,21 @@ BrowserGlue.prototype = {
       UrlbarPrefs.initializeShowSearchSuggestionsFirstPref();
     }
 
+    if (currentUIVersion < 107) {
+      // Migrate old http URIs for mailto handlers to their https equivalents.
+      // The handler service will do this. We need to wait with migrating
+      // until the handler service has started up, so just set a pref here.
+      const kPref = "browser.handlers.migrations";
+      // We might have set up another migration further up. Create an array,
+      // and drop empty strings resulting from the `split`:
+      let migrations = Services.prefs
+        .getCharPref(kPref, "")
+        .split(",")
+        .filter(x => !!x);
+      migrations.push("secure-mail");
+      Services.prefs.setCharPref(kPref, migrations.join(","));
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -3864,7 +3737,6 @@ BrowserGlue.prototype = {
       );
       let isFeatureEnabled = ExperimentAPI.getExperiment({
         featureId: "infobar",
-        sendExposurePing: false,
       })?.branch.feature.enabled;
       if (willPrompt) {
         // Prevent the related notification from appearing and
@@ -4177,15 +4049,12 @@ BrowserGlue.prototype = {
         accessKey: win.gNavigatorBundle.getString(
           "flashHang.helpButton.accesskey"
         ),
-        callback() {
-          win.openTrustedLinkIn(
-            "https://support.mozilla.org/kb/flash-protected-mode-autodisabled",
-            "tab"
-          );
-        },
+        link:
+          "https://support.mozilla.org/kb/flash-protected-mode-autodisabled",
       },
     ];
 
+    // XXXndeakin is this notification still relevant?
     win.gNotificationBox.appendNotification(
       message,
       "flash-hang",

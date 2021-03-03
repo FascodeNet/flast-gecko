@@ -29,7 +29,7 @@ class OpenVRControllerManifestManager {
 
   void SetOpenVRControllerManifestPath(VRControllerType aType,
                                        const nsCString& aPath) {
-    mManifest.Put(static_cast<uint32_t>(aType), aPath);
+    mManifest.InsertOrUpdate(static_cast<uint32_t>(aType), aPath);
   }
 
   bool GetActionPath(nsCString* aPath) {
@@ -105,7 +105,6 @@ void VRChild::Init() {
       gfxConfig::GetValue(Feature::D3D11_COMPOSITING);
   devicePrefs.oglCompositing() =
       gfxConfig::GetValue(Feature::OPENGL_COMPOSITING);
-  devicePrefs.advancedLayers() = gfxConfig::GetValue(Feature::ADVANCED_LAYERS);
   devicePrefs.useD2D1() = gfxConfig::GetValue(Feature::DIRECT2D);
 
   SendInit(updates, devicePrefs);

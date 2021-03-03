@@ -73,23 +73,33 @@ class nsBaseHashtableET : public KeyClass {
   typedef typename KeyClass::KeyType KeyType;
   typedef typename KeyClass::KeyTypePointer KeyTypePointer;
 
-  explicit nsBaseHashtableET(KeyTypePointer aKey);
-  nsBaseHashtableET(KeyTypePointer aKey, DataType&& aData);
-  nsBaseHashtableET(nsBaseHashtableET<KeyClass, DataType>&& aToMove);
+  template <typename... Args>
+  explicit nsBaseHashtableET(KeyTypePointer aKey, Args&&... aArgs);
+  nsBaseHashtableET(nsBaseHashtableET<KeyClass, DataType>&& aToMove) = default;
   ~nsBaseHashtableET() = default;
 };
 
 /**
- * templated hashtable for simple data types
- * This class manages simple data types that do not need construction or
- * destruction.
+ * Templated hashtable. Usually, this isn't instantiated directly but through
+ * its sub-class templates nsDataHashtable, nsInterfaceHashtable,
+ * nsClassHashtable and nsRefPtrHashtable.
+ *
+ * Originally, UserDataType used to be the only type exposed to the user in the
+ * public member function signatures (hence its name), but this has proven to
+ * inadequate over time. Now, UserDataType is only exposed in by-value
+ * getter member functions that are called *Get*. Member functions that provide
+ * access to the DataType are called Lookup rather than Get. Note that this rule
+ * does not apply to nsRefPtrHashtable and nsInterfaceHashtable, as they are
+ * provide a similar interface, but are no genuine sub-classes of
+ * nsBaseHashtable.
  *
  * @param KeyClass a wrapper-class for the hashtable key, see nsHashKeys.h
  *   for a complete specification.
  * @param DataType the datatype stored in the hashtable,
  *   for example, uint32_t or nsCOMPtr.
- * @param UserDataType the user sees, for example uint32_t or nsISupports*
- * @param Converter that can be used to map from DataType to UserDataType. A
+ * @param UserDataType the datatype returned from the by-value getter member
+ *   functions (named *Get*), for example uint32_t or nsISupports*
+ * @param Converter that is used to map from DataType to UserDataType. A
  *   default converter is provided that assumes implicit conversion is an
  *   option.
  */
@@ -117,13 +127,17 @@ class nsBaseHashtable
    * Return the number of entries in the table.
    * @return    number of entries
    */
-  uint32_t Count() const { return nsTHashtable<EntryType>::Count(); }
+  [[nodiscard]] uint32_t Count() const {
+    return nsTHashtable<EntryType>::Count();
+  }
 
   /**
    * Return whether the table is empty.
    * @return    whether empty
    */
-  bool IsEmpty() const { return nsTHashtable<EntryType>::IsEmpty(); }
+  [[nodiscard]] bool IsEmpty() const {
+    return nsTHashtable<EntryType>::IsEmpty();
+  }
 
   /**
    * Get the value, returning a flag indicating the presence of the entry in
@@ -134,8 +148,12 @@ class nsBaseHashtable
    *        If you only need to check if the key exists, aData may be null.
    * @return true if the key exists. If key does not exist, aData is not
    *   modified.
+   *
+   * @attention As opposed to Remove, this does not assign a value to *aData if
+   * no entry is present! (And also as opposed to the member function Get with
+   * the same signature that nsClassHashtable defines and hides this one.)
    */
-  bool Get(KeyType aKey, UserDataType* aData) const {
+  [[nodiscard]] bool Get(KeyType aKey, UserDataType* aData) const {
     EntryType* ent = this->GetEntry(aKey);
     if (!ent) {
       return false;
@@ -162,7 +180,7 @@ class nsBaseHashtable
    * @note If zero/default-initialized values are stored in the table, it is
    *       not possible to distinguish between such a value and a missing entry.
    */
-  UserDataType Get(KeyType aKey) const {
+  [[nodiscard]] UserDataType Get(KeyType aKey) const {
     EntryType* ent = this->GetEntry(aKey);
     if (!ent) {
       return UserDataType{};
@@ -178,7 +196,7 @@ class nsBaseHashtable
    * @return The found value wrapped in a Maybe, or Nothing if no entry was
    *         found with the given key.
    */
-  mozilla::Maybe<UserDataType> MaybeGet(KeyType aKey) const {
+  [[nodiscard]] mozilla::Maybe<UserDataType> MaybeGet(KeyType aKey) const {
     EntryType* ent = this->GetEntry(aKey);
     if (!ent) {
       return mozilla::Nothing();
@@ -188,61 +206,57 @@ class nsBaseHashtable
   }
 
   /**
-   * Add key to the table if not already present, and return a reference to its
-   * value.  If key is not already in the table then the value is default
-   * constructed.
+   * Add aKey to the table if not already present, and return a reference to its
+   * value.  If aKey is not already in the table then the a default-constructed
+   * or the provided value aData is used.
    *
-   * This function can only be used if DataType is default-constructible. Use
-   * LookupForAdd with non-default-constructible DataType for now.
-   *
-   * TODO: Add a function GetOrInsertFrom that will use a function for
-   *       DataType construction.
+   * If the arguments are non-trivial to provide, consider using
+   * LookupOrInsertWith instead.
    */
-  DataType& GetOrInsert(const KeyType& aKey) {
-    EntryType* ent = this->PutEntry(aKey);
-    return ent->mData;
-  }
-
-  /**
-   * Put a new value for the associated key
-   * @param aKey the key to put
-   * @param aData the new data
-   */
-  void Put(KeyType aKey, const UserDataType& aData) {
-    WithEntryHandle(aKey, [&aData](auto entryHandle) {
-      entryHandle.InsertOrUpdate(aData);
-    });
-  }
-
-  [[nodiscard]] bool Put(KeyType aKey, const UserDataType& aData,
-                         const fallible_t& aFallible) {
-    return WithEntryHandle(aKey, aFallible, [&aData](auto maybeEntryHandle) {
-      if (!maybeEntryHandle) {
-        return false;
-      }
-      maybeEntryHandle->InsertOrUpdate(aData);
-      return true;
+  template <typename... Args>
+  DataType& LookupOrInsert(const KeyType& aKey, Args&&... aArgs) {
+    return WithEntryHandle(aKey, [&](auto entryHandle) -> DataType& {
+      return entryHandle.OrInsert(std::forward<Args>(aArgs)...);
     });
   }
 
   /**
-   * Put a new value for the associated key
-   * @param aKey the key to put
-   * @param aData the new data
+   * Add aKey to the table if not already present, and return a reference to its
+   * value.  If aKey is not already in the table then the value is
+   * constructed using the given factory.
    */
-  void Put(KeyType aKey, UserDataType&& aData) {
-    WithEntryHandle(aKey, [&aData](auto entryHandle) {
-      entryHandle.InsertOrUpdate(std::move(aData));
+  template <typename F>
+  DataType& LookupOrInsertWith(const KeyType& aKey, F&& aFunc) {
+    return WithEntryHandle(aKey, [&aFunc](auto entryHandle) -> DataType& {
+      return entryHandle.OrInsertWith(std::forward<F>(aFunc));
     });
   }
 
-  [[nodiscard]] bool Put(KeyType aKey, UserDataType&& aData,
-                         const fallible_t& aFallible) {
+  /**
+   * If it does not yet, inserts a new entry with the handle's key and the
+   * value passed to this function. Otherwise, it updates the entry by the
+   * value passed to this function.
+   *
+   * \tparam U DataType must be implicitly convertible (and assignable) from U
+   * \post HasEntry()
+   * \param aKey the key to put
+   * \param aData the new data
+   */
+  template <typename U>
+  DataType& InsertOrUpdate(KeyType aKey, U&& aData) {
+    return WithEntryHandle(aKey, [&aData](auto entryHandle) -> DataType& {
+      return entryHandle.InsertOrUpdate(std::forward<U>(aData));
+    });
+  }
+
+  template <typename U>
+  [[nodiscard]] bool InsertOrUpdate(KeyType aKey, U&& aData,
+                                    const fallible_t& aFallible) {
     return WithEntryHandle(aKey, aFallible, [&aData](auto maybeEntryHandle) {
       if (!maybeEntryHandle) {
         return false;
       }
-      maybeEntryHandle->InsertOrUpdate(std::move(aData));
+      maybeEntryHandle->InsertOrUpdate(std::forward<U>(aData));
       return true;
     });
   }
@@ -252,7 +266,7 @@ class nsBaseHashtable
    * into *aData.  Return true if found.
    *
    * This overload can only be used if DataType is default-constructible. Use
-   * the single-argument Remove or GetAndRemove with non-default-constructible
+   * the single-argument Remove or Extract with non-default-constructible
    * DataType.
    *
    * @param aKey the key to remove from the hashtable
@@ -261,6 +275,10 @@ class nsBaseHashtable
    *              zero or nullptr for primitive types).
    * @return true if an entry for aKey was found (and removed)
    */
+  // XXX This should also better be marked nodiscard, but due to
+  // nsClassHashtable not guaranteeing non-nullness of entries, it is usually
+  // only checked if aData is nullptr in such cases.
+  // [[nodiscard]]
   bool Remove(KeyType aKey, DataType* aData) {
     if (auto* ent = this->GetEntry(aKey)) {
       if (aData) {
@@ -298,7 +316,7 @@ class nsBaseHashtable
    * @return the found value, or Nothing if no entry was found with the
    *   given key.
    */
-  [[nodiscard]] mozilla::Maybe<DataType> GetAndRemove(KeyType aKey) {
+  [[nodiscard]] mozilla::Maybe<DataType> Extract(KeyType aKey) {
     mozilla::Maybe<DataType> value;
     if (EntryType* ent = this->GetEntry(aKey)) {
       value.emplace(std::move(ent->mData));
@@ -344,6 +362,25 @@ class nsBaseHashtable
       MOZ_ASSERT(!!*this, "must have an entry to access its value");
       return mEntry->mData;
     }
+
+    [[nodiscard]] const DataType& Data() const {
+      MOZ_ASSERT(!!*this, "must have an entry to access its value");
+      return mEntry->mData;
+    }
+
+    [[nodiscard]] DataType* DataPtrOrNull() {
+      return static_cast<bool>(*this) ? &mEntry->mData : nullptr;
+    }
+
+    [[nodiscard]] const DataType* DataPtrOrNull() const {
+      return static_cast<bool>(*this) ? &mEntry->mData : nullptr;
+    }
+
+    [[nodiscard]] DataType* operator->() { return &Data(); }
+    [[nodiscard]] const DataType* operator->() const { return &Data(); }
+
+    [[nodiscard]] DataType& operator*() { return Data(); }
+    [[nodiscard]] const DataType& operator*() const { return Data(); }
   };
 
   /**
@@ -376,113 +413,33 @@ class nsBaseHashtable
    * This is useful for cases where you want to read/write the value of an entry
    * and (optionally) remove the entry without having to do multiple hashtable
    * lookups.  If you want to insert a new entry if one does not exist, then use
-   * LookupForAdd instead, see below.
+   * WithEntryHandle instead, see below.
    */
   [[nodiscard]] LookupResult Lookup(KeyType aKey) {
     return LookupResult(this->GetEntry(aKey), *this);
   }
 
-  struct EntryPtr {
-   private:
-    EntryType* mEntry;
-    bool mExistingEntry;
-    nsBaseHashtable& mTable;
-    // For debugging purposes
-#ifdef DEBUG
-    uint32_t mTableGeneration;
-    bool mDidInitNewEntry;
-#endif
-
-   public:
-    EntryPtr(nsBaseHashtable& aTable, EntryType* aEntry, bool aExistingEntry)
-        : mEntry(aEntry),
-          mExistingEntry(aExistingEntry),
-          mTable(aTable)
-#ifdef DEBUG
-          ,
-          mTableGeneration(aTable.GetGeneration()),
-          mDidInitNewEntry(false)
-#endif
-    {
-    }
-    ~EntryPtr() {
-      MOZ_ASSERT(mExistingEntry || mDidInitNewEntry || !mEntry,
-                 "Forgot to call OrInsert() or OrRemove() on a new entry");
-    }
-
-    // Is there something stored in the table already?
-    explicit operator bool() const {
-      MOZ_ASSERT(mTableGeneration == mTable.GetGeneration());
-      return mExistingEntry;
-    }
-
-    template <class F>
-    DataType& OrInsert(F func) {
-      MOZ_ASSERT(mTableGeneration == mTable.GetGeneration());
-      MOZ_ASSERT(mEntry);
-      if (!mExistingEntry) {
-        mEntry->mData = Converter::Wrap(func());
-#ifdef DEBUG
-        mDidInitNewEntry = true;
-#endif
-      }
-      return mEntry->mData;
-    }
-
-    void OrRemove() {
-      MOZ_ASSERT(mTableGeneration == mTable.GetGeneration());
-      MOZ_ASSERT(mEntry);
-      mTable.RemoveEntry(mEntry);
-      mEntry = nullptr;
-    }
-
-    [[nodiscard]] DataType& Data() {
-      MOZ_ASSERT(mTableGeneration == mTable.GetGeneration());
-      MOZ_ASSERT(mEntry);
-      return mEntry->mData;
-    }
-  };
-
   /**
-   * Looks up aKey in the hashtable and returns an object that allows you to
-   * insert a new entry into the hashtable for that key if an existing entry
-   * isn't found for it.
+   * Used by WithEntryHandle as the argument type to its functor. It is
+   * associated with the Key passed to WithEntryHandle and manages only the
+   * potential entry with that key. Note that in case no modifying operations
+   * are called on the handle, the state of the hashtable remains unchanged,
+   * i.e. WithEntryHandle does not modify the hashtable itself.
    *
-   * This function can only be used if DataType is default-constructible at the
-   * moment.
+   * Provides query functions (Key, HasEntry/operator bool, Data) and
+   * modifying operations for inserting new entries (Insert), updating existing
+   * entries (Update) and removing existing entries (Remove). They have
+   * debug-only assertion that fail when the state of the entry doesn't match
+   * the expectation. There are variants prefixed with "Or" (OrInsert, OrUpdate,
+   * OrRemove) that are a no-op in case the entry does already exist resp. does
+   * not exist. There are also variants OrInsertWith and OrUpdateWith that don't
+   * accept a value, but a functor, which is only called if the operation takes
+   * place, which should be used if the provision of the value is not trivial
+   * (e.g. allocates a heap object). Finally, there's InsertOrUpdate that
+   * handles both existing and non-existing entries.
    *
-   * A typical usage of this API looks like this:
-   *
-   *   auto insertedValue = table.LookupForAdd(key).OrInsert([]() {
-   *     return newValue;
-   *   });
-   *
-   *   auto p = table.LookupForAdd(key);
-   *   if (p) {
-   *     // The entry already existed in the table.
-   *     DoSomething(p.Data());
-   *   } else {
-   *     // An existing entry wasn't found, store a new entry in the hashtable.
-   *     p.OrInsert([]() { return newValue; });
-   *   }
-   *
-   * We ensure that the hashtable isn't modified before EntryPtr method calls.
-   * This is useful for cases where you want to insert a new entry into the
-   * hashtable if one doesn't exist before but would like to avoid two hashtable
-   * lookups.
-   */
-  [[nodiscard]] EntryPtr LookupForAdd(KeyType aKey) {
-    auto count = Count();
-    EntryType* ent = this->PutEntry(aKey);
-    return EntryPtr(*this, ent, count == Count());
-  }
-
- protected:
-  /*
-   * The new API for LookupForAdd (WithEntryHandle).
-   *
-   * TODO: Merge with the old API, bug 1688833.
-   *
+   * Note that all functions of EntryHandle only deal with DataType, not with
+   * UserDataType.
    */
   class EntryHandle : protected nsTHashtable<EntryType>::EntryHandle {
    public:
@@ -503,28 +460,73 @@ class nsBaseHashtable
 
     using Base::Entry;
 
-    template <typename U>
-    void Insert(U&& aData) {
-      Base::InsertInternal(Converter::Wrap(std::forward<U>(aData)));
+    /**
+     * Inserts a new entry with the handle's key and the value passed to this
+     * function.
+     *
+     * \tparam Args DataType must be constructible from Args
+     * \pre !HasEntry()
+     * \post HasEntry()
+     */
+    template <typename... Args>
+    DataType& Insert(Args&&... aArgs) {
+      Base::InsertInternal(std::forward<Args>(aArgs)...);
+      return Data();
     }
 
-    template <typename U>
-    DataType& OrInsert(U&& aData) {
+    /**
+     * If it doesn't yet exist, inserts a new entry with the handle's key and
+     * the value passed to this function. The value is not consumed if no insert
+     * takes place.
+     *
+     * \tparam Args DataType must be constructible from Args
+     * \post HasEntry()
+     */
+    template <typename... Args>
+    DataType& OrInsert(Args&&... aArgs) {
       if (!HasEntry()) {
-        Insert(std::forward<U>(aData));
+        return Insert(std::forward<Args>(aArgs)...);
       }
       return Data();
     }
 
-    // TODO: Add functions InsertFrom and OrInsertFrom which will use a function
-    //       for DataType construction.
-
-    template <typename U>
-    void Update(U&& aData) {
-      MOZ_ASSERT(HasEntry());
-      Data() = Converter::Wrap(std::forward<U>(aData));
+    /**
+     * If it doesn't yet exist, inserts a new entry with the handle's key and
+     * the result of the functor passed to this function. The functor is not
+     * called if no insert takes place.
+     *
+     * \tparam F must return a value that is implicitly convertible to DataType
+     * \post HasEntry()
+     */
+    template <typename F>
+    DataType& OrInsertWith(F&& aFunc) {
+      if (!HasEntry()) {
+        return Insert(std::forward<F>(aFunc)());
+      }
+      return Data();
     }
 
+    /**
+     * Updates the entry with the handle's key by the value passed to this
+     * function.
+     *
+     * \tparam U DataType must be assignable from U
+     * \pre HasEntry()
+     */
+    template <typename U>
+    DataType& Update(U&& aData) {
+      MOZ_RELEASE_ASSERT(HasEntry());
+      Data() = std::forward<U>(aData);
+      return Data();
+    }
+
+    /**
+     * If an entry with the handle's key already exists, updates its value by
+     * the value passed to this function. The value is not consumed if no update
+     * takes place.
+     *
+     * \tparam U DataType must be assignable from U
+     */
     template <typename U>
     void OrUpdate(U&& aData) {
       if (HasEntry()) {
@@ -532,6 +534,28 @@ class nsBaseHashtable
       }
     }
 
+    /**
+     * If an entry with the handle's key already exists, updates its value by
+     * the the result of the functor passed to this function. The functor is not
+     * called if no update takes place.
+     *
+     * \tparam F must return a value that DataType is assignable from
+     */
+    template <typename F>
+    void OrUpdateWith(F&& aFunc) {
+      if (HasEntry()) {
+        Update(std::forward<F>(aFunc)());
+      }
+    }
+
+    /**
+     * If it does not yet, inserts a new entry with the handle's key and the
+     * value passed to this function. Otherwise, it updates the entry by the
+     * value passed to this function.
+     *
+     * \tparam U DataType must be implicitly convertible (and assignable) from U
+     * \post HasEntry()
+     */
     template <typename U>
     DataType& InsertOrUpdate(U&& aData) {
       if (!HasEntry()) {
@@ -546,7 +570,20 @@ class nsBaseHashtable
 
     using Base::OrRemove;
 
-    DataType& Data() { return Entry()->mData; }
+    /**
+     * Returns a reference to the value of the entry.
+     *
+     * \pre HasEntry()
+     */
+    [[nodiscard]] DataType& Data() { return Entry()->mData; }
+
+    [[nodiscard]] DataType* DataPtrOrNull() {
+      return static_cast<bool>(*this) ? &Data() : nullptr;
+    }
+
+    [[nodiscard]] DataType* operator->() { return &Data(); }
+
+    [[nodiscard]] DataType& operator*() { return Data(); }
 
    private:
     friend class nsBaseHashtable;
@@ -554,16 +591,42 @@ class nsBaseHashtable
     explicit EntryHandle(Base&& aBase) : Base(std::move(aBase)) {}
   };
 
+  /**
+   * Performs a scoped operation on the entry for aKey, which may or may not
+   * exist when the function is called. It calls aFunc with an EntryHandle. The
+   * result of aFunc is returned as the result of this function. Its return type
+   * may be void. See the documentation of EntryHandle for the query and
+   * modifying operations it offers.
+   *
+   * A simple use of this function is, e.g.,
+   *
+   *   hashtable.WithEntryHandle(key, [](auto&& entry) { entry.OrInsert(42); });
+   *
+   * \attention It is not safe to perform modifying operations on the hashtable
+   * other than through the EntryHandle within aFunc, and trying to do so will
+   * trigger debug assertions, and result in undefined behaviour otherwise.
+   */
   template <class F>
-  auto WithEntryHandle(KeyType aKey, F&& aFunc)
+  [[nodiscard]] auto WithEntryHandle(KeyType aKey, F&& aFunc)
       -> std::invoke_result_t<F, EntryHandle&&> {
-    return Base::WithEntryHandle(aKey, [&aFunc](auto entryHandle) {
-      return std::forward<F>(aFunc)(EntryHandle{std::move(entryHandle)});
-    });
+    return Base::WithEntryHandle(
+        aKey, [&aFunc](auto entryHandle) -> decltype(auto) {
+          return std::forward<F>(aFunc)(EntryHandle{std::move(entryHandle)});
+        });
   }
 
+  /**
+   * Fallible variant of WithEntryHandle, with the following differences:
+   * - The functor aFunc must accept a Maybe<EntryHandle> (instead of an
+   *   EntryHandle).
+   * - In case allocation of the slot for the entry fails, Nothing is passed to
+   *   the functor.
+   *
+   * For more details, see the explanation on the non-fallible overload above.
+   */
   template <class F>
-  auto WithEntryHandle(KeyType aKey, const fallible_t& aFallible, F&& aFunc)
+  [[nodiscard]] auto WithEntryHandle(KeyType aKey, const fallible_t& aFallible,
+                                     F&& aFunc)
       -> std::invoke_result_t<F, mozilla::Maybe<EntryHandle>&&> {
     return Base::WithEntryHandle(
         aKey, aFallible, [&aFunc](auto maybeEntryHandle) {
@@ -659,17 +722,9 @@ class nsBaseHashtable
 //
 
 template <class KeyClass, class DataType>
-nsBaseHashtableET<KeyClass, DataType>::nsBaseHashtableET(KeyTypePointer aKey)
-    : KeyClass(aKey), mData() {}
-
-template <class KeyClass, class DataType>
+template <typename... Args>
 nsBaseHashtableET<KeyClass, DataType>::nsBaseHashtableET(KeyTypePointer aKey,
-                                                         DataType&& aData)
-    : KeyClass(aKey), mData(std::move(aData)) {}
-
-template <class KeyClass, class DataType>
-nsBaseHashtableET<KeyClass, DataType>::nsBaseHashtableET(
-    nsBaseHashtableET<KeyClass, DataType>&& aToMove)
-    : KeyClass(std::move(aToMove)), mData(std::move(aToMove.mData)) {}
+                                                         Args&&... aArgs)
+    : KeyClass(aKey), mData(std::forward<Args>(aArgs)...) {}
 
 #endif  // nsBaseHashtable_h__

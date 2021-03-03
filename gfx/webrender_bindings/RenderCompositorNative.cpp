@@ -8,6 +8,8 @@
 
 #include "GLContext.h"
 #include "GLContextProvider.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/layers/CompositionRecorder.h"
@@ -410,15 +412,6 @@ void RenderCompositorNative::AddSurface(
         clipRect.Intersect(RoundedToInt(r) + layerPosition);
     mAddedClippedPixelCount += visibleRect.Area();
   }
-}
-
-CompositorCapabilities RenderCompositorNative::GetCompositorCapabilities() {
-  CompositorCapabilities caps;
-
-  // CoreAnimation doesn't use virtual surfaces
-  caps.virtual_surface_size = 0;
-
-  return caps;
 }
 
 /* static */

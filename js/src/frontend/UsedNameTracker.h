@@ -7,8 +7,6 @@
 #ifndef frontend_UsedNameTracker_h
 #define frontend_UsedNameTracker_h
 
-#include "mozilla/Attributes.h"
-
 #include "frontend/ParserAtom.h"                   // TaggedParserAtomIndex
 #include "frontend/TaggedParserAtomIndexHasher.h"  // TaggedParserAtomIndexHasher
 #include "frontend/Token.h"
@@ -206,19 +204,19 @@ class UsedNameTracker {
     return map_.lookup(name);
   }
 
-  MOZ_MUST_USE bool noteUse(
+  [[nodiscard]] bool noteUse(
       JSContext* cx, TaggedParserAtomIndex name, NameVisibility visibility,
       uint32_t scriptId, uint32_t scopeId,
       mozilla::Maybe<TokenPos> tokenPosition = mozilla::Nothing());
 
   // Fill maybeUnboundName with the first (source order) unbound name, or
   // Nothing() if there are no unbound names.
-  MOZ_MUST_USE bool hasUnboundPrivateNames(
+  [[nodiscard]] bool hasUnboundPrivateNames(
       JSContext* cx, mozilla::Maybe<UnboundPrivateName>& maybeUnboundName);
 
   // Return a list of unbound private names, sorted by increasing location in
   // the source.
-  MOZ_MUST_USE bool getUnboundPrivateNames(
+  [[nodiscard]] bool getUnboundPrivateNames(
       Vector<UnboundPrivateName, 8>& unboundPrivateNames);
 
   struct RewindToken {

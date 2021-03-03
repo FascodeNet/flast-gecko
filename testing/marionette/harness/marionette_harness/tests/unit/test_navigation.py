@@ -15,7 +15,6 @@ from marionette_driver.marionette import Alert
 from marionette_harness import (
     MarionetteTestCase,
     run_if_manage_instance,
-    skip_if_framescript,
     skip_unless_browser_pref,
     WindowManagerMixin,
 )
@@ -292,6 +291,31 @@ class TestNavigate(BaseNavigationTestCase):
 
         self.marionette.navigate("about:robots")
         self.assertFalse(self.is_remote_tab)
+
+    def test_stale_element_after_remoteness_change(self):
+        self.marionette.navigate(self.test_page_file_url)
+        self.assertTrue(self.is_remote_tab)
+        elem = self.marionette.find_element(By.ID, "file-url")
+
+        self.marionette.navigate("about:robots")
+        self.assertFalse(self.is_remote_tab)
+
+        # Force a GC to get rid of the replaced browsing context.
+        with self.marionette.using_context("chrome"):
+            self.marionette.execute_async_script(
+                """
+                const resolve = arguments[0];
+
+                var memSrv = Cc["@mozilla.org/memory-reporter-manager;1"]
+                  .getService(Ci.nsIMemoryReporterManager);
+
+                Services.obs.notifyObservers(null, "child-mmu-request", null);
+                memSrv.minimizeMemoryUsage(resolve);
+            """
+            )
+
+        with self.assertRaises(errors.StaleElementException):
+            elem.click()
 
     def test_about_blank_for_new_docshell(self):
         self.assertEqual(self.marionette.get_url(), "about:blank")
@@ -886,7 +910,6 @@ class TestPageLoadStrategy(BaseNavigationTestCase):
 
         super(TestPageLoadStrategy, self).tearDown()
 
-    @skip_if_framescript("Bug 1675173: Won't be fixed for framescript mode")
     def test_none(self):
         self.marionette.delete_session()
         self.marionette.start_session({"pageLoadStrategy": "none"})

@@ -7,8 +7,8 @@
 #ifndef mozilla_dom_indexeddb_filemanager_h__
 #define mozilla_dom_indexeddb_filemanager_h__
 
+#include "mozilla/dom/quota/OriginMetadata.h"
 #include "mozilla/dom/quota/PersistenceType.h"
-#include "mozilla/dom/quota/QuotaInfo.h"
 #include "mozilla/dom/quota/UsageInfo.h"
 #include "mozilla/InitializedOnce.h"
 #include "FileManagerBase.h"
@@ -27,7 +27,7 @@ class FileManager final : public FileManagerBase<FileManager>,
   using FileManagerBase<FileManager>::MutexType;
 
   const PersistenceType mPersistenceType;
-  const quota::GroupAndOrigin mGroupAndOrigin;
+  const quota::OriginMetadata mOriginMetadata;
   const nsString mDatabaseName;
 
   LazyInitializedOnce<const nsString> mDirectoryPath;
@@ -54,16 +54,16 @@ class FileManager final : public FileManagerBase<FileManager>,
   static Result<quota::FileUsageType, nsresult> GetUsage(nsIFile* aDirectory);
 
   FileManager(PersistenceType aPersistenceType,
-              const quota::GroupAndOrigin& aGroupAndOrigin,
+              const quota::OriginMetadata& aOriginMetadata,
               const nsAString& aDatabaseName, bool aEnforcingQuota);
 
   PersistenceType Type() const { return mPersistenceType; }
 
-  const quota::GroupAndOrigin& GroupAndOrigin() const {
-    return mGroupAndOrigin;
+  const quota::OriginMetadata& OriginMetadata() const {
+    return mOriginMetadata;
   }
 
-  const nsACString& Origin() const { return mGroupAndOrigin.mOrigin; }
+  const nsACString& Origin() const { return mOriginMetadata.mOrigin; }
 
   const nsAString& DatabaseName() const { return mDatabaseName; }
 

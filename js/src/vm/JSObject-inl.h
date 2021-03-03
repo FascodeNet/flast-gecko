@@ -25,18 +25,9 @@
 namespace js {
 
 /*
- * Get the GC kind to use for scripted 'new' on the given class.
- * FIXME bug 547327: estimate the size from the allocation site.
+ * Get the GC kind to use for scripted 'new'.
  */
-static inline gc::AllocKind NewObjectGCKind(const JSClass* clasp) {
-  if (clasp == &ArrayObject::class_) {
-    return gc::AllocKind::OBJECT8;
-  }
-  if (clasp == &JSFunction::class_) {
-    return gc::AllocKind::OBJECT2;
-  }
-  return gc::AllocKind::OBJECT4;
-}
+static inline gc::AllocKind NewObjectGCKind() { return gc::AllocKind::OBJECT4; }
 
 }  // namespace js
 
@@ -93,10 +84,9 @@ inline void JSObject::finalize(JSFreeOp* fop) {
 #endif
 
   const JSClass* clasp = getClass();
-  js::NativeObject* nobj = nullptr;
-  if (clasp->isNative()) {
-    nobj = &as<js::NativeObject>();
-  }
+  js::NativeObject* nobj =
+      clasp->isNativeObject() ? &as<js::NativeObject>() : nullptr;
+
   if (clasp->hasFinalize()) {
     clasp->doFinalize(fop, this);
   }
@@ -177,7 +167,7 @@ inline bool ClassCanHaveFixedData(const JSClass* clasp) {
   // arrays we only use enough to cover the class reserved slots, so that
   // the remaining space in the object's allocation is available for the
   // buffer's data.
-  return !clasp->isNative() || clasp == &js::ArrayBufferObject::class_ ||
+  return !clasp->isNativeObject() || clasp == &js::ArrayBufferObject::class_ ||
          js::IsTypedArrayClass(clasp);
 }
 
@@ -207,8 +197,8 @@ class MOZ_RAII AutoSuppressAllocationMetadataBuilder {
 // may be the passed pointer, relocated by GC. If no GC could occur, it's just
 // passed through. We root nothing unless necessary.
 template <typename T>
-static MOZ_ALWAYS_INLINE MOZ_MUST_USE T* SetNewObjectMetadata(JSContext* cx,
-                                                              T* obj) {
+[[nodiscard]] static MOZ_ALWAYS_INLINE T* SetNewObjectMetadata(JSContext* cx,
+                                                               T* obj) {
   MOZ_ASSERT(!cx->realm()->hasObjectPendingMetadata());
 
   // The metadata builder is invoked for each object created on the active
@@ -246,7 +236,7 @@ inline bool JSObject::hasAllFlags(js::BaseShape::Flag flags) const {
 }
 
 inline bool JSObject::nonProxyIsExtensible() const {
-  MOZ_ASSERT(!uninlinedIsProxy());
+  MOZ_ASSERT(!uninlinedIsProxyObject());
 
   // [[Extensible]] for ordinary non-proxy objects is an object flag.
   return !hasAllFlags(js::BaseShape::NOT_EXTENSIBLE);
@@ -265,7 +255,7 @@ inline bool JSObject::hasUncacheableProto() const {
 }
 
 MOZ_ALWAYS_INLINE bool JSObject::maybeHasInterestingSymbolProperty() const {
-  if (isNative()) {
+  if (is<js::NativeObject>()) {
     return as<js::NativeObject>().hasInterestingSymbol();
   }
   return true;
@@ -289,16 +279,6 @@ static MOZ_ALWAYS_INLINE bool IsFunctionObject(const js::Value& v,
     return true;
   }
   return false;
-}
-
-static MOZ_ALWAYS_INLINE bool IsNativeFunction(const js::Value& v) {
-  JSFunction* fun;
-  return IsFunctionObject(v, &fun) && fun->isNative();
-}
-
-static MOZ_ALWAYS_INLINE bool IsNativeFunction(const js::Value& v,
-                                               JSFunction** fun) {
-  return IsFunctionObject(v, fun) && (*fun)->isNative();
 }
 
 static MOZ_ALWAYS_INLINE bool IsNativeFunction(const js::Value& v,
@@ -338,7 +318,7 @@ static MOZ_ALWAYS_INLINE bool HasNoToPrimitiveMethodPure(JSObject* obj,
     PropertyResult prop;
     MOZ_ASSERT(
         LookupPropertyPure(cx, obj, SYMBOL_TO_JSID(toPrimitive), &pobj, &prop));
-    MOZ_ASSERT(!prop);
+    MOZ_ASSERT(prop.isNotFound());
 #endif
     return true;
   }
@@ -350,7 +330,7 @@ static MOZ_ALWAYS_INLINE bool HasNoToPrimitiveMethodPure(JSObject* obj,
     return false;
   }
 
-  return !prop;
+  return prop.isNotFound();
 }
 
 extern bool ToPropertyKeySlow(JSContext* cx, HandleValue argument,
@@ -549,25 +529,6 @@ inline T* NewBuiltinClassInstance(JSContext* cx, gc::AllocKind allocKind,
 
 // Used to optimize calls to (new Object())
 bool NewObjectScriptedCall(JSContext* cx, MutableHandleObject obj);
-
-JSObject* NewObjectWithGroupCommon(JSContext* cx, HandleObjectGroup group,
-                                   gc::AllocKind allocKind,
-                                   NewObjectKind newKind);
-
-template <typename T>
-inline T* NewObjectWithGroup(JSContext* cx, HandleObjectGroup group,
-                             gc::AllocKind allocKind,
-                             NewObjectKind newKind = GenericObject) {
-  JSObject* obj = NewObjectWithGroupCommon(cx, group, allocKind, newKind);
-  return obj ? &obj->as<T>() : nullptr;
-}
-
-template <typename T>
-inline T* NewObjectWithGroup(JSContext* cx, HandleObjectGroup group,
-                             NewObjectKind newKind = GenericObject) {
-  gc::AllocKind allocKind = gc::GetGCObjectKind(group->clasp());
-  return NewObjectWithGroup<T>(cx, group, allocKind, newKind);
-}
 
 /*
  * As for gc::GetGCObjectKind, where numElements is a guess at the final size of

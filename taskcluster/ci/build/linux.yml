@@ -102,7 +102,6 @@ linux64-fuzzing/debug:
     worker:
         max-run-time: 5400
         env:
-            MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: fuzzing
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
@@ -132,10 +131,6 @@ linux64-fuzzing/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
     optimization:
         skip-unless-expanded: null
 
@@ -184,10 +179,6 @@ linux64/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
 
 linux64/codeql-cpp:
     description: Builds a C++ codeql database
@@ -239,10 +230,6 @@ linux64/codeql-cpp:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
     notifications:
         subject: '{task[shipping-product]} {release_config[version]} build{release_config[build_number]}/{config[params][project]} linux64 codeql-cpp status'
         message: '{task[shipping-product]} {release_config[version]} build{release_config[build_number]}/{config[params][project]} linux64 codeql-cpp status'
@@ -427,10 +414,6 @@ linux/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
 
 linux-rusttests/opt:
     description: "Linux32 Rust Tests Opt"
@@ -941,9 +924,7 @@ linux64-fuzzing-ccov/opt:
     worker:
         max-run-time: 5400
         env:
-            MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: fuzzing-ccov
-            FORCE_GCC: '1'
             ASAN_OPTIONS: "detect_leaks=0"
             RUSTC_BOOTSTRAP: '1'
     run:
@@ -962,7 +943,6 @@ linux64-fuzzing-ccov/opt:
         toolchain:
             - linux64-binutils
             - linux64-clang
-            - linux64-gcc-7
             - linux64-cbindgen
             - linux64-dump-syms
             - linux64-rust
@@ -1070,10 +1050,6 @@ linux64-asan/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
     optimization:
         skip-unless-expanded: null
 
@@ -1168,10 +1144,6 @@ linux64-noopt/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
 
 linux64-rusttests/opt:
     description: "Linux64 Rust Tests Opt"
@@ -1277,8 +1249,6 @@ linux64-ccov/opt:
               type: file
         max-run-time: 7200
         env:
-            MOZ_LOW_PARALLELISM_BUILD: '1'
-            FORCE_GCC: '1'
             RUSTC_BOOTSTRAP: '1'
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
@@ -1299,7 +1269,48 @@ linux64-ccov/opt:
             - linux64-binutils
             - linux64-clang
             - linux64-rust
-            - linux64-gcc-7
+            - linux64-cbindgen
+            - linux64-dump-syms
+            - linux64-sccache
+            - linux64-nasm
+            - linux64-node
+            - linux64-grcov
+            - linux64-lucetc
+            - wasi-sysroot
+
+linux64-ccov/debug:
+    description: "Linux64-CCov Debug"
+    index:
+        product: firefox
+        job-name: linux64-ccov-debug
+    treeherder:
+        platform: linux64-ccov/debug
+        symbol: B
+        tier: 2
+    run-on-projects: []
+    worker-type: b-linux
+    worker:
+        max-run-time: 7200
+        env:
+            RUSTC_BOOTSTRAP: '1'
+    run:
+        using: mozharness
+        actions: [get-secrets, build]
+        config:
+            - builds/releng_base_firefox.py
+            - builds/releng_base_linux_64_builds.py
+        script: "mozharness/scripts/fx_desktop_build.py"
+        secrets: true
+        custom-build-variant-cfg: code-coverage-debug
+        mozconfig-variant: code-coverage-debug
+        tooltool-downloads: public
+        need-xvfb: true
+    use-sccache: true
+    fetches:
+        toolchain:
+            - linux64-binutils
+            - linux64-clang
+            - linux64-rust
             - linux64-cbindgen
             - linux64-dump-syms
             - linux64-sccache
@@ -1362,7 +1373,6 @@ linux64-aarch64/opt:
         tier: 2
     worker-type: b-linux
     worker:
-        docker-image: {in-tree: debian10-arm64-build}
         max-run-time: 7200
     run:
         using: mozharness
@@ -1390,6 +1400,7 @@ linux64-aarch64/opt:
             - linux64-sccache
             - linux64-node
             - linux64-lucetc
+            - linux64-aarch64-sysroot
             - wasi-sysroot
     optimization:
         skip-unless-expanded: null
@@ -1438,10 +1449,6 @@ linux-gcp/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
     optimization:
         skip-unless-backstop: null
 
@@ -1530,10 +1537,6 @@ linux64-gcp/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
-            # `fix-stacks` is needed because xpcshell self tests run as part of
-            # the build step. Once bug 1614626 moves them to the xpcshell task,
-            # this dependency can be removed.
-            - linux64-fix-stacks
     optimization:
         skip-unless-backstop: null
 

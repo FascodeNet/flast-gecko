@@ -553,6 +553,13 @@ class nsDisplayListBuilder {
    */
   void ForceLayerForScrollParent() { mForceLayerForScrollParent = true; }
   /**
+   * Set the flag that indicates there is a non-minimal display port in the
+   * current subtree. This is used to determine display port expiry.
+   */
+  void SetContainsNonMinimalDisplayPort() {
+    mContainsNonMinimalDisplayPort = true;
+  }
+  /**
    * Get the ViewID and the scrollbar flags corresponding to the scrollbar for
    * which we are building display items at the moment.
    */
@@ -951,7 +958,8 @@ class nsDisplayListBuilder {
       return;
     }
 
-    nsTArray<ThemeGeometry>* geometries = mThemeGeometries.LookupOrAdd(aItem);
+    nsTArray<ThemeGeometry>* geometries =
+        mThemeGeometries.GetOrInsertNew(aItem);
     geometries->AppendElement(ThemeGeometry(aWidgetType, aRect));
   }
 
@@ -982,7 +990,7 @@ class nsDisplayListBuilder {
   }
 
   void AddEffectUpdate(RemoteBrowser* aBrowser, EffectsInfo aUpdate) {
-    mEffectsUpdates.Put(aBrowser, aUpdate);
+    mEffectsUpdates.InsertOrUpdate(aBrowser, aUpdate);
   }
 
   /**
@@ -1221,7 +1229,9 @@ class nsDisplayListBuilder {
                                     ViewID aScrollId)
         : mBuilder(aBuilder),
           mOldValue(aBuilder->mCurrentScrollParentId),
-          mOldForceLayer(aBuilder->mForceLayerForScrollParent) {
+          mOldForceLayer(aBuilder->mForceLayerForScrollParent),
+          mOldContainsNonMinimalDisplayPort(
+              mBuilder->mContainsNonMinimalDisplayPort) {
       // If this AutoCurrentScrollParentIdSetter has the same scrollId as the
       // previous one on the stack, then that means the scrollframe that
       // created this isn't actually scrollable and cannot participate in
@@ -1229,12 +1239,19 @@ class nsDisplayListBuilder {
       mCanBeScrollParent = (mOldValue != aScrollId);
       aBuilder->mCurrentScrollParentId = aScrollId;
       aBuilder->mForceLayerForScrollParent = false;
+      aBuilder->mContainsNonMinimalDisplayPort = false;
     }
 
     bool ShouldForceLayerForScrollParent() const {
       // Only scrollframes participating in scroll handoff can be forced to
       // layerize
       return mCanBeScrollParent && mBuilder->mForceLayerForScrollParent;
+    }
+
+    bool GetContainsNonMinimalDisplayPort() const {
+      // Only for scrollframes participating in scroll handoff can we return
+      // true.
+      return mCanBeScrollParent && mBuilder->mContainsNonMinimalDisplayPort;
     }
 
     ~AutoCurrentScrollParentIdSetter() {
@@ -1250,12 +1267,15 @@ class nsDisplayListBuilder {
         // scroll handoff.
         mBuilder->mForceLayerForScrollParent |= mOldForceLayer;
       }
+      mBuilder->mContainsNonMinimalDisplayPort |=
+          mOldContainsNonMinimalDisplayPort;
     }
 
    private:
     nsDisplayListBuilder* mBuilder;
     ViewID mOldValue;
     bool mOldForceLayer;
+    bool mOldContainsNonMinimalDisplayPort;
     bool mCanBeScrollParent;
   };
 
@@ -2004,6 +2024,7 @@ class nsDisplayListBuilder {
   bool mWindowDraggingAllowed;
   bool mIsBuildingForPopup;
   bool mForceLayerForScrollParent;
+  bool mContainsNonMinimalDisplayPort;
   bool mAsyncPanZoomEnabled;
   bool mBuildingInvisibleItems;
   bool mIsBuilding;
@@ -2072,11 +2093,6 @@ void AssertUniqueItem(nsDisplayItem* aItem);
 bool ShouldBuildItemForEvents(const DisplayItemType aType);
 
 /**
- * Updates the item DisplayItemData if needed.
- */
-void UpdateDisplayItemData(nsPaintedDisplayItem* aItem);
-
-/**
  * Initializes the hit test information of |aItem| if the item type supports it.
  */
 void InitializeHitTestInfo(nsDisplayListBuilder* aBuilder,
@@ -2109,7 +2125,6 @@ MOZ_ALWAYS_INLINE T* MakeDisplayItemWithIndex(nsDisplayListBuilder* aBuilder,
 
   nsPaintedDisplayItem* paintedItem = item->AsPaintedDisplayItem();
   if (paintedItem) {
-    UpdateDisplayItemData(paintedItem);
     InitializeHitTestInfo(aBuilder, paintedItem, type);
   }
 
@@ -2228,7 +2243,6 @@ class nsDisplayItemBase : public nsDisplayItemLink {
     MOZ_ASSERT(aFrame);
 
     if (mFrame && aFrame == mFrame) {
-      MOZ_ASSERT(!mFrame->HasDisplayItem(this));
       mFrame = nullptr;
       SetDeletedFrame();
     }
@@ -3111,8 +3125,6 @@ class nsDisplayItem : public nsDisplayItemBase {
 
  protected:
   typedef bool (*PrefFunc)(void);
-  bool ShouldUseAdvancedLayer(LayerManager* aManager, PrefFunc aFunc) const;
-  bool CanUseAdvancedLayer(LayerManager* aManager) const;
   void SetHasHitTestInfo() { mItemFlags += ItemFlag::HasHitTestInfo; }
 
   RefPtr<const DisplayItemClipChain> mClipChain;
@@ -3163,30 +3175,6 @@ class nsPaintedDisplayItem : public nsDisplayItem {
   nsPaintedDisplayItem* AsPaintedDisplayItem() final { return this; }
   const nsPaintedDisplayItem* AsPaintedDisplayItem() const final {
     return this;
-  }
-
-  ~nsPaintedDisplayItem() override { SetDisplayItemData(nullptr, nullptr); }
-
-  void SetDisplayItemData(mozilla::DisplayItemData* aDID,
-                          mozilla::layers::LayerManager* aLayerManager) {
-    if (mDisplayItemData) {
-      MOZ_ASSERT(!mDisplayItemData->GetItem() ||
-                 mDisplayItemData->GetItem() == this);
-      mDisplayItemData->SetItem(nullptr);
-    }
-    if (aDID) {
-      if (aDID->GetItem()) {
-        aDID->GetItem()->SetDisplayItemData(nullptr, nullptr);
-      }
-      aDID->SetItem(this);
-    }
-    mDisplayItemData = aDID;
-    mDisplayItemDataLayerManager = aLayerManager;
-  }
-
-  mozilla::DisplayItemData* GetDisplayItemData() { return mDisplayItemData; }
-  mozilla::layers::LayerManager* GetDisplayItemDataLayerManager() {
-    return mDisplayItemDataLayerManager;
   }
 
   /**
@@ -3281,13 +3269,9 @@ class nsPaintedDisplayItem : public nsDisplayItem {
                        const nsPaintedDisplayItem& aOther)
       : nsDisplayItem(aBuilder, aOther), mHitTestInfo(aOther.mHitTestInfo) {}
 
- private:
-  mozilla::DisplayItemData* mDisplayItemData = nullptr;
-  mozilla::layers::LayerManager* mDisplayItemDataLayerManager = nullptr;
-  mozilla::Maybe<uint16_t> mCacheIndex;
-
  protected:
   mozilla::HitTestInfo mHitTestInfo;
+  mozilla::Maybe<uint16_t> mCacheIndex;
 };
 
 /**

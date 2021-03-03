@@ -34,13 +34,13 @@ xpcAccessibleGeneric::~xpcAccessibleGeneric() {
 
   xpcAccessibleDocument* xpcDoc = nullptr;
   if (mIntl.IsAccessible()) {
-    Accessible* acc = mIntl.AsAccessible();
+    LocalAccessible* acc = mIntl.AsAccessible();
     if (!acc->IsDoc() && !acc->IsApplication()) {
       xpcDoc = GetAccService()->GetXPCDocument(acc->Document());
       xpcDoc->NotifyOfShutdown(acc);
     }
   } else {
-    ProxyAccessible* proxy = mIntl.AsProxy();
+    RemoteAccessible* proxy = mIntl.AsProxy();
     if (!proxy->IsDoc()) {
       xpcDoc = GetAccService()->GetXPCDocument(proxy->Document());
       xpcDoc->NotifyOfShutdown(proxy);
@@ -51,7 +51,7 @@ xpcAccessibleGeneric::~xpcAccessibleGeneric() {
 ////////////////////////////////////////////////////////////////////////////////
 // nsIAccessible
 
-Accessible* xpcAccessibleGeneric::ToInternalAccessible() const {
+LocalAccessible* xpcAccessibleGeneric::ToInternalAccessible() const {
   return mIntl.AsAccessible();
 }
 

@@ -483,17 +483,23 @@ void SVGTextPathObserver::OnRenderingChange() {
   MOZ_ASSERT(frame->GetContent()->IsSVGElement(nsGkAtoms::textPath),
              "expected frame for a <textPath> element");
 
-  // Repaint asynchronously text in case the path frame is being torn down
-  frame->PresContext()->RestyleManager()->PostRestyleEvent(
-      frame->GetContent()->AsElement(), RestyleHint{0},
-      nsChangeHint_RepaintFrame);
-
-  nsIFrame* text =
-      nsLayoutUtils::GetClosestFrameOfType(frame, LayoutFrameType::SVGText);
+  auto* text = static_cast<SVGTextFrame*>(
+      nsLayoutUtils::GetClosestFrameOfType(frame, LayoutFrameType::SVGText));
   MOZ_ASSERT(text, "expected to find an ancestor SVGTextFrame");
   if (text) {
-    // This also does async work.
-    static_cast<SVGTextFrame*>(text)->NotifyGlyphMetricsChange();
+    text->AddStateBits(NS_STATE_SVG_TEXT_CORRESPONDENCE_DIRTY |
+                       NS_STATE_SVG_POSITIONING_DIRTY);
+
+    if (SVGUtils::AnyOuterSVGIsCallingReflowSVG(text)) {
+      text->AddStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
+      if (text->HasAnyStateBits(NS_FRAME_IS_NONDISPLAY)) {
+        text->ReflowSVGNonDisplayText();
+      } else {
+        text->ReflowSVG();
+      }
+    } else {
+      text->ScheduleReflowSVG();
+    }
   }
 }
 
@@ -1500,13 +1506,17 @@ Element* SVGObserverUtils::GetAndObserveBackgroundImage(nsIFrame* aFrame,
   RefPtr<URLAndReferrerInfo> url =
       new URLAndReferrerInfo(targetURI, referrerInfo);
 
-  SVGMozElementObserver* observer =
-      static_cast<SVGMozElementObserver*>(hashtable->GetWeak(url));
-  if (!observer) {
-    observer = new SVGMozElementObserver(url, aFrame, /* aWatchImage */ true);
-    hashtable->Put(url, observer);
-  }
-  return observer->GetAndObserveReferencedElement();
+  return static_cast<SVGMozElementObserver*>(
+             hashtable
+                 ->LookupOrInsertWith(
+                     url,
+                     [&] {
+                       return MakeRefPtr<SVGMozElementObserver>(
+                           url, aFrame,
+                           /* aWatchImage */ true);
+                     })
+                 .get())
+      ->GetAndObserveReferencedElement();
 }
 
 Element* SVGObserverUtils::GetAndObserveBackgroundClip(nsIFrame* aFrame) {
@@ -1605,9 +1615,6 @@ void SVGObserverUtils::AddRenderingObserver(Element* aElement,
   SVGRenderingObserverSet* observers = GetObserverSet(aElement);
   if (!observers) {
     observers = new SVGRenderingObserverSet();
-    if (!observers) {
-      return;
-    }
     aElement->SetProperty(nsGkAtoms::renderingobserverset, observers,
                           nsINode::DeleteProperty<SVGRenderingObserverSet>);
   }

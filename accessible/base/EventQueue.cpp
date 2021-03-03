@@ -5,7 +5,7 @@
 
 #include "EventQueue.h"
 
-#include "Accessible-inl.h"
+#include "LocalAccessible-inl.h"
 #include "nsEventShell.h"
 #include "DocAccessible.h"
 #include "DocAccessibleChild.h"
@@ -48,9 +48,9 @@ bool EventQueue::PushEvent(AccEvent* aEvent) {
   return true;
 }
 
-bool EventQueue::PushNameOrDescriptionChange(Accessible* aTarget) {
-  // Fire name/description change event on parent or related Accessible being
-  // labelled/described given that this event hasn't been coalesced, the
+bool EventQueue::PushNameOrDescriptionChange(LocalAccessible* aTarget) {
+  // Fire name/description change event on parent or related LocalAccessible
+  // being labelled/described given that this event hasn't been coalesced, the
   // dependent's name/description was calculated from this subtree, and the
   // subtree was changed.
   const bool doName = aTarget->HasNameDependent();
@@ -61,9 +61,9 @@ bool EventQueue::PushNameOrDescriptionChange(Accessible* aTarget) {
   bool pushed = false;
   bool nameCheckAncestor = true;
   // Only continue traversing up the tree if it's possible that the parent
-  // Accessible's name (or an Accessible being labelled by this Accessible or
-  // an ancestor) can depend on this Accessible's name.
-  Accessible* parent = aTarget->Parent();
+  // LocalAccessible's name (or a LocalAccessible being labelled by this
+  // LocalAccessible or an ancestor) can depend on this LocalAccessible's name.
+  LocalAccessible* parent = aTarget->LocalParent();
   while (parent &&
          nsTextEquivUtils::HasNameRule(parent, eNameFromSubtreeIfReqRule)) {
     // Test possible name dependent parent.
@@ -82,7 +82,7 @@ bool EventQueue::PushNameOrDescriptionChange(Accessible* aTarget) {
       }
 
       Relation rel = parent->RelationByType(RelationType::LABEL_FOR);
-      while (Accessible* relTarget = rel.Next()) {
+      while (LocalAccessible* relTarget = rel.Next()) {
         RefPtr<AccEvent> nameChangeEvent =
             new AccEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, relTarget);
         pushed |= PushEvent(nameChangeEvent);
@@ -91,14 +91,14 @@ bool EventQueue::PushNameOrDescriptionChange(Accessible* aTarget) {
 
     if (doDesc) {
       Relation rel = parent->RelationByType(RelationType::DESCRIPTION_FOR);
-      while (Accessible* relTarget = rel.Next()) {
+      while (LocalAccessible* relTarget = rel.Next()) {
         RefPtr<AccEvent> descChangeEvent = new AccEvent(
             nsIAccessibleEvent::EVENT_DESCRIPTION_CHANGE, relTarget);
         pushed |= PushEvent(descChangeEvent);
       }
     }
 
-    parent = parent->Parent();
+    parent = parent->LocalParent();
   }
   return pushed;
 }
@@ -113,7 +113,7 @@ void EventQueue::CoalesceEvents() {
 
   switch (tailEvent->mEventRule) {
     case AccEvent::eCoalesceReorder: {
-      DebugOnly<Accessible*> target = tailEvent->mAccessible.get();
+      DebugOnly<LocalAccessible*> target = tailEvent->mAccessible.get();
       MOZ_ASSERT(
           target->IsApplication() || target->IsOuterDoc() ||
               target->IsXULTree(),
@@ -167,8 +167,9 @@ void EventQueue::CoalesceEvents() {
           AccStateChangeEvent* tailSCEvent = downcast_accEvent(tailEvent);
           if (thisSCEvent->mState == tailSCEvent->mState) {
             thisEvent->mEventRule = AccEvent::eDoNotEmit;
-            if (thisSCEvent->mIsEnabled != tailSCEvent->mIsEnabled)
+            if (thisSCEvent->mIsEnabled != tailSCEvent->mIsEnabled) {
               tailEvent->mEventRule = AccEvent::eDoNotEmit;
+            }
           }
         }
       }
@@ -187,8 +188,9 @@ void EventQueue::CoalesceEvents() {
           AccTextSelChangeEvent* thisTSCEvent = downcast_accEvent(thisEvent);
           AccTextSelChangeEvent* tailTSCEvent = downcast_accEvent(tailEvent);
           if (thisTSCEvent->mSel == tailTSCEvent->mSel ||
-              thisEvent->mAccessible == tailEvent->mAccessible)
+              thisEvent->mAccessible == tailEvent->mAccessible) {
             thisEvent->mEventRule = AccEvent::eDoNotEmit;
+          }
         }
       }
       break;  // eCoalesceTextSelChange
@@ -233,8 +235,9 @@ void EventQueue::CoalesceSelChangeEvents(AccSelChangeEvent* aTailEvent,
         AccEvent* prevEvent = mEvents[jdx];
         if (prevEvent->mEventRule == aTailEvent->mEventRule) {
           AccSelChangeEvent* prevSelChangeEvent = downcast_accEvent(prevEvent);
-          if (prevSelChangeEvent->mWidget == aTailEvent->mWidget)
+          if (prevSelChangeEvent->mWidget == aTailEvent->mWidget) {
             prevSelChangeEvent->mEventRule = AccEvent::eDoNotEmit;
+          }
         }
       }
     }
@@ -287,8 +290,9 @@ void EventQueue::CoalesceSelChangeEvents(AccSelChangeEvent* aTailEvent,
 
   // Convert into selection add since control has single selection but other
   // selection events for this control are queued.
-  if (aTailEvent->mEventType == nsIAccessibleEvent::EVENT_SELECTION)
+  if (aTailEvent->mEventType == nsIAccessibleEvent::EVENT_SELECTION) {
     aTailEvent->mEventType = nsIAccessibleEvent::EVENT_SELECTION_ADD;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -310,7 +314,7 @@ void EventQueue::ProcessEventQueue() {
   for (uint32_t idx = 0; idx < eventCount; idx++) {
     AccEvent* event = events[idx];
     if (event->mEventRule != AccEvent::eDoNotEmit) {
-      Accessible* target = event->GetAccessible();
+      LocalAccessible* target = event->GetAccessible();
       if (!target || target->IsDefunct()) continue;
 
       // Dispatch the focus event if target is still focused.

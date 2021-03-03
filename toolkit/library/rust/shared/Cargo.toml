@@ -19,12 +19,12 @@ static_prefs = { path = "../../../../modules/libpref/init/static_prefs" }
 profiler_helper = { path = "../../../../tools/profiler/rust-helper", optional = true }
 mozurl = { path = "../../../../netwerk/base/mozurl" }
 webrender_bindings = { path = "../../../../gfx/webrender_bindings", optional = true }
-cubeb-coreaudio = { git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs", rev = "1e1222d6213e28eabd7f4302d00765ae1153a31e", optional = true }
-cubeb-pulse = { git = "https://github.com/djg/cubeb-pulse-rs", rev="bf31534d08b2c16fb5e4c5834944ae3271efbd63", optional = true, features=["pulse-dlopen"] }
-cubeb-sys = { version = "0.8", optional = true, features=["gecko-in-tree"] }
+cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "ad56ea14ac915f1e7ecbcf6ac38182443b0dd29e", optional = true }
+cubeb-pulse = { git = "https://github.com/mozilla/cubeb-pulse-rs", rev="c87b50aebfa088c1ad30c74819d4e9829f88b2e3", optional = true, features=["pulse-dlopen"] }
+cubeb-sys = { version = "0.9", optional = true, features=["gecko-in-tree"] }
 encoding_glue = { path = "../../../../intl/encoding_glue" }
-audioipc-client = { path = "../../../../media/audioipc/client", optional = true }
-audioipc-server = { path = "../../../../media/audioipc/server", optional = true }
+audioipc-client = { git = "https://github.com/mozilla/audioipc-2", rev = "8fb5ff19fba7b09e8e66598122421e68a5c573ac", optional = true }
+audioipc-server = { git = "https://github.com/mozilla/audioipc-2", rev = "8fb5ff19fba7b09e8e66598122421e68a5c573ac", optional = true }
 authenticator = "0.3.1"
 gkrust_utils = { path = "../../../../xpcom/rust/gkrust_utils" }
 gecko_logger = { path = "../../../../xpcom/rust/gecko_logger" }

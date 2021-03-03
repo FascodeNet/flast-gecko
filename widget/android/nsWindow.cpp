@@ -103,7 +103,7 @@ using mozilla::gfx::SurfaceFormat;
 #include "ScreenHelperAndroid.h"
 #include "TouchResampler.h"
 
-#include "GeckoProfiler.h"  // For AUTO_PROFILER_LABEL
+#include "mozilla/ProfilerLabels.h"
 #include "nsPrintfCString.h"
 #include "nsString.h"
 
@@ -2438,10 +2438,10 @@ nsresult nsWindow::SynthesizeNativeTouchPoint(uint32_t aPointerId,
   return NS_OK;
 }
 
-nsresult nsWindow::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
-                                              uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags,
-                                              nsIObserver* aObserver) {
+nsresult nsWindow::SynthesizeNativeMouseEvent(
+    LayoutDeviceIntPoint aPoint, NativeMouseMessage aNativeMessage,
+    MouseButton aButton, nsIWidget::Modifiers aModifierFlags,
+    nsIObserver* aObserver) {
   mozilla::widget::AutoObserverNotifier notifier(aObserver, "mouseevent");
 
   MOZ_ASSERT(mNPZCSupport.IsAttached());
@@ -2453,36 +2453,63 @@ nsresult nsWindow::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
   aPoint.x -= bounds.x;
   aPoint.y -= bounds.y;
 
+  int32_t nativeMessage;
+  switch (aNativeMessage) {
+    case NativeMouseMessage::ButtonDown:
+      nativeMessage = java::sdk::MotionEvent::ACTION_POINTER_DOWN;
+      break;
+    case NativeMouseMessage::ButtonUp:
+      nativeMessage = java::sdk::MotionEvent::ACTION_POINTER_UP;
+      break;
+    case NativeMouseMessage::Move:
+      nativeMessage = java::sdk::MotionEvent::ACTION_HOVER_MOVE;
+      break;
+    default:
+      MOZ_ASSERT_UNREACHABLE("Non supported mouse event on Android");
+      return NS_ERROR_INVALID_ARG;
+  }
+  int32_t button;
+  switch (aButton) {
+    case MouseButton::ePrimary:
+      button = java::sdk::MotionEvent::BUTTON_PRIMARY;
+      break;
+    case MouseButton::eMiddle:
+      button = java::sdk::MotionEvent::BUTTON_TERTIARY;
+      break;
+    case MouseButton::eSecondary:
+      button = java::sdk::MotionEvent::BUTTON_SECONDARY;
+      break;
+    case MouseButton::eX1:
+      button = java::sdk::MotionEvent::BUTTON_BACK;
+      break;
+    case MouseButton::eX2:
+      button = java::sdk::MotionEvent::BUTTON_FORWARD;
+      break;
+    default:
+      if (aNativeMessage != NativeMouseMessage::ButtonDown &&
+          aNativeMessage != NativeMouseMessage::ButtonUp) {
+        button = 0;
+        break;
+      }
+      return NS_ERROR_INVALID_ARG;
+  }
+
+  // TODO (bug 1693237): Handle aModifierFlags.
   DispatchToUiThread(
       "nsWindow::SynthesizeNativeMouseEvent",
       [npzc = java::PanZoomController::NativeProvider::GlobalRef(npzc),
-       aNativeMessage, aPoint] {
-        npzc->SynthesizeNativeMouseEvent(aNativeMessage, aPoint.x, aPoint.y);
+       nativeMessage, aPoint, button] {
+        npzc->SynthesizeNativeMouseEvent(nativeMessage, aPoint.x, aPoint.y,
+                                         button);
       });
   return NS_OK;
 }
 
 nsresult nsWindow::SynthesizeNativeMouseMove(LayoutDeviceIntPoint aPoint,
                                              nsIObserver* aObserver) {
-  mozilla::widget::AutoObserverNotifier notifier(aObserver, "mouseevent");
-
-  MOZ_ASSERT(mNPZCSupport.IsAttached());
-  auto npzcSup(mNPZCSupport.Access());
-  MOZ_ASSERT(!!npzcSup);
-
-  const auto& npzc = npzcSup->GetJavaNPZC();
-  const auto& bounds = FindTopLevel()->mBounds;
-  aPoint.x -= bounds.x;
-  aPoint.y -= bounds.y;
-
-  DispatchToUiThread(
-      "nsWindow::SynthesizeNativeMouseMove",
-      [npzc = java::PanZoomController::NativeProvider::GlobalRef(npzc),
-       aPoint] {
-        npzc->SynthesizeNativeMouseEvent(
-            java::sdk::MotionEvent::ACTION_HOVER_MOVE, aPoint.x, aPoint.y);
-      });
-  return NS_OK;
+  return SynthesizeNativeMouseEvent(
+      aPoint, NativeMouseMessage::Move, MouseButton::eNotPressed,
+      nsIWidget::Modifiers::NO_MODIFIERS, aObserver);
 }
 
 bool nsWindow::WidgetPaintsBackground() {

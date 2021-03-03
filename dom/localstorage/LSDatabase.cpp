@@ -85,8 +85,8 @@ LSDatabase::LSDatabase(const nsACString& aOrigin)
         obsSvc->AddObserver(sObserver, XPCOM_SHUTDOWN_OBSERVER_TOPIC, false));
   }
 
-  MOZ_ASSERT(!gLSDatabases->Get(mOrigin));
-  gLSDatabases->Put(mOrigin, this);
+  MOZ_ASSERT(!gLSDatabases->Contains(mOrigin));
+  gLSDatabases->InsertOrUpdate(mOrigin, this);
 }
 
 LSDatabase::~LSDatabase() {

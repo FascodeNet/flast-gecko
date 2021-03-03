@@ -13,6 +13,7 @@
 #include "mozilla/WritingModes.h"
 
 #import <Cocoa/Cocoa.h>
+#import <Carbon/Carbon.h>
 
 namespace mozilla {
 namespace widget {
@@ -56,7 +57,7 @@ NativeKeyBindings::NativeKeyBindings() {}
 
 inline objc_selector* ToObjcSelectorPtr(SEL aSel) { return reinterpret_cast<objc_selector*>(aSel); }
 #define SEL_TO_COMMAND(aSel, aCommand) \
-  mSelectorToCommand.Put(ToObjcSelectorPtr(@selector(aSel)), aCommand)
+  mSelectorToCommand.InsertOrUpdate(ToObjcSelectorPtr(@selector(aSel)), aCommand)
 
 void NativeKeyBindings::Init(NativeKeyBindingsType aType) {
   MOZ_LOG(gNativeKeyBindingsLog, LogLevel::Info, ("%p NativeKeyBindings::Init", this));
@@ -234,7 +235,7 @@ void NativeKeyBindings::GetEditCommands(const WidgetKeyboardEvent& aEvent,
                              modifierFlags:[originalEvent modifierFlags]
                                  timestamp:[originalEvent timestamp]
                               windowNumber:[originalEvent windowNumber]
-                                   context:[originalEvent context]
+                                   context:nil
                                 characters:chars
                charactersIgnoringModifiers:chars
                                  isARepeat:[originalEvent isARepeat]

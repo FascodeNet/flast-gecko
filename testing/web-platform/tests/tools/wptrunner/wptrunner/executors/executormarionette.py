@@ -570,12 +570,22 @@ class MarionetteVirtualAuthenticatorProtocolPart(VirtualAuthenticatorProtocolPar
     def set_user_verified(self, authenticator_id, uv):
         raise NotImplementedError("set_user_verified not yet implemented")
 
+
 class MarionetteSetPermissionProtocolPart(SetPermissionProtocolPart):
     def setup(self):
         self.marionette = self.parent.marionette
 
-    def set_permission(self, name, state, one_realm):
-        raise NotImplementedError("set_permission not yet implemented")
+    def set_permission(self, descriptor, state, one_realm):
+        body = {
+            "descriptor": descriptor,
+            "state": state,
+        }
+        if one_realm is not None:
+            body["oneRealm"] = one_realm
+        try:
+            self.marionette._send_message("WebDriver:SetPermission", body)
+        except errors.UnsupportedOperationException:
+            raise NotImplementedError("set_permission not yet implemented")
 
 
 class MarionettePrintProtocolPart(PrintProtocolPart):
@@ -636,15 +646,28 @@ class MarionetteDebugProtocolPart(DebugProtocolPart):
     def load_devtools(self):
         with self.marionette.using_context(self.marionette.CONTEXT_CHROME):
             self.parent.base.execute_script("""
-const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm");
-const { TargetFactory } = require("devtools/client/framework/target");
-const { gDevTools } = require("devtools/client/framework/devtools");
+const DevToolsShim = ChromeUtils.import(
+  "chrome://devtools-startup/content/DevToolsShim.jsm"
+);
 
 const callback = arguments[arguments.length - 1];
 
 async function loadDevTools() {
-    const target = await TargetFactory.forTab(window.gBrowser.selectedTab);
-    await gDevTools.showToolbox(target, "webconsole", "window");
+    const tab = window.gBrowser.selectedTab;
+    // showToolboxForTab is available for Firefox 87 or newer.
+    if (typeof DevToolsShim.showToolboxForTab === "function") {
+        await showToolboxForTab(tab, {
+          toolId: "webconsole",
+          hostType: "window"
+        });
+    } else {
+        // This branch can be removed whe wptrunner can only be used with
+        // Firefox 87 or newer.
+        const { TargetFactory } = require("devtools/client/framework/target");
+        const { gDevTools } = require("devtools/client/framework/devtools");
+        const target = await TargetFactory.forTab(tab);
+        await gDevTools.showToolbox(target, "webconsole", "window");
+    }
 }
 
 loadDevTools().catch(() => dump("Devtools failed to load"))

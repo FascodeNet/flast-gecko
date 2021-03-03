@@ -206,14 +206,17 @@ function waitForNavigation(target) {
   });
 }
 
-function toggleCache(target, disabled) {
-  const options = { cacheDisabled: disabled, performReload: true };
-  const navigationFinished = waitForNavigation(target);
+async function toggleCache(toolbox, disabled) {
+  const options = { cacheDisabled: disabled };
+  const navigationFinished = waitForNavigation(toolbox.target);
 
   // Disable the cache for any toolbox that it is opened from this point on.
   Services.prefs.setBoolPref("devtools.cache.disabled", disabled);
 
-  return target.reconfigure({ options }).then(() => navigationFinished);
+  await toolbox.targetList.updateConfiguration(options);
+  await toolbox.target.reload();
+
+  await navigationFinished;
 }
 
 /**
@@ -319,9 +322,9 @@ function initNetMonitor(
     const tab = await addTab(url);
     info("Net tab added successfully: " + url);
 
-    const target = await TargetFactory.forTab(tab);
-
-    const toolbox = await gDevTools.showToolbox(target, "netmonitor");
+    const toolbox = await gDevTools.showToolboxForTab(tab, {
+      toolId: "netmonitor",
+    });
     info("Network monitor pane shown successfully.");
 
     const monitor = toolbox.getCurrentPanel();
@@ -341,7 +344,7 @@ function initNetMonitor(
         expectedEventTimings,
       });
       const markersDone = waitForTimelineMarkers(monitor);
-      await toggleCache(target, true);
+      await toggleCache(toolbox, true);
       await Promise.all([requestsDone, markersDone]);
       info("Clearing requests in the UI.");
       store.dispatch(Actions.clearRequests());

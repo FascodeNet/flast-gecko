@@ -25,7 +25,7 @@
 #include "mozilla/storage.h"
 #include "mozilla/dom/Link.h"
 #include "nsDocShellCID.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "nsThreadUtils.h"
 #include "nsNetUtil.h"
 #include "nsIWidget.h"
@@ -1318,7 +1318,7 @@ History::History()
       mRecentlyVisitedURIs(RECENTLY_VISITED_URIS_SIZE) {
   NS_ASSERTION(!gService, "Ruh-roh!  This service has already been created!");
   if (XRE_IsParentProcess()) {
-    nsCOMPtr<nsIProperties> dirsvc = services::GetDirectoryService();
+    nsCOMPtr<nsIProperties> dirsvc = components::Directory::Service();
     bool haveProfile = false;
     MOZ_RELEASE_ASSERT(
         dirsvc &&
@@ -1667,7 +1667,7 @@ History* History::GetService() {
     return gService;
   }
 
-  nsCOMPtr<IHistory> service = services::GetHistory();
+  nsCOMPtr<IHistory> service = components::History::Service();
   if (service) {
     NS_ASSERTION(gService, "Our constructor was not run?!");
   }
@@ -1730,15 +1730,7 @@ void History::Shutdown() {
 void History::AppendToRecentlyVisitedURIs(nsIURI* aURI, bool aHidden) {
   PRTime now = PR_Now();
 
-  {
-    RecentURIVisit& visit =
-        mRecentlyVisitedURIs.LookupForAdd(aURI).OrInsert([] {
-          return RecentURIVisit{0, false};
-        });
-
-    visit.mTime = now;
-    visit.mHidden = aHidden;
-  }
+  mRecentlyVisitedURIs.InsertOrUpdate(aURI, RecentURIVisit{now, aHidden});
 
   // Remove entries older than RECENTLY_VISITED_URIS_MAX_AGE.
   for (auto iter = mRecentlyVisitedURIs.Iter(); !iter.Done(); iter.Next()) {
@@ -1851,9 +1843,8 @@ History::VisitURI(nsIWidget* aWidget, nsIURI* aURI, nsIURI* aLastVisitedURI,
     auto entry = mRecentlyVisitedURIs.Lookup(aURI);
     // Check if the entry exists and is younger than
     // RECENTLY_VISITED_URIS_MAX_AGE.
-    if (entry &&
-        (PR_Now() - entry.Data().mTime) < RECENTLY_VISITED_URIS_MAX_AGE) {
-      bool wasHidden = entry.Data().mHidden;
+    if (entry && (PR_Now() - entry->mTime) < RECENTLY_VISITED_URIS_MAX_AGE) {
+      bool wasHidden = entry->mHidden;
       // Regardless of whether we store the visit or not, we must update the
       // stored visit time.
       AppendToRecentlyVisitedURIs(aURI, place.hidden);

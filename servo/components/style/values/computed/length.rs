@@ -224,6 +224,12 @@ impl CSSPixelLength {
         CSSPixelLength(px)
     }
 
+    /// Returns a normalized (NaN turned to zero) version of this length.
+    #[inline]
+    pub fn normalized(self) -> Self {
+        Self::new(crate::values::normalize(self.0))
+    }
+
     /// Scale the length by a given amount.
     #[inline]
     pub fn scale_by(self, scale: CSSFloat) -> Self {
@@ -313,6 +319,12 @@ impl ToCss for CSSPixelLength {
     }
 }
 
+impl std::iter::Sum for CSSPixelLength {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Length::zero(), Add::add)
+    }
+}
+
 impl Add for CSSPixelLength {
     type Output = Self;
 
@@ -326,6 +338,15 @@ impl AddAssign for CSSPixelLength {
     #[inline]
     fn add_assign(&mut self, other: Self) {
         self.0 += other.0;
+    }
+}
+
+impl Div for CSSPixelLength {
+    type Output = CSSFloat;
+
+    #[inline]
+    fn div(self, other: Self) -> CSSFloat {
+        self.px() / other.px()
     }
 }
 

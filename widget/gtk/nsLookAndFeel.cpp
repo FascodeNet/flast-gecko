@@ -385,6 +385,12 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
     case ColorID::Highlight:  // preference selected item,
       aColor = mTextSelectedBackground;
       break;
+    case ColorID::MozAccentColor:
+      aColor = mAccentColor;
+      break;
+    case ColorID::MozAccentColorForeground:
+      aColor = mAccentColorForeground;
+      break;
     case ColorID::WidgetSelectForeground:
     case ColorID::TextSelectForeground:
     case ColorID::IMESelectedRawTextForeground:
@@ -770,7 +776,7 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       // Enable transparent titlebar corners for titlebar mode.
       GdkScreen* screen = gdk_screen_get_default();
       aResult = gdk_screen_is_composited(screen)
-                    ? (nsWindow::GetSystemCSDSupportLevel() !=
+                    ? (nsWindow::GtkWindowDecoration() !=
                        nsWindow::GTK_DECORATION_NONE)
                     : false;
       break;
@@ -1298,6 +1304,14 @@ void nsLookAndFeel::EnsureInit() {
       // fall back to the regular text view style.
       GrabSelectionColors(style);
     }
+
+    // Accent is the darker of the selection background / foreground.
+    mAccentColor = mTextSelectedBackground;
+    mAccentColorForeground = mTextSelectedText;
+    if (RelativeLuminanceUtils::Compute(mAccentColor) >
+        RelativeLuminanceUtils::Compute(mAccentColorForeground)) {
+      std::exchange(mAccentColor, mAccentColorForeground);
+    }
   }
 
   // Button text color
@@ -1421,7 +1435,7 @@ void nsLookAndFeel::EnsureInit() {
   g_object_unref(labelWidget);
 
   mCSDAvailable =
-      nsWindow::GetSystemCSDSupportLevel() != nsWindow::GTK_DECORATION_NONE;
+      nsWindow::GtkWindowDecoration() != nsWindow::GTK_DECORATION_NONE;
   mCSDHideTitlebarByDefault = nsWindow::HideTitlebarByDefault();
 
   mCSDCloseButton = false;

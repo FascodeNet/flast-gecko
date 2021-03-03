@@ -61,7 +61,6 @@ browser/extensions/formautofill/phonenumberutils/PhoneNumberMetaData.jsm
 # See https://github.com/firefox-devtools/debugger/blob/master/package.json#L24
 devtools/client/debugger/configs/
 devtools/client/debugger/dist/
-devtools/client/debugger/flow-typed/
 devtools/client/debugger/images/
 devtools/client/debugger/test/
 devtools/client/debugger/index.html
@@ -158,8 +157,8 @@ modules/libpref/test/unit/*data/
 python/
 
 # These are (mainly) imported code that we don't want to lint to make imports easier.
-remote/Protocol.jsm
-remote/test/browser/chrome-remote-interface.js
+remote/cdp/Protocol.jsm
+remote/cdp/test/browser/chrome-remote-interface.js
 
 # services/ exclusions
 

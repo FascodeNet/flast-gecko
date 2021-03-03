@@ -345,7 +345,7 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod {
   uint32_t toStringStart;
   uint32_t srcStart;
   bool strict;
-  ScriptSourceHolder scriptSource;
+  RefPtr<ScriptSource> source;
 
   uint32_t srcEndBeforeCurly() const { return srcStart + srcLength; }
   uint32_t srcEndAfterCurly() const {
@@ -371,17 +371,11 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod {
     MOZ_CRASH("missing asm.js func export");
   }
 
-  bool mutedErrors() const override {
-    return scriptSource.get()->mutedErrors();
-  }
+  bool mutedErrors() const override { return source->mutedErrors(); }
   const char16_t* displayURL() const override {
-    return scriptSource.get()->hasDisplayURL()
-               ? scriptSource.get()->displayURL()
-               : nullptr;
+    return source->hasDisplayURL() ? source->displayURL() : nullptr;
   }
-  ScriptSource* maybeScriptSource() const override {
-    return scriptSource.get();
-  }
+  ScriptSource* maybeScriptSource() const override { return source.get(); }
   bool getFuncName(NameContext ctx, uint32_t funcIndex,
                    UTF8Bytes* name) const override {
     const char* p = asmJSFuncNames[funcIndex].get();
@@ -1942,7 +1936,7 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
     asmJSMetadata_->srcStart = moduleFunctionNode_->body()->pn_pos.begin;
     asmJSMetadata_->strict = parser_.pc_->sc()->strict() &&
                              !parser_.pc_->sc()->hasExplicitUseStrict();
-    asmJSMetadata_->scriptSource.reset(parser_.ss);
+    asmJSMetadata_->source = do_AddRef(parser_.ss);
 
     if (!addStandardLibraryMathInfo()) {
       return false;
@@ -2116,7 +2110,10 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
       }
     }
 
-    SharedCompileArgs args = CompileArgs::build(cx_, std::move(scriptedCaller));
+    // The default options are fine for asm.js
+    FeatureOptions options;
+    SharedCompileArgs args =
+        CompileArgs::build(cx_, std::move(scriptedCaller), options);
     if (!args) {
       return nullptr;
     }
@@ -6731,20 +6728,26 @@ static bool ValidateConstant(JSContext* cx, const AsmJSGlobal& global,
 
 static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
                         HandleValue bufferVal,
-                        MutableHandle<ArrayBufferObjectMaybeShared*> buffer) {
+                        MutableHandle<ArrayBufferObject*> buffer) {
+  if (!bufferVal.isObject()) {
+    return LinkFail(cx, "buffer must be an object");
+  }
+  JSObject* bufferObj = &bufferVal.toObject();
+
   if (metadata.memoryUsage == MemoryUsage::Shared) {
-    if (!IsSharedArrayBuffer(bufferVal)) {
+    if (!bufferObj->is<SharedArrayBufferObject>()) {
       return LinkFail(
           cx, "shared views can only be constructed onto SharedArrayBuffer");
     }
-  } else {
-    if (!IsArrayBuffer(bufferVal)) {
-      return LinkFail(
-          cx, "unshared views can only be constructed onto ArrayBuffer");
-    }
+    return LinkFail(cx, "Unable to prepare SharedArrayBuffer for asm.js use");
   }
 
-  buffer.set(&AsAnyArrayBuffer(bufferVal));
+  if (!bufferObj->is<ArrayBufferObject>()) {
+    return LinkFail(cx,
+                    "unshared views can only be constructed onto ArrayBuffer");
+  }
+
+  buffer.set(&bufferObj->as<ArrayBufferObject>());
 
   // Do not assume the buffer's length fits within the wasm heap limit, so do
   // not call ByteLength32().
@@ -6780,14 +6783,8 @@ static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
     return LinkFail(cx, msg.get());
   }
 
-  if (buffer->is<ArrayBufferObject>()) {
-    Rooted<ArrayBufferObject*> arrayBuffer(cx,
-                                           &buffer->as<ArrayBufferObject>());
-    if (!arrayBuffer->prepareForAsmJS()) {
-      return LinkFail(cx, "Unable to prepare ArrayBuffer for asm.js use");
-    }
-  } else {
-    return LinkFail(cx, "Unable to prepare SharedArrayBuffer for asm.js use");
+  if (!buffer->prepareForAsmJS()) {
+    return LinkFail(cx, "Unable to prepare ArrayBuffer for asm.js use");
   }
 
   MOZ_ASSERT(buffer->isPreparedForAsmJS());
@@ -6864,7 +6861,7 @@ static bool TryInstantiate(JSContext* cx, CallArgs args, const Module& module,
   Rooted<ImportValues> imports(cx);
 
   if (module.metadata().usesMemory()) {
-    RootedArrayBufferObjectMaybeShared buffer(cx);
+    RootedArrayBufferObject buffer(cx);
     if (!CheckBuffer(cx, metadata, bufferVal, &buffer)) {
       return false;
     }
@@ -6897,7 +6894,7 @@ static bool HandleInstantiationFailure(JSContext* cx, CallArgs args,
     return false;
   }
 
-  ScriptSource* source = metadata.scriptSource.get();
+  ScriptSource* source = metadata.maybeScriptSource();
 
   // Source discarding is allowed to affect JS semantics because it is never
   // enabled for normal JS content.
@@ -7188,7 +7185,7 @@ JSString* js::AsmJSModuleToString(JSContext* cx, HandleFunction fun,
       AsmJSModuleFunctionToModule(fun).metadata().asAsmJS();
   uint32_t begin = metadata.toStringStart;
   uint32_t end = metadata.srcEndAfterCurly();
-  ScriptSource* source = metadata.scriptSource.get();
+  ScriptSource* source = metadata.maybeScriptSource();
 
   JSStringBuilder out(cx);
 
@@ -7240,7 +7237,7 @@ JSString* js::AsmJSFunctionToString(JSContext* cx, HandleFunction fun) {
   uint32_t begin = metadata.srcStart + f.startOffsetInModule();
   uint32_t end = metadata.srcStart + f.endOffsetInModule();
 
-  ScriptSource* source = metadata.scriptSource.get();
+  ScriptSource* source = metadata.maybeScriptSource();
   JSStringBuilder out(cx);
 
   if (!out.append("function ")) {

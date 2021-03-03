@@ -19,6 +19,7 @@
 #include "nsQueryObject.h"
 #include "mozilla/dom/PlacesObservers.h"
 #include "mozilla/dom/PlacesVisit.h"
+#include "mozilla/dom/PlacesVisitRemoved.h"
 #include "mozilla/dom/PlacesVisitTitle.h"
 
 #include "nsCycleCollectionParticipant.h"
@@ -1902,7 +1903,7 @@ void nsNavHistoryQueryResultNode::ClearChildren(bool aUnregister) {
 nsresult nsNavHistoryQueryResultNode::Refresh() {
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
-  if (result->mBatchInProgress) {
+  if (result->IsBatching()) {
     result->requestRefresh(this);
     return NS_OK;
   }
@@ -1991,11 +1992,9 @@ nsNavHistoryQueryResultNode::GetSkipTags(bool* aSkipTags) {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnBeginUpdateBatch() { return NS_OK; }
+nsresult nsNavHistoryQueryResultNode::OnBeginUpdateBatch() { return NS_OK; }
 
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnEndUpdateBatch() {
+nsresult nsNavHistoryQueryResultNode::OnEndUpdateBatch() {
   // If the query has no children it's possible it's not yet listening to
   // bookmarks changes, in such a case it's safer to force a refresh to gather
   // eventual new nodes matching query options.
@@ -2040,7 +2039,7 @@ nsresult nsNavHistoryQueryResultNode::OnVisit(nsIURI* aURI, int64_t aVisitId,
 
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
-  if (result->mBatchInProgress &&
+  if (result->IsBatching() &&
       ++mBatchChanges > MAX_BATCH_CHANGES_BEFORE_REFRESH) {
     nsresult rv = Refresh();
     NS_ENSURE_SUCCESS(rv, rv);
@@ -2199,7 +2198,7 @@ nsresult nsNavHistoryQueryResultNode::OnTitleChanged(
 
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
-  if (result->mBatchInProgress &&
+  if (result->IsBatching() &&
       ++mBatchChanges > MAX_BATCH_CHANGES_BEFORE_REFRESH) {
     nsresult rv = Refresh();
     NS_ENSURE_SUCCESS(rv, rv);
@@ -2261,12 +2260,11 @@ nsresult nsNavHistoryQueryResultNode::OnTitleChanged(
  * Here, we can always live update by just deleting all occurrences of
  * the given URI.
  */
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnDeleteURI(nsIURI* aURI, const nsACString& aGUID,
-                                         uint16_t aReason) {
+nsresult nsNavHistoryQueryResultNode::OnPageRemovedFromStore(
+    nsIURI* aURI, const nsACString& aGUID, uint16_t aReason) {
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
-  if (result->mBatchInProgress &&
+  if (result->IsBatching() &&
       ++mBatchChanges > MAX_BATCH_CHANGES_BEFORE_REFRESH) {
     nsresult rv = Refresh();
     NS_ENSURE_SUCCESS(rv, rv);
@@ -2327,11 +2325,9 @@ static nsresult setFaviconCallback(nsNavHistoryResultNode* aNode,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnDeleteVisits(nsIURI* aURI, bool aPartialRemoval,
-                                            const nsACString& aGUID,
-                                            uint16_t aReason,
-                                            uint32_t aTransitionType) {
+nsresult nsNavHistoryQueryResultNode::OnPageRemovedVisits(
+    nsIURI* aURI, bool aPartialRemoval, const nsACString& aGUID,
+    uint16_t aReason, uint32_t aTransitionType) {
   MOZ_ASSERT(
       mOptions->QueryType() == nsINavHistoryQueryOptions::QUERY_TYPE_HISTORY,
       "Bookmarks queries should not get a OnDeleteVisits notification");
@@ -2339,16 +2335,16 @@ nsNavHistoryQueryResultNode::OnDeleteVisits(nsIURI* aURI, bool aPartialRemoval,
   if (!aPartialRemoval) {
     // All visits for this uri have been removed, but the uri won't be removed
     // from the databse, most likely because it's a bookmark.  For a history
-    // query this is equivalent to a onDeleteURI notification.
-    nsresult rv = OnDeleteURI(aURI, aGUID, aReason);
+    // query this is equivalent to a OnPageRemovedFromStore notification.
+    nsresult rv = OnPageRemovedFromStore(aURI, aGUID, aReason);
     NS_ENSURE_SUCCESS(rv, rv);
   }
   if (aTransitionType > 0) {
     // All visits for aTransitionType have been removed, if the query is
-    // filtering on such transition type, this is equivalent to an onDeleteURI
-    // notification.
+    // filtering on such transition type, this is equivalent to an
+    // OnPageRemovedFromStore notification.
     if (mTransitions.Length() > 0 && mTransitions.Contains(aTransitionType)) {
-      nsresult rv = OnDeleteURI(aURI, aGUID, aReason);
+      nsresult rv = OnPageRemovedFromStore(aURI, aGUID, aReason);
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
@@ -2894,7 +2890,7 @@ void nsNavHistoryFolderResultNode::ClearChildren(bool unregister) {
 nsresult nsNavHistoryFolderResultNode::Refresh() {
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
-  if (result->mBatchInProgress) {
+  if (result->IsBatching()) {
     result->requestRefresh(this);
     return NS_OK;
   }
@@ -2992,11 +2988,9 @@ nsNavHistoryFolderResultNode::GetSkipTags(bool* aSkipTags) {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNavHistoryFolderResultNode::OnBeginUpdateBatch() { return NS_OK; }
+nsresult nsNavHistoryFolderResultNode::OnBeginUpdateBatch() { return NS_OK; }
 
-NS_IMETHODIMP
-nsNavHistoryFolderResultNode::OnEndUpdateBatch() { return NS_OK; }
+nsresult nsNavHistoryFolderResultNode::OnEndUpdateBatch() { return NS_OK; }
 
 nsresult nsNavHistoryFolderResultNode::OnItemAdded(
     int64_t aItemId, int64_t aParentFolder, int32_t aIndex, uint16_t aItemType,
@@ -3453,7 +3447,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsNavHistoryResult)
   NS_INTERFACE_MAP_STATIC_AMBIGUOUS(nsNavHistoryResult)
   NS_INTERFACE_MAP_ENTRY(nsINavHistoryResult)
   NS_INTERFACE_MAP_ENTRY(nsINavBookmarkObserver)
-  NS_INTERFACE_MAP_ENTRY(nsINavHistoryObserver)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_END
 
@@ -3469,19 +3462,27 @@ nsNavHistoryResult::nsNavHistoryResult(
       mIsBookmarksObserver(false),
       mIsMobilePrefObserver(false),
       mBookmarkFolderObservers(64),
-      mBatchInProgress(false),
       mSuppressNotifications(false),
       mIsHistoryDetailsObserver(false),
-      mObserversWantHistoryDetails(true) {
+      mObserversWantHistoryDetails(true),
+      mBatchInProgress(0) {
   mSortingMode = aOptions->SortingMode();
 
   mRootNode->mResult = this;
   MOZ_ASSERT(mRootNode->mIndentLevel == -1,
              "Root node's indent level initialized wrong");
   mRootNode->FillStats();
+
+  AutoTArray<PlacesEventType, 1> events;
+  events.AppendElement(PlacesEventType::Purge_caches);
+  PlacesObservers::AddListener(events, this);
 }
 
 nsNavHistoryResult::~nsNavHistoryResult() {
+  AutoTArray<PlacesEventType, 1> events;
+  events.AppendElement(PlacesEventType::Purge_caches);
+  PlacesObservers::RemoveListener(events, this);
+
   // Delete all heap-allocated bookmark folder observer arrays.
   for (auto it = mBookmarkFolderObservers.Iter(); !it.Done(); it.Next()) {
     delete it.Data();
@@ -3507,12 +3508,9 @@ void nsNavHistoryResult::StopObserving() {
     mIsMobilePrefObserver = false;
   }
   if (mIsHistoryObserver) {
-    nsNavHistory* history = nsNavHistory::GetHistoryService();
-    if (history) {
-      history->RemoveObserver(this);
-      mIsHistoryObserver = false;
-    }
+    mIsHistoryObserver = false;
     events.AppendElement(PlacesEventType::History_cleared);
+    events.AppendElement(PlacesEventType::Page_removed);
   }
   if (mIsHistoryDetailsObserver) {
     events.AppendElement(PlacesEventType::Page_visited);
@@ -3541,13 +3539,11 @@ bool nsNavHistoryResult::CanSkipHistoryDetailsNotifications() const {
 void nsNavHistoryResult::AddHistoryObserver(
     nsNavHistoryQueryResultNode* aNode) {
   if (!mIsHistoryObserver) {
-    nsNavHistory* history = nsNavHistory::GetHistoryService();
-    NS_ASSERTION(history, "Can't create history service");
-    history->AddObserver(this, true);
     mIsHistoryObserver = true;
 
     AutoTArray<PlacesEventType, 3> events;
     events.AppendElement(PlacesEventType::History_cleared);
+    events.AppendElement(PlacesEventType::Page_removed);
     if (!mIsHistoryDetailsObserver) {
       events.AppendElement(PlacesEventType::Page_visited);
       events.AppendElement(PlacesEventType::Page_title_changed);
@@ -3655,7 +3651,7 @@ nsNavHistoryResult::BookmarkFolderObserversForId(int64_t aFolderId,
 
   // need to create a new list
   list = new FolderObserverList;
-  mBookmarkFolderObservers.Put(aFolderId, list);
+  mBookmarkFolderObservers.InsertOrUpdate(aFolderId, list);
   return list;
 }
 
@@ -3725,7 +3721,7 @@ nsNavHistoryResult::AddObserver(nsINavHistoryResultObserver* aObserver,
 
   // If we are batching, notify a fake batch start to the observers.
   // Not doing so would then notify a not coupled batch end.
-  if (mBatchInProgress) {
+  if (IsBatching()) {
     NOTIFY_RESULT_OBSERVERS(this, Batching(true));
   }
 
@@ -3869,8 +3865,7 @@ NS_IMETHODIMP
 nsNavHistoryResult::OnBeginUpdateBatch() {
   // Since we could be observing both history and bookmarks, it's possible both
   // notify the batch.  We can safely ignore nested calls.
-  if (!mBatchInProgress) {
-    mBatchInProgress = true;
+  if (++mBatchInProgress == 1) {
     ENUMERATE_HISTORY_OBSERVERS(OnBeginUpdateBatch());
     ENUMERATE_ALL_BOOKMARKS_OBSERVERS(OnBeginUpdateBatch());
 
@@ -3887,14 +3882,10 @@ nsNavHistoryResult::OnEndUpdateBatch() {
   // Notice it's possible we are notified OnEndUpdateBatch more times than
   // onBeginUpdateBatch, since the result could be created in the middle of
   // nested batches.
-  if (mBatchInProgress) {
+  if (--mBatchInProgress == 0) {
     ENUMERATE_HISTORY_OBSERVERS(OnEndUpdateBatch());
     ENUMERATE_ALL_BOOKMARKS_OBSERVERS(OnEndUpdateBatch());
 
-    // Setting mBatchInProgress before notifying the end of the batch to
-    // observers would make evantual calls to Refresh() directly handled rather
-    // than enqueued.  Thus set it just before handling refreshes.
-    mBatchInProgress = false;
     NOTIFY_REFRESH_PARTICIPANTS();
     NOTIFY_RESULT_OBSERVERS(this, Batching(false));
   }
@@ -4203,35 +4194,40 @@ void nsNavHistoryResult::HandlePlacesEvent(const PlacesEventSequence& aEvents) {
         ENUMERATE_HISTORY_OBSERVERS(OnClearHistory());
         break;
       }
+      case PlacesEventType::Page_removed: {
+        const PlacesVisitRemoved* removeEvent = event->AsPlacesVisitRemoved();
+        if (NS_WARN_IF(!removeEvent)) {
+          continue;
+        }
+
+        nsCOMPtr<nsIURI> uri;
+        MOZ_ALWAYS_SUCCEEDS(NS_NewURI(getter_AddRefs(uri), removeEvent->mUrl));
+        if (!uri) {
+          continue;
+        }
+
+        if (removeEvent->mIsRemovedFromStore) {
+          ENUMERATE_HISTORY_OBSERVERS(OnPageRemovedFromStore(
+              uri, removeEvent->mPageGuid, removeEvent->mReason));
+        } else {
+          ENUMERATE_HISTORY_OBSERVERS(
+              OnPageRemovedVisits(uri, removeEvent->mIsPartialVisistsRemoval,
+                                  removeEvent->mPageGuid, removeEvent->mReason,
+                                  removeEvent->mTransitionType));
+        }
+
+        break;
+      }
+      case PlacesEventType::Purge_caches: {
+        mRootNode->Refresh();
+        break;
+      }
       default: {
         MOZ_ASSERT_UNREACHABLE(
             "Receive notification of a type not subscribed to.");
       }
     }
   }
-}
-
-NS_IMETHODIMP
-nsNavHistoryResult::OnDeleteURI(nsIURI* aURI, const nsACString& aGUID,
-                                uint16_t aReason) {
-  NS_ENSURE_ARG(aURI);
-
-  ENUMERATE_HISTORY_OBSERVERS(OnDeleteURI(aURI, aGUID, aReason));
-  return NS_OK;
-}
-
-/**
- * Don't do anything when visits expire.
- */
-NS_IMETHODIMP
-nsNavHistoryResult::OnDeleteVisits(nsIURI* aURI, bool aPartialRemoval,
-                                   const nsACString& aGUID, uint16_t aReason,
-                                   uint32_t aTransitionType) {
-  NS_ENSURE_ARG(aURI);
-
-  ENUMERATE_HISTORY_OBSERVERS(
-      OnDeleteVisits(aURI, aPartialRemoval, aGUID, aReason, aTransitionType));
-  return NS_OK;
 }
 
 void nsNavHistoryResult::OnMobilePrefChanged() {

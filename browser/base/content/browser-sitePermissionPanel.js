@@ -191,7 +191,7 @@ var gPermissionPanel = {
     this._initializePopup();
 
     // Remove the reload hint that we show after a user has cleared a permission.
-    this._permissionReloadHint.setAttribute("hidden", "true");
+    this._permissionReloadHint.hidden = true;
 
     // Update the popup strings
     this._refreshPermissionPopup();
@@ -363,7 +363,7 @@ var gPermissionPanel = {
 
   onLocationChange() {
     if (this._popupInitialized && this._permissionPopup.state != "closed") {
-      this._permissionReloadHint.setAttribute("hidden", "true");
+      this._permissionReloadHint.hidden = true;
     }
   },
 
@@ -552,19 +552,6 @@ var gPermissionPanel = {
         !permission.sharingState.includes("Paused"))
     ) {
       img.classList.add("in-use");
-
-      // Synchronize permission panel and identity block blinking animations.
-      window
-        .promiseDocumentFlushed(() => {
-          let sharingIconBlink = this._webRTCSharingIcon.getAnimations()[0];
-          let imgBlink = img.getAnimations()[0];
-          return [sharingIconBlink, imgBlink];
-        })
-        .then(([sharingIconBlink, imgBlink]) => {
-          if (sharingIconBlink && imgBlink) {
-            imgBlink.startTime = sharingIconBlink.startTime;
-          }
-        });
     }
 
     let nameLabel = document.createXULElement("label");
@@ -779,7 +766,7 @@ var gPermissionPanel = {
         browser
       );
 
-      this._permissionReloadHint.removeAttribute("hidden");
+      this._permissionReloadHint.hidden = false;
       PanelView.forNode(
         this._permissionPopupMainView
       ).descriptionHeightWorkaround();

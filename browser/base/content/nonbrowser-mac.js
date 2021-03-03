@@ -30,7 +30,6 @@ function nonBrowserWindowStartup() {
     "Browser:SendLink",
     "cmd_pageSetup",
     "cmd_print",
-    "cmd_print_kb",
     "cmd_find",
     "cmd_findAgain",
     "viewToolbarsMenu",
@@ -41,6 +40,7 @@ function nonBrowserWindowStartup() {
     "charsetMenu",
     "View:PageSource",
     "View:FullScreen",
+    "enterFullScreenItem",
     "viewHistorySidebar",
     "Browser:AddBookmarkAs",
     "Browser:BookmarkAllTabs",
@@ -84,7 +84,7 @@ function nonBrowserWindowStartup() {
 
     // Also hide the window-list separator.
     element = document.getElementById("sep-window-list");
-    element.setAttribute("hidden", "true");
+    element.hidden = true;
 
     // Setup the dock menu.
     let dockMenuElement = document.getElementById("menu_mac_dockmenu");
@@ -109,6 +109,10 @@ function nonBrowserWindowStartup() {
     }
     if (!PrivateBrowsingUtils.enabled) {
       document.getElementById("macDockMenuNewPrivateWindow").hidden = true;
+    }
+    if (BrowserUIUtils.quitShortcutDisabled) {
+      document.getElementById("key_quitApplication").remove();
+      document.getElementById("menu_FileQuitItem").removeAttribute("key");
     }
   }
 

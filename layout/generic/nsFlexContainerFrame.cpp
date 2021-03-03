@@ -649,6 +649,10 @@ class nsFlexContainerFrame::FlexItem final {
     // the 'hypothetical main size', which is the flex base size, clamped
     // to the [min,max] range:
     mMainSize = NS_CSS_MINMAX(mFlexBaseSize, mMainMinSize, mMainMaxSize);
+
+    FLEX_LOGV(
+        "Set flex base size: %d, hypothetical main size: %d for flex item %p",
+        mFlexBaseSize, mMainSize, mFrame);
   }
 
   // Setters used while we're resolving flexible lengths
@@ -1310,7 +1314,14 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
     const FlexboxAxisTracker& aAxisTracker, bool aHasLineClampEllipsis) {
   const auto flexWM = aAxisTracker.GetWritingMode();
   const auto childWM = aChildFrame->GetWritingMode();
-  const auto* stylePos = aChildFrame->StylePosition();
+
+  // Note: we use GetStyleFrame() to access the sizing & flex properties here.
+  // This lets us correctly handle table wrapper frames as flex items since
+  // their inline-size and block-size properties are always 'auto'. In order for
+  // 'flex-basis:auto' to actually resolve to the author's specified inline-size
+  // or block-size, we need to dig through to the inner table.
+  const auto* stylePos =
+      nsLayoutUtils::GetStyleFrame(aChildFrame)->StylePosition();
 
   // Construct a StyleSizeOverrides for this flex item so that its ReflowInput
   // below will use and resolve its flex base size rather than its corresponding
@@ -1344,10 +1355,12 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
       styleFlexBaseSize.emplace(flexBasis.AsSize());
     } else {
       // else: flex-basis is 'auto', which is deferring to some explicit value
-      // in the preferred main size, so we proceed without emplacing
-      // styleFlexBaseSize.
+      // in the preferred main size.
       MOZ_ASSERT(flexBasis.IsAuto());
+      styleFlexBaseSize.emplace(styleMainSize);
     }
+
+    MOZ_ASSERT(styleFlexBaseSize, "We should've emplace styleFlexBaseSize!");
 
     // Provide the size override for the preferred main size property.
     if (aAxisTracker.IsInlineAxisMainAxis(childWM)) {
@@ -1355,6 +1368,10 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
     } else {
       sizeOverrides.mStyleBSize = std::move(styleFlexBaseSize);
     }
+
+    // 'flex-basis' should works on the inner table frame for a table flex item,
+    // just like how 'height' works on a table element.
+    sizeOverrides.mApplyOverridesVerbatim = true;
   }
 
   // Create temporary reflow input just for sizing -- to get hypothetical
@@ -1662,12 +1679,14 @@ void nsFlexContainerFrame::ResolveAutoFlexBasisAndMinSize(
         const auto cbWM = aAxisTracker.GetWritingMode();
         const auto itemWM = aFlexItem.GetWritingMode();
         const nscoord availISize = 0;  // for min-content size
+        StyleSizeOverrides sizeOverrides;
+        sizeOverrides.mStyleISize.emplace(StyleSize::Auto());
         const auto sizeInItemWM = aFlexItem.Frame()->ComputeSize(
             aItemReflowInput.mRenderingContext, itemWM,
             aItemReflowInput.mContainingBlockSize, availISize,
             aItemReflowInput.ComputedLogicalMargin(itemWM).Size(itemWM),
             aItemReflowInput.ComputedLogicalBorderPadding(itemWM).Size(itemWM),
-            {}, {ComputeSizeFlag::UseAutoISize, ComputeSizeFlag::ShrinkWrap});
+            sizeOverrides, {ComputeSizeFlag::ShrinkWrap});
 
         contentSizeSuggestion = aAxisTracker.MainComponent(
             sizeInItemWM.mLogicalSize.ConvertTo(cbWM, itemWM));
@@ -2005,30 +2024,37 @@ nscoord nsFlexContainerFrame::MeasureFlexItemContentBSize(
     bool aHasLineClampEllipsis, const ReflowInput& aParentReflowInput) {
   FLEX_LOG("Measuring flex item's content block-size");
 
-  // Set up a reflow input for measuring the flex item's auto-height:
+  // Set up a reflow input for measuring the flex item's content block-size:
   WritingMode wm = aFlexItem.Frame()->GetWritingMode();
   LogicalSize availSize = aParentReflowInput.ComputedSize(wm);
   availSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
-  ReflowInput childRIForMeasuringBSize(PresContext(), aParentReflowInput,
-                                       aFlexItem.Frame(), availSize, Nothing(),
-                                       ReflowInput::InitFlag::CallerWillInit);
-  childRIForMeasuringBSize.mFlags.mIsFlexContainerMeasuringBSize = true;
+
+  StyleSizeOverrides sizeOverrides;
+  if (aFlexItem.IsStretched()) {
+    sizeOverrides.mStyleISize.emplace(aFlexItem.StyleCrossSize());
+    // Suppress any AspectRatio that we might have to prevent ComputeSize() from
+    // transferring our inline-size override through the aspect-ratio to set the
+    // block-size, because that would prevent us from measuring the content
+    // block-size.
+    sizeOverrides.mAspectRatio.emplace(AspectRatio());
+    FLEX_LOGV(" Cross size override: %d", aFlexItem.CrossSize());
+  }
+  sizeOverrides.mStyleBSize.emplace(StyleSize::Auto());
+
+  ReflowInput childRIForMeasuringBSize(
+      PresContext(), aParentReflowInput, aFlexItem.Frame(), availSize,
+      Nothing(), ReflowInput::InitFlag::CallerWillInit, sizeOverrides);
   childRIForMeasuringBSize.mFlags.mInsideLineClamp = GetLineClampValue() != 0;
   childRIForMeasuringBSize.mFlags.mApplyLineClamp =
       childRIForMeasuringBSize.mFlags.mInsideLineClamp || aHasLineClampEllipsis;
   childRIForMeasuringBSize.Init(PresContext());
 
-  if (aFlexItem.IsStretched()) {
-    // TODO: This code should really use StyleSizeOverrides (rather than
-    // SetComputedISize) to impose the ISize here, in order to stretch table
-    // flex items correctly (to fix Bug 799725). However, when we make that
-    // change, we'll also need to prevent ComputeSize from transferring our
-    // ISize-override through the aspect-ratio to set the BSize, because that
-    // would prevent us from measuring the content BSize here.
-    childRIForMeasuringBSize.SetComputedISize(aFlexItem.CrossSize());
-    childRIForMeasuringBSize.SetIResize(true);
-    FLEX_LOGV(" Cross size override: %d", aFlexItem.CrossSize());
-  }
+  // When measuring flex item's content block-size, disregard the item's
+  // min-block-size and max-block-size by resetting both to to their
+  // unconstraining (extreme) values. The flexbox layout algorithm does still
+  // explicitly clamp both sizes when resolving the target main size.
+  childRIForMeasuringBSize.ComputedMinBSize() = 0;
+  childRIForMeasuringBSize.ComputedMaxBSize() = NS_UNCONSTRAINEDSIZE;
 
   if (aForceBResizeForMeasuringReflow) {
     childRIForMeasuringBSize.SetBResize(true);
@@ -2263,7 +2289,8 @@ nscoord FlexItem::BaselineOffsetFromOuterCrossEdge(
 }
 
 bool FlexItem::IsCrossSizeAuto() const {
-  const nsStylePosition* stylePos = mFrame->StylePosition();
+  const nsStylePosition* stylePos =
+      nsLayoutUtils::GetStyleFrame(mFrame)->StylePosition();
   // Check whichever component is in the flex container's cross axis.
   // (IsInlineAxisCrossAxis() tells us whether that's our ISize or BSize, in
   // terms of our own WritingMode, mWM.)
@@ -3201,8 +3228,8 @@ void FlexLine::ResolveFlexibleLengths(nscoord aFlexContainerMainSize,
             availableFreeSpace -= sizeDelta;
 
             item.SetMainSize(item.MainSize() + sizeDelta);
-            FLEX_LOG("  child %p receives %d, for a total of %d", &item,
-                     sizeDelta, item.MainSize());
+            FLEX_LOG("  flex item %p receives %d, for a total of %d",
+                     item.Frame(), sizeDelta, item.MainSize());
           }
         }
 

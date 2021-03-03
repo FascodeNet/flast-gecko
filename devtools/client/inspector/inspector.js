@@ -198,10 +198,12 @@ Inspector.prototype = {
     this._fluentL10n = new FluentL10n();
     await this._fluentL10n.init(["devtools/client/compatibility.ftl"]);
 
-    // The markup view will be initialized in onRootNodeAvailable, which will be
-    // called through watchTargets and _onTargetAvailable, when a root node is
-    // available for the top-level target.
-    this._onFirstMarkupLoaded = this.once("markuploaded");
+    // This promise should be resolved once the markupview frame has been loaded
+    // and the inspector has fully initialized it (for instance expanding the
+    // initially selected node).
+    this._onMarkupViewInitialized = new Promise(
+      r => (this._resolveMarkupViewInitialized = r)
+    );
 
     // If the server-side stylesheet watcher is enabled, we should start to watch
     // stylesheet resources before instanciating the inspector front since pageStyle
@@ -396,7 +398,7 @@ Inspector.prototype = {
     // Setup the sidebar panels.
     this.setupSidebar();
 
-    await this._onFirstMarkupLoaded;
+    await this._onMarkupViewInitialized;
     this.isReady = true;
 
     // All the components are initialized. Take care of the remaining initialization
@@ -998,12 +1000,6 @@ Inspector.prototype = {
         );
         panel = new LayoutView(this, this.panelWin);
         break;
-      case "newruleview":
-        const RulesView = this.browserRequire(
-          "devtools/client/inspector/rules/new-rules"
-        );
-        panel = new RulesView(this, this.panelWin);
-        break;
       case "ruleview":
         const {
           RuleViewTool,
@@ -1099,15 +1095,6 @@ Inspector.prototype = {
       id: "animationinspector",
       title: INSPECTOR_L10N.getStr("inspector.sidebar.animationInspectorTitle"),
     });
-
-    if (
-      Services.prefs.getBoolPref("devtools.inspector.new-rulesview.enabled")
-    ) {
-      sidebarPanels.push({
-        id: "newruleview",
-        title: INSPECTOR_L10N.getStr("inspector.sidebar.ruleViewTitle"),
-      });
-    }
 
     for (const { id, title } of sidebarPanels) {
       // The Computed panel is not a React-based panel. We pick its element container from
@@ -1391,6 +1378,14 @@ Inspector.prototype = {
         histogram.add(delay);
       }
       delete this._newRootStart;
+    }
+
+    // The initial inspector open() waits for the markup view to be initialized
+    // via the _onMarkupViewInitialized promise. Resolve it now.
+    if (this._resolveMarkupViewInitialized) {
+      this._resolveMarkupViewInitialized();
+      // Should only be done for the first load, remove the `resolve` method.
+      delete this._resolveMarkupViewInitialized;
     }
   },
 
@@ -1909,11 +1904,25 @@ Inspector.prototype = {
       clipboard: clipboardEnabled,
     };
 
-    await captureAndSaveScreenshot(
+    const messages = await captureAndSaveScreenshot(
       this.selection.nodeFront.targetFront,
       this.panelWin,
       args
     );
+    const notificationBox = this.toolbox.getNotificationBox();
+    const priorityMap = {
+      error: notificationBox.PRIORITY_CRITICAL_HIGH,
+      warn: notificationBox.PRIORITY_WARNING_HIGH,
+    };
+    for (const { text, level } of messages) {
+      // captureAndSaveScreenshot returns "saved" messages, that indicate where the
+      // screenshot was saved. We don't want to display them as the download UI can be
+      // used to open the file.
+      if (level !== "warn" && level !== "error") {
+        continue;
+      }
+      notificationBox.appendNotification(text, null, null, priorityMap[level]);
+    }
   },
 
   /**

@@ -169,6 +169,7 @@ enum class ExplicitActiveStatus : uint8_t {
   FIELD(FullZoom, float)                                                      \
   FIELD(WatchedByDevToolsInternal, bool)                                      \
   FIELD(TextZoom, float)                                                      \
+  FIELD(OverrideDPPX, float)                                                  \
   /* The current in-progress load. */                                         \
   FIELD(CurrentLoadIdentifier, Maybe<uint64_t>)                               \
   /* See nsIRequest for possible flags. */                                    \
@@ -222,6 +223,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   static void Init();
   static LogModule* GetLog();
+  static LogModule* GetSyncLog();
 
   // Look up a BrowsingContext in the current process by ID.
   static already_AddRefed<BrowsingContext> Get(uint64_t aId);
@@ -389,6 +391,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   BrowsingContext* GetParent() const;
   BrowsingContext* Top();
+  const BrowsingContext* Top() const;
   int32_t IndexOf(BrowsingContext* aChild);
 
   // NOTE: Unlike `GetEmbedderWindowGlobal`, `GetParentWindowContext` does not
@@ -489,6 +492,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   float FullZoom() const { return GetFullZoom(); }
   float TextZoom() const { return GetTextZoom(); }
+
+  float OverrideDPPX() const { return Top()->GetOverrideDPPX(); }
 
   bool SuspendMediaWhenInactive() const {
     return GetSuspendMediaWhenInactive();
@@ -881,6 +886,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   void SendCommitTransaction(ContentChild* aChild, const BaseTransaction& aTxn,
                              uint64_t aEpoch);
 
+  using CanSetResult = syncedcontext::CanSetResult;
+
   // Ensure that opener is in the same BrowsingContextGroup.
   bool CanSet(FieldIndex<IDX_OpenerId>, const uint64_t& aValue,
               ContentParent* aSource) {
@@ -936,11 +943,15 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // volume of all media elements.
   void DidSet(FieldIndex<IDX_Muted>);
 
+  bool CanSet(FieldIndex<IDX_OverrideDPPX>, const float& aValue,
+              ContentParent* aSource);
+  void DidSet(FieldIndex<IDX_OverrideDPPX>, float aOldValue);
+
   bool CanSet(FieldIndex<IDX_EmbedderInnerWindowId>, const uint64_t& aValue,
               ContentParent* aSource);
 
-  bool CanSet(FieldIndex<IDX_CurrentInnerWindowId>, const uint64_t& aValue,
-              ContentParent* aSource);
+  CanSetResult CanSet(FieldIndex<IDX_CurrentInnerWindowId>,
+                      const uint64_t& aValue, ContentParent* aSource);
 
   void DidSet(FieldIndex<IDX_CurrentInnerWindowId>);
 

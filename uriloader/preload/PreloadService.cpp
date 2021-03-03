@@ -8,7 +8,6 @@
 #include "FetchPreloader.h"
 #include "PreloaderBase.h"
 #include "mozilla/AsyncEventDispatcher.h"
-#include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/HTMLLinkElement.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/Encoding.h"
@@ -23,13 +22,14 @@ PreloadService::~PreloadService() = default;
 
 bool PreloadService::RegisterPreload(const PreloadHashKey& aKey,
                                      PreloaderBase* aPreload) {
-  auto lookup = mPreloads.LookupForAdd(aKey);
-  if (lookup) {
-    lookup.Data() = aPreload;
-    return true;
-  }
-  lookup.OrInsert([&] { return aPreload; });
-  return false;
+  return mPreloads.WithEntryHandle(aKey, [&](auto&& lookup) {
+    if (lookup) {
+      lookup.Data() = aPreload;
+      return true;
+    }
+    lookup.Insert(aPreload);
+    return false;
+  });
 }
 
 void PreloadService::DeregisterPreload(const PreloadHashKey& aKey) {
@@ -39,9 +39,7 @@ void PreloadService::DeregisterPreload(const PreloadHashKey& aKey) {
 void PreloadService::ClearAllPreloads() { mPreloads.Clear(); }
 
 bool PreloadService::PreloadExists(const PreloadHashKey& aKey) {
-  bool found;
-  mPreloads.GetWeak(aKey, &found);
-  return found;
+  return mPreloads.Contains(aKey);
 }
 
 already_AddRefed<PreloaderBase> PreloadService::LookupPreload(
@@ -64,19 +62,12 @@ already_AddRefed<nsIURI> PreloadService::GetPreloadURI(const nsAString& aURL) {
 
 already_AddRefed<PreloaderBase> PreloadService::PreloadLinkElement(
     dom::HTMLLinkElement* aLinkElement, nsContentPolicyType aPolicyType) {
-  // Even if the pref is disabled, we still want to collect telemetry about
-  // attempted preloads.
-  const bool preloadEnabled = StaticPrefs::network_preload();
   if (aPolicyType == nsIContentPolicy::TYPE_INVALID) {
     MOZ_ASSERT_UNREACHABLE("Caller should check");
     return nullptr;
   }
 
-  if (auto* wgc = mDocument->GetWindowGlobalChild()) {
-    wgc->MaybeSendUpdateDocumentWouldPreloadResources();
-  }
-
-  if (!preloadEnabled) {
+  if (!StaticPrefs::network_preload()) {
     return nullptr;
   }
 
@@ -112,20 +103,12 @@ void PreloadService::PreloadLinkHeader(
     const nsAString& aAs, const nsAString& aType, const nsAString& aIntegrity,
     const nsAString& aSrcset, const nsAString& aSizes, const nsAString& aCORS,
     const nsAString& aReferrerPolicy) {
-  // Even if the pref is disabled, we still want to collect telemetry about
-  // attempted preloads.
-  const bool preloadEnabled = StaticPrefs::network_preload();
-
   if (aPolicyType == nsIContentPolicy::TYPE_INVALID) {
     MOZ_ASSERT_UNREACHABLE("Caller should check");
     return;
   }
 
-  if (auto* wgc = mDocument->GetWindowGlobalChild()) {
-    wgc->MaybeSendUpdateDocumentWouldPreloadResources();
-  }
-
-  if (!preloadEnabled) {
+  if (!StaticPrefs::network_preload()) {
     return;
   }
 

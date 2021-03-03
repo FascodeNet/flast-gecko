@@ -17,10 +17,10 @@
 #include "jstypes.h"  // JS_PUBLIC_API
 
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
-#include "frontend/CompilationStencil.h"  // for frontened::CompilationStencil, frontened::CompilationGCOutput
-#include "frontend/FullParseHandler.h"  // frontend::FullParseHandler
-#include "frontend/ParseContext.h"      // frontend::UsedNameTracker
-#include "frontend/Parser.h"            // frontend::Parser, frontend::ParseGoal
+#include "frontend/CompilationStencil.h"  // for frontened::{CompilationStencil, BorrowingCompilationStencil, CompilationGCOutput}
+#include "frontend/FullParseHandler.h"    // frontend::FullParseHandler
+#include "frontend/ParseContext.h"        // frontend::UsedNameTracker
+#include "frontend/Parser.h"       // frontend::Parser, frontend::ParseGoal
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, JS::UTF8CharsToNewTwoByteCharsZ
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/RootingAPI.h"            // JS::Rooted
@@ -84,25 +84,26 @@ template <typename Unit>
 static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     SourceText<Unit>& srcBuf) {
-  ScopeKind scopeKind =
-      options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
-
   MOZ_ASSERT(!cx->zone()->isAtomsZone());
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
-    return nullptr;
-  }
-  if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
-                                              scopeKind)) {
+  ScopeKind scopeKind =
+      options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
+
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  auto stencil = frontend::CompileGlobalScriptToExtensibleStencil(
+      cx, input.get(), srcBuf, scopeKind);
+  if (!stencil) {
     return nullptr;
   }
 
+  frontend::BorrowingCompilationStencil borrowingStencil(*stencil);
+
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, stencil.get(), gcOutput.get())) {
+  if (!frontend::InstantiateStencils(cx, input.get(), borrowingStencil,
+                                     gcOutput.get())) {
     return nullptr;
   }
 
@@ -115,8 +116,8 @@ static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
 
   UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
 
-  if (!stencil.get().input.source()->xdrEncodeInitialStencil(cx, stencil.get(),
-                                                             xdrEncoder)) {
+  if (!borrowingStencil.source->xdrEncodeInitialStencil(
+          cx, input.get(), borrowingStencil, xdrEncoder)) {
     return nullptr;
   }
 
@@ -194,15 +195,14 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   using frontend::Parser;
 
   CompileOptions options(cx);
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  if (!input.get().initForGlobal(cx)) {
     return false;
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, options,
-                                              stencil.get());
+  frontend::CompilationState compilationState(cx, allocScope, input.get());
   if (!compilationState.init(cx)) {
     return false;
   }
@@ -210,7 +210,7 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   Parser<FullParseHandler, char16_t> parser(cx, options, chars.get(), length,
                                             /* foldConstants = */ true,
-                                            stencil.get(), compilationState,
+                                            compilationState,
                                             /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of source, we
@@ -243,8 +243,8 @@ class FunctionCompiler {
     MOZ_ASSERT(!cx->zone()->isAtomsZone());
   }
 
-  MOZ_MUST_USE bool init(const char* name, unsigned nargs,
-                         const char* const* argnames) {
+  [[nodiscard]] bool init(const char* name, unsigned nargs,
+                          const char* const* argnames) {
     if (!funStr_.ensureTwoByteChars()) {
       return false;
     }
@@ -294,7 +294,7 @@ class FunctionCompiler {
   }
 
   template <typename Unit>
-  inline MOZ_MUST_USE bool addFunctionBody(const SourceText<Unit>& srcBuf) {
+  [[nodiscard]] inline bool addFunctionBody(const SourceText<Unit>& srcBuf) {
     return funStr_.append(srcBuf.get(), srcBuf.length());
   }
 

@@ -54,7 +54,6 @@
 #include "mozilla/layers/GeckoContentController.h"
 #include "mozilla/layers/ImageBridgeParent.h"
 #include "mozilla/layers/LayerManagerComposite.h"
-#include "mozilla/layers/LayerManagerMLGPU.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/OMTASampler.h"
@@ -70,6 +69,8 @@
 #include "mozilla/mozalloc.h"                          // for operator new, etc
 #include "mozilla/PerfStats.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/Telemetry.h"
 #ifdef MOZ_WIDGET_GTK
 #  include "basic/X11BasicCompositor.h"  // for X11BasicCompositor
@@ -85,7 +86,6 @@
 #  include "mozilla/widget/WinCompositorWidget.h"
 #  include "mozilla/WindowsVersion.h"
 #endif
-#include "GeckoProfiler.h"
 #include "mozilla/ipc/ProtocolTypes.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Hal.h"
@@ -347,9 +347,7 @@ CompositorBridgeParent::CompositorBridgeParent(
       mForceCompositionTask(nullptr),
       mCompositorScheduler(nullptr),
       mAnimationStorage(nullptr),
-      mPaintTime(TimeDuration::Forever())
-{
-}
+      mPaintTime(TimeDuration::Forever()) {}
 
 void CompositorBridgeParent::InitSameProcess(widget::CompositorWidget* aWidget,
                                              const LayersId& aLayerTreeId) {
@@ -1369,53 +1367,22 @@ void CompositorBridgeParent::InitializeLayerManager(
   NS_ASSERTION(!mLayerManager, "Already initialised mLayerManager");
   NS_ASSERTION(!mCompositor, "Already initialised mCompositor");
 
-  if (!InitializeAdvancedLayers(aBackendHints, nullptr)) {
-    mCompositor = NewCompositor(aBackendHints);
-    if (!mCompositor) {
-      return;
-    }
-#ifdef XP_WIN
-    if (mCompositor->AsBasicCompositor() && XRE_IsGPUProcess()) {
-      // BasicCompositor does not use CompositorWindow,
-      // then if CompositorWindow exists, it needs to be destroyed.
-      mWidget->AsWindows()->DestroyCompositorWindow();
-    }
-#endif
-    mLayerManager = new LayerManagerComposite(mCompositor);
+  mCompositor = NewCompositor(aBackendHints);
+  if (!mCompositor) {
+    return;
   }
+#ifdef XP_WIN
+  if (mCompositor->AsBasicCompositor() && XRE_IsGPUProcess()) {
+    // BasicCompositor does not use CompositorWindow,
+    // then if CompositorWindow exists, it needs to be destroyed.
+    mWidget->AsWindows()->DestroyCompositorWindow();
+  }
+#endif
+  mLayerManager = new LayerManagerComposite(mCompositor);
   mLayerManager->SetCompositorBridgeID(mCompositorBridgeID);
 
   MonitorAutoLock lock(*sIndirectLayerTreesLock);
   sIndirectLayerTrees[mRootLayerTreeID].mLayerManager = mLayerManager;
-}
-
-bool CompositorBridgeParent::InitializeAdvancedLayers(
-    const nsTArray<LayersBackend>& aBackendHints,
-    TextureFactoryIdentifier* aOutIdentifier) {
-#ifdef XP_WIN
-  if (!mOptions.UseAdvancedLayers()) {
-    return false;
-  }
-
-  // Currently LayerManagerMLGPU hardcodes a D3D11 device, so we reject using
-  // AL if LAYERS_D3D11 isn't in the backend hints.
-  if (!aBackendHints.Contains(LayersBackend::LAYERS_D3D11)) {
-    return false;
-  }
-
-  RefPtr<LayerManagerMLGPU> manager = new LayerManagerMLGPU(mWidget);
-  if (!manager->Initialize()) {
-    return false;
-  }
-
-  if (aOutIdentifier) {
-    *aOutIdentifier = manager->GetTextureFactoryIdentifier();
-  }
-  mLayerManager = manager;
-  return true;
-#else
-  return false;
-#endif
 }
 
 RefPtr<Compositor> CompositorBridgeParent::NewCompositor(
@@ -1828,7 +1795,7 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
     return mWrBridge;
   }
 
-  wr::TransactionBuilder txn;
+  wr::TransactionBuilder txn(api);
   txn.SetRootPipeline(aPipelineId);
   api->SendTransaction(txn);
 
@@ -2308,12 +2275,16 @@ void CompositorBridgeParent::NotifyPipelineRendered(
   RefPtr<UiCompositorControllerParent> uiController =
       UiCompositorControllerParent::GetFromRootLayerTreeId(mRootLayerTreeID);
 
-  TransactionId transactionId = wrBridge->FlushTransactionIdsForEpoch(
+  Maybe<TransactionId> transactionId = wrBridge->FlushTransactionIdsForEpoch(
       aEpoch, aCompositeStartId, aCompositeStart, aRenderStart, aCompositeEnd,
       uiController, aStats, &stats);
+  if (!transactionId) {
+    MOZ_ASSERT(stats.IsEmpty());
+    return;
+  }
 
   LayersId layersId = isRoot ? LayersId{0} : wrBridge->GetLayersId();
-  Unused << compBridge->SendDidComposite(layersId, transactionId,
+  Unused << compBridge->SendDidComposite(layersId, *transactionId,
                                          aCompositeStart, aCompositeEnd);
 
   if (!stats.IsEmpty()) {

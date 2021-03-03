@@ -58,7 +58,6 @@
 #include "nsBoxFrame.h"
 #include "nsImageFrame.h"
 #include "nsSubDocumentFrame.h"
-#include "GeckoProfiler.h"
 #include "nsViewManager.h"
 #include "ImageLayers.h"
 #include "ImageContainer.h"
@@ -76,6 +75,8 @@
 #include "mozilla/OperatorNewExtensions.h"
 #include "mozilla/PendingAnimationTracker.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/StyleAnimationValue.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/SVGClipPathFrame.h"
@@ -138,12 +139,7 @@ static bool SpammyLayoutWarningsEnabled() {
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
 void AssertUniqueItem(nsDisplayItem* aItem) {
-  nsIFrame::DisplayItemArray* items =
-      aItem->Frame()->GetProperty(nsIFrame::DisplayItems());
-  if (!items) {
-    return;
-  }
-  for (nsDisplayItemBase* i : *items) {
+  for (nsDisplayItemBase* i : aItem->Frame()->DisplayItems()) {
     if (i != aItem && !i->HasDeletedFrame() && i->Frame() == aItem->Frame() &&
         i->GetPerFrameKey() == aItem->GetPerFrameKey()) {
       if (i->IsPreProcessedItem()) {
@@ -158,19 +154,6 @@ void AssertUniqueItem(nsDisplayItem* aItem) {
 bool ShouldBuildItemForEvents(const DisplayItemType aType) {
   return aType == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO ||
          (GetDisplayItemFlagsForType(aType) & TYPE_IS_CONTAINER);
-}
-
-void UpdateDisplayItemData(nsPaintedDisplayItem* aItem) {
-  for (mozilla::DisplayItemData* did : aItem->Frame()->DisplayItemData()) {
-    if (did->GetDisplayItemKey() == aItem->GetPerFrameKey() &&
-        did->GetLayer()->AsPaintedLayer()) {
-      if (!did->HasMergedFrames()) {
-        aItem->SetDisplayItemData(did, did->GetLayer()->Manager());
-      }
-
-      return;
-    }
-  }
 }
 
 static bool ItemTypeSupportsHitTesting(const DisplayItemType aType) {
@@ -622,6 +605,7 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mWindowDraggingAllowed(false),
       mIsBuildingForPopup(nsLayoutUtils::IsPopup(aReferenceFrame)),
       mForceLayerForScrollParent(false),
+      mContainsNonMinimalDisplayPort(false),
       mAsyncPanZoomEnabled(nsLayoutUtils::AsyncPanZoomEnabled(aReferenceFrame)),
       mBuildingInvisibleItems(false),
       mIsBuilding(false),
@@ -665,7 +649,7 @@ static PresShell* GetFocusedPresShell() {
 void nsDisplayListBuilder::BeginFrame() {
   nsCSSRendering::BeginFrameTreesLocked();
   mCurrentAGR = mRootAGR;
-  mFrameToAnimatedGeometryRootMap.Put(mReferenceFrame, mRootAGR);
+  mFrameToAnimatedGeometryRootMap.InsertOrUpdate(mReferenceFrame, mRootAGR);
 
   mIsPaintingToWindow = false;
   mUseHighQualityScaling = false;
@@ -806,7 +790,8 @@ AnimatedGeometryRoot* nsDisplayListBuilder::WrapAGRForFrame(
     }
     result = AnimatedGeometryRoot::CreateAGRForFrame(
         aAnimatedGeometryRoot, parent, aIsAsync, IsRetainingDisplayList());
-    mFrameToAnimatedGeometryRootMap.Put(aAnimatedGeometryRoot, result);
+    mFrameToAnimatedGeometryRootMap.InsertOrUpdate(aAnimatedGeometryRoot,
+                                                   result);
   }
   MOZ_ASSERT(!aParent || result->mParentAGR == aParent);
   return result;
@@ -837,7 +822,7 @@ AnimatedGeometryRoot* nsDisplayListBuilder::FindAnimatedGeometryRootFor(
   bool isAsync;
   nsIFrame* agrFrame = FindAnimatedGeometryRootFrameFor(aFrame, isAsync);
   result = WrapAGRForFrame(agrFrame, isAsync);
-  mFrameToAnimatedGeometryRootMap.Put(aFrame, result);
+  mFrameToAnimatedGeometryRootMap.InsertOrUpdate(aFrame, result);
   return result;
 }
 
@@ -1951,15 +1936,15 @@ bool nsDisplayListBuilder::AddToWillChangeBudget(nsIFrame* aFrame,
   const uint32_t cost = GetLayerizationCost(aSize);
 
   DocumentWillChangeBudget& documentBudget =
-      mDocumentWillChangeBudgets.GetOrInsert(presContext);
+      mDocumentWillChangeBudgets.LookupOrInsert(presContext);
 
   const bool onBudget =
       (documentBudget + cost) / gWillChangeAreaMultiplier < budgetLimit;
 
   if (onBudget) {
     documentBudget += cost;
-    mFrameWillChangeBudgets.Put(aFrame,
-                                FrameWillChangeBudget(presContext, cost));
+    mFrameWillChangeBudgets.InsertOrUpdate(
+        aFrame, FrameWillChangeBudget(presContext, cost));
     aFrame->SetMayHaveWillChangeBudget(true);
   }
 
@@ -2011,8 +1996,8 @@ void nsDisplayListBuilder::RemoveFromWillChangeBudgets(const nsIFrame* aFrame) {
   if (auto entry = mFrameWillChangeBudgets.Lookup(aFrame)) {
     const FrameWillChangeBudget& frameBudget = entry.Data();
 
-    DocumentWillChangeBudget* documentBudget =
-        mDocumentWillChangeBudgets.GetValue(frameBudget.mPresContext);
+    auto documentBudget =
+        mDocumentWillChangeBudgets.Lookup(frameBudget.mPresContext);
 
     if (documentBudget) {
       *documentBudget -= frameBudget.mUsage;
@@ -3018,16 +3003,6 @@ void nsDisplayItem::FuseClipChainUpTo(nsDisplayListBuilder* aBuilder,
   } else {
     mClip = nullptr;
   }
-}
-
-bool nsDisplayItem::ShouldUseAdvancedLayer(LayerManager* aManager,
-                                           PrefFunc aFunc) const {
-  return CanUseAdvancedLayer(aManager) ? aFunc() : false;
-}
-
-bool nsDisplayItem::CanUseAdvancedLayer(LayerManager* aManager) const {
-  return StaticPrefs::layers_advanced_basic_layer_enabled() || !aManager ||
-         aManager->GetBackendType() == layers::LayersBackend::LAYERS_WR;
 }
 
 static const DisplayItemClipChain* FindCommonAncestorClipForIntersection(

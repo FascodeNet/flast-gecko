@@ -132,7 +132,7 @@ void ChromiumCDMParent::CreateSession(uint32_t aCreateSessionToken,
         aPromiseId, "Failed to send generateRequest to CDM process."_ns);
     return;
   }
-  mPromiseToCreateSessionToken.Put(aPromiseId, aCreateSessionToken);
+  mPromiseToCreateSessionToken.InsertOrUpdate(aPromiseId, aCreateSessionToken);
 }
 
 void ChromiumCDMParent::LoadSession(uint32_t aPromiseId, uint32_t aSessionType,
@@ -395,7 +395,7 @@ ipc::IPCResult ChromiumCDMParent::RecvOnResolveNewSessionPromise(
     return IPC_OK();
   }
 
-  Maybe<uint32_t> token = mPromiseToCreateSessionToken.GetAndRemove(aPromiseId);
+  Maybe<uint32_t> token = mPromiseToCreateSessionToken.Extract(aPromiseId);
   if (token.isNothing()) {
     RejectPromiseWithStateError(aPromiseId,
                                 "Lost session token for new session."_ns);

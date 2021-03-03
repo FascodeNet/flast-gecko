@@ -197,7 +197,7 @@ class BlobURLsReporter final : public nsIMemoryReporter {
       mozilla::dom::BlobImpl* blobImpl = iter.UserData()->mBlobImpl;
       MOZ_ASSERT(blobImpl);
 
-      refCounts.Put(blobImpl, refCounts.Get(blobImpl) + 1);
+      refCounts.LookupOrInsert(blobImpl, 0) += 1;
     }
 
     for (auto iter = gDataTable->Iter(); !iter.Done(); iter.Next()) {
@@ -530,11 +530,12 @@ static void AddDataEntryInternal(const nsACString& aURI, T aObject,
     gDataTable = new nsClassHashtable<nsCStringHashKey, mozilla::dom::DataInfo>;
   }
 
-  mozilla::dom::DataInfo* info =
-      new mozilla::dom::DataInfo(aObject, aPrincipal, aAgentClusterId);
-  BlobURLsReporter::GetJSStackForBlob(info);
+  mozilla::UniquePtr<mozilla::dom::DataInfo> info =
+      mozilla::MakeUnique<mozilla::dom::DataInfo>(aObject, aPrincipal,
+                                                  aAgentClusterId);
+  BlobURLsReporter::GetJSStackForBlob(info.get());
 
-  gDataTable->Put(aURI, info);
+  gDataTable->InsertOrUpdate(aURI, std::move(info));
 }
 
 void BlobURLProtocolHandler::Init(void) {
@@ -737,7 +738,7 @@ nsresult BlobURLProtocolHandler::GenerateURIString(nsIPrincipal* aPrincipal,
 bool BlobURLProtocolHandler::GetDataEntry(
     const nsACString& aUri, mozilla::dom::BlobImpl** aBlobImpl,
     nsIPrincipal* aLoadingPrincipal, nsIPrincipal* aTriggeringPrincipal,
-    const OriginAttributes& aOriginAttributes,
+    const OriginAttributes& aOriginAttributes, uint64_t aInnerWindowId,
     const Maybe<nsID>& aAgentClusterId, bool aAlsoIfRevoked) {
   MOZ_ASSERT(NS_IsMainThread(),
              "without locking gDataTable is main-thread only");
@@ -778,6 +779,18 @@ bool BlobURLProtocolHandler::GetDataEntry(
   if (StaticPrefs::privacy_partition_bloburl_per_agent_cluster() &&
       aAgentClusterId.isSome() && info->mAgentClusterId.isSome() &&
       NS_WARN_IF(!aAgentClusterId->Equals(info->mAgentClusterId.value()))) {
+    nsAutoString localizedMsg;
+    AutoTArray<nsString, 1> param;
+    CopyUTF8toUTF16(aUri, *param.AppendElement());
+    nsresult rv = nsContentUtils::FormatLocalizedString(
+        nsContentUtils::eDOM_PROPERTIES, "BlobDifferentClusterError", param,
+        localizedMsg);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return false;
+    }
+
+    nsContentUtils::ReportToConsoleByWindowID(
+        localizedMsg, nsIScriptError::errorFlag, "DOM"_ns, aInnerWindowId);
     return false;
   }
 

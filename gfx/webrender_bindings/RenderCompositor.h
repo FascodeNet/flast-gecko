@@ -32,6 +32,7 @@ class CompositorWidget;
 
 namespace wr {
 
+class RenderCompositorLayersSWGL;
 class RenderCompositorD3D11SWGL;
 
 class RenderCompositor {
@@ -93,6 +94,10 @@ class RenderCompositor {
     return nullptr;
   }
 
+  virtual RenderCompositorLayersSWGL* AsRenderCompositorLayersSWGL() {
+    return nullptr;
+  }
+
   // True if AttachExternalImage supports being used with an external
   // image that maps to a RenderBufferTextureHost
   virtual bool SupportsExternalBufferTextures() const { return false; }
@@ -144,7 +149,9 @@ class RenderCompositor {
                                 size_t aNumOpaqueRects) {}
   virtual void EnableNativeCompositor(bool aEnable) {}
   virtual void DeInit() {}
-  virtual CompositorCapabilities GetCompositorCapabilities() = 0;
+  // Overrides any of the default compositor capabilities for behavior this
+  // compositor might require.
+  virtual void GetCompositorCapabilities(CompositorCapabilities* aCaps) {}
 
   // Interface for partial present
   virtual bool UsePartialPresent() { return false; }

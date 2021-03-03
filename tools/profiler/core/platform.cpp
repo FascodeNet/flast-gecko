@@ -1843,6 +1843,13 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
                 !profilingStackFrame.pc(),
             &profilingStackFrame ==
                 &profilingStack.frames[profilingStack.stackSize() - 1]);
+        if (aIsSynchronous && profilingStackFrame.categoryPair() ==
+                                  JS::ProfilingCategoryPair::PROFILER) {
+          // For stacks captured synchronously (ie. marker stacks), stop
+          // walking the stack as soon as we enter the profiler category,
+          // to avoid showing profiler internal code in marker stacks.
+          return;
+        }
         aCollector.CollectProfilingStackFrame(profilingStackFrame);
       }
       profilingStackIndex++;
@@ -2616,9 +2623,9 @@ static void StreamMetaJSCustomObject(
   }
   aWriter.EndObject();
 
-  // We should avoid collecting extension metadata for profiler while XPCOM is
-  // shutting down since it cannot create a new ExtensionPolicyService.
-  if (!gXPCOMShuttingDown) {
+  // We should avoid collecting extension metadata for profiler when there is no
+  // observer service, since a ExtensionPolicyService could not be created then.
+  if (nsCOMPtr<nsIObserverService> os = services::GetObserverService()) {
     aWriter.StartObjectProperty("extensions");
     {
       {
@@ -3020,6 +3027,10 @@ static void PrintUsageThenExit(int aExitCode) {
       "  a comma-separated list of strings.\n"
       "  Ignored if  MOZ_PROFILER_STARTUP_FEATURES_BITFIELD is set.\n"
       "  If unset, the platform default is used.\n"
+      "\n"
+      "  MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID=<Number>\n"
+      "  This variable is used to propagate the activeBrowsingContextID of\n"
+      "  the profiler init params to subprocesses.\n"
       "\n"
       "    Features: (x=unavailable, D/d=default/unavailable,\n"
       "               S/s=MOZ_PROFILER_STARTUP extra default/unavailable)\n",
@@ -4104,6 +4115,8 @@ void profiler_init(void* aStackTop) {
   PowerOfTwo32 capacity = PROFILER_DEFAULT_ENTRIES;
   Maybe<double> duration = Nothing();
   double interval = PROFILER_DEFAULT_INTERVAL;
+  uint64_t activeBrowsingContextID =
+      PROFILER_DEFAULT_ACTIVE_BROWSING_CONTEXT_ID;
 
   {
     PSAutoLock lock(gPSMutex);
@@ -4231,8 +4244,25 @@ void profiler_init(void* aStackTop) {
       LOG("- MOZ_PROFILER_STARTUP_FILTERS = %s", startupFilters);
     }
 
+    const char* startupActiveBrowsingContextID =
+        getenv("MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID");
+    if (startupActiveBrowsingContextID &&
+        startupActiveBrowsingContextID[0] != '\0') {
+      std::istringstream iss(startupActiveBrowsingContextID);
+      iss >> activeBrowsingContextID;
+      if (!iss.fail()) {
+        LOG("- MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID = %" PRIu64,
+            activeBrowsingContextID);
+      } else {
+        LOG("- MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID not a valid "
+            "uint64_t: %s",
+            startupActiveBrowsingContextID);
+        PrintUsageThenExit(1);
+      }
+    }
+
     locked_profiler_start(lock, capacity, interval, features, filters.begin(),
-                          filters.length(), 0, duration);
+                          filters.length(), activeBrowsingContextID, duration);
   }
 
 #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
@@ -4470,6 +4500,11 @@ void GetProfilerEnvVarsForChildProcess(
     filtersString += filters[i];
   }
   aSetEnv("MOZ_PROFILER_STARTUP_FILTERS", filtersString.c_str());
+
+  auto activeBrowsingContextIDString =
+      Smprintf("%" PRIu64, ActivePS::ActiveBrowsingContextID(lock));
+  aSetEnv("MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID",
+          activeBrowsingContextIDString.get());
 }
 
 }  // namespace mozilla
@@ -5483,6 +5518,7 @@ bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer,
 
 UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
+  AUTO_PROFILER_LABEL("profiler_capture_backtrace", PROFILER);
 
   // Quick is-active check before allocating a buffer.
   if (!profiler_is_active()) {

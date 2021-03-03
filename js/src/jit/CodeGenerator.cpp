@@ -1269,19 +1269,18 @@ void CodeGenerator::visitNonNegativeIntPtrToInt32(
   Register output = ToRegister(lir->output());
   MOZ_ASSERT(ToRegister(lir->input()) == output);
 
-#  ifdef DEBUG
-  Label ok;
-  masm.branchPtr(Assembler::NotSigned, output, output, &ok);
-  masm.assumeUnreachable("Unexpected negative value");
-  masm.bind(&ok);
-#  endif
-
   Label bail;
-  masm.branchPtr(Assembler::Above, output, Imm32(INT32_MAX), &bail);
+  masm.guardNonNegativeIntPtrToInt32(output, &bail);
   bailoutFrom(&bail, lir->snapshot());
 #else
   MOZ_CRASH("Not used on 32-bit platforms");
 #endif
+}
+
+void CodeGenerator::visitIntPtrToDouble(LIntPtrToDouble* lir) {
+  Register input = ToRegister(lir->input());
+  FloatRegister output = ToFloatRegister(lir->output());
+  masm.convertIntPtrToDouble(input, output);
 }
 
 void CodeGenerator::visitAdjustDataViewLength(LAdjustDataViewLength* lir) {
@@ -2456,7 +2455,7 @@ static void CreateMatchResultFallback(MacroAssembler& masm, Register object,
   masm.move32(Imm32(int32_t(templateObject.getAllocKind())), temp1);
   masm.passABIArg(temp1);
   masm.move32(
-      Imm32(int32_t(templateObject.asNativeTemplateObject().numDynamicSlots())),
+      Imm32(int32_t(templateObject.asTemplateNativeObject().numDynamicSlots())),
       temp2);
   masm.passABIArg(temp2);
   masm.callWithABI<Fn, CreateMatchResultFallbackFunc>();
@@ -2500,8 +2499,8 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     return nullptr;
   }
   TemplateObject templateObj(templateObject);
-  const NativeTemplateObject& nativeTemplateObj =
-      templateObj.asNativeTemplateObject();
+  const TemplateNativeObject& nativeTemplateObj =
+      templateObj.asTemplateNativeObject();
 
   // The template object should have enough space for the maximum number of
   // pairs this stub can handle.
@@ -4545,9 +4544,10 @@ void CodeGenerator::visitTruncateBigIntToInt64(LTruncateBigIntToInt64* lir) {
   masm.loadBigInt64(operand, output);
 }
 
-void CodeGenerator::emitCreateBigInt(LInstruction* lir, Scalar::Type type,
-                                     Register64 input, Register output,
-                                     Register maybeTemp) {
+OutOfLineCode* CodeGenerator::createBigIntOutOfLine(LInstruction* lir,
+                                                    Scalar::Type type,
+                                                    Register64 input,
+                                                    Register output) {
 #if JS_BITS_PER_WORD == 32
   using Fn = BigInt* (*)(JSContext*, uint32_t, uint32_t);
   auto args = ArgList(input.low, input.high);
@@ -4556,15 +4556,19 @@ void CodeGenerator::emitCreateBigInt(LInstruction* lir, Scalar::Type type,
   auto args = ArgList(input);
 #endif
 
-  OutOfLineCode* ool;
   if (type == Scalar::BigInt64) {
-    ool = oolCallVM<Fn, jit::CreateBigIntFromInt64>(lir, args,
-                                                    StoreRegisterTo(output));
-  } else {
-    MOZ_ASSERT(type == Scalar::BigUint64);
-    ool = oolCallVM<Fn, jit::CreateBigIntFromUint64>(lir, args,
+    return oolCallVM<Fn, jit::CreateBigIntFromInt64>(lir, args,
                                                      StoreRegisterTo(output));
   }
+  MOZ_ASSERT(type == Scalar::BigUint64);
+  return oolCallVM<Fn, jit::CreateBigIntFromUint64>(lir, args,
+                                                    StoreRegisterTo(output));
+}
+
+void CodeGenerator::emitCreateBigInt(LInstruction* lir, Scalar::Type type,
+                                     Register64 input, Register output,
+                                     Register maybeTemp) {
+  OutOfLineCode* ool = createBigIntOutOfLine(lir, type, input, output);
 
   if (maybeTemp != InvalidReg) {
     masm.newGCBigInt(output, maybeTemp, ool->entry(), bigIntsCanBeInNursery());
@@ -5685,15 +5689,51 @@ void CodeGenerator::emitPushArguments(LApplyArgsGeneric* apply,
   masm.pushValue(ToValue(apply, LApplyArgsGeneric::ThisIndex));
 }
 
-void CodeGenerator::emitPushElementsAsArguments(Register tmpArgc,
-                                                Register elementsAndArgc,
-                                                Register extraStackSpace) {
-  // Pushes |tmpArgc| number of elements stored in |elementsAndArgc| onto the
-  // stack. |extraStackSpace| is used as a temp register within this function,
-  // but must be restored before returning.
-  // On exit, |tmpArgc| is written to |elementsAndArgc|, so we can keep using
-  // |tmpArgc| as a scratch register. And |elementsAndArgc| is from now on the
-  // register holding the arguments count.
+void CodeGenerator::emitPushArguments(LApplyArgsObj* apply,
+                                      Register extraStackSpace) {
+  // argc and argsObj are mapped to the same calltemp register.
+  MOZ_ASSERT(apply->getArgsObj() == apply->getArgc());
+
+  Register tmpArgc = ToRegister(apply->getTempObject());
+  Register argsObj = ToRegister(apply->getArgsObj());
+
+  // Load argc into tmpArgc.
+  Address lengthAddr(argsObj, ArgumentsObject::getInitialLengthSlotOffset());
+  masm.unboxInt32(lengthAddr, tmpArgc);
+  masm.rshift32(Imm32(ArgumentsObject::PACKED_BITS_COUNT), tmpArgc);
+
+  // Allocate space on the stack for arguments. This modifies extraStackSpace.
+  emitAllocateSpaceForApply(tmpArgc, extraStackSpace);
+
+  // Load arguments data
+  masm.loadPrivate(Address(argsObj, ArgumentsObject::getDataSlotOffset()),
+                   argsObj);
+  size_t argsSrcOffset = ArgumentsData::offsetOfArgs();
+
+  // This is the end of the lifetime of argsObj.
+  // After this call, the argsObj register holds the argument count instead.
+  emitPushArrayAsArguments(tmpArgc, argsObj, extraStackSpace, argsSrcOffset);
+
+  masm.addPtr(Imm32(sizeof(Value)), extraStackSpace);
+  masm.pushValue(ToValue(apply, LApplyArgsObj::ThisIndex));
+}
+
+void CodeGenerator::emitPushArrayAsArguments(Register tmpArgc,
+                                             Register srcBaseAndArgc,
+                                             Register scratch,
+                                             size_t argvSrcOffset) {
+  // Preconditions:
+  // 1. |tmpArgc| * sizeof(Value) bytes have been allocated at the top of
+  //    the stack to hold arguments.
+  // 2. |srcBaseAndArgc| + |srcOffset| points to an array of |tmpArgc| values.
+  //
+  // Postconditions:
+  // 1. The arguments at |srcBaseAndArgc| + |srcOffset| have been copied into
+  //    the allocated space.
+  // 2. |srcBaseAndArgc| now contains the original value of |tmpArgc|.
+  //
+  // |scratch| is used as a temp register within this function. It is
+  // restored before returning.
 
   Label noCopy, epilogue;
 
@@ -5704,10 +5744,10 @@ void CodeGenerator::emitPushElementsAsArguments(Register tmpArgc,
   // no values.
   size_t argvDstOffset = 0;
 
-  Register argvSrcBase = elementsAndArgc;  // Elements value
+  Register argvSrcBase = srcBaseAndArgc;
 
-  masm.push(extraStackSpace);
-  Register copyreg = extraStackSpace;
+  masm.push(scratch);
+  Register copyreg = scratch;
   argvDstOffset += sizeof(void*);
 
   masm.push(tmpArgc);
@@ -5715,19 +5755,20 @@ void CodeGenerator::emitPushElementsAsArguments(Register tmpArgc,
   argvDstOffset += sizeof(void*);
 
   // Copy
-  emitCopyValuesForApply(argvSrcBase, argvIndex, copyreg, 0, argvDstOffset);
+  emitCopyValuesForApply(argvSrcBase, argvIndex, copyreg, argvSrcOffset,
+                         argvDstOffset);
 
   // Restore.
-  masm.pop(elementsAndArgc);
-  masm.pop(extraStackSpace);
+  masm.pop(srcBaseAndArgc);  // srcBaseAndArgc now contains argc.
+  masm.pop(scratch);
   masm.jump(&epilogue);
 
   // Clear argc if we skipped the copy step.
   masm.bind(&noCopy);
-  masm.movePtr(ImmPtr(0), elementsAndArgc);
+  masm.movePtr(ImmWord(0), srcBaseAndArgc);
 
   // Join with all arguments copied and the extra stack usage computed.
-  // Note, "elements" has become "argc".
+  // Note, "srcBase" has become "argc".
   masm.bind(&epilogue);
 }
 
@@ -5749,7 +5790,9 @@ void CodeGenerator::emitPushArguments(LApplyArrayGeneric* apply,
   emitAllocateSpaceForApply(tmpArgc, extraStackSpace);
 
   // After this call "elements" has become "argc".
-  emitPushElementsAsArguments(tmpArgc, elementsAndArgc, extraStackSpace);
+  size_t elementsOffset = 0;
+  emitPushArrayAsArguments(tmpArgc, elementsAndArgc, extraStackSpace,
+                           elementsOffset);
 
   // Push |this|.
   masm.addPtr(Imm32(sizeof(Value)), extraStackSpace);
@@ -5777,7 +5820,9 @@ void CodeGenerator::emitPushArguments(LConstructArrayGeneric* construct,
 
   // After this call "elements" has become "argc" and "newTarget" has become
   // "extraStackSpace".
-  emitPushElementsAsArguments(tmpArgc, elementsAndArgc, extraStackSpace);
+  size_t elementsOffset = 0;
+  emitPushArrayAsArguments(tmpArgc, elementsAndArgc, extraStackSpace,
+                           elementsOffset);
 
   // Push |this|.
   masm.addPtr(Imm32(sizeof(Value)), extraStackSpace);
@@ -5793,16 +5838,17 @@ void CodeGenerator::emitApplyGeneric(T* apply) {
   Register objreg = ToRegister(apply->getTempObject());
   Register extraStackSpace = ToRegister(apply->getTempStackCounter());
 
-  // Holds the function nargs, computed in the invoker or (for ApplyArray and
-  // ConstructArray) in the argument pusher.
+  // Holds the function nargs, computed in the invoker or (for ApplyArray,
+  // ConstructArray, or ApplyArgsObj) in the argument pusher.
   Register argcreg = ToRegister(apply->getArgc());
 
   // Copy the arguments of the current function.
   //
-  // In the case of ApplyArray and ConstructArray, also compute argc: the argc
-  // register and the elements register are the same; argc must not be
-  // referenced before the call to emitPushArguments() and elements must not be
-  // referenced after it returns.
+  // In the case of ApplyArray, ConstructArray, or ApplyArgsObj, also
+  // compute argc. The argc register and the elements/argsObj register
+  // are the same; argc must not be referenced before the call to
+  // emitPushArguments() and elements/argsObj must not be referenced
+  // after it returns.
   //
   // In the case of ConstructArray, also overwrite newTarget with
   // extraStackSpace; newTarget must not be referenced after this point.
@@ -5965,6 +6011,18 @@ void CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric* apply) {
 
   // Ensure that we have a reasonable number of arguments.
   bailoutCmp32(Assembler::Above, argcreg, Imm32(JIT_ARGS_LENGTH_MAX), snapshot);
+
+  emitApplyGeneric(apply);
+}
+
+void CodeGenerator::visitApplyArgsObj(LApplyArgsObj* apply) {
+  Register argsObj = ToRegister(apply->getArgsObj());
+  Register temp = ToRegister(apply->getTempObject());
+
+  Label bail;
+  masm.loadArgumentsObjectLength(argsObj, temp, &bail);
+  masm.branch32(Assembler::Above, temp, Imm32(JIT_ARGS_LENGTH_MAX), &bail);
+  bailoutFrom(&bail, apply->snapshot());
 
   emitApplyGeneric(apply);
 }
@@ -6878,10 +6936,10 @@ void CodeGenerator::visitNewObjectVMCall(LNewObject* lir) {
 }
 
 static bool ShouldInitFixedSlots(LInstruction* lir, const TemplateObject& obj) {
-  if (!obj.isNative()) {
+  if (!obj.isNativeObject()) {
     return true;
   }
-  const NativeTemplateObject& templateObj = obj.asNativeTemplateObject();
+  const TemplateNativeObject& templateObj = obj.asTemplateNativeObject();
 
   // Look for StoreFixedSlot instructions following an object allocation
   // that write to this object before a GC is triggered or this object is
@@ -7260,13 +7318,14 @@ void CodeGenerator::visitArgumentsObjectLength(LArgumentsObjectLength* lir) {
   bailoutFrom(&bail, lir->snapshot());
 }
 
-void CodeGenerator::visitGuardArgumentsObjectNotOverriddenIterator(
-    LGuardArgumentsObjectNotOverriddenIterator* lir) {
+void CodeGenerator::visitGuardArgumentsObjectFlags(
+    LGuardArgumentsObjectFlags* lir) {
   Register argsObj = ToRegister(lir->getArgsObject());
   Register temp = ToRegister(lir->temp());
 
   Label bail;
-  masm.branchArgumentsObjectHasOverridenIterator(argsObj, temp, &bail);
+  masm.branchTestArgumentsObjectFlags(argsObj, temp, lir->mir()->flags(),
+                                      Assembler::NonZero, &bail);
   bailoutFrom(&bail, lir->snapshot());
 }
 
@@ -7832,34 +7891,23 @@ void CodeGenerator::visitWasmStoreSlotI64(LWasmStoreSlotI64* ins) {
   masm.store64(value, addr);
 }
 
-void CodeGenerator::visitArrayBufferByteLengthInt32(
-    LArrayBufferByteLengthInt32* lir) {
+void CodeGenerator::visitArrayBufferByteLength(LArrayBufferByteLength* lir) {
   Register obj = ToRegister(lir->object());
   Register out = ToRegister(lir->output());
-
-  Label bail;
-  masm.loadArrayBufferByteLengthInt32(obj, out, &bail);
-  if (bail.used()) {
-    bailoutFrom(&bail, lir->snapshot());
-  }
+  masm.loadArrayBufferByteLengthIntPtr(obj, out);
 }
 
 void CodeGenerator::visitArrayBufferViewLength(LArrayBufferViewLength* lir) {
   Register obj = ToRegister(lir->object());
   Register out = ToRegister(lir->output());
-  masm.loadArrayBufferViewLengthPtr(obj, out);
+  masm.loadArrayBufferViewLengthIntPtr(obj, out);
 }
 
 void CodeGenerator::visitArrayBufferViewByteOffset(
     LArrayBufferViewByteOffset* lir) {
   Register obj = ToRegister(lir->object());
   Register out = ToRegister(lir->output());
-
-  Label bail;
-  masm.loadArrayBufferViewByteOffsetInt32(obj, out, &bail);
-  if (bail.used()) {
-    bailoutFrom(&bail, lir->snapshot());
-  }
+  masm.loadArrayBufferViewByteOffsetIntPtr(obj, out);
 }
 
 void CodeGenerator::visitArrayBufferViewElements(
@@ -7869,11 +7917,21 @@ void CodeGenerator::visitArrayBufferViewElements(
   masm.loadPtr(Address(obj, ArrayBufferViewObject::dataOffset()), out);
 }
 
-void CodeGenerator::visitTypedArrayElementShift(LTypedArrayElementShift* lir) {
+void CodeGenerator::visitTypedArrayElementSize(LTypedArrayElementSize* lir) {
   Register obj = ToRegister(lir->object());
   Register out = ToRegister(lir->output());
 
-  masm.typedArrayElementShift(obj, out);
+  masm.typedArrayElementSize(obj, out);
+}
+
+void CodeGenerator::visitGuardHasAttachedArrayBuffer(
+    LGuardHasAttachedArrayBuffer* lir) {
+  Register obj = ToRegister(lir->object());
+  Register temp = ToRegister(lir->temp());
+
+  Label bail;
+  masm.branchIfHasDetachedArrayBuffer(obj, temp, &bail);
+  bailoutFrom(&bail, lir->snapshot());
 }
 
 class OutOfLineGuardNumberToIntPtrIndex
@@ -12375,12 +12433,12 @@ void CodeGenerator::visitLoadUnboxedScalar(LLoadUnboxedScalar* lir) {
 
   Label fail;
   if (lir->index()->isConstant()) {
-    Address source = ToAddress(elements, lir->index(), storageType);
+    Address source =
+        ToAddress(elements, lir->index(), storageType, mir->offsetAdjustment());
     masm.loadFromTypedArray(storageType, source, out, temp, &fail);
   } else {
-    size_t width = Scalar::byteSize(storageType);
     BaseIndex source(elements, ToRegister(lir->index()),
-                     ScaleFromElemWidth(width), mir->offsetAdjustment());
+                     ScaleFromScalarType(storageType), mir->offsetAdjustment());
     masm.loadFromTypedArray(storageType, source, out, temp, &fail);
   }
 
@@ -12404,9 +12462,8 @@ void CodeGenerator::visitLoadUnboxedBigInt(LLoadUnboxedBigInt* lir) {
         ToAddress(elements, lir->index(), storageType, mir->offsetAdjustment());
     masm.load64(source, temp64);
   } else {
-    size_t width = Scalar::byteSize(storageType);
     BaseIndex source(elements, ToRegister(lir->index()),
-                     ScaleFromElemWidth(width), mir->offsetAdjustment());
+                     ScaleFromScalarType(storageType), mir->offsetAdjustment());
     masm.load64(source, temp64);
   }
 
@@ -12562,7 +12619,7 @@ void CodeGenerator::visitLoadTypedArrayElementHole(
   Register scratch = out.scratchReg();
   Register scratch2 = ToRegister(lir->temp());
   Register index = ToRegister(lir->index());
-  masm.loadArrayBufferViewLengthPtr(object, scratch);
+  masm.loadArrayBufferViewLengthIntPtr(object, scratch);
 
   // Load undefined if index >= length.
   Label outOfBounds, done;
@@ -12572,9 +12629,8 @@ void CodeGenerator::visitLoadTypedArrayElementHole(
   masm.loadPtr(Address(object, ArrayBufferViewObject::dataOffset()), scratch);
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
   Label fail;
-  BaseIndex source(scratch, index, ScaleFromElemWidth(width));
+  BaseIndex source(scratch, index, ScaleFromScalarType(arrayType));
   masm.loadFromTypedArray(arrayType, source, out, lir->mir()->allowDouble(),
                           out.scratchReg(), &fail);
   masm.jump(&done);
@@ -12607,7 +12663,7 @@ void CodeGenerator::visitLoadTypedArrayElementHoleBigInt(
   // Load the length.
   Register scratch = out.scratchReg();
   Register index = ToRegister(lir->index());
-  masm.loadArrayBufferViewLengthPtr(object, scratch);
+  masm.loadArrayBufferViewLengthIntPtr(object, scratch);
 
   // Load undefined if index >= length.
   Label outOfBounds, done;
@@ -12617,8 +12673,7 @@ void CodeGenerator::visitLoadTypedArrayElementHoleBigInt(
   masm.loadPtr(Address(object, ArrayBufferViewObject::dataOffset()), scratch);
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
-  BaseIndex source(scratch, index, ScaleFromElemWidth(width));
+  BaseIndex source(scratch, index, ScaleFromScalarType(arrayType));
   masm.load64(source, temp64);
 
   Register bigInt = out.scratchReg();
@@ -12768,9 +12823,8 @@ void CodeGenerator::visitStoreUnboxedScalar(LStoreUnboxedScalar* lir) {
     Address dest = ToAddress(elements, lir->index(), writeType);
     StoreToTypedArray(masm, writeType, value, dest);
   } else {
-    size_t width = Scalar::byteSize(mir->writeType());
     BaseIndex dest(elements, ToRegister(lir->index()),
-                   ScaleFromElemWidth(width));
+                   ScaleFromScalarType(writeType));
     StoreToTypedArray(masm, writeType, value, dest);
   }
 }
@@ -12780,8 +12834,7 @@ void CodeGenerator::visitStoreUnboxedBigInt(LStoreUnboxedBigInt* lir) {
   Register value = ToRegister(lir->value());
   Register64 temp = ToRegister64(lir->temp());
 
-  const MStoreUnboxedScalar* mir = lir->mir();
-  Scalar::Type writeType = mir->writeType();
+  Scalar::Type writeType = lir->mir()->writeType();
 
   masm.loadBigInt64(value, temp);
 
@@ -12789,9 +12842,8 @@ void CodeGenerator::visitStoreUnboxedBigInt(LStoreUnboxedBigInt* lir) {
     Address dest = ToAddress(elements, lir->index(), writeType);
     masm.storeToTypedBigIntArray(writeType, temp, dest);
   } else {
-    size_t width = Scalar::byteSize(mir->writeType());
     BaseIndex dest(elements, ToRegister(lir->index()),
-                   ScaleFromElemWidth(width));
+                   ScaleFromScalarType(writeType));
     masm.storeToTypedBigIntArray(writeType, temp, dest);
   }
 }
@@ -12926,7 +12978,6 @@ void CodeGenerator::visitStoreTypedArrayElementHole(
   const LAllocation* value = lir->value();
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   Register index = ToRegister(lir->index());
   const LAllocation* length = lir->length();
@@ -12939,7 +12990,7 @@ void CodeGenerator::visitStoreTypedArrayElementHole(
     masm.spectreBoundsCheckPtr(index, ToAddress(length), spectreTemp, &skip);
   }
 
-  BaseIndex dest(elements, index, ScaleFromElemWidth(width));
+  BaseIndex dest(elements, index, ScaleFromScalarType(arrayType));
   StoreToTypedArray(masm, arrayType, value, dest);
 
   masm.bind(&skip);
@@ -12952,7 +13003,6 @@ void CodeGenerator::visitStoreTypedArrayElementHoleBigInt(
   Register64 temp = ToRegister64(lir->temp());
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   Register index = ToRegister(lir->index());
   const LAllocation* length = lir->length();
@@ -12967,7 +13017,7 @@ void CodeGenerator::visitStoreTypedArrayElementHoleBigInt(
 
   masm.loadBigInt64(value, temp);
 
-  BaseIndex dest(elements, index, ScaleFromElemWidth(width));
+  BaseIndex dest(elements, index, ScaleFromScalarType(arrayType));
   masm.storeToTypedBigIntArray(arrayType, temp, dest);
 
   masm.bind(&skip);

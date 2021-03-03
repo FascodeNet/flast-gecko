@@ -193,19 +193,26 @@ already_AddRefed<ClientManagerService> ClientManagerService::GetInstance() {
 bool ClientManagerService::AddSource(ClientSourceParent* aSource) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aSource);
-  auto entry = mSourceTable.LookupForAdd(aSource->Info().Id());
-  // Do not permit overwriting an existing ClientSource with the same
-  // UUID.  This would allow a spoofed ClientParentSource actor to
-  // intercept postMessage() intended for the real actor.
-  if (NS_WARN_IF(!!entry)) {
+  if (!mSourceTable.WithEntryHandle(aSource->Info().Id(),
+                                    [aSource](auto&& entry) {
+                                      // Do not permit overwriting an existing
+                                      // ClientSource with the same UUID.  This
+                                      // would allow a spoofed
+                                      // ClientParentSource actor to intercept
+                                      // postMessage() intended for the real
+                                      // actor.
+                                      if (NS_WARN_IF(entry.HasEntry())) {
+                                        return false;
+                                      }
+                                      entry.Insert(aSource);
+                                      return true;
+                                    })) {
     return false;
   }
-  entry.OrInsert([&] { return aSource; });
 
   // Now that we've been created, notify any handles that were
   // waiting on us.
-  auto* handles = mPendingHandles.GetValue(aSource->Info().Id());
-  if (handles) {
+  if (auto handles = mPendingHandles.Lookup(aSource->Info().Id())) {
     for (auto handle : *handles) {
       handle->FoundSource(aSource);
     }
@@ -246,14 +253,13 @@ ClientSourceParent* ClientManagerService::FindSource(
 
 void ClientManagerService::WaitForSource(ClientHandleParent* aHandle,
                                          const nsID& aID) {
-  auto& entry = mPendingHandles.GetOrInsert(aID);
+  auto& entry = mPendingHandles.LookupOrInsert(aID);
   entry.AppendElement(aHandle);
 }
 
 void ClientManagerService::StopWaitingForSource(ClientHandleParent* aHandle,
                                                 const nsID& aID) {
-  auto* entry = mPendingHandles.GetValue(aID);
-  if (entry) {
+  if (auto entry = mPendingHandles.Lookup(aID)) {
     entry->RemoveElement(aHandle);
   }
 }

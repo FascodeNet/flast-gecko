@@ -94,27 +94,6 @@ const convertNavHistoryContainerResultNode = (container, converter) => {
   return results;
 };
 
-var _observer;
-
-const getHistoryObserver = () => {
-  if (!_observer) {
-    _observer = new (class extends EventEmitter {
-      onDeleteURI(uri, guid, reason) {
-        this.emit("visitRemoved", { allHistory: false, urls: [uri.spec] });
-      }
-      onBeginUpdateBatch() {}
-      onEndUpdateBatch() {}
-      onDeleteVisits(uri, partialRemoval, guid, reason) {
-        if (!partialRemoval) {
-          this.emit("visitRemoved", { allHistory: false, urls: [uri.spec] });
-        }
-      }
-    })();
-    PlacesUtils.history.addObserver(_observer);
-  }
-  return _observer;
-};
-
 this.history = class extends ExtensionAPI {
   getAPI(context) {
     return {
@@ -257,23 +236,37 @@ this.history = class extends ExtensionAPI {
           context,
           name: "history.onVisitRemoved",
           register: fire => {
-            let listener = (event, data) => {
-              fire.sync(data);
-            };
-            const historyClearedListener = events => {
-              fire.sync({ allHistory: true, urls: [] });
+            const listener = events => {
+              const removedURLs = [];
+
+              for (const event of events) {
+                switch (event.type) {
+                  case "history-cleared": {
+                    fire.sync({ allHistory: true, urls: [] });
+                    break;
+                  }
+                  case "page-removed": {
+                    if (!event.isPartialVisistsRemoval) {
+                      removedURLs.push(event.url);
+                    }
+                    break;
+                  }
+                }
+              }
+
+              if (removedURLs.length) {
+                fire.sync({ allHistory: false, urls: removedURLs });
+              }
             };
 
-            getHistoryObserver().on("visitRemoved", listener);
             PlacesUtils.observers.addListener(
-              ["history-cleared"],
-              historyClearedListener
+              ["history-cleared", "page-removed"],
+              listener
             );
             return () => {
-              getHistoryObserver().off("visitRemoved", listener);
               PlacesUtils.observers.removeListener(
-                ["history-cleared"],
-                historyClearedListener
+                ["history-cleared", "page-removed"],
+                listener
               );
             };
           },

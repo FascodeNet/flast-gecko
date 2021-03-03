@@ -106,6 +106,7 @@ class ScriptSourceObject;
 namespace frontend {
 
 struct CompilationStencil;
+struct ExtensibleCompilationStencil;
 struct CompilationGCOutput;
 class ErrorReporter;
 class FunctionBox;
@@ -121,16 +122,16 @@ ModuleObject* CompileModule(JSContext* cx,
 
 // Parse a module of the given source.  This is an internal API; if you want to
 // compile a module as a user, use CompileModule above.
-bool ParseModuleToStencil(JSContext* cx, CompilationStencil& stencil,
-                          JS::SourceText<char16_t>& srcBuf);
-bool ParseModuleToStencil(JSContext* cx, CompilationStencil& stencil,
-                          JS::SourceText<mozilla::Utf8Unit>& srcBuf);
+UniquePtr<CompilationStencil> ParseModuleToStencil(
+    JSContext* cx, CompilationInput& input, JS::SourceText<char16_t>& srcBuf);
+UniquePtr<CompilationStencil> ParseModuleToStencil(
+    JSContext* cx, CompilationInput& input,
+    JS::SourceText<mozilla::Utf8Unit>& srcBuf);
 
-UniquePtr<CompilationStencil> ParseModuleToStencil(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-    JS::SourceText<char16_t>& srcBuf);
-UniquePtr<CompilationStencil> ParseModuleToStencil(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+UniquePtr<ExtensibleCompilationStencil> ParseModuleToExtensibleStencil(
+    JSContext* cx, CompilationInput& input, JS::SourceText<char16_t>& srcBuf);
+UniquePtr<ExtensibleCompilationStencil> ParseModuleToExtensibleStencil(
+    JSContext* cx, CompilationInput& input,
     JS::SourceText<mozilla::Utf8Unit>& srcBuf);
 
 //
@@ -145,32 +146,32 @@ UniquePtr<CompilationStencil> ParseModuleToStencil(
 //     Function("/*", "*/x) {")
 //     Function("x){ if (3", "return x;}")
 //
-MOZ_MUST_USE JSFunction* CompileStandaloneFunction(
+[[nodiscard]] JSFunction* CompileStandaloneFunction(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf,
     const mozilla::Maybe<uint32_t>& parameterListEnd,
     frontend::FunctionSyntaxKind syntaxKind);
 
-MOZ_MUST_USE JSFunction* CompileStandaloneGenerator(
+[[nodiscard]] JSFunction* CompileStandaloneGenerator(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf,
     const mozilla::Maybe<uint32_t>& parameterListEnd,
     frontend::FunctionSyntaxKind syntaxKind);
 
-MOZ_MUST_USE JSFunction* CompileStandaloneAsyncFunction(
+[[nodiscard]] JSFunction* CompileStandaloneAsyncFunction(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf,
     const mozilla::Maybe<uint32_t>& parameterListEnd,
     frontend::FunctionSyntaxKind syntaxKind);
 
-MOZ_MUST_USE JSFunction* CompileStandaloneAsyncGenerator(
+[[nodiscard]] JSFunction* CompileStandaloneAsyncGenerator(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf,
     const mozilla::Maybe<uint32_t>& parameterListEnd,
     frontend::FunctionSyntaxKind syntaxKind);
 
 // Compile a single function in given enclosing non-syntactic scope.
-MOZ_MUST_USE JSFunction* CompileStandaloneFunctionInNonSyntacticScope(
+[[nodiscard]] JSFunction* CompileStandaloneFunctionInNonSyntacticScope(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf,
     const mozilla::Maybe<uint32_t>& parameterListEnd,
@@ -194,6 +195,12 @@ bool IsIdentifierNameOrPrivateName(JSLinearString* str);
  */
 bool IsIdentifier(const Latin1Char* chars, size_t length);
 bool IsIdentifier(const char16_t* chars, size_t length);
+
+/*
+ * ASCII variant with known length.
+ */
+bool IsIdentifierASCII(char c);
+bool IsIdentifierASCII(char c1, char c2);
 
 bool IsIdentifierNameOrPrivateName(const Latin1Char* chars, size_t length);
 bool IsIdentifierNameOrPrivateName(const char16_t* chars, size_t length);

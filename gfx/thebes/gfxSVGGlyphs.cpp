@@ -107,23 +107,28 @@ gfxSVGGlyphsDocument* gfxSVGGlyphs::FindOrCreateGlyphsDocument(
     return nullptr;
   }
 
-  gfxSVGGlyphsDocument* result = mGlyphDocs.Get(entry->mDocOffset);
+  return mGlyphDocs.WithEntryHandle(
+      entry->mDocOffset, [&](auto&& glyphDocsEntry) -> gfxSVGGlyphsDocument* {
+        if (!glyphDocsEntry) {
+          unsigned int length;
+          const uint8_t* data =
+              (const uint8_t*)hb_blob_get_data(mSVGData, &length);
+          if (entry->mDocOffset > 0 && uint64_t(mHeader->mDocIndexOffset) +
+                                               entry->mDocOffset +
+                                               entry->mDocLength <=
+                                           length) {
+            return glyphDocsEntry
+                .Insert(MakeUnique<gfxSVGGlyphsDocument>(
+                    data + mHeader->mDocIndexOffset + entry->mDocOffset,
+                    entry->mDocLength, this))
+                .get();
+          }
 
-  if (!result) {
-    unsigned int length;
-    const uint8_t* data = (const uint8_t*)hb_blob_get_data(mSVGData, &length);
-    if (entry->mDocOffset > 0 && uint64_t(mHeader->mDocIndexOffset) +
-                                         entry->mDocOffset +
-                                         entry->mDocLength <=
-                                     length) {
-      result = new gfxSVGGlyphsDocument(
-          data + mHeader->mDocIndexOffset + entry->mDocOffset,
-          entry->mDocLength, this);
-      mGlyphDocs.Put(entry->mDocOffset, result);
-    }
-  }
+          return nullptr;
+        }
 
-  return result;
+        return glyphDocsEntry->get();
+      });
 }
 
 nsresult gfxSVGGlyphsDocument::SetupPresentation() {
@@ -219,17 +224,13 @@ bool gfxSVGGlyphs::GetGlyphExtents(uint32_t aGlyphId,
 }
 
 Element* gfxSVGGlyphs::GetGlyphElement(uint32_t aGlyphId) {
-  Element* elem;
-
-  if (!mGlyphIdMap.Get(aGlyphId, &elem)) {
-    elem = nullptr;
+  return mGlyphIdMap.LookupOrInsertWith(aGlyphId, [&] {
+    Element* elem = nullptr;
     if (gfxSVGGlyphsDocument* set = FindOrCreateGlyphsDocument(aGlyphId)) {
       elem = set->GetGlyphElement(aGlyphId);
     }
-    mGlyphIdMap.Put(aGlyphId, elem);
-  }
-
-  return elem;
+    return elem;
+  });
 }
 
 bool gfxSVGGlyphs::HasSVGGlyph(uint32_t aGlyphId) {
@@ -448,7 +449,7 @@ void gfxSVGGlyphsDocument::InsertGlyphId(Element* aGlyphElement) {
     id = id * 10 + (ch - '0');
   }
 
-  mGlyphIdMap.Put(id, aGlyphElement);
+  mGlyphIdMap.InsertOrUpdate(id, aGlyphElement);
 }
 
 size_t gfxSVGGlyphsDocument::SizeOfIncludingThis(

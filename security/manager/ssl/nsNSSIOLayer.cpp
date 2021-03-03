@@ -518,7 +518,7 @@ void nsSSLIOLayerHelpers::rememberTolerantAtVersion(const nsACString& hostName,
 
   entry.AssertInvariant();
 
-  mTLSIntoleranceInfo.Put(key, entry);
+  mTLSIntoleranceInfo.InsertOrUpdate(key, entry);
 }
 
 void nsSSLIOLayerHelpers::forgetIntolerance(const nsACString& hostName,
@@ -536,7 +536,7 @@ void nsSSLIOLayerHelpers::forgetIntolerance(const nsACString& hostName,
     entry.intoleranceReason = 0;
 
     entry.AssertInvariant();
-    mTLSIntoleranceInfo.Put(key, entry);
+    mTLSIntoleranceInfo.InsertOrUpdate(key, entry);
   }
 }
 
@@ -581,7 +581,7 @@ bool nsSSLIOLayerHelpers::rememberIntolerantAtVersion(
   entry.intolerant = intolerant;
   entry.intoleranceReason = intoleranceReason;
   entry.AssertInvariant();
-  mTLSIntoleranceInfo.Put(key, entry);
+  mTLSIntoleranceInfo.InsertOrUpdate(key, entry);
 
   return true;
 }
@@ -2548,7 +2548,8 @@ static PRFileDesc* nsSSLIOLayerImportFD(PRFileDesc* fd,
   uint32_t flags = 0;
   infoObject->GetProviderFlags(&flags);
   // Provide the client cert to HTTPS proxy no matter if it is anonymous.
-  if (flags & nsISocketProvider::ANONYMOUS_CONNECT && !haveHTTPSProxy) {
+  if (flags & nsISocketProvider::ANONYMOUS_CONNECT && !haveHTTPSProxy &&
+      !(flags & nsISocketProvider::ANONYMOUS_CONNECT_ALLOW_CLIENT_CERT)) {
     SSL_GetClientAuthDataHook(sslSock, nullptr, infoObject);
   } else {
     SSL_GetClientAuthDataHook(
@@ -2720,7 +2721,7 @@ static nsresult nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
     return NS_ERROR_FAILURE;
   }
 
-#ifdef __arm__
+#if defined(__arm__) && not defined(__ARM_FEATURE_CRYPTO)
   unsigned int enabledCiphers = 0;
   std::vector<uint16_t> ciphers(SSL_GetNumImplementedCiphers());
 
@@ -2732,10 +2733,11 @@ static nsresult nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
     return NS_ERROR_FAILURE;
   }
 
-  // On ARM, prefer (TLS_CHACHA20_POLY1305_SHA256) over AES. However,
-  // it may be disabled. If enabled, it will either be element [0] or [1]*.
-  // If [0], we're done. If [1], swap it with [0] (TLS_AES_128_GCM_SHA256).
-  // * (assuming the compile-time order remains unchanged)
+  // On ARM, prefer (TLS_CHACHA20_POLY1305_SHA256) over AES when hardware
+  // support for AES isn't available. However, it may be disabled. If enabled,
+  // it will either be element [0] or [1]*. If [0], we're done. If [1], swap it
+  // with [0] (TLS_AES_128_GCM_SHA256).
+  // *(assuming the compile-time order remains unchanged)
   if (enabledCiphers > 1) {
     if (ciphers[0] != TLS_CHACHA20_POLY1305_SHA256 &&
         ciphers[1] == TLS_CHACHA20_POLY1305_SHA256) {

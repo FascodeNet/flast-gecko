@@ -14,6 +14,7 @@
 #include "gfxQuad.h"
 #include "imgIEncoder.h"
 #include "mozilla/Base64.h"
+#include "mozilla/Components.h"
 #include "mozilla/dom/ImageEncoder.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRunnable.h"
@@ -31,6 +32,7 @@
 #include "mozilla/layers/SynchronousTask.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ServoStyleConsts.h"
 #include "mozilla/StaticPrefs_gfx.h"
@@ -48,7 +50,6 @@
 #include "nsPresContext.h"
 #include "nsRegion.h"
 #include "nsServiceManagerUtils.h"
-#include "GeckoProfiler.h"
 #include "ImageContainer.h"
 #include "ImageRegion.h"
 #include "gfx2DGlue.h"
@@ -1410,7 +1411,7 @@ void gfxUtils::RemoveShaderCacheFromDiskIfNecessary() {
     return;
   }
 
-  nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
+  nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
 
   // Get current values
   nsCString buildID(mozilla::PlatformBuildID());
@@ -1464,7 +1465,7 @@ DeviceColor ToDeviceColor(const sRGBColor& aColor) {
   // need to return the same object from all return points in this function. We
   // could declare a local Color variable and use that, but we might as well
   // just use aColor.
-  if (gfxPlatform::GetCMSMode() == eCMSMode_All) {
+  if (gfxPlatform::GetCMSMode() == CMSMode::All) {
     qcms_transform* transform = gfxPlatform::GetCMSRGBTransform();
     if (transform) {
       return gfxPlatform::TransformPixel(aColor, transform);

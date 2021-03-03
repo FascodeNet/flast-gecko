@@ -29,6 +29,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/Services.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/Hal.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/Document.h"
@@ -47,7 +48,6 @@
 #include <pthread.h>
 #include <wchar.h>
 
-#include "GeckoProfiler.h"
 #ifdef MOZ_ANDROID_HISTORY
 #  include "nsNetUtil.h"
 #  include "nsIURI.h"
@@ -401,7 +401,6 @@ nsAppShell::nsAppShell()
       GeckoThreadSupport::Init();
       GeckoAppShellSupport::Init();
       XPCOMEventTargetWrapper::Init();
-      mozilla::GeckoSystemStateListener::Init();
       mozilla::widget::Telemetry::Init();
       mozilla::widget::GeckoTelemetryDelegate::Init();
 
@@ -754,7 +753,7 @@ nsresult nsAppShell::AddObserver(const nsAString& aObserverKey,
                                  nsIObserver* aObserver) {
   NS_ASSERTION(aObserver != nullptr,
                "nsAppShell::AddObserver: aObserver is null!");
-  mObserversHash.Put(aObserverKey, aObserver);
+  mObserversHash.InsertOrUpdate(aObserverKey, aObserver);
   return NS_OK;
 }
 

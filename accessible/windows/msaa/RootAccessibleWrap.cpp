@@ -114,9 +114,9 @@ RootAccessibleWrap::accNavigate(
     return CO_E_OBJNOTCONNECTED;
   }
 
-  Accessible* target = nullptr;
+  LocalAccessible* target = nullptr;
   // Get the document in the active tab.
-  ProxyAccessible* docProxy = GetPrimaryRemoteTopLevelContentDoc();
+  RemoteAccessible* docProxy = GetPrimaryRemoteTopLevelContentDoc();
   if (docProxy) {
     target = WrapperFor(docProxy);
   } else {
@@ -152,11 +152,11 @@ RootAccessibleWrap::get_accFocus(
   // Focus might be in a remote document.
   // (The base implementation can't handle this.)
   // Get the document in the active tab.
-  ProxyAccessible* docProxy = GetPrimaryRemoteTopLevelContentDoc();
+  RemoteAccessible* docProxy = GetPrimaryRemoteTopLevelContentDoc();
   if (!docProxy) {
     return hr;
   }
-  Accessible* docAcc = WrapperFor(docProxy);
+  LocalAccessible* docAcc = WrapperFor(docProxy);
   if (!docAcc) {
     return E_FAIL;
   }

@@ -1525,14 +1525,19 @@ nsIFrame::SizeComputationResult nsTableFrame::ComputeSize(
     nscoord aAvailableISize, const LogicalSize& aMargin,
     const LogicalSize& aBorderPadding, const StyleSizeOverrides& aSizeOverrides,
     ComputeSizeFlags aFlags) {
+  // Only table wrapper calls this method, and it should use our writing mode.
+  MOZ_ASSERT(aWM == GetWritingMode(),
+             "aWM should be the same as our writing mode!");
+
   auto result = nsContainerFrame::ComputeSize(
       aRenderingContext, aWM, aCBSize, aAvailableISize, aMargin, aBorderPadding,
       aSizeOverrides, aFlags);
 
-  // XXX The code below doesn't make sense if the caller's writing mode
-  // is orthogonal to this frame's. Not sure yet what should happen then;
-  // for now, just bail out.
-  if (aWM.IsVertical() != GetWritingMode().IsVertical()) {
+  // If our containing block wants to override inner table frame's inline-size
+  // (e.g. when resolving flex base size), don't enforce the min inline-size
+  // later in this method.
+  if (aSizeOverrides.mApplyOverridesVerbatim && aSizeOverrides.mStyleISize &&
+      aSizeOverrides.mStyleISize->IsLengthPercentage()) {
     return result;
   }
 
@@ -3871,14 +3876,38 @@ void nsTableFrame::Dump(bool aDumpRows, bool aDumpCols, bool aDumpCellMap) {
 #endif
 
 bool nsTableFrame::ColumnHasCellSpacingBefore(int32_t aColIndex) const {
+  if (aColIndex == 0) {
+    return true;
+  }
   // Since fixed-layout tables should not have their column sizes change
   // as they load, we assume that all columns are significant.
-  if (LayoutStrategy()->GetType() == nsITableLayoutStrategy::Fixed) return true;
-  // the first column is always significant
-  if (aColIndex == 0) return true;
-  nsTableCellMap* cellMap = GetCellMap();
-  if (!cellMap) return false;
-  return cellMap->GetNumCellsOriginatingInCol(aColIndex) > 0;
+  auto* fif = static_cast<nsTableFrame*>(FirstInFlow());
+  if (fif->LayoutStrategy()->GetType() == nsITableLayoutStrategy::Fixed) {
+    return true;
+  }
+  nsTableCellMap* cellMap = fif->GetCellMap();
+  if (!cellMap) {
+    return false;
+  }
+  if (cellMap->GetNumCellsOriginatingInCol(aColIndex) > 0) {
+    return true;
+  }
+  // Check if we have a <col> element with a non-zero definite inline size.
+  // Note: percentages and calc(%) are intentionally not considered.
+  if (const auto* col = fif->GetColFrame(aColIndex)) {
+    const auto& iSize = col->StylePosition()->ISize(GetWritingMode());
+    if (iSize.ConvertsToLength() && iSize.ToLength() > 0) {
+      const auto& maxISize = col->StylePosition()->MaxISize(GetWritingMode());
+      if (!maxISize.ConvertsToLength() || maxISize.ToLength() > 0) {
+        return true;
+      }
+    }
+    const auto& minISize = col->StylePosition()->MinISize(GetWritingMode());
+    if (minISize.ConvertsToLength() && minISize.ToLength() > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /********************************************************************************
@@ -6314,7 +6343,6 @@ bool BCPaintBorderIterator::SetDamageArea(const nsRect& aDirtyRect) {
 
   Reset();
   mBlockDirInfo = new BCBlockDirSeg[mDamageArea.ColCount() + 1];
-  if (!mBlockDirInfo) return false;
   return true;
 }
 

@@ -704,8 +704,8 @@ JSLinearString* JSRope::flattenInternal(JSContext* maybecx) {
       MOZ_ASSERT(str->isRope());
       while (str != leftMostRope) {
         if (b == WithIncrementalBarrier) {
-          gc::PreWriteBarrier(str->d.s.u2.left);
-          gc::PreWriteBarrier(str->d.s.u3.right);
+          gc::PreWriteBarrierDuringFlattening(str->d.s.u2.left);
+          gc::PreWriteBarrierDuringFlattening(str->d.s.u3.right);
         }
         JSString* child = str->d.s.u2.left;
         // 'child' will be post-barriered during the later traversal.
@@ -715,8 +715,8 @@ JSLinearString* JSRope::flattenInternal(JSContext* maybecx) {
         str = child;
       }
       if (b == WithIncrementalBarrier) {
-        gc::PreWriteBarrier(str->d.s.u2.left);
-        gc::PreWriteBarrier(str->d.s.u3.right);
+        gc::PreWriteBarrierDuringFlattening(str->d.s.u2.left);
+        gc::PreWriteBarrierDuringFlattening(str->d.s.u3.right);
       }
       str->setNonInlineChars(wholeChars);
       uint32_t left_len = left.length();
@@ -763,8 +763,8 @@ JSLinearString* JSRope::flattenInternal(JSContext* maybecx) {
   pos = wholeChars;
 first_visit_node : {
   if (b == WithIncrementalBarrier) {
-    gc::PreWriteBarrier(str->d.s.u2.left);
-    gc::PreWriteBarrier(str->d.s.u3.right);
+    gc::PreWriteBarrierDuringFlattening(str->d.s.u2.left);
+    gc::PreWriteBarrierDuringFlattening(str->d.s.u3.right);
   }
 
   JSString& left = *str->d.s.u2.left;
@@ -1197,6 +1197,7 @@ bool js::CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp) {
   uint32_t c = 0;
 
   if (index != 0) {
+    /* Consume remaining characters only if the first character isn't '0'. */
     while (cp < end && IsAsciiDigit(*cp)) {
       oldIndex = index;
       c = AsciiDigitToNumber(*cp);
@@ -1205,7 +1206,7 @@ bool js::CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp) {
     }
   }
 
-  /* It's not an element if there are characters after the number. */
+  /* It's not an integer index if there are characters after the number. */
   if (cp != end) {
     return false;
   }

@@ -68,8 +68,9 @@ class ImportEntryObject : public NativeObject {
   static const JSClass class_;
   static bool isInstance(HandleValue value);
   static ImportEntryObject* create(JSContext* cx, HandleAtom moduleRequest,
-                                   HandleAtom importName, HandleAtom localName,
-                                   uint32_t lineNumber, uint32_t columnNumber);
+                                   HandleAtom maybeImportName,
+                                   HandleAtom localName, uint32_t lineNumber,
+                                   uint32_t columnNumber);
   JSAtom* moduleRequest() const;
   JSAtom* importName() const;
   JSAtom* localName() const;
@@ -276,6 +277,7 @@ class ModuleObject : public NativeObject {
     TopLevelCapabilitySlot,
     AsyncParentModulesSlot,
     PendingAsyncDependenciesSlot,
+    CycleRootSlot,
     SlotCount
   };
 
@@ -355,6 +357,8 @@ class ModuleObject : public NativeObject {
   JSObject* topLevelCapability() const;
   ListObject* asyncParentModules() const;
   uint32_t pendingAsyncDependencies() const;
+  void setCycleRoot(ModuleObject* cycleRoot);
+  ModuleObject* getCycleRoot() const;
 
   static bool appendAsyncParentModule(JSContext* cx, HandleModuleObject self,
                                       HandleModuleObject parent);
@@ -409,9 +413,6 @@ JSObject* GetOrCreateModuleMetaObject(JSContext* cx, HandleObject module);
 
 JSObject* CallModuleResolveHook(JSContext* cx, HandleValue referencingPrivate,
                                 HandleString specifier);
-
-// https://tc39.es/proposal-top-level-await/#sec-getasynccycleroot
-ModuleObject* GetAsyncCycleRoot(ModuleObject* module);
 
 // https://tc39.es/proposal-top-level-await/#sec-asyncmodulexecutionfulfilled
 void AsyncModuleExecutionFulfilled(JSContext* cx, HandleModuleObject module);

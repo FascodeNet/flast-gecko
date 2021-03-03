@@ -10,9 +10,7 @@
  *  sendWheelAndPaintNoFlush
  *  synthesizeMouse
  *  synthesizeMouseAtCenter
- *  synthesizeNativeMouseMove
- *  synthesizeNativeMouseClick
- *  synthesizeNativeMouseClickAtCenter
+ *  synthesizeNativeMouseEvent
  *  synthesizeWheel
  *  synthesizeWheelAtPoint
  *  synthesizeKey
@@ -155,38 +153,6 @@ function _EU_getPlatform() {
     return "linux";
   }
   return "unknown";
-}
-
-function _EU_nativeMouseDownEventMsg() {
-  switch (_EU_getPlatform()) {
-    case "windows":
-      return 2; // MOUSEEVENTF_LEFTDOWN
-    case "mac":
-      return 1; // NSEventTypeLeftMouseDown
-    case "linux":
-      return 4; // GDK_BUTTON_PRESS
-    case "android":
-      return 5; // ACTION_POINTER_DOWN
-  }
-  throw new Error(
-    "Native mouse-down events not supported on platform " + _EU_getPlatform()
-  );
-}
-
-function _EU_nativeMouseUpEventMsg() {
-  switch (_EU_getPlatform()) {
-    case "windows":
-      return 4; // MOUSEEVENTF_LEFTUP
-    case "mac":
-      return 2; // NSEventTypeLeftMouseUp
-    case "linux":
-      return 7; // GDK_BUTTON_RELEASE
-    case "android":
-      return 6; // ACTION_POINTER_UP
-  }
-  throw new Error(
-    "Native mouse-up events not supported on platform " + _EU_getPlatform()
-  );
 }
 
 /**
@@ -1027,93 +993,173 @@ function synthesizeNativeTap(
   utils.sendNativeTouchTap(x, y, aLongTap, observer);
 }
 
-function synthesizeNativeMouseMove(
-  aTarget,
-  aOffsetX,
-  aOffsetY,
-  aCallback,
-  aWindow = window
-) {
-  var utils = _getDOMWindowUtils(aWindow);
-  if (!utils) {
-    return;
-  }
-
-  var rect = aTarget.getBoundingClientRect();
-  var x = aOffsetX + window.mozInnerScreenX + rect.left;
-  var y = aOffsetY + window.mozInnerScreenY + rect.top;
-  var scale = utils.screenPixelsPerCSSPixel;
-
-  var observer = {
-    observe: (subject, topic, data) => {
-      if (aCallback && topic == "mouseevent") {
-        aCallback(data);
-      }
-    },
-  };
-  utils.sendNativeMouseMove(x * scale, y * scale, null, observer);
-}
-
-function synthesizeNativeMouseClick(
-  aTarget,
-  aOffsetX,
-  aOffsetY,
-  aCallback,
-  aWindow = window
-) {
-  var utils = _getDOMWindowUtils(aWindow);
-  if (!utils) {
-    return;
-  }
-
-  var rect = aTarget.getBoundingClientRect();
-  var x = aOffsetX + window.mozInnerScreenX + rect.left;
-  var y = aOffsetY + window.mozInnerScreenY + rect.top;
-  var scale = utils.screenPixelsPerCSSPixel;
-
-  var observer = {
-    observe: (subject, topic, data) => {
-      if (aCallback && topic == "mouseevent") {
-        aCallback(data);
-      }
-    },
-  };
-  utils.sendNativeMouseEvent(
-    x * scale,
-    y * scale,
-    _EU_nativeMouseDownEventMsg(),
-    0,
-    null,
-    function() {
-      utils.sendNativeMouseEvent(
-        x * scale,
-        y * scale,
-        _EU_nativeMouseUpEventMsg(),
-        0,
-        null,
-        observer
+function synthesizeNativeMouseEvent(aParams, aCallback = null) {
+  const {
+    type, // "click", "mousedown", "mouseup" or "mousemove"
+    target, // Origin of offsetX and offsetY, must be an element
+    offsetX, // X offset in `target` (in CSS pixels if `scale` is "screenPixelsPerCSSPixel*")
+    offsetY, // Y offset in `target` (in CSS pixels if `scale` is "screenPixelsPerCSSPixel*")
+    atCenter, // Instead of offsetX/Y, synthesize the event at center of `target`
+    screenX, // X offset in screen (in CSS pixels if `scale` is "screenPixelsPerCSSPixel*"), offsetX/Y nor atCenter must not be set if this is set
+    screenY, // Y offset in screen (in CSS pixels if `scale` is "screenPixelsPerCSSPixel*"), offsetX/Y nor atCenter must not be set if this is set
+    // If scale is "screenPixelsPerCSSPixel", it'll be used.
+    // If scale is "screenPixelsPerCSSPixelNoOverride", it'll be used.
+    // If scale is "inScreenPixels", clientX/Y nor scaleX/Y are not adjusted with screenPixelsPerCSSPixel*.
+    scale = "screenPixelsPerCSSPixel",
+    button = 0, // if "click", "mousedown", "mouseup", set same value as DOM MouseEvent.button
+    modifiers = {}, // Active modifiers, see `_parseNativeModifiers`
+    win = window, // The window to use its utils
+    // If element under the point is in another widget from target's widget,
+    //  e.g., when it's in a XUL <panel>, specify this.
+    elementOnWidget = target,
+  } = aParams;
+  if (atCenter) {
+    if (offsetX != undefined || offsetY != undefined) {
+      throw Error(
+        `atCenter is specified, but offsetX (${offsetX}) and/or offsetY (${offsetY}) are also specified`
       );
     }
+    if (screenX != undefined || screenY != undefined) {
+      throw Error(
+        `atCenter is specified, but screenX (${screenX}) and/or screenY (${screenY}) are also specified`
+      );
+    }
+    if (!target) {
+      throw Error("atCenter is specified, but target is not specified");
+    }
+  } else if (offsetX != undefined && offsetY != undefined) {
+    if (screenX != undefined || screenY != undefined) {
+      throw Error(
+        `offsetX/Y are specified, but screenX (${screenX}) and/or screenY (${screenY}) are also specified`
+      );
+    }
+    if (!target) {
+      throw Error(
+        "offsetX and offsetY are specified, but target is not specified"
+      );
+    }
+  } else if (screenX != undefined && screenY != undefined) {
+    if (offsetX != undefined || offsetY != undefined) {
+      throw Error(
+        `screenX/Y are specified, but offsetX (${offsetX}) and/or offsetY (${offsetY}) are also specified`
+      );
+    }
+  }
+  const utils = _getDOMWindowUtils(win);
+  if (!utils) {
+    return;
+  }
+
+  const rect = target?.getBoundingClientRect();
+  const scaleValue = (() => {
+    if (scale === "inScreenPixels") {
+      return 1.0;
+    }
+    if (scale === "screenPixelsPerCSSPixel") {
+      return utils.screenPixelsPerCSSPixel;
+    }
+    if (scale === "screenPixelsPerCSSPixelNoOverride") {
+      return utils.screenPixelsPerCSSPixelNoOverride;
+    }
+    throw Error(`invalid scale value (${scale}) is specified`);
+  })();
+  const x = (() => {
+    if (screenX != undefined) {
+      return screenX * scaleValue;
+    }
+    return (
+      ((atCenter ? rect.width / 2 : offsetX) +
+        win.mozInnerScreenX +
+        rect.left) *
+      scaleValue
+    );
+  })();
+  const y = (() => {
+    if (screenY != undefined) {
+      return screenY * scaleValue;
+    }
+    return (
+      ((atCenter ? rect.height / 2 : offsetY) +
+        win.mozInnerScreenY +
+        rect.top) *
+      scaleValue
+    );
+  })();
+  const modifierFlags = _parseNativeModifiers(modifiers);
+
+  const observer = {
+    observe: (subject, topic, data) => {
+      if (aCallback && topic == "mouseevent") {
+        aCallback(data);
+      }
+    },
+  };
+  if (type === "click") {
+    utils.sendNativeMouseEvent(
+      x,
+      y,
+      utils.NATIVE_MOUSE_MESSAGE_BUTTON_DOWN,
+      button,
+      modifierFlags,
+      elementOnWidget,
+      function() {
+        utils.sendNativeMouseEvent(
+          x,
+          y,
+          utils.NATIVE_MOUSE_MESSAGE_BUTTON_UP,
+          button,
+          modifierFlags,
+          elementOnWidget,
+          observer
+        );
+      }
+    );
+    return;
+  }
+  utils.sendNativeMouseEvent(
+    x,
+    y,
+    (() => {
+      switch (type) {
+        case "mousedown":
+          return utils.NATIVE_MOUSE_MESSAGE_BUTTON_DOWN;
+        case "mouseup":
+          return utils.NATIVE_MOUSE_MESSAGE_BUTTON_UP;
+        case "mousemove":
+          return utils.NATIVE_MOUSE_MESSAGE_MOVE;
+        default:
+          throw Error(`Invalid type is specified: ${type}`);
+      }
+    })(),
+    button,
+    modifierFlags,
+    elementOnWidget,
+    observer
   );
 }
 
-function synthesizeNativeMouseClickAtCenter(
-  aTarget,
-  aCallback,
-  aWindow = window
-) {
-  let rect = aTarget.getBoundingClientRect();
-  return synthesizeNativeMouseClick(
-    aTarget,
-    rect.width / 2,
-    rect.height / 2,
-    aCallback,
-    aWindow
+function promiseNativeMouseEvent(aParams) {
+  return new Promise(resolve => synthesizeNativeMouseEvent(aParams, resolve));
+}
+
+function synthesizeNativeMouseEventAndWaitForEvent(aParams, aCallback) {
+  const listener = aParams.eventTargetToListen || aParams.target;
+  const eventType = aParams.eventTypeToWait || aParams.type;
+  listener.addEventListener(eventType, aCallback, {
+    capture: true,
+    once: true,
+  });
+  synthesizeNativeMouseEvent(aParams);
+}
+
+function promiseNativeMouseEventAndWaitForEvent(aParams) {
+  return new Promise(resolve =>
+    synthesizeNativeMouseEventAndWaitForEvent(aParams, resolve)
   );
 }
 
 /**
- * This is a wrapper around synthesizeNativeMouseMove that waits for the mouse
+ * This is a wrapper around synthesizeNativeMouseEvent that waits for the mouse
  * event to be dispatched to the target content.
  *
  * This API is supposed to be used in those test cases that synthesize some
@@ -1157,7 +1203,13 @@ function synthesizeAndWaitNativeMouseMove(
     }
   );
   eventRegisteredPromise.then(() => {
-    synthesizeNativeMouseMove(aTarget, aOffsetX, aOffsetY, null, aWindow);
+    synthesizeNativeMouseEvent({
+      type: "mousemove",
+      target: aTarget,
+      offsetX: aOffsetX,
+      offsetY: aOffsetY,
+      win: aWindow,
+    });
   });
   return eventReceivedPromise;
 }
@@ -1297,55 +1349,66 @@ function synthesizeAndWaitKey(
 }
 
 function _parseNativeModifiers(aModifiers, aWindow = window) {
-  var modifiers;
+  let modifiers = 0;
   if (aModifiers.capsLockKey) {
-    modifiers |= 0x00000001;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CAPS_LOCK;
   }
   if (aModifiers.numLockKey) {
-    modifiers |= 0x00000002;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_NUM_LOCK;
   }
   if (aModifiers.shiftKey) {
-    modifiers |= 0x00000100;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_SHIFT_LEFT;
   }
   if (aModifiers.shiftRightKey) {
-    modifiers |= 0x00000200;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_SHIFT_RIGHT;
   }
   if (aModifiers.ctrlKey) {
-    modifiers |= 0x00000400;
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_LEFT;
   }
   if (aModifiers.ctrlRightKey) {
-    modifiers |= 0x00000800;
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_RIGHT;
   }
   if (aModifiers.altKey) {
-    modifiers |= 0x00001000;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_LEFT;
   }
   if (aModifiers.altRightKey) {
-    modifiers |= 0x00002000;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_RIGHT;
   }
   if (aModifiers.metaKey) {
-    modifiers |= 0x00004000;
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_LEFT;
   }
   if (aModifiers.metaRightKey) {
-    modifiers |= 0x00008000;
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_RIGHT;
   }
   if (aModifiers.helpKey) {
-    modifiers |= 0x00010000;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_HELP;
   }
   if (aModifiers.fnKey) {
-    modifiers |= 0x00100000;
+    modifiers |= SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_FUNCTION;
   }
   if (aModifiers.numericKeyPadKey) {
-    modifiers |= 0x01000000;
+    modifiers |=
+      SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_NUMERIC_KEY_PAD;
   }
 
   if (aModifiers.accelKey) {
-    modifiers |= _EU_isMac(aWindow) ? 0x00004000 : 0x00000400;
+    modifiers |= _EU_isMac(aWindow)
+      ? SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_LEFT
+      : SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_LEFT;
   }
   if (aModifiers.accelRightKey) {
-    modifiers |= _EU_isMac(aWindow) ? 0x00008000 : 0x00000800;
+    modifiers |= _EU_isMac(aWindow)
+      ? SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_COMMAND_RIGHT
+      : SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_CONTROL_RIGHT;
   }
   if (aModifiers.altGrKey) {
-    modifiers |= _EU_isWin(aWindow) ? 0x00020000 : 0x00001000;
+    modifiers |= _EU_isMac(aWindow)
+      ? SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_LEFT
+      : SpecialPowers.Ci.nsIDOMWindowUtils.NATIVE_MODIFIER_ALT_GRAPH;
   }
   return modifiers;
 }

@@ -10,7 +10,6 @@
 #include <vector>  // for vector
 
 #include "ClientLayerManager.h"  // for ClientLayerManager
-#include "GeckoProfiler.h"       // for AUTO_PROFILER_LABEL
 #include "IPDLActor.h"
 #include "ISurfaceAllocator.h"    // for IsSurfaceDescriptorValid
 #include "Layers.h"               // for Layer
@@ -35,6 +34,7 @@
 #  include "mozilla/layers/TextureSync.h"
 #endif
 #include "ShadowLayerUtils.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/layers/TextureClient.h"  // for TextureClient
@@ -829,7 +829,7 @@ void ShadowLayerForwarder::Connect(CompositableClient* aCompositable,
   static uint64_t sNextID = 1;
   uint64_t id = sNextID++;
 
-  mCompositables.Put(id, aCompositable);
+  mCompositables.InsertOrUpdate(id, aCompositable);
 
   CompositableHandle handle(id);
   aCompositable->InitIPDL(handle);

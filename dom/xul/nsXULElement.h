@@ -364,7 +364,7 @@ class nsXULElement : public nsStyledElement {
   virtual void DestroyContent() override;
   virtual void DoneAddingChildren(bool aHaveNotified) override;
 
-#ifdef DEBUG
+#ifdef MOZ_DOM_LIST
   virtual void List(FILE* out, int32_t aIndent) const override;
   virtual void DumpContent(FILE* out, int32_t aIndent,
                            bool aDumpAll) const override {}
@@ -558,7 +558,8 @@ class nsXULElement : public nsStyledElement {
     return slots ? slots->mControllers.get() : nullptr;
   }
 
-  void UnregisterAccessKey(const nsAString& aOldValue);
+  bool SupportsAccessKey() const;
+  void RegUnRegAccessKey(bool aDoReg);
   bool BoolAttrIsTrue(nsAtom* aName) const;
 
   friend nsXULElement* NS_NewBasicXULElement(

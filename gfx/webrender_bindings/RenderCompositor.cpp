@@ -7,18 +7,19 @@
 #include "RenderCompositor.h"
 
 #include "gfxConfig.h"
+#include "gfxPlatform.h"
 #include "GLContext.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/SyncObject.h"
+#include "mozilla/webrender/RenderCompositorLayersSWGL.h"
 #include "mozilla/webrender/RenderCompositorOGL.h"
 #include "mozilla/webrender/RenderCompositorSWGL.h"
 #include "mozilla/widget/CompositorWidget.h"
 
 #ifdef XP_WIN
 #  include "mozilla/webrender/RenderCompositorANGLE.h"
-#  include "mozilla/webrender/RenderCompositorD3D11SWGL.h"
 #endif
 
 #if defined(MOZ_WAYLAND) || defined(MOZ_WIDGET_ANDROID)
@@ -111,9 +112,10 @@ void wr_compositor_enable_native_compositor(void* aCompositor, bool aEnable) {
   compositor->EnableNativeCompositor(aEnable);
 }
 
-CompositorCapabilities wr_compositor_get_capabilities(void* aCompositor) {
+void wr_compositor_get_capabilities(void* aCompositor,
+                                    CompositorCapabilities* aCaps) {
   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
-  return compositor->GetCompositorCapabilities();
+  compositor->GetCompositorCapabilities(aCaps);
 }
 
 void wr_compositor_unbind(void* aCompositor) {
@@ -148,20 +150,18 @@ void wr_partial_present_compositor_set_buffer_damage_region(
 /* static */
 UniquePtr<RenderCompositor> RenderCompositor::Create(
     RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
-  if (gfx::gfxVars::UseSoftwareWebRender()) {
+  if (aWidget->GetCompositorOptions().UseSoftwareWebRender()) {
 #ifdef XP_MACOSX
     // Mac uses NativeLayerCA
-    return RenderCompositorNativeSWGL::Create(std::move(aWidget), aError);
-#elif defined(XP_WIN)
-    if (StaticPrefs::gfx_webrender_software_d3d11_AtStartup() &&
-        gfx::gfxConfig::IsEnabled(gfx::Feature::D3D11_COMPOSITING)) {
-      UniquePtr<RenderCompositor> comp =
-          RenderCompositorD3D11SWGL::Create(std::move(aWidget), aError);
-      if (comp) {
-        return comp;
-      }
+    if (!gfxPlatform::IsHeadless()) {
+      return RenderCompositorNativeSWGL::Create(std::move(aWidget), aError);
     }
 #endif
+    UniquePtr<RenderCompositor> comp =
+        RenderCompositorLayersSWGL::Create(std::move(aWidget), aError);
+    if (comp) {
+      return comp;
+    }
     return RenderCompositorSWGL::Create(std::move(aWidget), aError);
   }
 

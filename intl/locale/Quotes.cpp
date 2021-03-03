@@ -38,14 +38,14 @@ const Quotes* QuotesForLang(const nsAtom* aLang) {
       const char* s = i.mLangs;
       size_t len;
       while ((len = strlen(s))) {
-        sQuotesForLang->Put(nsDependentCString(s, len), i.mQuotes);
+        sQuotesForLang->InsertOrUpdate(nsDependentCString(s, len), i.mQuotes);
         s += len + 1;
       }
     }
   }
 
   nsAtomCString langStr(aLang);
-  const Quotes* entry = sQuotesForLang->GetValue(langStr);
+  const Quotes* entry = sQuotesForLang->Lookup(langStr).DataPtrOrNull();
   if (entry) {
     // Found an exact match for the requested lang.
     return entry;
@@ -63,7 +63,7 @@ const Quotes* QuotesForLang(const nsAtom* aLang) {
     langAndRegion.Append(loc.GetLanguage());
     langAndRegion.Append('-');
     langAndRegion.Append(loc.GetRegion());
-    if ((entry = sQuotesForLang->GetValue(langAndRegion))) {
+    if ((entry = sQuotesForLang->Lookup(langAndRegion).DataPtrOrNull())) {
       return entry;
     }
   }
@@ -72,11 +72,11 @@ const Quotes* QuotesForLang(const nsAtom* aLang) {
     langAndScript.Append(loc.GetLanguage());
     langAndScript.Append('-');
     langAndScript.Append(loc.GetScript());
-    if ((entry = sQuotesForLang->GetValue(langAndScript))) {
+    if ((entry = sQuotesForLang->Lookup(langAndScript).DataPtrOrNull())) {
       return entry;
     }
   }
-  if ((entry = sQuotesForLang->GetValue(loc.GetLanguage()))) {
+  if ((entry = sQuotesForLang->Lookup(loc.GetLanguage()).DataPtrOrNull())) {
     return entry;
   }
 

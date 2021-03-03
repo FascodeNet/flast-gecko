@@ -485,6 +485,10 @@
       this.addEventListener(
         "blur",
         event => {
+          // Reset the flag since we can't capture enter keyup event if the event happens
+          // after moving the focus.
+          this._needBrowserFocusAtEnterKeyUp = false;
+
           // If the input field is still focused then a different window has
           // received focus, ignore the next focus event.
           this._ignoreFocus = document.activeElement == this._textbox;
@@ -811,13 +815,13 @@
     _buildContextMenu() {
       const raw = `
         <menuitem data-l10n-id="text-action-undo" cmd="cmd_undo"/>
+        <menuitem data-l10n-id="text-action-redo" cmd="cmd_redo"/>
         <menuseparator/>
         <menuitem data-l10n-id="text-action-cut" cmd="cmd_cut"/>
         <menuitem data-l10n-id="text-action-copy" cmd="cmd_copy"/>
         <menuitem data-l10n-id="text-action-paste" cmd="cmd_paste"/>
         <menuitem class="searchbar-paste-and-search"/>
         <menuitem data-l10n-id="text-action-delete" cmd="cmd_delete"/>
-        <menuseparator/>
         <menuitem data-l10n-id="text-action-select-all" cmd="cmd_selectAll"/>
         <menuseparator/>
         <menuitem class="searchbar-clear-history"/>

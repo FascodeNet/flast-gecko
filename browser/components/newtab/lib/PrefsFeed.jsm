@@ -28,7 +28,7 @@ ChromeUtils.defineModuleGetter(
 
 XPCOMUtils.defineLazyGetter(this, "aboutNewTabFeature", () => {
   const { ExperimentFeature } = ChromeUtils.import(
-    "resource://messaging-system/experiments/ExperimentAPI.jsm"
+    "resource://nimbus/ExperimentAPI.jsm"
   );
   return new ExperimentFeature("newtab");
 });
@@ -83,10 +83,7 @@ this.PrefsFeed = class PrefsFeed {
    * Handler for when experiment data updates.
    */
   onExperimentUpdated(event, reason) {
-    const value =
-      aboutNewTabFeature.getValue({
-        sendExposurePing: false,
-      }) || {};
+    const value = aboutNewTabFeature.getValue() || {};
     this.store.dispatch(
       ac.BroadcastToContent({
         type: at.PREF_CHANGED,
@@ -164,13 +161,7 @@ this.PrefsFeed = class PrefsFeed {
     });
 
     // Add experiment values and default values
-    values.featureConfig =
-      aboutNewTabFeature.getValue({
-        sendExposurePing: false,
-      }) || {};
-
-    this._setBoolPref(values, "newNewtabExperience.enabled", false);
-    this._setBoolPref(values, "customizationMenu.enabled", false);
+    values.featureConfig = aboutNewTabFeature.getValue() || {};
     this._setBoolPref(values, "logowordmark.alwaysVisible", false);
     this._setBoolPref(values, "feeds.section.topstories", false);
     this._setBoolPref(values, "discoverystream.enabled", false);

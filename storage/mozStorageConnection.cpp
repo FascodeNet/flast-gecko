@@ -38,10 +38,10 @@
 #include "SQLCollations.h"
 #include "FileSystemModule.h"
 #include "mozStorageHelper.h"
-#include "GeckoProfiler.h"
 
 #include "mozilla/Logging.h"
 #include "mozilla/Printf.h"
+#include "mozilla/ProfilerLabels.h"
 #include "nsProxyRelease.h"
 #include "nsURLHelper.h"
 
@@ -2162,7 +2162,7 @@ Connection::CreateFunction(const nsACString& aFunctionName,
   // Check to see if this function is already defined.  We only check the name
   // because a function can be defined with the same body but different names.
   SQLiteMutexAutoLock lockedScope(sharedDBMutex);
-  NS_ENSURE_FALSE(mFunctions.Get(aFunctionName, nullptr), NS_ERROR_FAILURE);
+  NS_ENSURE_FALSE(mFunctions.Contains(aFunctionName), NS_ERROR_FAILURE);
 
   int srv = ::sqlite3_create_function(
       mDBConn, nsPromiseFlatCString(aFunctionName).get(), aNumArguments,
@@ -2170,7 +2170,7 @@ Connection::CreateFunction(const nsACString& aFunctionName,
   if (srv != SQLITE_OK) return convertResultCode(srv);
 
   FunctionInfo info = {aFunction, aNumArguments};
-  mFunctions.Put(aFunctionName, info);
+  mFunctions.InsertOrUpdate(aFunctionName, info);
 
   return NS_OK;
 }

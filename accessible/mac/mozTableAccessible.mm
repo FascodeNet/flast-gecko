@@ -11,7 +11,7 @@
 #import "RotorRules.h"
 
 #include "AccIterator.h"
-#include "Accessible.h"
+#include "LocalAccessible.h"
 #include "TableAccessible.h"
 #include "TableCellAccessible.h"
 #include "XULTreeAccessible.h"
@@ -49,13 +49,13 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
   mChildren = [[NSMutableArray alloc] init];
 
-  if (Accessible* acc = [mParent geckoAccessible].AsAccessible()) {
+  if (LocalAccessible* acc = [mParent geckoAccessible].AsAccessible()) {
     TableAccessible* table = acc->AsTable();
     MOZ_ASSERT(table, "Got null table when fetching column children!");
     uint32_t numRows = table->RowCount();
 
     for (uint32_t j = 0; j < numRows; j++) {
-      Accessible* cell = table->CellAt(j, mIndex);
+      LocalAccessible* cell = table->CellAt(j, mIndex);
       mozAccessible* nativeCell =
           cell ? GetNativeFromGeckoAccessible(cell) : nil;
       if ([nativeCell isAccessibilityElement]) {
@@ -63,11 +63,11 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
       }
     }
 
-  } else if (ProxyAccessible* proxy = [mParent geckoAccessible].AsProxy()) {
+  } else if (RemoteAccessible* proxy = [mParent geckoAccessible].AsProxy()) {
     uint32_t numRows = proxy->TableRowCount();
 
     for (uint32_t j = 0; j < numRows; j++) {
-      ProxyAccessible* cell = proxy->TableCellAt(j, mIndex);
+      RemoteAccessible* cell = proxy->TableCellAt(j, mIndex);
       mozAccessible* nativeCell =
           cell ? GetNativeFromGeckoAccessible(cell) : nil;
       if ([nativeCell isAccessibilityElement]) {
@@ -80,16 +80,16 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 }
 
 - (void)dealloc {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   [self invalidateChildren];
   [super dealloc];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 - (void)expire {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   [self invalidateChildren];
 
@@ -97,7 +97,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
   [super expire];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 - (BOOL)isExpired {
@@ -107,7 +107,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 }
 
 - (void)invalidateChildren {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   // make room for new children
   if (mChildren) {
@@ -115,7 +115,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
     mChildren = nil;
   }
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 @end
@@ -165,9 +165,14 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
 - (void)invalidateLayoutTableCache {
   mozAccessible* parent = (mozAccessible*)[self moxUnignoredParent];
-  MOZ_ASSERT([parent isKindOfClass:[mozTablePartAccessible class]],
-             "Trying to invalidate table cache but cannot find table!");
-  [(mozTablePartAccessible*)parent invalidateLayoutTableCache];
+  if ([parent isKindOfClass:[mozTablePartAccessible class]]) {
+    // We do this to prevent dispatching invalidateLayoutTableCache
+    // on outlines or outline parts. This is possible here because
+    // outline rows subclass table rows, which are a table part.
+    // This means `parent` could be an outline, and there is no
+    // cache on outlines to invalidate.
+    [(mozTablePartAccessible*)parent invalidateLayoutTableCache];
+  }
 }
 @end
 
@@ -191,10 +196,10 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
   }
 
   bool tableGuess;
-  if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
+  if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
     tableGuess = acc->AsTable()->IsProbablyLayoutTable();
   } else {
-    ProxyAccessible* proxy = mGeckoAccessible.AsProxy();
+    RemoteAccessible* proxy = mGeckoAccessible.AsProxy();
     tableGuess = proxy->TableIsProbablyForLayout();
   }
 
@@ -214,12 +219,12 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 }
 
 - (void)dealloc {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   [self invalidateColumns];
   [super dealloc];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 - (NSNumber*)moxRowCount {
@@ -258,7 +263,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
   mColContainers = [[NSMutableArray alloc] init];
   uint32_t numCols = 0;
 
-  if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
+  if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
     numCols = acc->AsTable()->ColCount();
   } else {
     numCols = mGeckoAccessible.AsProxy()->TableColumnCount();
@@ -288,7 +293,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
   uint32_t numCols = 0;
   TableAccessible* table = nullptr;
 
-  if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
+  if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
     table = mGeckoAccessible.AsAccessible()->AsTable();
     numCols = table->ColCount();
   } else {
@@ -340,12 +345,12 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 }
 
 - (void)invalidateColumns {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
   if (mColContainers) {
     [mColContainers release];
     mColContainers = nil;
   }
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 @end
@@ -380,7 +385,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
     return
         [NSValue valueWithRange:NSMakeRange(cell->RowIdx(), cell->RowExtent())];
   } else {
-    ProxyAccessible* proxy = mGeckoAccessible.AsProxy();
+    RemoteAccessible* proxy = mGeckoAccessible.AsProxy();
     return [NSValue
         valueWithRange:NSMakeRange(proxy->RowIdx(), proxy->RowExtent())];
   }
@@ -394,7 +399,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
     return
         [NSValue valueWithRange:NSMakeRange(cell->ColIdx(), cell->ColExtent())];
   } else {
-    ProxyAccessible* proxy = mGeckoAccessible.AsProxy();
+    RemoteAccessible* proxy = mGeckoAccessible.AsProxy();
     return [NSValue
         valueWithRange:NSMakeRange(proxy->ColIdx(), proxy->ColExtent())];
   }
@@ -405,12 +410,12 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
   if (mGeckoAccessible.IsAccessible()) {
     TableCellAccessible* cell = mGeckoAccessible.AsAccessible()->AsTableCell();
-    AutoTArray<Accessible*, 10> headerCells;
+    AutoTArray<LocalAccessible*, 10> headerCells;
     cell->RowHeaderCells(&headerCells);
     return utils::ConvertToNSArray(headerCells);
   } else {
-    ProxyAccessible* proxy = mGeckoAccessible.AsProxy();
-    nsTArray<ProxyAccessible*> headerCells;
+    RemoteAccessible* proxy = mGeckoAccessible.AsProxy();
+    nsTArray<RemoteAccessible*> headerCells;
     proxy->RowHeaderCells(&headerCells);
     return utils::ConvertToNSArray(headerCells);
   }
@@ -421,12 +426,12 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
   if (mGeckoAccessible.IsAccessible()) {
     TableCellAccessible* cell = mGeckoAccessible.AsAccessible()->AsTableCell();
-    AutoTArray<Accessible*, 10> headerCells;
+    AutoTArray<LocalAccessible*, 10> headerCells;
     cell->ColHeaderCells(&headerCells);
     return utils::ConvertToNSArray(headerCells);
   } else {
-    ProxyAccessible* proxy = mGeckoAccessible.AsProxy();
-    nsTArray<ProxyAccessible*> headerCells;
+    RemoteAccessible* proxy = mGeckoAccessible.AsProxy();
+    nsTArray<RemoteAccessible*> headerCells;
     proxy->ColHeaderCells(&headerCells);
     return utils::ConvertToNSArray(headerCells);
   }
@@ -458,18 +463,18 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 }
 
 - (NSArray*)moxColumns {
-  if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
+  if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
     if (acc->IsContent() && acc->GetContent()->IsXULElement(nsGkAtoms::tree)) {
       XULTreeAccessible* treeAcc = (XULTreeAccessible*)acc;
       NSMutableArray* cols = [[NSMutableArray alloc] init];
       // XUL trees store their columns in a group at the tree's first
       // child. Here, we iterate over that group to get each column's
       // native accessible and add it to our col array.
-      Accessible* treeColumns = treeAcc->GetChildAt(0);
+      LocalAccessible* treeColumns = treeAcc->LocalChildAt(0);
       if (treeColumns) {
         uint32_t colCount = treeColumns->ChildCount();
         for (uint32_t i = 0; i < colCount; i++) {
-          Accessible* treeColumnItem = treeColumns->GetChildAt(i);
+          LocalAccessible* treeColumnItem = treeColumns->LocalChildAt(i);
           [cols addObject:GetNativeFromGeckoAccessible(treeColumnItem)];
         }
         return cols;
@@ -562,9 +567,9 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
 - (NSNumber*)moxDisclosureLevel {
   GroupPos groupPos;
-  if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
+  if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
     groupPos = acc->GroupPosition();
-  } else if (ProxyAccessible* proxy = mGeckoAccessible.AsProxy()) {
+  } else if (RemoteAccessible* proxy = mGeckoAccessible.AsProxy()) {
     groupPos = proxy->GroupPosition();
   }
   // mac expects 0-indexed levels, but groupPos.level is 1-indexed
@@ -607,7 +612,7 @@ enum CachedBool { eCachedBoolMiss, eCachedTrue, eCachedFalse };
 
 - (NSString*)moxLabel {
   nsAutoString title;
-  if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
+  if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
     acc->Name(title);
   } else {
     mGeckoAccessible.AsProxy()->Name(title);

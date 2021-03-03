@@ -12,7 +12,7 @@ const { XPCOMUtils } = ChromeUtils.import(
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   DEFAULT_SITES: "resource://activity-stream/lib/DefaultSites.jsm",
-  ExperimentAPI: "resource://messaging-system/experiments/ExperimentAPI.jsm",
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.jsm",
   shortURL: "resource://activity-stream/lib/ShortURL.jsm",
   TippyTopProvider: "resource://activity-stream/lib/TippyTopProvider.jsm",
 });
@@ -198,6 +198,10 @@ class AboutWelcomeChild extends JSWindowActorChild {
       defineAs: "AWGetRegion",
     });
 
+    Cu.exportFunction(this.AWIsDefaultBrowser.bind(this), window, {
+      defineAs: "AWIsDefaultBrowser",
+    });
+
     Cu.exportFunction(this.AWSelectTheme.bind(this), window, {
       defineAs: "AWSelectTheme",
     });
@@ -310,8 +314,6 @@ class AboutWelcomeChild extends JSWindowActorChild {
     // about:welcome loads outside of the "FirstStartup" scenario this will likely not be ready
     let experimentData = ExperimentAPI.getExperiment({
       featureId: "aboutwelcome",
-      // Telemetry handled in AboutNewTabService.jsm
-      sendExposurePing: false,
     });
 
     if (experimentData?.slug) {
@@ -338,6 +340,10 @@ class AboutWelcomeChild extends JSWindowActorChild {
 
   AWGetSelectedTheme() {
     return this.wrapPromise(getSelectedTheme(this));
+  }
+
+  AWIsDefaultBrowser() {
+    return this.wrapPromise(this.sendQuery("AWPage:IS_DEFAULT_BROWSER"));
   }
 
   /**

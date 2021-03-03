@@ -18,7 +18,12 @@ case "$1" in
         export PATH="$MOZ_FETCHES_DIR/clang/bin:$MOZ_FETCHES_DIR/cctools/bin:$PATH"
         export LD_LIBRARY_PATH="$MOZ_FETCHES_DIR/clang/lib"
         ./configure CC="clang --target=x86_64-apple-darwin -isysroot $MOZ_FETCHES_DIR/MacOSX10.12.sdk" --host=x86_64-apple-darwin
-	cat config.log
+        EXE=
+	;;
+    macosx64-aarch64)
+        export PATH="$MOZ_FETCHES_DIR/clang/bin:$MOZ_FETCHES_DIR/cctools/bin:$PATH"
+        export LD_LIBRARY_PATH="$MOZ_FETCHES_DIR/clang/lib"
+        ./configure CC="clang --target=aarch64-apple-darwin -isysroot $MOZ_FETCHES_DIR/MacOSX11.0.sdk" --host=aarch64-apple-darwin
         EXE=
 	;;
     *)
@@ -39,7 +44,7 @@ index de99d076..47031e12 100644
      if (is_elf32()) {
          WRITELONG(pbuf,0);  /* null  beginning offset */
 EOF
-        ./configure CC="$MOZ_FETCHES_DIR/clang/bin/clang" CFLAGS="--sysroot=$MOZ_FETCHES_DIR/sysroot"
+        ./configure CC="$MOZ_FETCHES_DIR/clang/bin/clang --sysroot=$MOZ_FETCHES_DIR/sysroot"
         EXE=
         ;;
 esac

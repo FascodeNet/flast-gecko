@@ -65,6 +65,7 @@ talos-bcv:
                     webrender-sw: ['trunk']
                     default: []
             windows7-32.*: []
+            windows10-64-qr.*: []
             (linux|windows10|macos)(?!.*shippable)(?!.*-qr).*: []
             default: ['mozilla-beta', 'trunk']
     max-run-time: 1800
@@ -587,7 +588,7 @@ talos-webgl-profiling:
             .*-ccov.*/.*: []
             android.*: []
             windows7-32.*: []
-            default: ['webgl-ipc']
+            default: ['webgl-ipc-profiling']
     max-run-time: 1800
     mozharness:
         extra-options:

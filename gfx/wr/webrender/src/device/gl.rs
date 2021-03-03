@@ -154,7 +154,6 @@ fn depth_target_size_in_bytes(dimensions: &DeviceIntSize) -> usize {
 pub fn get_gl_target(target: ImageBufferKind) -> gl::GLuint {
     match target {
         ImageBufferKind::Texture2D => gl::TEXTURE_2D,
-        ImageBufferKind::Texture2DArray => gl::TEXTURE_2D_ARRAY,
         ImageBufferKind::TextureRect => gl::TEXTURE_RECTANGLE,
         ImageBufferKind::TextureExternal => gl::TEXTURE_EXTERNAL_OES,
     }
@@ -988,6 +987,9 @@ pub struct Capabilities {
     /// Whether clip-masking is supported natively by the GL implementation
     /// rather than emulated in shaders.
     pub uses_native_clip_mask: bool,
+    /// Whether anti-aliasing is supported natively by the GL implementation
+    /// rather than emulated in shaders.
+    pub uses_native_antialiasing: bool,
     /// The name of the renderer, as reported by GL
     pub renderer_name: String,
 }
@@ -1060,7 +1062,7 @@ pub struct Device {
     bound_textures: [gl::GLuint; 16],
     bound_program: gl::GLuint,
     bound_vao: gl::GLuint,
-    bound_read_fbo: FBOId,
+    bound_read_fbo: (FBOId, DeviceIntPoint),
     bound_draw_fbo: FBOId,
     program_mode_id: UniformLocation,
     default_read_fbo: FBOId,
@@ -1075,7 +1077,7 @@ pub struct Device {
     /// Whether to use draw calls instead of regular blitting commands.
     ///
     /// Note: this currently only applies to the batched texture uploads
-    /// path. 
+    /// path.
     use_draw_calls_for_texture_copy: bool,
 
     // HW or API capabilities
@@ -1317,6 +1319,11 @@ pub enum ReadTarget {
     External {
         fbo: FBOId,
     },
+    /// An FBO bound to a native (OS compositor) surface
+    NativeSurface {
+        fbo_id: FBOId,
+        offset: DeviceIntPoint,
+    },
 }
 
 impl ReadTarget {
@@ -1328,19 +1335,40 @@ impl ReadTarget {
             fbo_id: texture.fbos[layer],
         }
     }
+
+    fn offset(&self) -> DeviceIntPoint {
+        match *self {
+            ReadTarget::Default |
+            ReadTarget::Texture { .. } |
+            ReadTarget::External { .. } => {
+                DeviceIntPoint::zero()
+            }
+
+            ReadTarget::NativeSurface { offset, .. } => {
+                offset
+            }
+        }
+    }
 }
 
 impl From<DrawTarget> for ReadTarget {
     fn from(t: DrawTarget) -> Self {
         match t {
-            DrawTarget::Default { .. } => ReadTarget::Default,
-            DrawTarget::NativeSurface { .. } => {
-                unreachable!("bug: native surfaces cannot be read targets");
+            DrawTarget::Default { .. } => {
+                ReadTarget::Default
             }
-            DrawTarget::Texture { fbo_id, .. } =>
-                ReadTarget::Texture { fbo_id },
-            DrawTarget::External { fbo, .. } =>
-                ReadTarget::External { fbo },
+            DrawTarget::NativeSurface { external_fbo_id, offset, .. } => {
+                ReadTarget::NativeSurface {
+                    fbo_id: FBOId(external_fbo_id),
+                    offset,
+                }
+            }
+            DrawTarget::Texture { fbo_id, .. } => {
+                ReadTarget::Texture { fbo_id }
+            }
+            DrawTarget::External { fbo, .. } => {
+                ReadTarget::External { fbo }
+            }
         }
     }
 }
@@ -1632,12 +1660,12 @@ impl Device {
         // from a non-zero offset within a PBO to fail. See bug 1603783.
         let supports_nonzero_pbo_offsets = !is_macos;
 
-        let is_mali_g = renderer_name.starts_with("Mali-G");
+        let is_mali = renderer_name.starts_with("Mali");
 
-        // On Mali-Gxx there is a driver bug when rendering partial updates to
+        // On Mali-Gxx and Txxx there is a driver bug when rendering partial updates to
         // offscreen render targets, so we must ensure we render to the entire target.
         // See bug 1663355.
-        let supports_render_target_partial_update = !is_mali_g;
+        let supports_render_target_partial_update = !is_mali;
 
         let supports_shader_storage_object = match gl.get_type() {
             // see https://www.g-truc.net/post-0734.html
@@ -1650,6 +1678,12 @@ impl Device {
         // pass variants if they know the alpha-pass was only required to deal with
         // clip-masking.
         let uses_native_clip_mask = is_software_webrender;
+
+        // SWGL uses swgl_antiAlias() instead of implementing anti-aliasing in shaders.
+        // As above, this allows bypassing certain alpha-pass variants.
+        let uses_native_antialiasing = is_software_webrender;
+
+        let is_mali_g = renderer_name.starts_with("Mali-G");
 
         let mut requires_batched_texture_uploads = None;
         if is_software_webrender {
@@ -1701,6 +1735,7 @@ impl Device {
                 requires_batched_texture_uploads,
                 supports_r8_texture_upload,
                 uses_native_clip_mask,
+                uses_native_antialiasing,
                 renderer_name,
             },
 
@@ -1717,7 +1752,7 @@ impl Device {
             bound_textures: [0; 16],
             bound_program: 0,
             bound_vao: 0,
-            bound_read_fbo: FBOId(0),
+            bound_read_fbo: (FBOId(0), DeviceIntPoint::zero()),
             bound_draw_fbo: FBOId(0),
             program_mode_id: UniformLocation::INVALID,
             default_read_fbo: FBOId(0),
@@ -1847,8 +1882,8 @@ impl Device {
         self.bound_vao = 0;
         self.gl.bind_vertex_array(0);
 
-        self.bound_read_fbo = self.default_read_fbo;
-        self.gl.bind_framebuffer(gl::READ_FRAMEBUFFER, self.bound_read_fbo.0);
+        self.bound_read_fbo = (self.default_read_fbo, DeviceIntPoint::zero());
+        self.gl.bind_framebuffer(gl::READ_FRAMEBUFFER, self.default_read_fbo.0);
 
         self.bound_draw_fbo = self.default_draw_fbo;
         self.gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, self.bound_draw_fbo.0);
@@ -2022,13 +2057,18 @@ impl Device {
         self.bind_texture_impl(slot.into(), external_texture.id, external_texture.target, None);
     }
 
-    pub fn bind_read_target_impl(&mut self, fbo_id: FBOId) {
+    pub fn bind_read_target_impl(
+        &mut self,
+        fbo_id: FBOId,
+        offset: DeviceIntPoint,
+    ) {
         debug_assert!(self.inside_frame);
 
-        if self.bound_read_fbo != fbo_id {
-            self.bound_read_fbo = fbo_id;
+        if self.bound_read_fbo != (fbo_id, offset) {
             fbo_id.bind(self.gl(), FBOTarget::Read);
         }
+
+        self.bound_read_fbo = (fbo_id, offset);
     }
 
     pub fn bind_read_target(&mut self, target: ReadTarget) {
@@ -2036,9 +2076,10 @@ impl Device {
             ReadTarget::Default => self.default_read_fbo,
             ReadTarget::Texture { fbo_id } => fbo_id,
             ReadTarget::External { fbo } => fbo,
+            ReadTarget::NativeSurface { fbo_id, .. } => fbo_id,
         };
 
-        self.bind_read_target_impl(fbo_id)
+        self.bind_read_target_impl(fbo_id, target.offset())
     }
 
     fn bind_draw_target_impl(&mut self, fbo_id: FBOId) {
@@ -2052,7 +2093,7 @@ impl Device {
 
     pub fn reset_read_target(&mut self) {
         let fbo = self.default_read_fbo;
-        self.bind_read_target_impl(fbo);
+        self.bind_read_target_impl(fbo, DeviceIntPoint::zero());
     }
 
 
@@ -2747,11 +2788,14 @@ impl Device {
             TextureFilter::Linear | TextureFilter::Trilinear => gl::LINEAR,
         };
 
+        let src_x0 = src_rect.origin.x + self.bound_read_fbo.1.x;
+        let src_y0 = src_rect.origin.y + self.bound_read_fbo.1.y;
+
         self.gl.blit_framebuffer(
-            src_rect.origin.x,
-            src_rect.origin.y,
-            src_rect.origin.x + src_rect.size.width,
-            src_rect.origin.y + src_rect.size.height,
+            src_x0,
+            src_y0,
+            src_x0 + src_rect.size.width,
+            src_y0 + src_rect.size.height,
             dest_rect.origin.x,
             dest_rect.origin.y,
             dest_rect.origin.x + dest_rect.size.width,
@@ -2805,7 +2849,7 @@ impl Device {
                     ),
                 ).intersection(&dimensions.into()).unwrap_or_else(DeviceIntRect::zero);
 
-                self.bind_read_target_impl(fbo);
+                self.bind_read_target_impl(fbo, DeviceIntPoint::zero());
                 self.bind_texture_impl(
                     DEFAULT_TEXTURE,
                     id,
@@ -3800,6 +3844,24 @@ impl Device {
         self.set_blend_factors(
             (gl::ONE, gl::ONE_MINUS_SRC1_COLOR),
             (gl::ONE, gl::ONE_MINUS_SRC1_ALPHA),
+        );
+    }
+    pub fn set_blend_mode_multiply_dual_source(&mut self) {
+        self.set_blend_factors(
+            (gl::ONE_MINUS_DST_ALPHA, gl::ONE_MINUS_SRC1_COLOR),
+            (gl::ONE, gl::ONE_MINUS_SRC_ALPHA),
+        );
+    }
+    pub fn set_blend_mode_screen(&mut self) {
+        self.set_blend_factors(
+            (gl::ONE, gl::ONE_MINUS_SRC_COLOR),
+            (gl::ONE, gl::ONE_MINUS_SRC_ALPHA),
+        );
+    }
+    pub fn set_blend_mode_exclusion(&mut self) {
+        self.set_blend_factors(
+            (gl::ONE_MINUS_DST_COLOR, gl::ONE_MINUS_SRC_COLOR),
+            (gl::ONE, gl::ONE_MINUS_SRC_ALPHA),
         );
     }
     pub fn set_blend_mode_show_overdraw(&mut self) {

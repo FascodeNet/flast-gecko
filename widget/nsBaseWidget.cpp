@@ -29,6 +29,7 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/TextEventDispatcher.h"
@@ -826,6 +827,10 @@ bool nsBaseWidget::ComputeShouldAccelerate() {
          WidgetTypeSupportsAcceleration();
 }
 
+bool nsBaseWidget::WidgetTypePrefersSoftwareWebRender() const {
+  return StaticPrefs::gfx_webrender_software_unaccelerated_widget_force();
+}
+
 bool nsBaseWidget::UseAPZ() {
   return (gfxPlatform::AsyncPanZoomEnabled() &&
           (WindowType() == eWindowType_toplevel ||
@@ -1211,20 +1216,30 @@ already_AddRefed<LayerManager> nsBaseWidget::CreateCompositorSession(
     // EnsureGPUReady(). It could update gfxVars and gfxConfigs.
     gpu->EnsureGPUReady();
 
-    // If widget type does not supports acceleration, we use ClientLayerManager
-    // even when gfxVars::UseWebRender() is true. WebRender could coexist only
-    // with BasicCompositor.
-    bool enableWR =
-        gfx::gfxVars::UseWebRender() && WidgetTypeSupportsAcceleration();
+    // If widget type does not supports acceleration, we may be allowed to use
+    // software WebRender instead. If not, then we use ClientLayerManager even
+    // when gfxVars::UseWebRender() is true. WebRender could coexist only with
+    // BasicCompositor.
+    bool supportsAcceleration = WidgetTypeSupportsAcceleration();
+    bool enableWR;
+    bool enableSWWR;
+    if (supportsAcceleration) {
+      enableWR = gfx::gfxVars::UseWebRender();
+      enableSWWR = gfx::gfxVars::UseSoftwareWebRender();
+    } else if (WidgetTypePrefersSoftwareWebRender()) {
+      enableWR = enableSWWR = gfx::gfxVars::UseWebRender();
+    } else {
+      enableWR = enableSWWR = false;
+    }
     bool enableAPZ = UseAPZ();
-    CompositorOptions options(enableAPZ, enableWR);
+    CompositorOptions options(enableAPZ, enableWR, enableSWWR);
 
-    // Bug 1588484 - Advanced Layers is currently disabled for fission windows,
-    // since it doesn't properly support nested RefLayers.
-    bool enableAL =
-        gfx::gfxConfig::IsEnabled(gfx::Feature::ADVANCED_LAYERS) &&
-        (!mFissionWindow || StaticPrefs::layers_advanced_fission_enabled());
-    options.SetUseAdvancedLayers(enableAL);
+#ifdef XP_WIN
+    if (supportsAcceleration) {
+      options.SetAllowSoftwareWebRenderD3D11(
+          StaticPrefs::gfx_webrender_software_d3d11_AtStartup());
+    }
+#endif
 
 #ifdef MOZ_WIDGET_ANDROID
     if (!GetNativeData(NS_JAVA_SURFACE)) {
@@ -1799,7 +1814,7 @@ void nsBaseWidget::ZoomToRect(const uint32_t& aPresShellId,
 
 #ifdef ACCESSIBILITY
 
-a11y::Accessible* nsBaseWidget::GetRootAccessible() {
+a11y::LocalAccessible* nsBaseWidget::GetRootAccessible() {
   NS_ENSURE_TRUE(mWidgetListener, nullptr);
 
   PresShell* presShell = mWidgetListener->GetPresShell();
@@ -1810,7 +1825,7 @@ a11y::Accessible* nsBaseWidget::GetRootAccessible() {
   nsPresContext* presContext = presShell->GetPresContext();
   NS_ENSURE_TRUE(presContext->GetContainerWeak(), nullptr);
 
-  // Accessible creation might be not safe so use IsSafeToRunScript to
+  // LocalAccessible creation might be not safe so use IsSafeToRunScript to
   // make sure it's not created at unsafe times.
   nsAccessibilityService* accService = GetOrCreateAccService();
   if (accService) {
@@ -2070,7 +2085,7 @@ void nsBaseWidget::RegisterPluginWindowForRemoteUpdates() {
     return;
   }
   MOZ_ASSERT(sPluginWidgetList);
-  sPluginWidgetList->Put(id, RefPtr{this});
+  sPluginWidgetList->InsertOrUpdate(id, RefPtr{this});
 #endif
 }
 

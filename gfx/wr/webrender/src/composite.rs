@@ -5,7 +5,7 @@
 use api::{ColorF, YuvColorSpace, YuvFormat, ImageRendering, ExternalImageId, ImageBufferKind};
 use api::units::*;
 use api::ColorDepth;
-use crate::batch::{resolve_image};
+use crate::image_source::resolve_image;
 use euclid::Transform3D;
 use crate::gpu_cache::GpuCache;
 use crate::gpu_types::{ZBufferId, ZBufferIdGenerator};
@@ -142,7 +142,6 @@ pub struct ExternalSurfaceDescriptor {
 #[derive(Debug, Copy, Clone)]
 pub struct ExternalPlaneDescriptor {
     pub texture: TextureSource,
-    pub texture_layer: i32,
     pub uv_rect: TexelRect,
 }
 
@@ -150,7 +149,6 @@ impl ExternalPlaneDescriptor {
     fn invalid() -> Self {
         ExternalPlaneDescriptor {
             texture: TextureSource::Invalid,
-            texture_layer: 0,
             uv_rect: TexelRect::invalid(),
         }
     }
@@ -281,8 +279,8 @@ pub enum CompositorKind {
     Native {
         /// Maximum dirty rects per compositor surface.
         max_update_rects: usize,
-        /// The virtual surface size used by underlying platform.
-        virtual_surface_size: i32,
+        /// The capabilities of the underlying platform.
+        capabilities: CompositorCapabilities,
     },
 }
 
@@ -300,7 +298,7 @@ impl CompositorKind {
     pub fn get_virtual_surface_size(&self) -> i32 {
         match self {
             CompositorKind::Draw { .. } => 0,
-            CompositorKind::Native { virtual_surface_size, .. } => *virtual_surface_size,
+            CompositorKind::Native { capabilities, .. } => capabilities.virtual_surface_size,
         }
     }
 
@@ -310,6 +308,16 @@ impl CompositorKind {
         match self {
             CompositorKind::Draw { .. } => false,
             CompositorKind::Native { .. } => true,
+        }
+    }
+
+    pub fn should_redraw_on_invalidation(&self) -> bool {
+        match self {
+            CompositorKind::Draw { max_partial_present_rects, .. } => {
+                // When partial present is enabled, we need to force redraw.
+                *max_partial_present_rects > 0
+            }
+            CompositorKind::Native { capabilities, .. } => capabilities.redraw_on_invalidation,
         }
     }
 }
@@ -757,7 +765,6 @@ impl CompositeState {
                 let plane = &mut planes[i];
                 *plane = ExternalPlaneDescriptor {
                     texture: cache_item.texture_id,
-                    texture_layer: cache_item.texture_layer,
                     uv_rect: cache_item.uv_rect.into(),
                 };
             }
@@ -906,8 +913,27 @@ pub struct NativeSurfaceInfo {
 }
 
 #[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct CompositorCapabilities {
+    /// The virtual surface size used by the underlying platform.
     pub virtual_surface_size: i32,
+    /// Whether the compositor requires redrawing on invalidation.
+    pub redraw_on_invalidation: bool,
+}
+
+impl Default for CompositorCapabilities {
+    fn default() -> Self {
+        // The default set of compositor capabilities for a given platform.
+        // These should only be modified if a compositor diverges specifically
+        // from the default behavior so that compositors don't have to track
+        // which changes to this structure unless necessary.
+        CompositorCapabilities {
+            virtual_surface_size: 0,
+            redraw_on_invalidation: false,
+        }
+    }
 }
 
 /// The transform type to apply to Compositor surfaces.

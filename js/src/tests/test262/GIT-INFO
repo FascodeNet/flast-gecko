@@ -1,12 +1,7 @@
-commit df1961f16a7cdae0bcd9d6a0004b9fda1895a9ef
-Author: Yusuke Suzuki <ysuzuki@apple.com>
-Date:   Wed Jan 6 20:36:24 2021 -0800
+commit 516ca9af3938bfe8694cf0998f9193c57e826adb
+Author: Gus Caplan <me@gus.host>
+Date:   Wed Oct 21 20:14:28 2020 -0400
 
-    Fix formatRangeToParts/date-same-returns-single-date.js and add tests using practically-equal two dates
+    Update tests for ECMA262 #2216
     
-    intl402/DateTimeFormat/prototype/formatRangeToParts/date-same-returns-single-date.js is using `formatRange` and `format`.
-    Fix this test to use `formatRangeToParts` and `formatToParts` since it is the intention of this test.
-    
-    This patch adds additional tests to intl402/DateTimeFormat/prototype/formatRangeToParts/date-same-returns-single-date.js and
-    intl402/DateTimeFormat/prototype/formatRange/date-same-returns-single-date.js. The new test uses two dates that are practially-equal,
-    and ensures the implementation uses `format` or `formatToParts` by detecting they are practically-equal.
+    https://github.com/tc39/ecma262/pull/2216

@@ -1,7 +1,7 @@
 import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
 import { GlobalOverrider } from "test/unit/utils";
 import { PlacesFeed } from "lib/PlacesFeed.jsm";
-const { HistoryObserver, BookmarksObserver, PlacesObserver } = PlacesFeed;
+const { BookmarksObserver, PlacesObserver } = PlacesFeed;
 
 const FAKE_BOOKMARK = {
   bookmarkGuid: "xi31",
@@ -82,16 +82,6 @@ describe("PlacesFeed", () => {
   });
   afterEach(() => globals.restore());
 
-  it("should have a HistoryObserver that dispatches to the store", () => {
-    assert.instanceOf(feed.historyObserver, HistoryObserver);
-    const action = { type: "FOO" };
-
-    feed.historyObserver.dispatch(action);
-
-    assert.calledOnce(feed.store.dispatch);
-    assert.equal(feed.store.dispatch.firstCall.args[0].type, action.type);
-  });
-
   it("should have a BookmarksObserver that dispatch to the store", () => {
     assert.instanceOf(feed.bookmarksObserver, BookmarksObserver);
     const action = { type: "FOO" };
@@ -116,18 +106,18 @@ describe("PlacesFeed", () => {
       feed.onAction({ type: at.INIT });
 
       assert.calledWith(
-        global.PlacesUtils.history.addObserver,
-        feed.historyObserver,
-        true
-      );
-      assert.calledWith(
         global.PlacesUtils.bookmarks.addObserver,
         feed.bookmarksObserver,
         true
       );
       assert.calledWith(
         global.PlacesUtils.observers.addListener,
-        ["bookmark-added", "bookmark-removed", "history-cleared"],
+        [
+          "bookmark-added",
+          "bookmark-removed",
+          "history-cleared",
+          "page-removed",
+        ],
         feed.placesObserver.handlePlacesEvent
       );
       assert.calledWith(global.Services.obs.addObserver, feed, BLOCKED_EVENT);
@@ -140,16 +130,17 @@ describe("PlacesFeed", () => {
       feed.onAction({ type: at.UNINIT });
 
       assert.calledWith(
-        global.PlacesUtils.history.removeObserver,
-        feed.historyObserver
-      );
-      assert.calledWith(
         global.PlacesUtils.bookmarks.removeObserver,
         feed.bookmarksObserver
       );
       assert.calledWith(
         global.PlacesUtils.observers.removeListener,
-        ["bookmark-added", "bookmark-removed", "history-cleared"],
+        [
+          "bookmark-added",
+          "bookmark-removed",
+          "history-cleared",
+          "page-removed",
+        ],
         feed.placesObserver.handlePlacesEvent
       );
       assert.calledWith(
@@ -742,35 +733,6 @@ describe("PlacesFeed", () => {
     });
   });
 
-  describe("HistoryObserver", () => {
-    let dispatch;
-    let observer;
-    beforeEach(() => {
-      dispatch = sandbox.spy();
-      observer = new HistoryObserver(dispatch);
-    });
-    it("should have a QueryInterface property", () => {
-      assert.property(observer, "QueryInterface");
-    });
-    describe("#onDeleteURI", () => {
-      it("should dispatch a PLACES_LINK_DELETED action with the right url", async () => {
-        await observer.onDeleteURI({ spec: "foo.com" });
-
-        assert.calledWith(dispatch, {
-          type: at.PLACES_LINK_DELETED,
-          data: { url: "foo.com" },
-        });
-      });
-    });
-    describe("Other empty methods (to keep code coverage happy)", () => {
-      it("should have a various empty functions for xpconnect happiness", () => {
-        observer.onBeginUpdateBatch();
-        observer.onEndUpdateBatch();
-        observer.onDeleteVisits();
-      });
-    });
-  });
-
   describe("Custom dispatch", () => {
     it("should only dispatch 1 PLACES_LINKS_CHANGED action if many bookmark-added notifications happened at once", async () => {
       // Yes, onItemAdded has at least 8 arguments. See function definition for docs.
@@ -821,10 +783,16 @@ describe("PlacesFeed", () => {
         )
       );
     });
-    it("should only dispatch 1 PLACES_LINKS_CHANGED action if any onDeleteURI notifications happened at once", async () => {
-      await feed.historyObserver.onDeleteURI({ spec: "foo.com" });
-      await feed.historyObserver.onDeleteURI({ spec: "foo1.com" });
-      await feed.historyObserver.onDeleteURI({ spec: "foo2.com" });
+    it("should only dispatch 1 PLACES_LINKS_CHANGED action if any page-removed notifications happened at once", async () => {
+      await feed.placesObserver.handlePlacesEvent([
+        { type: "page-removed", url: "foo.com", isRemovedFromStore: true },
+      ]);
+      await feed.placesObserver.handlePlacesEvent([
+        { type: "page-removed", url: "foo1.com", isRemovedFromStore: true },
+      ]);
+      await feed.placesObserver.handlePlacesEvent([
+        { type: "page-removed", url: "foo2.com", isRemovedFromStore: true },
+      ]);
 
       assert.calledOnce(
         feed.store.dispatch.withArgs(
@@ -847,6 +815,23 @@ describe("PlacesFeed", () => {
         const args = [{ type: "history-cleared" }];
         await observer.handlePlacesEvent(args);
         assert.calledWith(dispatch, { type: at.PLACES_HISTORY_CLEARED });
+      });
+    });
+
+    describe("#page-removed", () => {
+      it("should dispatch a PLACES_LINKS_DELETED action with the right url", async () => {
+        const args = [
+          {
+            type: "page-removed",
+            url: "foo.com",
+            isRemovedFromStore: true,
+          },
+        ];
+        await observer.handlePlacesEvent(args);
+        assert.calledWith(dispatch, {
+          type: at.PLACES_LINKS_DELETED,
+          data: { urls: ["foo.com"] },
+        });
       });
     });
 
@@ -1022,7 +1007,7 @@ describe("PlacesFeed", () => {
         await observer.handlePlacesEvent(args);
         assert.notCalled(dispatch);
       });
-      it("should not dispatch a PLACES_BOOKMARK_REMOVED action - has SYNC source", async () => {
+      it("should not dispatch a PLACES_BOOKMARKS_REMOVED action - has SYNC source", async () => {
         const args = [
           {
             id: null,
@@ -1040,7 +1025,7 @@ describe("PlacesFeed", () => {
 
         assert.notCalled(dispatch);
       });
-      it("should not dispatch a PLACES_BOOKMARK_REMOVED action - has IMPORT source", async () => {
+      it("should not dispatch a PLACES_BOOKMARKS_REMOVED action - has IMPORT source", async () => {
         const args = [
           {
             id: null,
@@ -1058,7 +1043,7 @@ describe("PlacesFeed", () => {
 
         assert.notCalled(dispatch);
       });
-      it("should not dispatch a PLACES_BOOKMARK_REMOVED action - has RESTORE source", async () => {
+      it("should not dispatch a PLACES_BOOKMARKS_REMOVED action - has RESTORE source", async () => {
         const args = [
           {
             id: null,
@@ -1076,7 +1061,7 @@ describe("PlacesFeed", () => {
 
         assert.notCalled(dispatch);
       });
-      it("should not dispatch a PLACES_BOOKMARK_REMOVED action - has RESTORE_ON_STARTUP source", async () => {
+      it("should not dispatch a PLACES_BOOKMARKS_REMOVED action - has RESTORE_ON_STARTUP source", async () => {
         const args = [
           {
             id: null,
@@ -1094,7 +1079,7 @@ describe("PlacesFeed", () => {
 
         assert.notCalled(dispatch);
       });
-      it("should dispatch a PLACES_BOOKMARK_REMOVED action with the right URL and bookmarkGuid", async () => {
+      it("should dispatch a PLACES_BOOKMARKS_REMOVED action with the right URL and bookmarkGuid", async () => {
         const args = [
           {
             id: null,
@@ -1110,8 +1095,8 @@ describe("PlacesFeed", () => {
         ];
         await observer.handlePlacesEvent(args);
         assert.calledWith(dispatch, {
-          type: at.PLACES_BOOKMARK_REMOVED,
-          data: { bookmarkGuid: "123foo", url: "foo.com" },
+          type: at.PLACES_BOOKMARKS_REMOVED,
+          data: { urls: ["foo.com"] },
         });
       });
     });
@@ -1129,8 +1114,6 @@ describe("PlacesFeed", () => {
     });
     describe("Other empty methods (to keep code coverage happy)", () => {
       it("should have a various empty functions for xpconnect happiness", () => {
-        observer.onBeginUpdateBatch();
-        observer.onEndUpdateBatch();
         observer.onItemMoved();
         observer.onItemChanged();
       });

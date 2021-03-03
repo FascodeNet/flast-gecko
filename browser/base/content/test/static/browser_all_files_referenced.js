@@ -157,8 +157,6 @@ var whitelist = [
   },
 
   // Files from upstream library
-  { file: "resource://pdf.js/build/pdf.sandbox.external.js" },
-  { file: "resource://pdf.js/build/pdf.scripting.js" },
   { file: "resource://pdf.js/web/debugger.js" },
 
   // resource://app/modules/translation/TranslationContentHandler.jsm
@@ -217,6 +215,12 @@ var whitelist = [
 
   // Bug 1559554
   { file: "chrome://browser/content/aboutlogins/aboutLoginsUtils.js" },
+
+  // Bug 1559554
+  {
+    file:
+      "chrome://browser/content/aboutlogins/components/import-details-row.js",
+  },
 
   // Referenced from the screenshots webextension
   { file: "resource://app/localization/en-US/browser/screenshots.ftl" },

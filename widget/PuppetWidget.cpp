@@ -427,14 +427,17 @@ nsresult PuppetWidget::SynthesizeNativeKeyEvent(
 }
 
 nsresult PuppetWidget::SynthesizeNativeMouseEvent(
-    mozilla::LayoutDeviceIntPoint aPoint, uint32_t aNativeMessage,
-    uint32_t aModifierFlags, nsIObserver* aObserver) {
+    mozilla::LayoutDeviceIntPoint aPoint, NativeMouseMessage aNativeMessage,
+    MouseButton aButton, nsIWidget::Modifiers aModifierFlags,
+    nsIObserver* aObserver) {
   AutoObserverNotifier notifier(aObserver, "mouseevent");
   if (!mBrowserChild) {
     return NS_ERROR_FAILURE;
   }
   mBrowserChild->SendSynthesizeNativeMouseEvent(
-      aPoint, aNativeMessage, aModifierFlags, notifier.SaveObserver());
+      aPoint, static_cast<uint32_t>(aNativeMessage),
+      static_cast<int16_t>(aButton), static_cast<uint32_t>(aModifierFlags),
+      notifier.SaveObserver());
   return NS_OK;
 }
 
@@ -473,6 +476,17 @@ nsresult PuppetWidget::SynthesizeNativeTouchPoint(
   mBrowserChild->SendSynthesizeNativeTouchPoint(
       aPointerId, aPointerState, aPoint, aPointerPressure, aPointerOrientation,
       notifier.SaveObserver());
+  return NS_OK;
+}
+
+nsresult PuppetWidget::SynthesizeNativeTouchPadPinch(
+    TouchpadPinchPhase aEventPhase, float aScale, LayoutDeviceIntPoint aPoint,
+    int32_t aModifierFlags) {
+  if (!mBrowserChild) {
+    return NS_ERROR_FAILURE;
+  }
+  mBrowserChild->SendSynthesizeNativeTouchPadPinch(aEventPhase, aScale, aPoint,
+                                                   aModifierFlags);
   return NS_OK;
 }
 

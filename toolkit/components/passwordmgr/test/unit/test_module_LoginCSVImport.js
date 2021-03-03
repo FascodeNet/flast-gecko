@@ -153,15 +153,36 @@ add_task(async function test_import_lacking_username_column() {
 });
 
 /**
- * Ensure that an import fails if there are two headings that map to one login field.
+ * Ensure that an import fails if there are two columns that map to one login field.
  */
-add_task(async function test_import_with_duplicate_columns() {
+add_task(async function test_import_with_duplicate_fields() {
   // Two origin columns (url & login_uri).
   // One row has different values and the other has the same.
   let csvFilePath = await setupCsv([
     "url,login_uri,username,login_password",
     "https://example.com/path,https://example.com,john@example.com,azerty",
     "https://mozilla.org,https://mozilla.org,jdoe@example.com,qwerty",
+  ]);
+
+  await Assert.rejects(
+    LoginCSVImport.importFromCSV(csvFilePath),
+    /CONFLICTING_VALUES_ERROR/,
+    "Check that the errorType is file format error"
+  );
+
+  LoginTestUtils.checkLogins(
+    [],
+    "Check that no login was added from a file with duplicated columns"
+  );
+});
+
+/**
+ * Ensure that an import fails if there are two identical columns.
+ */
+add_task(async function test_import_with_duplicate_columns() {
+  let csvFilePath = await setupCsv([
+    "url,username,password,password",
+    "https://example.com/path,john@example.com,azerty,12345",
   ]);
 
   await Assert.rejects(
@@ -616,28 +637,36 @@ add_task(async function test_import_summary_contains_unchanged_login() {
 });
 
 /**
- * Imports login data summary contains logins with errors.
+ * Imports login data summary contains logins with errors in case of missing fields.
  */
-add_task(async function test_import_summary_contains_logins_with_errors() {
-  let csvFilePath = await setupCsv([
-    "url,username,password,httpRealm,formActionOrigin,guid,timeCreated,timeLastUsed,timePasswordChanged",
-    "https://invalid.password.example.com,jane@example.com,,My realm,,{5ec0d12f-e194-4279-ae1b-d7d281bb0002},1589617814635,1589710449871,1589617846802",
-    ",jane@example.com,invalid_origin,My realm,,{5ec0d12f-e194-4279-ae1b-d7d281bb0005},1589617814635,1589710449871,1589617846802",
-  ]);
-  let [invalidPassword, invalidOrigin] = await LoginCSVImport.importFromCSV(
-    csvFilePath
-  );
+add_task(async function test_import_summary_contains_missing_fields_errors() {
+  const missingFieldsToCheck = ["url", "username", "password"];
+  const sourceObject = {
+    url: "https://invalid.password.example.com",
+    username: "jane@example.com",
+    password: "qwerty",
+  };
+  for (const missingField of missingFieldsToCheck) {
+    const clonedUser = { ...sourceObject };
+    clonedUser[missingField] = "";
+    let csvFilePath = await setupCsv([
+      "url,username,password",
+      `${clonedUser.url},${clonedUser.username},${clonedUser.password}`,
+    ]);
 
-  equal(
-    invalidPassword.result,
-    "error_invalid_password",
-    `Check that the invalid password error is reported`
-  );
-  equal(
-    invalidOrigin.result,
-    "error_invalid_origin",
-    `Check that the invalid origin error is reported`
-  );
+    let [importLogin] = await LoginCSVImport.importFromCSV(csvFilePath);
+
+    equal(
+      importLogin.result,
+      "error_missing_field",
+      `Check that the missing field error is reported for ${missingField}`
+    );
+    equal(
+      importLogin.field_name,
+      missingField,
+      `Check that the invalid field name is correctly reported for the ${missingField}`
+    );
+  }
 });
 
 /**

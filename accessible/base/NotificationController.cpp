@@ -7,7 +7,6 @@
 
 #include "DocAccessible-inl.h"
 #include "DocAccessibleChild.h"
-#include "GeckoProfiler.h"
 #include "nsEventShell.h"
 #include "TextLeafAccessible.h"
 #include "TextUpdater.h"
@@ -15,6 +14,7 @@
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/Telemetry.h"
 
 using namespace mozilla;
@@ -86,8 +86,9 @@ void NotificationController::Shutdown() {
   // Shutdown handling child documents.
   int32_t childDocCount = mHangingChildDocuments.Length();
   for (int32_t idx = childDocCount - 1; idx >= 0; idx--) {
-    if (!mHangingChildDocuments[idx]->IsDefunct())
+    if (!mHangingChildDocuments[idx]->IsDefunct()) {
       mHangingChildDocuments[idx]->Shutdown();
+    }
   }
 
   mHangingChildDocuments.Clear();
@@ -103,7 +104,7 @@ void NotificationController::Shutdown() {
   mEventTree.Clear();
 }
 
-EventTree* NotificationController::QueueMutation(Accessible* aContainer) {
+EventTree* NotificationController::QueueMutation(LocalAccessible* aContainer) {
   EventTree* tree = mEventTree.FindOrInsert(aContainer);
   if (tree) {
     ScheduleProcessing();
@@ -170,8 +171,8 @@ bool NotificationController::QueueMutationEvent(AccTreeMutationEvent* aEvent) {
   // or hidden children of a container.  So either queue a new one, or move an
   // existing one to the end of the queue if the container already has a
   // reorder event.
-  Accessible* target = aEvent->GetAccessible();
-  Accessible* container = aEvent->GetAccessible()->Parent();
+  LocalAccessible* target = aEvent->GetAccessible();
+  LocalAccessible* container = aEvent->GetAccessible()->LocalParent();
   RefPtr<AccReorderEvent> reorder;
   if (!container->ReorderEventTarget()) {
     reorder = new AccReorderEvent(container);
@@ -228,7 +229,7 @@ bool NotificationController::QueueMutationEvent(AccTreeMutationEvent* aEvent) {
       mutEvent->IsHide()) {
     AccHideEvent* prevHide = downcast_accEvent(prevEvent);
     AccTextChangeEvent* prevTextChange = prevHide->mTextChangeEvent;
-    if (prevTextChange && prevHide->Parent() == mutEvent->Parent()) {
+    if (prevTextChange && prevHide->LocalParent() == mutEvent->LocalParent()) {
       if (prevHide->mNextSibling == target) {
         target->AppendTextTo(prevTextChange->mModifiedText);
         prevHide->mTextChangeEvent.swap(mutEvent->mTextChangeEvent);
@@ -248,7 +249,7 @@ bool NotificationController::QueueMutationEvent(AccTreeMutationEvent* aEvent) {
              prevEvent->GetEventType() == nsIAccessibleEvent::EVENT_SHOW) {
     AccShowEvent* prevShow = downcast_accEvent(prevEvent);
     AccTextChangeEvent* prevTextChange = prevShow->mTextChangeEvent;
-    if (prevTextChange && prevShow->Parent() == target->Parent()) {
+    if (prevTextChange && prevShow->LocalParent() == target->LocalParent()) {
       int32_t index = target->IndexInParent();
       int32_t prevIndex = prevShow->GetAccessible()->IndexInParent();
       if (prevIndex + 1 == index) {
@@ -315,7 +316,7 @@ void NotificationController::CoalesceMutationEvents() {
     AccTreeMutationEvent* nextEvent = event->NextEvent();
     uint32_t eventType = event->GetEventType();
     if (event->GetEventType() == nsIAccessibleEvent::EVENT_REORDER) {
-      Accessible* acc = event->GetAccessible();
+      LocalAccessible* acc = event->GetAccessible();
       while (acc) {
         if (acc->IsDoc()) {
           break;
@@ -329,7 +330,7 @@ void NotificationController::CoalesceMutationEvents() {
           break;
         }
 
-        Accessible* parent = acc->Parent();
+        LocalAccessible* parent = acc->LocalParent();
         if (parent->ReorderEventTarget()) {
           AccReorderEvent* reorder = downcast_accEvent(
               mMutationMap.GetEvent(parent, EventMap::ReorderEvent));
@@ -370,7 +371,7 @@ void NotificationController::CoalesceMutationEvents() {
         acc = parent;
       }
     } else if (eventType == nsIAccessibleEvent::EVENT_SHOW) {
-      Accessible* parent = event->GetAccessible()->Parent();
+      LocalAccessible* parent = event->GetAccessible()->LocalParent();
       while (parent) {
         if (parent->IsDoc()) {
           break;
@@ -383,14 +384,14 @@ void NotificationController::CoalesceMutationEvents() {
           break;
         }
 
-        parent = parent->Parent();
+        parent = parent->LocalParent();
       }
     } else {
       MOZ_ASSERT(eventType == nsIAccessibleEvent::EVENT_HIDE,
                  "mutation event list has an invalid event");
 
       AccHideEvent* hideEvent = downcast_accEvent(event);
-      Accessible* parent = hideEvent->Parent();
+      LocalAccessible* parent = hideEvent->LocalParent();
       while (parent) {
         if (parent->IsDoc()) {
           break;
@@ -410,7 +411,7 @@ void NotificationController::CoalesceMutationEvents() {
           }
         }
 
-        parent = parent->Parent();
+        parent = parent->LocalParent();
       }
     }
 
@@ -425,9 +426,9 @@ void NotificationController::ScheduleChildDocBinding(DocAccessible* aDocument) {
 }
 
 void NotificationController::ScheduleContentInsertion(
-    Accessible* aContainer, nsTArray<nsCOMPtr<nsIContent>>& aInsertions) {
+    LocalAccessible* aContainer, nsTArray<nsCOMPtr<nsIContent>>& aInsertions) {
   if (!aInsertions.IsEmpty()) {
-    mContentInsertions.LookupOrAdd(aContainer)->AppendElements(aInsertions);
+    mContentInsertions.GetOrInsertNew(aContainer)->AppendElements(aInsertions);
     ScheduleProcessing();
   }
 }
@@ -437,8 +438,9 @@ void NotificationController::ScheduleProcessing() {
   // asynchronously (after style and layout).
   if (mObservingState == eNotObservingRefresh) {
     if (mPresShell->AddRefreshObserver(this, FlushType::Display,
-                                       "Accessibility notifications"))
+                                       "Accessibility notifications")) {
       mObservingState = eRefreshObserving;
+    }
   }
 }
 
@@ -520,7 +522,8 @@ void NotificationController::ProcessMutationEvents() {
   }
 
   // Group the show events by the parent of their target.
-  nsDataHashtable<nsPtrHashKey<Accessible>, nsTArray<AccTreeMutationEvent*>>
+  nsDataHashtable<nsPtrHashKey<LocalAccessible>,
+                  nsTArray<AccTreeMutationEvent*>>
       showEvents;
   for (AccTreeMutationEvent* event = mFirstMutationEvent; event;
        event = event->NextEvent()) {
@@ -528,8 +531,8 @@ void NotificationController::ProcessMutationEvents() {
       continue;
     }
 
-    Accessible* parent = event->GetAccessible()->Parent();
-    showEvents.GetOrInsert(parent).AppendElement(event);
+    LocalAccessible* parent = event->GetAccessible()->LocalParent();
+    showEvents.LookupOrInsert(parent).AppendElement(event);
   }
 
   // We need to fire show events for the children of an accessible in the order
@@ -583,7 +586,7 @@ void NotificationController::ProcessMutationEvents() {
       return;
     }
 
-    Accessible* target = event->GetAccessible();
+    LocalAccessible* target = event->GetAccessible();
     target->Document()->MaybeNotifyOfValueChange(target);
     if (!mDocument) {
       return;
@@ -655,7 +658,7 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
   for (auto iter = mTextHash.Iter(); !iter.Done(); iter.Next()) {
     nsCOMPtrHashKey<nsIContent>* entry = iter.Get();
     nsIContent* textNode = entry->GetKey();
-    Accessible* textAcc = mDocument->GetAccessible(textNode);
+    LocalAccessible* textAcc = mDocument->GetAccessible(textNode);
 
     // If the text node is not in tree or doesn't have a frame, or placed in
     // another document, then this case should have been handled already by
@@ -734,11 +737,11 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
       MOZ_ASSERT(mDocument->AccessibleOrTrueContainer(containerNode),
                  "Text node having rendered text hasn't accessible document!");
 
-      Accessible* container =
+      LocalAccessible* container =
           mDocument->AccessibleOrTrueContainer(containerNode, true);
       if (container) {
         nsTArray<nsCOMPtr<nsIContent>>* list =
-            mContentInsertions.LookupOrAdd(container);
+            mContentInsertions.GetOrInsertNew(container);
         list->AppendElement(textNode);
       }
     }
@@ -776,7 +779,7 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
 
     nsIContent* ownerContent = childDoc->DocumentNode()->GetEmbedderElement();
     if (ownerContent) {
-      Accessible* outerDocAcc = mDocument->GetAccessible(ownerContent);
+      LocalAccessible* outerDocAcc = mDocument->GetAccessible(ownerContent);
       if (outerDocAcc && outerDocAcc->AppendChild(childDoc)) {
         if (mDocument->AppendChildDocument(childDoc)) {
           newChildDocs.AppendElement(std::move(mHangingChildDocuments[idx]));
@@ -859,7 +862,7 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
   mFirstMutationEvent = nullptr;
   while (mutEvent) {
     RefPtr<AccTreeMutationEvent> nextEvent = mutEvent->NextEvent();
-    Accessible* target = mutEvent->GetAccessible();
+    LocalAccessible* target = mutEvent->GetAccessible();
 
     // We need to be careful here, while it may seem that we can simply 0 all
     // the pending event bits that is not true.  Because accessibles may be
@@ -893,7 +896,7 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
         continue;
       }
 
-      Accessible* parent = childDoc->Parent();
+      LocalAccessible* parent = childDoc->LocalParent();
       DocAccessibleChild* parentIPCDoc = mDocument->IPCDoc();
       MOZ_DIAGNOSTIC_ASSERT(parentIPCDoc);
       uint64_t id = reinterpret_cast<uintptr_t>(parent->UniqueID());
@@ -941,11 +944,11 @@ void NotificationController::EventMap::PutEvent(AccTreeMutationEvent* aEvent) {
   uint64_t addr = reinterpret_cast<uintptr_t>(aEvent->GetAccessible());
   MOZ_ASSERT((addr & 0x3) == 0, "accessible is not 4 byte aligned");
   addr |= type;
-  mTable.Put(addr, RefPtr{aEvent});
+  mTable.InsertOrUpdate(addr, RefPtr{aEvent});
 }
 
 AccTreeMutationEvent* NotificationController::EventMap::GetEvent(
-    Accessible* aTarget, EventType aType) {
+    LocalAccessible* aTarget, EventType aType) {
   uint64_t addr = reinterpret_cast<uintptr_t>(aTarget);
   MOZ_ASSERT((addr & 0x3) == 0, "target is not 4 byte aligned");
 

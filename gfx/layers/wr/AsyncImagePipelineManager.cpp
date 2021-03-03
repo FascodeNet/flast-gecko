@@ -101,21 +101,22 @@ void AsyncImagePipelineManager::AddPipeline(const wr::PipelineId& aPipelineId,
   if (mDestroyed) {
     return;
   }
-  uint64_t id = wr::AsUint64(aPipelineId);
 
-  PipelineTexturesHolder* holder =
-      mPipelineTexturesHolders.Get(wr::AsUint64(aPipelineId));
-  if (holder) {
-    // This could happen during tab move between different windows.
-    // Previously removed holder could be still alive for waiting destroyed.
-    MOZ_ASSERT(holder->mDestroyedEpoch.isSome());
-    holder->mDestroyedEpoch = Nothing();  // Revive holder
-    holder->mWrBridge = aWrBridge;
-    return;
-  }
-  holder = new PipelineTexturesHolder();
-  holder->mWrBridge = aWrBridge;
-  mPipelineTexturesHolders.Put(id, holder);
+  mPipelineTexturesHolders.WithEntryHandle(
+      wr::AsUint64(aPipelineId), [&](auto&& holder) {
+        if (holder) {
+          // This could happen during tab move between different windows.
+          // Previously removed holder could be still alive for waiting
+          // destroyed.
+          MOZ_ASSERT(holder.Data()->mDestroyedEpoch.isSome());
+          holder.Data()->mDestroyedEpoch = Nothing();  // Revive holder
+          holder.Data()->mWrBridge = aWrBridge;
+          return;
+        }
+
+        holder.Insert(MakeUnique<PipelineTexturesHolder>())->mWrBridge =
+            aWrBridge;
+      });
 }
 
 void AsyncImagePipelineManager::RemovePipeline(
@@ -161,10 +162,10 @@ void AsyncImagePipelineManager::AddAsyncImagePipeline(
   MOZ_ASSERT(aImageHost);
   uint64_t id = wr::AsUint64(aPipelineId);
 
-  MOZ_ASSERT(!mAsyncImagePipelines.Get(id));
-  AsyncImagePipeline* holder = new AsyncImagePipeline();
+  MOZ_ASSERT(!mAsyncImagePipelines.Contains(id));
+  auto holder = MakeUnique<AsyncImagePipeline>();
   holder->mImageHost = aImageHost;
-  mAsyncImagePipelines.Put(id, holder);
+  mAsyncImagePipelines.InsertOrUpdate(id, std::move(holder));
   AddPipeline(aPipelineId, /* aWrBridge */ nullptr);
 }
 
@@ -246,12 +247,13 @@ Maybe<TextureHost::ResourceUpdateOp> AsyncImagePipelineManager::UpdateImageKeys(
 
   // If we already had a texture and the format hasn't changed, better to reuse
   // the image keys than create new ones.
+  auto backend = aSceneBuilderTxn.GetBackendType();
   bool canUpdate = !!previousTexture &&
                    previousTexture->GetSize() == texture->GetSize() &&
                    previousTexture->GetFormat() == texture->GetFormat() &&
                    previousTexture->NeedsYFlip() == texture->NeedsYFlip() &&
-                   previousTexture->SupportsExternalCompositing() ==
-                       texture->SupportsExternalCompositing() &&
+                   previousTexture->SupportsExternalCompositing(backend) ==
+                       texture->SupportsExternalCompositing(backend) &&
                    aPipeline->mKeys.Length() == numKeys;
 
   if (!canUpdate) {
@@ -404,7 +406,7 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
 
   aPipeline->mIsChanged = false;
 
-  wr::DisplayListBuilder builder(aPipelineId);
+  wr::DisplayListBuilder builder(aPipelineId, mApi->GetBackendType());
 
   float opacity = 1.0f;
   wr::StackingContextParams params;
@@ -476,7 +478,7 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
   if (!pipeline) {
     return;
   }
-  wr::TransactionBuilder fastTxn(/* aUseSceneBuilderThread */ false);
+  wr::TransactionBuilder fastTxn(mApi, /* aUseSceneBuilderThread */ false);
   wr::AutoTransactionSender sender(mApi, &fastTxn);
 
   // Transaction for async image pipeline that uses ImageBridge always need to
@@ -513,7 +515,7 @@ void AsyncImagePipelineManager::SetEmptyDisplayList(
   auto& txn = pipeline->mImageHost->GetAsyncRef() ? aTxnForImageBridge : aTxn;
 
   wr::Epoch epoch = GetNextImageEpoch();
-  wr::DisplayListBuilder builder(aPipelineId);
+  wr::DisplayListBuilder builder(aPipelineId, mApi->GetBackendType());
 
   wr::BuiltDisplayList dl;
   builder.Finalize(dl);

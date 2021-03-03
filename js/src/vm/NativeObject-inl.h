@@ -27,6 +27,7 @@
 #include "gc/Marking-inl.h"
 #include "gc/ObjectKind-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/Shape-inl.h"
 
 namespace js {
 
@@ -86,7 +87,7 @@ inline void NativeObject::removeDenseElementForSparseIndex(uint32_t index) {
 }
 
 inline void NativeObject::markDenseElementsNotPacked() {
-  MOZ_ASSERT(isNative());
+  MOZ_ASSERT(is<NativeObject>());
   getElementsHeader()->markNonPacked();
 }
 
@@ -378,7 +379,7 @@ DenseElementResult NativeObject::extendDenseElements(JSContext* cx,
 inline DenseElementResult NativeObject::ensureDenseElements(JSContext* cx,
                                                             uint32_t index,
                                                             uint32_t extra) {
-  MOZ_ASSERT(isNative());
+  MOZ_ASSERT(is<NativeObject>());
   MOZ_ASSERT(isExtensible() || (containsDenseElement(index) && extra == 1));
 
   uint32_t requiredCapacity;
@@ -450,7 +451,7 @@ inline bool NativeObject::isInWholeCellBuffer() const {
   debugCheckNewObject(group, shape, kind, heap);
 
   const JSClass* clasp = group->clasp();
-  MOZ_ASSERT(clasp->isNative());
+  MOZ_ASSERT(clasp->isNativeObject());
   MOZ_ASSERT(!clasp->isJSFunction(), "should use JSFunction::create");
 
   size_t nDynamicSlots =
@@ -604,29 +605,28 @@ inline bool NativeObject::denseElementsMaybeInIteration() {
  *
  * There are four possible outcomes:
  *
- *   - On failure, report an error or exception and return false.
+ *  - On failure, report an error or exception and return false.
  *
- *   - If we are already resolving a property of obj, set *recursedp = true,
- *     and return true.
+ *  - If we are already resolving a property of obj, call setRecursiveResolve on
+ *    propp and return true.
  *
- *   - If the resolve hook finds or defines the sought property, set propp
- *      appropriately, set *recursedp = false, and return true.
+ *  - If the resolve hook finds or defines the sought property, set propp
+ *    appropriately, and return true.
  *
- *   - Otherwise no property was resolved. Set propp to nullptr and
- *     *recursedp = false and return true.
+ *  - Otherwise no property was resolved. Set propp to NotFound and return true.
  */
-static MOZ_ALWAYS_INLINE bool CallResolveOp(JSContext* cx,
-                                            HandleNativeObject obj, HandleId id,
-                                            MutableHandle<PropertyResult> propp,
-                                            bool* recursedp) {
+static MOZ_ALWAYS_INLINE bool CallResolveOp(
+    JSContext* cx, HandleNativeObject obj, HandleId id,
+    MutableHandle<PropertyResult> propp) {
+  MOZ_ASSERT(!cx->isHelperThreadContext());
+
   // Avoid recursion on (obj, id) already being resolved on cx.
   AutoResolving resolving(cx, obj, id);
   if (resolving.alreadyStarted()) {
     // Already resolving id in obj, suppress recursion.
-    *recursedp = true;
+    propp.setRecursiveResolve();
     return true;
   }
-  *recursedp = false;
 
   bool resolved = false;
   AutoRealm ar(cx, obj);
@@ -635,6 +635,7 @@ static MOZ_ALWAYS_INLINE bool CallResolveOp(JSContext* cx,
   }
 
   if (!resolved) {
+    propp.setNotFound();
     return true;
   }
 
@@ -663,18 +664,29 @@ static MOZ_ALWAYS_INLINE bool CallResolveOp(JSContext* cx,
   return true;
 }
 
-template <AllowGC allowGC>
-static MOZ_ALWAYS_INLINE bool LookupOwnPropertyInline(
+enum class LookupResolveMode {
+  IgnoreResolve,
+  CheckResolve,
+  CheckMayResolve,
+};
+
+template <AllowGC allowGC,
+          LookupResolveMode resolveMode = LookupResolveMode::CheckResolve>
+static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
     JSContext* cx, typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
     typename MaybeRooted<jsid, allowGC>::HandleType id,
-    typename MaybeRooted<PropertyResult, allowGC>::MutableHandleType propp,
-    bool* donep) {
+    typename MaybeRooted<PropertyResult, allowGC>::MutableHandleType propp) {
+  // Native objects should should avoid `lookupProperty` hooks, and those that
+  // use them should avoid recursively triggering lookup, and those that still
+  // violate this guidance are the ModuleEnvironmentObject.
+  MOZ_ASSERT_IF(obj->getOpsLookupProperty(),
+                obj->template is<ModuleEnvironmentObject>());
+
   // Check for a native dense element.
   if (JSID_IS_INT(id)) {
     uint32_t index = JSID_TO_INT(id);
     if (obj->containsDenseElement(index)) {
       propp.setDenseElement(index);
-      *donep = true;
       return true;
     }
   }
@@ -683,22 +695,21 @@ static MOZ_ALWAYS_INLINE bool LookupOwnPropertyInline(
   // so that integer properties on the prototype are ignored even for out
   // of bounds accesses.
   if (obj->template is<TypedArrayObject>()) {
-    JS::Result<mozilla::Maybe<uint64_t>> index = IsTypedArrayIndex(cx, id);
-    if (index.isErr()) {
+    mozilla::Maybe<uint64_t> index;
+    if (!ToTypedArrayIndex(cx, id, &index)) {
       if (!allowGC) {
         cx->recoverFromOutOfMemory();
       }
       return false;
     }
 
-    if (index.inspect()) {
-      uint64_t idx = index.inspect().value();
+    if (index.isSome()) {
+      uint64_t idx = index.value();
       if (idx < obj->template as<TypedArrayObject>().length().get()) {
         propp.setTypedArrayElement(idx);
       } else {
-        propp.setNotFound();
+        propp.setTypedArrayOutOfRange();
       }
-      *donep = true;
       return true;
     }
   }
@@ -709,81 +720,54 @@ static MOZ_ALWAYS_INLINE bool LookupOwnPropertyInline(
   // NativeObject::lookup) because it's inlined.
   if (Shape* shape = obj->lastProperty()->search(cx, id)) {
     propp.setNativeProperty(shape);
-    *donep = true;
     return true;
   }
 
-  // id was not found in obj. Try obj's resolve hook, if any.
+  // Some callers explicitily want us to ignore the resolve hook entirely. In
+  // that case, we report the property as NotFound.
+  if constexpr (resolveMode == LookupResolveMode::IgnoreResolve) {
+    propp.setNotFound();
+    return true;
+  }
+
+  // JITs in particular use the `mayResolve` hook to determine a JSClass can
+  // never resolve this property name (for all instances of the class).
+  if constexpr (resolveMode == LookupResolveMode::CheckMayResolve) {
+    static_assert(allowGC == false,
+                  "CheckMayResolve can only be used with NoGC");
+
+    MOZ_ASSERT(propp.isNotFound());
+    return !ClassMayResolveId(cx->names(), obj->getClass(), id, obj);
+  }
+
+  MOZ_ASSERT(resolveMode == LookupResolveMode::CheckResolve);
+
+  // If there is no resolve hook, the property definitely does not exist.
   if (obj->getClass()->getResolve()) {
-    MOZ_ASSERT(!cx->isHelperThreadContext());
     if constexpr (!allowGC) {
       return false;
     } else {
-      bool recursed;
-      if (!CallResolveOp(cx, obj, id, propp, &recursed)) {
-        return false;
-      }
-
-      if (recursed) {
-        propp.setNotFound();
-        *donep = true;
-        return true;
-      }
-
-      if (propp) {
-        *donep = true;
-        return true;
-      }
+      return CallResolveOp(cx, obj, id, propp);
     }
   }
 
   propp.setNotFound();
-  *donep = false;
   return true;
 }
 
 /*
- * Simplified version of LookupOwnPropertyInline that doesn't call resolve
- * hooks.
+ * Simplified version of NativeLookupOwnPropertyInline that doesn't call
+ * resolve hooks.
  */
-static inline MOZ_MUST_USE bool NativeLookupOwnPropertyNoResolve(
-    JSContext* cx, HandleNativeObject obj, HandleId id,
-    MutableHandle<PropertyResult> result) {
-  // Check for a native dense element.
-  if (JSID_IS_INT(id)) {
-    uint32_t index = JSID_TO_INT(id);
-    if (obj->containsDenseElement(index)) {
-      result.setDenseElement(index);
-      return true;
-    }
-  }
-
-  // Check for a typed array element.
-  if (obj->is<TypedArrayObject>()) {
-    mozilla::Maybe<uint64_t> index;
-    JS_TRY_VAR_OR_RETURN_FALSE(cx, index, IsTypedArrayIndex(cx, id));
-
-    if (index) {
-      if (index.value() < obj->as<TypedArrayObject>().length().get()) {
-        result.setTypedArrayElement(index.value());
-      } else {
-        result.setNotFound();
-      }
-      return true;
-    }
-  }
-
-  // Check for a native property.
-  if (Shape* shape = obj->lookup(cx, id)) {
-    result.setNativeProperty(shape);
-  } else {
-    result.setNotFound();
-  }
-  return true;
+[[nodiscard]] static inline bool NativeLookupOwnPropertyNoResolve(
+    JSContext* cx, NativeObject* obj, jsid id, PropertyResult* result) {
+  return NativeLookupOwnPropertyInline<NoGC, LookupResolveMode::IgnoreResolve>(
+      cx, obj, id, result);
 }
 
-template <AllowGC allowGC>
-static MOZ_ALWAYS_INLINE bool LookupPropertyInline(
+template <AllowGC allowGC,
+          LookupResolveMode resolveMode = LookupResolveMode::CheckResolve>
+static MOZ_ALWAYS_INLINE bool NativeLookupPropertyInline(
     JSContext* cx, typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
     typename MaybeRooted<jsid, allowGC>::HandleType id,
     typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
@@ -792,39 +776,42 @@ static MOZ_ALWAYS_INLINE bool LookupPropertyInline(
   typename MaybeRooted<NativeObject*, allowGC>::RootType current(cx, obj);
 
   while (true) {
-    bool done;
-    if (!LookupOwnPropertyInline<allowGC>(cx, current, id, propp, &done)) {
+    if (!NativeLookupOwnPropertyInline<allowGC, resolveMode>(cx, current, id,
+                                                             propp)) {
       return false;
     }
-    if (done) {
-      if (propp) {
-        objp.set(current);
-      } else {
-        objp.set(nullptr);
-      }
+
+    if (propp.isFound()) {
+      objp.set(current);
       return true;
     }
 
-    typename MaybeRooted<JSObject*, allowGC>::RootType proto(
-        cx, current->staticPrototype());
+    if (propp.shouldIgnoreProtoChain()) {
+      break;
+    }
 
+    JSObject* proto = current->staticPrototype();
     if (!proto) {
       break;
     }
-    if (!proto->isNative()) {
-      MOZ_ASSERT(!cx->isHelperThreadContext());
-      if constexpr (!allowGC) {
-        return false;
+
+    // If a `lookupProperty` hook exists, recurse into LookupProperty, otherwise
+    // we can simply loop within this call frame.
+    if (proto->getOpsLookupProperty()) {
+      if constexpr (allowGC) {
+        MOZ_ASSERT(!cx->isHelperThreadContext());
+        RootedObject protoRoot(cx, proto);
+        return LookupProperty(cx, protoRoot, id, objp, propp);
       } else {
-        return LookupProperty(cx, proto, id, objp, propp);
+        return false;
       }
     }
 
-    current = &proto->template as<NativeObject>();
+    current = &proto->as<NativeObject>();
   }
 
+  MOZ_ASSERT(propp.isNotFound());
   objp.set(nullptr);
-  propp.setNotFound();
   return true;
 }
 

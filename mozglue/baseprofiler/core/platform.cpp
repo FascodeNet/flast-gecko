@@ -1368,6 +1368,13 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
       // Sp marker frames are just annotations and should not be recorded in
       // the profile.
       if (!profilingStackFrame.isSpMarkerFrame()) {
+        if (aIsSynchronous && profilingStackFrame.categoryPair() ==
+                                  ProfilingCategoryPair::PROFILER) {
+          // For stacks captured synchronously (ie. marker stacks), stop
+          // walking the stack as soon as we enter the profiler category,
+          // to avoid showing profiler internal code in marker stacks.
+          return;
+        }
         aCollector.CollectProfilingStackFrame(profilingStackFrame);
       }
       profilingStackIndex++;
@@ -3600,6 +3607,8 @@ bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer,
 
 UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
+  AUTO_BASE_PROFILER_LABEL("baseprofiler::profiler_capture_backtrace",
+                           PROFILER);
 
   // Quick is-active check before allocating a buffer.
   if (!profiler_is_active()) {

@@ -476,6 +476,30 @@ interface nsIDOMWindowUtils : nsISupports {
                       in unsigned long aOptions);
 
   /**
+   * Native modifiers for sendNativeKeyEvent and sendNativeMouseEvent.
+   * TODO: The other sendNative*Event should take these values instead.
+   */
+  const unsigned long NATIVE_MODIFIER_CAPS_LOCK       = 0x00000001;
+  const unsigned long NATIVE_MODIFIER_NUM_LOCK        = 0x00000002;
+  const unsigned long NATIVE_MODIFIER_SHIFT_LEFT      = 0x00000100;
+  const unsigned long NATIVE_MODIFIER_SHIFT_RIGHT     = 0x00000200;
+  const unsigned long NATIVE_MODIFIER_CONTROL_LEFT    = 0x00000400;
+  const unsigned long NATIVE_MODIFIER_CONTROL_RIGHT   = 0x00000800;
+  const unsigned long NATIVE_MODIFIER_ALT_LEFT        = 0x00001000;
+  const unsigned long NATIVE_MODIFIER_ALT_RIGHT       = 0x00002000;
+  const unsigned long NATIVE_MODIFIER_COMMAND_LEFT    = 0x00004000;
+  const unsigned long NATIVE_MODIFIER_COMMAND_RIGHT   = 0x00008000;
+  const unsigned long NATIVE_MODIFIER_HELP            = 0x00010000;
+  // On Windows, AltGraph key emulates the AltRight key on specific keyboard
+  // layouts.  Therefore, this shouldn't be used without `synthesizeNativeKey`.
+  const unsigned long NATIVE_MODIFIER_ALT_GRAPH       = 0x00020000;
+  // Available only on macOS.
+  const unsigned long NATIVE_MODIFIER_FUNCTION        = 0x00100000;
+  // Available only on macOS.  When pressing a key in numeric key pad, this
+  // must be included.
+  const unsigned long NATIVE_MODIFIER_NUMERIC_KEY_PAD = 0x01000000;
+
+  /**
    * See nsIWidget::SynthesizeNativeKeyEvent
    *
    * Cannot be accessed from unprivileged context (not content-accessible)
@@ -489,7 +513,7 @@ interface nsIDOMWindowUtils : nsISupports {
    */
   void sendNativeKeyEvent(in long aNativeKeyboardLayout,
                           in long aNativeKeyCode,
-                          in long aModifierFlags,
+                          in unsigned long aModifierFlags,
                           in AString aCharacters,
                           in AString aUnmodifiedCharacters,
                           [optional] in nsIObserver aObserver);
@@ -501,23 +525,28 @@ interface nsIDOMWindowUtils : nsISupports {
    * Cannot be accessed from unprivileged context (not content-accessible)
    * Will throw a DOM security error if called without chrome privileges.
    *
-   * NOTE: The synthesized native event will be fired asynchronously, and upon
-   * completion the observer, if provided, will be notified with a "mouseevent"
-   * topic.
+   * @param aScreenX    X offset in the screen in device pixels.
+   * @param aScreenY    Y offset in the screen in derive pixels.
+   * @param aNativeMessage      One of NATIVE_MOUSE_MESSAGE_*
+   * @param aButton     Same as `MouseEvent.button` value.
+   * @param aModifierFlags      See nsIWidget's native modifier flags.
+   * @param aElementOnWidget    An element which is on a widget.
+   * @param aObserver   The synthesized native event will be fired
+   *                    asynchronously, and upon completion the observer, if
+   *                    provided, will be notified with a "mouseevent" topic.
    */
+  const unsigned long NATIVE_MOUSE_MESSAGE_BUTTON_DOWN  = 0x00000001;
+  const unsigned long NATIVE_MOUSE_MESSAGE_BUTTON_UP    = 0x00000002;
+  const unsigned long NATIVE_MOUSE_MESSAGE_MOVE         = 0x00000003;
+  const unsigned long NATIVE_MOUSE_MESSAGE_ENTER_WINDOW = 0x00000004;
+  const unsigned long NATIVE_MOUSE_MESSAGE_LEAVE_WINDOW = 0x00000005;
   void sendNativeMouseEvent(in long aScreenX,
                             in long aScreenY,
-                            in long aNativeMessage,
-                            in long aModifierFlags,
-                            in Element aElement,
+                            in unsigned long aNativeMessage,
+                            in short aButton,
+                            in unsigned long aModifierFlags,
+                            in Element aElementOnWidget,
                             [optional] in nsIObserver aObserver);
-  /**
-   * See nsIWidget::SynthesizeNativeMouseMove and sendNativeMouseEvent
-   */
-  void sendNativeMouseMove(in long aScreenX,
-                           in long aScreenY,
-                           in Element aElement,
-                           [optional] in nsIObserver aObserver);
 
   /**
    * Suppress animations that are applied to a window by OS when
@@ -594,6 +623,13 @@ interface nsIDOMWindowUtils : nsISupports {
   // input sequence. This may not cancel moz platform related events
   // that might get tirggered by input already delivered.
   const long TOUCH_CANCEL  = 0x08;
+  
+  /**
+   * Phase states for sendNativeTouchPadPinch.
+   */
+  const long PHASE_BEGIN = 0;
+  const long PHASE_UPDATE = 1;
+  const long PHASE_END  = 2;
 
   /**
    * Create a new or update an existing touch point on the digitizer.
@@ -624,6 +660,23 @@ interface nsIDOMWindowUtils : nsISupports {
                             in double aPressure,
                             in unsigned long aOrientation,
                             [optional] in nsIObserver aObserver);
+  /**
+   * These values indicate touchpad pinch phase states :
+   * PHASE_BEGIN 
+   * PHASE_UPDATE
+   * PHASE_END
+   * Widget support: Linux GTK 3.18+.
+   * @param aEventPhase The touchpad pinch phase using states listed above.
+   * @param aScale Events with PHASE_UPDATE will change the zoom level by 
+   * the ratio between the scale of the current event and the scale of the last event.
+   * @param aScreenX, aScreenY screen coords of the focus point of this event.
+   * @param aModifierFlags is expected to contain native modifier values. 
+   */
+  void sendNativeTouchpadPinch(in unsigned long aEventPhase,
+                               in float aScale,
+                               in long aScreenX,
+                               in long aScreenY,
+                               in long aModifierFlags);
 
   /**
    * Simulates native touch based taps on the input digitizer. Events
@@ -1983,12 +2036,38 @@ interface nsIDOMWindowUtils : nsISupports {
   void wrCapture();
 
   /**
-   * Start capturing the contents of the current WebRender frame and
-   * save them to a folder relative to the current working directory,
-   * as well as any frames generated from this point onward. If called
-   * again, it will stop capturing.
+   * Flag bits for use in |wrStartCaptureSequence|'s |aFlags| argument.
    */
-  void wrToggleCaptureSequence();
+  const uint32_t WR_CAPTURE_SCENE = 0x1;
+  const uint32_t WR_CAPTURE_FRAME = 0x2;
+  const uint32_t WR_CAPTURE_TILE_CACHE = 0x4;
+  const uint32_t WR_CAPTURE_EXTERNAL_RESOURCES = 0x8;
+
+  /**
+   * Start capturing each WebRender frame to disk.
+   *
+   * |aPath| is the name of a new directory to be created to hold the captures.
+   * it is relative to:
+   * - the |PUBLIC_STORAGE| environment variable, if set, else
+   * - the |MOZ_UPLOAD_DIR| environment variable, if set, else
+   * - the user's home directory, if known, else
+   * the current directory.
+   *
+   * If there is already a directory with the given name, a numeric suffix is
+   * added to ensure a fresh directory is created. This means that you can't
+   * be sure your capture directory is actually named |aPath|.
+   *
+   * |aFlags| is a set of flags from |webrender::render_api::CaptureBits|.
+   *
+   * If there is already a sequence capture in progress, stop it and start a new
+   * one, with the new path and flags.
+   */
+  void wrStartCaptureSequence(in ACString aPath, in uint32_t aFlags);
+
+  /**
+   * Stop a capture begun with |wrStartCaptureSequence|.
+   */
+  void wrStopCaptureSequence();
 
   /**
    * Toggle recording of composition on and off.

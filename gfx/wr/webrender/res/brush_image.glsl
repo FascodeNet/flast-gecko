@@ -6,10 +6,6 @@
 
 #include shared,prim_shared,brush
 
-#ifdef WR_FEATURE_ALPHA_PASS
-varying vec2 v_local_pos;
-#endif
-
 // Interpolated UV coordinates to sample.
 varying vec2 v_uv;
 
@@ -26,7 +22,7 @@ flat varying vec4 v_uv_bounds;
 flat varying vec4 v_uv_sample_bounds;
 // x: Layer index to sample.
 // y: Flag to allow perspective interpolation of UV.
-flat varying vec2 v_layer_and_perspective;
+flat varying float v_perspective;
 
 #ifdef WR_VERTEX_SHADER
 
@@ -69,10 +65,10 @@ void brush_vs(
 #ifdef WR_FEATURE_TEXTURE_RECT
     vec2 texture_size = vec2(1, 1);
 #else
-    vec2 texture_size = vec2(textureSize(sColor0, 0));
+    vec2 texture_size = vec2(TEX_SIZE(sColor0));
 #endif
 
-    ImageResource res = fetch_image_resource(specific_resource_address);
+    ImageSource res = fetch_image_source(specific_resource_address);
     vec2 uv0 = res.uv_rect.p0;
     vec2 uv1 = res.uv_rect.p1;
 
@@ -167,7 +163,7 @@ void brush_vs(
     }
 
     float perspective_interpolate = (brush_flags & BRUSH_FLAG_PERSPECTIVE_INTERPOLATION) != 0 ? 1.0 : 0.0;
-    v_layer_and_perspective = vec2(res.layer, perspective_interpolate);
+    v_perspective = perspective_interpolate;
 
     // Handle case where the UV coords are inverted (e.g. from an
     // external image).
@@ -240,11 +236,16 @@ void brush_vs(
     switch (color_mode) {
         case COLOR_MODE_ALPHA:
         case COLOR_MODE_BITMAP:
-            v_mask_swizzle = vec2(0.0, 1.0);
-            v_color = image_data.color;
+            #ifdef SWGL_BLEND
+                swgl_blendDropShadow(image_data.color);
+                v_mask_swizzle = vec2(1.0, 0.0);
+                v_color = vec4(1.0);
+            #else
+                v_mask_swizzle = vec2(0.0, 1.0);
+                v_color = image_data.color;
+            #endif
             break;
         case COLOR_MODE_SUBPX_BG_PASS2:
-        case COLOR_MODE_SUBPX_DUAL_SOURCE:
         case COLOR_MODE_IMAGE:
             v_mask_swizzle = vec2(1.0, 0.0);
             v_color = image_data.color;
@@ -259,12 +260,18 @@ void brush_vs(
             v_mask_swizzle = vec2(-1.0, 1.0);
             v_color = vec4(image_data.color.a) * image_data.background_color;
             break;
+        case COLOR_MODE_SUBPX_DUAL_SOURCE:
+            v_mask_swizzle = vec2(image_data.color.a, 0.0);
+            v_color = image_data.color;
+            break;
+        case COLOR_MODE_MULTIPLY_DUAL_SOURCE:
+            v_mask_swizzle = vec2(-image_data.color.a, image_data.color.a);
+            v_color = image_data.color;
+            break;
         default:
             v_mask_swizzle = vec2(0.0);
             v_color = vec4(1.0);
     }
-
-    v_local_pos = vi.local_pos;
 #endif
 }
 #endif
@@ -272,9 +279,10 @@ void brush_vs(
 #ifdef WR_FRAGMENT_SHADER
 
 vec2 compute_repeated_uvs(float perspective_divisor) {
+#ifdef WR_FEATURE_REPETITION
     vec2 uv_size = v_uv_bounds.zw - v_uv_bounds.xy;
 
-#ifdef WR_FEATURE_ALPHA_PASS
+    #if defined(WR_FEATURE_ALPHA_PASS) && !defined(SWGL_ANTIALIAS)
     // This prevents the uv on the top and left parts of the primitive that was inflated
     // for anti-aliasing purposes from going beyound the range covered by the regular
     // (non-inflated) primitive.
@@ -292,42 +300,42 @@ vec2 compute_repeated_uvs(float perspective_divisor) {
     if (local_uv.y >= v_tile_repeat.y) {
         repeated_uv.y = v_uv_bounds.w;
     }
-#else
+    #else
     vec2 repeated_uv = fract(v_uv * perspective_divisor) * uv_size + v_uv_bounds.xy;
-#endif
+    #endif
 
     return repeated_uv;
+#else
+    return v_uv * perspective_divisor + v_uv_bounds.xy;
+#endif
 }
 
 Fragment brush_fs() {
-    float perspective_divisor = mix(gl_FragCoord.w, 1.0, v_layer_and_perspective.y);
-
-#ifdef WR_FEATURE_REPETITION
+    float perspective_divisor = mix(gl_FragCoord.w, 1.0, v_perspective);
     vec2 repeated_uv = compute_repeated_uvs(perspective_divisor);
-#else
-    vec2 repeated_uv = v_uv * perspective_divisor + v_uv_bounds.xy;
-#endif
 
     // Clamp the uvs to avoid sampling artifacts.
     vec2 uv = clamp(repeated_uv, v_uv_sample_bounds.xy, v_uv_sample_bounds.zw);
 
-    vec4 texel = TEX_SAMPLE(sColor0, vec3(uv, v_layer_and_perspective.x));
+    vec4 texel = TEX_SAMPLE(sColor0, uv);
 
     Fragment frag;
 
 #ifdef WR_FEATURE_ALPHA_PASS
     #ifdef WR_FEATURE_ANTIALIASING
-        float alpha = init_transform_fs(v_local_pos);
+        float alpha = antialias_brush();
     #else
         float alpha = 1.0;
     #endif
-    texel.rgb = texel.rgb * v_mask_swizzle.x + texel.aaa * v_mask_swizzle.y;
+    #ifndef WR_FEATURE_DUAL_SOURCE_BLENDING
+        texel.rgb = texel.rgb * v_mask_swizzle.x + texel.aaa * v_mask_swizzle.y;
+    #endif
 
     vec4 alpha_mask = texel * alpha;
     frag.color = v_color * alpha_mask;
 
     #ifdef WR_FEATURE_DUAL_SOURCE_BLENDING
-        frag.blend = alpha_mask * v_color.a;
+        frag.blend = alpha_mask * v_mask_swizzle.x + alpha_mask.aaaa * v_mask_swizzle.y;
     #endif
 #else
     frag.color = texel;
@@ -336,9 +344,9 @@ Fragment brush_fs() {
     return frag;
 }
 
-#if defined(SWGL) && (!defined(WR_FEATURE_ALPHA_PASS) || !defined(WR_FEATURE_DUAL_SOURCE_BLENDING))
+#if defined(SWGL_DRAW_SPAN) && (!defined(WR_FEATURE_ALPHA_PASS) || !defined(WR_FEATURE_DUAL_SOURCE_BLENDING))
 void swgl_drawSpanRGBA8() {
-    if (!swgl_isTextureRGBA8(sColor0) || !swgl_isTextureLinear(sColor0)) {
+    if (!swgl_isTextureRGBA8(sColor0)) {
         return;
     }
 
@@ -348,73 +356,32 @@ void swgl_drawSpanRGBA8() {
         }
     #endif
 
-    int layer = swgl_textureLayerOffset(sColor0, v_layer_and_perspective.x);
+    float perspective_divisor = mix(swgl_forceScalar(gl_FragCoord.w), 1.0, v_perspective);
 
-    float perspective_divisor = mix(swgl_forceScalar(gl_FragCoord.w), 1.0, v_layer_and_perspective.y);
-
-    #ifndef WR_FEATURE_REPETITION
-        vec2 uv = v_uv * perspective_divisor + v_uv_bounds.xy;
-
-        #ifndef WR_FEATURE_ANTIALIASING
-        if (swgl_allowTextureNearest(sColor0, uv)) {
-            #ifdef WR_FEATURE_ALPHA_PASS
-            if (v_color != vec4(1.0)) {
-                swgl_commitTextureNearestColorRGBA8(sColor0, uv, v_uv_sample_bounds, v_color, layer);
-                return;
-            }
-            #endif
-            swgl_commitTextureNearestRGBA8(sColor0, uv, v_uv_sample_bounds, layer);
-            return;
-        }
-        #endif
-
-        uv = swgl_linearQuantize(sColor0, uv);
-        vec2 min_uv = swgl_linearQuantize(sColor0, v_uv_sample_bounds.xy);
-        vec2 max_uv = swgl_linearQuantize(sColor0, v_uv_sample_bounds.zw);
-        vec2 step_uv = swgl_linearQuantizeStep(sColor0, swgl_interpStep(v_uv)) * perspective_divisor;
+    #ifdef WR_FEATURE_REPETITION
+        // Get the UVs before any repetition, scaling, or offsetting has occurred...
+        vec2 uv = v_uv * perspective_divisor;
+    #else
+        vec2 uv = compute_repeated_uvs(perspective_divisor);
     #endif
 
     #ifdef WR_FEATURE_ALPHA_PASS
-        #ifdef WR_FEATURE_ANTIALIASING
-        {
+    if (v_color != vec4(1.0)) {
+        #ifdef WR_FEATURE_REPETITION
+            swgl_commitTextureRepeatColorRGBA8(sColor0, uv, v_uv_bounds, v_uv_sample_bounds, v_color, 0.0);
         #else
-        if (v_color != vec4(1.0)) {
+            swgl_commitTextureColorRGBA8(sColor0, uv, v_uv_sample_bounds, v_color, 0.0);
         #endif
-            #ifdef WR_FEATURE_ANTIALIASING
-            float aa_range = compute_aa_range(v_local_pos);
-            #endif
-            while (swgl_SpanLength > 0) {
-                vec4 color = v_color;
-                #ifdef WR_FEATURE_ANTIALIASING
-                    color *= init_transform_fs_noperspective(v_local_pos, aa_range);
-                    v_local_pos += swgl_interpStep(v_local_pos);
-                #endif
-                #ifdef WR_FEATURE_REPETITION
-                    vec2 repeated_uv = compute_repeated_uvs(perspective_divisor);
-                    vec2 uv = clamp(repeated_uv, v_uv_sample_bounds.xy, v_uv_sample_bounds.zw);
-                    swgl_commitTextureLinearColorRGBA8(sColor0, swgl_linearQuantize(sColor0, uv), color, layer);
-                    v_uv += swgl_interpStep(v_uv);
-                #else
-                    swgl_commitTextureLinearColorRGBA8(sColor0, clamp(uv, min_uv, max_uv), color, layer);
-                    uv += step_uv;
-                #endif
-            }
-            return;
-        }
-        // No clip or color scaling required, so just fall through to a normal textured span...
+        return;
+    }
+    // No color scaling required, so just fall through to a normal textured span...
     #endif
 
-    while (swgl_SpanLength > 0) {
-        #ifdef WR_FEATURE_REPETITION
-            vec2 repeated_uv = compute_repeated_uvs(perspective_divisor);
-            vec2 uv = clamp(repeated_uv, v_uv_sample_bounds.xy, v_uv_sample_bounds.zw);
-            swgl_commitTextureLinearRGBA8(sColor0, swgl_linearQuantize(sColor0, uv), layer);
-            v_uv += swgl_interpStep(v_uv);
-        #else
-            swgl_commitTextureLinearRGBA8(sColor0, clamp(uv, min_uv, max_uv), layer);
-            uv += step_uv;
-        #endif
-    }
+    #ifdef WR_FEATURE_REPETITION
+        swgl_commitTextureRepeatRGBA8(sColor0, uv, v_uv_bounds, v_uv_sample_bounds, 0.0);
+    #else
+        swgl_commitTextureRGBA8(sColor0, uv, v_uv_sample_bounds, 0.0);
+    #endif
 }
 #endif
 

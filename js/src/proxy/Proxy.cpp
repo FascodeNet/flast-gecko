@@ -788,7 +788,7 @@ static bool proxy_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
   }
 
   if (found) {
-    propp.setNonNativeProperty();
+    propp.setProxyProperty();
     objp.set(obj);
   } else {
     propp.setNotFound();
@@ -834,7 +834,6 @@ static inline void CheckProxyIsInCCWMap(ProxyObject* proxy) {
 void ProxyObject::trace(JSTracer* trc, JSObject* obj) {
   ProxyObject* proxy = &obj->as<ProxyObject>();
 
-  TraceEdge(trc, proxy->shapePtr(), "ProxyObject_shape");
   TraceNullableEdge(trc, proxy->slotOfExpando(), "expando");
 
 #ifdef DEBUG

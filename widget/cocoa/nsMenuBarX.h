@@ -12,7 +12,6 @@
 #include "nsMenuBaseX.h"
 #include "nsMenuGroupOwnerX.h"
 #include "nsChangeObserver.h"
-#include "nsINativeMenuService.h"
 #include "nsString.h"
 
 class nsMenuBarX;
@@ -33,19 +32,6 @@ class Element;
 }
 - (id)initWithApplicationMenu:(nsMenuBarX*)aApplicationMenu;
 @end
-
-// The native menu service for creating native menu bars.
-class nsNativeMenuServiceX : public nsINativeMenuService {
- public:
-  NS_DECL_ISUPPORTS
-
-  nsNativeMenuServiceX() {}
-
-  NS_IMETHOD CreateNativeMenuBar(nsIWidget* aParent, mozilla::dom::Element* aMenuBarNode) override;
-
- protected:
-  virtual ~nsNativeMenuServiceX() {}
-};
 
 // Objective-C class used to allow us to intervene with keyboard event handling.
 // We allow mouse actions to work normally.
@@ -100,7 +86,6 @@ class nsMenuBarX : public nsMenuGroupOwnerX, public nsChangeObserver {
   // The following content nodes have been removed from the menu system.
   // We save them here for use in command handling.
   nsCOMPtr<nsIContent> mAboutItemContent;
-  nsCOMPtr<nsIContent> mUpdateItemContent;
   nsCOMPtr<nsIContent> mPrefItemContent;
   nsCOMPtr<nsIContent> mQuitItemContent;
 
@@ -122,7 +107,6 @@ class nsMenuBarX : public nsMenuGroupOwnerX, public nsChangeObserver {
   nsresult Paint();
   void ForceUpdateNativeMenuAt(const nsAString& indexString);
   void ForceNativeMenuReload();  // used for testing
-  static char GetLocalizedAccelKey(const char* shortcutID);
   static void ResetNativeApplicationMenu();
   void SetNeedsRebuild();
   void ApplicationMenuOpened();

@@ -13,6 +13,7 @@
 #include "mozilla/Casting.h"    // mozilla::AssertedCast
 #include "mozilla/DebugOnly.h"  // mozilla::DebugOnly
 #include "mozilla/FloatingPoint.h"  // mozilla::NumberEqualsInt32, mozilla::NumberIsInt32
+#include "mozilla/HashTable.h"      // mozilla::HashSet
 #include "mozilla/Maybe.h"          // mozilla::{Maybe,Nothing,Some}
 #include "mozilla/PodOperations.h"  // mozilla::PodCopy
 #include "mozilla/Sprintf.h"        // SprintfLiteral
@@ -54,10 +55,11 @@
 #include "frontend/PropOpEmitter.h"  // PropOpEmitter
 #include "frontend/SourceNotes.h"    // SrcNote, SrcNoteType, SrcNoteWriter
 #include "frontend/SwitchEmitter.h"  // SwitchEmitter
-#include "frontend/TDZCheckCache.h"  // TDZCheckCache
-#include "frontend/TryEmitter.h"     // TryEmitter
-#include "frontend/WhileEmitter.h"   // WhileEmitter
-#include "js/CompileOptions.h"       // TransitiveCompileOptions, CompileOptions
+#include "frontend/TaggedParserAtomIndexHasher.h"  // TaggedParserAtomIndexHasher
+#include "frontend/TDZCheckCache.h"                // TDZCheckCache
+#include "frontend/TryEmitter.h"                   // TryEmitter
+#include "frontend/WhileEmitter.h"                 // WhileEmitter
+#include "js/CompileOptions.h"  // TransitiveCompileOptions, CompileOptions
 #include "js/friend/ErrorMessages.h"      // JSMSG_*
 #include "js/friend/StackLimits.h"        // CheckRecursionLimit
 #include "util/StringBuffer.h"            // StringBuffer
@@ -65,13 +67,14 @@
 #include "vm/BytecodeUtil.h"  // JOF_*, IsArgOp, IsLocalOp, SET_UINT24, SET_ICINDEX, BytecodeFallsThrough, BytecodeIsJumpTarget
 #include "vm/FunctionPrefixKind.h"  // FunctionPrefixKind
 #include "vm/GeneratorObject.h"     // AbstractGeneratorObject
-#include "vm/JSAtom.h"              // JSAtom, js_*_str
+#include "vm/JSAtom.h"              // JSAtom
 #include "vm/JSContext.h"           // JSContext
 #include "vm/JSFunction.h"          // JSFunction,
 #include "vm/JSScript.h"  // JSScript, ScriptSourceObject, MemberInitializers, BaseScript
 #include "vm/Opcodes.h"        // JSOp, JSOpLength_*
 #include "vm/SharedStencil.h"  // ScopeNote
 #include "vm/ThrowMsgKind.h"   // ThrowMsgKind
+#include "vm/WellKnownAtom.h"  // js_*_str
 #include "wasm/AsmJS.h"        // IsAsmJSModule
 
 #include "vm/JSObject-inl.h"  // JSObject
@@ -133,7 +136,6 @@ static bool ShouldSuppressBreakpointsAndSourceNotes(
 }
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
-                                 CompilationStencil& stencil,
                                  CompilationState& compilationState,
                                  EmitterMode emitterMode)
     : sc(sc),
@@ -141,7 +143,6 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
       parent(parent),
       bytecodeSection_(cx, sc->extent().lineno, sc->extent().column),
       perScriptData_(cx, compilationState),
-      stencil(stencil),
       compilationState(compilationState),
       suppressBreakpointsAndSourceNotes(
           ShouldSuppressBreakpointsAndSourceNotes(sc, emitterMode)),
@@ -149,20 +150,18 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  BCEParserHandle* handle, SharedContext* sc,
-                                 CompilationStencil& stencil,
                                  CompilationState& compilationState,
                                  EmitterMode emitterMode)
-    : BytecodeEmitter(parent, sc, stencil, compilationState, emitterMode) {
+    : BytecodeEmitter(parent, sc, compilationState, emitterMode) {
   parser = handle;
   instrumentationKinds = parser->options().instrumentationKinds;
 }
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  const EitherParser& parser, SharedContext* sc,
-                                 CompilationStencil& stencil,
                                  CompilationState& compilationState,
                                  EmitterMode emitterMode)
-    : BytecodeEmitter(parent, sc, stencil, compilationState, emitterMode) {
+    : BytecodeEmitter(parent, sc, compilationState, emitterMode) {
   ep_.emplace(parser);
   this->parser = ep_.ptr();
   instrumentationKinds = this->parser->options().instrumentationKinds;
@@ -175,7 +174,7 @@ void BytecodeEmitter::initFromBodyPosition(TokenPos bodyPosition) {
 
 bool BytecodeEmitter::init() {
   if (!parent) {
-    if (!stencil.prepareStorageFor(cx, compilationState)) {
+    if (!compilationState.prepareSharedDataStorage(cx)) {
       return false;
     }
   }
@@ -700,7 +699,7 @@ class NonLocalExitControl {
 
   NonLocalExitControl(const NonLocalExitControl&) = delete;
 
-  MOZ_MUST_USE bool leaveScope(EmitterScope* scope);
+  [[nodiscard]] bool leaveScope(EmitterScope* scope);
 
  public:
   NonLocalExitControl(BytecodeEmitter* bce, Kind kind)
@@ -719,9 +718,9 @@ class NonLocalExitControl {
     bce_->bytecodeSection().setStackDepth(savedDepth_);
   }
 
-  MOZ_MUST_USE bool prepareForNonLocalJump(NestableControl* target);
+  [[nodiscard]] bool prepareForNonLocalJump(NestableControl* target);
 
-  MOZ_MUST_USE bool prepareForNonLocalJumpToOutermost() {
+  [[nodiscard]] bool prepareForNonLocalJumpToOutermost() {
     return prepareForNonLocalJump(nullptr);
   }
 };
@@ -1536,9 +1535,11 @@ restart:
     case ParseNodeKind::ClassMemberList:      // by ParseNodeKind::ClassDecl
     case ParseNodeKind::ImportSpecList:       // by ParseNodeKind::Import
     case ParseNodeKind::ImportSpec:           // by ParseNodeKind::Import
+    case ParseNodeKind::ImportNamespaceSpec:  // by ParseNodeKind::Import
     case ParseNodeKind::ExportBatchSpecStmt:  // by ParseNodeKind::Export
     case ParseNodeKind::ExportSpecList:       // by ParseNodeKind::Export
     case ParseNodeKind::ExportSpec:           // by ParseNodeKind::Export
+    case ParseNodeKind::ExportNamespaceSpec:  // by ParseNodeKind::Export
     case ParseNodeKind::CallSiteObj:       // by ParseNodeKind::TaggedTemplate
     case ParseNodeKind::PosHolder:         // by ParseNodeKind::NewTarget
     case ParseNodeKind::SuperBase:         // by ParseNodeKind::Elem and others
@@ -1680,8 +1681,12 @@ void BytecodeEmitter::reportError(const Maybe<uint32_t>& maybeOffset,
 
 bool BytecodeEmitter::addObjLiteralData(ObjLiteralWriter& writer,
                                         GCThingIndex* outIndex) {
+  if (!writer.checkForDuplicatedNames(cx)) {
+    return false;
+  }
+
   size_t len = writer.getCode().size();
-  auto* code = stencil.alloc.newArrayUninitialized<uint8_t>(len);
+  auto* code = compilationState.alloc.newArrayUninitialized<uint8_t>(len);
   if (!code) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -4911,7 +4916,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitTry(TryNode* tryNode) {
   return true;
 }
 
-MOZ_MUST_USE bool BytecodeEmitter::emitGoSub(JumpList* jump) {
+[[nodiscard]] bool BytecodeEmitter::emitGoSub(JumpList* jump) {
   // Emit the following:
   //
   //     False
@@ -5869,8 +5874,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       return false;
     }
 
-    BytecodeEmitter bce2(this, parser, funbox, stencil, compilationState,
-                         emitterMode);
+    BytecodeEmitter bce2(this, parser, funbox, compilationState, emitterMode);
     if (!bce2.init(funNode->pn_pos)) {
       return false;
     }
@@ -7883,9 +7887,11 @@ bool BytecodeEmitter::emitArguments(ListNode* argsList, bool isCall,
       //            [stack] CALLEE THIS
       return false;
     }
-    if (!emitArray(argsList->head(), argc)) {
-      //            [stack] CALLEE THIS ARR
-      return false;
+    if (cone.wantSpreadIteration()) {
+      if (!emitArray(argsList->head(), argc)) {
+        //          [stack] CALLEE THIS ARR
+        return false;
+      }
     }
   }
 
@@ -7907,7 +7913,7 @@ bool BytecodeEmitter::emitOptionalCall(CallNode* callNode, OptionalEmitter& oe,
    */
   ParseNode* calleeNode = callNode->left();
   ListNode* argsList = &callNode->right()->as<ListNode>();
-  bool isSpread = JOF_OPTYPE(callNode->callOp()) == JOF_BYTE;
+  bool isSpread = IsSpreadOp(callNode->callOp());
   JSOp op = callNode->callOp();
   uint32_t argc = argsList->count();
   bool isOptimizableSpread =
@@ -7963,7 +7969,7 @@ bool BytecodeEmitter::emitCallOrNew(
                 callNode->isKind(ParseNodeKind::TaggedTemplateExpr);
   ParseNode* calleeNode = callNode->left();
   ListNode* argsList = &callNode->right()->as<ListNode>();
-  bool isSpread = JOF_OPTYPE(callNode->callOp()) == JOF_BYTE;
+  bool isSpread = IsSpreadOp(callNode->callOp());
 
   if (calleeNode->isKind(ParseNodeKind::Name) &&
       emitterMode == BytecodeEmitter::SelfHosting && !isSpread) {
@@ -8042,11 +8048,18 @@ bool BytecodeEmitter::emitCallOrNew(
   bool isOptimizableSpread =
       isSpread && argc == 1 &&
       isOptimizableSpreadArgument(argsList->head()->as<UnaryNode>().kid());
-  CallOrNewEmitter cone(this, op,
-                        isOptimizableSpread
-                            ? CallOrNewEmitter::ArgumentsKind::SingleSpread
-                            : CallOrNewEmitter::ArgumentsKind::Other,
-                        valueUsage);
+  bool isDefaultDerivedClassConstructor =
+      sc->isFunctionBox() && sc->asFunctionBox()->isDerivedClassConstructor() &&
+      sc->asFunctionBox()->isSyntheticFunction();
+  MOZ_ASSERT_IF(isDefaultDerivedClassConstructor, isOptimizableSpread);
+  CallOrNewEmitter cone(
+      this, op,
+      isOptimizableSpread
+          ? isDefaultDerivedClassConstructor
+                ? CallOrNewEmitter::ArgumentsKind::PassthroughRest
+                : CallOrNewEmitter::ArgumentsKind::SingleSpread
+          : CallOrNewEmitter::ArgumentsKind::Other,
+      valueUsage);
 
   if (!emitCalleeAndThis(calleeNode, callNode, cone)) {
     //              [stack] CALLEE THIS
@@ -8950,6 +8963,16 @@ bool BytecodeEmitter::emitPropertyListObjLiteral(ListNode* obj,
                                                  bool useObjLiteralValues) {
   ObjLiteralWriter writer;
 
+#ifdef DEBUG
+  // In self-hosted JS, we check duplication only on debug build.
+  mozilla::Maybe<mozilla::HashSet<frontend::TaggedParserAtomIndex,
+                                  frontend::TaggedParserAtomIndexHasher>>
+      selfHostedPropNames;
+  if (emitterMode == BytecodeEmitter::SelfHosting) {
+    selfHostedPropNames.emplace();
+  }
+#endif
+
   writer.beginObject(flags);
   bool singleton = flags.contains(ObjLiteralFlag::Singleton);
 
@@ -8958,8 +8981,23 @@ bool BytecodeEmitter::emitPropertyListObjLiteral(ListNode* obj,
     ParseNode* key = prop->left();
 
     if (key->is<NameNode>()) {
-      if (!writer.setPropName(cx, parserAtoms(), key->as<NameNode>().atom())) {
-        return false;
+      if (emitterMode == BytecodeEmitter::SelfHosting) {
+        auto propName = key->as<NameNode>().atom();
+#ifdef DEBUG
+        // Self-hosted JS shouldn't contain duplicate properties.
+        auto p = selfHostedPropNames->lookupForAdd(propName);
+        MOZ_ASSERT(!p);
+        if (!selfHostedPropNames->add(p, propName)) {
+          js::ReportOutOfMemory(cx);
+          return false;
+        }
+#endif
+        writer.setPropNameNoDuplicateCheck(parserAtoms(), propName);
+      } else {
+        if (!writer.setPropName(cx, parserAtoms(),
+                                key->as<NameNode>().atom())) {
+          return false;
+        }
       }
     } else {
       double numValue = key->as<NumericLiteral>().value();
@@ -8991,7 +9029,7 @@ bool BytecodeEmitter::emitPropertyListObjLiteral(ListNode* obj,
   }
 
   // JSOp::Object may only be used by (top-level) run-once scripts.
-  MOZ_ASSERT_IF(singleton, stencil.input.options.isRunOnce);
+  MOZ_ASSERT_IF(singleton, sc->isTopLevelContext() && sc->treatAsRunOnce());
 
   JSOp op = singleton ? JSOp::Object : JSOp::NewObject;
   if (!emitGCIndexOp(op, index)) {
@@ -9411,8 +9449,7 @@ bool BytecodeEmitter::emitPrivateMethodInitializer(
     return false;
   }
 
-  BytecodeEmitter bce2(this, parser, funbox, stencil, compilationState,
-                       emitterMode);
+  BytecodeEmitter bce2(this, parser, funbox, compilationState, emitterMode);
   if (!bce2.init(funNode->pn_pos)) {
     return false;
   }
@@ -11308,7 +11345,7 @@ bool BytecodeEmitter::intoScriptStencil(ScriptIndex scriptIndex) {
   }
 
   // De-duplicate the bytecode within the runtime.
-  if (!stencil.sharedData.addAndShare(cx, scriptIndex, sharedData)) {
+  if (!compilationState.sharedData.addAndShare(cx, scriptIndex, sharedData)) {
     return false;
   }
 

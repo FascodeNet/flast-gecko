@@ -55,14 +55,13 @@ Glyph fetch_glyph(int specific_prim_address,
 
 struct GlyphResource {
     vec4 uv_rect;
-    float layer;
     vec2 offset;
     float scale;
 };
 
 GlyphResource fetch_glyph_resource(int address) {
     vec4 data[2] = fetch_from_gpu_cache_2(address);
-    return GlyphResource(data[0], data[1].x, data[1].yz, data[1].w);
+    return GlyphResource(data[0], data[1].xy, data[1].z);
 }
 
 struct TextRun {
@@ -232,7 +231,6 @@ void main() {
             v_color = text.color;
             break;
         case COLOR_MODE_SUBPX_BG_PASS2:
-        case COLOR_MODE_SUBPX_DUAL_SOURCE:
             v_mask_swizzle = vec3(1.0, 0.0, 0.0);
             v_color = text.color;
             break;
@@ -246,12 +244,16 @@ void main() {
             v_mask_swizzle = vec3(-1.0, 1.0, 0.0);
             v_color = vec4(text.color.a) * text.bg_color;
             break;
+        case COLOR_MODE_SUBPX_DUAL_SOURCE:
+            v_mask_swizzle = vec3(text.color.a, 0.0, 0.0);
+            v_color = text.color;
+            break;
         default:
             v_mask_swizzle = vec3(0.0, 0.0, 0.0);
             v_color = vec4(1.0);
     }
 
-    vec2 texture_size = vec2(textureSize(sColor0, 0));
+    vec2 texture_size = vec2(TEX_SIZE(sColor0));
     vec2 st0 = res.uv_rect.xy / texture_size;
     vec2 st1 = res.uv_rect.zw / texture_size;
 
@@ -271,7 +273,9 @@ Fragment text_fs(void) {
     // v_mask_swizzle.z != 0 means we are using an R8 texture as alpha,
     // and therefore must swizzle from the r channel to all channels.
     mask = mix(mask, mask.rrrr, bvec4(v_mask_swizzle.z != 0.0));
-    mask.rgb = mask.rgb * v_mask_swizzle.x + mask.aaa * v_mask_swizzle.y;
+    #ifndef WR_FEATURE_DUAL_SOURCE_BLENDING
+        mask.rgb = mask.rgb * v_mask_swizzle.x + mask.aaa * v_mask_swizzle.y;
+    #endif
 
     #ifdef WR_FEATURE_GLYPH_TRANSFORM
         mask *= float(all(greaterThanEqual(v_uv_clip, vec4(0.0))));
@@ -280,7 +284,7 @@ Fragment text_fs(void) {
     frag.color = v_color * mask;
 
     #ifdef WR_FEATURE_DUAL_SOURCE_BLENDING
-        frag.blend = v_color.a * mask;
+        frag.blend = mask * v_mask_swizzle.x + mask.aaaa * v_mask_swizzle.y;
     #endif
 
     return frag;

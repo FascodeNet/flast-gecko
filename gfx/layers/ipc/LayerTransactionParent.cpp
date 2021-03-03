@@ -38,7 +38,8 @@
 #include "nsPoint.h"          // for nsPoint
 #include "nsTArray.h"         // for nsTArray, nsTArray_Impl, etc
 #include "TreeTraversal.h"    // for ForEachNode
-#include "GeckoProfiler.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/layers/TextureHost.h"
 #include "mozilla/layers/AsyncCompositionManager.h"
 
@@ -951,12 +952,13 @@ bool LayerTransactionParent::BindLayerToHandle(RefPtr<Layer> aLayer,
   if (!aHandle || !aLayer) {
     return false;
   }
-  auto entry = mLayerMap.LookupForAdd(aHandle.Value());
-  if (entry) {
-    return false;
-  }
-  entry.OrInsert([&aLayer]() { return aLayer; });
-  return true;
+  return mLayerMap.WithEntryHandle(aHandle.Value(), [&](auto&& entry) {
+    if (entry) {
+      return false;
+    }
+    entry.Insert(std::move(aLayer));
+    return true;
+  });
 }
 
 Layer* LayerTransactionParent::AsLayer(const LayerHandle& aHandle) {

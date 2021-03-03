@@ -5,18 +5,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/a11y/DocAccessibleChildBase.h"
-#include "mozilla/a11y/ProxyAccessible.h"
+#include "mozilla/a11y/RemoteAccessible.h"
 
-#include "Accessible-inl.h"
+#include "LocalAccessible-inl.h"
 
 namespace mozilla {
 namespace a11y {
 
 /* static */
-uint32_t DocAccessibleChildBase::InterfacesFor(Accessible* aAcc) {
+uint32_t DocAccessibleChildBase::InterfacesFor(LocalAccessible* aAcc) {
   uint32_t interfaces = 0;
-  if (aAcc->IsHyperText() && aAcc->AsHyperText()->IsTextRole())
+  if (aAcc->IsHyperText() && aAcc->AsHyperText()->IsTextRole()) {
     interfaces |= Interfaces::HYPERTEXT;
+  }
 
   if (aAcc->IsLink()) interfaces |= Interfaces::HYPERLINK;
 
@@ -44,7 +45,7 @@ uint32_t DocAccessibleChildBase::InterfacesFor(Accessible* aAcc) {
 }
 
 /* static */
-void DocAccessibleChildBase::SerializeTree(Accessible* aRoot,
+void DocAccessibleChildBase::SerializeTree(LocalAccessible* aRoot,
                                            nsTArray<AccessibleData>& aTree) {
   uint64_t id = reinterpret_cast<uint64_t>(aRoot->UniqueID());
 #if defined(XP_WIN)
@@ -69,12 +70,12 @@ void DocAccessibleChildBase::SerializeTree(Accessible* aRoot,
 #endif
 
   for (uint32_t i = 0; i < childCount; i++) {
-    SerializeTree(aRoot->GetChildAt(i), aTree);
+    SerializeTree(aRoot->LocalChildAt(i), aTree);
   }
 }
 
-void DocAccessibleChildBase::InsertIntoIpcTree(Accessible* aParent,
-                                               Accessible* aChild,
+void DocAccessibleChildBase::InsertIntoIpcTree(LocalAccessible* aParent,
+                                               LocalAccessible* aChild,
                                                uint32_t aIdxInParent) {
   uint64_t parentID =
       aParent->IsDoc() ? 0 : reinterpret_cast<uint64_t>(aParent->UniqueID());
@@ -85,7 +86,7 @@ void DocAccessibleChildBase::InsertIntoIpcTree(Accessible* aParent,
 }
 
 void DocAccessibleChildBase::ShowEvent(AccShowEvent* aShowEvent) {
-  Accessible* parent = aShowEvent->Parent();
+  LocalAccessible* parent = aShowEvent->LocalParent();
   uint64_t parentID =
       parent->IsDoc() ? 0 : reinterpret_cast<uint64_t>(parent->UniqueID());
   uint32_t idxInParent = aShowEvent->GetAccessible()->IndexInParent();

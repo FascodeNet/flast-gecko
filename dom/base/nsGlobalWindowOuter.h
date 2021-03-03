@@ -895,26 +895,25 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   nsIntSize CSSToDevIntPixelsForBaseWindow(nsIntSize aCSSSize,
                                            nsIBaseWindow* aWindow);
 
-  virtual void SetFocusedElement(mozilla::dom::Element* aElement,
-                                 uint32_t aFocusMethod = 0,
-                                 bool aNeedsFocus = false) override;
+  void SetFocusedElement(mozilla::dom::Element* aElement,
+                         uint32_t aFocusMethod = 0, bool aNeedsFocus = false,
+                         bool aWillShowOutline = false) override;
 
-  virtual uint32_t GetFocusMethod() override;
+  uint32_t GetFocusMethod() override;
 
-  virtual bool ShouldShowFocusRing() override;
+  bool ShouldShowFocusRing() override;
 
-  virtual void SetKeyboardIndicators(
-      UIStateChangeType aShowFocusRings) override;
+  void SetKeyboardIndicators(UIStateChangeType aShowFocusRings) override;
 
  public:
-  virtual already_AddRefed<nsPIWindowRoot> GetTopWindowRoot() override;
+  already_AddRefed<nsPIWindowRoot> GetTopWindowRoot() override;
 
  protected:
   void NotifyWindowIDDestroyed(const char* aTopic);
 
   void ClearStatus();
 
-  virtual void UpdateParentTarget() override;
+  void UpdateParentTarget() override;
 
   void InitializeShowFocusRings();
 
@@ -1072,7 +1071,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   // close us when the JS stops executing or that we have a close
   // event posted.  If this is set, just ignore window.close() calls.
   bool mHavePendingClose : 1;
-  bool mIsPopupSpam : 1;
 
   // Indicates whether scripts are allowed to close this window.
   bool mBlockScriptedClosingFlag : 1;

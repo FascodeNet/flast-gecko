@@ -13,7 +13,7 @@
 #include <new>
 
 #include "builtin/ModuleObject.h"
-#include "frontend/CompilationStencil.h"  // CompiltionAtomCache, CompilationInput, BaseCompilationStencil, CompilationGCOutput
+#include "frontend/CompilationStencil.h"  // CompilationState, CompilationAtomCache
 #include "frontend/Parser.h"              // Copy*ScopeData
 #include "frontend/ScriptIndex.h"         // ScriptIndex
 #include "frontend/SharedContext.h"
@@ -418,7 +418,7 @@ XDRResult Scope::XDRSizedBindingNames(
   } else {
     data.set(NewEmptyScopeData<ConcreteScope, JSAtom>(cx, length).release());
     if (!data) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -889,7 +889,7 @@ XDRResult LexicalScope::XDR(XDRState<mode>* xdr, ScopeKind kind,
       scope.set(createWithData(cx, kind, &uniqueData.ref(), firstFrameSlot,
                                enclosing));
       if (!scope) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
 
       // nextFrameSlot is used only for this correctness check.
@@ -1051,7 +1051,7 @@ XDRResult FunctionScope::XDR(XDRState<mode>* xdr, HandleFunction fun,
       scope.set(createWithData(cx, &uniqueData.ref(), hasParameterExprs,
                                needsEnvironment, fun, enclosing));
       if (!scope) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
 
       // nextFrameSlot is used only for this correctness check.
@@ -1145,7 +1145,7 @@ XDRResult VarScope::XDR(XDRState<mode>* xdr, ScopeKind kind,
       scope.set(createWithData(cx, kind, &uniqueData.ref(), firstFrameSlot,
                                needsEnvironment, enclosing));
       if (!scope) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
 
       // nextFrameSlot is used only for this correctness check.
@@ -1236,7 +1236,7 @@ XDRResult GlobalScope::XDR(XDRState<mode>* xdr, ScopeKind kind,
 
       scope.set(createWithData(cx, kind, &uniqueData.ref()));
       if (!scope) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
   }
@@ -1270,7 +1270,7 @@ XDRResult WithScope::XDR(XDRState<mode>* xdr, HandleScope enclosing,
   if (mode == XDR_DECODE) {
     scope.set(create(cx, enclosing));
     if (!scope) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -1362,7 +1362,7 @@ XDRResult EvalScope::XDR(XDRState<mode>* xdr, ScopeKind kind,
       }
       scope.set(createWithData(cx, kind, &uniqueData.ref(), enclosing));
       if (!scope) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
   }
@@ -1481,7 +1481,7 @@ XDRResult ModuleScope::XDR(XDRState<mode>* xdr, HandleModuleObject module,
 
       scope.set(createWithData(cx, &uniqueData.ref(), module, enclosing));
       if (!scope) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
 
       // nextFrameSlot is used only for this correctness check.
@@ -2002,8 +2002,7 @@ template <typename... Args>
 
 /* static */
 bool ScopeStencil::createForFunctionScope(
-    JSContext* cx, frontend::CompilationStencil& stencil,
-    frontend::CompilationState& compilationState,
+    JSContext* cx, frontend::CompilationState& compilationState,
     FunctionScope::ParserData* data, bool hasParameterExprs,
     bool needsEnvironment, ScriptIndex functionIndex, bool isArrow,
     mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index) {
@@ -2014,7 +2013,7 @@ bool ScopeStencil::createForFunctionScope(
   if (data) {
     MarkParserScopeData<ScopeType>(cx, data, compilationState);
   } else {
-    data = NewEmptyParserScopeData<ScopeType>(cx, stencil.alloc);
+    data = NewEmptyParserScopeData<ScopeType>(cx, compilationState.alloc);
     if (!data) {
       return false;
     }
@@ -2038,8 +2037,7 @@ bool ScopeStencil::createForFunctionScope(
 
 /* static */
 bool ScopeStencil::createForLexicalScope(
-    JSContext* cx, frontend::CompilationStencil& stencil,
-    frontend::CompilationState& compilationState, ScopeKind kind,
+    JSContext* cx, frontend::CompilationState& compilationState, ScopeKind kind,
     LexicalScope::ParserData* data, uint32_t firstFrameSlot,
     mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index) {
   using ScopeType = LexicalScope;
@@ -2048,7 +2046,7 @@ bool ScopeStencil::createForLexicalScope(
   if (data) {
     MarkParserScopeData<ScopeType>(cx, data, compilationState);
   } else {
-    data = NewEmptyParserScopeData<ScopeType>(cx, stencil.alloc);
+    data = NewEmptyParserScopeData<ScopeType>(cx, compilationState.alloc);
     if (!data) {
       return false;
     }
@@ -2065,8 +2063,7 @@ bool ScopeStencil::createForLexicalScope(
 }
 
 bool ScopeStencil::createForVarScope(
-    JSContext* cx, frontend::CompilationStencil& stencil,
-    frontend::CompilationState& compilationState, ScopeKind kind,
+    JSContext* cx, frontend::CompilationState& compilationState, ScopeKind kind,
     VarScope::ParserData* data, uint32_t firstFrameSlot, bool needsEnvironment,
     mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index) {
   using ScopeType = VarScope;
@@ -2075,7 +2072,7 @@ bool ScopeStencil::createForVarScope(
   if (data) {
     MarkParserScopeData<ScopeType>(cx, data, compilationState);
   } else {
-    data = NewEmptyParserScopeData<ScopeType>(cx, stencil.alloc);
+    data = NewEmptyParserScopeData<ScopeType>(cx, compilationState.alloc);
     if (!data) {
       return false;
     }
@@ -2093,8 +2090,7 @@ bool ScopeStencil::createForVarScope(
 
 /* static */
 bool ScopeStencil::createForGlobalScope(
-    JSContext* cx, frontend::CompilationStencil& stencil,
-    frontend::CompilationState& compilationState, ScopeKind kind,
+    JSContext* cx, frontend::CompilationState& compilationState, ScopeKind kind,
     GlobalScope::ParserData* data, ScopeIndex* index) {
   using ScopeType = GlobalScope;
   MOZ_ASSERT(matchScopeKind<ScopeType>(kind));
@@ -2102,7 +2098,7 @@ bool ScopeStencil::createForGlobalScope(
   if (data) {
     MarkParserScopeData<ScopeType>(cx, data, compilationState);
   } else {
-    data = NewEmptyParserScopeData<ScopeType>(cx, stencil.alloc);
+    data = NewEmptyParserScopeData<ScopeType>(cx, compilationState.alloc);
     if (!data) {
       return false;
     }
@@ -2123,8 +2119,7 @@ bool ScopeStencil::createForGlobalScope(
 
 /* static */
 bool ScopeStencil::createForEvalScope(
-    JSContext* cx, frontend::CompilationStencil& stencil,
-    frontend::CompilationState& compilationState, ScopeKind kind,
+    JSContext* cx, frontend::CompilationState& compilationState, ScopeKind kind,
     EvalScope::ParserData* data, mozilla::Maybe<ScopeIndex> enclosing,
     ScopeIndex* index) {
   using ScopeType = EvalScope;
@@ -2133,7 +2128,7 @@ bool ScopeStencil::createForEvalScope(
   if (data) {
     MarkParserScopeData<ScopeType>(cx, data, compilationState);
   } else {
-    data = NewEmptyParserScopeData<ScopeType>(cx, stencil.alloc);
+    data = NewEmptyParserScopeData<ScopeType>(cx, compilationState.alloc);
     if (!data) {
       return false;
     }
@@ -2152,9 +2147,9 @@ bool ScopeStencil::createForEvalScope(
 
 /* static */
 bool ScopeStencil::createForModuleScope(
-    JSContext* cx, frontend::CompilationStencil& stencil,
-    frontend::CompilationState& compilationState, ModuleScope::ParserData* data,
-    mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index) {
+    JSContext* cx, frontend::CompilationState& compilationState,
+    ModuleScope::ParserData* data, mozilla::Maybe<ScopeIndex> enclosing,
+    ScopeIndex* index) {
   auto kind = ScopeKind::Module;
   using ScopeType = ModuleScope;
   MOZ_ASSERT(matchScopeKind<ScopeType>(kind));
@@ -2162,7 +2157,7 @@ bool ScopeStencil::createForModuleScope(
   if (data) {
     MarkParserScopeData<ScopeType>(cx, data, compilationState);
   } else {
-    data = NewEmptyParserScopeData<ScopeType>(cx, stencil.alloc);
+    data = NewEmptyParserScopeData<ScopeType>(cx, compilationState.alloc);
     if (!data) {
       return false;
     }
@@ -2211,7 +2206,6 @@ bool ScopeStencil::createSpecificShape(JSContext* cx, ScopeKind kind,
 
 /* static */
 bool ScopeStencil::createForWithScope(JSContext* cx,
-                                      CompilationStencil& stencil,
                                       CompilationState& compilationState,
                                       mozilla::Maybe<ScopeIndex> enclosing,
                                       ScopeIndex* index) {

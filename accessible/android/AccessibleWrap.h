@@ -6,8 +6,8 @@
 #ifndef mozilla_a11y_AccessibleWrap_h_
 #define mozilla_a11y_AccessibleWrap_h_
 
-#include "Accessible.h"
-#include "mozilla/a11y/ProxyAccessible.h"
+#include "LocalAccessible.h"
+#include "mozilla/a11y/RemoteAccessible.h"
 #include "mozilla/java/GeckoBundleWrappers.h"
 #include "mozilla/java/SessionAccessibilityWrappers.h"
 #include "nsCOMPtr.h"
@@ -15,7 +15,7 @@
 namespace mozilla {
 namespace a11y {
 
-class AccessibleWrap : public Accessible {
+class AccessibleWrap : public LocalAccessible {
  public:
   AccessibleWrap(nsIContent* aContent, DocAccessible* aDoc);
   virtual ~AccessibleWrap();
@@ -90,7 +90,7 @@ class AccessibleWrap : public Accessible {
 
  private:
   virtual AccessibleWrap* WrapperParent() {
-    return static_cast<AccessibleWrap*>(Parent());
+    return static_cast<AccessibleWrap*>(LocalParent());
   }
 
   virtual bool WrapperRangeInfo(double* aCurVal, double* aMinVal,
@@ -112,7 +112,7 @@ class AccessibleWrap : public Accessible {
   static uint32_t GetFlags(role aRole, uint64_t aState, uint8_t aActionCount);
 };
 
-static inline AccessibleWrap* WrapperFor(const ProxyAccessible* aProxy) {
+static inline AccessibleWrap* WrapperFor(const RemoteAccessible* aProxy) {
   return reinterpret_cast<AccessibleWrap*>(aProxy->GetWrapper());
 }
 

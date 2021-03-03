@@ -56,11 +56,11 @@ static bool sProcessedGetURLEvent = false;
 // This is needed, on relaunch, to force the OS to use the "Cocoa Dock API"
 // instead of the "Carbon Dock API".  For more info see bmo bug 377166.
 void EnsureUseCocoaDockAPI() {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   [GeckoNSApplication sharedApplication];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 void DisableAppNap() {
@@ -77,7 +77,7 @@ void DisableAppNap() {
 }
 
 void SetupMacApplicationDelegate() {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   // this is called during startup, outside an event loop, and therefore
   // needs an autorelease pool to avoid cocoa object leakage (bug 559075)
@@ -95,7 +95,7 @@ void SetupMacApplicationDelegate() {
   id<NSApplicationDelegate> delegate = [[MacApplicationDelegate alloc] init];
   [[GeckoNSApplication sharedApplication] setDelegate:delegate];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // Indirectly make the OS process any pending GetURL Apple events.  This is
@@ -122,7 +122,7 @@ void ProcessPendingGetURLAppleEvents() {
 @implementation MacApplicationDelegate
 
 - (id)init {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_RETURN;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   if ((self = [super init])) {
     NSAppleEventManager* aeMgr = [NSAppleEventManager sharedAppleEventManager];
@@ -152,11 +152,11 @@ void ProcessPendingGetURLAppleEvents() {
   }
   return self;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(nil);
+  NS_OBJC_END_TRY_BLOCK_RETURN(nil);
 }
 
 - (void)dealloc {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   NSAppleEventManager* aeMgr = [NSAppleEventManager sharedAppleEventManager];
   [aeMgr removeEventHandlerForEventClass:kInternetEventClass andEventID:kAEGetURL];
@@ -164,7 +164,7 @@ void ProcessPendingGetURLAppleEvents() {
   [aeMgr removeEventHandlerForEventClass:kCoreEventClass andEventID:kAEOpenDocuments];
   [super dealloc];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // The method that NSApplication calls upon a request to reopen, such as when
@@ -185,7 +185,7 @@ void ProcessPendingGetURLAppleEvents() {
 // The method that NSApplication calls when documents are requested to be opened.
 // It will be called once for each selected document.
 - (BOOL)application:(NSApplication*)theApplication openFile:(NSString*)filename {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_RETURN;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   NSURL* url = [NSURL fileURLWithPath:filename];
   if (!url) return NO;
@@ -221,7 +221,7 @@ void ProcessPendingGetURLAppleEvents() {
 
   return NO;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(NO);
+  NS_OBJC_END_TRY_BLOCK_RETURN(NO);
 }
 
 // The method that NSApplication calls when documents are requested to be printed
@@ -233,7 +233,7 @@ void ProcessPendingGetURLAppleEvents() {
 
 // Create the menu that shows up in the Dock.
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NIL;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   // Create the NSMenu that will contain the dock menu items.
   NSMenu* menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
@@ -276,7 +276,7 @@ void ProcessPendingGetURLAppleEvents() {
 
   return menu;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NIL;
+  NS_OBJC_END_TRY_BLOCK_RETURN(nil);
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification*)notification {

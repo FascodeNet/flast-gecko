@@ -27,35 +27,6 @@ XPCOMUtils.defineLazyGetter(this, "logger", () =>
   UrlbarUtils.getLogger({ prefix: "MuxerUnifiedComplete" })
 );
 
-function groupFromResult(result) {
-  if (result.heuristic) {
-    return UrlbarUtils.RESULT_GROUP.HEURISTIC;
-  }
-  switch (result.type) {
-    case UrlbarUtils.RESULT_TYPE.SEARCH:
-      if (result.payload.suggestion) {
-        return UrlbarUtils.RESULT_GROUP.SUGGESTION;
-      }
-      break;
-    case UrlbarUtils.RESULT_TYPE.OMNIBOX:
-      return UrlbarUtils.RESULT_GROUP.EXTENSION;
-  }
-  return UrlbarUtils.RESULT_GROUP.GENERAL;
-}
-
-// Breaks ties among heuristic results. Providers higher up the list are higher
-// priority.
-const HEURISTIC_ORDER = [
-  // Test providers are handled in sort(),
-  // Extension providers are handled in sort(),
-  "UrlbarProviderSearchTips",
-  "Omnibox",
-  "UnifiedComplete",
-  "Autofill",
-  "TokenAliasEngines",
-  "HeuristicFallback",
-];
-
 /**
  * Class used to create a muxer.
  * The muxer receives and sorts results in a UrlbarQueryContext.
@@ -88,27 +59,22 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       context,
       resultsByGroup: new Map(),
       totalResultCount: 0,
-      topHeuristicRank: Infinity,
       strippedUrlToTopPrefixAndTitle: new Map(),
       canShowPrivateSearch: context.results.length > 1,
       canShowTailSuggestions: true,
-      formHistorySuggestions: new Set(),
+      // Form history and remote suggestions added so far.  Used for deduping
+      // suggestions.  Also includes the heuristic query string if the heuristic
+      // is a search result.  All strings in the set are lowercased.
+      suggestions: new Set(),
       canAddTabToSearch: true,
+      // When you add state, update _copyState() as necessary.
     };
-
-    let resultsWithSuggestedIndex = [];
 
     // Do the first pass over all results to build some state.
     for (let result of context.results) {
-      // Save results that have a suggested index for later.
-      if (result.suggestedIndex >= 0) {
-        resultsWithSuggestedIndex.push(result);
-        continue;
-      }
-
-      // Add all other results to the resultsByGroup map:
+      // Add each result to the resultsByGroup map:
       // group => array of results belonging to the group
-      let group = groupFromResult(result);
+      let group = UrlbarUtils.getResultGroup(result);
       let results = state.resultsByGroup.get(group);
       if (!results) {
         results = [];
@@ -120,79 +86,190 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       this._updateStatePreAdd(result, state);
     }
 
-    if (
-      context.heuristicResult?.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
-      context.heuristicResult?.payload.query
-    ) {
-      state.heuristicResultQuery = context.heuristicResult.payload.query.toLocaleLowerCase();
-    }
+    // Determine the buckets to use for this sort.  In search mode with an
+    // engine, show search suggestions first.
+    let rootBucket = context.searchMode?.engineName
+      ? UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: true })
+      : UrlbarPrefs.get("resultBuckets");
+    logger.debug(`Buckets: ${rootBucket}`);
 
-    // If the heuristic result is a search result, use search buckets, otherwise
-    // use normal buckets.
-    let buckets =
-      context.heuristicResult?.type == UrlbarUtils.RESULT_TYPE.SEARCH
-        ? UrlbarPrefs.get("matchBucketsSearch")
-        : UrlbarPrefs.get("matchBuckets");
-    logger.debug(`Buckets: ${buckets}`);
-
-    // Do the second pass to fill each bucket.  We'll build a list where each
-    // item at index i is the array of results in the bucket at index i.
-    let resultsByBucketIndex = [];
-    for (let [group, maxResultCount] of buckets) {
-      let results = this._addResults(group, maxResultCount, state);
-      resultsByBucketIndex.push(results);
-    }
-
-    // In search mode for an engine, search suggestions should always appear
-    // before general results. Transplanting them allows us to keep history
-    // results up to the limit set in matchBuckets, while filling the space
-    // above them with suggestions.
-    if (context.searchMode?.engineName) {
-      let suggestionsIndex = resultsByBucketIndex.findIndex(
-        results =>
-          results[0] &&
-          !results[0].heuristic &&
-          results[0].type == UrlbarUtils.RESULT_TYPE.SEARCH
-      );
-      if (suggestionsIndex > 1) {
-        logger.debug(`Transplanting suggestions before general results.`);
-        let removed = resultsByBucketIndex.splice(suggestionsIndex, 1);
-        resultsByBucketIndex.splice(1, 0, ...removed);
-      }
-    }
-
-    // Build the sorted results list by concatenating each bucket's results.
-    let sortedResults = [];
-    let remainingCount = context.maxResults;
-    for (let i = 0; i < resultsByBucketIndex.length && remainingCount; i++) {
-      let results = resultsByBucketIndex[i];
-      let count = Math.min(remainingCount, results.length);
-      sortedResults.push(...results.slice(0, count));
-      remainingCount -= count;
-    }
-
-    // Finally, insert results that have a suggested index.  Sort them by index
-    // in descending order so that earlier insertions don't disrupt later ones.
-    resultsWithSuggestedIndex.sort(
-      (a, b) => a.suggestedIndex - b.suggestedIndex
+    let sortedResults = this._fillBuckets(
+      rootBucket,
+      context.maxResults,
+      state
     );
-    // Do a first pass to update sort state for each result.
-    for (let result of resultsWithSuggestedIndex) {
-      this._updateStatePreAdd(result, state);
-    }
-    // Now insert them.
-    for (let result of resultsWithSuggestedIndex) {
-      if (this._canAddResult(result, state)) {
-        let index =
-          result.suggestedIndex <= sortedResults.length
-            ? result.suggestedIndex
-            : sortedResults.length;
-        sortedResults.splice(index, 0, result);
-        this._updateStatePostAdd(result, state);
+
+    // Finally, insert results that have a suggested index.
+    let resultsWithSuggestedIndex = state.resultsByGroup.get(
+      UrlbarUtils.RESULT_GROUP.SUGGESTED_INDEX
+    );
+    if (resultsWithSuggestedIndex) {
+      // Sort them by index in descending order so that earlier insertions don't
+      // disrupt later ones.
+      resultsWithSuggestedIndex.sort(
+        (a, b) => a.suggestedIndex - b.suggestedIndex
+      );
+      // Do a first pass to update sort state for each result.
+      for (let result of resultsWithSuggestedIndex) {
+        this._updateStatePreAdd(result, state);
+      }
+      // Now insert them.
+      for (let result of resultsWithSuggestedIndex) {
+        if (this._canAddResult(result, state)) {
+          let index =
+            result.suggestedIndex <= sortedResults.length
+              ? result.suggestedIndex
+              : sortedResults.length;
+          sortedResults.splice(index, 0, result);
+          this._updateStatePostAdd(result, state);
+        }
       }
     }
 
     context.results = sortedResults;
+  }
+
+  /**
+   * Returns a *deep* copy of state (except for `state.context`, which is
+   * shallow copied).  i.e., any Maps, Sets, and arrays in the state should be
+   * recursively copied so that the original state is not modified when the copy
+   * is modified.
+   *
+   * @param {object} state
+   *   The muxer state to copy.
+   * @returns {object}
+   *   A deep copy of the state.
+   */
+  _copyState(state) {
+    let copy = Object.assign({}, state, {
+      resultsByGroup: new Map(),
+      strippedUrlToTopPrefixAndTitle: new Map(
+        state.strippedUrlToTopPrefixAndTitle
+      ),
+      suggestions: new Set(state.suggestions),
+    });
+    for (let [group, results] of state.resultsByGroup) {
+      copy.resultsByGroup.set(group, [...results]);
+    }
+    return copy;
+  }
+
+  /**
+   * Recursively fills a result bucket.
+   *
+   * @param {object} bucket
+   *   The result bucket to fill.
+   * @param {number} maxResultCount
+   *   The maximum number of results to include in the bucket.
+   * @param {object} state
+   *   The muxer state.
+   * @returns {array}
+   *   A flat array of results in the bucket.
+   */
+  _fillBuckets(bucket, maxResultCount, state) {
+    // If there are no child buckets, then fill the bucket directly.
+    if (!bucket.children) {
+      return this._addResults(bucket.group, maxResultCount, state);
+    }
+
+    // Set up some flex state for the bucket.
+    let stateCopy;
+    let flexSum = 0;
+    let unfilledChildIndexes = [];
+    let unfilledChildResultCount = 0;
+    if (bucket.flexChildren) {
+      stateCopy = this._copyState(state);
+      for (let child of bucket.children) {
+        let flex = typeof child.flex == "number" ? child.flex : 0;
+        flexSum += flex;
+      }
+    }
+
+    // Sum of child bucket flex values for children that could be completely
+    // filled.
+    let flexSumFilled = flexSum;
+
+    // Fill each child bucket, collecting all results in `results`.
+    let results = [];
+    for (
+      let i = 0;
+      i < bucket.children.length && results.length < maxResultCount;
+      i++
+    ) {
+      let child = bucket.children[i];
+
+      // Compute the child's max result count.
+      let childMaxResultCount;
+      if (bucket.flexChildren) {
+        let flex = typeof child.flex == "number" ? child.flex : 0;
+        childMaxResultCount = Math.round(maxResultCount * (flex / flexSum));
+      } else {
+        childMaxResultCount = Math.min(
+          typeof child.maxResultCount == "number"
+            ? child.maxResultCount
+            : Infinity,
+          // parent max result count - current total of child results
+          maxResultCount - results.length
+        );
+      }
+
+      // Recurse and fill the child bucket.
+      let childResults = this._fillBuckets(child, childMaxResultCount, state);
+      results = results.concat(childResults);
+
+      if (bucket.flexChildren && childResults.length < childMaxResultCount) {
+        // The flexed child bucket wasn't completely filled.  We'll try to make
+        // up the difference below by overfilling children that did fill up.
+        let flex = typeof child.flex == "number" ? child.flex : 0;
+        flexSumFilled -= flex;
+        unfilledChildIndexes.push(i);
+        unfilledChildResultCount += childResults.length;
+      }
+    }
+
+    // If the child buckets are flexed and some didn't fill up, then discard the
+    // results and do one more pass, trying to recursively overfill child
+    // buckets that did fill up while still respecting their flex ratios.
+    if (unfilledChildIndexes.length) {
+      results = [];
+      let remainingResultCount = maxResultCount - unfilledChildResultCount;
+      for (
+        let i = 0;
+        i < bucket.children.length && results.length < maxResultCount;
+        i++
+      ) {
+        let child = bucket.children[i];
+        let childMaxResultCount;
+        if (unfilledChildIndexes.length && i == unfilledChildIndexes[0]) {
+          // This is one of the children that didn't fill up.  Since it didn't
+          // fill up, the max result count to use in this pass isn't important
+          // as long as it's >= the number of results it was able to fill.  We
+          // can't re-use its results from the first pass (even though they're
+          // still correct) because we need to properly update `stateCopy` and
+          // therefore re-fill the child.
+          unfilledChildIndexes.shift();
+          childMaxResultCount = maxResultCount;
+        } else {
+          let flex = typeof child.flex == "number" ? child.flex : 0;
+          childMaxResultCount = flex
+            ? Math.round(remainingResultCount * (flex / flexSumFilled))
+            : remainingResultCount;
+        }
+        let childResults = this._fillBuckets(
+          child,
+          childMaxResultCount,
+          stateCopy
+        );
+        results = results.concat(childResults);
+      }
+
+      // Update `state` in place so that it's also updated in the caller.
+      for (let [key, value] of Object.entries(stateCopy)) {
+        state[key] = value;
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -209,6 +286,17 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
    *   The added results, empty if no results were added.
    */
   _addResults(group, maxResultCount, state) {
+    // For form history, maxHistoricalSearchSuggestions == 0 implies that the
+    // user has opted out of form history completely, so we override maxResult
+    // count here in that case.  Other values of maxHistoricalSearchSuggestions
+    // are ignored and we use the flex defined on the form history bucket.
+    if (
+      group == UrlbarUtils.RESULT_GROUP.FORM_HISTORY &&
+      !UrlbarPrefs.get("maxHistoricalSearchSuggestions")
+    ) {
+      maxResultCount = 0;
+    }
+
     let addedResults = [];
     let groupResults = state.resultsByGroup.get(group);
     while (
@@ -242,11 +330,6 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
    *   True if the result can be added and false if it should be discarded.
    */
   _canAddResult(result, state) {
-    // Exclude low-ranked heuristic results.
-    if (result.heuristic && result != state.context.heuristicResult) {
-      return false;
-    }
-
     // We expect UnifiedComplete sent us the highest-ranked www. and non-www
     // origins, if any. Now, compare them to each other and to the heuristic
     // result.
@@ -319,6 +402,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       if (!result.payload.satisfiesAutofillThreshold) {
         // Discard the result if the heuristic result is not autofill.
         if (
+          !state.context.heuristicResult ||
           state.context.heuristicResult.type != UrlbarUtils.RESULT_TYPE.URL ||
           !state.context.heuristicResult.autofill
         ) {
@@ -365,23 +449,12 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       return false;
     }
 
-    // Discard form history that dupes the heuristic or previous added form
-    // history (for restyleSearch).
+    // Discard form history and remote suggestions that dupe previously added
+    // suggestions or the heuristic.
     if (
       result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
-      result.source == UrlbarUtils.RESULT_SOURCE.HISTORY &&
-      (result.payload.lowerCaseSuggestion === state.heuristicResultQuery ||
-        state.formHistorySuggestions.has(result.payload.lowerCaseSuggestion))
-    ) {
-      return false;
-    }
-
-    // Discard remote search suggestions that dupe the heuristic.
-    if (
-      result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
-      result.source == UrlbarUtils.RESULT_SOURCE.SEARCH &&
       result.payload.lowerCaseSuggestion &&
-      result.payload.lowerCaseSuggestion === state.heuristicResultQuery
+      state.suggestions.has(result.payload.lowerCaseSuggestion)
     ) {
       return false;
     }
@@ -396,7 +469,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     }
 
     // Discard SERPs from browser history that dupe either the heuristic or
-    // previously added form history.
+    // previously added suggestions.
     if (
       result.source == UrlbarUtils.RESULT_SOURCE.HISTORY &&
       result.type == UrlbarUtils.RESULT_TYPE.URL
@@ -404,10 +477,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       let submission = Services.search.parseSubmissionURL(result.payload.url);
       if (submission) {
         let resultQuery = submission.terms.toLocaleLowerCase();
-        if (
-          state.heuristicResultQuery === resultQuery ||
-          state.formHistorySuggestions.has(resultQuery)
-        ) {
+        if (state.suggestions.has(resultQuery)) {
           // If the result's URL is the same as a brand new SERP URL created
           // from the query string modulo certain URL params, then treat the
           // result as a dupe and discard it.
@@ -445,6 +515,16 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       }
     }
 
+    // Heuristic results must always be the first result.  If this result is a
+    // heuristic but we've already added results, discard it.  Normally this
+    // should never happen because the standard result buckets are set up so
+    // that there's always at most one heuristic and it's always first, but
+    // since result buckets are stored in a pref and can therefore be modified
+    // by the user, we perform this check.
+    if (result.heuristic && state.totalResultCount) {
+      return false;
+    }
+
     // Include the result.
     return true;
   }
@@ -460,30 +540,6 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
    *   Global state that we use to make decisions during this sort.
    */
   _updateStatePreAdd(result, state) {
-    // Determine the highest-ranking heuristic result.
-    if (result.heuristic) {
-      // + 2 to reserve the highest-priority slots for test and extension
-      // providers.
-      let heuristicRank = HEURISTIC_ORDER.indexOf(result.providerName) + 2;
-      // Extension and test provider names vary widely and aren't suitable
-      // for a static safelist like HEURISTIC_ORDER.
-      if (result.providerType == UrlbarUtils.PROVIDER_TYPE.EXTENSION) {
-        heuristicRank = 1;
-      } else if (result.providerName.startsWith("TestProvider")) {
-        heuristicRank = 0;
-      } else if (heuristicRank - 2 == -1) {
-        throw new Error(
-          `Heuristic result returned by unexpected provider: ${result.providerName}`
-        );
-      }
-      // Replace in case of ties, which would occur if a provider sent two
-      // heuristic results.
-      if (heuristicRank <= state.topHeuristicRank) {
-        state.topHeuristicRank = heuristicRank;
-        state.context.heuristicResult = result;
-      }
-    }
-
     // Save some state we'll use later to dedupe URL results.
     if (result.type == UrlbarUtils.RESULT_TYPE.URL && result.payload.url) {
       let [strippedUrl, prefix] = UrlbarUtils.stripPrefixAndTrim(
@@ -532,6 +588,17 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
    *   Global state that we use to make decisions during this sort.
    */
   _updateStatePostAdd(result, state) {
+    // Update heuristic state.
+    if (result.heuristic) {
+      state.context.heuristicResult = result;
+      if (
+        result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
+        result.payload.query
+      ) {
+        state.suggestions.add(result.payload.query.toLocaleLowerCase());
+      }
+    }
+
     // The "Search in a Private Window" result should only be shown when there
     // are other results and all of them are searches.  It should not be shown
     // if the user typed an alias because that's an explicit engine choice.
@@ -544,12 +611,12 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       state.canShowPrivateSearch = false;
     }
 
-    // Update form history suggestions.
+    // Update suggestions.
     if (
       result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
-      result.source == UrlbarUtils.RESULT_SOURCE.HISTORY
+      result.payload.lowerCaseSuggestion
     ) {
-      state.formHistorySuggestions.add(result.payload.lowerCaseSuggestion);
+      state.suggestions.add(result.payload.lowerCaseSuggestion);
     }
 
     // Avoid multiple tab-to-search results.

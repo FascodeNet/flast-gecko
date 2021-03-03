@@ -12,7 +12,7 @@
 #include "xpcAccessibleSelectable.h"
 #include "xpcAccessibleValue.h"
 
-#include "Accessible.h"
+#include "LocalAccessible.h"
 #include "AccessibleOrProxy.h"
 
 namespace mozilla {
@@ -26,20 +26,20 @@ class xpcAccessibleGeneric : public xpcAccessible,
                              public xpcAccessibleSelectable,
                              public xpcAccessibleValue {
  public:
-  explicit xpcAccessibleGeneric(Accessible* aInternal)
+  explicit xpcAccessibleGeneric(LocalAccessible* aInternal)
       : mIntl(aInternal), mSupportedIfaces(0) {
     if (aInternal->IsSelect()) mSupportedIfaces |= eSelectable;
     if (aInternal->HasNumericValue()) mSupportedIfaces |= eValue;
     if (aInternal->IsLink()) mSupportedIfaces |= eHyperLink;
   }
 
-  xpcAccessibleGeneric(ProxyAccessible* aProxy, uint8_t aInterfaces)
+  xpcAccessibleGeneric(RemoteAccessible* aProxy, uint8_t aInterfaces)
       : mIntl(aProxy), mSupportedIfaces(aInterfaces) {}
 
   NS_DECL_ISUPPORTS
 
   // nsIAccessible
-  Accessible* ToInternalAccessible() const final;
+  LocalAccessible* ToInternalAccessible() const final;
 
   // xpcAccessibleGeneric
   virtual void Shutdown();
@@ -58,7 +58,7 @@ class xpcAccessibleGeneric : public xpcAccessible,
   uint8_t mSupportedIfaces;
 
  private:
-  friend class Accessible;
+  friend class LocalAccessible;
   friend class xpcAccessible;
   friend class xpcAccessibleHyperLink;
   friend class xpcAccessibleSelectable;
@@ -68,7 +68,7 @@ class xpcAccessibleGeneric : public xpcAccessible,
   xpcAccessibleGeneric& operator=(const xpcAccessibleGeneric&) = delete;
 };
 
-inline Accessible* xpcAccessible::Intl() {
+inline LocalAccessible* xpcAccessible::Intl() {
   return static_cast<xpcAccessibleGeneric*>(this)->mIntl.AsAccessible();
 }
 
@@ -80,7 +80,7 @@ inline AccessibleOrProxy xpcAccessibleHyperLink::Intl() {
   return static_cast<xpcAccessibleGeneric*>(this)->mIntl;
 }
 
-inline Accessible* xpcAccessibleSelectable::Intl() {
+inline LocalAccessible* xpcAccessibleSelectable::Intl() {
   return static_cast<xpcAccessibleGeneric*>(this)->mIntl.AsAccessible();
 }
 

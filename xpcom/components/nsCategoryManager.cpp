@@ -27,10 +27,11 @@
 #include "nsThreadUtils.h"
 #include "mozilla/ArenaAllocatorExtensions.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/Services.h"
 #include "mozilla/SimpleEnumerator.h"
 
-#include "GeckoProfiler.h"
 #include "ManifestParser.h"
 #include "nsSimpleEnumerator.h"
 
@@ -511,9 +512,11 @@ void nsCategoryManager::AddCategoryEntry(const nsACString& aCategoryName,
 
     if (!category) {
       // That category doesn't exist yet; let's make it.
-      category = CategoryNode::Create(&mArena);
-
-      mTable.Put(MaybeStrdup(aCategoryName, &mArena), category);
+      category = mTable
+                     .InsertOrUpdate(
+                         MaybeStrdup(aCategoryName, &mArena),
+                         UniquePtr<CategoryNode>{CategoryNode::Create(&mArena)})
+                     .get();
     }
   }
 

@@ -11,6 +11,7 @@
 #include "HostWebGLContext.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/SanitizeRenderer.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/WebGLContextEvent.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -616,8 +617,8 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     }
 
     if (!useOop) {
-      notLost.inProcess = HostWebGLContext::Create({this, nullptr},
-                                                   initDesc, &notLost.info);
+      notLost.inProcess =
+          HostWebGLContext::Create({this, nullptr}, initDesc, &notLost.info);
       return Ok();
     }
 
@@ -632,14 +633,13 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     }
 
     RefPtr<dom::WebGLChild> outOfProcess = new dom::WebGLChild(*this);
-    outOfProcess = static_cast<dom::WebGLChild*>(
-        cbc->SendPWebGLConstructor(outOfProcess));
+    outOfProcess =
+        static_cast<dom::WebGLChild*>(cbc->SendPWebGLConstructor(outOfProcess));
     if (!outOfProcess) {
       return Err("SendPWebGLConstructor failed");
     }
 
-    if (!outOfProcess->SendInitialize(
-            initDesc, &notLost.info)) {
+    if (!outOfProcess->SendInitialize(initDesc, &notLost.info)) {
       return Err("WebGL actor Initialize failed");
     }
 
@@ -2056,7 +2056,9 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
 
         const auto maybe = GetString(driverEnum);
         if (maybe) {
-          retval.set(StringValue(cx, *maybe, rv));
+          std::string renderer = *maybe;
+          mozilla::dom::SanitizeRenderer(renderer);
+          retval.set(StringValue(cx, renderer, rv));
         }
         return;
       }

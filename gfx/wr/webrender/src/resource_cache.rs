@@ -79,8 +79,7 @@ pub struct CacheItem {
     pub texture_id: TextureSource,
     pub uv_rect_handle: GpuCacheHandle,
     pub uv_rect: DeviceIntRect,
-    pub texture_layer: i32,
-    pub user_data: [f32; 3],
+    pub user_data: [f32; 4],
 }
 
 impl CacheItem {
@@ -89,9 +88,12 @@ impl CacheItem {
             texture_id: TextureSource::Invalid,
             uv_rect_handle: GpuCacheHandle::new(),
             uv_rect: DeviceIntRect::zero(),
-            texture_layer: 0,
-            user_data: [0.0, 0.0, 0.0],
+            user_data: [0.0; 4],
         }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.texture_id != TextureSource::Invalid
     }
 }
 
@@ -580,12 +582,12 @@ impl ResourceCache {
         key: RenderTaskCacheKey,
         gpu_cache: &mut GpuCache,
         rg_builder: &mut RenderTaskGraphBuilder,
-        user_data: Option<[f32; 3]>,
+        user_data: Option<[f32; 4]>,
         is_opaque: bool,
         parent: RenderTaskParent,
         surfaces: &[SurfaceInfo],
         f: F,
-    ) -> RenderTaskCacheEntryHandle
+    ) -> RenderTaskId
     where
         F: FnOnce(&mut RenderTaskGraphBuilder) -> RenderTaskId,
     {
@@ -892,11 +894,14 @@ impl ResourceCache {
             .map_or(ImageGeneration::INVALID, |template| template.generation)
     }
 
+    /// Requests an image to ensure that it will be in the texture cache this frame.
+    ///
+    /// returns the size in device pixel of the image or tile.
     pub fn request_image(
         &mut self,
         request: ImageRequest,
         gpu_cache: &mut GpuCache,
-    ) {
+    ) -> DeviceIntSize {
         debug_assert_eq!(self.state, State::AddResources);
 
         let template = match self.resources.image_templates.get(request.key) {
@@ -904,13 +909,18 @@ impl ResourceCache {
             None => {
                 warn!("ERROR: Trying to render deleted / non-existent key");
                 debug!("key={:?}", request.key);
-                return
+                return DeviceIntSize::zero();
             }
+        };
+
+        let size = match request.tile {
+            Some(tile) => compute_tile_size(&template.visible_rect, template.tiling.unwrap(), tile),
+            None => template.descriptor.size,
         };
 
         // Images that don't use the texture cache can early out.
         if !template.data.uses_texture_cache() {
-            return;
+            return size;
         }
 
         let side_size =
@@ -921,7 +931,7 @@ impl ResourceCache {
             warn!("Dropping image, image:(w:{},h:{}, tile:{}) is too big for hardware!",
                   template.descriptor.size.width, template.descriptor.size.height, template.tiling.unwrap_or(0));
             self.cached_images.insert(request.key, ImageResult::Err(ImageCacheError::OverLimitSize));
-            return;
+            return DeviceIntSize::zero();
         }
 
         let storage = match self.cached_images.entry(request.key) {
@@ -986,11 +996,11 @@ impl ResourceCache {
         let needs_upload = self.texture_cache.request(&entry.texture_cache_handle, gpu_cache);
 
         if !needs_upload && entry.dirty_rect.is_empty() {
-            return
+            return size;
         }
 
         if !self.pending_image_requests.insert(request) {
-            return
+            return size;
         }
 
         if template.data.is_blob() {
@@ -1002,6 +1012,8 @@ impl ResourceCache {
 
             assert!(!missing);
         }
+
+        size
     }
 
     fn discard_tiles_outside_visible_area(
@@ -1338,7 +1350,7 @@ impl ResourceCache {
                     descriptor,
                     filter,
                     Some(image_data),
-                    [0.0; 3],
+                    [0.0; 4],
                     dirty_rect,
                     gpu_cache,
                     None,

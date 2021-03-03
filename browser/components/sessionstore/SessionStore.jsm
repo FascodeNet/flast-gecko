@@ -187,11 +187,16 @@ const BROWSER_STARTUP_RESUME_SESSION = 3;
 const kNoIndex = Number.MAX_SAFE_INTEGER;
 const kLastIndex = Number.MAX_SAFE_INTEGER - 1;
 
-ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm", this);
-ChromeUtils.import("resource://gre/modules/Services.jsm", this);
-ChromeUtils.import("resource://gre/modules/TelemetryTimestamps.jsm", this);
-ChromeUtils.import("resource://gre/modules/Timer.jsm", this);
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm", this);
+const { PrivateBrowsingUtils } = ChromeUtils.import(
+  "resource://gre/modules/PrivateBrowsingUtils.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { TelemetryTimestamps } = ChromeUtils.import(
+  "resource://gre/modules/TelemetryTimestamps.jsm"
+);
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
 
 ChromeUtils.defineModuleGetter(
   this,
@@ -291,6 +296,11 @@ var SessionStore = {
 
   setTabState: function ss_setTabState(aTab, aState) {
     SessionStoreInternal.setTabState(aTab, aState);
+  },
+
+  // Return whether a tab is restoring.
+  isTabRestoring(aTab) {
+    return TAB_STATE_FOR_BROWSER.has(aTab.linkedBrowser);
   },
 
   getInternalObjectState(obj) {
@@ -995,8 +1005,6 @@ var SessionStoreInternal = {
       if (this.browser.currentURI && this.browser.ownerGlobal) {
         this._lastKnownUri = browser.currentURI.displaySpec;
         this._lastKnownBody = browser.ownerGlobal.document.body;
-        this._lastKnownUserContextId =
-          browser.contentPrincipal.originAttributes.userContextId;
       }
     }
     SHistoryListener.prototype = {
@@ -1025,7 +1033,6 @@ var SessionStoreInternal = {
         if (this.browser.currentURI && this.browser.ownerGlobal) {
           this._lastKnownUri = this.browser.currentURI.displaySpec;
           this._lastKnownBody = this.browser.ownerGlobal.document.body;
-          this._lastKnownUserContextId = this.browser.contentPrincipal.originAttributes.userContextId;
         }
       },
 
@@ -1259,9 +1266,6 @@ var SessionStoreInternal = {
           let body = aBrowser.ownerGlobal
             ? aBrowser.ownerGlobal.document.body
             : listener._lastKnownBody;
-          let userContextId = aBrowser.contentPrincipal
-            ? aBrowser.contentPrincipal.originAttributes.userContextId
-            : listener._lastKnownUserContextId;
           // If aData.sHistoryNeeded we need to collect all session
           // history entries, because with SHIP this indicates that we
           // either saw 'DOMTitleChanged' in
@@ -1273,7 +1277,6 @@ var SessionStoreInternal = {
             uri,
             body,
             aBrowsingContext.sessionHistory,
-            userContextId,
             listener._sHistoryChanges && !aData.sHistoryNeeded
               ? listener._fromIdx
               : -1
@@ -4033,15 +4036,19 @@ var SessionStoreInternal = {
    * @returns a promise resolved when all windows have been opened
    */
   _openWindows(root) {
+    let windowsOpened = [];
     for (let winData of root.windows) {
       if (!winData || !winData.tabs || !winData.tabs[0]) {
         continue;
       }
-      this._openWindowWithState({ windows: [winData] });
+      windowsOpened.push(this._openWindowWithState({ windows: [winData] }));
     }
-    return Promise.all(
-      [...WINDOW_SHOWING_PROMISES.values()].map(deferred => deferred.promise)
-    );
+    let windowOpenedPromises = [];
+    for (const openedWindow of windowsOpened) {
+      let deferred = WINDOW_SHOWING_PROMISES.get(openedWindow);
+      windowOpenedPromises.push(deferred.promise);
+    }
+    return Promise.all(windowOpenedPromises);
   },
 
   /**

@@ -534,14 +534,14 @@ enum class SimdOp {
   I32x4TruncSatF64x2SZero = 0x55,
   I32x4TruncSatF64x2UZero = 0x56,
   F32x4DemoteF64x2Zero = 0x57,
-  // Unused = 0x58
-  // Unused = 0x59
-  // Unused = 0x5a
-  // Unused = 0x5b
-  // Unused = 0x5c
-  // Unused = 0x5d
-  // Unused = 0x5e
-  // Unused = 0x5f
+  V128Load8Lane = 0x58,
+  V128Load16Lane = 0x59,
+  V128Load32Lane = 0x5a,
+  V128Load64Lane = 0x5b,
+  V128Store8Lane = 0x5c,
+  V128Store16Lane = 0x5d,
+  V128Store32Lane = 0x5e,
+  V128Store64Lane = 0x5f,
   I8x16Abs = 0x60,
   I8x16Neg = 0x61,
   V128AnyTrue = 0x62,  // Used to be I8x16AnyTrue
@@ -638,7 +638,7 @@ enum class SimdOp {
   I32x4ExtMulHighSI16x8 = 0xbd,
   I32x4ExtMulLowUI16x8 = 0xbe,
   I32x4ExtMulHighUI16x8 = 0xbf,
-  // Abs = 0xc0
+  I64x2Eq = 0xc0,
   I64x2Neg = 0xc1,
   // AnyTrue = 0xc2
   // AllTrue = 0xc3
@@ -653,8 +653,8 @@ enum class SimdOp {
   I64x2ShrS = 0xcc,
   I64x2ShrU = 0xcd,
   I64x2Add = 0xce,
-  // AddSatS = 0xcf
-  // AddSatU = 0xd0
+  I64x2AllTrue = 0xcf,
+  I64x2Ne = 0xd0,
   I64x2Sub = 0xd1,
   I64x2ExtMulLowSI32x4 = 0xd2,
   I64x2ExtMulHighSI32x4 = 0xd3,
@@ -709,15 +709,47 @@ enum class SimdOp {
   // expressed as a two-operation SIMD shuffle op with the pattern <31, 0, 30,
   // 2, 29, 4, 28, 6, 27, 8, 26, 10, 25, 12, 24, X> where X is the opcode,
   // 0..31, from the set below.  If an operation uses no operands, the operands
-  // to the shuffle opcode should be const 0.  If an operation uses one operand,
-  // the operands to the shuffle opcode should both be that operand.
+  // to the shuffle opcode should be v128.const 0.  If an operation uses one
+  // operand, the operands to the shuffle opcode should both be that operand.
   //
-  // The wormhole must be enabled by a flag and is only supported by ion on x64,
-  // baseline must be disabled.
+  // The wormhole must be enabled by a flag (see below) and is only supported on
+  // x64 and x86 (though with both compilers).
   //
   // The benefit of this mechanism is that it allows experimental opcodes to be
   // used without updating other tools (compilers, linkers, optimizers).
   //
+  // Controlling the wormhole:
+  //
+  // - Under the correct circumstances, an options bag that is passed as an
+  //   additional and nonstandard argument to any function that validates or
+  //   compiles wasm will be inspected for carrying additional compilation
+  //   options. The options bag always follows any fixed and optional arguments
+  //   already in the signature.  The functions are: WA.validate, WA.compile,
+  //   WA.instantiate when called on a BufferSource, WA.compileStreaming,
+  //   WA.instantiateStreaming, and WA.Module.constructor.  If compiled code can
+  //   be cached, the presence of the options bag forces recompilation.
+  //
+  // - If the bag is inspected and contains the property `simdWormhole` and that
+  //   property has the boolean value `true` (and not just any truthy value),
+  //   then wasm SIMD will be enabled and the wormhole functionality will also
+  //   be enabled for the affected compilation only.
+  //
+  // - The options bag is parsed under these circumstances:
+  //
+  //   - In the shell, if the switch `--wasm-simd-wormhole` is set.
+  //
+  //   - In Nightly and early Beta browsers, if the flag
+  //     `j.o.wasm_simd_wormhole` is set.
+  //
+  //   - In all browsers, if the content passing the options bag is privileged
+  //     (in a way that is TBD).
+  //
+  // - As per normal, wasm SIMD can be enabled by setting `j.o.wasm_simd` to
+  //   true, but in that case the wormhole functionality will not be enabled.
+  //   Note that `j.o.wasm_simd_wormhole` does not enable the wormhole
+  //   functionality directly; it must be enabled by passing an options bag as
+  //   described above.
+
   // These opcodes can be rearranged but the X values associated with them must
   // remain fixed.
 

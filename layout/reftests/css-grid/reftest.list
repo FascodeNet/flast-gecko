@@ -125,7 +125,7 @@ random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == grid-item-auto-min-size-
 == grid-item-button-001.html grid-item-button-001-ref.html
 == grid-item-table-stretch-001.html grid-item-table-stretch-001-ref.html
 == grid-item-table-stretch-002.html grid-item-table-stretch-002-ref.html
-== grid-item-table-stretch-003.html grid-item-table-stretch-003-ref.html
+pref(layout.css.caption-side-non-standard.enabled,true) == grid-item-table-stretch-003.html grid-item-table-stretch-003-ref.html
 == grid-item-table-stretch-004.html grid-item-table-stretch-004-ref.html
 == grid-item-fieldset-stretch-001.html grid-item-fieldset-stretch-001-ref.html
 skip-if(Android) == grid-item-video-stretch-001.html grid-item-video-stretch-001-ref.html # Huh, Android doesn't have webm support?
@@ -272,7 +272,7 @@ fuzzy-if(webrender&&winWidget,0-1,0-5) == grid-fragmentation-dyn5-027.html grid-
 == grid-fragmentation-dyn1-029.html grid-fragmentation-029-ref.html
 == grid-fragmentation-dyn2-029.html grid-fragmentation-029-ref.html
 == grid-fragmentation-dyn2-030.html grid-fragmentation-030-ref.html
-== grid-fragmentation-dyn2-031.html grid-fragmentation-031-ref.html
+fuzzy-if(webrender&&swgl,0-2,0-42) == grid-fragmentation-dyn2-031.html grid-fragmentation-031-ref.html
 
 == bug1306106.html bug1306106-ref.html
 == grid-percent-intrinsic-sizing-001.html grid-percent-intrinsic-sizing-001-ref.html

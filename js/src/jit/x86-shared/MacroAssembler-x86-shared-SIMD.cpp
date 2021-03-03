@@ -95,7 +95,7 @@ void MacroAssemblerX86Shared::extractLaneFloat64x2(FloatRegister input,
 void MacroAssemblerX86Shared::extractLaneInt16x8(FloatRegister input,
                                                  Register output, unsigned lane,
                                                  SimdSign sign) {
-  vpextrw(lane, input, output);
+  vpextrw(lane, input, Operand(output));
   if (sign == SimdSign::Signed) {
     movswl(output, output);
   }
@@ -104,7 +104,7 @@ void MacroAssemblerX86Shared::extractLaneInt16x8(FloatRegister input,
 void MacroAssemblerX86Shared::extractLaneInt8x16(FloatRegister input,
                                                  Register output, unsigned lane,
                                                  SimdSign sign) {
-  vpextrb(lane, input, output);
+  vpextrb(lane, input, Operand(output));
   if (sign == SimdSign::Signed) {
     movsbl(output, output);
   }
@@ -674,6 +674,23 @@ void MacroAssemblerX86Shared::unsignedCompareInt32x4(
   if (complement) {
     vpcmpeqd(Operand(tmp1), tmp1, tmp1);
     vpxor(Operand(tmp1), output, output);
+  }
+}
+
+void MacroAssemblerX86Shared::compareInt64x2(FloatRegister lhs, Operand rhs,
+                                             Assembler::Condition cond,
+                                             FloatRegister output) {
+  static const SimdConstant allOnes = SimdConstant::SplatX4(-1);
+  switch (cond) {
+    case Assembler::Condition::Equal:
+      vpcmpeqq(rhs, lhs, lhs);
+      break;
+    case Assembler::Condition::NotEqual:
+      vpcmpeqq(rhs, lhs, lhs);
+      asMasm().bitwiseXorSimd128(allOnes, lhs);
+      break;
+    default:
+      MOZ_CRASH("unexpected condition op");
   }
 }
 

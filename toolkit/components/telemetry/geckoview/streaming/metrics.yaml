@@ -21,6 +21,7 @@ geckoview:
     gecko_datapoint: gecko.version
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1611240
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1611240#c2
     notification_emails:
@@ -38,6 +39,7 @@ geckoview:
     gecko_datapoint: gecko.build_id
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1611240
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1611240#c2
     notification_emails:
@@ -556,6 +558,7 @@ gfx.display:
     gecko_datapoint: gfx.display.count
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -573,6 +576,7 @@ gfx.display:
     gecko_datapoint: gfx.display.primary_width
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -590,6 +594,7 @@ gfx.display:
     gecko_datapoint: gfx.display.primary_height
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -607,6 +612,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.description
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -623,6 +629,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.vendor_id
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -639,6 +646,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.device_id
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -655,6 +663,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.subsystem_id
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -672,6 +681,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.ram
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -688,11 +698,12 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.driver_files
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
-    expires: 2022-02-01
+    expires: never
   driver_vendor:
     description: >
       Graphics adapter driver vendor identification
@@ -704,6 +715,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.driver_vendor
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -720,6 +732,7 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.driver_version
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
@@ -736,11 +749,12 @@ gfx.adapter.primary:
     gecko_datapoint: gfx.adapter.driver_date
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
-    expires: 2023-02-01
+    expires: never
 
 gfx.status:
   compositor:
@@ -755,11 +769,12 @@ gfx.status:
     gecko_datapoint: gfx.compositor
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
-    expires: 2022-02-01
+    expires: never
   headless:
     description: >
       Boolean indicated whether graphics is running in
@@ -772,11 +787,12 @@ gfx.status:
     gecko_datapoint: gfx.headless
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1687219
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1594145#c4
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
-    expires: 2022-02-01
+    expires: never
 
 gfx.feature:
   webrender:
@@ -836,34 +852,30 @@ avif:
     expires: never
 
   aom_decode_error:
-    type: quantity
-    unit: error code
-    gecko_datapoint: avif.aom_decode_error
+    type: labeled_counter
+    labels:
+      - error
+      - mem_error
+      - abi_mismatch
+      - incapable
+      - unsup_bitstream
+      - unsup_feature
+      - corrupt_frame
+      - invalid_param
+    gecko_datapoint: AVIF_AOM_DECODE_ERROR
     description: >
       Image-decode Error from AOM decoder
     bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1690406
     data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1690406#c3
     notification_emails:
       - cchang@mozilla.com
       - jbauman@mozilla.com
     expires: never
 
-  dav1d_decode_error:
-    type: quantity
-    unit: error code
-    gecko_datapoint: avif.dav1d_decode_error
-    description: >
-      Image-decode Error from dav1d decoder
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1670827#c9
-    notification_emails:
-      - cchang@mozilla.com
-      - jbauman@mozilla.com
-    expires: never
+  # dav1d_decode_error is replaced by avif.dav1d_get_picture in Events.yaml
+  # Unfortunately, events are not currently supported for geckoview
 
   yuv_color_space:
     type: labeled_counter
@@ -1282,82 +1294,6 @@ performance.time:
       - vchin@mozilla.com
       - perf-telemetry-alerts@mozilla.com
     expires: never
-
-  load_event_start_preload:
-    type: timing_distribution
-    time_unit: millisecond
-    gecko_datapoint: TIME_TO_LOAD_EVENT_START_PRELOAD_MS
-    description: >
-      Time from navigationStart to [`loadEventStart`](https://www.w3.org/TR/
-      navigation-timing/#dom-performancetiming-loadstart) as per the W3C
-      Performance Timing API. This is only submitted on when the document
-      would preload a resource (i.e., if it encounters a `<link>` element or
-      a `Link` header with `rel="preload"`), even if the `network.preload`
-      pref is disabled.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188#c5
-    notification_emails:
-      - perf-telemetry-alerts@mozilla.com
-      - barret@mozilla.com
-    expires: 2021-02-24
-
-  load_event_end_preload:
-    type: timing_distribution
-    time_unit: millisecond
-    gecko_datapoint: TIME_TO_LOAD_EVENT_END_PRELOAD_MS
-    description: >
-      Time from navigationStart to [`loadEventEnd`](https://www.w3.org/TR/
-      navigation-timing/#dom-performancetiming-loadend) as per the W3C
-      Performance Timing API. This is only submitted on when the document
-      would preload a resource (i.e., if it encounters a `<link>` element or
-      a `Link` header with `rel="preload"`), even if the `network.preload`
-      pref is disabled.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188#c5
-    notification_emails:
-      - perf-telemetry-alerts@mozilla.com
-      - barret@mozilla.com
-    expires: 2021-02-24
-
-  load_event_start_no_preload:
-    type: timing_distribution
-    time_unit: millisecond
-    gecko_datapoint: TIME_TO_LOAD_EVENT_START_NO_PRELOAD_MS
-    description: >
-      Time from navigationStart to [`loadEventStart`](https://www.w3.org/TR/
-      navigation-timing/#dom-performancetiming-loadstart) as per the W3C
-      Performance Timing API. This is only submitted on when the document
-      would not preload a resource.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188#c5
-    notification_emails:
-      - perf-telemetry-alerts@mozilla.com
-      - barret@mozilla.com
-    expires: 2021-02-24
-
-  load_event_end_no_preload:
-    type: timing_distribution
-    time_unit: millisecond
-    gecko_datapoint: TIME_TO_LOAD_EVENT_END_NO_PRELOAD_MS
-    description: >
-      Time from navigationStart to [`loadEventEnd`](https://www.w3.org/TR/
-      navigation-timing/#dom-performancetiming-loadend) as per the W3C
-      Performance Timing API. This is only submitted on when the document
-      would not preload a resource.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1657188#c5
-    notification_emails:
-      - perf-telemetry-alerts@mozilla.com
-      - barret@mozilla.com
-    expires: 2021-02-24
 
 performance.page:
   non_blank_paint:

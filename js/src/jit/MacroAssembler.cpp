@@ -430,9 +430,9 @@ void MacroAssembler::createGCObject(Register obj, Register temp,
   MOZ_ASSERT(gc::IsObjectAllocKind(allocKind));
 
   uint32_t nDynamicSlots = 0;
-  if (templateObj.isNative()) {
-    const NativeTemplateObject& ntemplate =
-        templateObj.asNativeTemplateObject();
+  if (templateObj.isNativeObject()) {
+    const TemplateNativeObject& ntemplate =
+        templateObj.asTemplateNativeObject();
     nDynamicSlots = ntemplate.numDynamicSlots();
   }
 
@@ -576,7 +576,7 @@ void MacroAssembler::newGCBigInt(Register result, Register temp, Label* fail,
 }
 
 void MacroAssembler::copySlotsFromTemplate(
-    Register obj, const NativeTemplateObject& templateObj, uint32_t start,
+    Register obj, const TemplateNativeObject& templateObj, uint32_t start,
     uint32_t end) {
   uint32_t nfixed = std::min(templateObj.numFixedSlots(), end);
   for (unsigned i = start; i < nfixed; i++) {
@@ -638,7 +638,7 @@ void MacroAssembler::fillSlotsWithUninitialized(Address base, Register temp,
 }
 
 static void FindStartOfUninitializedAndUndefinedSlots(
-    const NativeTemplateObject& templateObj, uint32_t nslots,
+    const TemplateNativeObject& templateObj, uint32_t nslots,
     uint32_t* startOfUninitialized, uint32_t* startOfUndefined) {
   MOZ_ASSERT(nslots == templateObj.slotSpan());
   MOZ_ASSERT(nslots > 0);
@@ -747,7 +747,7 @@ void MacroAssembler::initTypedArraySlots(Register obj, Register temp,
 }
 
 void MacroAssembler::initGCSlots(Register obj, Register temp,
-                                 const NativeTemplateObject& templateObj,
+                                 const TemplateNativeObject& templateObj,
                                  bool initContents) {
   // Slots of non-array objects are required to be initialized.
   // Use the values currently in the template object.
@@ -831,9 +831,9 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
   storePtr(ImmGCPtr(templateObj.shape()),
            Address(obj, JSObject::offsetOfShape()));
 
-  if (templateObj.isNative()) {
-    const NativeTemplateObject& ntemplate =
-        templateObj.asNativeTemplateObject();
+  if (templateObj.isNativeObject()) {
+    const TemplateNativeObject& ntemplate =
+        templateObj.asTemplateNativeObject();
     MOZ_ASSERT(!ntemplate.hasDynamicElements());
 
     // If the object has dynamic slots, the slots member has already been
@@ -1741,64 +1741,33 @@ void MacroAssembler::setIsDefinitelyTypedArrayConstructor(Register obj,
   bind(&done);
 }
 
-void MacroAssembler::loadArrayBufferByteLengthInt32(Register obj,
-                                                    Register output,
-                                                    Label* fail) {
+void MacroAssembler::guardNonNegativeIntPtrToInt32(Register reg, Label* fail) {
+#ifdef DEBUG
+  Label ok;
+  branchPtr(Assembler::NotSigned, reg, reg, &ok);
+  assumeUnreachable("Unexpected negative value");
+  bind(&ok);
+#endif
+
+#ifdef JS_64BIT
+  branchPtr(Assembler::Above, reg, Imm32(INT32_MAX), fail);
+#endif
+}
+
+void MacroAssembler::loadArrayBufferByteLengthIntPtr(Register obj,
+                                                     Register output) {
   Address slotAddr(obj, ArrayBufferObject::offsetOfByteLengthSlot());
   loadPrivate(slotAddr, output);
-
-  if (fail && ArrayBufferObject::maxBufferByteLength() > INT32_MAX) {
-    branchPtr(Assembler::Above, output, Imm32(INT32_MAX), fail);
-    return;
-  }
-
-#ifdef DEBUG
-  Label ok;
-  branchPtr(Assembler::BelowOrEqual, output, Imm32(INT32_MAX), &ok);
-  assumeUnreachable("Expecting length to fit in int32");
-  bind(&ok);
-#endif
 }
 
-void MacroAssembler::loadArrayBufferViewByteOffsetInt32(Register obj,
-                                                        Register output,
-                                                        Label* fail) {
+void MacroAssembler::loadArrayBufferViewByteOffsetIntPtr(Register obj,
+                                                         Register output) {
   Address slotAddr(obj, ArrayBufferViewObject::byteOffsetOffset());
   loadPrivate(slotAddr, output);
-
-  if (fail && ArrayBufferObject::maxBufferByteLength() > INT32_MAX) {
-    branchPtr(Assembler::Above, output, Imm32(INT32_MAX), fail);
-    return;
-  }
-
-#ifdef DEBUG
-  Label ok;
-  branchPtr(Assembler::BelowOrEqual, output, Imm32(INT32_MAX), &ok);
-  assumeUnreachable("Expecting offset to fit in int32");
-  bind(&ok);
-#endif
 }
 
-void MacroAssembler::loadArrayBufferViewLengthInt32(Register obj,
-                                                    Register output,
-                                                    Label* fail) {
-  loadArrayBufferViewLengthPtr(obj, output);
-
-  if (fail && ArrayBufferObject::maxBufferByteLength() > INT32_MAX) {
-    branchPtr(Assembler::Above, output, Imm32(INT32_MAX), fail);
-    return;
-  }
-
-#ifdef DEBUG
-  Label ok;
-  branchPtr(Assembler::BelowOrEqual, output, Imm32(INT32_MAX), &ok);
-  assumeUnreachable("Expecting length to fit in int32");
-  bind(&ok);
-#endif
-}
-
-void MacroAssembler::loadArrayBufferViewLengthPtr(Register obj,
-                                                  Register output) {
+void MacroAssembler::loadArrayBufferViewLengthIntPtr(Register obj,
+                                                     Register output) {
   Address slotAddr(obj, ArrayBufferViewObject::lengthOffset());
   loadPrivate(slotAddr, output);
 }
@@ -3584,6 +3553,44 @@ void MacroAssembler::branchTestObjGroup(Condition cond, Register obj,
   }
 }
 
+void MacroAssembler::branchTestObjTypeDescr(Condition cond, Register obj,
+                                            Register descr, Register scratch,
+                                            Register spectreRegToZero,
+                                            Label* label) {
+  MOZ_ASSERT(obj != scratch);
+  MOZ_ASSERT(obj != descr);
+  MOZ_ASSERT(spectreRegToZero != scratch);
+
+  if (JitOptions.spectreObjectMitigationsMisc) {
+    move32(Imm32(0), scratch);
+  }
+
+  branchPtr(cond, Address(obj, TypedObject::offsetOfTypeDescr()), descr, label);
+
+  if (JitOptions.spectreObjectMitigationsMisc) {
+    spectreMovePtr(cond, scratch, spectreRegToZero);
+  }
+}
+
+void MacroAssembler::branchTestObjTypeDescr(Condition cond, Register obj,
+                                            TypeDescr* descr, Register scratch,
+                                            Register spectreRegToZero,
+                                            Label* label) {
+  MOZ_ASSERT(obj != scratch);
+  MOZ_ASSERT(spectreRegToZero != scratch);
+
+  if (JitOptions.spectreObjectMitigationsMisc) {
+    move32(Imm32(0), scratch);
+  }
+
+  branchPtr(cond, Address(obj, TypedObject::offsetOfTypeDescr()),
+            ImmGCPtr(descr), label);
+
+  if (JitOptions.spectreObjectMitigationsMisc) {
+    spectreMovePtr(cond, scratch, spectreRegToZero);
+  }
+}
+
 void MacroAssembler::branchTestObjCompartment(Condition cond, Register obj,
                                               const Address& compartment,
                                               Register scratch, Label* label) {
@@ -3983,14 +3990,14 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
 
 void MacroAssembler::atomicIsLockFreeJS(Register value, Register output) {
   // Keep this in sync with isLockfreeJS() in jit/AtomicOperations.h.
-  MOZ_ASSERT(AtomicOperations::isLockfreeJS(1));  // Implementation artifact
-  MOZ_ASSERT(AtomicOperations::isLockfreeJS(2));  // Implementation artifact
-  MOZ_ASSERT(AtomicOperations::isLockfreeJS(4));  // Spec requirement
-  MOZ_ASSERT(
-      !AtomicOperations::isLockfreeJS(8));  // Implementation invariant, for now
+  static_assert(AtomicOperations::isLockfreeJS(1));  // Implementation artifact
+  static_assert(AtomicOperations::isLockfreeJS(2));  // Implementation artifact
+  static_assert(AtomicOperations::isLockfreeJS(4));  // Spec requirement
+  static_assert(AtomicOperations::isLockfreeJS(8));  // Implementation artifact
 
   Label done;
   move32(Imm32(1), output);
+  branch32(Assembler::Equal, value, Imm32(8), &done);
   branch32(Assembler::Equal, value, Imm32(4), &done);
   branch32(Assembler::Equal, value, Imm32(2), &done);
   branch32(Assembler::Equal, value, Imm32(1), &done);
@@ -4263,10 +4270,6 @@ void MacroAssembler::loadArgumentsObjectElement(Register obj, Register index,
   // Load ArgumentsData.
   loadPrivate(Address(obj, ArgumentsObject::getDataSlotOffset()), temp);
 
-  // Fail if we have a RareArgumentsData (elements were deleted).
-  branchPtr(Assembler::NotEqual,
-            Address(temp, offsetof(ArgumentsData, rareData)), ImmWord(0), fail);
-
   // Guard the argument is not a FORWARD_TO_CALL_SLOT MagicValue.
   BaseValueIndex argValue(temp, index, ArgumentsData::offsetOfArgs());
   branchTestMagic(Assembler::Equal, argValue, fail);
@@ -4287,69 +4290,75 @@ void MacroAssembler::loadArgumentsObjectLength(Register obj, Register output,
   rshift32(Imm32(ArgumentsObject::PACKED_BITS_COUNT), output);
 }
 
-void MacroAssembler::branchArgumentsObjectHasOverridenIterator(Register obj,
-                                                               Register temp,
-                                                               Label* label) {
+void MacroAssembler::branchTestArgumentsObjectFlags(Register obj, Register temp,
+                                                    uint32_t flags,
+                                                    Condition cond,
+                                                    Label* label) {
+  MOZ_ASSERT((flags & ~ArgumentsObject::PACKED_BITS_MASK) == 0);
+
   // Get initial length value.
   unboxInt32(Address(obj, ArgumentsObject::getInitialLengthSlotOffset()), temp);
 
-  // Ensure no overridden iterator.
-  branchTest32(Assembler::NonZero, temp,
-               Imm32(ArgumentsObject::ITERATOR_OVERRIDDEN_BIT), label);
+  // Test flags.
+  branchTest32(cond, temp, Imm32(flags), label);
 }
 
-static constexpr bool ValidateShiftRange(Scalar::Type from, Scalar::Type to) {
+static constexpr bool ValidateSizeRange(Scalar::Type from, Scalar::Type to) {
   for (Scalar::Type type = from; type < to; type = Scalar::Type(type + 1)) {
-    if (TypedArrayShift(type) != TypedArrayShift(from)) {
+    if (TypedArrayElemSize(type) != TypedArrayElemSize(from)) {
       return false;
     }
   }
   return true;
 }
 
-void MacroAssembler::typedArrayElementShift(Register obj, Register output) {
+void MacroAssembler::typedArrayElementSize(Register obj, Register output) {
   static_assert(Scalar::Int8 == 0, "Int8 is the first typed array class");
   static_assert(
       (Scalar::BigUint64 - Scalar::Int8) == Scalar::MaxTypedArrayViewType - 1,
       "BigUint64 is the last typed array class");
 
-  Label zero, one, two, three, done;
+  Label one, two, four, eight, done;
 
   loadObjClassUnsafe(obj, output);
 
-  static_assert(ValidateShiftRange(Scalar::Int8, Scalar::Int16),
-                "shift amount is zero in [Int8, Int16)");
+  static_assert(ValidateSizeRange(Scalar::Int8, Scalar::Int16),
+                "element size is one in [Int8, Int16)");
   branchPtr(Assembler::Below, output,
-            ImmPtr(TypedArrayObject::classForType(Scalar::Int16)), &zero);
+            ImmPtr(TypedArrayObject::classForType(Scalar::Int16)), &one);
 
-  static_assert(ValidateShiftRange(Scalar::Int16, Scalar::Int32),
-                "shift amount is one in [Int16, Int32)");
+  static_assert(ValidateSizeRange(Scalar::Int16, Scalar::Int32),
+                "element size is two in [Int16, Int32)");
   branchPtr(Assembler::Below, output,
-            ImmPtr(TypedArrayObject::classForType(Scalar::Int32)), &one);
+            ImmPtr(TypedArrayObject::classForType(Scalar::Int32)), &two);
 
-  static_assert(ValidateShiftRange(Scalar::Int32, Scalar::Float64),
-                "shift amount is two in [Int32, Float64)");
+  static_assert(ValidateSizeRange(Scalar::Int32, Scalar::Float64),
+                "element size is four in [Int32, Float64)");
   branchPtr(Assembler::Below, output,
-            ImmPtr(TypedArrayObject::classForType(Scalar::Float64)), &two);
+            ImmPtr(TypedArrayObject::classForType(Scalar::Float64)), &four);
 
-  static_assert(ValidateShiftRange(Scalar::Float64, Scalar::Uint8Clamped),
-                "shift amount is three in [Float64, Uint8Clamped)");
+  static_assert(ValidateSizeRange(Scalar::Float64, Scalar::Uint8Clamped),
+                "element size is eight in [Float64, Uint8Clamped)");
   branchPtr(Assembler::Below, output,
             ImmPtr(TypedArrayObject::classForType(Scalar::Uint8Clamped)),
-            &three);
+            &eight);
 
-  static_assert(ValidateShiftRange(Scalar::Uint8Clamped, Scalar::BigInt64),
-                "shift amount is zero in [Uint8Clamped, BigInt64)");
+  static_assert(ValidateSizeRange(Scalar::Uint8Clamped, Scalar::BigInt64),
+                "element size is one in [Uint8Clamped, BigInt64)");
   branchPtr(Assembler::Below, output,
-            ImmPtr(TypedArrayObject::classForType(Scalar::BigInt64)), &zero);
+            ImmPtr(TypedArrayObject::classForType(Scalar::BigInt64)), &one);
 
   static_assert(
-      ValidateShiftRange(Scalar::BigInt64, Scalar::MaxTypedArrayViewType),
-      "shift amount is three in [BigInt64, MaxTypedArrayViewType)");
+      ValidateSizeRange(Scalar::BigInt64, Scalar::MaxTypedArrayViewType),
+      "element size is eight in [BigInt64, MaxTypedArrayViewType)");
   // Fall through for BigInt64 and BigUint64
 
-  bind(&three);
-  move32(Imm32(3), output);
+  bind(&eight);
+  move32(Imm32(8), output);
+  jump(&done);
+
+  bind(&four);
+  move32(Imm32(4), output);
   jump(&done);
 
   bind(&two);
@@ -4358,10 +4367,6 @@ void MacroAssembler::typedArrayElementShift(Register obj, Register output) {
 
   bind(&one);
   move32(Imm32(1), output);
-  jump(&done);
-
-  bind(&zero);
-  move32(Imm32(0), output);
 
   bind(&done);
 }
@@ -4382,6 +4387,32 @@ void MacroAssembler::branchIfClassIsNotTypedArray(Register clasp,
             notTypedArray);
   branchPtr(Assembler::Above, clasp, ImmPtr(lastTypedArrayClass),
             notTypedArray);
+}
+
+void MacroAssembler::branchIfHasDetachedArrayBuffer(Register obj, Register temp,
+                                                    Label* label) {
+  // Inline implementation of ArrayBufferViewObject::hasDetachedBuffer().
+
+  // Load obj->elements in temp.
+  loadPtr(Address(obj, NativeObject::offsetOfElements()), temp);
+
+  // Shared buffers can't be detached.
+  Label done;
+  branchTest32(Assembler::NonZero,
+               Address(temp, ObjectElements::offsetOfFlags()),
+               Imm32(ObjectElements::SHARED_MEMORY), &done);
+
+  // An ArrayBufferView with a null buffer has never had its buffer exposed to
+  // become detached.
+  fallibleUnboxObject(Address(obj, ArrayBufferViewObject::bufferOffset()), temp,
+                      &done);
+
+  // Load the ArrayBuffer flags and branch if the detached flag is set.
+  unboxInt32(Address(temp, ArrayBufferObject::offsetOfFlagsSlot()), temp);
+  branchTest32(Assembler::NonZero, temp, Imm32(ArrayBufferObject::DETACHED),
+               label);
+
+  bind(&done);
 }
 
 void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
@@ -4458,7 +4489,7 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
         Address(temp1, NativeIterator::offsetOfFlagsAndCount()));
 
   // Reset property cursor.
-  loadPtr(Address(temp1, NativeIterator::offsetOfGuardsEnd()), temp2);
+  loadPtr(Address(temp1, NativeIterator::offsetOfShapesEnd()), temp2);
   storePtr(temp2, Address(temp1, NativeIterator::offsetOfPropertyCursor()));
 
   // Unlink from the iterator list.

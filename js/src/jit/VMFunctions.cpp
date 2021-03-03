@@ -1718,7 +1718,7 @@ bool CallNativeGetter(JSContext* cx, HandleFunction callee,
                       HandleValue receiver, MutableHandleValue result) {
   AutoRealm ar(cx, callee);
 
-  MOZ_ASSERT(callee->isNative());
+  MOZ_ASSERT(callee->isNativeFun());
   JSNative natfun = callee->native();
 
   JS::RootedValueArray<2> vp(cx);
@@ -1736,7 +1736,7 @@ bool CallNativeGetter(JSContext* cx, HandleFunction callee,
 bool CallDOMGetter(JSContext* cx, const JSJitInfo* info, HandleObject obj,
                    MutableHandleValue result) {
   MOZ_ASSERT(info->type() == JSJitInfo::Getter);
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   MOZ_ASSERT(obj->getClass()->isDOMClass());
 
 #ifdef DEBUG
@@ -1755,7 +1755,7 @@ bool CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
                       HandleValue rhs) {
   AutoRealm ar(cx, callee);
 
-  MOZ_ASSERT(callee->isNative());
+  MOZ_ASSERT(callee->isNativeFun());
   JSNative natfun = callee->native();
 
   JS::RootedValueArray<3> vp(cx);
@@ -1769,7 +1769,7 @@ bool CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
 bool CallDOMSetter(JSContext* cx, const JSJitInfo* info, HandleObject obj,
                    HandleValue value) {
   MOZ_ASSERT(info->type() == JSJitInfo::Setter);
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   MOZ_ASSERT(obj->getClass()->isDOMClass());
 
 #ifdef DEBUG
@@ -1859,7 +1859,7 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
       return true;
     }
 
-    if (!proto->isNative()) {
+    if (!proto->is<NativeObject>()) {
       return false;
     }
     obj = &proto->as<NativeObject>();
@@ -1869,7 +1869,7 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
 bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* vp) {
   // Condition checked by caller.
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   return GetNativeDataPropertyPure(cx, &obj->as<NativeObject>(), NameToId(name),
                                    vp);
 }
@@ -1911,7 +1911,7 @@ bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
   // Condition checked by caller.
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
 
   // vp[0] contains the id, result will be stored in vp[1].
   Value idVal = vp[0];
@@ -1928,7 +1928,7 @@ bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* val) {
   AutoUnsafeCallWithABI unsafe;
 
-  if (MOZ_UNLIKELY(!obj->isNative())) {
+  if (MOZ_UNLIKELY(!obj->is<NativeObject>())) {
     return false;
   }
 
@@ -1950,7 +1950,7 @@ bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg,
 
   // Window objects may require outerizing (passing the WindowProxy to the
   // getter/setter), so we don't support them here.
-  if (MOZ_UNLIKELY(!objArg->isNative() || IsWindow(objArg))) {
+  if (MOZ_UNLIKELY(!objArg->is<NativeObject>() || IsWindow(objArg))) {
     return false;
   }
 
@@ -1981,7 +1981,7 @@ bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg,
       return false;
     }
 
-    if (!proto->isNative()) {
+    if (!proto->is<NativeObject>()) {
       return false;
     }
     nobj = &proto->as<NativeObject>();
@@ -2000,7 +2000,7 @@ bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp) {
   }
 
   do {
-    if (obj->isNative()) {
+    if (obj->is<NativeObject>()) {
       if (obj->as<NativeObject>().lastProperty()->search(cx, id)) {
         vp[1].setBoolean(true);
         return true;
@@ -2056,7 +2056,7 @@ bool HasNativeElementPure(JSContext* cx, NativeObject* obj, int32_t index,
                           Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
-  MOZ_ASSERT(obj->getClass()->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   MOZ_ASSERT(!obj->getOpsHasProperty());
   MOZ_ASSERT(!obj->getOpsLookupProperty());
   MOZ_ASSERT(!obj->getOpsGetOwnPropertyDescriptor());
@@ -2663,6 +2663,130 @@ AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType) {
     default:
       MOZ_CRASH("Unexpected TypedArray type");
   }
+}
+
+template <typename AtomicOp, typename... Args>
+static BigInt* AtomicAccess64(JSContext* cx, TypedArrayObject* typedArray,
+                              size_t index, AtomicOp op, Args... args) {
+  MOZ_ASSERT(Scalar::isBigIntType(typedArray->type()));
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index < typedArray->length().get());
+
+  if (typedArray->type() == Scalar::BigInt64) {
+    SharedMem<int64_t*> addr = typedArray->dataPointerEither().cast<int64_t*>();
+    int64_t v = op(addr + index, BigInt::toInt64(args)...);
+    return BigInt::createFromInt64(cx, v);
+  }
+
+  SharedMem<uint64_t*> addr = typedArray->dataPointerEither().cast<uint64_t*>();
+  uint64_t v = op(addr + index, BigInt::toUint64(args)...);
+  return BigInt::createFromUint64(cx, v);
+}
+
+template <typename AtomicOp, typename... Args>
+static auto AtomicAccess64(TypedArrayObject* typedArray, size_t index,
+                           AtomicOp op, Args... args) {
+  MOZ_ASSERT(Scalar::isBigIntType(typedArray->type()));
+  MOZ_ASSERT(!typedArray->hasDetachedBuffer());
+  MOZ_ASSERT(index < typedArray->length().get());
+
+  if (typedArray->type() == Scalar::BigInt64) {
+    SharedMem<int64_t*> addr = typedArray->dataPointerEither().cast<int64_t*>();
+    return op(addr + index, BigInt::toInt64(args)...);
+  }
+
+  SharedMem<uint64_t*> addr = typedArray->dataPointerEither().cast<uint64_t*>();
+  return op(addr + index, BigInt::toUint64(args)...);
+}
+
+BigInt* AtomicsLoad64(JSContext* cx, TypedArrayObject* typedArray,
+                      size_t index) {
+  return AtomicAccess64(cx, typedArray, index, [](auto addr) {
+    return jit::AtomicOperations::loadSeqCst(addr);
+  });
+}
+
+void AtomicsStore64(TypedArrayObject* typedArray, size_t index, BigInt* value) {
+  AutoUnsafeCallWithABI unsafe;
+
+  AtomicAccess64(
+      typedArray, index,
+      [](auto addr, auto val) {
+        jit::AtomicOperations::storeSeqCst(addr, val);
+      },
+      value);
+}
+
+BigInt* AtomicsCompareExchange64(JSContext* cx, TypedArrayObject* typedArray,
+                                 size_t index, BigInt* expected,
+                                 BigInt* replacement) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto oldval, auto newval) {
+        return jit::AtomicOperations::compareExchangeSeqCst(addr, oldval,
+                                                            newval);
+      },
+      expected, replacement);
+}
+
+BigInt* AtomicsExchange64(JSContext* cx, TypedArrayObject* typedArray,
+                          size_t index, BigInt* value) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto val) {
+        return jit::AtomicOperations::exchangeSeqCst(addr, val);
+      },
+      value);
+}
+
+BigInt* AtomicsAdd64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
+                     BigInt* value) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto val) {
+        return jit::AtomicOperations::fetchAddSeqCst(addr, val);
+      },
+      value);
+}
+
+BigInt* AtomicsAnd64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
+                     BigInt* value) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto val) {
+        return jit::AtomicOperations::fetchAndSeqCst(addr, val);
+      },
+      value);
+}
+
+BigInt* AtomicsOr64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
+                    BigInt* value) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto val) {
+        return jit::AtomicOperations::fetchOrSeqCst(addr, val);
+      },
+      value);
+}
+
+BigInt* AtomicsSub64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
+                     BigInt* value) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto val) {
+        return jit::AtomicOperations::fetchSubSeqCst(addr, val);
+      },
+      value);
+}
+
+BigInt* AtomicsXor64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
+                     BigInt* value) {
+  return AtomicAccess64(
+      cx, typedArray, index,
+      [](auto addr, auto val) {
+        return jit::AtomicOperations::fetchXorSeqCst(addr, val);
+      },
+      value);
 }
 
 void AssumeUnreachable(const char* output) {

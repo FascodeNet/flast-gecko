@@ -1,8 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-ChromeUtils.import("resource://testing-common/LoginTestUtils.jsm", this);
-
 function waitForLoginCountToReach(browser, loginCount) {
   return SpecialPowers.spawn(
     browser,
@@ -200,8 +198,8 @@ add_task(async function test() {
       loginList._list.querySelectorAll(
         ".login-list-item[data-guid]:not([hidden])"
       ).length,
-      0,
-      "login-list should not show any results since the filter won't search passwords when MP is enabled"
+      1,
+      "login-list should show corresponding result when primary password is enabled"
     );
     loginFilter.value = "";
     is(

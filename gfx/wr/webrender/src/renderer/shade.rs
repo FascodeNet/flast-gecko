@@ -25,7 +25,6 @@ use webrender_build::shader::{ShaderFeatures, ShaderFeatureFlags, get_shader_fea
 pub(crate) fn get_feature_string(kind: ImageBufferKind) -> &'static str {
     match kind {
         ImageBufferKind::Texture2D => "TEXTURE_2D",
-        ImageBufferKind::Texture2DArray => "TEXTURE_2D_ARRAY",
         ImageBufferKind::TextureRect => "TEXTURE_RECT",
         ImageBufferKind::TextureExternal => "TEXTURE_EXTERNAL",
     }
@@ -34,7 +33,6 @@ pub(crate) fn get_feature_string(kind: ImageBufferKind) -> &'static str {
 fn has_platform_support(kind: ImageBufferKind, gl_type: &GlType) -> bool {
     match (kind, gl_type) {
         (ImageBufferKind::Texture2D, _) => true,
-        (ImageBufferKind::Texture2DArray, _) => true,
         (ImageBufferKind::TextureRect, &GlType::Gles) => false,
         (ImageBufferKind::TextureRect, &GlType::Gl) => true,
         (ImageBufferKind::TextureExternal, &GlType::Gles) => true,
@@ -42,11 +40,10 @@ fn has_platform_support(kind: ImageBufferKind, gl_type: &GlType) -> bool {
     }
 }
 
-pub const IMAGE_BUFFER_KINDS: [ImageBufferKind; 4] = [
+pub const IMAGE_BUFFER_KINDS: [ImageBufferKind; 3] = [
     ImageBufferKind::Texture2D,
     ImageBufferKind::TextureRect,
     ImageBufferKind::TextureExternal,
-    ImageBufferKind::Texture2DArray,
 ];
 
 const ADVANCED_BLEND_FEATURE: &str = "ADVANCED_BLEND";
@@ -398,7 +395,9 @@ impl BrushShader {
             BlendMode::PremultipliedAlpha |
             BlendMode::PremultipliedDestOut |
             BlendMode::SubpixelConstantTextColor(..) |
-            BlendMode::SubpixelWithBgColor => {
+            BlendMode::SubpixelWithBgColor |
+            BlendMode::Screen |
+            BlendMode::Exclusion => {
                 if features.contains(BatchFeatures::ALPHA_PASS) {
                     &mut self.alpha
                 } else {
@@ -410,7 +409,8 @@ impl BrushShader {
                     .as_mut()
                     .expect("bug: no advanced blend shader loaded")
             }
-            BlendMode::SubpixelDualSource => {
+            BlendMode::SubpixelDualSource |
+            BlendMode::MultiplyDualSource => {
                 self.dual_source
                     .as_mut()
                     .expect("bug: no dual source shader loaded")
@@ -1068,6 +1068,12 @@ impl Shaders {
                 &mut self.ps_split_composite
             }
             BatchKind::Brush(brush_kind) => {
+                // SWGL uses a native anti-aliasing implementation that bypasses the shader.
+                // Don't consider it in that case when deciding whether or not to use
+                // an alpha-pass shader.
+                if device.get_capabilities().uses_native_antialiasing {
+                    features.remove(BatchFeatures::ANTIALIASING);
+                }
                 let brush_shader = match brush_kind {
                     BrushBatchKind::Solid => {
                         &mut self.brush_solid

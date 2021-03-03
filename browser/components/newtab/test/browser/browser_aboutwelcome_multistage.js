@@ -1,15 +1,19 @@
 "use strict";
 
 const { ExperimentAPI } = ChromeUtils.import(
-  "resource://messaging-system/experiments/ExperimentAPI.jsm"
+  "resource://nimbus/ExperimentAPI.jsm"
 );
 const { ExperimentFakes } = ChromeUtils.import(
-  "resource://testing-common/MSTestUtils.jsm"
+  "resource://testing-common/NimbusTestUtils.jsm"
+);
+const { FxAccounts } = ChromeUtils.import(
+  "resource://gre/modules/FxAccounts.jsm"
 );
 
 const SEPARATE_ABOUT_WELCOME_PREF = "browser.aboutwelcome.enabled";
 const ABOUT_WELCOME_OVERRIDE_CONTENT_PREF =
   "browser.aboutwelcome.overrideContent";
+const DID_SEE_ABOUT_WELCOME_PREF = "trailhead.firstrun.didSeeAboutWelcome";
 
 const TEST_MULTISTAGE_CONTENT = {
   id: "multi-stage-welcome",
@@ -45,8 +49,10 @@ const TEST_MULTISTAGE_CONTENT = {
           },
         },
         secondary_button: {
+          label: "link",
+        },
+        secondary_button_top: {
           label: "link top",
-          position: "top",
           action: {
             type: "SHOW_FIREFOX_ACCOUNTS",
             data: { entrypoint: "test" },
@@ -72,7 +78,6 @@ const TEST_MULTISTAGE_CONTENT = {
         },
         secondary_button: {
           label: "link",
-          position: "bottom",
         },
       },
     },
@@ -199,6 +204,17 @@ async function onButtonClick(browser, elementId) {
   );
 }
 
+add_task(async function setup() {
+  const sandbox = sinon.createSandbox();
+  // This needs to happen before any about:welcome page opens
+  sandbox.stub(FxAccounts.config, "promiseMetricsFlowURI").resolves("");
+  await setAboutWelcomeMultiStage("");
+
+  registerCleanupFunction(() => {
+    sandbox.restore();
+  });
+});
+
 /**
  * Test the zero onboarding using ExperimentAPI
  */
@@ -292,8 +308,10 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
       "main.AW_STEP1",
       "h1.welcomeZap",
       "span.zap.short",
+      "div.secondary-cta",
       "div.secondary-cta.top",
-      "button.secondary",
+      "button[value='secondary_button']",
+      "button[value='secondary_button_top']",
       "label.theme",
       "input[type='radio']",
       "div.indicator.current",
@@ -310,7 +328,7 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
     [
       "div.onboardingContainer",
       "main.AW_STEP2",
-      "button.secondary",
+      "button[value='secondary_button']",
       "h1.welcomeZap",
       "span.zap.long",
       "div.tiles-container.info",
@@ -363,8 +381,10 @@ add_task(async function test_Multistage_About_Welcome_branches() {
       "main.AW_STEP1",
       "h1.welcomeZap",
       "span.zap.short",
+      "div.secondary-cta",
       "div.secondary-cta.top",
-      "button.secondary",
+      "button[value='secondary_button']",
+      "button[value='secondary_button_top']",
       "label.theme",
       "input[type='radio']",
       "div.indicator.current",
@@ -383,7 +403,7 @@ add_task(async function test_Multistage_About_Welcome_branches() {
       "main.AW_STEP2",
       "h1.welcomeZap",
       "span.zap.long",
-      "button.secondary",
+      "button[value='secondary_button']",
       "div.tiles-container.info",
     ],
     // Unexpected selectors:
@@ -431,8 +451,10 @@ add_task(async function test_Multistage_About_Welcome_navigation() {
     [
       "div.onboardingContainer",
       "main.AW_STEP1",
+      "div.secondary-cta",
       "div.secondary-cta.top",
-      "button.secondary",
+      "button[value='secondary_button']",
+      "button[value='secondary_button_top']",
       "div.indicator.current",
     ],
     // Unexpected selectors:
@@ -444,7 +466,11 @@ add_task(async function test_Multistage_About_Welcome_navigation() {
     browser,
     "multistage step 2",
     // Expected selectors:
-    ["div.onboardingContainer", "main.AW_STEP2", "button.secondary"],
+    [
+      "div.onboardingContainer",
+      "main.AW_STEP2",
+      "button[value='secondary_button']",
+    ],
     // Unexpected selectors:
     ["main.AW_STEP1", "main.AW_STEP3", "div.secondary-cta.top"]
   );
@@ -598,7 +624,7 @@ add_task(async function test_AWMultistage_Secondary_Open_URL_Action() {
     sandbox.restore();
   });
 
-  await onButtonClick(browser, "button.secondary");
+  await onButtonClick(browser, "button[value='secondary_button_top']");
   const { callCount } = aboutWelcomeActor.onContentMessage;
   ok(
     callCount >= 2,
@@ -649,8 +675,8 @@ add_task(async function test_AWMultistage_Secondary_Open_URL_Action() {
   );
   Assert.equal(
     eventCall.args[1].event_context.source,
-    "secondary_button",
-    "secondary button click source recorded in Telemetry"
+    "secondary_button_top",
+    "secondary_top button click source recorded in Telemetry"
   );
 });
 
@@ -741,7 +767,7 @@ add_task(async function test_AWMultistage_Import() {
     sandbox.restore();
   });
 
-  await onButtonClick(browser, "button.secondary");
+  await onButtonClick(browser, "button[value='secondary_button']");
   const { callCount } = aboutWelcomeActor.onContentMessage;
 
   let actionCall;
@@ -777,3 +803,49 @@ add_task(async function test_AWMultistage_Import() {
     "Got call to handle Telemetry event"
   );
 });
+
+// Test events from AboutWelcomeUtils
+async function test_set_message() {
+  Services.prefs.setBoolPref(DID_SEE_ABOUT_WELCOME_PREF, false);
+  await openAboutWelcome();
+  Assert.equal(
+    Services.prefs.getBoolPref(DID_SEE_ABOUT_WELCOME_PREF, false),
+    true,
+    "Pref was set"
+  );
+}
+
+add_task(async function test_onContentMessage() {
+  await setAboutWelcomePref(true);
+  await openAboutWelcome();
+
+  //case "SET_WELCOME_MESSAGE_SEEN"
+  await test_set_message();
+});
+
+// Test Fxaccounts MetricsFlowURI
+test_newtab(
+  {
+    async before({ pushPrefs }) {
+      await pushPrefs(["browser.aboutwelcome.enabled", true]);
+    },
+    test: async function test_startBrowsing() {
+      await ContentTaskUtils.waitForCondition(
+        () => content.document.querySelector(".indicator.current"),
+        "Wait for about:welcome to load"
+      );
+    },
+    after() {
+      Assert.ok(
+        FxAccounts.config.promiseMetricsFlowURI.called,
+        "Stub was called"
+      );
+      Assert.equal(
+        FxAccounts.config.promiseMetricsFlowURI.firstCall.args[0],
+        "aboutwelcome",
+        "Called by AboutWelcomeParent"
+      );
+    },
+  },
+  "about:welcome"
+);

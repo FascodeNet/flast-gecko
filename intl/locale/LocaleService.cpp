@@ -152,7 +152,7 @@ LocaleService* LocaleService::GetInstance() {
     }
     // DOM might use ICUUtils and LocaleService during UnbindFromTree by
     // final cycle collection.
-    ClearOnShutdown(&sInstance, ShutdownPhase::ShutdownPostLastCycleCollection);
+    ClearOnShutdown(&sInstance, ShutdownPhase::CCPostLastCycleCollection);
   }
   return sInstance;
 }
@@ -378,8 +378,10 @@ LocaleService::GetDefaultLocale(nsACString& aRetVal) {
     // just use our hard-coded default below.
     GetGREFileContents("update.locale", &locale);
     locale.Trim(" \t\n\r");
+#ifdef MOZ_UPDATER
     // This should never be empty.
     MOZ_ASSERT(!locale.IsEmpty());
+#endif
     if (CanonicalizeLanguageId(locale)) {
       mDefaultLocale.Assign(locale);
     }

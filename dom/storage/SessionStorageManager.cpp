@@ -50,8 +50,8 @@ void RecvPropagateBackgroundSessionStorageManager(
             sManagers->Get(aCurrentTopContextId)) {
       // Assuming the target top browsing context should haven't been
       // registered yet.
-      MOZ_DIAGNOSTIC_ASSERT(!sManagers->GetWeak(aTargetTopContextId));
-      sManagers->Put(aTargetTopContextId, std::move(mgr));
+      MOZ_DIAGNOSTIC_ASSERT(!sManagers->Contains(aTargetTopContextId));
+      sManagers->InsertOrUpdate(aTargetTopContextId, std::move(mgr));
     }
   }
 }
@@ -70,32 +70,29 @@ SessionStorageManagerBase::OriginRecord*
 SessionStorageManagerBase::GetOriginRecord(
     const nsACString& aOriginAttrs, const nsACString& aOriginKey,
     const bool aMakeIfNeeded, SessionStorageCache* const aCloneFrom) {
-  OriginKeyHashTable* table;
-  if (!mOATable.Get(aOriginAttrs, &table)) {
-    if (aMakeIfNeeded) {
-      table = new OriginKeyHashTable();
-      mOATable.Put(aOriginAttrs, table);
-    } else {
-      return nullptr;
-    }
+  // XXX It seems aMakeIfNeeded is always known at compile-time, so this could
+  // be split into two functions.
+
+  if (aMakeIfNeeded) {
+    return mOATable.GetOrInsertNew(aOriginAttrs)
+        ->LookupOrInsertWith(
+            aOriginKey,
+            [&] {
+              auto newOriginRecord = MakeUnique<OriginRecord>();
+              if (aCloneFrom) {
+                newOriginRecord->mCache = aCloneFrom->Clone();
+              } else {
+                newOriginRecord->mCache = new SessionStorageCache();
+              }
+              return newOriginRecord;
+            })
+        .get();
   }
 
-  OriginRecord* originRecord;
-  if (!table->Get(aOriginKey, &originRecord)) {
-    if (aMakeIfNeeded) {
-      originRecord = new OriginRecord();
-      if (aCloneFrom) {
-        originRecord->mCache = aCloneFrom->Clone();
-      } else {
-        originRecord->mCache = new SessionStorageCache();
-      }
-      table->Put(aOriginKey, originRecord);
-    } else {
-      return nullptr;
-    }
-  }
+  auto* const table = mOATable.Get(aOriginAttrs);
+  if (!table) return nullptr;
 
-  return originRecord;
+  return table->Get(aOriginKey);
 }
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(SessionStorageManager)
@@ -628,13 +625,14 @@ BackgroundSessionStorageManager* BackgroundSessionStorageManager::GetOrCreate(
                   return;
                 }
               },
-              ShutdownPhase::Shutdown);
+              ShutdownPhase::XPCOMShutdown);
         }));
   }
 
-  return sManagers->LookupForAdd(aTopContextId).OrInsert([] {
-    return new BackgroundSessionStorageManager();
-  });
+  return sManagers
+      ->LookupOrInsertWith(aTopContextId,
+                           [] { return new BackgroundSessionStorageManager(); })
+      .get();
 }
 
 BackgroundSessionStorageManager::BackgroundSessionStorageManager() {

@@ -334,6 +334,7 @@ class MOZ_NEEDS_NO_VTABLE_TYPE nsTHashtable {
    protected:
     template <typename... Args>
     void InsertInternal(Args&&... aArgs) {
+      MOZ_RELEASE_ASSERT(!HasEntry());
       mEntryHandle.Insert([&](PLDHashEntryHdr* entry) {
         new (mozilla::KnownNotNull, entry) EntryType(
             EntryType::KeyToPointer(mKey), std::forward<Args>(aArgs)...);
@@ -354,7 +355,8 @@ class MOZ_NEEDS_NO_VTABLE_TYPE nsTHashtable {
   auto WithEntryHandle(KeyType aKey, F&& aFunc)
       -> std::invoke_result_t<F, EntryHandle&&> {
     return this->mTable.WithEntryHandle(
-        EntryType::KeyToPointer(aKey), [&aKey, &aFunc](auto entryHandle) {
+        EntryType::KeyToPointer(aKey),
+        [&aKey, &aFunc](auto entryHandle) -> decltype(auto) {
           return std::forward<F>(aFunc)(
               EntryHandle{aKey, std::move(entryHandle)});
         });
@@ -553,11 +555,14 @@ template <class EntryType>
       EntryType::ALLOW_MEMMOVE
           ? mozilla::detail::FixedSizeEntryMover<sizeof(EntryType)>
           : s_CopyEntry,
+      // Simplify hashtable clearing in case our entries are trivially
+      // destructible.
+      std::is_trivially_destructible_v<EntryType> ? nullptr : s_ClearEntry,
       // We don't use a generic initEntry hook because we want to allow
       // initialization of data members defined in derived classes directly
       // in the entry constructor (for example when a member can't be default
       // constructed).
-      s_ClearEntry, nullptr};
+      nullptr};
   return &sOps;
 }
 

@@ -208,8 +208,8 @@ const DEVTOOLS_F12_DISABLED_PREF = "devtools.experiment.f12.shortcut_disabled";
  * target. Visually, it's a document that includes the tools tabs and all
  * the iframes where the tool panels will be living in.
  *
- * @param {object} target
- *        The object the toolbox is debugging.
+ * @param {object} descriptorFront
+ *        The context to inspect identified by this descriptor.
  * @param {string} selectedTool
  *        Tool to select initially
  * @param {Toolbox.HostType} hostType
@@ -224,7 +224,7 @@ const DEVTOOLS_F12_DISABLED_PREF = "devtools.experiment.f12.shortcut_disabled";
  *        timestamps (unaffected by system clock changes).
  */
 function Toolbox(
-  target,
+  descriptorFront,
   selectedTool,
   hostType,
   contentWindow,
@@ -236,7 +236,8 @@ function Toolbox(
   this.selection = new Selection();
   this.telemetry = new Telemetry();
 
-  this.targetList = new TargetList(target.client.mainRoot, target);
+  this.descriptorFront = descriptorFront;
+  this.targetList = new TargetList(descriptorFront);
   this.targetList.on(
     "target-thread-wrong-order-on-resume",
     this._onTargetThreadFrontResumeWrongOrder.bind(this)
@@ -543,6 +544,9 @@ Toolbox.prototype = {
 
   /**
    * Get the current top level target the toolbox is debugging.
+   *
+   * This will only be defined *after* calling Toolbox.open(),
+   * after it has called `TargetList.startListening`.
    */
   get target() {
     return this.targetList.targetFront;
@@ -836,6 +840,7 @@ Toolbox.prototype = {
       this._buildTabs();
       this._applyCacheSettings();
       this._applyServiceWorkersTestingSettings();
+      this._applyJavascriptEnabledSettings();
       this._addWindowListeners();
       this._addChromeEventHandlerEvents();
       this._registerOverlays();
@@ -929,11 +934,7 @@ Toolbox.prototype = {
         // Request the actor to restore the focus to the content page once the
         // target is detached. This typically happens when the console closes.
         // We restore the focus as it may have been stolen by the console input.
-        await this.target.reconfigure({
-          options: {
-            restoreFocus: true,
-          },
-        });
+        await this.targetList.updateConfiguration({ restoreFocus: true });
       }
 
       // Lazily connect to the profiler here and don't wait for it to complete,
@@ -1421,6 +1422,7 @@ Toolbox.prototype = {
   },
 
   _pingTelemetry: function() {
+    Services.prefs.setBoolPref("devtools.everOpened", true);
     this.telemetry.toolOpened("toolbox", this.sessionId, this);
 
     this.telemetry
@@ -1644,18 +1646,13 @@ Toolbox.prototype = {
     const openedConsolePanel = this.currentToolId === "webconsole";
 
     if (openedConsolePanel) {
-      deck.setAttribute("collapsed", "true");
-      splitter.setAttribute("hidden", "true");
-      webconsolePanel.removeAttribute("collapsed");
+      deck.collapsed = true;
+      splitter.hidden = true;
+      webconsolePanel.collapsed = false;
     } else {
-      deck.removeAttribute("collapsed");
-      if (this.splitConsole) {
-        webconsolePanel.removeAttribute("collapsed");
-        splitter.removeAttribute("hidden");
-      } else {
-        webconsolePanel.setAttribute("collapsed", "true");
-        splitter.setAttribute("hidden", "true");
-      }
+      deck.collapsed = false;
+      splitter.hidden = !this.splitConsole;
+      webconsolePanel.collapsed = !this.splitConsole;
     }
   },
 
@@ -1703,7 +1700,7 @@ Toolbox.prototype = {
    * the host changes.
    */
   _buildDockOptions: function() {
-    if (!this.target.isLocalTab) {
+    if (!this.descriptorFront.isLocalTab) {
       this.component.setDockOptionsEnabled(false);
       this.component.setCanCloseToolbox(false);
       return;
@@ -1960,6 +1957,9 @@ Toolbox.prototype = {
   },
 
   _onPickerStarting: async function() {
+    if (this.isDestroying()) {
+      return;
+    }
     this.tellRDMAboutPickerState(true, PICKER_TYPES.ELEMENT);
     this.pickerButton.isChecked = true;
     await this.selectTool("inspector", "inspect_dom");
@@ -1973,6 +1973,9 @@ Toolbox.prototype = {
   },
 
   _onPickerStopped: function() {
+    if (this.isDestroying()) {
+      return;
+    }
     this.tellRDMAboutPickerState(false, PICKER_TYPES.ELEMENT);
     this.off("select", this.nodePicker.stop);
     this.doc.removeEventListener("keypress", this._onPickerKeypress, true);
@@ -2064,11 +2067,7 @@ Toolbox.prototype = {
     const pref = "devtools.cache.disabled";
     const cacheDisabled = Services.prefs.getBoolPref(pref);
 
-    await this.target.reconfigure({
-      options: {
-        cacheDisabled: cacheDisabled,
-      },
-    });
+    await this.targetList.updateConfiguration({ cacheDisabled });
 
     // This event is only emitted for tests in order to know when to reload
     if (flags.testing) {
@@ -2083,11 +2082,16 @@ Toolbox.prototype = {
   _applyServiceWorkersTestingSettings: function() {
     const pref = "devtools.serviceWorkers.testing.enabled";
     const serviceWorkersTestingEnabled = Services.prefs.getBoolPref(pref);
-    this.target.reconfigure({
-      options: {
-        serviceWorkersTestingEnabled,
-      },
-    });
+    this.targetList.updateConfiguration({ serviceWorkersTestingEnabled });
+  },
+
+  /**
+   * Read the initial javascriptEnabled configuration from the current target
+   * and forward it to the configuration actor.
+   */
+  _applyJavascriptEnabledSettings: function() {
+    const javascriptEnabled = this.target._javascriptEnabled;
+    this.targetList.updateConfiguration({ javascriptEnabled });
   },
 
   /**
@@ -2132,10 +2136,8 @@ Toolbox.prototype = {
       this.telemetry.toolClosed("paintflashing", this.sessionId, this);
     }
     this.isPaintFlashing = !this.isPaintFlashing;
-    return this.target.reconfigure({
-      options: {
-        paintFlashing: this.isPaintFlashing,
-      },
+    return this.targetList.updateConfiguration({
+      paintFlashing: this.isPaintFlashing,
     });
   },
 
@@ -3257,7 +3259,7 @@ Toolbox.prototype = {
    *        The host type of the new host object
    */
   switchHost: function(hostType) {
-    if (hostType == this.hostType || !this.target.isLocalTab) {
+    if (hostType == this.hostType || !this.descriptorFront.isLocalTab) {
       return null;
     }
 
@@ -3713,6 +3715,10 @@ Toolbox.prototype = {
       this._componentMount = null;
       this._tabBar = null;
     }
+    if (this._nodePicker) {
+      this._nodePicker.stop();
+      this._nodePicker = null;
+    }
 
     const outstanding = [];
     for (const [id, panel] of this._toolPanels) {
@@ -3746,8 +3752,6 @@ Toolbox.prototype = {
       ],
       { onAvailable: this._onResourceAvailable }
     );
-
-    this.targetList.destroy();
 
     // Unregister buttons listeners
     this.toolbarButtons.forEach(button => {
@@ -3810,6 +3814,12 @@ Toolbox.prototype = {
             // This is done after other destruction tasks since it may tear down
             // fronts and the debugger transport which earlier destroy methods may
             // require to complete.
+            //
+            // For similar reasons, only destroy the target-list after every
+            // other outstanding cleanup is done. Destroying the target list
+            // will lead to destroy frame targets which can temporarily make
+            // some fronts unresponsive and block the cleanup.
+            this.targetList.destroy();
             return this.target.destroy();
           }, console.error)
           .then(() => {

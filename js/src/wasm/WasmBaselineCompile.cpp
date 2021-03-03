@@ -1853,9 +1853,9 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
   using LocalVector = Vector<Local, 16, SystemAllocPolicy>;
 
   // Initialize `localInfo` based on the types of `locals` and `args`.
-  MOZ_MUST_USE bool setupLocals(const ValTypeVector& locals,
-                                const ArgTypeVector& args, bool debugEnabled,
-                                LocalVector* localInfo) {
+  [[nodiscard]] bool setupLocals(const ValTypeVector& locals,
+                                 const ArgTypeVector& args, bool debugEnabled,
+                                 LocalVector* localInfo) {
     if (!localInfo->reserve(locals.length())) {
       return false;
     }
@@ -4933,7 +4933,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     return Stk::StackResult(result.type(), offs);
   }
 
-  MOZ_MUST_USE bool pushResults(ResultType type, StackHeight resultsBase) {
+  [[nodiscard]] bool pushResults(ResultType type, StackHeight resultsBase) {
     if (type.empty()) {
       return true;
     }
@@ -4995,7 +4995,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     return true;
   }
 
-  MOZ_MUST_USE bool pushBlockResults(ResultType type) {
+  [[nodiscard]] bool pushBlockResults(ResultType type) {
     return pushResults(type, controlItem().stackHeight);
   }
 
@@ -5003,7 +5003,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   // block with a control-flow join (loops) or split (if) to shuffle the
   // fallthrough block parameters into the locations expected by the
   // continuation.
-  MOZ_MUST_USE bool topBlockParams(ResultType type) {
+  [[nodiscard]] bool topBlockParams(ResultType type) {
     // This function should only be called when entering a block with a
     // control-flow join at the entry, where there are no live temporaries in
     // the current block.
@@ -5018,7 +5018,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   // is taken, the stack results will be shuffled down into place.  For br_if
   // that has fallthrough, the parameters for the untaken branch flow through to
   // the continuation.
-  MOZ_MUST_USE bool topBranchParams(ResultType type, StackHeight* height) {
+  [[nodiscard]] bool topBranchParams(ResultType type, StackHeight* height) {
     if (type.empty()) {
       *height = fr.stackHeight();
       return true;
@@ -5967,8 +5967,8 @@ class BaseCompiler final : public BaseCompilerInterface {
         desc, instanceArg, builtin.identity, builtin.failureMode);
   }
 
-  MOZ_MUST_USE bool pushCallResults(const FunctionCall& call, ResultType type,
-                                    const StackResultsLoc& loc) {
+  [[nodiscard]] bool pushCallResults(const FunctionCall& call, ResultType type,
+                                     const StackResultsLoc& loc) {
 #if defined(JS_CODEGEN_ARM)
     // pushResults currently bypasses special case code in captureReturnedFxx()
     // that converts GPR results to FPR results for systemABI+softFP.  If we
@@ -8053,8 +8053,8 @@ class BaseCompiler final : public BaseCompilerInterface {
   // Lhs "when applicable".
 
   template <typename Cond, typename Lhs, typename Rhs>
-  MOZ_MUST_USE bool jumpConditionalWithResults(BranchState* b, Cond cond,
-                                               Lhs lhs, Rhs rhs) {
+  [[nodiscard]] bool jumpConditionalWithResults(BranchState* b, Cond cond,
+                                                Lhs lhs, Rhs rhs) {
     if (b->hasBlockResults()) {
       StackHeight resultsBase(0);
       if (!topBranchParams(b->resultType, &resultsBase)) {
@@ -8086,11 +8086,11 @@ class BaseCompiler final : public BaseCompilerInterface {
   // then the compiler MUST instead call resetLatentOp() to reset the state.
 
   template <typename Cond>
-  MOZ_MUST_USE bool sniffConditionalControlCmp(Cond compareOp,
-                                               ValType operandType);
-  MOZ_MUST_USE bool sniffConditionalControlEqz(ValType operandType);
+  [[nodiscard]] bool sniffConditionalControlCmp(Cond compareOp,
+                                                ValType operandType);
+  [[nodiscard]] bool sniffConditionalControlEqz(ValType operandType);
   void emitBranchSetup(BranchState* b);
-  MOZ_MUST_USE bool emitBranchPerform(BranchState* b);
+  [[nodiscard]] bool emitBranchPerform(BranchState* b);
 
   //////////////////////////////////////////////////////////////////////
 
@@ -8154,18 +8154,18 @@ class BaseCompiler final : public BaseCompilerInterface {
   template <bool isSetLocal>
   [[nodiscard]] bool emitSetOrTeeLocal(uint32_t slot);
 
-  MOZ_MUST_USE bool endBlock(ResultType type);
-  MOZ_MUST_USE bool endIfThen(ResultType type);
-  MOZ_MUST_USE bool endIfThenElse(ResultType type);
+  [[nodiscard]] bool endBlock(ResultType type);
+  [[nodiscard]] bool endIfThen(ResultType type);
+  [[nodiscard]] bool endIfThenElse(ResultType type);
 #ifdef ENABLE_WASM_EXCEPTIONS
-  MOZ_MUST_USE bool endTryCatch(ResultType type);
+  [[nodiscard]] bool endTryCatch(ResultType type);
 #endif
 
   void doReturn(ContinuationKind kind);
   void pushReturnValueOfCall(const FunctionCall& call, MIRType type);
 
-  MOZ_MUST_USE bool pushStackResultsForCall(const ResultType& type, RegPtr temp,
-                                            StackResultsLoc* loc);
+  [[nodiscard]] bool pushStackResultsForCall(const ResultType& type,
+                                             RegPtr temp, StackResultsLoc* loc);
   void popStackResultsAfterCall(const StackResultsLoc& results,
                                 uint32_t stackArgBytes);
 
@@ -8374,6 +8374,8 @@ class BaseCompiler final : public BaseCompilerInterface {
   [[nodiscard]] bool emitLoadSplat(Scalar::Type viewType);
   [[nodiscard]] bool emitLoadZero(Scalar::Type viewType);
   [[nodiscard]] bool emitLoadExtend(Scalar::Type viewType);
+  [[nodiscard]] bool emitLoadLane(uint32_t laneSize);
+  [[nodiscard]] bool emitStoreLane(uint32_t laneSize);
   [[nodiscard]] bool emitBitselect();
   [[nodiscard]] bool emitVectorShuffle();
   [[nodiscard]] bool emitVectorShiftRightI64x2(bool isUnsigned);
@@ -13643,6 +13645,11 @@ static void CmpI32x4(MacroAssembler& masm, Assembler::Condition cond,
   masm.compareInt32x4(cond, rs, rsd);
 }
 
+static void CmpI64x2(MacroAssembler& masm, Assembler::Condition cond,
+                     RegV128 rs, RegV128 rsd) {
+  masm.compareInt64x2(cond, rs, rsd);
+}
+
 #  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
 static void CmpUI8x16(MacroAssembler& masm, Assembler::Condition cond,
                       RegV128 rs, RegV128 rsd, RegV128 temp1, RegV128 temp2) {
@@ -14107,6 +14114,10 @@ static void AllTrueI32x4(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
   masm.allTrueInt32x4(rs, rd);
 }
 
+static void AllTrueI64x2(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.allTrueInt64x2(rs, rd);
+}
+
 #  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
 static void BitmaskI8x16(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
   masm.bitmaskInt8x16(rs, rd);
@@ -14431,6 +14442,123 @@ bool BaseCompiler::emitLoadExtend(Scalar::Type viewType) {
   return true;
 }
 
+bool BaseCompiler::emitLoadLane(uint32_t laneSize) {
+  Nothing nothing;
+  LinearMemoryAddress<Nothing> addr;
+  uint32_t laneIndex;
+  if (!iter_.readLoadLane(laneSize, &addr, &laneIndex, &nothing)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  RegV128 rsd = popV128();
+
+  Scalar::Type viewType;
+  ValType type;
+  switch (laneSize) {
+    case 1:
+      viewType = Scalar::Uint8;
+      type = ValType::I32;
+      break;
+    case 2:
+      viewType = Scalar::Uint16;
+      type = ValType::I32;
+      break;
+    case 4:
+      viewType = Scalar::Int32;
+      type = ValType::I32;
+      break;
+    case 8:
+      viewType = Scalar::Int64;
+      type = ValType::I64;
+      break;
+    default:
+      MOZ_CRASH("unsupported laneSize");
+  }
+
+  MemoryAccessDesc access(viewType, addr.align, addr.offset, bytecodeOffset());
+  if (!loadCommon(&access, AccessCheck(), type)) {
+    return false;
+  }
+
+  if (type == ValType::I32) {
+    RegI32 rs = popI32();
+    switch (laneSize) {
+      case 1:
+        masm.replaceLaneInt8x16(laneIndex, rs, rsd);
+        break;
+      case 2:
+        masm.replaceLaneInt16x8(laneIndex, rs, rsd);
+        break;
+      case 4:
+        masm.replaceLaneInt32x4(laneIndex, rs, rsd);
+        break;
+    }
+    freeI32(rs);
+  } else {
+    MOZ_ASSERT(type == ValType::I64);
+    RegI64 rs = popI64();
+    masm.replaceLaneInt64x2(laneIndex, rs, rsd);
+    freeI64(rs);
+  }
+
+  pushV128(rsd);
+
+  return true;
+}
+
+bool BaseCompiler::emitStoreLane(uint32_t laneSize) {
+  Nothing nothing;
+  LinearMemoryAddress<Nothing> addr;
+  uint32_t laneIndex;
+  if (!iter_.readStoreLane(laneSize, &addr, &laneIndex, &nothing)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  RegV128 rs = popV128();
+  Scalar::Type viewType;
+  ValType type;
+  if (laneSize <= 4) {
+    RegI32 tmp = needI32();
+    switch (laneSize) {
+      case 1:
+        viewType = Scalar::Uint8;
+        masm.extractLaneInt8x16(laneIndex, rs, tmp);
+        break;
+      case 2:
+        viewType = Scalar::Uint16;
+        masm.extractLaneInt16x8(laneIndex, rs, tmp);
+        break;
+      case 4:
+        viewType = Scalar::Int32;
+        masm.extractLaneInt32x4(laneIndex, rs, tmp);
+        break;
+      default:
+        MOZ_CRASH("unsupported laneSize");
+    }
+    pushI32(tmp);
+    type = ValType::I32;
+  } else {
+    MOZ_ASSERT(laneSize == 8);
+    RegI64 tmp = needI64();
+    masm.extractLaneInt64x2(laneIndex, rs, tmp);
+    pushI64(tmp);
+    type = ValType::I64;
+    viewType = Scalar::Int64;
+  }
+  freeV128(rs);
+
+  MemoryAccessDesc access(viewType, addr.align, addr.offset, bytecodeOffset());
+  return storeCommon(&access, AccessCheck(), type);
+}
+
 bool BaseCompiler::emitBitselect() {
   Nothing unused_a, unused_b, unused_c;
 
@@ -14482,7 +14610,34 @@ bool BaseCompiler::emitVectorShuffle() {
 
   RegV128 rd, rs;
   pop2xV128(&rd, &rs);
-  masm.shuffleInt8x16(shuffleMask.bytes, rs, rd);
+
+  bool emitShuffle = true;
+
+#  ifdef ENABLE_WASM_SIMD_WORMHOLE
+  if (moduleEnv_.simdWormholeEnabled() && IsWormholeTrigger(shuffleMask)) {
+    emitShuffle = false;
+    switch (shuffleMask.bytes[15]) {
+      case 0:
+        masm.loadConstantSimd128(WormholeSignature(), rd);
+        break;
+#    if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+      case 1:
+        masm.vpmaddubsw(rs, rd, rd);
+        break;
+      case 2:
+        masm.vpmaddwd(Operand(rs), rd, rd);
+        break;
+#    endif
+      default:
+        return iter_.fail("Unrecognized wormhole opcode");
+    }
+  }
+#  endif
+
+  if (emitShuffle) {
+    masm.shuffleInt8x16(shuffleMask.bytes, rs, rd);
+  }
+
   freeV128(rs);
   pushV128(rd);
 
@@ -14673,12 +14828,6 @@ bool BaseCompiler::emitBody() {
 #  define CHECK_POINTER_COUNT \
     do {                      \
     } while (0)
-#endif
-
-#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
-#  define CHECK_SIMD_EXPERIMENTAL() (void)(0)
-#else
-#  define CHECK_SIMD_EXPERIMENTAL() break
 #endif
 
 #define CHECK(E) \
@@ -15410,6 +15559,8 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorReduction(AllTrueI16x8));
           case uint32_t(SimdOp::I32x4AllTrue):
             CHECK_NEXT(dispatchVectorReduction(AllTrueI32x4));
+          case uint32_t(SimdOp::I64x2AllTrue):
+            CHECK_NEXT(dispatchVectorReduction(AllTrueI64x2));
           case uint32_t(SimdOp::I8x16Bitmask):
             CHECK_NEXT(dispatchVectorReduction(BitmaskI8x16));
           case uint32_t(SimdOp::I16x8Bitmask):
@@ -15505,6 +15656,10 @@ bool BaseCompiler::emitBody() {
           case uint32_t(SimdOp::I32x4GeU):
             CHECK_NEXT(
                 dispatchVectorComparison(CmpUI32x4, Assembler::AboveOrEqual));
+          case uint32_t(SimdOp::I64x2Eq):
+            CHECK_NEXT(dispatchVectorComparison(CmpI64x2, Assembler::Equal));
+          case uint32_t(SimdOp::I64x2Ne):
+            CHECK_NEXT(dispatchVectorComparison(CmpI64x2, Assembler::NotEqual));
           case uint32_t(SimdOp::F32x4Eq):
             CHECK_NEXT(dispatchVectorComparison(CmpF32x4, Assembler::Equal));
           case uint32_t(SimdOp::F32x4Ne):
@@ -15831,6 +15986,22 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(emitLoadZero(Scalar::Float64));
           case uint32_t(SimdOp::V128Store):
             CHECK_NEXT(emitStore(ValType::V128, Scalar::Simd128));
+          case uint32_t(SimdOp::V128Load8Lane):
+            CHECK_NEXT(emitLoadLane(1));
+          case uint32_t(SimdOp::V128Load16Lane):
+            CHECK_NEXT(emitLoadLane(2));
+          case uint32_t(SimdOp::V128Load32Lane):
+            CHECK_NEXT(emitLoadLane(4));
+          case uint32_t(SimdOp::V128Load64Lane):
+            CHECK_NEXT(emitLoadLane(8));
+          case uint32_t(SimdOp::V128Store8Lane):
+            CHECK_NEXT(emitStoreLane(1));
+          case uint32_t(SimdOp::V128Store16Lane):
+            CHECK_NEXT(emitStoreLane(2));
+          case uint32_t(SimdOp::V128Store32Lane):
+            CHECK_NEXT(emitStoreLane(4));
+          case uint32_t(SimdOp::V128Store64Lane):
+            CHECK_NEXT(emitStoreLane(8));
           default:
             break;
         }  // switch (op.b1)
@@ -16133,7 +16304,6 @@ bool BaseCompiler::emitBody() {
 #undef NEXT
 #undef CHECK_NEXT
 #undef CHECK_POINTER_COUNT
-#undef CHECK_SIMD_EXPERIMENTAL
 #undef dispatchBinary
 #undef dispatchUnary
 #undef dispatchComparison

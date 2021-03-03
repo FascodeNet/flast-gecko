@@ -14,7 +14,6 @@ browser.jar:
   skin/classic/browser/pageInfo.css
   skin/classic/browser/pageInfo.png
 * skin/classic/browser/searchbar.css
-  skin/classic/browser/slowStartup-16.png
 * skin/classic/browser/webRTC-indicator.css
   skin/classic/browser/webRTC-legacy-indicator.css  (../shared/webRTC-legacy-indicator.css)
 * skin/classic/browser/controlcenter/panel.css                 (controlcenter/panel.css)
@@ -50,3 +49,7 @@ browser.jar:
   skin/classic/browser/window-controls/restore-highcontrast.svg  (window-controls/restore-highcontrast.svg)
   skin/classic/browser/window-controls/restore-themes.svg        (window-controls/restore-themes.svg)
   skin/classic/browser/e10s-64@2x.png                            (../shared/e10s-64@2x.png)
+  skin/classic/browser/menus/back.svg                            (../shared/icons/menus/back.svg)
+  skin/classic/browser/menus/bookmark-hollow.svg                 (../shared/icons/menus/bookmark-hollow.svg)
+  skin/classic/browser/menus/forward.svg                         (../shared/icons/menus/forward.svg)
+  skin/classic/browser/menus/reload.svg                          (../shared/icons/menus/reload.svg)

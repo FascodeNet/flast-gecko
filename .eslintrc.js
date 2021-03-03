@@ -519,6 +519,7 @@ module.exports = {
         "browser/components/customizableui/test/browser_989338_saved_placements_not_resaved.js",
         "browser/components/customizableui/test/browser_currentset_post_reset.js",
         "browser/components/customizableui/test/browser_panel_keyboard_navigation.js",
+        "browser/components/customizableui/test/browser_proton_toolbar_hide_toolbarbuttons.js",
         "browser/components/enterprisepolicies/tests/browser/browser_policies_setAndLockPref_API.js",
         "browser/components/enterprisepolicies/tests/browser/head.js",
         "browser/components/enterprisepolicies/tests/xpcshell/head.js",
@@ -657,7 +658,7 @@ module.exports = {
         "toolkit/mozapps/installer/precompile_cache.js",
       ],
       rules: {
-        "mozilla/reject-chromeutils-import-null": "off",
+        "mozilla/reject-chromeutils-import-params": "off",
       },
     },
   ],

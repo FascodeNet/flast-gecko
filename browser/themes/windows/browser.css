@@ -5,6 +5,7 @@
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 %include ../shared/browser.inc.css
+%include ../shared/browser-custom-colors.inc.css
 %filter substitution
 %define glassShadowColor hsla(240,5%,5%,0.3)
 
@@ -14,11 +15,11 @@
   --toolbar-non-lwt-bgimage: linear-gradient(rgba(255,255,255,.15), rgba(255,255,255,.15));
 
   --toolbarbutton-vertical-text-padding: calc(var(--toolbarbutton-inner-padding) - 1px);
-  --toolbarbutton-border-radius: 2px;
+  --toolbarbutton-border-radius: 4px;
   --toolbarbutton-icon-fill-opacity: 1;
 
   --panel-separator-color: ThreeDLightShadow;
-  --arrowpanel-dimmed: hsla(0,0%,80%,.35);
+  --arrowpanel-dimmed: hsla(0,0%,80%,.3);
   --arrowpanel-dimmed-further: hsla(0,0%,80%,.5);
   --arrowpanel-dimmed-even-further: hsla(0,0%,80%,.8);
 
@@ -26,6 +27,12 @@
 
   --chrome-content-separator-color: ThreeDShadow;
 }
+
+@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
+:root {
+  --toolbarbutton-border-radius: 2px;
+}
+} /* END !proton */
 
 #navigator-toolbox {
   --tabs-border-color: threedshadow;
@@ -46,6 +53,8 @@
     --panel-separator-color: hsla(210,4%,10%,.14);
 
     --chrome-content-separator-color: #e1e1e2;
+
+    --toolbar-field-non-lwt-bgcolor: #f0f0f4;
   }
 
   #navigator-toolbox {
@@ -549,11 +558,6 @@ menuitem.bookmark-item {
 
 %include ../shared/urlbarView.inc.css
 
-:root {
-  --urlbar-popup-url-color: hsl(210, 77%, 47%);
-  --urlbar-popup-action-color: hsl(178, 100%, 28%);
-}
-
 @media (-moz-windows-default-theme: 0) {
   :root:not(:-moz-lwtheme) {
     --urlbar-popup-url-color: -moz-nativehyperlinktext;
@@ -608,12 +612,14 @@ menuitem.bookmark-item {
   }
 }
 
+@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
 /* tabbrowser-tab focus ring */
 .keyboard-focused-tab > .tab-stack > .tab-content,
 .tabbrowser-tab:focus:not([aria-activedescendant]) > .tab-stack > .tab-content {
   outline: 1px dotted;
   outline-offset: -6px;
 }
+} /*** END !proton ***/
 
 /* All tabs menupopup */
 
@@ -750,6 +756,40 @@ panel[touchmode] .PanelUI-subView #appMenu-zoom-controls > .subviewbutton-iconic
 #context-sep-navigation {
   margin-inline-start: -28px;
   margin-top: -4px;
+}
+
+@supports (-moz-bool-pref("browser.proton.contextmenus.enabled")) {
+@media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
+  #context-navigation {
+    /* The Windows 10 version of the navigation area needs the scrollbox's
+       background color, not the builtin "menu" color. */
+    background-color: inherit;
+    /* The Win10 context menu wants the icons centered vertically in the
+       navigation group, not with a gap on the bottom. */
+    padding-bottom: 0;
+  }
+
+  /* Other menu separators don't extend all the way to the menu edges, but the
+     one below the navigation buttons in the content context menu should. */
+  #context-sep-navigation {
+    margin-top: 0;
+    margin-inline: 0;
+  }
+
+  /* We also have different navigation icons for Win10. */
+  #context-back {
+    list-style-image: url("chrome://browser/skin/menus/back.svg");
+  }
+  #context-forward {
+    list-style-image: url("chrome://browser/skin/menus/forward.svg");
+  }
+  #context-reload {
+    list-style-image: url("chrome://browser/skin/menus/reload.svg");
+  }
+  #context-bookmarkpage {
+    list-style-image: url("chrome://browser/skin/menus/bookmark-hollow.svg");
+  }
+}
 }
 
 %include browser-aero.css

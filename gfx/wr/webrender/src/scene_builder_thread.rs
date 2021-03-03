@@ -31,7 +31,6 @@ use crate::render_backend::SceneView;
 use crate::renderer::{PipelineInfo, SceneBuilderHooks};
 use crate::scene::{Scene, BuiltScene, SceneStats};
 use std::iter;
-use std::mem::replace;
 use time::precise_time_ns;
 use crate::util::drain_filter;
 use std::thread;
@@ -95,7 +94,6 @@ pub enum SceneBuilderRequest {
     GetGlyphIndices(GlyphIndexRequest),
     ClearNamespace(IdNamespace),
     SimulateLongSceneBuild(u32),
-    SimulateLongLowPrioritySceneBuild(u32),
     ExternalEvent(ExternalEvent),
     WakeUp,
     ShutDown(Option<Sender<()>>),
@@ -116,8 +114,6 @@ pub enum SceneBuilderRequest {
 // Message from scene builder to render backend.
 pub enum SceneBuilderResult {
     Transactions(Vec<Box<BuiltTransaction>>, Option<Sender<SceneSwapResult>>),
-    #[cfg(feature = "capture")]
-    CapturedTransactions(Vec<Box<BuiltTransaction>>, CaptureConfig, Option<Sender<SceneSwapResult>>),
     ExternalEvent(ExternalEvent),
     FlushComplete(Sender<()>),
     DeleteDocument(DocumentId),
@@ -125,7 +121,18 @@ pub enum SceneBuilderResult {
     GetGlyphDimensions(GlyphDimensionRequest),
     GetGlyphIndices(GlyphIndexRequest),
     ShutDown(Option<Sender<()>>),
-    DocumentsForDebugger(String)
+    DocumentsForDebugger(String),
+
+    #[cfg(feature = "capture")]
+    /// The same as `Transactions`, but also supplies a `CaptureConfig` that the
+    /// render backend should use for sequence capture, until the next
+    /// `CapturedTransactions` or `StopCaptureSequence` result.
+    CapturedTransactions(Vec<Box<BuiltTransaction>>, CaptureConfig, Option<Sender<SceneSwapResult>>),
+
+    #[cfg(feature = "capture")]
+    /// The scene builder has stopped sequence capture, so the render backend
+    /// should do the same.
+    StopCaptureSequence,
 }
 
 // Message from render backend to scene builder to indicate the
@@ -303,9 +310,9 @@ impl SceneBuilderThread {
                 Ok(SceneBuilderRequest::Flush(tx)) => {
                     self.send(SceneBuilderResult::FlushComplete(tx));
                 }
-                Ok(SceneBuilderRequest::Transactions(mut txns)) => {
-                    let built_txns : Vec<Box<BuiltTransaction>> = txns.iter_mut()
-                        .map(|txn| self.process_transaction(txn))
+                Ok(SceneBuilderRequest::Transactions(txns)) => {
+                    let built_txns : Vec<Box<BuiltTransaction>> = txns.into_iter()
+                        .map(|txn| self.process_transaction(*txn))
                         .collect();
                     #[cfg(feature = "capture")]
                     match built_txns.iter().any(|txn| txn.built_scene.is_some()) {
@@ -345,7 +352,6 @@ impl SceneBuilderThread {
                 Ok(SceneBuilderRequest::SimulateLongSceneBuild(time_ms)) => {
                     self.simulate_slow_ms = time_ms
                 }
-                Ok(SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(_)) => {}
                 Ok(SceneBuilderRequest::ReportMemory(mut report, tx)) => {
                     (*report) += self.report_memory();
                     tx.send(report).unwrap();
@@ -370,6 +376,7 @@ impl SceneBuilderThread {
                     // FIXME(aosmond): clear config for frames and resource cache without scene
                     // rebuild?
                     self.capture_config = None;
+                    self.send(SceneBuilderResult::StopCaptureSequence);
                 }
                 Ok(SceneBuilderRequest::DocumentsForDebugger) => {
                     let json = self.get_docs_for_debugger();
@@ -553,7 +560,7 @@ impl SceneBuilderThread {
     }
 
     /// Do the bulk of the work of the scene builder thread.
-    fn process_transaction(&mut self, txn: &mut TransactionMsg) -> Box<BuiltTransaction> {
+    fn process_transaction(&mut self, mut txn: TransactionMsg) -> Box<BuiltTransaction> {
         profile_scope!("process_transaction");
 
         if let Some(ref hooks) = self.hooks {
@@ -670,7 +677,7 @@ impl SceneBuilderThread {
             profile.start_time(profiler::BLOB_RASTERIZATION_TIME);
 
             let is_low_priority = false;
-            rasterize_blobs(txn, is_low_priority);
+            rasterize_blobs(&mut txn, is_low_priority);
 
             profile.end_time(profiler::BLOB_RASTERIZATION_TIME);
         }
@@ -691,13 +698,13 @@ impl SceneBuilderThread {
             invalidate_rendered_frame: txn.invalidate_rendered_frame,
             built_scene,
             view: doc.view,
-            rasterized_blobs: replace(&mut txn.rasterized_blobs, Vec::new()),
-            resource_updates: replace(&mut txn.resource_updates, Vec::new()),
-            blob_rasterizer: replace(&mut txn.blob_rasterizer, None),
-            frame_ops: replace(&mut txn.frame_ops, Vec::new()),
+            rasterized_blobs: txn.rasterized_blobs,
+            resource_updates: txn.resource_updates,
+            blob_rasterizer: txn.blob_rasterizer,
+            frame_ops: txn.frame_ops,
             removed_pipelines,
             discard_frame_state_for_pipelines,
-            notifications: replace(&mut txn.notifications, Vec::new()),
+            notifications: txn.notifications,
             interner_updates,
             profile,
         })
@@ -754,8 +761,6 @@ impl SceneBuilderThread {
         #[cfg(not(feature = "capture"))]
         self.send(SceneBuilderResult::Transactions(txns, result_tx));
 
-        let _ = self.tx.send(ApiMsg::WakeUp);
-
         if let Some(pipeline_info) = pipeline_info {
             // Block until the swap is done, then invoke the hook.
             let swap_result = result_rx.unwrap().recv();
@@ -796,7 +801,6 @@ impl SceneBuilderThread {
 pub struct LowPrioritySceneBuilderThread {
     pub rx: Receiver<SceneBuilderRequest>,
     pub tx: Sender<SceneBuilderRequest>,
-    pub simulate_slow_ms: u32,
 }
 
 impl LowPrioritySceneBuilderThread {
@@ -813,9 +817,6 @@ impl LowPrioritySceneBuilderThread {
                     self.tx.send(SceneBuilderRequest::ShutDown(sync)).unwrap();
                     break;
                 }
-                Ok(SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(time_ms)) => {
-                    self.simulate_slow_ms = time_ms;
-                }
                 Ok(other) => {
                     self.tx.send(other).unwrap();
                 }
@@ -830,10 +831,6 @@ impl LowPrioritySceneBuilderThread {
         let is_low_priority = true;
         rasterize_blobs(&mut txn, is_low_priority);
         txn.blob_requests = Vec::new();
-
-        if self.simulate_slow_ms > 0 {
-            thread::sleep(Duration::from_millis(self.simulate_slow_ms as u64));
-        }
 
         txn
     }

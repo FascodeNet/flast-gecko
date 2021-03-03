@@ -6,7 +6,7 @@
 
 #ifdef ACCESSIBILITY
 #  ifdef XP_WIN
-#    include "mozilla/a11y/ProxyAccessible.h"
+#    include "mozilla/a11y/RemoteAccessible.h"
 #    include "mozilla/a11y/ProxyWrappers.h"
 #  endif
 #  include "mozilla/a11y/DocAccessible.h"
@@ -56,7 +56,7 @@ already_AddRefed<BrowserBridgeHost> BrowserBridgeChild::FinishInit(
 #if defined(ACCESSIBILITY)
   if (a11y::DocAccessible* docAcc =
           a11y::GetExistingDocAccessible(owner->OwnerDoc())) {
-    if (a11y::Accessible* ownerAcc = docAcc->GetAccessible(owner)) {
+    if (a11y::LocalAccessible* ownerAcc = docAcc->GetAccessible(owner)) {
       if (a11y::OuterDocAccessible* outerAcc = ownerAcc->AsOuterDoc()) {
         outerAcc->SendEmbedderAccessible(this);
       }
@@ -156,7 +156,7 @@ BrowserBridgeChild::RecvSetEmbeddedDocAccessibleCOMProxy(
   }
   RefPtr<IDispatch> comProxy(aCOMProxy.Get());
   mEmbeddedDocAccessible =
-      new a11y::RemoteIframeDocProxyAccessibleWrap(comProxy);
+      new a11y::RemoteIframeDocRemoteAccessibleWrap(comProxy);
 #endif
   return IPC_OK();
 }

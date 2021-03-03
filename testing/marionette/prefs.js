@@ -233,11 +233,13 @@ class MarionetteBranch extends Branch {
   }
 
   /**
-   * Temporary preference to enable the usage of the JSWindowActor
-   * implementation for commands that already support Fission.
+   * Gets the `marionette.setpermission.enabled` preference, should
+   * only be used for testdriver's set_permission API.
+   *
+   * @return {boolean}
    */
-  get useActors() {
-    return this.get("actors.enabled", true);
+  get setPermissionEnabled() {
+    return this.get("setpermission.enabled", false);
   }
 }
 

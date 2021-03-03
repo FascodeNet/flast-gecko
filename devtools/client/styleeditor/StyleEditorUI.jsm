@@ -530,11 +530,8 @@ StyleEditorUI.prototype = {
    * below the list): hide the context menu
    */
   _updateContextMenuItems: function() {
-    this._openLinkNewTabItem.setAttribute(
-      "hidden",
-      !this._contextMenuStyleSheet
-    );
-    this._copyUrlItem.setAttribute("hidden", !this._contextMenuStyleSheet);
+    this._openLinkNewTabItem.hidden = !this._contextMenuStyleSheet;
+    this._copyUrlItem.hidden = !this._contextMenuStyleSheet;
 
     if (this._contextMenuStyleSheet) {
       this._openLinkNewTabItem.setAttribute(
@@ -1039,7 +1036,7 @@ StyleEditorUI.prototype = {
         if (!rule.matches) {
           cond.classList.add("media-condition-unmatched");
         }
-        if (this.currentTarget.isLocalTab) {
+        if (this._toolbox.descriptorFront.isLocalTab) {
           this._setConditionContents(cond, rule.conditionText);
         } else {
           cond.textContent = rule.conditionText;

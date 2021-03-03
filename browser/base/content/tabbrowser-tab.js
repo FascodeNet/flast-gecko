@@ -35,12 +35,14 @@
                 onunderflow="this.removeAttribute('textoverflow');"
                 align="start"
                 flex="1">
-            <label class="tab-text tab-label" role="presentation"/>
             <hbox class="tab-icon-sound">
               <image class="tab-icon-sound-image" role="presentation"/>
-              <label class="tab-icon-sound-playing-label" data-l10n-id="browser-tab-audio-playing" role="presentation"/>
-              <label class="tab-icon-sound-muted-label" data-l10n-id="browser-tab-audio-muted" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-playing-label" data-l10n-id="browser-tab-audio-playing2" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-muted-label" data-l10n-id="browser-tab-audio-muted2" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-blocked-label" data-l10n-id="browser-tab-audio-blocked" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-pip-label" data-l10n-id="browser-tab-audio-pip" role="presentation"/>
             </hbox>
+            <label class="tab-text tab-label" role="presentation"/>
           </vbox>
           <image class="tab-close-button close-icon" role="presentation"/>
         </hbox>
@@ -179,7 +181,8 @@
     }
 
     get hidden() {
-      return this.getAttribute("hidden") == "true";
+      // This getter makes `hidden` read-only
+      return super.hidden;
     }
 
     get muted() {
@@ -336,7 +339,8 @@
         this.style.MozUserFocus = "ignore";
       } else if (
         event.target.classList.contains("tab-close-button") ||
-        this._isEventForTabSoundIcon(event) ||
+        (this._isEventForTabSoundIcon(event) &&
+          !event.target.className.includes("tab-icon-sound-pip-label")) ||
         event.target.classList.contains("tab-icon-overlay")
       ) {
         eventMaySelectTab = false;

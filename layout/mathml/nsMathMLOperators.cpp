@@ -149,7 +149,7 @@ static bool SetOperator(OperatorData* aOperatorData, nsOperatorFlags aForm,
   aOperatorData->mFlags |= aForm;
   aOperatorData->mStr.Assign(value);
   value.AppendInt(aForm, 10);
-  gOperatorTable->Put(value, aOperatorData);
+  gOperatorTable->InsertOrUpdate(value, aOperatorData);
 
 #ifdef DEBUG
   NS_LossyConvertUTF16toASCII str(aAttributes);
@@ -251,7 +251,6 @@ static nsresult InitOperators(void) {
                 if (!gOperatorArray) {
                   if (0 == gOperatorCount) return NS_ERROR_UNEXPECTED;
                   gOperatorArray = new OperatorData[gOperatorCount];
-                  if (!gOperatorArray) return NS_ERROR_OUT_OF_MEMORY;
                 }
                 operatorData = &gOperatorArray[index];
               } else {

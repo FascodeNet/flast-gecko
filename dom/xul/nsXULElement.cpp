@@ -160,6 +160,10 @@ nsXULElement* NS_NewBasicXULElement(
 /* static */
 nsXULElement* nsXULElement::Construct(
     already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo) {
+  // NOTE: If you add elements here, you probably also want to change
+  // mozilla::dom::binding_detail::HTMLConstructor in BindingUtils.cpp to take
+  // them into account, otherwise you'll start getting "Illegal constructor"
+  // exceptions in chrome code.
   RefPtr<mozilla::dom::NodeInfo> nodeInfo = aNodeInfo;
   if (nodeInfo->Equals(nsGkAtoms::label) ||
       nodeInfo->Equals(nsGkAtoms::description)) {
@@ -676,6 +680,8 @@ nsresult nsXULElement::BindToTree(BindContext& aContext, nsINode& aParent) {
     XULKeySetGlobalKeyListener::AttachKeyHandler(this);
   }
 
+  RegUnRegAccessKey(true);
+
   if (NeedTooltipSupport(*this)) {
     AddTooltipSupport();
   }
@@ -694,6 +700,8 @@ void nsXULElement::UnbindFromTree(bool aNullParent) {
   if (NodeInfo()->Equals(nsGkAtoms::keyset, kNameSpaceID_XUL)) {
     XULKeySetGlobalKeyListener::DetachKeyHandler(this);
   }
+
+  RegUnRegAccessKey(false);
 
   if (NeedTooltipSupport(*this)) {
     RemoveTooltipSupport();
@@ -735,27 +743,57 @@ void nsXULElement::DoneAddingChildren(bool aHaveNotified) {
   }
 }
 
-void nsXULElement::UnregisterAccessKey(const nsAString& aOldValue) {
-  // If someone changes the accesskey, unregister the old one
-  //
-  Document* doc = GetComposedDoc();
-  if (doc && !aOldValue.IsEmpty()) {
-    if (PresShell* presShell = doc->GetPresShell()) {
-      presShell->GetPresContext()->EventStateManager()->UnregisterAccessKey(
-          this, aOldValue.First());
+// XXX(ntim): Unify with nsGenericHTMLElement.cpp
+void nsXULElement::RegUnRegAccessKey(bool aDoReg) {
+  // Don't try to register for unsupported elements
+  if (!SupportsAccessKey()) {
+    return;
+  }
+
+  // first check to see if we have an access key
+  nsAutoString accessKey;
+  GetAttr(nsGkAtoms::accesskey, accessKey);
+  if (accessKey.IsEmpty()) {
+    return;
+  }
+
+  // We have an access key, so get the ESM from the pres context.
+  if (nsPresContext* presContext = GetPresContext(eForUncomposedDoc)) {
+    EventStateManager* esm = presContext->EventStateManager();
+
+    // Register or unregister as appropriate.
+    if (aDoReg) {
+      esm->RegisterAccessKey(this, (uint32_t)accessKey.First());
+    } else {
+      esm->UnregisterAccessKey(this, (uint32_t)accessKey.First());
     }
   }
+}
+
+bool nsXULElement::SupportsAccessKey() const {
+  if (NodeInfo()->Equals(nsGkAtoms::label) && HasAttr(nsGkAtoms::control)) {
+    return true;
+  }
+
+  // XXX(ntim): check if description[value] or description[accesskey] are
+  // actually used, remove `value` from {Before/After}SetAttr if not the case
+  if (NodeInfo()->Equals(nsGkAtoms::description) && HasAttr(nsGkAtoms::value) &&
+      HasAttr(nsGkAtoms::control)) {
+    return true;
+  }
+
+  return IsAnyOfXULElements(nsGkAtoms::button, nsGkAtoms::toolbarbutton,
+                            nsGkAtoms::checkbox, nsGkAtoms::tab,
+                            nsGkAtoms::radio);
 }
 
 nsresult nsXULElement::BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
                                      const nsAttrValueOrString* aValue,
                                      bool aNotify) {
-  if (aNamespaceID == kNameSpaceID_None && aName == nsGkAtoms::accesskey &&
-      IsInUncomposedDoc()) {
-    nsAutoString oldValue;
-    if (GetAttr(aNamespaceID, aName, oldValue)) {
-      UnregisterAccessKey(oldValue);
-    }
+  if (aNamespaceID == kNameSpaceID_None &&
+      (aName == nsGkAtoms::accesskey || aName == nsGkAtoms::control ||
+       aName == nsGkAtoms::value)) {
+    RegUnRegAccessKey(false);
   } else if (aNamespaceID == kNameSpaceID_None &&
              (aName == nsGkAtoms::command || aName == nsGkAtoms::observes) &&
              IsInUncomposedDoc()) {
@@ -806,7 +844,10 @@ nsresult nsXULElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
       AddListenerForAttributeIfNeeded(aName);
     }
 
-    if (aName == nsGkAtoms::tooltip || aName == nsGkAtoms::tooltiptext) {
+    if (aName == nsGkAtoms::accesskey || aName == nsGkAtoms::control ||
+        aName == nsGkAtoms::value) {
+      RegUnRegAccessKey(true);
+    } else if (aName == nsGkAtoms::tooltip || aName == nsGkAtoms::tooltiptext) {
       if (!!aValue != !!aOldValue && IsInComposedDoc() &&
           !NodeInfo()->Equals(nsGkAtoms::treechildren)) {
         if (aValue) {
@@ -883,7 +924,7 @@ void nsXULElement::DestroyContent() {
   nsStyledElement::DestroyContent();
 }
 
-#ifdef DEBUG
+#ifdef MOZ_DOM_LIST
 void nsXULElement::List(FILE* out, int32_t aIndent) const {
   nsCString prefix("XUL");
   if (HasSlots()) {

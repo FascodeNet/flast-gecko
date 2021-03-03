@@ -87,10 +87,6 @@ var PocketPageAction = {
               browser.innerWindowID;
           },
           onIframeHidden(iframe, panel) {
-            if (iframe.getAttribute("itemAdded") == "true") {
-              iframe.ownerGlobal.LibraryUI.triggerLibraryAnimation("pocket");
-            }
-
             if (!PocketPageAction.urlbarNode) {
               return;
             }
@@ -179,7 +175,7 @@ var PocketPageAction = {
     for (let win of browserWindows()) {
       let doc = win.document;
       let pocketButton = doc.getElementById("pocket-button");
-      pocketButton.setAttribute("hidden", "true");
+      pocketButton.hidden = true;
     }
 
     this.pageAction.remove();

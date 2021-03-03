@@ -94,7 +94,11 @@ browsertime-tp6:
             default: []
     pageload: cold
     fission-tier: 2
-    fission-run-on-projects: ["mozilla-central"]
+    fission-run-on-projects:
+        by-test-platform:
+            windows7.*: []
+            windows10.*shippable[^-qr].*: []
+            default: ["mozilla-central"]
     run-on-projects:
         by-app:
             firefox:
@@ -102,6 +106,7 @@ browsertime-tp6:
                     (linux|windows|macos)(?!.*shippable).*: []
                     linux.*shippable.*: ["trunk", "mozilla-beta"]
                     macos.*shippable.*: ["trunk", "mozilla-beta"]
+                    windows10.*shippable.*: ["trunk", "mozilla-beta"]
                     default: []
             default: []
     limit-platforms:
@@ -109,6 +114,7 @@ browsertime-tp6:
             chrome:
                 - linux.*shippable[^-qr].*
                 - macosx1014-64-shippable-qr/opt
+                - windows10.*shippable[^-qr].*
             chromium:
                 # Run on non-QR shippable, but test-platforms.yml doesn't have
                 # any more non-QR macosx shippable things. So for macosx we want
@@ -116,6 +122,7 @@ browsertime-tp6:
                 # this on macosx at all.
                 - .*shippable[^-qr].*
                 - macosx1014-64-shippable-qr/opt
+                - windows10.*shippable[^-qr].*
             default: []
     treeherder-symbol: Btime(tp6)
     max-run-time: 4000
@@ -131,9 +138,32 @@ browsertime-benchmark:
         - ares6
         - [motionmark-animometer, mm-a]
         - [motionmark-htmlsuite, mm-h]
+        - [stylebench, sb]
     variants: ["fission"]
     apps: ["firefox"]
     treeherder-symbol: Btime()
+
+browsertime-tp6-live:
+    description: "Raptor (browsertime) tp6 on live-sites"
+    raptor-test: tp6
+    raptor-subtests:
+        - [cnn-ampstories, cnn-amp]
+    tier: 2
+    apps: ["firefox"]
+    variants: []
+    pageload: "cold"
+    treeherder-symbol: Btime-live(tp6)
+    run-on-projects:
+        by-pageload:
+            cold:
+                by-test-platform:
+                    windows7-32.*/opt: []
+                    macosx.*64(?:-qr)?/opt: []
+                    (linux|windows10|macos)(?!.*shippable).*: []
+                    default: ["autoland"]
+    mozharness:
+        extra-options:
+            - --chimera
 
 browsertime-tp6-profiling:
     description: "Raptor (browsertime) tp6 page-load tests with Gecko Profiling"

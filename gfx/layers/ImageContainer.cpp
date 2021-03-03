@@ -8,7 +8,6 @@
 
 #include <string.h>  // for memcpy, memset
 
-#include "GeckoProfiler.h"
 #include "GLImages.h"    // for SurfaceTextureImage
 #include "YCbCrUtils.h"  // for YCbCr conversions
 #include "gfx2DGlue.h"
@@ -16,6 +15,7 @@
 #include "gfxUtils.h"     // for gfxUtils
 #include "libyuv.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/RefPtr.h"  // for already_AddRefed
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/gfx/2D.h"
@@ -835,29 +835,28 @@ TextureClient* SourceSurfaceImage::GetTextureClient(
     return nullptr;
   }
 
-  auto entry = mTextureClients.LookupForAdd(aKnowsCompositor->GetSerial());
-  if (entry) {
-    return entry.Data();
-  }
+  return mTextureClients.WithEntryHandle(
+      aKnowsCompositor->GetSerial(), [&](auto&& entry) -> TextureClient* {
+        if (entry) {
+          return entry->get();
+        }
 
-  RefPtr<TextureClient> textureClient;
-  RefPtr<SourceSurface> surface = GetAsSourceSurface();
-  MOZ_ASSERT(surface);
-  if (surface) {
-    // gfx::BackendType::NONE means default to content backend
-    textureClient = TextureClient::CreateFromSurface(
-        aKnowsCompositor, surface, BackendSelector::Content, mTextureFlags,
-        ALLOC_DEFAULT);
-  }
-  if (textureClient) {
-    textureClient->SyncWithObject(aKnowsCompositor->GetSyncObject());
-    entry.OrInsert([&textureClient]() { return textureClient; });
-    return textureClient;
-  }
+        RefPtr<TextureClient> textureClient;
+        RefPtr<SourceSurface> surface = GetAsSourceSurface();
+        MOZ_ASSERT(surface);
+        if (surface) {
+          // gfx::BackendType::NONE means default to content backend
+          textureClient = TextureClient::CreateFromSurface(
+              aKnowsCompositor, surface, BackendSelector::Content,
+              mTextureFlags, ALLOC_DEFAULT);
+        }
+        if (textureClient) {
+          textureClient->SyncWithObject(aKnowsCompositor->GetSyncObject());
+          return entry.Insert(std::move(textureClient)).get();
+        }
 
-  // Remove the speculatively added entry.
-  entry.OrRemove();
-  return nullptr;
+        return nullptr;
+      });
 }
 
 ImageContainer::ProducerID ImageContainer::AllocateProducerID() {

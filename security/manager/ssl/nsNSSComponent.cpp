@@ -9,7 +9,6 @@
 #include "CryptoTask.h"
 #include "EnterpriseRoots.h"
 #include "ExtendedValidation.h"
-#include "GeckoProfiler.h"
 #include "NSSCertDBTrustDomain.h"
 #include "SSLTokensCache.h"
 #include "ScopedNSSTypes.h"
@@ -23,6 +22,8 @@
 #include "mozilla/Casting.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/PublicSSL.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticMutex.h"
@@ -2737,6 +2738,9 @@ nsresult InitializeCipherSuite() {
   SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_128, 1);
   SEC_PKCS12EnableCipher(PKCS12_DES_56, 1);
   SEC_PKCS12EnableCipher(PKCS12_DES_EDE3_168, 1);
+  SEC_PKCS12EnableCipher(PKCS12_AES_CBC_128, 1);
+  SEC_PKCS12EnableCipher(PKCS12_AES_CBC_192, 1);
+  SEC_PKCS12EnableCipher(PKCS12_AES_CBC_256, 1);
   SEC_PKCS12SetPreferredCipher(PKCS12_DES_EDE3_168, 1);
   PORT_SetUCS2_ASCIIConversionFunction(pkcs12StringEndiannessConversion);
 

@@ -483,12 +483,6 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
   if (!(c)) return false; \
   break
 
-#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
-#  define CHECK_SIMD_EXPERIMENTAL() (void)(0)
-#else
-#  define CHECK_SIMD_EXPERIMENTAL() return iter.unrecognizedOpcode(&op)
-#endif
-
   while (true) {
     OpBytes op;
     if (!iter.readOp(&op)) {
@@ -932,6 +926,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::I16x8AllTrue):
           case uint32_t(SimdOp::I32x4AnyTrue):
           case uint32_t(SimdOp::I32x4AllTrue):
+          case uint32_t(SimdOp::I64x2AllTrue):
           case uint32_t(SimdOp::I8x16Bitmask):
           case uint32_t(SimdOp::I16x8Bitmask):
           case uint32_t(SimdOp::I32x4Bitmask):
@@ -987,6 +982,8 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::I32x4LeU):
           case uint32_t(SimdOp::I32x4GeS):
           case uint32_t(SimdOp::I32x4GeU):
+          case uint32_t(SimdOp::I64x2Eq):
+          case uint32_t(SimdOp::I64x2Ne):
           case uint32_t(SimdOp::F32x4Eq):
           case uint32_t(SimdOp::F32x4Ne):
           case uint32_t(SimdOp::F32x4Lt):
@@ -1202,6 +1199,46 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           case uint32_t(SimdOp::V128Load64Zero): {
             LinearMemoryAddress<Nothing> addr;
             CHECK(iter.readLoadSplat(8, &addr));
+          }
+
+          case uint32_t(SimdOp::V128Load8Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readLoadLane(1, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Load16Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readLoadLane(2, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Load32Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readLoadLane(4, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Load64Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readLoadLane(8, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Store8Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readStoreLane(1, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Store16Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readStoreLane(2, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Store32Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readStoreLane(4, &addr, &noIndex, &nothing));
+          }
+
+          case uint32_t(SimdOp::V128Store64Lane): {
+            LinearMemoryAddress<Nothing> addr;
+            CHECK(iter.readStoreLane(8, &addr, &noIndex, &nothing));
           }
 
           default:
@@ -1547,7 +1584,6 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
   MOZ_CRASH("unreachable");
 
 #undef CHECK
-#undef CHECK_SIMD_EXPERIMENTAL
 }
 
 bool wasm::ValidateFunctionBody(const ModuleEnvironment& env,
@@ -3384,10 +3420,10 @@ bool wasm::DecodeModuleTail(Decoder& d, ModuleEnvironment* env) {
 // Validate algorithm.
 
 bool wasm::Validate(JSContext* cx, const ShareableBytes& bytecode,
-                    UniqueChars* error) {
+                    const FeatureOptions& options, UniqueChars* error) {
   Decoder d(bytecode.bytes, 0, error);
 
-  FeatureArgs features = FeatureArgs::build(cx);
+  FeatureArgs features = FeatureArgs::build(cx, options);
   ModuleEnvironment env(features);
   if (!DecodeModuleEnvironment(d, &env)) {
     return false;

@@ -65,6 +65,8 @@ treeherder:
         'M-spi-1proc': 'Mochitests with socket process without e10s'
         'M-spi-nw': 'Mochitests with networking on socket process'
         'M-spi-nw-1proc': 'Mochitests with networking on socket process without e10s'
+        'M-swr': 'Mochitests with software webrender enabled'
+        'M-swr-1proc': 'Mochitests with software webrender enabled without e10s'
         'M-f': 'Mochitest failures'
         'M-f-1proc': 'Mochitest failures without e10s'
         'M-f-fis': 'Mochitest failures with fission enabled'
@@ -74,6 +76,8 @@ treeherder:
         'M-f-spi-1proc': 'Mochitest failures with socket process without e10s'
         'M-f-spi-nw': 'Mochitest failures with networking on socket process'
         'M-f-spi-nw-1proc': 'Mochitest failures with networking on socket process without e10s'
+        'M-f-swr': 'Mochitests failures with software webrender enabled'
+        'M-f-swr-1proc': 'Mochitests failures with software webrender enabled without e10s'
         'M-V-1proc': 'Mochitests on Valgrind without e10s'
         'MSI': 'Repack installers into MSIs'
         'MSIs': 'Signing of Repacked installers of MSIs'
@@ -118,6 +122,7 @@ treeherder:
         'W': 'Web platform tests'
         'W-1proc': 'Web platform tests without e10s'
         'W-fis': 'Web platform tests with fission enabled'
+        'W-swr': 'Web platform tests with software webrender enabled'
         'W-b': 'Web platform tests (backlog)'
         'W-b-fis': 'Web platform tests (backlog) with fission enabled'
         'X': 'Xpcshell tests'
@@ -188,6 +193,7 @@ treeherder:
         'perftest': 'Performance tests'
         'perftest-http3': 'Performance tests with HTTP/3'
         'fuzzing': 'Fuzzing checks'
+        'l10n': 'Localization checks'
 
 index:
     products:
@@ -556,7 +562,17 @@ workers:
             implementation: generic-worker
             os: linux
             worker-type: 'gecko-{alias}'
+        t-linux-talos-1804:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: linux
+            worker-type: 'gecko-{alias}'
         t-osx-1014:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: macosx
+            worker-type: 'gecko-{alias}'
+        t-osx-1015-r8:
             provisioner: releng-hardware
             implementation: generic-worker
             os: macosx

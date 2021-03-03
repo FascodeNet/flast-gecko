@@ -15,7 +15,7 @@
 #include "nsThreadUtils.h"
 #include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "mozilla/StaticPrefs_dom.h"
 
 #include "nsCycleCollectionParticipant.h"
@@ -115,7 +115,6 @@ already_AddRefed<ServiceWorkerContainer> ServiceWorkerContainer::Create(
   } else {
     inner = new ServiceWorkerContainerImpl();
   }
-  NS_ENSURE_TRUE(inner, nullptr);
 
   RefPtr<ServiceWorkerContainer> ref =
       new ServiceWorkerContainer(aGlobal, inner.forget());
@@ -606,7 +605,7 @@ void ServiceWorkerContainer::GetScopeForUrl(const nsAString& aUrl,
                                             nsString& aScope,
                                             ErrorResult& aRv) {
   nsCOMPtr<nsIServiceWorkerManager> swm =
-      mozilla::services::GetServiceWorkerManager();
+      mozilla::components::ServiceWorkerManager::Service();
   if (!swm) {
     aRv.Throw(NS_ERROR_FAILURE);
     return;

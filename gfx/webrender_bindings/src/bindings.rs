@@ -31,15 +31,18 @@ use nsstring::nsAString;
 use num_cpus;
 use program_cache::{remove_disk_cache, WrProgramCache};
 use rayon;
-use webrender::sw_compositor::SwCompositor;
 use tracy_rs::register_thread_with_profiler;
+use webrender::sw_compositor::SwCompositor;
 use webrender::{
-    api::units::*, api::*, render_api::*, set_profiler_hooks, AsyncPropertySampler, AsyncScreenshotHandle, Compositor,
-    CompositorCapabilities, CompositorConfig, CompositorSurfaceTransform, DebugFlags, Device, NativeSurfaceId,
-    NativeSurfaceInfo, NativeTileId, PartialPresentCompositor, PipelineInfo, ProfilerHooks, RecordedFrameHandle,
-    Renderer, RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, SharedShaders,
-    TextureCacheConfig, UploadMethod, ONE_TIME_USAGE_HINT, host_utils::{thread_started, thread_stopped},
-    MappableCompositor, MappedTileInfo, SWGLCompositeSurfaceInfo,
+    api::units::*,
+    api::*,
+    host_utils::{thread_started, thread_stopped},
+    render_api::*,
+    set_profiler_hooks, AsyncPropertySampler, AsyncScreenshotHandle, Compositor, CompositorCapabilities,
+    CompositorConfig, CompositorSurfaceTransform, DebugFlags, Device, MappableCompositor, MappedTileInfo,
+    NativeSurfaceId, NativeSurfaceInfo, NativeTileId, PartialPresentCompositor, PipelineInfo, ProfilerHooks,
+    RecordedFrameHandle, Renderer, RendererOptions, RendererStats, SWGLCompositeSurfaceInfo, SceneBuilderHooks,
+    ShaderPrecacheFlags, Shaders, SharedShaders, TextureCacheConfig, UploadMethod, ONE_TIME_USAGE_HINT,
 };
 use wr_malloc_size_of::MallocSizeOfOps;
 
@@ -501,12 +504,6 @@ fn get_proc_address(glcontext_ptr: *mut c_void, name: &str) -> *const c_void {
 
     let symbol_name = CString::new(name).unwrap();
     let symbol = unsafe { get_proc_address_from_glcontext(glcontext_ptr, symbol_name.as_ptr()) };
-
-    if symbol.is_null() {
-        // XXX Bug 1322949 Make whitelist for extensions
-        warn!("Could not find symbol {:?} by glcontext", symbol_name);
-    }
-
     symbol as *const _
 }
 
@@ -1077,7 +1074,9 @@ pub extern "C" fn wr_thread_pool_new(low_priority: bool) -> *mut WrThreadPool {
         .thread_name(move |idx| format!("WRWorker{}#{}", priority_tag, idx))
         .num_threads(num_threads)
         .start_handler(move |idx| {
-            unsafe { wr_register_thread_local_arena(); }
+            unsafe {
+                wr_register_thread_local_arena();
+            }
             let name = format!("WRWorker{}#{}", priority_tag, idx);
             register_thread_with_profiler(name.clone());
             thread_started(&name);
@@ -1239,7 +1238,10 @@ extern "C" {
     fn wr_compositor_end_frame(compositor: *mut c_void);
     fn wr_compositor_enable_native_compositor(compositor: *mut c_void, enable: bool);
     fn wr_compositor_deinit(compositor: *mut c_void);
-    fn wr_compositor_get_capabilities(compositor: *mut c_void) -> CompositorCapabilities;
+    fn wr_compositor_get_capabilities(
+        compositor: *mut c_void,
+        caps: *mut CompositorCapabilities,
+    );
     fn wr_compositor_map_tile(
         compositor: *mut c_void,
         id: NativeTileId,
@@ -1346,11 +1348,7 @@ impl Compositor for WrCompositor {
         }
     }
 
-    fn start_compositing(
-        &mut self,
-        dirty_rects: &[DeviceIntRect],
-        opaque_rects: &[DeviceIntRect],
-    ) {
+    fn start_compositing(&mut self, dirty_rects: &[DeviceIntRect], opaque_rects: &[DeviceIntRect]) {
         unsafe {
             wr_compositor_start_compositing(
                 self.0,
@@ -1381,7 +1379,11 @@ impl Compositor for WrCompositor {
     }
 
     fn get_capabilities(&self) -> CompositorCapabilities {
-        unsafe { wr_compositor_get_capabilities(self.0) }
+        unsafe {
+            let mut caps: CompositorCapabilities = Default::default();
+            wr_compositor_get_capabilities(self.0, &mut caps);
+            caps
+        }
     }
 }
 

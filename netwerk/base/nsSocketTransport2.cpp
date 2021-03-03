@@ -707,8 +707,7 @@ nsSocketTransport::nsSocketTransport()
       mKeepaliveIdleTimeS(-1),
       mKeepaliveRetryIntervalS(-1),
       mKeepaliveProbeCount(-1),
-      mDoNotRetryToConnect(false),
-      mUsingQuic(false) {
+      mDoNotRetryToConnect(false) {
   this->mNetAddr.raw.family = 0;
   this->mNetAddr.inet = {};
   this->mSelfAddr.raw.family = 0;
@@ -727,11 +726,17 @@ nsresult nsSocketTransport::Init(const nsTArray<nsCString>& types,
                                  const nsACString& host, uint16_t port,
                                  const nsACString& hostRoute,
                                  uint16_t portRoute,
-                                 nsIProxyInfo* givenProxyInfo) {
+                                 nsIProxyInfo* givenProxyInfo,
+                                 nsIDNSRecord* dnsRecord) {
   nsCOMPtr<nsProxyInfo> proxyInfo;
   if (givenProxyInfo) {
     proxyInfo = do_QueryInterface(givenProxyInfo);
     NS_ENSURE_ARG(proxyInfo);
+  }
+
+  if (dnsRecord) {
+    mExternalDNSResolution = true;
+    mDNSRecord = do_QueryInterface(dnsRecord);
   }
 
   // init socket type info
@@ -798,14 +803,11 @@ nsresult nsSocketTransport::Init(const nsTArray<nsCString>& types,
     else
       mTypes.AppendElement(types[type++]);
 
-    // quic does not have a socketProvider.
-    if (!mTypes[i].EqualsLiteral("quic")) {
-      nsCOMPtr<nsISocketProvider> provider;
-      rv = spserv->GetSocketProvider(mTypes[i].get(), getter_AddRefs(provider));
-      if (NS_FAILED(rv)) {
-        NS_WARNING("no registered socket provider");
-        return rv;
-      }
+    nsCOMPtr<nsISocketProvider> provider;
+    rv = spserv->GetSocketProvider(mTypes[i].get(), getter_AddRefs(provider));
+    if (NS_FAILED(rv)) {
+      NS_WARNING("no registered socket provider");
+      return rv;
     }
 
     // note if socket type corresponds to a transparent proxy
@@ -990,6 +992,12 @@ nsresult nsSocketTransport::ResolveHost() {
     }
   }
 
+  if (mExternalDNSResolution) {
+    MOZ_ASSERT(mDNSRecord);
+    mState = STATE_RESOLVING;
+    return PostEvent(MSG_DNS_LOOKUP_COMPLETE, NS_OK, nullptr);
+  }
+
   nsCOMPtr<nsIDNSService> dns = nullptr;
   auto initTask = [&dns]() { dns = do_GetService(kDNSServiceCID); };
   if (!NS_IsMainThread()) {
@@ -1098,42 +1106,16 @@ nsresult nsSocketTransport::BuildSocket(PRFileDesc*& fd, bool& proxyTransparent,
   if (mConnectionFlags & nsISocketTransport::BE_CONSERVATIVE)
     controlFlags |= nsISocketProvider::BE_CONSERVATIVE;
 
+  if (mConnectionFlags &
+      nsISocketTransport::ANONYMOUS_CONNECT_ALLOW_CLIENT_CERT) {
+    controlFlags |= nsISocketProvider::ANONYMOUS_CONNECT_ALLOW_CLIENT_CERT;
+  }
+
   // by setting host to mOriginHost, instead of mHost we send the
   // SocketProvider (e.g. PSM) the origin hostname but can still do DNS
   // on an explicit alternate service host name
   const char* host = mOriginHost.get();
   int32_t port = (int32_t)mOriginPort;
-
-  if (mTypes[0].EqualsLiteral("quic")) {
-    fd = PR_OpenUDPSocket(mNetAddr.raw.family);
-    if (!fd) {
-      SOCKET_LOG(("  error creating UDP nspr socket [rv=%" PRIx32 "]\n",
-                  static_cast<uint32_t>(rv)));
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    mUsingQuic = true;
-    // Create security control and info object for quic.
-    RefPtr<QuicSocketControl> quicCtrl = new QuicSocketControl(controlFlags);
-    quicCtrl->SetHostName(mHttpsProxy ? mProxyHost.get() : host);
-    quicCtrl->SetPort(mHttpsProxy ? mProxyPort : port);
-    nsCOMPtr<nsISupports> secinfo;
-    quicCtrl->QueryInterface(NS_GET_IID(nsISupports), (void**)(&secinfo));
-
-    // remember security info and give notification callbacks to PSM...
-    nsCOMPtr<nsIInterfaceRequestor> callbacks;
-    {
-      MutexAutoLock lock(mLock);
-      mSecInfo = secinfo;
-      callbacks = mCallbacks;
-      SOCKET_LOG(
-          ("  [secinfo=%p callbacks=%p]\n", mSecInfo.get(), mCallbacks.get()));
-    }
-    // don't call into PSM while holding mLock!!
-    quicCtrl->SetNotificationCallbacks(callbacks);
-
-    return NS_OK;
-  }
 
   nsCOMPtr<nsISocketProviderService> spserv =
       nsSocketProviderService::GetOrCreate();
@@ -1372,39 +1354,27 @@ nsresult nsSocketTransport::InitiateSocket() {
   status = PR_SetSocketOption(fd, &opt);
   NS_ASSERTION(status == PR_SUCCESS, "unable to make socket non-blocking");
 
-  if (mUsingQuic) {
-    opt.option = PR_SockOpt_RecvBufferSize;
-    opt.value.recv_buffer_size =
-        StaticPrefs::network_http_http3_recvBufferSize();
-    status = PR_SetSocketOption(fd, &opt);
+  if (mReuseAddrPort) {
+    SOCKET_LOG(("  Setting port/addr reuse socket options\n"));
+
+    // Set ReuseAddr for TCP sockets to enable having several
+    // sockets bound to same local IP and port
+    PRSocketOptionData opt_reuseaddr;
+    opt_reuseaddr.option = PR_SockOpt_Reuseaddr;
+    opt_reuseaddr.value.reuse_addr = PR_TRUE;
+    status = PR_SetSocketOption(fd, &opt_reuseaddr);
     if (status != PR_SUCCESS) {
-      SOCKET_LOG(("  Couldn't set recv buffer size"));
+      SOCKET_LOG(("  Couldn't set reuse addr socket option: %d\n", status));
     }
-  }
 
-  if (!mUsingQuic) {
-    if (mReuseAddrPort) {
-      SOCKET_LOG(("  Setting port/addr reuse socket options\n"));
-
-      // Set ReuseAddr for TCP sockets to enable having several
-      // sockets bound to same local IP and port
-      PRSocketOptionData opt_reuseaddr;
-      opt_reuseaddr.option = PR_SockOpt_Reuseaddr;
-      opt_reuseaddr.value.reuse_addr = PR_TRUE;
-      status = PR_SetSocketOption(fd, &opt_reuseaddr);
-      if (status != PR_SUCCESS) {
-        SOCKET_LOG(("  Couldn't set reuse addr socket option: %d\n", status));
-      }
-
-      // And also set ReusePort for platforms supporting this socket option
-      PRSocketOptionData opt_reuseport;
-      opt_reuseport.option = PR_SockOpt_Reuseport;
-      opt_reuseport.value.reuse_port = PR_TRUE;
-      status = PR_SetSocketOption(fd, &opt_reuseport);
-      if (status != PR_SUCCESS &&
-          PR_GetError() != PR_OPERATION_NOT_SUPPORTED_ERROR) {
-        SOCKET_LOG(("  Couldn't set reuse port socket option: %d\n", status));
-      }
+    // And also set ReusePort for platforms supporting this socket option
+    PRSocketOptionData opt_reuseport;
+    opt_reuseport.option = PR_SockOpt_Reuseport;
+    opt_reuseport.value.reuse_port = PR_TRUE;
+    status = PR_SetSocketOption(fd, &opt_reuseport);
+    if (status != PR_SUCCESS &&
+        PR_GetError() != PR_OPERATION_NOT_SUPPORTED_ERROR) {
+      SOCKET_LOG(("  Couldn't set reuse port socket option: %d\n", status));
     }
 
     // disable the nagle algorithm - if we rely on it to coalesce writes into
@@ -1519,18 +1489,6 @@ nsresult nsSocketTransport::InitiateSocket() {
       }
       mEchConfigUsed = true;
     }
-  }
-
-  if (mUsingQuic) {
-    //
-    // we pretend that we are connected!
-    //
-    if (PR_Connect(fd, &prAddr, NS_SOCKET_CONNECT_TIMEOUT) == PR_SUCCESS) {
-      OnSocketConnected();
-      return NS_OK;
-    }
-    PRErrorCode code = PR_GetError();
-    return ErrorAccordingToNSPR(code);
   }
 
   // We use PRIntervalTime here because we need
@@ -1688,8 +1646,6 @@ bool nsSocketTransport::RecoverFromError() {
     mDNSRecord->ReportUnusable(SocketPort());
   }
 
-#if defined(_WIN64) && defined(WIN95)
-  // can only recover from these errors
   if (mCondition != NS_ERROR_CONNECTION_REFUSED &&
       mCondition != NS_ERROR_PROXY_CONNECTION_REFUSED &&
       mCondition != NS_ERROR_NET_TIMEOUT &&
@@ -1699,17 +1655,6 @@ bool nsSocketTransport::RecoverFromError() {
                 static_cast<uint32_t>(mCondition)));
     return false;
   }
-#else
-  if (mCondition != NS_ERROR_CONNECTION_REFUSED &&
-      mCondition != NS_ERROR_PROXY_CONNECTION_REFUSED &&
-      mCondition != NS_ERROR_NET_TIMEOUT &&
-      mCondition != NS_ERROR_UNKNOWN_HOST &&
-      mCondition != NS_ERROR_UNKNOWN_PROXY_HOST) {
-    SOCKET_LOG(("  not a recoverable error %" PRIx32,
-                static_cast<uint32_t>(mCondition)));
-    return false;
-  }
-#endif
 
   bool tryAgain = false;
 
@@ -1746,6 +1691,19 @@ bool nsSocketTransport::RecoverFromError() {
     if (NS_SUCCEEDED(rv)) {
       SOCKET_LOG(("  trying again with next ip address\n"));
       tryAgain = true;
+    } else if (mExternalDNSResolution) {
+      mRetryDnsIfPossible = true;
+      bool trrEnabled;
+      mDNSRecord->IsTRR(&trrEnabled);
+      // Bug 1648147 - If the server responded with `0.0.0.0` or `::` then we
+      // should intentionally not fallback to regular DNS.
+      if (trrEnabled && !StaticPrefs::network_trr_fallback_on_zero_response() &&
+          ((mNetAddr.raw.family == AF_INET && mNetAddr.inet.ip == 0) ||
+           (mNetAddr.raw.family == AF_INET6 && mNetAddr.inet6.ip.u64[0] == 0 &&
+            mNetAddr.inet6.ip.u64[1] == 0))) {
+        SOCKET_LOG(("  TRR returned 0.0.0.0 and there are no other IPs"));
+        mRetryDnsIfPossible = false;
+      }
     } else if (mConnectionFlags & RETRY_WITH_DIFFERENT_IP_FAMILY) {
       SOCKET_LOG(("  failed to connect, trying with opposite ip family\n"));
       // Drop state to closed.  This will trigger new round of DNS
@@ -2552,10 +2510,6 @@ nsSocketTransport::GetPeerAddr(NetAddr* addr) {
   // we can freely access mNetAddr from any thread without being
   // inside a critical section.
 
-  if (NS_FAILED(mCondition)) {
-    return mCondition;
-  }
-
   if (!mNetAddrIsSet) {
     SOCKET_LOG(
         ("nsSocketTransport::GetPeerAddr [this=%p state=%d] "
@@ -2574,10 +2528,6 @@ nsSocketTransport::GetSelfAddr(NetAddr* addr) {
   // so if we can verify that we are in the connected state, then
   // we can freely access mSelfAddr from any thread without being
   // inside a critical section.
-
-  if (NS_FAILED(mCondition)) {
-    return mCondition;
-  }
 
   if (!mSelfAddrIsSet) {
     SOCKET_LOG(
@@ -3353,6 +3303,20 @@ nsSocketTransport::SetEchConfig(const nsACString& aEchConfig) {
 NS_IMETHODIMP
 nsSocketTransport::ResolvedByTRR(bool* aResolvedByTRR) {
   *aResolvedByTRR = mResolvedByTRR;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetRetryDnsIfPossible(bool* aRetryDns) {
+  *aRetryDns = mRetryDnsIfPossible;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetStatus(nsresult* aStatus) {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+
+  *aStatus = mCondition;
   return NS_OK;
 }
 

@@ -1182,13 +1182,6 @@ class SpecialPowersChild extends JSWindowActorChild {
     BrowsingContext.getFromWindow(window).textZoom = zoom;
   }
 
-  getOverrideDPPX(window) {
-    return this._getMUDV(window).overrideDPPX;
-  }
-  setOverrideDPPX(window, dppx) {
-    this._getMUDV(window).overrideDPPX = dppx;
-  }
-
   emulateMedium(window, mediaType) {
     BrowsingContext.getFromWindow(window).top.mediumOverride = mediaType;
   }
@@ -1631,6 +1624,14 @@ class SpecialPowersChild extends JSWindowActorChild {
   }
   set SimpleTest(val) {
     this._SimpleTest = val;
+  }
+
+  async evictAllContentViewers() {
+    if (Services.appinfo.sessionHistoryInParent) {
+      await this.sendQuery("EvictAllContentViewers");
+    } else {
+      this.browsingContext.top.childSessionHistory.legacySHistory.evictAllContentViewers();
+    }
   }
 
   /**

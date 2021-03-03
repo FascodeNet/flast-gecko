@@ -79,7 +79,9 @@ pub const MAX_FONT_WEIGHT: f32 = 1000.;
 /// A specified font-weight value.
 ///
 /// https://drafts.csswg.org/css-fonts-4/#propdef-font-weight
-#[derive(Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem)]
+#[derive(
+    Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
+)]
 pub enum FontWeight {
     /// `<font-weight-absolute>`
     Absolute(AbsoluteFontWeight),
@@ -317,7 +319,9 @@ impl SpecifiedFontStyle {
 }
 
 /// The specified value of the `font-style` property.
-#[derive(Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem)]
+#[derive(
+    Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
+)]
 #[allow(missing_docs)]
 pub enum FontStyle {
     Specified(SpecifiedFontStyle),
@@ -366,7 +370,9 @@ pub enum FontStretch {
 }
 
 /// A keyword value for `font-stretch`.
-#[derive(Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem)]
+#[derive(
+    Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
+)]
 #[allow(missing_docs)]
 pub enum FontStretchKeyword {
     Normal,
@@ -727,7 +733,9 @@ impl Parse for FamilyName {
     }
 }
 
-#[derive(Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem)]
+#[derive(
+    Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
+)]
 /// Preserve the readability of text when font fallback occurs
 pub enum FontSizeAdjust {
     /// None variant
@@ -925,7 +933,7 @@ impl FontSize {
                 // If the parent font was keyword-derived, this is too.
                 // Tack the % onto the factor
                 info = compose_keyword(pc.0);
-                base_size.resolve(context) * pc.0
+                (base_size.resolve(context) * pc.0).normalized()
             },
             FontSize::Length(LengthPercentage::Calc(ref calc)) => {
                 let calc = calc.to_computed_value_zoomed(context, base_size);

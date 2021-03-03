@@ -79,14 +79,9 @@ class PresentationServiceBase {
         return;
       }
 
-      nsTArray<nsString>* sessionIdArray;
-      if (!mRespondingSessionIds.Get(aWindowId, &sessionIdArray)) {
-        sessionIdArray = new nsTArray<nsString>();
-        mRespondingSessionIds.Put(aWindowId, sessionIdArray);
-      }
-
-      sessionIdArray->AppendElement(nsString(aSessionId));
-      mRespondingWindowIds.Put(aSessionId, aWindowId);
+      mRespondingSessionIds.GetOrInsertNew(aWindowId)->AppendElement(
+          nsString(aSessionId));
+      mRespondingWindowIds.InsertOrUpdate(aSessionId, aWindowId);
     }
 
     void RemoveSessionId(const nsAString& aSessionId) {
@@ -151,12 +146,14 @@ class PresentationServiceBase {
       aAddedUrls.Clear();
       nsTArray<nsString> knownAvailableUrls;
       for (const auto& url : aAvailabilityUrls) {
-        AvailabilityEntry* entry;
-        if (!mAvailabilityUrlTable.Get(url, &entry)) {
-          entry = new AvailabilityEntry();
-          mAvailabilityUrlTable.Put(url, entry);
-          aAddedUrls.AppendElement(url);
-        }
+        AvailabilityEntry* const entry =
+            mAvailabilityUrlTable
+                .LookupOrInsertWith(url,
+                                    [&] {
+                                      aAddedUrls.AppendElement(url);
+                                      return MakeUnique<AvailabilityEntry>();
+                                    })
+                .get();
         if (!entry->mListeners.Contains(aListener)) {
           entry->mListeners.AppendElement(aListener);
         }
@@ -228,12 +225,8 @@ class PresentationServiceBase {
           for (uint32_t i = 0; i < entry->mListeners.Length(); ++i) {
             nsIPresentationAvailabilityListener* listener =
                 entry->mListeners.ObjectAt(i);
-            nsTArray<nsString>* urlArray;
-            if (!availabilityListenerTable.Get(listener, &urlArray)) {
-              urlArray = new nsTArray<nsString>();
-              availabilityListenerTable.Put(listener, urlArray);
-            }
-            urlArray->AppendElement(it.Key());
+            availabilityListenerTable.GetOrInsertNew(listener)->AppendElement(
+                it.Key());
           }
         }
       }

@@ -8,13 +8,12 @@
 #ifndef frontend_ObjLiteral_h
 #define frontend_ObjLiteral_h
 
+#include "mozilla/BloomFilter.h"  // mozilla::BitBloomFilter
 #include "mozilla/EndianUtils.h"
 #include "mozilla/EnumSet.h"
-#include "mozilla/HashTable.h"  // HashSet
 #include "mozilla/Span.h"
 
 #include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
-#include "frontend/TaggedParserAtomIndexHasher.h"  // TaggedParserAtomIndexHasher
 #include "js/AllocPolicy.h"
 #include "js/GCPolicyAPI.h"
 #include "js/Value.h"
@@ -107,6 +106,7 @@
 
 namespace js {
 
+class LifoAlloc;
 class JSONPrinter;
 
 namespace frontend {
@@ -227,7 +227,7 @@ struct ObjLiteralWriterBase {
   uint32_t curOffset() const { return code_.length(); }
 
  private:
-  MOZ_MUST_USE bool pushByte(JSContext* cx, uint8_t data) {
+  [[nodiscard]] bool pushByte(JSContext* cx, uint8_t data) {
     if (!code_.append(data)) {
       js::ReportOutOfMemory(cx);
       return false;
@@ -235,7 +235,7 @@ struct ObjLiteralWriterBase {
     return true;
   }
 
-  MOZ_MUST_USE bool prepareBytes(JSContext* cx, size_t len, uint8_t** p) {
+  [[nodiscard]] bool prepareBytes(JSContext* cx, size_t len, uint8_t** p) {
     size_t offset = code_.length();
     if (!code_.growByUninitialized(len)) {
       js::ReportOutOfMemory(cx);
@@ -246,7 +246,7 @@ struct ObjLiteralWriterBase {
   }
 
   template <typename T>
-  MOZ_MUST_USE bool pushRawData(JSContext* cx, T data) {
+  [[nodiscard]] bool pushRawData(JSContext* cx, T data) {
     uint8_t* p = nullptr;
     if (!prepareBytes(cx, sizeof(T), &p)) {
       return false;
@@ -257,22 +257,22 @@ struct ObjLiteralWriterBase {
   }
 
  protected:
-  MOZ_MUST_USE bool pushOpAndName(JSContext* cx, ObjLiteralOpcode op,
-                                  ObjLiteralKey key) {
+  [[nodiscard]] bool pushOpAndName(JSContext* cx, ObjLiteralOpcode op,
+                                   ObjLiteralKey key) {
     uint8_t opdata = static_cast<uint8_t>(op);
     uint32_t data = key.rawIndex() | (key.isArrayIndex() ? INDEXED_PROP : 0);
     return pushByte(cx, opdata) && pushRawData(cx, data);
   }
 
-  MOZ_MUST_USE bool pushValueArg(JSContext* cx, const JS::Value& value) {
+  [[nodiscard]] bool pushValueArg(JSContext* cx, const JS::Value& value) {
     MOZ_ASSERT(value.isNumber() || value.isNullOrUndefined() ||
                value.isBoolean());
     uint64_t data = value.asRawBits();
     return pushRawData(cx, data);
   }
 
-  MOZ_MUST_USE bool pushAtomArg(JSContext* cx,
-                                frontend::TaggedParserAtomIndex atomIndex) {
+  [[nodiscard]] bool pushAtomArg(JSContext* cx,
+                                 frontend::TaggedParserAtomIndex atomIndex) {
     return pushRawData(cx, atomIndex.rawData());
   }
 };
@@ -290,6 +290,7 @@ struct ObjLiteralWriter : private ObjLiteralWriterBase {
 
   using CodeVector = typename ObjLiteralWriterBase::CodeVector;
 
+  bool checkForDuplicatedNames(JSContext* cx);
   mozilla::Span<const uint8_t> getCode() const { return code_; }
   ObjLiteralFlags getFlags() const { return flags_; }
   uint32_t getPropertyCount() const { return propertyCount_; }
@@ -304,14 +305,16 @@ struct ObjLiteralWriter : private ObjLiteralWriterBase {
       return true;
     }
 
-    auto p = propNames_.lookupForAdd(propName);
-    if (!p) {
-      if (!propNames_.add(p, propName)) {
-        js::ReportOutOfMemory(cx);
-        return false;
-      }
+    // OK to early return if we've already discovered a potential duplicate.
+    if (mightContainDuplicatePropertyNames_) {
+      return true;
+    }
+
+    // Check bloom filter for duplicate, and add if not already represented.
+    if (propNamesFilter_.mightContain(propName.rawData())) {
+      mightContainDuplicatePropertyNames_ = true;
     } else {
-      flags_ += ObjLiteralFlag::HasIndexOrDuplicatePropName;
+      propNamesFilter_.add(propName.rawData());
     }
     return true;
   }
@@ -338,14 +341,14 @@ struct ObjLiteralWriter : private ObjLiteralWriterBase {
     nextKey_ = ObjLiteralKey::none();
   }
 
-  MOZ_MUST_USE bool propWithConstNumericValue(JSContext* cx,
-                                              const JS::Value& value) {
+  [[nodiscard]] bool propWithConstNumericValue(JSContext* cx,
+                                               const JS::Value& value) {
     propertyCount_++;
     MOZ_ASSERT(value.isNumber());
     return pushOpAndName(cx, ObjLiteralOpcode::ConstValue, nextKey_) &&
            pushValueArg(cx, value);
   }
-  MOZ_MUST_USE bool propWithAtomValue(
+  [[nodiscard]] bool propWithAtomValue(
       JSContext* cx, frontend::ParserAtomsTable& parserAtoms,
       const frontend::TaggedParserAtomIndex value) {
     propertyCount_++;
@@ -353,19 +356,19 @@ struct ObjLiteralWriter : private ObjLiteralWriterBase {
     return pushOpAndName(cx, ObjLiteralOpcode::ConstAtom, nextKey_) &&
            pushAtomArg(cx, value);
   }
-  MOZ_MUST_USE bool propWithNullValue(JSContext* cx) {
+  [[nodiscard]] bool propWithNullValue(JSContext* cx) {
     propertyCount_++;
     return pushOpAndName(cx, ObjLiteralOpcode::Null, nextKey_);
   }
-  MOZ_MUST_USE bool propWithUndefinedValue(JSContext* cx) {
+  [[nodiscard]] bool propWithUndefinedValue(JSContext* cx) {
     propertyCount_++;
     return pushOpAndName(cx, ObjLiteralOpcode::Undefined, nextKey_);
   }
-  MOZ_MUST_USE bool propWithTrueValue(JSContext* cx) {
+  [[nodiscard]] bool propWithTrueValue(JSContext* cx) {
     propertyCount_++;
     return pushOpAndName(cx, ObjLiteralOpcode::True, nextKey_);
   }
-  MOZ_MUST_USE bool propWithFalseValue(JSContext* cx) {
+  [[nodiscard]] bool propWithFalseValue(JSContext* cx) {
     propertyCount_++;
     return pushOpAndName(cx, ObjLiteralOpcode::False, nextKey_);
   }
@@ -383,12 +386,24 @@ struct ObjLiteralWriter : private ObjLiteralWriterBase {
 #endif
 
  private:
+  // Set to true if we've found possible duplicate names while building.
+  // This field is placed next to `flags_` field, to reduce padding.
+  bool mightContainDuplicatePropertyNames_ = false;
+
   ObjLiteralFlags flags_;
   ObjLiteralKey nextKey_;
   uint32_t propertyCount_ = 0;
-  mozilla::HashSet<frontend::TaggedParserAtomIndex,
-                   frontend::TaggedParserAtomIndexHasher>
-      propNames_;
+
+  // Duplicate property names detection is performed in the following way:
+  //   * while emitting code, add each property names with
+  //     `propNamesFilter_`
+  //   * if possible duplicate property name is detected, set
+  //     `mightContainDuplicatePropertyNames_` to true
+  //   * in `checkForDuplicatedNames` method,
+  //     if `mightContainDuplicatePropertyNames_` is true,
+  //     check the duplicate property names with `HashSet`, and if it exists,
+  //     set HasIndexOrDuplicatePropName flag.
+  mozilla::BitBloomFilter<12, frontend::TaggedParserAtomIndex> propNamesFilter_;
 };
 
 struct ObjLiteralReaderBase {
@@ -396,7 +411,7 @@ struct ObjLiteralReaderBase {
   mozilla::Span<const uint8_t> data_;
   size_t cursor_;
 
-  MOZ_MUST_USE bool readByte(uint8_t* b) {
+  [[nodiscard]] bool readByte(uint8_t* b) {
     if (cursor_ + 1 > data_.Length()) {
       return false;
     }
@@ -405,7 +420,7 @@ struct ObjLiteralReaderBase {
     return true;
   }
 
-  MOZ_MUST_USE bool readBytes(size_t size, const uint8_t** p) {
+  [[nodiscard]] bool readBytes(size_t size, const uint8_t** p) {
     if (cursor_ + size > data_.Length()) {
       return false;
     }
@@ -415,7 +430,7 @@ struct ObjLiteralReaderBase {
   }
 
   template <typename T>
-  MOZ_MUST_USE bool readRawData(T* data) {
+  [[nodiscard]] bool readRawData(T* data) {
     const uint8_t* p = nullptr;
     if (!readBytes(sizeof(T), &p)) {
       return false;
@@ -429,7 +444,7 @@ struct ObjLiteralReaderBase {
   explicit ObjLiteralReaderBase(mozilla::Span<const uint8_t> data)
       : data_(data), cursor_(0) {}
 
-  MOZ_MUST_USE bool readOpAndKey(ObjLiteralOpcode* op, ObjLiteralKey* key) {
+  [[nodiscard]] bool readOpAndKey(ObjLiteralOpcode* op, ObjLiteralKey* key) {
     uint8_t opbyte;
     if (!readByte(&opbyte)) {
       return false;
@@ -449,7 +464,7 @@ struct ObjLiteralReaderBase {
     return true;
   }
 
-  MOZ_MUST_USE bool readValueArg(JS::Value* value) {
+  [[nodiscard]] bool readValueArg(JS::Value* value) {
     uint64_t data;
     if (!readRawData(&data)) {
       return false;
@@ -458,7 +473,7 @@ struct ObjLiteralReaderBase {
     return true;
   }
 
-  MOZ_MUST_USE bool readAtomArg(frontend::TaggedParserAtomIndex* atomIndex) {
+  [[nodiscard]] bool readAtomArg(frontend::TaggedParserAtomIndex* atomIndex) {
     return readRawData(atomIndex->rawDataRef());
   }
 };
@@ -547,7 +562,7 @@ struct ObjLiteralReader : private ObjLiteralReaderBase {
   explicit ObjLiteralReader(mozilla::Span<const uint8_t> data)
       : ObjLiteralReaderBase(data) {}
 
-  MOZ_MUST_USE bool readInsn(ObjLiteralInsn* insn) {
+  [[nodiscard]] bool readInsn(ObjLiteralInsn* insn) {
     ObjLiteralOpcode op;
     ObjLiteralKey key;
     if (!readOpAndKey(&op, &key)) {
@@ -592,6 +607,10 @@ class ObjLiteralStencil {
 
   JSObject* create(JSContext* cx,
                    const frontend::CompilationAtomCache& atomCache) const;
+
+#ifdef DEBUG
+  bool isContainedIn(const LifoAlloc& alloc) const;
+#endif
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;

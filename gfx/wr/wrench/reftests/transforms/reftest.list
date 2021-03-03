@@ -8,7 +8,7 @@ platform(linux,mac) fuzzy(1,6) == rotated-image.yaml rotated-image.png
 == singular.yaml singular-ref.yaml
 platform(linux) fuzzy(1,630) == perspective.yaml perspective.png
 platform(linux,mac) fuzzy(1,156) == prim-suite.yaml prim-suite.png
-== segments-bug.yaml segments-bug-ref.yaml
+fuzzy-if(platform(swgl),1,2) == segments-bug.yaml segments-bug-ref.yaml
 platform(linux,mac) == content-offset.yaml content-offset.png
 platform(linux,mac) == coord-system.yaml coord-system.png
 platform(linux,mac) fuzzy(1,15) zoom(4) == border-zoom.yaml border-zoom.png
@@ -30,7 +30,7 @@ platform(linux,mac) fuzzy(1,2) == perspective-shadow.yaml perspective-shadow.png
 # The ref YAML here produces significantly worse quality
 fuzzy(200,4200) == perspective-box-shadow.yaml perspective-box-shadow-ref.yaml
 == complex-preserve-3d.yaml blank.yaml
-platform(linux,mac) fuzzy(9,348) == perspective-border-radius.yaml perspective-border-radius.png
+platform(linux,mac) fuzzy(38,348) == perspective-border-radius.yaml perspective-border-radius.png
 fuzzy(1,38) == snapped-preserve-3d.yaml snapped-preserve-3d-ref.yaml
 platform(linux,mac) fuzzy(1,122) == border-scale.yaml border-scale.png
 platform(linux,mac) fuzzy(1,16) == border-scale-2.yaml border-scale-2.png

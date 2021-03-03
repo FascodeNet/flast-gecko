@@ -5,18 +5,21 @@
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 %include ../shared/browser.inc.css
+%include ../shared/browser-custom-colors.inc.css
 
 :root {
   --toolbar-non-lwt-bgcolor: #f9f9fa;
   --toolbar-non-lwt-textcolor: #0c0c0d;
   --toolbar-non-lwt-bgimage: none;
 
+  --toolbar-field-non-lwt-bgcolor: #f0f0f4;
+
   --toolbarbutton-vertical-text-padding: calc(var(--toolbarbutton-inner-padding) + 1px);
   --toolbarbutton-border-radius: 4px;
   --toolbarbutton-icon-fill-opacity: .7;
 
   --panel-separator-color: hsla(210,4%,10%,.14);
-  --arrowpanel-dimmed: hsla(0,0%,80%,.35);
+  --arrowpanel-dimmed: hsla(0,0%,80%,.3);
   --arrowpanel-dimmed-further: hsla(0,0%,80%,.5);
   --arrowpanel-dimmed-even-further: hsla(0,0%,80%,.8);
 
@@ -245,11 +248,6 @@
 
 %include ../shared/urlbarView.inc.css
 
-:root {
-  --urlbar-popup-url-color: hsl(210, 77%, 47%);
-  --urlbar-popup-action-color: hsl(178, 100%, 28%);
-}
-
 .urlbarView:not(:-moz-lwtheme),
 #PopupSearchAutoComplete:not(:-moz-lwtheme) {
   /* Set custom disabled text color since native graytext is too faint on macOS 10.14+. */
@@ -451,13 +449,11 @@
   --sidebar-background-color: -moz-mac-source-list;
 }
 
-/* Give the sidebar a vibrant appearance. Only do this when no lwtheme is
- * in use, because vibrant appearance values only work if there is no
- * background-color rendered behind the element, and we have :root:-moz-lwtheme
- * rules which set appearance: none and an opaque background color on the
- * root element. That background color would interfere with the vibrancy.
- * See bug 1594132 for fixing this. */
-#sidebar-box:not(:-moz-lwtheme) {
+/* Give the sidebar a vibrant appearance. Only do this when no lwtheme sidebar
+ * rules are in use. Vibrant appearance values only work if there is no
+ * background-color rendered behind the element. If the active theme has sidebar
+ * rules, we want to show the theme's background-color in the sidebar. */
+#sidebar-box:not([lwt-sidebar]) {
   appearance: auto;
   -moz-default-appearance: -moz-mac-source-list;
   -moz-font-smoothing-background-color: -moz-mac-source-list;
@@ -519,11 +515,13 @@
   text-shadow: inherit;
 }
 
+@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
 :is(.keyboard-focused-tab, .tabbrowser-tab:focus:not([aria-activedescendant])) > .tab-stack > .tab-content > .tab-label-container:not([pinned]),
 :is(.keyboard-focused-tab, .tabbrowser-tab:focus:not([aria-activedescendant])) > .tab-stack > .tab-content > .tab-icon-image[pinned],
 :is(.keyboard-focused-tab, .tabbrowser-tab:focus:not([aria-activedescendant])) > .tab-stack > .tab-content > .tab-throbber[pinned] {
   box-shadow: var(--focus-ring-box-shadow);
 }
+} /*** END !proton ***/
 
 #TabsToolbar > .toolbar-items {
   padding-top: var(--space-above-tabbar);

@@ -350,7 +350,7 @@ void gfxPlatformFontList::ApplyWhitelist() {
   for (auto& f : accepted) {
     nsAutoCString fontFamilyName(f->Name());
     ToLowerCase(fontFamilyName);
-    mFontFamilies.Put(fontFamilyName, std::move(f));
+    mFontFamilies.InsertOrUpdate(fontFamilyName, std::move(f));
   }
 }
 
@@ -419,15 +419,19 @@ bool gfxPlatformFontList::AddWithLegacyFamilyName(const nsACString& aLegacyName,
   bool added = false;
   nsAutoCString key;
   ToLowerCase(aLegacyName, key);
-  gfxFontFamily* family = mOtherFamilyNames.GetWeak(key);
-  if (!family) {
-    family = CreateFontFamily(aLegacyName, aVisibility);
-    family->SetHasStyles(true);  // we don't want the family to search for
-                                 // faces, we're adding them directly here
-    mOtherFamilyNames.Put(key, RefPtr{family});
-    added = true;
-  }
-  family->AddFontEntry(aFontEntry->Clone());
+  mOtherFamilyNames
+      .LookupOrInsertWith(
+          key,
+          [&] {
+            RefPtr<gfxFontFamily> family =
+                CreateFontFamily(aLegacyName, aVisibility);
+            family->SetHasStyles(
+                true);  // we don't want the family to search for
+                        // faces, we're adding them directly here
+            added = true;
+            return family;
+          })
+      ->AddFontEntry(aFontEntry->Clone());
   return added;
 }
 
@@ -1069,6 +1073,9 @@ gfxFont* gfxPlatformFontList::GlobalFontFallback(
             if (hasColorGlyph == PrefersColor(aPresentation)) {
               return font;
             }
+            // If we don't use this font, we need to touch its refcount
+            // to trigger gfxFontCache expiration tracking.
+            RefPtr<gfxFont> autoRefDeref(font);
           }
         }
         rejectedFallbackVisibility = aMatchedFamily.mShared->Visibility();
@@ -1083,6 +1090,7 @@ gfxFont* gfxPlatformFontList::GlobalFontFallback(
             if (hasColorGlyph == PrefersColor(aPresentation)) {
               return font;
             }
+            RefPtr<gfxFont> autoRefDeref(font);
           }
         }
         rejectedFallbackVisibility = aMatchedFamily.mUnshared->Visibility();
@@ -1584,8 +1592,10 @@ gfxFontEntry* gfxPlatformFontList::FindFontForFamily(
 
 gfxFontEntry* gfxPlatformFontList::GetOrCreateFontEntry(
     fontlist::Face* aFace, const fontlist::Family* aFamily) {
-  return mFontEntries.LookupForAdd(aFace).OrInsert(
-      [=]() { return CreateFontEntry(aFace, aFamily); });
+  return mFontEntries
+      .LookupOrInsertWith(aFace,
+                          [=] { return CreateFontEntry(aFace, aFamily); })
+      .get();
 }
 
 void gfxPlatformFontList::AddOtherFamilyName(
@@ -1593,8 +1603,7 @@ void gfxPlatformFontList::AddOtherFamilyName(
   nsAutoCString key;
   GenerateFontListKey(aOtherFamilyName, key);
 
-  if (!mOtherFamilyNames.GetWeak(key)) {
-    mOtherFamilyNames.Put(key, RefPtr{aFamilyEntry});
+  mOtherFamilyNames.LookupOrInsertWith(key, [&] {
     LOG_FONTLIST(
         ("(fontlist-otherfamily) canonical family: %s, "
          "other family: %s\n",
@@ -1602,25 +1611,26 @@ void gfxPlatformFontList::AddOtherFamilyName(
     if (mBadUnderlineFamilyNames.ContainsSorted(key)) {
       aFamilyEntry->SetBadUnderlineFamily();
     }
-  }
+    return RefPtr{aFamilyEntry};
+  });
 }
 
 void gfxPlatformFontList::AddFullname(gfxFontEntry* aFontEntry,
                                       const nsCString& aFullname) {
-  if (!mExtraNames->mFullnames.GetWeak(aFullname)) {
-    mExtraNames->mFullnames.Put(aFullname, RefPtr{aFontEntry});
+  mExtraNames->mFullnames.LookupOrInsertWith(aFullname, [&] {
     LOG_FONTLIST(("(fontlist-fullname) name: %s, fullname: %s\n",
                   aFontEntry->Name().get(), aFullname.get()));
-  }
+    return RefPtr{aFontEntry};
+  });
 }
 
 void gfxPlatformFontList::AddPostscriptName(gfxFontEntry* aFontEntry,
                                             const nsCString& aPostscriptName) {
-  if (!mExtraNames->mPostscriptNames.GetWeak(aPostscriptName)) {
-    mExtraNames->mPostscriptNames.Put(aPostscriptName, RefPtr{aFontEntry});
+  mExtraNames->mPostscriptNames.LookupOrInsertWith(aPostscriptName, [&] {
     LOG_FONTLIST(("(fontlist-postscript) name: %s, psname: %s\n",
                   aFontEntry->Name().get(), aPostscriptName.get()));
-  }
+    return RefPtr{aFontEntry};
+  });
 }
 
 bool gfxPlatformFontList::GetStandardFamilyName(const nsCString& aFontName,

@@ -147,7 +147,7 @@ xpcAccessibleDocument::GetVirtualCursor(nsIAccessiblePivot** aVirtualCursor) {
 // xpcAccessibleDocument
 
 xpcAccessibleGeneric* xpcAccessibleDocument::GetAccessible(
-    Accessible* aAccessible) {
+    LocalAccessible* aAccessible) {
   MOZ_ASSERT(!mRemote);
   if (ToXPCDocument(aAccessible->Document()) != this) {
     NS_ERROR(
@@ -157,59 +157,50 @@ xpcAccessibleGeneric* xpcAccessibleDocument::GetAccessible(
 
   if (aAccessible->IsDoc()) return this;
 
-  xpcAccessibleGeneric* xpcAcc = mCache.Get(aAccessible);
-  if (xpcAcc) return xpcAcc;
+  return mCache.LookupOrInsertWith(aAccessible, [&]() -> xpcAccessibleGeneric* {
+    if (aAccessible->IsImage()) {
+      return new xpcAccessibleImage(aAccessible);
+    }
+    if (aAccessible->IsTable()) {
+      return new xpcAccessibleTable(aAccessible);
+    }
+    if (aAccessible->IsTableCell()) {
+      return new xpcAccessibleTableCell(aAccessible);
+    }
+    if (aAccessible->IsHyperText()) {
+      return new xpcAccessibleHyperText(aAccessible);
+    }
 
-  if (aAccessible->IsImage())
-    xpcAcc = new xpcAccessibleImage(aAccessible);
-  else if (aAccessible->IsTable())
-    xpcAcc = new xpcAccessibleTable(aAccessible);
-  else if (aAccessible->IsTableCell())
-    xpcAcc = new xpcAccessibleTableCell(aAccessible);
-  else if (aAccessible->IsHyperText())
-    xpcAcc = new xpcAccessibleHyperText(aAccessible);
-  else
-    xpcAcc = new xpcAccessibleGeneric(aAccessible);
-
-  mCache.Put(aAccessible, xpcAcc);
-  return xpcAcc;
+    return new xpcAccessibleGeneric(aAccessible);
+  });
 }
 
 xpcAccessibleGeneric* xpcAccessibleDocument::GetXPCAccessible(
-    ProxyAccessible* aProxy) {
+    RemoteAccessible* aProxy) {
   MOZ_ASSERT(mRemote);
   MOZ_ASSERT(aProxy->Document() == mIntl.AsProxy());
   if (aProxy->IsDoc()) {
     return this;
   }
 
-  xpcAccessibleGeneric* acc = mCache.Get(aProxy);
-  if (acc) {
-    return acc;
-  }
+  return mCache.LookupOrInsertWith(aProxy, [&]() -> xpcAccessibleGeneric* {
+    // XXX support exposing optional interfaces.
+    uint8_t interfaces = 0;
+    if (aProxy->mHasValue) {
+      interfaces |= eValue;
+    }
 
-  // XXX support exposing optional interfaces.
-  uint8_t interfaces = 0;
-  if (aProxy->mHasValue) {
-    interfaces |= eValue;
-  }
+    if (aProxy->mIsHyperLink) {
+      interfaces |= eHyperLink;
+    }
 
-  if (aProxy->mIsHyperLink) {
-    interfaces |= eHyperLink;
-  }
+    if (aProxy->mIsHyperText) {
+      interfaces |= eText;
+      return new xpcAccessibleHyperText(aProxy, interfaces);
+    }
 
-  if (aProxy->mIsHyperText) {
-    interfaces |= eText;
-    acc = new xpcAccessibleHyperText(aProxy, interfaces);
-    mCache.Put(aProxy, acc);
-
-    return acc;
-  }
-
-  acc = new xpcAccessibleGeneric(aProxy, interfaces);
-  mCache.Put(aProxy, acc);
-
-  return acc;
+    return new xpcAccessibleGeneric(aProxy, interfaces);
+  });
 }
 
 void xpcAccessibleDocument::Shutdown() {

@@ -272,24 +272,17 @@ StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
   return aDocument->PrefersColorScheme();
 }
 
-StyleContrastPref Gecko_MediaFeatures_PrefersContrast(
-    const Document* aDocument, const bool aForcedColors) {
+StylePrefersContrast Gecko_MediaFeatures_PrefersContrast(
+    const Document* aDocument) {
   if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
-    return StyleContrastPref::NoPreference;
+    return StylePrefersContrast::NoPreference;
   }
-  // Neither Linux, Windows, nor Mac have a way to indicate that low
-  // contrast is prefered so the presence of an accessibility theme
-  // implies that high contrast is prefered.
-  //
-  // Note that MacOS does not expose whether or not high contrast is
-  // enabled so for MacOS users this will always evaluate to
-  // false. For more information and discussion see:
-  // https://github.com/w3c/csswg-drafts/issues/3856#issuecomment-642313572
-  // https://github.com/w3c/csswg-drafts/issues/2943
+  // Neither Linux, Windows, nor Mac have a way to indicate that low contrast is
+  // preferred so we use the presence of an accessibility theme as a signal.
   if (!!LookAndFeel::GetInt(LookAndFeel::IntID::UseAccessibilityTheme, 0)) {
-    return StyleContrastPref::More;
+    return StylePrefersContrast::More;
   }
-  return StyleContrastPref::NoPreference;
+  return StylePrefersContrast::NoPreference;
 }
 
 static PointerCapabilities GetPointerCapabilities(const Document* aDocument,

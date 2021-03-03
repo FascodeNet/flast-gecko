@@ -68,6 +68,7 @@ body {
   grid-template-columns: 1fr auto;
   margin-block: 0;
   align-items: center;
+  font-weight: normal;
 }
 
 .category[badge-count]::after {
@@ -356,6 +357,8 @@ addon-card[expanded] .update-postponed-bar + .addon-card-message {
   min-height: auto;
   height: 24px;
   margin: 0;
+  padding: 0 8px;
+  font-weight: normal;
 }
 
 .addon-description {
@@ -550,9 +553,6 @@ addon-details {
 }
 
 .addon-detail-actions > label {
-  /* Center the items and remove the whitespaces between the input and the span
-     to allow them to accomodate more space when it's constrained. */
-  display: inline-flex;
   flex-wrap: wrap;
 }
 

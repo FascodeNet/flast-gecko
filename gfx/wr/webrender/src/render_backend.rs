@@ -797,7 +797,6 @@ pub struct RenderBackend {
     api_rx: Receiver<ApiMsg>,
     result_tx: Sender<ResultMsg>,
     scene_tx: Sender<SceneBuilderRequest>,
-    low_priority_scene_tx: Sender<SceneBuilderRequest>,
 
     default_device_pixel_ratio: f32,
 
@@ -821,8 +820,13 @@ pub struct RenderBackend {
     blob_image_handler: Option<Box<dyn BlobImageHandler>>,
 
     recycler: Recycler,
+
     #[cfg(feature = "capture")]
+    /// If `Some`, do 'sequence capture' logging, recording updated documents,
+    /// frames, etc. This is set only through messages from the scene builder,
+    /// so all control of sequence capture goes through there.
     capture_config: Option<CaptureConfig>,
+
     #[cfg(feature = "replay")]
     loaded_resource_sequence_id: u32,
 
@@ -836,7 +840,6 @@ impl RenderBackend {
         api_rx: Receiver<ApiMsg>,
         result_tx: Sender<ResultMsg>,
         scene_tx: Sender<SceneBuilderRequest>,
-        low_priority_scene_tx: Sender<SceneBuilderRequest>,
         default_device_pixel_ratio: f32,
         resource_cache: ResourceCache,
         notifier: Box<dyn RenderNotifier>,
@@ -851,7 +854,6 @@ impl RenderBackend {
             api_rx,
             result_tx,
             scene_tx,
-            low_priority_scene_tx,
             default_device_pixel_ratio,
             resource_cache,
             gpu_cache: GpuCache::new(),
@@ -1026,7 +1028,6 @@ impl RenderBackend {
         frame_counter: &mut u32,
     ) -> RenderBackendStatus {
         match msg {
-            ApiMsg::WakeUp => {}
             ApiMsg::CloneApi(sender) => {
                 assert!(!self.namespace_alloc_by_client);
                 sender.send(self.next_namespace_id()).unwrap();
@@ -1181,12 +1182,6 @@ impl RenderBackend {
                         let _ = self.scene_tx.send(SceneBuilderRequest::SimulateLongSceneBuild(time_ms));
                         return RenderBackendStatus::Continue;
                     }
-                    DebugCommand::SimulateLongLowPrioritySceneBuild(time_ms) => {
-                        let _ = self.low_priority_scene_tx.send(
-                            SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(time_ms)
-                        );
-                        return RenderBackendStatus::Continue;
-                    }
                     DebugCommand::SetFlags(flags) => {
                         self.resource_cache.set_debug_flags(flags);
                         self.gpu_cache.set_debug_flags(flags);
@@ -1273,6 +1268,10 @@ impl RenderBackend {
 
                 self.bookkeep_after_frames();
             },
+            #[cfg(feature = "capture")]
+            SceneBuilderResult::StopCaptureSequence => {
+                self.capture_config = None;
+            }
             SceneBuilderResult::GetGlyphDimensions(request) => {
                 let mut glyph_dimensions = Vec::with_capacity(request.glyph_indices.len());
                 if let Some(base) = self.resource_cache.get_font_instance(request.key) {
@@ -1438,7 +1437,7 @@ impl RenderBackend {
         // fiddle with things after a potentially long scene build, but just
         // before rendering. This is useful for rendering with the latest
         // async transforms.
-        if requested_frame || has_built_scene {
+        if requested_frame {
             if let Some(ref sampler) = self.sampler {
                 frame_ops.append(&mut sampler.sample(document_id, generated_frame_id));
             }
@@ -1490,13 +1489,9 @@ impl RenderBackend {
         // external image with NativeTexture or when platform requested to composite frame.
         if invalidate_rendered_frame {
             doc.rendered_frame_is_valid = false;
-            if let CompositorKind::Draw { max_partial_present_rects, .. } = doc.scene.config.compositor_kind {
-
-              // When partial present is enabled, we need to force redraw.
-              if max_partial_present_rects > 0 {
-                  let msg = ResultMsg::ForceRedraw;
-                  self.result_tx.send(msg).unwrap();
-              }
+            if doc.scene.config.compositor_kind.should_redraw_on_invalidation() {
+                let msg = ResultMsg::ForceRedraw;
+                self.result_tx.send(msg).unwrap();
             }
         }
 

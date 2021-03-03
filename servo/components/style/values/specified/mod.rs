@@ -70,13 +70,14 @@ pub use self::list::MozListReversed;
 pub use self::list::Quotes;
 pub use self::motion::{OffsetPath, OffsetRotate};
 pub use self::outline::OutlineStyle;
-pub use self::page::{Orientation, PaperSize, PageSize};
+pub use self::page::{Orientation, PageSize, PaperSize};
 pub use self::percentage::Percentage;
 pub use self::position::AspectRatio;
 pub use self::position::{
     GridAutoFlow, GridTemplateAreas, MasonryAutoFlow, Position, PositionOrAuto,
 };
 pub use self::position::{PositionComponent, ZIndex};
+pub use self::ratio::Ratio;
 pub use self::rect::NonNegativeLengthOrNumberRect;
 pub use self::resolution::Resolution;
 pub use self::svg::MozContextProperties;
@@ -121,9 +122,10 @@ pub mod length;
 pub mod list;
 pub mod motion;
 pub mod outline;
-pub mod percentage;
 pub mod page;
+pub mod percentage;
 pub mod position;
+pub mod ratio;
 pub mod rect;
 pub mod resolution;
 pub mod source_size_list;

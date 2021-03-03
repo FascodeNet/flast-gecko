@@ -37,6 +37,7 @@ class RenderCompositorSWGL : public RenderCompositor {
                         size_t aNumOpaqueRects) override;
 
   bool UsePartialPresent() override { return true; }
+  bool RequestFullRender() override;
 
   void Pause() override;
   bool Resume() override;
@@ -55,7 +56,7 @@ class RenderCompositorSWGL : public RenderCompositor {
   bool SupportsExternalBufferTextures() const override { return true; }
 
   // Interface for wr::Compositor
-  CompositorCapabilities GetCompositorCapabilities() override;
+  void GetCompositorCapabilities(CompositorCapabilities* aCaps) override;
 
  private:
   void* mContext = nullptr;

@@ -12,9 +12,12 @@ const {
   registerFront,
 } = require("devtools/shared/protocol");
 const { TargetMixin } = require("devtools/client/fronts/targets/target-mixin");
+const {
+  DescriptorMixin,
+} = require("devtools/client/fronts/descriptors/descriptor-mixin");
 
-class WorkerDescriptorFront extends TargetMixin(
-  FrontClassWithSpec(workerDescriptorSpec)
+class WorkerDescriptorFront extends DescriptorMixin(
+  TargetMixin(FrontClassWithSpec(workerDescriptorSpec))
 ) {
   constructor(client, targetFront, parentFront) {
     super(client, targetFront, parentFront);
@@ -70,7 +73,7 @@ class WorkerDescriptorFront extends TargetMixin(
 
     this._attach = (async () => {
       if (this.isDestroyedOrBeingDestroyed()) {
-        return;
+        return this;
       }
 
       const response = await super.attach();
@@ -85,7 +88,7 @@ class WorkerDescriptorFront extends TargetMixin(
       this._url = response.url;
 
       if (this.isDestroyedOrBeingDestroyed()) {
-        return;
+        return this;
       }
 
       const workerTargetForm = await super.getTarget();
@@ -96,10 +99,11 @@ class WorkerDescriptorFront extends TargetMixin(
       this.targetForm.threadActor = workerTargetForm.threadActor;
 
       if (this.isDestroyedOrBeingDestroyed()) {
-        return;
+        return this;
       }
 
       await this.attachConsole();
+      return this;
     })();
     return this._attach;
   }

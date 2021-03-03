@@ -543,112 +543,6 @@ browser.engagement.navigation:
       - 'main'
 
 browser.startup:
-  slow_startup_notification_disabled:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description:
-      Whether the slow startup notification bar is disabled for the user.
-    expires: "85"
-    kind: boolean
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  too_new_for_notification:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description:
-      Whether the slow startup notification bar was suppressed because the profile is too new.
-    expires: "85"
-    kind: boolean
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  slow_startup_notified:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description:
-      Whether the slow startup notification bar was shown to the user during this session.
-    expires: "85"
-    kind: boolean
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  recorded_time:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description: >
-      The startup time computed by the slow startup notification bar in milliseconds.
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  average_time:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description: >
-      The average startup time computed by the slow startup notification bar in milliseconds.
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  action:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description: >
-      The action that the user took with the slow startup notification bar.
-      0: No action (default)
-      1: User chose to open SUMO document on slow startup
-      2: User chose to never show the notification bar again
-      3: User dismissed the notification bar
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
   abouthome_cache_result:
     bug_numbers:
       - 1622263
@@ -1235,11 +1129,12 @@ security:
       - 1265472
       - 1558870
       - 1630155
+      - 1689269
     description: >
       Counts of how often Web Authentication was used in this session, keyed
       by authenticator protocol, method and result. Currently: U2FRegisterFinish,
       U2FRegisterAbort, U2FSignFinish, U2FSignAbort.
-    expires: "88"
+    expires: "100"
     kind: uint
     keyed: true
     notification_emails:
@@ -1879,6 +1774,45 @@ os.environment:
     operating_systems:
       - "windows"
 
+  launch_method:
+    bug_numbers:
+      - 1685213
+    description: >
+      Records how Firefox was started on Windows.
+      Currently will be one of "Desktop", "StartMenu" (including pins),
+      "Taskbar", "OtherShortcut", or "Other"
+    expires: "94"
+    kind: string
+    notification_emails:
+      - application-update-telemetry-alerts@mozilla.com
+      - agashlin@mozilla.com
+      - shong@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    record_in_processes:
+      - main
+    operating_systems:
+      - windows
+
+  is_taskbar_pinned:
+    bug_numbers:
+      - 1685213
+    description: Whether this app was pinned to taskbar on startup
+    expires: "94"
+    kind: boolean
+    notification_emails:
+      - application-update-telemetry-alerts@mozilla.com
+      - agashlin@mozilla.com
+      - shong@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    record_in_processes:
+      - main
+    operating_systems:
+      - windows
+
 pictureinpicture:
   opened_method:
     bug_numbers:
@@ -2241,37 +2175,19 @@ media:
     record_in_processes:
       - 'content'
 
-avif:
-  dav1d_decode_error:
+  wmf_process_usage:
     bug_numbers:
-      - 1670827
+      - 1690372
     description: >
-      Image-decode Error from dav1d decoder
-    kind: uint
-    expires: "never"
+      Record whether the WMF decoder module is used in content or chrome process.
+    expires: "93"
+    kind: boolean
     notification_emails:
-      - cchang@mozilla.com
-      - jbauman@mozilla.com
+      - alwu@mozilla.com
+      - bvandyk@mozilla.com
+    release_channel_collection: opt-out
     products:
       - 'firefox'
-      - 'geckoview_streaming'
-    record_in_processes:
-      - 'main'
-      - 'content'
-
-  aom_decode_error:
-    bug_numbers:
-      - 1670827
-    description: >
-      Image-decode Error from aom decoder
-    kind: uint
-    expires: "never"
-    notification_emails:
-      - cchang@mozilla.com
-      - jbauman@mozilla.com
-    products:
-      - 'firefox'
-      - 'geckoview_streaming'
     record_in_processes:
       - 'main'
       - 'content'
@@ -2344,6 +2260,50 @@ dom.contentprocess:
     products:
       - 'firefox'
       - 'fennec'
+    record_in_processes:
+      - 'main'
+  crash_tab_ui_presented:
+    bug_numbers:
+      - 1676943
+    description: >
+      The number of times the tab crashed page has been shown.
+    expires: "98"
+    kind: uint
+    notification_emails:
+      - nlayzell@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  crash_subframe_ui_presented:
+    bug_numbers:
+      - 1676943
+    description: >  
+      The number of times the subframe crash UI is shown to the user. This
+      only triggers when a tab containing the subframe is switched to.
+    expires: "98"
+    kind: uint
+    notification_emails:
+      - nlayzell@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  # Note that the unsubmitted notification is currently only enabled on Nightly builds
+  unsubmitted_ui_presented:
+    bug_numbers:
+      - 1676943
+    description: >
+      The number of times the notification has been shown that indicates
+      that there are unsubmitted crash reports.
+    expires: "98"
+    kind: uint
+    notification_emails:
+      - nlayzell@mozilla.com
+    products:
+      - 'firefox'
     record_in_processes:
       - 'main'
 
@@ -3544,6 +3504,7 @@ gfx.hdr:
   windows_display_colorspace_bitfield:
     bug_numbers:
       - 1514840
+      - 1690597
     description: >
       A bitfield representation of the available DXGI color spaces of the connected displays on Windows.
       See (https://docs.microsoft.com/en-us/windows/desktop/api/dxgicommon/ne-dxgicommon-dxgi_color_space_type)
@@ -3551,13 +3512,12 @@ gfx.hdr:
       index 'N' is available on at least one connected monitor.
     keyed: false
     kind: uint
-    expires: "70"
+    expires: never
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
-      - rhunt@mozilla.com
+      - jmuizelaaar@mozilla.com
     products:
       - 'firefox'
-      - 'fennec'
     record_in_processes:
       - 'main'
 
@@ -4146,23 +4106,6 @@ pdf.viewer:
 
 # The following section contains scalars for printing.
 printing:
-  trigger:
-    bug_numbers:
-      - 1669925
-    description: >
-      The thing that triggered the print dialog, like "keyboard_shortcut", etc.
-    keyed: true
-    expires: "89"
-    kind: uint
-    notification_emails:
-      - jwatt@jwatt.org
-      - emilio@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
   paper_size:
     bug_numbers:
       - 1660686
@@ -5194,11 +5137,14 @@ browser.searchinit:
   engine_invalid_webextension:
     bug_numbers:
       - 1665938
+      - 1691050
     description: >
       Records the WebExtension ID of a search engine where the WebExtension
-      is not installed (= 1), disabled (= 2) or where the submission URL
-      is different between the search engine and the WebExtension (= 3)
-    expires: "89"
+      is not installed (= 1), disabled (= 2), search engine no longer specified (= 4),
+      a different name (= 5), where the submission URL is different between the
+      search engine and the WebExtension (= 6). The value '3' has been replaced
+      by '6' to distinguish newer entries.
+    expires: "94"
     keyed: true
     kind: uint
     notification_emails:
@@ -5428,7 +5374,7 @@ script.preloader:
     description:
       How many times we ended up recompiling a script from the script preloader
       on the main thread.
-    expires: "88"
+    expires: "100"
     keyed: false
     kind: uint
     notification_emails:
@@ -5665,11 +5611,12 @@ blocklist:
       - 1572711
       - 1607744
       - 1649960
+      - 1689274
     description: >
       Keep track of the last time the "addons" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5688,11 +5635,12 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the last time the "addons-bloomfilters" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5710,11 +5658,12 @@ blocklist:
       - 1572711
       - 1607744
       - 1649960
+      - 1689274
     description: >
       Keep track of the last time the "plugins" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5732,10 +5681,11 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of whether the addons blocklist engine uses bloom filters (blocklist v3).
       If false, the blocklist v2 is used instead.
-    expires: "88"
+    expires: "95"
     kind: boolean
     release_channel_collection: opt-out
     notification_emails:
@@ -5752,12 +5702,13 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of whether the bloomfilter-based blocklist engine uses stashes from the
       addons-bloomfilters collection, together with an infrequently updated base bloomfilter.
       If false, the latest (full) bloom filter is downloaded on every update of the addon blocklist.
       This metric is only meaningful if mlbf_enabled is true.
-    expires: "88"
+    expires: "95"
     kind: boolean
     release_channel_collection: opt-out
     notification_emails:
@@ -5774,12 +5725,13 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the generation time of the addon blocklist's bloom filter. This marks the
       point in time until which signed add-ons are recognized by the selected bloom filter from the
       addons-bloomfilters collection.
       The value is a datetime string in UTC format, or  "Missing Date" when unavailable.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5796,11 +5748,12 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the timestamp of the oldest stash of the addons blocklist.
       Only meaningful when mlbf_enabled and mlbf_stashes are true.
       The value is a datetime string in UTC format, or "Missing Date" when unavailable.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5817,11 +5770,12 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the timestamp of the most recent stash of the addons blocklist.
       Only meaningful when mlbf_enabled and mlbf_stashes are true.
       The value is a datetime string in UTC format, or "Missing Date" when unavailable.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -6748,6 +6702,97 @@ migration:
       - main
     operating_systems:
       - windows
+
+
+contextual.services.topsites:
+  impression:
+    bug_numbers:
+      - 1688698
+    description: >
+      A keyed uint recording how many times the user has viewed the sponsored TopSites
+      on the newtab page. The key is a combination of the source and the placement of
+      the TopSites tile (1-based). such as 'urlbar_1', 'newtab_2'.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  click:
+    bug_numbers:
+      - 1688698
+    description: >
+      A keyed uint recording how many times the user has clicked on the sponsored TopSites
+      on the newtab page. The key is a combination of the source and the placement of
+      the TopSites tile (1-based). such as 'urlbar_1', 'newtab_2'.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+
+contextual.services.quicksuggest:
+  impression:
+    bug_numbers:
+      - 1693927
+    description: >
+      A keyed uint recording how many times the user has viewed Firefox Suggests
+      (a.k.a. Quick Suggest) results in the urlbar. The key is the 1-based index
+      of each result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  click:
+    bug_numbers:
+      - 1693927
+    description: >
+      A keyed uint recording how many times the user has clicked on Firefox
+      Suggests (a.k.a. Quick Suggest) results in the urlbar (not including the
+      help button). The key is the 1-based index of each result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  help:
+    bug_numbers:
+      - 1693927
+    description: >
+      A keyed uint recording how many times the user has clicked on the help
+      button in Firefox Suggests (a.k.a. Quick Suggest) results in the urlbar.
+      The key is the 1-based index of each result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
 
 
 # The following section is for probes testing the Telemetry system. They will not be

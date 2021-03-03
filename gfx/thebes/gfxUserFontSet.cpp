@@ -5,12 +5,12 @@
 
 #include "mozilla/Logging.h"
 
-#include "GeckoProfiler.h"
 #include "gfxUserFontSet.h"
 #include "gfxPlatform.h"
 #include "gfxFontConstants.h"
 #include "mozilla/FontPropertyTypes.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/Telemetry.h"
@@ -1018,12 +1018,8 @@ gfxUserFontFamily* gfxUserFontSet::GetFamily(const nsACString& aFamilyName) {
   nsAutoCString key(aFamilyName);
   ToLowerCase(key);
 
-  gfxUserFontFamily* family = mFontFamilies.GetWeak(key);
-  if (!family) {
-    family = new gfxUserFontFamily(aFamilyName);
-    mFontFamilies.Put(key, RefPtr{family});
-  }
-  return family;
+  return mFontFamilies.LookupOrInsertWith(
+      key, [&] { return MakeRefPtr<gfxUserFontFamily>(aFamilyName); });
 }
 
 void gfxUserFontSet::ForgetLocalFaces() {

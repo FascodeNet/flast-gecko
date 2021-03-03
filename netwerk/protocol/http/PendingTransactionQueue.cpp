@@ -56,12 +56,12 @@ void PendingTransactionQueue::InsertTransactionNormal(
        info->Transaction()->TopLevelOuterContentWindowId()));
 
   uint64_t windowId = TabIdForQueuing(info->Transaction());
-  nsTArray<RefPtr<PendingTransactionInfo>>* infoArray;
-  if (!mPendingTransactionTable.Get(windowId, &infoArray)) {
-    infoArray = new nsTArray<RefPtr<PendingTransactionInfo>>();
-    mPendingTransactionTable.Put(windowId, infoArray);
-  }
+  nsTArray<RefPtr<PendingTransactionInfo>>* const infoArray =
+      mPendingTransactionTable.GetOrInsertNew(windowId);
 
+  // XXX At least if a new array was empty before, this isn't efficient, as it
+  // does an insert-sort. It would be better to just append all elements and
+  // then sort.
   InsertTransactionSorted(*infoArray, info, aInsertAsFirstForTheSamePriority);
 }
 

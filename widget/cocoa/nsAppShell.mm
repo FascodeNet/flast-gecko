@@ -11,7 +11,6 @@
 #import <Cocoa/Cocoa.h>
 
 #include "CustomCocoaEvents.h"
-#include "GeckoProfiler.h"
 #include "mozilla/WidgetTraceEvent.h"
 #include "nsAppShell.h"
 #include "gfxPlatform.h"
@@ -123,7 +122,32 @@ extern int32_t gXULModalLevel;
 
 static bool gAppShellMethodsSwizzled = false;
 
+void OnUncaughtException(NSException* aException) {
+  nsObjCExceptionLog(aException);
+  MOZ_CRASH("Uncaught Objective C exception from NSSetUncaughtExceptionHandler");
+}
+
 @implementation GeckoNSApplication
+
+// Load is called very early during startup, when the Objective C runtime loads this class.
++ (void)load {
+  NSSetUncaughtExceptionHandler(OnUncaughtException);
+}
+
+// This method is called from NSDefaultTopLevelErrorHandler, which is invoked when an Objective C
+// exception propagates up into the native event loop. It is possible that it is also called in
+// other cases.
+- (void)reportException:(NSException*)aException {
+  if (ShouldIgnoreObjCException(aException)) {
+    return;
+  }
+
+  nsObjCExceptionLog(aException);
+
+#ifdef NIGHTLY_BUILD
+  MOZ_CRASH("Uncaught Objective C exception from -[GeckoNSApplication reportException:]");
+#endif
+}
 
 - (void)sendEvent:(NSEvent*)anEvent {
   mozilla::BackgroundHangMonitor().NotifyActivity();
@@ -204,7 +228,7 @@ nsAppShell::nsAppShell()
 }
 
 nsAppShell::~nsAppShell() {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   hal::Shutdown();
 
@@ -228,7 +252,7 @@ nsAppShell::~nsAppShell() {
 
   [mDelegate release];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK
+  NS_OBJC_END_TRY_IGNORE_BLOCK
 }
 
 NS_IMPL_ISUPPORTS(MacWakeLockListener, nsIDOMMozWakeLockListener)
@@ -299,7 +323,7 @@ void nsAppShell::OnRunLoopActivityChanged(CFRunLoopActivity aActivity) {
 //
 // public
 nsresult nsAppShell::Init() {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   // No event loop is running yet (unless an embedding app that uses
   // NSApplicationMain() is running).
@@ -394,7 +418,7 @@ nsresult nsAppShell::Init() {
 
   return rv;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
 }
 
 // ProcessGeckoEvents
@@ -408,7 +432,7 @@ nsresult nsAppShell::Init() {
 //
 // protected static
 void nsAppShell::ProcessGeckoEvents(void* aInfo) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
   AUTO_PROFILER_LABEL("nsAppShell::ProcessGeckoEvents", OTHER);
 
   nsAppShell* self = static_cast<nsAppShell*>(aInfo);
@@ -499,7 +523,7 @@ void nsAppShell::ProcessGeckoEvents(void* aInfo) {
     }
   }
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // WillTerminate
@@ -542,7 +566,7 @@ void nsAppShell::WillTerminate() {
 //
 // protected virtual
 void nsAppShell::ScheduleNativeEventCallback() {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   if (mTerminated) return;
 
@@ -556,7 +580,7 @@ void nsAppShell::ScheduleNativeEventCallback() {
   ::CFRunLoopSourceSignal(mCFRunLoopSource);
   ::CFRunLoopWakeUp(mCFRunLoop);
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // Undocumented Cocoa Event Manager function, present in the same form since
@@ -574,7 +598,7 @@ extern "C" EventAttributes GetEventAttributes(EventRef inEvent);
 bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
   bool moreEvents = false;
 
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   bool eventProcessed = false;
   NSString* currentMode = nil;
@@ -671,7 +695,7 @@ bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
 
   mRunningEventLoop = wasRunningEventLoop;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 
   if (!moreEvents) {
     nsChildView::UpdateCurrentInputEventCount();
@@ -706,7 +730,9 @@ nsAppShell::Run(void) {
   // We use the native Gecko event loop in content processes.
   nsresult rv = NS_OK;
   if (XRE_UseNativeEventProcessing()) {
-    NS_OBJC_TRY_ABORT([NSApp run]);
+    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+    [NSApp run];
+    NS_OBJC_END_TRY_IGNORE_BLOCK;
   } else {
     rv = nsBaseAppShell::Run();
   }
@@ -720,7 +746,7 @@ nsAppShell::Run(void) {
 
 NS_IMETHODIMP
 nsAppShell::Exit(void) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   // This method is currently called more than once -- from (according to
   // mento) an nsAppExitEvent dispatched by nsAppStartup::Quit() and from an
@@ -766,7 +792,7 @@ nsAppShell::Exit(void) {
 
   return nsBaseAppShell::Exit();
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
 }
 
 // OnProcessNextEvent
@@ -781,7 +807,7 @@ nsAppShell::Exit(void) {
 // public
 NS_IMETHODIMP
 nsAppShell::OnProcessNextEvent(nsIThreadInternal* aThread, bool aMayWait) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   NS_ASSERTION(mAutoreleasePools, "No stack on which to store autorelease pool");
 
@@ -790,7 +816,7 @@ nsAppShell::OnProcessNextEvent(nsIThreadInternal* aThread, bool aMayWait) {
 
   return nsBaseAppShell::OnProcessNextEvent(aThread, aMayWait);
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
 }
 
 // AfterProcessNextEvent
@@ -802,7 +828,7 @@ nsAppShell::OnProcessNextEvent(nsIThreadInternal* aThread, bool aMayWait) {
 // public
 NS_IMETHODIMP
 nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProcessed) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   CFIndex count = ::CFArrayGetCount(mAutoreleasePools);
 
@@ -815,7 +841,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
 
   return nsBaseAppShell::AfterProcessNextEvent(aThread, aEventWasProcessed);
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
 }
 
 // AppShellDelegate implementation
@@ -825,7 +851,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
 //
 // Constructs the AppShellDelegate object
 - (id)initWithAppShell:(nsAppShell*)aAppShell {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NIL;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   if ((self = [self init])) {
     mAppShell = aAppShell;
@@ -847,28 +873,28 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
 
   return self;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NIL;
+  NS_OBJC_END_TRY_BLOCK_RETURN(nil);
 }
 
 - (void)dealloc {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [[NSDistributedNotificationCenter defaultCenter] removeObserver:self];
   [super dealloc];
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // applicationWillTerminate:
 //
 // Notify the nsAppShell that native event processing should be discontinued.
 - (void)applicationWillTerminate:(NSNotification*)aNotification {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   mAppShell->WillTerminate();
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // applicationDidBecomeActive
@@ -877,7 +903,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
 // active (since we won't have received [ChildView flagsChanged:] messages
 // while inactive).
 - (void)applicationDidBecomeActive:(NSNotification*)aNotification {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   // [NSEvent modifierFlags] is valid on every kind of event, so we don't need
   // to worry about getting an NSInternalInconsistencyException here.
@@ -892,7 +918,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
     observerService->NotifyObservers(nullptr, NS_WIDGET_MAC_APP_ACTIVATE_OBSERVER_TOPIC, nullptr);
   }
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 // beginMenuTracking
@@ -901,7 +927,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
 // any sort of menu.  But make sure we don't do this for notifications we
 // send ourselves (whose 'sender' will be @"org.mozilla.gecko.PopupWindow").
 - (void)beginMenuTracking:(NSNotification*)aNotification {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   NSString* sender = [aNotification object];
   if (!sender || ![sender isEqualToString:@"org.mozilla.gecko.PopupWindow"]) {
@@ -910,7 +936,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread, bool aEventWasProc
     if (rollupWidget) rollupListener->Rollup(0, true, nullptr, nullptr);
   }
 
-  NS_OBJC_END_TRY_ABORT_BLOCK;
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 @end

@@ -18022,8 +18022,23 @@ class CGBindingRoot(CGThing):
             for d in descriptors
         )
 
-        # XXX Not sure when we actually need this
-        bindingHeaders["GeckoProfiler.h"] = True
+        # The conditions for which we generate profiler labels are fairly
+        # complicated. The check below is a little imprecise to make it simple.
+        # It includes the profiler header in all cases where it is necessary and
+        # generates only a few false positives.
+        bindingHeaders["mozilla/ProfilerLabels.h"] = any(
+            # constructor profiler label
+            d.interface.namedConstructors
+            or (d.interface.hasInterfaceObject() and d.interface.ctor())
+            or any(
+                # getter/setter profiler labels
+                m.isAttr()
+                # method profiler label
+                or m.isMethod()
+                for m in d.interface.members
+            )
+            for d in descriptors
+        )
 
         def descriptorHasCrossOriginProperties(desc):
             def hasCrossOriginProperty(m):
@@ -21625,8 +21640,14 @@ class CGMaplikeOrSetlikeHelperFunctionGenerator(CallbackMember):
                 // It's safe to use UnprivilegedJunkScopeOrWorkerGlobal here because
                 // all we want is to wrap into _some_ scope and then unwrap to find
                 // the reflector, and wrapping has no side-effects.
-                JSAutoRealm tempRealm(cx, UnprivilegedJunkScopeOrWorkerGlobal());
+                JSObject* scope = UnprivilegedJunkScopeOrWorkerGlobal(fallible);
+                if (!scope) {
+                  aRv.Throw(NS_ERROR_UNEXPECTED);
+                  return%s;
+                }
+                JSAutoRealm tempRealm(cx, scope);
                 """
+                % self.getDefaultRetval()
             )
 
         code += dedent(

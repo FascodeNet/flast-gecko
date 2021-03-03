@@ -9,7 +9,7 @@
 // formal protocols
 #include "mozView.h"
 #ifdef ACCESSIBILITY
-#  include "mozilla/a11y/Accessible.h"
+#  include "mozilla/a11y/LocalAccessible.h"
 #  include "mozAccessibleProtocol.h"
 #endif
 
@@ -386,13 +386,17 @@ class nsChildView final : public nsBaseWidget {
                                             const nsAString& aUnmodifiedCharacters,
                                             nsIObserver* aObserver) override;
 
-  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint, uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags,
+  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
+                                              NativeMouseMessage aNativeMessage,
+                                              mozilla::MouseButton aButton,
+                                              nsIWidget::Modifiers aModifierFlags,
                                               nsIObserver* aObserver) override;
 
   virtual nsresult SynthesizeNativeMouseMove(LayoutDeviceIntPoint aPoint,
                                              nsIObserver* aObserver) override {
-    return SynthesizeNativeMouseEvent(aPoint, NSEventTypeMouseMoved, 0, aObserver);
+    return SynthesizeNativeMouseEvent(aPoint, NativeMouseMessage::Move,
+                                      mozilla::MouseButton::eNotPressed,
+                                      nsIWidget::Modifiers::NO_MODIFIERS, aObserver);
   }
   virtual nsresult SynthesizeNativeMouseScrollEvent(LayoutDeviceIntPoint aPoint,
                                                     uint32_t aNativeMessage, double aDeltaX,
@@ -418,7 +422,7 @@ class nsChildView final : public nsBaseWidget {
   void HandleMainThreadCATransaction();
 
 #ifdef ACCESSIBILITY
-  already_AddRefed<mozilla::a11y::Accessible> GetDocumentAccessible();
+  already_AddRefed<mozilla::a11y::LocalAccessible> GetDocumentAccessible();
 #endif
 
   virtual void CreateCompositor() override;

@@ -29,6 +29,7 @@ namespace dom {
 template class syncedcontext::Transaction<WindowContext>;
 
 static LazyLogModule gWindowContextLog("WindowContext");
+static LazyLogModule gWindowContextSyncLog("WindowContextSync");
 
 extern mozilla::LazyLogModule gUserInteractionPRLog;
 
@@ -40,6 +41,9 @@ static StaticAutoPtr<WindowContextByIdMap> gWindowContexts;
 
 /* static */
 LogModule* WindowContext::GetLog() { return gWindowContextLog; }
+
+/* static */
+LogModule* WindowContext::GetSyncLog() { return gWindowContextSyncLog; }
 
 /* static */
 already_AddRefed<WindowContext> WindowContext::GetById(
@@ -260,6 +264,11 @@ bool WindowContext::CanSet(FieldIndex<IDX_IsLocalIP>, const bool& aValue,
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 
+bool WindowContext::CanSet(FieldIndex<IDX_HadLazyLoadImage>, const bool& aValue,
+                           ContentParent* aSource) {
+  return IsTop();
+}
+
 void WindowContext::DidSet(FieldIndex<IDX_SHEntryHasUserInteraction>,
                            bool aOldValue) {
   MOZ_ASSERT(
@@ -343,7 +352,7 @@ void WindowContext::Init() {
     gWindowContexts = new WindowContextByIdMap();
     ClearOnShutdown(&gWindowContexts);
   }
-  auto& entry = gWindowContexts->GetOrInsert(mInnerWindowId);
+  auto& entry = gWindowContexts->LookupOrInsert(mInnerWindowId);
   MOZ_RELEASE_ASSERT(!entry, "Duplicate WindowContext for ID!");
   entry = this;
 

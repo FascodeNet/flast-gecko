@@ -4,7 +4,6 @@ browser/components/translation/cld2/
 browser/extensions/formautofill/content/third-party/
 browser/extensions/formautofill/test/fixtures/third_party/
 browser/extensions/screenshots/build/raven.js
-devtools/client/debugger/flow-typed/npm/
 devtools/client/inspector/markup/test/lib_*
 devtools/client/jsonview/lib/require.js
 devtools/client/shared/demangle.js
@@ -141,7 +140,7 @@ netwerk/srtp/src/
 nsprpub/
 other-licenses/
 parser/expat/
-remote/test/browser/chrome-remote-interface.js
+remote/cdp/test/browser/chrome-remote-interface.js
 remote/test/puppeteer/
 security/nss/
 security/sandbox/chromium/

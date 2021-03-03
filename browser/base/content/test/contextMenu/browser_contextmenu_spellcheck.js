@@ -29,6 +29,8 @@ add_task(async function test_text_input_spellcheck() {
     [
       "context-undo",
       false,
+      "context-redo",
+      false,
       "---",
       null,
       "context-cut",
@@ -39,8 +41,6 @@ add_task(async function test_text_input_spellcheck() {
       "context-paste",
       null, // ignore clipboard state
       "context-delete",
-      null,
-      "---",
       null,
       "context-selectall",
       null,
@@ -90,6 +90,8 @@ add_task(async function test_text_input_spellcheckwrong() {
       null,
       "context-undo",
       null,
+      "context-redo",
+      null,
       "---",
       null,
       "context-cut",
@@ -99,8 +101,6 @@ add_task(async function test_text_input_spellcheckwrong() {
       "context-paste",
       null, // ignore clipboard state
       "context-delete",
-      null,
-      "---",
       null,
       "context-selectall",
       null,
@@ -127,6 +127,8 @@ add_task(async function test_text_input_spellcheckwrong() {
 const kCorrectItems = [
   "context-undo",
   false,
+  "context-redo",
+  false,
   "---",
   null,
   "context-cut",
@@ -136,8 +138,6 @@ const kCorrectItems = [
   "context-paste",
   null, // ignore clipboard state
   "context-delete",
-  null,
-  "---",
   null,
   "context-selectall",
   null,

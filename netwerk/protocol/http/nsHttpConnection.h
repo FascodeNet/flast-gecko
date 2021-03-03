@@ -73,6 +73,18 @@ class nsHttpConnection final : public HttpConnectionBase,
 
   nsHttpConnection();
 
+  // Initialize the connection:
+  //  info        - specifies the connection parameters.
+  //  maxHangTime - limits the amount of time this connection can spend on a
+  //                single transaction before it should no longer be kept
+  //                alive.  a value of 0xffff indicates no limit.
+  [[nodiscard]] virtual nsresult Init(nsHttpConnectionInfo* info,
+                                      uint16_t maxHangTime, nsISocketTransport*,
+                                      nsIAsyncInputStream*,
+                                      nsIAsyncOutputStream*,
+                                      bool connectedTransport, nsresult status,
+                                      nsIInterfaceRequestor*, PRIntervalTime);
+
   //-------------------------------------------------------------------------
   // XXX document when these are ok to call
 
@@ -168,6 +180,15 @@ class nsHttpConnection final : public HttpConnectionBase,
 
   bool CanAcceptWebsocket() override;
 
+  int64_t BytesWritten() override { return mTotalBytesWritten; }
+
+  nsISocketTransport* Transport() override { return mSocketTransport; }
+
+  nsresult GetSelfAddr(NetAddr* addr) override;
+  nsresult GetPeerAddr(NetAddr* addr) override;
+  bool ResolvedByTRR() override;
+  bool GetEchConfigUsed() override;
+
  private:
   // Value (set in mTCPKeepaliveConfig) indicates which set of prefs to use.
   enum TCPKeepaliveConfig {
@@ -216,6 +237,8 @@ class nsHttpConnection final : public HttpConnectionBase,
   [[nodiscard]] nsresult StartShortLivedTCPKeepalives();
   [[nodiscard]] nsresult StartLongLivedTCPKeepalives();
   [[nodiscard]] nsresult DisableTCPKeepalives();
+
+  bool CheckCanWrite0RTTData();
 
  private:
   // mTransaction only points to the HTTP Transaction callbacks if the
@@ -328,8 +351,13 @@ class nsHttpConnection final : public HttpConnectionBase,
   nsCString mEarlyNegotiatedALPN;
   bool mDid0RTTSpdy;
 
+  nsresult mErrorBeforeConnect = NS_OK;
+
+  nsCOMPtr<nsISocketTransport> mSocketTransport;
+
  private:
   bool mThroughCaptivePortal;
+  int64_t mTotalBytesWritten;  // does not include CONNECT tunnel
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsHttpConnection, NS_HTTPCONNECTION_IID)

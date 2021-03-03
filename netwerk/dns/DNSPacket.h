@@ -7,9 +7,9 @@
 
 #include "mozilla/Maybe.h"
 #include "mozilla/Result.h"
-#include "nsHostResolver.h"
 #include "pk11pub.h"
 #include "ScopedNSSTypes.h"
+#include "nsIDNSService.h"
 
 namespace mozilla {
 namespace net {
@@ -31,6 +31,17 @@ enum TrrType {
   TRRTYPE_OPT = 41,
   TRRTYPE_TXT = 16,
   TRRTYPE_HTTPSSVC = nsIDNSService::RESOLVE_TYPE_HTTPSSVC,  // 65
+};
+
+enum class DNSPacketStatus : uint8_t {
+  Unknown = 0,
+  Success,
+  KeyNotAvailable,
+  KeyNotUsable,
+  EncodeError,
+  EncryptError,
+  DecodeError,
+  DecryptError,
 };
 
 class DNSPacket {
@@ -57,6 +68,8 @@ class DNSPacket {
       nsClassHashtable<nsCStringHashKey, DOHresp>& aAdditionalRecords,
       uint32_t& aTTL);
 
+  DNSPacketStatus PacketStatus() const { return mStatus; }
+
  protected:
   // Never accept larger DOH responses than this as that would indicate
   // something is wrong. Typical ones are much smaller.
@@ -74,9 +87,17 @@ class DNSPacket {
       nsClassHashtable<nsCStringHashKey, DOHresp>& aAdditionalRecords,
       uint32_t& aTTL, const unsigned char* aBuffer, uint32_t aLen);
 
+  void SetDNSPacketStatus(DNSPacketStatus aStatus) {
+    if (mStatus == DNSPacketStatus::Unknown ||
+        mStatus == DNSPacketStatus::Success) {
+      mStatus = aStatus;
+    }
+  }
+
   // The response buffer.
   unsigned char mResponse[MAX_SIZE]{};
   unsigned int mBodySize = 0;
+  DNSPacketStatus mStatus = DNSPacketStatus::Unknown;
 };
 
 class ODoHDNSPacket final : public DNSPacket {

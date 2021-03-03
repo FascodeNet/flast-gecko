@@ -867,9 +867,9 @@ EGLSurface GLContextEGL::CreateWaylandBufferSurface(
       config, reinterpret_cast<EGLNativeWindowType>(eglwindow), 0);
   if (surface) {
 #ifdef MOZ_GTK_WAYLAND
-    WaylandGLSurface* waylandData = new WaylandGLSurface(wlsurface, eglwindow);
-    auto entry = sWaylandGLSurface.LookupForAdd(surface);
-    entry.OrInsert([&waylandData]() { return waylandData; });
+    MOZ_ASSERT(!sWaylandGLSurface.Contains(surface));
+    sWaylandGLSurface.LookupOrInsert(
+        surface, new WaylandGLSurface(wlsurface, eglwindow));
 #endif
   }
 

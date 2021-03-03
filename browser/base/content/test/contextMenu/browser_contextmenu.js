@@ -34,9 +34,6 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-/* import-globals-from ../general/head.js */
-Services.scriptloader.loadSubScript(head_base + "head.js", this);
-
 function getThisFrameSubMenu(base_menu) {
   if (AppConstants.NIGHTLY_BUILD) {
     let osPidItem = ["context-frameOsPid", false];
@@ -180,8 +177,6 @@ add_task(async function test_plaintext() {
     "---",
     null,
     "context-viewsource",
-    true,
-    "context-viewinfo",
     true,
   ];
   await test_contextmenu("#test-text", plainTextItems, {
@@ -717,8 +712,6 @@ add_task(async function test_iframe() {
     null,
     "context-viewsource",
     true,
-    "context-viewinfo",
-    true,
   ]);
 });
 
@@ -1050,8 +1043,6 @@ add_task(async function test_pdf_viewer_in_iframe() {
       null,
       "context-viewsource",
       true,
-      "context-viewinfo",
-      true,
     ],
     { maybeScreenshotsPresent: true, shiftkey: true }
   );
@@ -1065,6 +1056,7 @@ add_task(async function test_textarea() {
   /*
   yield test_contextmenu("#test-textarea",
     ["context-undo",                false,
+     "context-redo",                false,
      "---",                         null,
      "context-cut",                 true,
      "context-copy",                true,
@@ -1091,6 +1083,7 @@ add_task(async function test_textarea_spellcheck() {
      "spell-add-to-dictionary", true,
      "---",                 null,
      "context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
@@ -1131,12 +1124,12 @@ add_task(async function test_undo_add_to_dictionary() {
     ["spell-undo-add-to-dictionary", true,
      "---",                 null,
      "context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      false,
-     "---",                 null,
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
@@ -1165,12 +1158,12 @@ add_task(async function test_contenteditable() {
      "spell-add-to-dictionary", true,
      "---",                 null,
      "context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      false,
-     "---",                 null,
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
@@ -1296,8 +1289,6 @@ add_task(async function test_pagemenu() {
       null,
       "context-viewsource",
       true,
-      "context-viewinfo",
-      true,
     ],
     {
       async postCheckContextMenuFn() {
@@ -1366,18 +1357,18 @@ add_task(async function test_dom_full_screen() {
       null,
       "context-viewsource",
       true,
-      "context-viewinfo",
-      true,
     ],
     {
       maybeScreenshotsPresent: true,
       shiftkey: true,
       async preCheckContextMenuFn() {
-        await pushPrefs(
-          ["full-screen-api.allow-trusted-requests-only", false],
-          ["full-screen-api.transition-duration.enter", "0 0"],
-          ["full-screen-api.transition-duration.leave", "0 0"]
-        );
+        await SpecialPowers.pushPrefEnv({
+          set: [
+            ["full-screen-api.allow-trusted-requests-only", false],
+            ["full-screen-api.transition-duration.enter", "0 0"],
+            ["full-screen-api.transition-duration.leave", "0 0"],
+          ],
+        });
         await SpecialPowers.spawn(
           gBrowser.selectedBrowser,
           [],
@@ -1452,8 +1443,6 @@ add_task(async function test_pagemenu2() {
       "---",
       null,
       "context-viewsource",
-      true,
-      "context-viewinfo",
       true,
     ],
     { maybeScreenshotsPresent: true, shiftkey: true }
@@ -1633,12 +1622,12 @@ add_task(async function test_select_input_text() {
   /*
   yield test_contextmenu("#test-select-input-text",
     ["context-undo",                 false,
+     "context-redo",                 false,
      "---",                          null,
      "context-cut",                  true,
      "context-copy",                 true,
      "context-paste",                null, // ignore clipboard state
      "context-delete",               true,
-     "---",                          null,
      "context-selectall",            true,
      "context-searchselect",         true,
      "context-searchselect-private", true,
@@ -1666,12 +1655,12 @@ add_task(async function test_select_input_text_password() {
   /*
   yield test_contextmenu("#test-select-input-text-type-password",
     ["context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      true,
-     "---",                 null,
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
@@ -1780,8 +1769,6 @@ add_task(async function test_srcdoc() {
     null,
     "context-viewsource",
     true,
-    "context-viewinfo",
-    true,
   ]);
 });
 
@@ -1791,12 +1778,12 @@ add_task(async function test_input_spell_false() {
   /*
   yield test_contextmenu("#test-contenteditable-spellcheck-false",
     ["context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      false,
-     "---",                 null,
      "context-selectall",   true,
     ]
   );

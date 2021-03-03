@@ -20,10 +20,10 @@ namespace a11y {
 class xpcAccessibleTableCell : public xpcAccessibleHyperText,
                                public nsIAccessibleTableCell {
  public:
-  explicit xpcAccessibleTableCell(Accessible* aIntl)
+  explicit xpcAccessibleTableCell(LocalAccessible* aIntl)
       : xpcAccessibleHyperText(aIntl) {}
 
-  xpcAccessibleTableCell(ProxyAccessible* aProxy, uint32_t aInterfaces)
+  xpcAccessibleTableCell(RemoteAccessible* aProxy, uint32_t aInterfaces)
       : xpcAccessibleHyperText(aProxy, aInterfaces) {}
 
   NS_DECL_ISUPPORTS_INHERITED
@@ -43,7 +43,7 @@ class xpcAccessibleTableCell : public xpcAccessibleHyperText,
 
  private:
   TableCellAccessible* Intl() {
-    if (Accessible* acc = mIntl.AsAccessible()) {
+    if (LocalAccessible* acc = mIntl.AsAccessible()) {
       return acc->AsTableCell();
     }
 

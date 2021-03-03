@@ -35,6 +35,8 @@ nsLookAndFeel::nsLookAndFeel(const LookAndFeelCache* aCache)
       mAllowOverlayScrollbarsOverlapCached(false),
       mSystemUsesDarkTheme(-1),
       mSystemUsesDarkThemeCached(false),
+      mUseAccessibilityTheme(-1),
+      mUseAccessibilityThemeCached(false),
       mColorTextSelectBackground(0),
       mColorTextSelectBackgroundDisabled(0),
       mColorHighlight(0),
@@ -105,6 +107,7 @@ void nsLookAndFeel::RefreshImpl() {
     mAllowOverlayScrollbarsOverlapCached = false;
     mPrefersReducedMotionCached = false;
     mSystemUsesDarkThemeCached = false;
+    mUseAccessibilityThemeCached = false;
   }
 
   // Fetch colors next time they are requested.
@@ -188,6 +191,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
       aColor = ProcessSelectionBackground(mColorTextSelectBackgroundDisabled);
       break;
     case ColorID::Highlight:  // CSS2 color
+    case ColorID::MozAccentColor:
       aColor = mColorHighlight;
       break;
     case ColorID::MozMenuhover:
@@ -197,6 +201,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
       aColor = mColorTextSelectForeground;
       break;
     case ColorID::Highlighttext:  // CSS2 color
+    case ColorID::MozAccentColorForeground:
     case ColorID::MozMenuhovertext:
       aColor = mColorMenuHoverText;
       break;
@@ -424,7 +429,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
 }
 
 nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   nsresult res = NS_OK;
 
@@ -585,13 +590,28 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       }
       aResult = mPrefersReducedMotion;
       break;
+    case IntID::UseAccessibilityTheme:
+      // Without native event loops,
+      // NSWorkspace.accessibilityDisplayShouldIncreaseContrast returns stale
+      // information, so we get the information only on the parent processes
+      // or when it's the initial query on child processes.  Otherwise we will
+      // get the info via LookAndFeel::SetIntCache on child processes.
+      if (!mUseAccessibilityThemeCached &&
+          [[NSWorkspace sharedWorkspace]
+              respondsToSelector:@selector(accessibilityDisplayShouldIncreaseContrast)]) {
+        mUseAccessibilityTheme =
+            [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldIncreaseContrast] ? 1 : 0;
+        mUseAccessibilityThemeCached = true;
+      }
+      aResult = mUseAccessibilityTheme;
+      break;
     default:
       aResult = 0;
       res = NS_ERROR_FAILURE;
   }
   return res;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
 }
 
 nsresult nsLookAndFeel::NativeGetFloat(FloatID aID, float& aResult) {
@@ -626,7 +646,7 @@ bool nsLookAndFeel::SystemWantsDarkTheme() {
 }
 
 bool nsLookAndFeel::NativeGetFont(FontID aID, nsString& aFontName, gfxFontStyle& aFontStyle) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_RETURN;
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
   // hack for now
   if (aID == FontID::Window || aID == FontID::Document) {
@@ -648,7 +668,7 @@ bool nsLookAndFeel::NativeGetFont(FontID aID, nsString& aFontName, gfxFontStyle&
 
   return true;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(false);
+  NS_OBJC_END_TRY_BLOCK_RETURN(false);
 }
 
 mozilla::widget::LookAndFeelCache nsLookAndFeel::GetCacheImpl() {
@@ -668,6 +688,11 @@ mozilla::widget::LookAndFeelCache nsLookAndFeel::GetCacheImpl() {
   prefersReducedMotion.id() = IntID::PrefersReducedMotion;
   prefersReducedMotion.value() = GetInt(IntID::PrefersReducedMotion);
   cache.mInts().AppendElement(prefersReducedMotion);
+
+  LookAndFeelInt useAccessibilityTheme;
+  useAccessibilityTheme.id() = IntID::UseAccessibilityTheme;
+  useAccessibilityTheme.value() = GetInt(IntID::UseAccessibilityTheme);
+  cache.mInts().AppendElement(useAccessibilityTheme);
 
   LookAndFeelInt systemUsesDarkTheme;
   systemUsesDarkTheme.id() = IntID::SystemUsesDarkTheme;
@@ -698,6 +723,10 @@ void nsLookAndFeel::DoSetCache(const LookAndFeelCache& aCache) {
         mPrefersReducedMotion = entry.value();
         mPrefersReducedMotionCached = true;
         break;
+      case IntID::UseAccessibilityTheme:
+        mUseAccessibilityTheme = entry.value();
+        mUseAccessibilityThemeCached = true;
+        break;
       default:
         MOZ_ASSERT_UNREACHABLE("Bogus Int ID in cache");
         break;
@@ -711,7 +740,7 @@ void nsLookAndFeel::EnsureInit() {
   }
   mInitialized = true;
 
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK
 
   nscolor color;
 
@@ -773,5 +802,5 @@ void nsLookAndFeel::EnsureInit() {
 
   RecordTelemetry();
 
-  NS_OBJC_END_TRY_ABORT_BLOCK
+  NS_OBJC_END_TRY_IGNORE_BLOCK
 }

@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "AccessibleWrap.h"
-#include "Accessible-inl.h"
+#include "LocalAccessible-inl.h"
 
 #include "Compatibility.h"
 #include "DocAccessible-inl.h"
@@ -17,7 +17,7 @@
 #include "nsIAccessibleEvent.h"
 #include "nsWindowsHelpers.h"
 #include "nsWinUtils.h"
-#include "mozilla/a11y/ProxyAccessible.h"
+#include "mozilla/a11y/RemoteAccessible.h"
 #include "ProxyWrappers.h"
 #include "ServiceProvider.h"
 #include "Relation.h"
@@ -76,7 +76,7 @@ static const int32_t kIEnumVariantDisconnected = -1;
 // AccessibleWrap
 ////////////////////////////////////////////////////////////////////////////////
 AccessibleWrap::AccessibleWrap(nsIContent* aContent, DocAccessible* aDoc)
-    : Accessible(aContent, aDoc), mID(kNoID) {}
+    : LocalAccessible(aContent, aDoc), mID(kNoID) {}
 
 AccessibleWrap::~AccessibleWrap() {
   if (mID != kNoID) {
@@ -86,7 +86,7 @@ AccessibleWrap::~AccessibleWrap() {
 
 ITypeInfo* AccessibleWrap::gTypeInfo = nullptr;
 
-NS_IMPL_ISUPPORTS_INHERITED0(AccessibleWrap, Accessible)
+NS_IMPL_ISUPPORTS_INHERITED0(AccessibleWrap, LocalAccessible)
 
 void AccessibleWrap::Shutdown() {
   if (mID != kNoID) {
@@ -120,7 +120,7 @@ void AccessibleWrap::Shutdown() {
     mAssociatedCOMObjectsForDisconnection.Clear();
   }
 
-  Accessible::Shutdown();
+  LocalAccessible::Shutdown();
 }
 
 //-----------------------------------------------------
@@ -203,7 +203,7 @@ AccessibleWrap::get_accParent(IDispatch __RPC_FAR* __RPC_FAR* ppdispParent) {
 
   if (IsDefunct()) return CO_E_OBJNOTCONNECTED;
 
-  Accessible* xpParentAcc = Parent();
+  LocalAccessible* xpParentAcc = LocalParent();
   if (!xpParentAcc) return S_FALSE;
 
   *ppdispParent = NativeAccessible(xpParentAcc);
@@ -441,7 +441,7 @@ AccessibleWrap::get_accRole(
   // the MSAA role a ROLE_OUTLINEITEM for consistency and compatibility. We need
   // this because ARIA has a role of "row" for both grid and treegrid
   if (geckoRole == roles::ROW) {
-    Accessible* xpParent = Parent();
+    LocalAccessible* xpParent = LocalParent();
     if (xpParent && xpParent->Role() == roles::TREE_TABLE)
       msaaRole = ROLE_SYSTEM_OUTLINEITEM;
   }
@@ -596,7 +596,7 @@ AccessibleWrap::get_accFocus(
   if (IsDefunct()) return CO_E_OBJNOTCONNECTED;
 
   // Return the current IAccessible child that has focus
-  Accessible* focusedAccessible = FocusedChild();
+  LocalAccessible* focusedAccessible = FocusedChild();
 
   if (focusedAccessible == this) {
     pvarChild->vt = VT_I4;
@@ -617,7 +617,7 @@ AccessibleWrap::get_accFocus(
  */
 class AccessibleEnumerator final : public IEnumVARIANT {
  public:
-  explicit AccessibleEnumerator(const nsTArray<Accessible*>& aArray)
+  explicit AccessibleEnumerator(const nsTArray<LocalAccessible*>& aArray)
       : mArray(aArray.Clone()), mCurIndex(0) {}
   AccessibleEnumerator(const AccessibleEnumerator& toCopy)
       : mArray(toCopy.mArray.Clone()), mCurIndex(toCopy.mCurIndex) {}
@@ -637,7 +637,7 @@ class AccessibleEnumerator final : public IEnumVARIANT {
   STDMETHODIMP Clone(IEnumVARIANT FAR* FAR* ppenum);
 
  private:
-  nsTArray<Accessible*> mArray;
+  nsTArray<LocalAccessible*> mArray;
   uint32_t mCurIndex;
 };
 
@@ -684,7 +684,6 @@ AccessibleEnumerator::Next(unsigned long celt, VARIANT FAR* rgvar,
 STDMETHODIMP
 AccessibleEnumerator::Clone(IEnumVARIANT FAR* FAR* ppenum) {
   *ppenum = new AccessibleEnumerator(*this);
-  if (!*ppenum) return E_OUTOFMEMORY;
   NS_ADDREF(*ppenum);
   return S_OK;
 }
@@ -731,7 +730,7 @@ AccessibleWrap::get_accSelection(VARIANT __RPC_FAR* pvarChildren) {
     return S_OK;
   }
 
-  AutoTArray<Accessible*, 10> selectedItems;
+  AutoTArray<LocalAccessible*, 10> selectedItems;
   SelectedItems(&selectedItems);
   uint32_t count = selectedItems.Length();
   if (count == 1) {
@@ -797,7 +796,7 @@ AccessibleWrap::accSelect(
       // is happening, so we dispatch TakeFocus from the main thread to
       // guarantee that we are outside any IPC.
       nsCOMPtr<nsIRunnable> runnable = mozilla::NewRunnableMethod(
-          "Accessible::TakeFocus", this, &Accessible::TakeFocus);
+          "LocalAccessible::TakeFocus", this, &LocalAccessible::TakeFocus);
       NS_DispatchToMainThread(runnable, NS_DISPATCH_NORMAL);
       return S_OK;
     }
@@ -880,7 +879,7 @@ AccessibleWrap::accNavigate(
     return accessible->accNavigate(navDir, kVarChildIdSelf, pvarEndUpAt);
   }
 
-  Accessible* navAccessible = nullptr;
+  LocalAccessible* navAccessible = nullptr;
   Maybe<RelationType> xpRelation;
 
 #define RELATIONTYPE(geckoType, stringType, atkType, msaaType, ia2Type) \
@@ -892,28 +891,28 @@ AccessibleWrap::accNavigate(
     case NAVDIR_FIRSTCHILD:
       if (IsProxy()) {
         if (!nsAccUtils::MustPrune(Proxy())) {
-          navAccessible = WrapperFor(Proxy()->FirstChild());
+          navAccessible = WrapperFor(Proxy()->RemoteFirstChild());
         }
       } else {
-        if (!nsAccUtils::MustPrune(this)) navAccessible = FirstChild();
+        if (!nsAccUtils::MustPrune(this)) navAccessible = LocalFirstChild();
       }
       break;
     case NAVDIR_LASTCHILD:
       if (IsProxy()) {
         if (!nsAccUtils::MustPrune(Proxy())) {
-          navAccessible = WrapperFor(Proxy()->LastChild());
+          navAccessible = WrapperFor(Proxy()->RemoteLastChild());
         }
       } else {
-        if (!nsAccUtils::MustPrune(this)) navAccessible = LastChild();
+        if (!nsAccUtils::MustPrune(this)) navAccessible = LocalLastChild();
       }
       break;
     case NAVDIR_NEXT:
-      navAccessible =
-          IsProxy() ? WrapperFor(Proxy()->NextSibling()) : NextSibling();
+      navAccessible = IsProxy() ? WrapperFor(Proxy()->RemoteNextSibling())
+                                : LocalNextSibling();
       break;
     case NAVDIR_PREVIOUS:
-      navAccessible =
-          IsProxy() ? WrapperFor(Proxy()->PrevSibling()) : PrevSibling();
+      navAccessible = IsProxy() ? WrapperFor(Proxy()->RemotePrevSibling())
+                                : LocalPrevSibling();
       break;
     case NAVDIR_DOWN:
     case NAVDIR_LEFT:
@@ -955,7 +954,7 @@ AccessibleWrap::accHitTest(
 
   if (IsDefunct()) return CO_E_OBJNOTCONNECTED;
 
-  Accessible* accessible = ChildAtPoint(xLeft, yTop, eDirectChild);
+  LocalAccessible* accessible = ChildAtPoint(xLeft, yTop, eDirectChild);
 
   // if we got a child
   if (accessible) {
@@ -963,7 +962,7 @@ AccessibleWrap::accHitTest(
     if (accessible == this) {
       pvarChild->vt = VT_I4;
       pvarChild->lVal = CHILDID_SELF;
-    } else {  // its not create an Accessible for it.
+    } else {  // its not create a LocalAccessible for it.
       pvarChild->vt = VT_DISPATCH;
       pvarChild->pdispVal = NativeAccessible(accessible);
     }
@@ -1110,7 +1109,8 @@ static bool IsHandlerInvalidationNeeded(uint32_t aEvent) {
   }
 }
 
-void AccessibleWrap::FireWinEvent(Accessible* aTarget, uint32_t aEventType) {
+void AccessibleWrap::FireWinEvent(LocalAccessible* aTarget,
+                                  uint32_t aEventType) {
   MOZ_ASSERT(XRE_IsParentProcess());
   static_assert(sizeof(gWinEventMap) / sizeof(gWinEventMap[0]) ==
                     nsIAccessibleEvent::EVENT_LAST_ENTRY,
@@ -1139,10 +1139,10 @@ void AccessibleWrap::FireWinEvent(Accessible* aTarget, uint32_t aEventType) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Accessible
+// LocalAccessible
 
 nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
-  nsresult rv = Accessible::HandleAccEvent(aEvent);
+  nsresult rv = LocalAccessible::HandleAccEvent(aEvent);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (IPCAccessibilityActive()) {
@@ -1154,7 +1154,7 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
   // Means we're not active.
   NS_ENSURE_TRUE(!IsDefunct(), NS_ERROR_FAILURE);
 
-  Accessible* accessible = aEvent->GetAccessible();
+  LocalAccessible* accessible = aEvent->GetAccessible();
   if (!accessible) return NS_OK;
 
   if (eventType == nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED ||
@@ -1167,10 +1167,10 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
   return NS_OK;
 }
 
-DocProxyAccessibleWrap* AccessibleWrap::DocProxyWrapper() const {
+DocRemoteAccessibleWrap* AccessibleWrap::DocProxyWrapper() const {
   MOZ_ASSERT(IsProxy());
 
-  ProxyAccessible* proxy = Proxy();
+  RemoteAccessible* proxy = Proxy();
   if (!proxy) {
     return nullptr;
   }
@@ -1178,7 +1178,7 @@ DocProxyAccessibleWrap* AccessibleWrap::DocProxyWrapper() const {
   AccessibleWrap* acc = WrapperFor(proxy->Document());
   MOZ_ASSERT(acc->IsDoc());
 
-  return static_cast<DocProxyAccessibleWrap*>(acc);
+  return static_cast<DocRemoteAccessibleWrap*>(acc);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1186,7 +1186,7 @@ DocProxyAccessibleWrap* AccessibleWrap::DocProxyWrapper() const {
 
 //------- Helper methods ---------
 
-int32_t AccessibleWrap::GetChildIDFor(Accessible* aAccessible) {
+int32_t AccessibleWrap::GetChildIDFor(LocalAccessible* aAccessible) {
   // A child ID of the window is required, when we use NotifyWinEvent,
   // so that the 3rd party application can call back and get the IAccessible
   // the event occurred on.
@@ -1217,13 +1217,13 @@ int32_t AccessibleWrap::GetChildIDFor(Accessible* aAccessible) {
   return *id;
 }
 
-HWND AccessibleWrap::GetHWNDFor(Accessible* aAccessible) {
+HWND AccessibleWrap::GetHWNDFor(LocalAccessible* aAccessible) {
   if (!aAccessible) {
     return nullptr;
   }
 
   if (aAccessible->IsProxy()) {
-    ProxyAccessible* proxy = aAccessible->Proxy();
+    RemoteAccessible* proxy = aAccessible->Proxy();
     if (!proxy) {
       return nullptr;
     }
@@ -1241,7 +1241,7 @@ HWND AccessibleWrap::GetHWNDFor(Accessible* aAccessible) {
     // Accessibles in child processes are said to have the HWND of the window
     // their tab is within.  Popups are always in the parent process, and so
     // never proxied, which means this is basically correct.
-    Accessible* outerDoc = proxy->OuterDocOfRemoteBrowser();
+    LocalAccessible* outerDoc = proxy->OuterDocOfRemoteBrowser();
     if (!outerDoc) {
       // In some cases, the outer document accessible may be unattached from its
       // document at this point, if it is scheduled for removal. Do not assert
@@ -1280,7 +1280,7 @@ HWND AccessibleWrap::GetHWNDFor(Accessible* aAccessible) {
   return static_cast<HWND>(document->GetNativeWindow());
 }
 
-IDispatch* AccessibleWrap::NativeAccessible(Accessible* aAccessible) {
+IDispatch* AccessibleWrap::NativeAccessible(LocalAccessible* aAccessible) {
   if (!aAccessible) {
     NS_WARNING("Not passing in an aAccessible");
     return nullptr;
@@ -1291,8 +1291,9 @@ IDispatch* AccessibleWrap::NativeAccessible(Accessible* aAccessible) {
   return static_cast<IDispatch*>(msaaAccessible);
 }
 
-static Accessible* GetAccessibleInSubtree(DocAccessible* aDoc, uint32_t aID) {
-  Accessible* child =
+static LocalAccessible* GetAccessibleInSubtree(DocAccessible* aDoc,
+                                               uint32_t aID) {
+  LocalAccessible* child =
       static_cast<DocAccessibleWrap*>(aDoc)->GetAccessibleByID(aID);
   if (child) return child;
 
@@ -1307,7 +1308,7 @@ static Accessible* GetAccessibleInSubtree(DocAccessible* aDoc, uint32_t aID) {
 
 static already_AddRefed<IDispatch> GetProxiedAccessibleInSubtree(
     const DocAccessibleParent* aDoc, const VARIANT& aVarChild) {
-  auto wrapper = static_cast<DocProxyAccessibleWrap*>(WrapperFor(aDoc));
+  auto wrapper = static_cast<DocRemoteAccessibleWrap*>(WrapperFor(aDoc));
   RefPtr<IAccessible> comProxy;
   int32_t docWrapperChildId = AccessibleWrap::GetChildIDFor(wrapper);
   // Only document accessible proxies at the top level of their content process
@@ -1353,7 +1354,7 @@ bool AccessibleWrap::IsRootForHWND() {
     return true;
   }
   HWND thisHwnd = GetHWNDFor(this);
-  AccessibleWrap* parent = static_cast<AccessibleWrap*>(Parent());
+  AccessibleWrap* parent = static_cast<AccessibleWrap*>(LocalParent());
   MOZ_ASSERT(parent);
   HWND parentHwnd = GetHWNDFor(parent);
   return thisHwnd != parentHwnd;
@@ -1421,7 +1422,7 @@ already_AddRefed<IAccessible> AccessibleWrap::GetIAccessibleFor(
   if (varChild.lVal > 0) {
     // Gecko child indices are 0-based in contrast to indices used in MSAA.
     MOZ_ASSERT(!IsProxy());
-    Accessible* xpAcc = GetChildAt(varChild.lVal - 1);
+    LocalAccessible* xpAcc = LocalChildAt(varChild.lVal - 1);
     if (!xpAcc) {
       return nullptr;
     }
@@ -1438,7 +1439,7 @@ already_AddRefed<IAccessible> AccessibleWrap::GetIAccessibleFor(
   // this process.
   if (!IsProxy()) {
     DocAccessible* document = Document();
-    Accessible* child =
+    LocalAccessible* child =
         GetAccessibleInSubtree(document, static_cast<uint32_t>(varChild.lVal));
 
     // If it is a document then just return an accessible.
@@ -1451,7 +1452,7 @@ already_AddRefed<IAccessible> AccessibleWrap::GetIAccessibleFor(
 
     // Otherwise check whether the accessible is a child (this path works for
     // ARIA documents and popups).
-    Accessible* parent = child;
+    LocalAccessible* parent = child;
     while (parent && parent != document) {
       if (parent == this) {
         *aIsDefunct = child->IsDefunct();
@@ -1460,7 +1461,7 @@ already_AddRefed<IAccessible> AccessibleWrap::GetIAccessibleFor(
         return result.forget();
       }
 
-      parent = parent->Parent();
+      parent = parent->LocalParent();
     }
   }
 
@@ -1534,7 +1535,7 @@ already_AddRefed<IAccessible> AccessibleWrap::GetRemoteIAccessibleFor(
   for (size_t i = 0; i < remoteDocs->Length(); i++) {
     DocAccessibleParent* topRemoteDoc = remoteDocs->ElementAt(i);
 
-    Accessible* outerDoc = topRemoteDoc->OuterDocOfRemoteBrowser();
+    LocalAccessible* outerDoc = topRemoteDoc->OuterDocOfRemoteBrowser();
     if (!outerDoc) {
       continue;
     }
@@ -1571,8 +1572,8 @@ already_AddRefed<IAccessible> AccessibleWrap::GetRemoteIAccessibleFor(
 
     DebugOnly<HRESULT> hr =
         disp->QueryInterface(IID_IAccessible, getter_AddRefs(result));
-    // QI can fail on rare occasions if the Accessible dies after we fetched
-    // disp but before we QI.
+    // QI can fail on rare occasions if the LocalAccessible dies after we
+    // fetched disp but before we QI.
     NS_WARNING_ASSERTION(SUCCEEDED(hr), "QI failed on remote IDispatch");
     return result.forget();
   }
@@ -1580,7 +1581,7 @@ already_AddRefed<IAccessible> AccessibleWrap::GetRemoteIAccessibleFor(
   return nullptr;
 }
 
-void AccessibleWrap::UpdateSystemCaretFor(Accessible* aAccessible) {
+void AccessibleWrap::UpdateSystemCaretFor(LocalAccessible* aAccessible) {
   // Move the system caret so that Windows Tablet Edition and tradional ATs with
   // off-screen model can follow the caret
   ::DestroyCaret();
@@ -1602,12 +1603,12 @@ void AccessibleWrap::UpdateSystemCaretFor(Accessible* aAccessible) {
 
 /* static */
 void AccessibleWrap::UpdateSystemCaretFor(
-    ProxyAccessible* aProxy, const LayoutDeviceIntRect& aCaretRect) {
+    RemoteAccessible* aProxy, const LayoutDeviceIntRect& aCaretRect) {
   ::DestroyCaret();
 
   // The HWND should be the real widget HWND, not an emulated HWND.
   // We get the HWND from the proxy's outer doc to bypass window emulation.
-  Accessible* outerDoc = aProxy->OuterDocOfRemoteBrowser();
+  LocalAccessible* outerDoc = aProxy->OuterDocOfRemoteBrowser();
   UpdateSystemCaretFor(GetHWNDFor(outerDoc), aCaretRect);
 }
 

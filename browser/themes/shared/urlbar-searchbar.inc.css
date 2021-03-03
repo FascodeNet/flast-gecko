@@ -10,11 +10,28 @@
 %define urlbarSearchButtonWidth calc(16px + 2 * @identityBoxPaddingInline@)
 
 :root {
-  --toolbar-field-focus-border-color: Highlight;
-
   /* 28x28 box - 16x16 image = 12x12 padding, 6 on each side */
   --urlbar-icon-padding: 6px;
 }
+
+@supports not -moz-bool-pref("browser.proton.urlbar.enabled") {
+:root {
+  --toolbar-field-focus-border-color: -moz-accent-color;
+}
+} /*** END !proton ***/
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+:root {
+  --toolbar-field-focus-border-color: var(--focus-outline-color);
+}
+/* Override this value in the default dark theme. This value should be moved
+    to default-theme/manifest.json when the Proton prefs are removed. */
+:root[lwt-default-theme-in-dark-mode] {
+  --lwt-toolbar-field-border-color: transparent !important;
+}
+/* TODO: Bug 1692046: Add --lwt-toolbar-field-background-color override for
+  [lwt-default-theme-in-dark-mode]. */
+} /*** END proton ***/
 
 :root[uidensity=compact] {
   /* 24x24 box - 16x16 image = 8x8 padding, 4 on each side */
@@ -39,14 +56,43 @@
   color: FieldText;
 }
 
+@supports -moz-bool-pref("browser.proton.toolbar.enabled") {
+#urlbar-container,
+#search-container {
+  padding-block: 8px;
+}
+#urlbar,
+#searchbar {
+  min-height: 32px;
+}
+} /* END proton */
+
 #urlbar-background,
 #searchbar {
   background-color: Field;
   background-clip: padding-box;
   border: 1px solid @fieldBorderColor@;
   border-radius: var(--toolbarbutton-border-radius);
+}
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar-background,
+#searchbar {
+  border-color: transparent;
+}
+
+#urlbar:not([focused="true"]) > #urlbar-background,
+#searchbar:not(:focus-within) {
+  background-color: var(--toolbar-field-non-lwt-bgcolor, Field);
+}
+} /*** END proton ***/
+
+@supports not -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar-background,
+#searchbar {
   box-shadow: 0 1px 4px rgba(0,0,0,.05);
 }
+} /*** END !proton ***/
 
 #urlbar-input-container,
 #searchbar {
@@ -66,6 +112,7 @@
   outline: none;
 }
 
+@supports not -moz-bool-pref("browser.proton.urlbar.enabled") {
 #urlbar:not([focused="true"]):hover > #urlbar-background,
 #searchbar:not(:focus-within):hover {
   border-color: @fieldHoverBorderColor@;
@@ -76,6 +123,39 @@
 #searchbar:focus-within {
   border-color: var(--toolbar-field-focus-border-color);
 }
+} /*** END !proton ***/
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar[focused="true"]:not([suppress-focus-border]) > #urlbar-background {
+  border: var(--focus-outline);
+  /* We used --focus-outline above to inherit its width and style properties,
+     but we still want to use the theme's border-color.
+     --toolbar-field-focus-border-color is set equal to --focus-outline-color
+     on :root, but LWT themes can override this value. */
+  border-color: var(--toolbar-field-focus-border-color);
+}
+
+#urlbar[focused="true"] > #urlbar-background {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.13);
+}
+
+#urlbar[focused="true"][open] > #urlbar-background {
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.13);
+}
+
+/* We draw the searchbar's border as a combination of its 1px unfocused border
+   and a 1px inset box-shadow. If we did it all as a border, the searchbar's
+   contents would shift when its border-width expanded by 1px when focused.
+   Removing the border when focused would also shift contents. #urlbar gets
+   around this problem by applying its border to #urlbar-background, which is
+   positioned absolutely. We don't plan on changing the searchbar's UX
+   significantly, so it's better to avoid that extra complexity. */
+#searchbar:focus-within {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.13),
+              0 0 0 1px var(--toolbar-field-focus-border-color) inset;
+  border-color: var(--toolbar-field-focus-border-color);
+}
+} /*** END proton ***/
 
 #urlbar:-moz-lwtheme,
 #navigator-toolbox #searchbar:-moz-lwtheme {
@@ -202,6 +282,15 @@
   width: calc(100% + 2 * @urlbarMarginInline@ + 2 * @urlbarBreakoutExtend@);
 }
 
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar[breakout][breakout-extend] {
+  top: 0;
+  left: -@urlbarMarginInline@;
+  width: calc(100% + 2 * @urlbarMarginInline@);
+}
+} /*** END proton ***/
+
+@supports not -moz-bool-pref("browser.proton.urlbar.enabled") {
 #urlbar[breakout][breakout-extend] > #urlbar-background {
   box-shadow: 0 3px 8px 0 rgba(0,0,0,.15)
 }
@@ -209,12 +298,21 @@
 #urlbar[breakout][breakout-extend][open] > #urlbar-background {
   box-shadow: 0 5px 18px rgba(0,0,0,.2);
 }
+} /*** END !proton ***/
 
 #urlbar[breakout][breakout-extend] > #urlbar-input-container {
   height: calc(var(--urlbar-toolbar-height) + 2 * @urlbarBreakoutExtend@);
   padding-block: calc(@urlbarBreakoutExtend@ + (var(--urlbar-toolbar-height) - var(--urlbar-height)) / 2);
   padding-inline: calc(@urlbarMarginInline@ + @urlbarBreakoutExtend@);
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar[breakout][breakout-extend] > #urlbar-input-container {
+  height: var(--urlbar-toolbar-height);
+  padding-block: calc((var(--urlbar-toolbar-height) - var(--urlbar-height)) / 2);
+  padding-inline: @urlbarMarginInline@;
+}
+} /*** END proton ***/
 
 #urlbar.searchButton[breakout][breakout-extend] > #urlbar-input-container > #urlbar-search-button {
   fill: currentColor;
@@ -300,6 +398,15 @@
   color: #d6ebff;
 }
 
+/* Use system colors for low/high contrast mode */
+@media (prefers-contrast) {
+  #urlbar-search-mode-indicator {
+    background-color: Highlight;
+    outline-color: Highlight;
+    color: HighlightText;
+  }
+}
+
 #urlbar-search-mode-indicator-title {
   padding-inline: 5px;
 }
@@ -327,24 +434,15 @@
   background-color: var(--lwt-toolbar-field-focus);
 }
 
-#urlbar-search-mode-indicator:hover > #urlbar-search-mode-indicator-close {
-  display: block;
-}
-
-/* Windows high-contrast themes */
-%ifdef XP_WIN
-@media (-moz-windows-default-theme: 0) {
-  #urlbar-search-mode-indicator {
-    background-color: Highlight;
-    outline-color: Highlight;
-    color: HighlightText;
-  }
-
+@media (prefers-contrast) {
   #urlbar-search-mode-indicator-close {
     stroke-opacity: 1.0;
   }
 }
-%endif
+
+#urlbar-search-mode-indicator:hover > #urlbar-search-mode-indicator-close {
+  display: block;
+}
 
 @supports -moz-bool-pref("browser.urlbar.experimental.searchModeIndicatorHover") {
   #urlbar-search-mode-indicator-close:hover {
@@ -839,7 +937,7 @@
 
 #urlbar-zoom-button:-moz-focusring {
   outline: var(--toolbarbutton-focus-outline);
-  outline-offset: unset;
+  outline-offset: calc(var(--focus-outline-width) * -1);
   -moz-outline-radius: 1em;
 }
 

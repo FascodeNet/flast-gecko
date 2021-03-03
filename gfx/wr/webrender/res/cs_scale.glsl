@@ -5,14 +5,12 @@
 #include shared,prim_shared
 
 varying vec2 vUv;
-flat varying float vUvLayer;
 flat varying vec4 vUvRect;
 
 #ifdef WR_VERTEX_SHADER
 
 PER_INSTANCE in vec4 aScaleTargetRect;
 PER_INSTANCE in ivec4 aScaleSourceRect;
-PER_INSTANCE in int aScaleSourceLayer;
 
 void main(void) {
     RectWithSize src_rect = RectWithSize(vec2(aScaleSourceRect.xy), vec2(aScaleSourceRect.zw));
@@ -22,10 +20,8 @@ void main(void) {
 #ifdef WR_FEATURE_TEXTURE_RECT
     vec2 texture_size = vec2(1, 1);
 #else
-    vec2 texture_size = vec2(textureSize(sColor0, 0));
+    vec2 texture_size = vec2(TEX_SIZE(sColor0));
 #endif
-
-    vUvLayer = float(aScaleSourceLayer);
 
     vUvRect = vec4(src_rect.p0 + vec2(0.5),
                    src_rect.p0 + src_rect.size - vec2(0.5)) / texture_size.xyxy;
@@ -42,25 +38,12 @@ void main(void) {
 
 void main(void) {
     vec2 st = clamp(vUv, vUvRect.xy, vUvRect.zw);
-    oFragColor = TEX_SAMPLE(sColor0, vec3(st, vUvLayer));
+    oFragColor = TEX_SAMPLE(sColor0, st);
 }
 
-#ifdef SWGL
+#ifdef SWGL_DRAW_SPAN
 void swgl_drawSpanRGBA8() {
-    if (!swgl_isTextureRGBA8(sColor0)) {
-        return;
-    }
-
-    int layer = swgl_textureLayerOffset(sColor0, vUvLayer);
-    vec2 uv = swgl_linearQuantize(sColor0, vUv);
-    vec2 min_uv = swgl_linearQuantize(sColor0, vUvRect.xy);
-    vec2 max_uv = swgl_linearQuantize(sColor0, vUvRect.zw);
-    vec2 step_uv = swgl_linearQuantizeStep(sColor0, swgl_interpStep(vUv));
-
-    while (swgl_SpanLength > 0) {
-        swgl_commitTextureLinearRGBA8(sColor0, clamp(uv, min_uv, max_uv), layer);
-        uv += step_uv;
-    }
+    swgl_commitTextureLinearRGBA8(sColor0, vUv, vUvRect, 0.0);
 }
 #endif
 

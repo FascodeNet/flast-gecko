@@ -176,29 +176,29 @@ class WindowSurfaceWayland : public WindowSurface {
   void CacheImageSurface(const LayoutDeviceIntRegion& aRegion);
   bool CommitImageCacheToWaylandBuffer();
 
-  void DrawDelayedImageCommits(gfx::DrawTarget* aDrawTarget,
+  bool DrawDelayedImageCommits(gfx::DrawTarget* aDrawTarget,
                                LayoutDeviceIntRegion& aWaylandBufferDamage);
   // Return true if we need to sync Wayland events after this call.
   bool FlushPendingCommitsLocked();
 
   // TODO: Do we need to hold a reference to nsWindow object?
   nsWindow* mWindow;
+
   // Buffer screen rects helps us understand if we operate on
   // the same window size as we're called on WindowSurfaceWayland::Lock().
-  // mLockedScreenRect is window size when our wayland buffer was allocated.
-  LayoutDeviceIntRect mLockedScreenRect;
+  // mMozContainerRect is MozContainer size when our wayland buffer was
+  // allocated.
+  LayoutDeviceIntRect mMozContainerRect;
 
-  // mWLBufferRect is an intersection of mozcontainer widgetsize and
-  // mLockedScreenRect size. It can be different than mLockedScreenRect
-  // during resize when mBounds are updated immediately but actual
-  // GtkWidget size is updated asynchronously (see Bug 1489463).
+  // mWLBufferRect is size of allocated wl_buffer where we paint to.
+  // It needs to match MozContainer widget size.
   LayoutDeviceIntRect mWLBufferRect;
   RefPtr<nsWaylandDisplay> mWaylandDisplay;
 
   // Actual buffer (backed by wl_buffer) where all drawings go into.
   // Drawn areas are stored at mWaylandBufferDamage and if there's
   // any uncommited drawings which needs to be send to wayland compositor
-  // the mBufferPendingCommit is set.
+  // the mWLBufferIsDirty is set.
   WindowBackBuffer* mWaylandBuffer;
   WindowBackBuffer* mShmBackupBuffer[BACK_BUFFER_NUM];
 
@@ -211,7 +211,7 @@ class WindowSurfaceWayland : public WindowSurface {
   // Any next commit to wayland compositor will happen when frame callback
   // comes from wayland compositor back as it's the best time to do the commit.
   wl_callback* mFrameCallback;
-  wl_surface* mLastCommittedSurface;
+  int mLastCommittedSurfaceID;
 
   // Cached drawings. If we can't get WaylandBuffer (wl_buffer) at
   // WindowSurfaceWayland::Lock() we direct gecko rendering to
@@ -238,7 +238,7 @@ class WindowSurfaceWayland : public WindowSurface {
 
   // Set when actual WaylandBuffer contains drawings which are not send to
   // wayland compositor yet.
-  bool mBufferPendingCommit;
+  bool mWLBufferIsDirty;
 
   // We can't send WaylandBuffer (wl_buffer) to compositor when gecko
   // is rendering into it (i.e. between WindowSurfaceWayland::Lock() /

@@ -17,10 +17,10 @@ namespace a11y {
 class xpcAccessibleImage : public xpcAccessibleGeneric,
                            public nsIAccessibleImage {
  public:
-  explicit xpcAccessibleImage(Accessible* aIntl)
+  explicit xpcAccessibleImage(LocalAccessible* aIntl)
       : xpcAccessibleGeneric(aIntl) {}
 
-  xpcAccessibleImage(ProxyAccessible* aProxy, uint32_t aInterfaces)
+  xpcAccessibleImage(RemoteAccessible* aProxy, uint32_t aInterfaces)
       : xpcAccessibleGeneric(aProxy, aInterfaces) {}
 
   NS_DECL_ISUPPORTS_INHERITED

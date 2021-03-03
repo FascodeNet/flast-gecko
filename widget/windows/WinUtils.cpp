@@ -711,7 +711,7 @@ gfx::MarginDouble WinUtils::GetUnwriteableMarginsForDeviceInInches(HDC aHdc) {
 
 #ifdef ACCESSIBILITY
 /* static */
-a11y::Accessible* WinUtils::GetRootAccessibleForHWND(HWND aHwnd) {
+a11y::LocalAccessible* WinUtils::GetRootAccessibleForHWND(HWND aHwnd) {
   nsWindow* window = GetNSWindowPtr(aHwnd);
   if (!window) {
     return nullptr;
@@ -2137,7 +2137,7 @@ const WinUtils::WhitelistVec& WinUtils::GetWhitelistedPaths() {
   static WhitelistVec sWhitelist([]() -> WhitelistVec {
     auto setClearFn = [ptr = &sWhitelist]() -> void {
       RunOnShutdown([ptr]() -> void { ptr->clear(); },
-                    ShutdownPhase::ShutdownFinal);
+                    ShutdownPhase::XPCOMShutdownFinal);
     };
 
     if (NS_IsMainThread()) {

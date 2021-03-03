@@ -6,6 +6,8 @@
 
 #include "frontend/ParserAtom.h"
 
+#include "mozilla/TextUtils.h"  // mozilla::IsAscii
+
 #include <memory>  // std::uninitialized_fill_n
 #include <type_traits>
 
@@ -16,6 +18,8 @@
 #include "frontend/NameCollections.h"
 #include "frontend/StencilXdr.h"  // CanCopyDataToDisk
 #include "util/StringBuffer.h"    // StringBuffer
+#include "util/Text.h"            // AsciiDigitToNumber
+#include "util/Unicode.h"
 #include "vm/JSContext.h"
 #include "vm/Printer.h"  // Sprinter, QuoteString
 #include "vm/Runtime.h"
@@ -89,11 +93,9 @@ void TaggedParserAtomIndex::validateRaw() {
     MOZ_ASSERT(uint32_t(toWellKnownAtomId()) <
                uint32_t(WellKnownAtomId::Limit));
   } else if (isLength1StaticParserString()) {
-    MOZ_ASSERT(size_t(toLength1StaticParserString()) <
-               WellKnownParserAtoms_ROM::ASCII_STATIC_LIMIT);
+    MOZ_ASSERT(size_t(toLength1StaticParserString()) < Length1StaticLimit);
   } else if (isLength2StaticParserString()) {
-    MOZ_ASSERT(size_t(toLength2StaticParserString()) <
-               WellKnownParserAtoms_ROM::NUM_LENGTH2_ENTRIES);
+    MOZ_ASSERT(size_t(toLength2StaticParserString()) < Length2StaticLimit);
   } else {
     MOZ_ASSERT(isNull());
   }
@@ -122,8 +124,6 @@ template <typename CharT, typename SeqCharT>
 
 JSAtom* ParserAtom::instantiate(JSContext* cx, ParserAtomIndex index,
                                 CompilationAtomCache& atomCache) const {
-  MOZ_ASSERT(!isWellKnownOrStatic());
-
   JSAtom* atom;
   if (hasLatin1Chars()) {
     atom = AtomizeChars(cx, hash(), latin1Chars(), length());
@@ -158,25 +158,99 @@ void ParserAtom::dumpCharsNoQuote(js::GenericPrinter& out) const {
 }
 
 void ParserAtomsTable::dump(TaggedParserAtomIndex index) const {
-  if (!index) {
-    js::Fprinter out(stderr);
-    out.put("#<null>");
+  if (index.isParserAtomIndex()) {
+    getParserAtom(index.toParserAtomIndex())->dump();
     return;
   }
-  const auto* atom = getParserAtom(index);
-  atom->dump();
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    js::Fprinter out(stderr);
+    out.put("\"");
+    out.put(info.content, info.length);
+    out.put("\"");
+    return;
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    js::Fprinter out(stderr);
+    out.put("\"");
+    out.putChar(content[0]);
+    out.put("\"\n");
+    return;
+  }
+
+  if (index.isLength2StaticParserString()) {
+    char content[2];
+    getLength2Content(index.toLength2StaticParserString(), content);
+    js::Fprinter out(stderr);
+    out.put("\"");
+    out.putChar(content[0]);
+    out.putChar(content[1]);
+    out.put("\"\n");
+    return;
+  }
+
+  MOZ_ASSERT(index.isNull());
+  js::Fprinter out(stderr);
+  out.put("#<null>");
 }
 
 void ParserAtomsTable::dumpCharsNoQuote(js::GenericPrinter& out,
                                         TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
-  atom->dumpCharsNoQuote(out);
+  if (index.isParserAtomIndex()) {
+    getParserAtom(index.toParserAtomIndex())->dumpCharsNoQuote(out);
+    return;
+  }
+
+  if (index.isWellKnownAtomId()) {
+    dumpCharsNoQuote(out, index.toWellKnownAtomId());
+    return;
+  }
+
+  if (index.isLength1StaticParserString()) {
+    dumpCharsNoQuote(out, index.toLength1StaticParserString());
+    return;
+  }
+
+  if (index.isLength2StaticParserString()) {
+    dumpCharsNoQuote(out, index.toLength2StaticParserString());
+    return;
+  }
+
+  MOZ_ASSERT(index.isNull());
+  out.put("#<null>");
 }
 
+/* static */
+void ParserAtomsTable::dumpCharsNoQuote(js::GenericPrinter& out,
+                                        WellKnownAtomId id) {
+  const auto& info = GetWellKnownAtomInfo(id);
+  out.put(info.content, info.length);
+}
+
+/* static */
+void ParserAtomsTable::dumpCharsNoQuote(js::GenericPrinter& out,
+                                        Length1StaticParserString index) {
+  char content[1];
+  getLength1Content(index, content);
+  out.putChar(content[0]);
+}
+
+/* static */
+void ParserAtomsTable::dumpCharsNoQuote(js::GenericPrinter& out,
+                                        Length2StaticParserString index) {
+  char content[2];
+  getLength2Content(index, content);
+  out.putChar(content[0]);
+  out.putChar(content[1]);
+}
 #endif
 
 ParserAtomsTable::ParserAtomsTable(JSRuntime* rt, LifoAlloc& alloc)
-    : wellKnownTable_(*rt->commonParserNames), alloc_(alloc) {}
+    : wellKnownTable_(*rt->commonParserNames), alloc_(&alloc) {}
 
 TaggedParserAtomIndex ParserAtomsTable::addEntry(JSContext* cx,
                                                  EntryMap::AddPtr& addPtr,
@@ -206,7 +280,7 @@ TaggedParserAtomIndex ParserAtomsTable::internChar16Seq(
   MOZ_ASSERT(!addPtr);
 
   ParserAtom* entry =
-      ParserAtom::allocate<AtomCharT>(cx, alloc_, seq, length, hash);
+      ParserAtom::allocate<AtomCharT>(cx, *alloc_, seq, length, hash);
   if (!entry) {
     return TaggedParserAtomIndex::null();
   }
@@ -387,76 +461,8 @@ TaggedParserAtomIndex ParserAtomsTable::internJSAtom(
   return parserAtom;
 }
 
-const ParserAtom* WellKnownParserAtoms::getWellKnown(
-    WellKnownAtomId atomId) const {
-#define ASSERT_OFFSET_(_, NAME, _2)                     \
-  static_assert(offsetof(WellKnownParserAtoms, NAME) == \
-                int32_t(WellKnownAtomId::NAME) * sizeof(ParserAtom*));
-  FOR_EACH_COMMON_PROPERTYNAME(ASSERT_OFFSET_);
-#undef ASSERT_OFFSET_
-
-#define ASSERT_OFFSET_(NAME, _)                         \
-  static_assert(offsetof(WellKnownParserAtoms, NAME) == \
-                int32_t(WellKnownAtomId::NAME) * sizeof(ParserAtom*));
-  JS_FOR_EACH_PROTOTYPE(ASSERT_OFFSET_);
-#undef ASSERT_OFFSET_
-
-  static_assert(int32_t(WellKnownAtomId::abort) == 0,
-                "Unexpected order of WellKnownAtom");
-
-  return (&abort)[int32_t(atomId)];
-}
-
-/* static */
-const ParserAtom* WellKnownParserAtoms::getLength1Static(
-    Length1StaticParserString s) {
-  return &WellKnownParserAtoms::rom_.length1Table[size_t(s)];
-}
-
-/* static */
-const ParserAtom* WellKnownParserAtoms::getLength2Static(
-    Length2StaticParserString s) {
-  return &WellKnownParserAtoms::rom_.length2Table[size_t(s)];
-}
-
-const ParserAtom* ParserAtomsTable::getWellKnown(WellKnownAtomId atomId) const {
-  return wellKnownTable_.getWellKnown(atomId);
-}
-
-const ParserAtom* ParserAtomsTable::getLength1Static(
-    Length1StaticParserString s) const {
-  return WellKnownParserAtoms::getLength1Static(s);
-}
-
-const ParserAtom* ParserAtomsTable::getLength2Static(
-    Length2StaticParserString s) const {
-  return WellKnownParserAtoms::getLength2Static(s);
-}
-
 ParserAtom* ParserAtomsTable::getParserAtom(ParserAtomIndex index) const {
   return entries_[index];
-}
-
-const ParserAtom* ParserAtomsTable::getParserAtom(
-    TaggedParserAtomIndex index) const {
-  if (index.isParserAtomIndex()) {
-    return getParserAtom(index.toParserAtomIndex());
-  }
-
-  if (index.isWellKnownAtomId()) {
-    return getWellKnown(index.toWellKnownAtomId());
-  }
-
-  if (index.isLength1StaticParserString()) {
-    return getLength1Static(index.toLength1StaticParserString());
-  }
-
-  if (index.isLength2StaticParserString()) {
-    return getLength2Static(index.toLength2StaticParserString());
-  }
-
-  MOZ_ASSERT(index.isNull());
-  return nullptr;
 }
 
 void ParserAtomsTable::markUsedByStencil(TaggedParserAtomIndex index) const {
@@ -468,10 +474,29 @@ void ParserAtomsTable::markUsedByStencil(TaggedParserAtomIndex index) const {
 }
 
 bool ParserAtomsTable::isIdentifier(TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
-  return atom->hasLatin1Chars()
-             ? IsIdentifier(atom->latin1Chars(), atom->length())
-             : IsIdentifier(atom->twoByteChars(), atom->length());
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    return atom->hasLatin1Chars()
+               ? IsIdentifier(atom->latin1Chars(), atom->length())
+               : IsIdentifier(atom->twoByteChars(), atom->length());
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return IsIdentifier(reinterpret_cast<const Latin1Char*>(info.content),
+                        info.length);
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    return IsIdentifierASCII(content[0]);
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
+  return IsIdentifierASCII(content[0], content[1]);
 }
 
 bool ParserAtomsTable::isPrivateName(TaggedParserAtomIndex index) const {
@@ -489,49 +514,216 @@ bool ParserAtomsTable::isPrivateName(TaggedParserAtomIndex index) const {
 
 bool ParserAtomsTable::isExtendedUnclonedSelfHostedFunctionName(
     TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
-  if (atom->length() < 2) {
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    if (atom->length() < 2) {
+      return false;
+    }
+
+    return atom->charAt(0) == ExtendedUnclonedSelfHostedFunctionNamePrefix;
+  }
+
+  if (index.isWellKnownAtomId()) {
+    switch (index.toWellKnownAtomId()) {
+      case WellKnownAtomId::ArrayBufferSpecies:
+      case WellKnownAtomId::ArraySpecies:
+      case WellKnownAtomId::ArrayValues:
+      case WellKnownAtomId::RegExpFlagsGetter:
+      case WellKnownAtomId::RegExpToString: {
+#ifdef DEBUG
+        const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+        MOZ_ASSERT(info.content[0] ==
+                   ExtendedUnclonedSelfHostedFunctionNamePrefix);
+#endif
+        return true;
+      }
+      default: {
+#ifdef DEBUG
+        const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+        MOZ_ASSERT(info.length == 0 ||
+                   info.content[0] !=
+                       ExtendedUnclonedSelfHostedFunctionNamePrefix);
+#endif
+        break;
+      }
+    }
     return false;
   }
 
-  return atom->charAt(0) == ExtendedUnclonedSelfHostedFunctionNamePrefix;
+  // Length-1/2 shouldn't be used for extented uncloned self-hosted
+  // function name, and this query shouldn't be used for them.
+#ifdef DEBUG
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    MOZ_ASSERT(content[0] != ExtendedUnclonedSelfHostedFunctionNamePrefix);
+  } else {
+    char content[2];
+    getLength2Content(index.toLength2StaticParserString(), content);
+    MOZ_ASSERT(content[0] != ExtendedUnclonedSelfHostedFunctionNamePrefix);
+  }
+#endif
+  return false;
+}
+
+static bool HasUnpairedSurrogate(mozilla::Range<const char16_t> chars) {
+  for (auto ptr = chars.begin(); ptr < chars.end();) {
+    char16_t ch = *ptr++;
+    if (unicode::IsLeadSurrogate(ch)) {
+      if (ptr == chars.end() || !unicode::IsTrailSurrogate(*ptr++)) {
+        return true;
+      }
+    } else if (unicode::IsTrailSurrogate(ch)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ParserAtomsTable::isModuleExportName(TaggedParserAtomIndex index) const {
+  if (index.isParserAtomIndex()) {
+    const ParserAtom* name = getParserAtom(index.toParserAtomIndex());
+    return name->hasLatin1Chars() ||
+           !HasUnpairedSurrogate(name->twoByteRange());
+  }
+
+  // Well-known/length-1/length-2 are ASCII.
+  return true;
 }
 
 bool ParserAtomsTable::isIndex(TaggedParserAtomIndex index,
                                uint32_t* indexp) const {
-  const auto* atom = getParserAtom(index);
-  size_t len = atom->length();
-  if (len == 0 || len > UINT32_CHAR_BUFFER_LENGTH) {
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    size_t len = atom->length();
+    if (len == 0 || len > UINT32_CHAR_BUFFER_LENGTH) {
+      return false;
+    }
+    if (atom->hasLatin1Chars()) {
+      return mozilla::IsAsciiDigit(*atom->latin1Chars()) &&
+             js::CheckStringIsIndex(atom->latin1Chars(), len, indexp);
+    }
+    return mozilla::IsAsciiDigit(*atom->twoByteChars()) &&
+           js::CheckStringIsIndex(atom->twoByteChars(), len, indexp);
+  }
+
+  if (index.isWellKnownAtomId()) {
+#ifdef DEBUG
+    // Well-known atom shouldn't start with digit.
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    MOZ_ASSERT(info.length == 0 || !mozilla::IsAsciiDigit(info.content[0]));
+#endif
     return false;
   }
-  if (atom->hasLatin1Chars()) {
-    return mozilla::IsAsciiDigit(*atom->latin1Chars()) &&
-           js::CheckStringIsIndex(atom->latin1Chars(), len, indexp);
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    if (mozilla::IsAsciiDigit(content[0])) {
+      *indexp = AsciiDigitToNumber(content[0]);
+      return true;
+    }
+    return false;
   }
-  return mozilla::IsAsciiDigit(*atom->twoByteChars()) &&
-         js::CheckStringIsIndex(atom->twoByteChars(), len, indexp);
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
+  // Leading '0' isn't allowed.
+  // See CheckStringIsIndex comment.
+  if (content[0] != '0' && mozilla::IsAsciiDigit(content[0]) &&
+      mozilla::IsAsciiDigit(content[1])) {
+    *indexp =
+        AsciiDigitToNumber(content[0]) * 10 + AsciiDigitToNumber(content[1]);
+    return true;
+  }
+  return false;
 }
 
 uint32_t ParserAtomsTable::length(TaggedParserAtomIndex index) const {
-  return getParserAtom(index)->length();
+  if (index.isParserAtomIndex()) {
+    return getParserAtom(index.toParserAtomIndex())->length();
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return info.length;
+  }
+
+  if (index.isLength1StaticParserString()) {
+    return 1;
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  return 2;
 }
 
 bool ParserAtomsTable::toNumber(JSContext* cx, TaggedParserAtomIndex index,
                                 double* result) const {
-  const auto* atom = getParserAtom(index);
-  size_t len = atom->length();
-  return atom->hasLatin1Chars()
-             ? CharsToNumber(cx, atom->latin1Chars(), len, result)
-             : CharsToNumber(cx, atom->twoByteChars(), len, result);
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    size_t len = atom->length();
+    return atom->hasLatin1Chars()
+               ? CharsToNumber(cx, atom->latin1Chars(), len, result)
+               : CharsToNumber(cx, atom->twoByteChars(), len, result);
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return CharsToNumber(cx, reinterpret_cast<const Latin1Char*>(info.content),
+                         info.length, result);
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    return CharsToNumber(cx, reinterpret_cast<const Latin1Char*>(content), 1,
+                         result);
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
+  return CharsToNumber(cx, reinterpret_cast<const Latin1Char*>(content), 2,
+                       result);
 }
 
 UniqueChars ParserAtomsTable::toNewUTF8CharsZ(
     JSContext* cx, TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    return UniqueChars(
+        atom->hasLatin1Chars()
+            ? JS::CharsToNewUTF8CharsZ(cx, atom->latin1Range()).c_str()
+            : JS::CharsToNewUTF8CharsZ(cx, atom->twoByteRange()).c_str());
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return UniqueChars(
+        JS::CharsToNewUTF8CharsZ(
+            cx,
+            mozilla::Range(reinterpret_cast<const Latin1Char*>(info.content),
+                           info.length))
+            .c_str());
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    return UniqueChars(
+        JS::CharsToNewUTF8CharsZ(
+            cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(content), 1))
+            .c_str());
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
   return UniqueChars(
-      atom->hasLatin1Chars()
-          ? JS::CharsToNewUTF8CharsZ(cx, atom->latin1Range()).c_str()
-          : JS::CharsToNewUTF8CharsZ(cx, atom->twoByteRange()).c_str());
+      JS::CharsToNewUTF8CharsZ(
+          cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(content), 2))
+          .c_str());
 }
 
 template <typename CharT>
@@ -549,24 +741,66 @@ UniqueChars ToPrintableStringImpl(JSContext* cx, mozilla::Range<CharT> str,
 
 UniqueChars ParserAtomsTable::toPrintableString(
     JSContext* cx, TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
-  size_t length = atom->length();
-  return atom->hasLatin1Chars()
-             ? ToPrintableStringImpl(
-                   cx, mozilla::Range(atom->latin1Chars(), length))
-             : ToPrintableStringImpl(
-                   cx, mozilla::Range(atom->twoByteChars(), length));
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    return atom->hasLatin1Chars()
+               ? ToPrintableStringImpl(cx, atom->latin1Range())
+               : ToPrintableStringImpl(cx, atom->twoByteRange());
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return ToPrintableStringImpl(
+        cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(info.content),
+                           info.length));
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    return ToPrintableStringImpl(
+        cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(content), 1));
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
+  return ToPrintableStringImpl(
+      cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(content), 2));
 }
 
 UniqueChars ParserAtomsTable::toQuotedString(
     JSContext* cx, TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
-  size_t length = atom->length();
-  return atom->hasLatin1Chars()
-             ? ToPrintableStringImpl(
-                   cx, mozilla::Range(atom->latin1Chars(), length), '\"')
-             : ToPrintableStringImpl(
-                   cx, mozilla::Range(atom->twoByteChars(), length), '\"');
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    return atom->hasLatin1Chars()
+               ? ToPrintableStringImpl(cx, atom->latin1Range(), '\"')
+               : ToPrintableStringImpl(cx, atom->twoByteRange(), '\"');
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return ToPrintableStringImpl(
+        cx,
+        mozilla::Range(reinterpret_cast<const Latin1Char*>(info.content),
+                       info.length),
+        '\"');
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    return ToPrintableStringImpl(
+        cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(content), 1),
+        '\"');
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
+  return ToPrintableStringImpl(
+      cx, mozilla::Range(reinterpret_cast<const Latin1Char*>(content), 2),
+      '\"');
 }
 
 JSAtom* ParserAtomsTable::toJSAtom(JSContext* cx, TaggedParserAtomIndex index,
@@ -597,10 +831,28 @@ JSAtom* ParserAtomsTable::toJSAtom(JSContext* cx, TaggedParserAtomIndex index,
 
 bool ParserAtomsTable::appendTo(StringBuffer& buffer,
                                 TaggedParserAtomIndex index) const {
-  const auto* atom = getParserAtom(index);
-  size_t length = atom->length();
-  return atom->hasLatin1Chars() ? buffer.append(atom->latin1Chars(), length)
-                                : buffer.append(atom->twoByteChars(), length);
+  if (index.isParserAtomIndex()) {
+    const auto* atom = getParserAtom(index.toParserAtomIndex());
+    size_t length = atom->length();
+    return atom->hasLatin1Chars() ? buffer.append(atom->latin1Chars(), length)
+                                  : buffer.append(atom->twoByteChars(), length);
+  }
+
+  if (index.isWellKnownAtomId()) {
+    const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
+    return buffer.append(info.content, info.length);
+  }
+
+  if (index.isLength1StaticParserString()) {
+    char content[1];
+    getLength1Content(index.toLength1StaticParserString(), content);
+    return buffer.append(content[0]);
+  }
+
+  MOZ_ASSERT(index.isLength2StaticParserString());
+  char content[2];
+  getLength2Content(index.toLength2StaticParserString(), content);
+  return buffer.append(content, 2);
 }
 
 bool InstantiateMarkedAtoms(JSContext* cx, const ParserAtomSpan& entries,
@@ -632,17 +884,15 @@ TaggedParserAtomIndex WellKnownParserAtoms::lookupChar16Seq(
   return TaggedParserAtomIndex::null();
 }
 
-bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserAtom** name,
-                                      const ParserAtom& romEntry,
+bool WellKnownParserAtoms::initSingle(JSContext* cx,
+                                      const WellKnownAtomInfo& info,
                                       TaggedParserAtomIndex index) {
-  MOZ_ASSERT(name != nullptr);
-
-  unsigned int len = romEntry.length();
-  const Latin1Char* str = romEntry.latin1Chars();
+  unsigned int len = info.length;
+  const Latin1Char* str = reinterpret_cast<const Latin1Char*>(info.content);
 
   // Well-known atoms are all currently ASCII with length <= MaxWellKnownLength.
   MOZ_ASSERT(len <= MaxWellKnownLength);
-  MOZ_ASSERT(romEntry.isAscii());
+  MOZ_ASSERT(mozilla::IsAscii(mozilla::Span(info.content, len)));
 
   // Strings matched by lookupTinyIndex are stored in static table and aliases
   // should be initialized directly in WellKnownParserAtoms::init.
@@ -651,49 +901,31 @@ bool WellKnownParserAtoms::initSingle(JSContext* cx, const ParserAtom** name,
              "the wrong CommonPropertyNames.h list?");
 
   InflatedChar16Sequence<Latin1Char> seq(str, len);
-  SpecificParserAtomLookup<Latin1Char> lookup(seq, romEntry.hash());
+  SpecificParserAtomLookup<Latin1Char> lookup(seq, info.hash);
 
   // Save name for returning after moving entry into set.
-  if (!wellKnownMap_.putNew(lookup, &romEntry, index)) {
+  if (!wellKnownMap_.putNew(lookup, &info, index)) {
     js::ReportOutOfMemory(cx);
     return false;
   }
 
-  *name = &romEntry;
   return true;
 }
 
 bool WellKnownParserAtoms::init(JSContext* cx) {
-  // Tiny strings with a common name need a named alias to an entry in the
-  // WellKnownParserAtoms_ROM.
-
-  empty = &rom_.emptyAtom;
-
-#define COMMON_NAME_INIT_(_, NAME, TEXT) \
-  (NAME) = &rom_.length1Table[static_cast<size_t>((TEXT)[0])];
-  FOR_EACH_LENGTH1_PROPERTYNAME(COMMON_NAME_INIT_)
-#undef COMMON_NAME_INIT_
-
-#define COMMON_NAME_INIT_(_, NAME, TEXT)                                \
-  (NAME) = &rom_.length2Table[StaticStrings::getLength2Index((TEXT)[0], \
-                                                             (TEXT)[1])];
-  FOR_EACH_LENGTH2_PROPERTYNAME(COMMON_NAME_INIT_)
-#undef COMMON_NAME_INIT_
-
-  // Initialize the named fields to point to entries in the ROM. This also adds
-  // the atom to the lookup HashMap. The HashMap is used for dynamic lookups
-  // later and does not change once this init method is complete.
-#define COMMON_NAME_INIT_(_, NAME, _2)                         \
-  if (!initSingle(cx, &(NAME), rom_.NAME,                      \
-                  TaggedParserAtomIndex::WellKnown::NAME())) { \
-    return false;                                              \
+  // Add well-known strings to the HashMap. The HashMap is used for dynamic
+  // lookups later and does not change once this init method is complete.
+#define COMMON_NAME_INIT_(_, NAME, _2)                             \
+  if (!initSingle(cx, GetWellKnownAtomInfo(WellKnownAtomId::NAME), \
+                  TaggedParserAtomIndex::WellKnown::NAME())) {     \
+    return false;                                                  \
   }
   FOR_EACH_NONTINY_COMMON_PROPERTYNAME(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_
-#define COMMON_NAME_INIT_(NAME, _)                             \
-  if (!initSingle(cx, &(NAME), rom_.NAME,                      \
-                  TaggedParserAtomIndex::WellKnown::NAME())) { \
-    return false;                                              \
+#define COMMON_NAME_INIT_(NAME, _)                                 \
+  if (!initSingle(cx, GetWellKnownAtomInfo(WellKnownAtomId::NAME), \
+                  TaggedParserAtomIndex::WellKnown::NAME())) {     \
+    return false;                                                  \
   }
   JS_FOR_EACH_PROTOTYPE(COMMON_NAME_INIT_)
 #undef COMMON_NAME_INIT_

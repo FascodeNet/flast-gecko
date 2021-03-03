@@ -7,7 +7,6 @@
 #ifndef frontend_TDZCheckCache_h
 #define frontend_TDZCheckCache_h
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 
 #include "ds/Nestable.h"
@@ -42,16 +41,16 @@ using CheckTDZMap = RecyclableNameMap<MaybeCheckTDZ>;
 class TDZCheckCache : public Nestable<TDZCheckCache> {
   PooledMapPtr<CheckTDZMap> cache_;
 
-  MOZ_MUST_USE bool ensureCache(BytecodeEmitter* bce);
+  [[nodiscard]] bool ensureCache(BytecodeEmitter* bce);
 
  public:
   explicit TDZCheckCache(BytecodeEmitter* bce);
 
   mozilla::Maybe<MaybeCheckTDZ> needsTDZCheck(BytecodeEmitter* bce,
                                               TaggedParserAtomIndex name);
-  MOZ_MUST_USE bool noteTDZCheck(BytecodeEmitter* bce,
-                                 TaggedParserAtomIndex name,
-                                 MaybeCheckTDZ check);
+  [[nodiscard]] bool noteTDZCheck(BytecodeEmitter* bce,
+                                  TaggedParserAtomIndex name,
+                                  MaybeCheckTDZ check);
 };
 
 } /* namespace frontend */

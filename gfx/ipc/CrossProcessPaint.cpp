@@ -119,6 +119,7 @@ PaintFragment PaintFragment::Record(dom::BrowsingContext* aBc,
   RenderDocumentFlags renderDocFlags = RenderDocumentFlags::None;
   if (!(aFlags & CrossProcessPaintFlags::DrawView)) {
     renderDocFlags = (RenderDocumentFlags::IgnoreViewportScrolling |
+                      RenderDocumentFlags::ResetViewportScrolling |
                       RenderDocumentFlags::DocumentRelative);
   }
 
@@ -296,7 +297,10 @@ RefPtr<CrossProcessPaint::ResolvePromise> CrossProcessPaint::Start(
   rootFragment.mDependencies = std::move(aDependencies);
 
   resolver->QueueDependencies(rootFragment.mDependencies);
-  resolver->mReceivedFragments.Put(dom::TabId(0), std::move(rootFragment));
+  resolver->mReceivedFragments.InsertOrUpdate(dom::TabId(0),
+                                              std::move(rootFragment));
+
+  resolver->MaybeResolve();
 
   return promise;
 }
@@ -316,11 +320,11 @@ void CrossProcessPaint::ReceiveFragment(dom::WindowGlobalParent* aWGP,
   dom::TabId surfaceId = GetTabId(aWGP);
 
   MOZ_ASSERT(mPendingFragments > 0);
-  MOZ_ASSERT(!mReceivedFragments.GetValue(surfaceId));
+  MOZ_ASSERT(!mReceivedFragments.Contains(surfaceId));
 
   // Double check our invariants to protect against a compromised content
   // process
-  if (mPendingFragments == 0 || mReceivedFragments.GetValue(surfaceId) ||
+  if (mPendingFragments == 0 || mReceivedFragments.Contains(surfaceId) ||
       aFragment.IsEmpty()) {
     CPP_LOG("Dropping invalid fragment from %p.\n", aWGP);
     LostFragment(aWGP);
@@ -333,7 +337,7 @@ void CrossProcessPaint::ReceiveFragment(dom::WindowGlobalParent* aWGP,
   // Queue paints for child tabs
   QueueDependencies(aFragment.mDependencies);
 
-  mReceivedFragments.Put(surfaceId, std::move(aFragment));
+  mReceivedFragments.InsertOrUpdate(surfaceId, std::move(aFragment));
   mPendingFragments -= 1;
 
   // Resolve this paint if we have received all pending fragments
@@ -361,6 +365,11 @@ void CrossProcessPaint::QueueDependencies(
     dom::ContentParentId cpId = cpm->GetTabProcessId(dependency);
     RefPtr<dom::BrowserParent> browser =
         cpm->GetBrowserParentByProcessAndTabId(cpId, dependency);
+    if (!browser) {
+      CPP_LOG("Skipping dependency %" PRIu64 "with no current BrowserParent.\n",
+              (uint64_t)dependency);
+      continue;
+    }
     RefPtr<dom::WindowGlobalParent> wgp =
         browser->GetBrowsingContext()->GetCurrentWindowGlobal();
 
@@ -379,7 +388,7 @@ void CrossProcessPaint::QueuePaint(dom::WindowGlobalParent* aWGP,
                                    const Maybe<IntRect>& aRect,
                                    nscolor aBackgroundColor,
                                    CrossProcessPaintFlags aFlags) {
-  MOZ_ASSERT(!mReceivedFragments.GetValue(GetTabId(aWGP)));
+  MOZ_ASSERT(!mReceivedFragments.Contains(GetTabId(aWGP)));
 
   CPP_LOG("Queueing paint for %p.\n", aWGP);
 
@@ -431,7 +440,7 @@ nsresult CrossProcessPaint::ResolveInternal(dom::TabId aTabId,
 
   CPP_LOG("Resolving fragment %" PRIu64 ".\n", (uint64_t)aTabId);
 
-  Maybe<PaintFragment> fragment = mReceivedFragments.GetAndRemove(aTabId);
+  Maybe<PaintFragment> fragment = mReceivedFragments.Extract(aTabId);
   if (!fragment) {
     return NS_ERROR_LOSS_OF_SIGNIFICANT_DATA;
   }
@@ -448,7 +457,7 @@ nsresult CrossProcessPaint::ResolveInternal(dom::TabId aTabId,
 
   RefPtr<RecordedDependentSurface> surface = new RecordedDependentSurface{
       fragment->mSize, std::move(fragment->mRecording)};
-  aResolved->Put(aTabId, std::move(surface));
+  aResolved->InsertOrUpdate(aTabId, std::move(surface));
   return NS_OK;
 }
 

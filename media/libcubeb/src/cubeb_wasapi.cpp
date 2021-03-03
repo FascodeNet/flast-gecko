@@ -861,7 +861,17 @@ refill(cubeb_stream * stm, void * input_buffer, long input_frames_count,
   return out_frames;
 }
 
-int wasapi_stream_reset_default_device(cubeb_stream * stm);
+int trigger_async_reconfigure(cubeb_stream * stm)
+{
+  XASSERT(stm && stm->reconfigure_event);
+  BOOL ok = SetEvent(stm->reconfigure_event);
+  if (!ok) {
+    LOG("SetEvent on reconfigure_event failed: %lx", GetLastError());
+    return CUBEB_ERROR;
+  }
+  return CUBEB_OK;
+}
+
 
 /* This helper grabs all the frames available from a capture client, put them in
  * linear_input_buffer. linear_input_buffer should be cleared before the
@@ -890,7 +900,7 @@ bool get_input_buffer(cubeb_stream * stm)
       // Application can recover from this error. More info
       // https://msdn.microsoft.com/en-us/library/windows/desktop/dd316605(v=vs.85).aspx
       LOG("Device invalidated error, reset default device");
-      wasapi_stream_reset_default_device(stm);
+      trigger_async_reconfigure(stm);
       return true;
     }
 
@@ -993,7 +1003,7 @@ bool get_output_buffer(cubeb_stream * stm, void *& buffer, size_t & frame_count)
       // Application can recover from this error. More info
       // https://msdn.microsoft.com/en-us/library/windows/desktop/dd316605(v=vs.85).aspx
       LOG("Device invalidated error, reset default device");
-      wasapi_stream_reset_default_device(stm);
+      trigger_async_reconfigure(stm);
       return true;
   }
 
@@ -1340,7 +1350,7 @@ void wasapi_destroy(cubeb * context);
 
 HRESULT register_notification_client(cubeb_stream * stm)
 {
-  assert(stm->device_enumerator);
+  XASSERT(stm->device_enumerator);
 
   stm->notification_client.reset(new wasapi_endpoint_notification_client(stm->reconfigure_event, stm->role));
 
@@ -1348,7 +1358,6 @@ HRESULT register_notification_client(cubeb_stream * stm)
   if (FAILED(hr)) {
     LOG("Could not register endpoint notification callback: %lx", hr);
     stm->notification_client = nullptr;
-    stm->device_enumerator = nullptr;
   }
 
   return hr;
@@ -1356,18 +1365,12 @@ HRESULT register_notification_client(cubeb_stream * stm)
 
 HRESULT unregister_notification_client(cubeb_stream * stm)
 {
-  XASSERT(stm);
-  HRESULT hr;
+  XASSERT(stm->device_enumerator);
 
-  if (!stm->device_enumerator) {
-    return S_OK;
-  }
-
-  hr = stm->device_enumerator->UnregisterEndpointNotificationCallback(stm->notification_client.get());
+  HRESULT hr = stm->device_enumerator->UnregisterEndpointNotificationCallback(stm->notification_client.get());
   if (FAILED(hr)) {
     // We can't really do anything here, we'll probably leak the
-    // notification client, but we can at least release the enumerator.
-    stm->device_enumerator = nullptr;
+    // notification client.
     return S_OK;
   }
 
@@ -2750,17 +2753,6 @@ int wasapi_stream_stop(cubeb_stream * stm)
   return CUBEB_OK;
 }
 
-int wasapi_stream_reset_default_device(cubeb_stream * stm)
-{
-  XASSERT(stm && stm->reconfigure_event);
-  BOOL ok = SetEvent(stm->reconfigure_event);
-  if (!ok) {
-    LOG("SetEvent on reconfigure_event failed: %lx", GetLastError());
-    return CUBEB_ERROR;
-  }
-  return CUBEB_OK;
-}
-
 int wasapi_stream_get_position(cubeb_stream * stm, uint64_t * position)
 {
   XASSERT(stm && position);
@@ -3260,7 +3252,6 @@ cubeb_ops const wasapi_ops = {
   /*.stream_destroy =*/ wasapi_stream_destroy,
   /*.stream_start =*/ wasapi_stream_start,
   /*.stream_stop =*/ wasapi_stream_stop,
-  /*.stream_reset_default_device =*/ wasapi_stream_reset_default_device,
   /*.stream_get_position =*/ wasapi_stream_get_position,
   /*.stream_get_latency =*/ wasapi_stream_get_latency,
   /*.stream_get_input_latency =*/ wasapi_stream_get_input_latency,

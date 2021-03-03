@@ -31,6 +31,7 @@
 #ifdef DEBUG
 #  include "util/Unicode.h"
 #endif
+#include "vm/WellKnownAtom.h"  // js_*_str
 #include "vm/Xdr.h"
 
 #include "vm/JSObject-inl.h"
@@ -939,9 +940,9 @@ RegExpZone::RegExpZone(Zone* zone) : set_(zone, zone) {}
 
 JSObject* js::CloneRegExpObject(JSContext* cx, Handle<RegExpObject*> regex) {
   // Unlike RegExpAlloc, all clones must use |regex|'s group.
-  RootedObjectGroup group(cx, regex->group());
+  Rooted<TaggedProto> proto(cx, regex->staticPrototype());
   Rooted<RegExpObject*> clone(
-      cx, NewObjectWithGroup<RegExpObject>(cx, group, GenericObject));
+      cx, NewObjectWithGivenTaggedProto<RegExpObject>(cx, proto));
   if (!clone) {
     return nullptr;
   }
@@ -1058,7 +1059,7 @@ XDRResult js::XDRScriptRegExpObject(XDRState<mode>* xdr,
     RegExpObject* reobj = RegExpObject::create(
         xdr->cx(), source, RegExpFlags(flags), TenuredObject);
     if (!reobj) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
 
     objp.set(reobj);

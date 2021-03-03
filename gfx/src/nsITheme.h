@@ -107,8 +107,8 @@ class nsITheme : public nsISupports {
     LayoutDeviceIntCoord mVertical;
     LayoutDeviceIntCoord mHorizontal;
   };
-  virtual ScrollbarSizes GetScrollbarSizes(
-      nsPresContext*, StyleScrollbarWidth, Overlay) = 0;
+  virtual ScrollbarSizes GetScrollbarSizes(nsPresContext*, StyleScrollbarWidth,
+                                           Overlay) = 0;
 
   /**
    * Return the border for the widget, in device pixels.
@@ -148,6 +148,14 @@ class nsITheme : public nsISupports {
                                  StyleAppearance aWidgetType,
                                  /*INOUT*/ nsRect* aOverflowRect) {
     return false;
+  }
+
+  /**
+   * Get the preferred content-box size of a checkbox / radio button, in app
+   * units.  Historically 9px.
+   */
+  virtual nscoord GetCheckboxRadioPrefSize() {
+    return mozilla::CSSPixel::ToAppUnits(9);
   }
 
   /**

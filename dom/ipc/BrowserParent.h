@@ -516,7 +516,8 @@ class BrowserParent final : public PBrowserParent,
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeMouseEvent(
       const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
-      const uint32_t& aModifierFlags, const uint64_t& aObserverId);
+      const int16_t& aButton, const uint32_t& aModifierFlags,
+      const uint64_t& aObserverId);
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeMouseMove(
       const LayoutDeviceIntPoint& aPoint, const uint64_t& aObserverId);
@@ -531,6 +532,10 @@ class BrowserParent final : public PBrowserParent,
       const uint32_t& aPointerId, const TouchPointerState& aPointerState,
       const LayoutDeviceIntPoint& aPoint, const double& aPointerPressure,
       const uint32_t& aPointerOrientation, const uint64_t& aObserverId);
+
+  mozilla::ipc::IPCResult RecvSynthesizeNativeTouchPadPinch(
+      const TouchpadPinchPhase& aEventPhase, const float& aScale,
+      const LayoutDeviceIntPoint& aPoint, const int32_t& aModifierFlags);
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeTouchTap(
       const LayoutDeviceIntPoint& aPoint, const bool& aLongTap,

@@ -7,6 +7,7 @@
 cfr-doorhanger-extension-heading = Recommended Extension
 cfr-doorhanger-feature-heading = Recommended Feature
 cfr-doorhanger-pintab-heading = Try This: Pin Tab
+
 ##
 
 cfr-doorhanger-extension-sumo-link =
@@ -76,7 +77,6 @@ cfr-doorhanger-pintab-step3 = If the site has an update you’ll see a blue dot 
 
 cfr-doorhanger-pintab-animation-pause = Pause
 cfr-doorhanger-pintab-animation-resume = Resume
-
 
 ## Firefox Accounts Message
 
@@ -187,11 +187,7 @@ cfr-doorhanger-cryptominers-description = Your privacy matters. { -brand-short-n
 
 # Variables:
 #   $blockedCount (Number) - The total count of blocked trackers. This number will always be greater than 1.
-#   $date (Number) - The date we began recording the count of blocked trackers
-cfr-doorhanger-milestone-heading =
-  { $blockedCount ->
-   *[other] { -brand-short-name } blocked over <b>{ $blockedCount }</b> trackers since { $date }!
-  }
+#   $date (Datetime) - The date we began recording the count of blocked trackers
 cfr-doorhanger-milestone-heading2 =
   { $blockedCount ->
     *[other] { -brand-short-name } blocked over <b>{ $blockedCount }</b> trackers since { DATETIME($date, month: "long", year: "numeric") }!
@@ -202,7 +198,6 @@ cfr-doorhanger-milestone-close-button = Close
   .accesskey = C
 
 ## What’s New Panel Content for Firefox 76
-
 ## Protections Dashboard message
 
 cfr-whatsnew-protections-header = Protections at a glance

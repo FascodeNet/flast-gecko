@@ -13,6 +13,13 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v88
+- Added [`WebExtension.Download#update`][88.1] that can be used to
+  implement the WebExtension `downloads` API. This method is used to communicate
+  updates in the download status to the Web Extension
+
+[88.1]: {{javadoc_uri}}/WebExtension.Download.html#update-org.mozilla.geckoview.WebExtension.Download.Info-
+
 ## v87
 - ⚠ Added [`WebExtension.DownloadInitData`][87.1] class that can be used to
   implement the WebExtension `downloads` API. This class represents initial state of a download.
@@ -22,11 +29,15 @@ exclude: true
 - [`Image#getBitmap`][87.3] now throws [`ImageProcessingException`][87.4] if
   the image cannot be processed.
   ([bug 1689745]({{bugzilla}}1689745))
+- Added support for HTTPS-only mode to [`GeckoRuntimeSettings`][87.5] via
+  [`setAllowInsecureConnections`][87.6].
   
 [87.1]: {{javadoc_uri}}/WebExtension.DownloadInitData.html
 [87.2]: {{javadoc_uri}}/WebExtension.Download.Info.html
 [87.3]: {{javadoc_uri}}/Image.html#getBitmap-int-
 [87.4]: {{javadoc_uri}}/Image.ImageProcessingException.html
+[87.5]: {{javadoc_uri}}/GeckoRuntimeSettings.html
+[87.6]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setAllowInsecureConnections-int-
 
 ## v86
 - Removed deprecated [`ContentDelegate#onExternalResponse(GeckoSession, WebResponseInfo)`].
@@ -892,4 +903,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: ea27a27d150b635b5e186efcf2770f9f76bd04aa
+[api-version]: 2ca865a6a509dfc7100d38f906877c5467c43cd0

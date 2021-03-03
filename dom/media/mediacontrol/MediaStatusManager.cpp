@@ -67,7 +67,8 @@ void MediaStatusManager::NotifySessionCreated(uint64_t aBrowsingContextId) {
   }
 
   LOG("Session %" PRIu64 " has been created", aBrowsingContextId);
-  mMediaSessionInfoMap.Put(aBrowsingContextId, MediaSessionInfo::EmptyInfo());
+  mMediaSessionInfoMap.InsertOrUpdate(aBrowsingContextId,
+                                      MediaSessionInfo::EmptyInfo());
   if (IsSessionOwningAudioFocus(aBrowsingContextId)) {
     SetActiveMediaSessionContextId(aBrowsingContextId);
   }
@@ -91,7 +92,7 @@ void MediaStatusManager::UpdateMetadata(
     return;
   }
 
-  MediaSessionInfo* info = mMediaSessionInfoMap.GetValue(aBrowsingContextId);
+  auto info = mMediaSessionInfoMap.Lookup(aBrowsingContextId);
   if (IsMetadataEmpty(aMetadata)) {
     LOG("Reset metadata for session %" PRIu64, aBrowsingContextId);
     info->mMetadata.reset();
@@ -262,7 +263,7 @@ void MediaStatusManager::SetDeclaredPlaybackState(
   if (!mMediaSessionInfoMap.Contains(aBrowsingContextId)) {
     return;
   }
-  MediaSessionInfo* info = mMediaSessionInfoMap.GetValue(aBrowsingContextId);
+  auto info = mMediaSessionInfoMap.Lookup(aBrowsingContextId);
   LOG("SetDeclaredPlaybackState from %s to %s",
       ToMediaSessionPlaybackStateStr(info->mDeclaredPlaybackState),
       ToMediaSessionPlaybackStateStr(aState));
@@ -329,7 +330,7 @@ void MediaStatusManager::EnableAction(uint64_t aBrowsingContextId,
   if (!mMediaSessionInfoMap.Contains(aBrowsingContextId)) {
     return;
   }
-  MediaSessionInfo* info = mMediaSessionInfoMap.GetValue(aBrowsingContextId);
+  auto info = mMediaSessionInfoMap.Lookup(aBrowsingContextId);
   if (info->IsActionSupported(aAction)) {
     LOG("Action '%s' has already been enabled for context %" PRIu64,
         ToMediaSessionActionStr(aAction), aBrowsingContextId);
@@ -346,7 +347,7 @@ void MediaStatusManager::DisableAction(uint64_t aBrowsingContextId,
   if (!mMediaSessionInfoMap.Contains(aBrowsingContextId)) {
     return;
   }
-  MediaSessionInfo* info = mMediaSessionInfoMap.GetValue(aBrowsingContextId);
+  auto info = mMediaSessionInfoMap.Lookup(aBrowsingContextId);
   if (!info->IsActionSupported(aAction)) {
     LOG("Action '%s' hasn't been enabled yet for context %" PRIu64,
         ToMediaSessionActionStr(aAction), aBrowsingContextId);
@@ -463,7 +464,7 @@ void MediaStatusManager::NotifyPageTitleChanged() {
   // If active media session has set non-empty metadata, then we would use that
   // instead of using default metadata.
   if (mActiveMediaSessionContextId &&
-      mMediaSessionInfoMap.GetValue(*mActiveMediaSessionContextId)->mMetadata) {
+      mMediaSessionInfoMap.Lookup(*mActiveMediaSessionContextId)->mMetadata) {
     return;
   }
   // In private browsing mode, we won't show page title on default metadata so

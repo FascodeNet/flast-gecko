@@ -641,6 +641,8 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
     JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION, true)                 \
   _("nurseryFreeThresholdForIdleCollectionPercent",                        \
     JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT, true)         \
+  _("nurseryTimeoutForIdleCollectionMS",                                   \
+    JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS, true)                     \
   _("pretenureThreshold", JSGC_PRETENURE_THRESHOLD, true)                  \
   _("pretenureGroupThreshold", JSGC_PRETENURE_GROUP_THRESHOLD, true)       \
   _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)                    \
@@ -649,7 +651,8 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
   _("chunkBytes", JSGC_CHUNK_BYTES, false)                                 \
   _("helperThreadRatio", JSGC_HELPER_THREAD_RATIO, true)                   \
   _("maxHelperThreads", JSGC_MAX_HELPER_THREADS, true)                     \
-  _("helperThreadCount", JSGC_HELPER_THREAD_COUNT, false)
+  _("helperThreadCount", JSGC_HELPER_THREAD_COUNT, false)                  \
+  _("systemPageSizeKB", JSGC_SYSTEM_PAGE_SIZE_KB, false)
 
 static const struct ParamInfo {
   const char* name;
@@ -4212,8 +4215,21 @@ static bool ThrowOutOfMemory(JSContext* cx, unsigned argc, Value* vp) {
 static bool ReportLargeAllocationFailure(JSContext* cx, unsigned argc,
                                          Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  void* buf = cx->runtime()->onOutOfMemoryCanGC(
-      AllocFunction::Malloc, js::MallocArena, JSRuntime::LARGE_ALLOCATION);
+
+  size_t bytes = JSRuntime::LARGE_ALLOCATION;
+  if (args.length() >= 1) {
+    if (!args[0].isInt32()) {
+      RootedObject callee(cx, &args.callee());
+      ReportUsageErrorASCII(cx, callee,
+                            "First argument must be an integer if specified.");
+      return false;
+    }
+    bytes = args[0].toInt32();
+  }
+
+  void* buf = cx->runtime()->onOutOfMemoryCanGC(AllocFunction::Malloc,
+                                                js::MallocArena, bytes);
+
   js_free(buf);
   args.rval().setUndefined();
   return true;
@@ -4864,7 +4880,7 @@ static bool ByteSizeOfScript(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   RootedFunction fun(cx, &args[0].toObject().as<JSFunction>());
-  if (fun->isNative()) {
+  if (fun->isNativeFun()) {
     JS_ReportErrorASCII(cx, "Argument must be a scripted function");
     return false;
   }
@@ -4988,20 +5004,21 @@ static bool CompileStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* TODO: StencilXDR - Add option to select between full and syntax parse. */
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
-    return false;
-  }
-  if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
-                                              ScopeKind::Global)) {
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  auto stencil = frontend::CompileGlobalScriptToExtensibleStencil(
+      cx, input.get(), srcBuf, ScopeKind::Global);
+  if (!stencil) {
     return false;
   }
 
   /* Serialize the stencil to XDR. */
   JS::TranscodeBuffer xdrBytes;
-  if (!stencil.get().serializeStencils(cx, xdrBytes)) {
-    return false;
+  {
+    frontend::BorrowingCompilationStencil borrowingStencil(*stencil);
+    if (!borrowingStencil.serializeStencils(cx, input.get(), xdrBytes)) {
+      return false;
+    }
   }
 
   /* Dump the bytes into a javascript ArrayBuffer and return a UInt8Array. */
@@ -5043,16 +5060,17 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   options.setFileAndLine(filename, lineno);
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  if (!input.get().initForGlobal(cx)) {
     return false;
   }
+  frontend::CompilationStencil stencil(nullptr);
 
   /* Deserialize the stencil from XDR. */
   JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength().get());
   bool succeeded = false;
-  if (!stencil.get().deserializeStencils(cx, xdrRange, &succeeded)) {
+  if (!stencil.deserializeStencils(cx, input.get(), xdrRange, &succeeded)) {
     return false;
   }
   if (!succeeded) {
@@ -5064,7 +5082,8 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   Rooted<frontend::CompilationGCOutput> output(cx);
   Rooted<frontend::CompilationGCOutput> outputForDelazification(cx);
   if (!frontend::CompilationStencil::instantiateStencils(
-          cx, stencil.get(), output.get(), outputForDelazification.address())) {
+          cx, input.get(), stencil, output.get(),
+          outputForDelazification.address())) {
     return false;
   }
 
@@ -6992,7 +7011,7 @@ gc::ZealModeHelpText),
 "  Throw out of memory exception, for OOM handling testing."),
 
     JS_FN_HELP("reportLargeAllocationFailure", ReportLargeAllocationFailure, 0, 0,
-"reportLargeAllocationFailure()",
+"reportLargeAllocationFailure([bytes])",
 "  Call the large allocation failure callback, as though a large malloc call failed,\n"
 "  then return undefined. In Gecko, this sends a memory pressure notification, which\n"
 "  can free up some memory."),

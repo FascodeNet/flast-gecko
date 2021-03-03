@@ -40,6 +40,13 @@
     #endif
 #endif
 
+#ifdef SWGL
+    #define SWGL_DRAW_SPAN
+    #define SWGL_CLIP_MASK
+    #define SWGL_ANTIALIAS
+    #define SWGL_BLEND
+#endif
+
 #ifdef WR_VERTEX_SHADER
     #ifdef SWGL
         // Annotate a vertex attribute as being flat per each drawn primitive instance.

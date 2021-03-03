@@ -29,7 +29,6 @@
 namespace js {
 namespace frontend {
 
-struct CompilationStencil;
 struct CompilationState;
 class ParseContext;
 class ScriptStencil;
@@ -141,8 +140,6 @@ class SharedContext {
   JSContext* const cx_;
 
  protected:
-  CompilationStencil& stencil_;
-
   // See: BaseScript::immutableFlags_
   ImmutableScriptFlags immutableFlags_ = {};
 
@@ -187,7 +184,7 @@ class SharedContext {
   // Alias enum into SharedContext
   using ImmutableFlags = ImmutableScriptFlagsEnum;
 
-  MOZ_MUST_USE bool hasFlag(ImmutableFlags flag) const {
+  [[nodiscard]] bool hasFlag(ImmutableFlags flag) const {
     return immutableFlags_.hasFlag(flag);
   }
   void setFlag(ImmutableFlags flag, bool b = true) {
@@ -196,7 +193,8 @@ class SharedContext {
   }
 
  public:
-  SharedContext(JSContext* cx, Kind kind, CompilationStencil& stencil,
+  SharedContext(JSContext* cx, Kind kind,
+                const JS::ReadOnlyCompileOptions& options,
                 Directives directives, SourceExtent extent);
 
   IMMUTABLE_FLAG_GETTER_SETTER(isForEval, IsForEval)
@@ -231,8 +229,6 @@ class SharedContext {
   inline EvalSharedContext* asEvalContext();
 
   bool isTopLevelContext() const { return !isFunction(); }
-
-  CompilationStencil& stencil() const { return stencil_; }
 
   ThisBinding thisBinding() const { return thisBinding_; }
   bool hasFunctionThisBinding() const {
@@ -280,8 +276,8 @@ class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
   GlobalScope::ParserData* bindings;
 
   GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
-                      CompilationStencil& stencil, Directives directives,
-                      SourceExtent extent);
+                      const JS::ReadOnlyCompileOptions& options,
+                      Directives directives, SourceExtent extent);
 
   ScopeKind scopeKind() const { return scopeKind_; }
 };
@@ -295,8 +291,8 @@ class MOZ_STACK_CLASS EvalSharedContext : public SharedContext {
  public:
   EvalScope::ParserData* bindings;
 
-  EvalSharedContext(JSContext* cx, CompilationStencil& stencil,
-                    CompilationState& compilationState, SourceExtent extent);
+  EvalSharedContext(JSContext* cx, CompilationState& compilationState,
+                    SourceExtent extent);
 };
 
 inline EvalSharedContext* SharedContext::asEvalContext() {
@@ -308,7 +304,8 @@ enum class HasHeritage { No, Yes };
 
 class SuspendableContext : public SharedContext {
  public:
-  SuspendableContext(JSContext* cx, Kind kind, CompilationStencil& stencil,
+  SuspendableContext(JSContext* cx, Kind kind,
+                     const JS::ReadOnlyCompileOptions& options,
                      Directives directives, SourceExtent extent,
                      bool isGenerator, bool isAsync);
 
@@ -418,11 +415,11 @@ class FunctionBox : public SuspendableContext {
 
   // End of fields.
 
-  FunctionBox(JSContext* cx, SourceExtent extent, CompilationStencil& stencil,
+  FunctionBox(JSContext* cx, SourceExtent extent,
               CompilationState& compilationState, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
-              TaggedParserAtomIndex atom, FunctionFlags flags,
-              ScriptIndex index);
+              bool isInitialCompilation, TaggedParserAtomIndex atom,
+              FunctionFlags flags, ScriptIndex index);
 
   ScriptStencil& functionStencil() const;
   ScriptStencilExtra& functionExtraStencil() const;
@@ -476,7 +473,7 @@ class FunctionBox : public SuspendableContext {
     }
   }
 
-  MOZ_MUST_USE bool setAsmJSModule(const JS::WasmModule* module);
+  [[nodiscard]] bool setAsmJSModule(const JS::WasmModule* module);
   bool isAsmJSModule() const { return flags_.isAsmJSNative(); }
 
   bool hasEnclosingScopeIndex() const { return enclosingScopeIndex_.isSome(); }

@@ -435,7 +435,7 @@ bool Channel::ChannelImpl::ProcessIncomingMessages(
       // has no routing ID), but we only emit a profiler marker for messages
       // with a routing ID, so there's no conflict here.
       AddIPCProfilerMarker(m, other_pid_, MessageDirection::eReceiving,
-                           MessagePhase::TransferStart);
+                           MessagePhase::TransferEnd);
 
 #ifdef IPC_MESSAGE_DEBUG_EXTRA
       DLOG(INFO) << "received message on channel @" << this << " with type "
@@ -512,14 +512,13 @@ bool Channel::ChannelImpl::ProcessOutgoingMessages(
   Message* m = output_queue_.FirstElement().get();
 
   if (partial_write_iter_.isNothing()) {
+    AddIPCProfilerMarker(*m, other_pid_, MessageDirection::eSending,
+                         MessagePhase::TransferStart);
     Pickle::BufferList::IterImpl iter(m->Buffers());
     partial_write_iter_.emplace(iter);
   }
 
   Pickle::BufferList::IterImpl& iter = partial_write_iter_.ref();
-
-  AddIPCProfilerMarker(*m, other_pid_, MessageDirection::eSending,
-                       MessagePhase::TransferStart);
 
   // Don't count this write for the purposes of late write checking. If this
   // message results in a legitimate file write, that will show up when it

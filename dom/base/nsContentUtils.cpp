@@ -107,7 +107,6 @@
 #include "mozilla/Result.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ScrollbarPreferences.h"
-#include "mozilla/Services.h"
 #include "mozilla/Span.h"
 #include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -870,7 +869,7 @@ void nsContentUtils::GetModifierSeparatorText(nsAString& text) {
 void nsContentUtils::InitializeModifierStrings() {
   // load the display strings for the keyboard accelerators
   nsCOMPtr<nsIStringBundleService> bundleService =
-      mozilla::services::GetStringBundleService();
+      mozilla::components::StringBundle::Service();
   nsCOMPtr<nsIStringBundle> bundle;
   DebugOnly<nsresult> rv = NS_OK;
   if (bundleService) {
@@ -965,11 +964,11 @@ bool nsContentUtils::InitializeEventTable() {
 
   // Subtract one from the length because of the trailing null
   for (uint32_t i = 0; i < ArrayLength(eventArray) - 1; ++i) {
-    MOZ_ASSERT(!sAtomEventTable->Lookup(eventArray[i].mAtom),
+    MOZ_ASSERT(!sAtomEventTable->Contains(eventArray[i].mAtom),
                "Double-defining event name; fix your EventNameList.h");
-    sAtomEventTable->Put(eventArray[i].mAtom, eventArray[i]);
+    sAtomEventTable->InsertOrUpdate(eventArray[i].mAtom, eventArray[i]);
     if (ShouldAddEventToStringEventTable(eventArray[i])) {
-      sStringEventTable->Put(
+      sStringEventTable->InsertOrUpdate(
           Substring(nsDependentAtomString(eventArray[i].mAtom), 2),
           eventArray[i]);
     }
@@ -992,8 +991,9 @@ void nsContentUtils::InitializeTouchEventTable() {
         {nullptr}};
     // Subtract one from the length because of the trailing null
     for (uint32_t i = 0; i < ArrayLength(touchEventArray) - 1; ++i) {
-      sAtomEventTable->Put(touchEventArray[i].mAtom, touchEventArray[i]);
-      sStringEventTable->Put(
+      sAtomEventTable->InsertOrUpdate(touchEventArray[i].mAtom,
+                                      touchEventArray[i]);
+      sStringEventTable->InsertOrUpdate(
           Substring(nsDependentAtomString(touchEventArray[i].mAtom), 2),
           touchEventArray[i]);
     }
@@ -3657,7 +3657,8 @@ static bool TestSitePerm(nsIPrincipal* aPrincipal, const nsACString& aType,
     return aPerm != nsIPermissionManager::ALLOW_ACTION;
   }
 
-  nsCOMPtr<nsIPermissionManager> permMgr = services::GetPermissionManager();
+  nsCOMPtr<nsIPermissionManager> permMgr =
+      components::PermissionManager::Service();
   NS_ENSURE_TRUE(permMgr, false);
 
   uint32_t perm;
@@ -4091,7 +4092,7 @@ nsAtom* nsContentUtils::GetEventMessageAndAtom(
   // sAtomEventTable instead.
   mapping.mMaybeSpecialSVGorSMILEvent =
       GetEventMessage(atom) != eUnidentifiedEvent;
-  sStringEventTable->Put(aName, mapping);
+  sStringEventTable->InsertOrUpdate(aName, mapping);
   return mapping.mAtom;
 }
 
@@ -4724,7 +4725,7 @@ void nsContentUtils::AddEntryToDOMArenaTable(nsINode* aNode,
         new nsRefPtrHashtable<nsPtrHashKey<const nsINode>, dom::DOMArena>();
   }
   aNode->SetFlags(NODE_KEEPS_DOMARENA);
-  sDOMArenaHashtable->Put(aNode, RefPtr<DOMArena>(aDOMArena));
+  sDOMArenaHashtable->InsertOrUpdate(aNode, RefPtr<DOMArena>(aDOMArena));
 }
 
 already_AddRefed<DOMArena> nsContentUtils::TakeEntryFromDOMArenaTable(
@@ -8879,7 +8880,7 @@ static inline bool ShouldEscape(nsIContent* aParent) {
       nsGkAtoms::style,     nsGkAtoms::script,  nsGkAtoms::xmp,
       nsGkAtoms::iframe,    nsGkAtoms::noembed, nsGkAtoms::noframes,
       nsGkAtoms::plaintext, nsGkAtoms::noscript};
-  static mozilla::BloomFilter<12, nsAtom> sFilter;
+  static mozilla::BitBloomFilter<12, nsAtom> sFilter;
   static bool sInitialized = false;
   if (!sInitialized) {
     sInitialized = true;
@@ -10019,6 +10020,7 @@ bool nsContentUtils::IsMessageInputEvent(const IPC::Message& aMsg) {
     switch (aMsg.type()) {
       case mozilla::dom::PBrowser::Msg_RealMouseMoveEvent__ID:
       case mozilla::dom::PBrowser::Msg_RealMouseButtonEvent__ID:
+      case mozilla::dom::PBrowser::Msg_RealMouseEnterExitWidgetEvent__ID:
       case mozilla::dom::PBrowser::Msg_RealKeyEvent__ID:
       case mozilla::dom::PBrowser::Msg_MouseWheelEvent__ID:
       case mozilla::dom::PBrowser::Msg_RealTouchEvent__ID:
@@ -10039,6 +10041,7 @@ bool nsContentUtils::IsMessageCriticalInputEvent(const IPC::Message& aMsg) {
     switch (aMsg.type()) {
       case mozilla::dom::PBrowser::Msg_RealMouseButtonEvent__ID:
       case mozilla::dom::PBrowser::Msg_RealKeyEvent__ID:
+      case mozilla::dom::PBrowser::Msg_MouseWheelEvent__ID:
       case mozilla::dom::PBrowser::Msg_RealTouchEvent__ID:
       case mozilla::dom::PBrowser::Msg_RealDragEvent__ID:
         return true;

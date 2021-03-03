@@ -86,6 +86,10 @@ static bool ModuleValueGetter(JSContext* cx, unsigned argc, Value* vp) {
     return JS::ToUint32(value.toDouble());       \
   }
 
+static Value StringOrNullValue(JSString* maybeString) {
+  return maybeString ? StringValue(maybeString) : NullValue();
+}
+
 ///////////////////////////////////////////////////////////////////////////
 // ImportEntryObject
 
@@ -99,7 +103,7 @@ DEFINE_GETTER_FUNCTIONS(ImportEntryObject, lineNumber, LineNumberSlot)
 DEFINE_GETTER_FUNCTIONS(ImportEntryObject, columnNumber, ColumnNumberSlot)
 
 DEFINE_ATOM_ACCESSOR_METHOD(ImportEntryObject, moduleRequest)
-DEFINE_ATOM_ACCESSOR_METHOD(ImportEntryObject, importName)
+DEFINE_ATOM_OR_NULL_ACCESSOR_METHOD(ImportEntryObject, importName)
 DEFINE_ATOM_ACCESSOR_METHOD(ImportEntryObject, localName)
 DEFINE_UINT32_ACCESSOR_METHOD(ImportEntryObject, lineNumber)
 DEFINE_UINT32_ACCESSOR_METHOD(ImportEntryObject, columnNumber)
@@ -136,7 +140,7 @@ bool GlobalObject::initImportEntryProto(JSContext* cx,
 
 /* static */
 ImportEntryObject* ImportEntryObject::create(
-    JSContext* cx, HandleAtom moduleRequest, HandleAtom importName,
+    JSContext* cx, HandleAtom moduleRequest, HandleAtom maybeImportName,
     HandleAtom localName, uint32_t lineNumber, uint32_t columnNumber) {
   RootedObject proto(
       cx, GlobalObject::getOrCreateImportEntryPrototype(cx, cx->global()));
@@ -151,7 +155,7 @@ ImportEntryObject* ImportEntryObject::create(
   }
 
   self->initReservedSlot(ModuleRequestSlot, StringValue(moduleRequest));
-  self->initReservedSlot(ImportNameSlot, StringValue(importName));
+  self->initReservedSlot(ImportNameSlot, StringOrNullValue(maybeImportName));
   self->initReservedSlot(LocalNameSlot, StringValue(localName));
   self->initReservedSlot(LineNumberSlot, NumberValue(lineNumber));
   self->initReservedSlot(ColumnNumberSlot, NumberValue(columnNumber));
@@ -207,10 +211,6 @@ bool GlobalObject::initExportEntryProto(JSContext* cx,
 
   global->initReservedSlot(EXPORT_ENTRY_PROTO, ObjectValue(*proto));
   return true;
-}
-
-static Value StringOrNullValue(JSString* maybeString) {
-  return maybeString ? StringValue(maybeString) : NullValue();
 }
 
 /* static */
@@ -994,7 +994,9 @@ uint32_t ModuleObject::dfsAncestorIndex() const {
 }
 
 JSObject* ModuleObject::topLevelCapability() const {
-  return &getReservedSlot(TopLevelCapabilitySlot).toObject();
+  Value capability = getReservedSlot(TopLevelCapabilitySlot);
+  MOZ_RELEASE_ASSERT(capability.isObject());
+  return &capability.toObject();
 }
 
 PromiseObject* ModuleObject::createTopLevelCapability(
@@ -1029,6 +1031,16 @@ uint32_t ModuleObject::pendingAsyncDependencies() const {
 
 void ModuleObject::setPendingAsyncDependencies(uint32_t newValue) {
   return setReservedSlot(PendingAsyncDependenciesSlot, NumberValue(newValue));
+}
+
+void ModuleObject::setCycleRoot(ModuleObject* cycleRoot) {
+  return setReservedSlot(CycleRootSlot, ObjectValue(*cycleRoot));
+}
+
+ModuleObject* ModuleObject::getCycleRoot() const {
+  Value cycleRoot = getReservedSlot(CycleRootSlot);
+  MOZ_RELEASE_ASSERT(cycleRoot.isObject());
+  return &cycleRoot.toObject().as<ModuleObject>();
 }
 
 bool ModuleObject::hasTopLevelCapability() const {
@@ -1343,8 +1355,7 @@ bool ModuleBuilder::buildTables(frontend::StencilModuleMetadata& metadata) {
           return false;
         }
       } else {
-        if (importEntry->importName ==
-            frontend::TaggedParserAtomIndex::WellKnown::star()) {
+        if (!importEntry->importName) {
           if (!metadata.localExportEntries.append(exp)) {
             js::ReportOutOfMemory(cx_);
             return false;
@@ -1360,9 +1371,7 @@ bool ModuleBuilder::buildTables(frontend::StencilModuleMetadata& metadata) {
           }
         }
       }
-    } else if (exp.importName ==
-                   frontend::TaggedParserAtomIndex::WellKnown::star() &&
-               !exp.exportName) {
+    } else if (!exp.importName && !exp.exportName) {
       if (!metadata.starExportEntries.append(exp)) {
         js::ReportOutOfMemory(cx_);
         return false;
@@ -1413,31 +1422,38 @@ static ArrayObject* ModuleBuilderInitArray(
     if (entry.specifier) {
       specifier = atomCache.getExistingAtomAt(cx, entry.specifier);
       MOZ_ASSERT(specifier);
+    } else {
+      MOZ_ASSERT(!specifier);
     }
 
     if (entry.localName) {
       localName = atomCache.getExistingAtomAt(cx, entry.localName);
       MOZ_ASSERT(localName);
+    } else {
+      MOZ_ASSERT(!localName);
     }
 
     if (entry.importName) {
       importName = atomCache.getExistingAtomAt(cx, entry.importName);
       MOZ_ASSERT(importName);
+    } else {
+      importName = nullptr;
     }
 
     if (entry.exportName) {
       exportName = atomCache.getExistingAtomAt(cx, entry.exportName);
       MOZ_ASSERT(exportName);
+    } else {
+      MOZ_ASSERT(!exportName);
     }
 
     switch (arrayType) {
       case ModuleArrayType::ImportEntryObject:
-        MOZ_ASSERT(localName && importName);
+        MOZ_ASSERT(localName);
         req = ImportEntryObject::create(cx, specifier, importName, localName,
                                         entry.lineno, entry.column);
         break;
       case ModuleArrayType::ExportEntryObject:
-        MOZ_ASSERT(localName || importName || exportName);
         req = ExportEntryObject::create(cx, exportName, specifier, importName,
                                         localName, entry.lineno, entry.column);
         break;
@@ -1532,10 +1548,10 @@ bool ModuleBuilder::processImport(frontend::BinaryNode* importNode) {
 
   MOZ_ASSERT(importNode->isKind(ParseNodeKind::ImportDecl));
 
-  ListNode* specList = &importNode->left()->as<ListNode>();
+  auto* specList = &importNode->left()->as<ListNode>();
   MOZ_ASSERT(specList->isKind(ParseNodeKind::ImportSpecList));
 
-  NameNode* moduleSpec = &importNode->right()->as<NameNode>();
+  auto* moduleSpec = &importNode->right()->as<NameNode>();
   MOZ_ASSERT(moduleSpec->isKind(ParseNodeKind::StringExpr));
 
   auto module = moduleSpec->atom();
@@ -1544,25 +1560,39 @@ bool ModuleBuilder::processImport(frontend::BinaryNode* importNode) {
   }
 
   for (ParseNode* item : specList->contents()) {
-    BinaryNode* spec = &item->as<BinaryNode>();
-    MOZ_ASSERT(spec->isKind(ParseNodeKind::ImportSpec));
-
-    NameNode* importNameNode = &spec->left()->as<NameNode>();
-    NameNode* localNameNode = &spec->right()->as<NameNode>();
-
-    auto importName = importNameNode->atom();
-    auto localName = localNameNode->atom();
-
     uint32_t line;
     uint32_t column;
-    eitherParser_.computeLineAndColumn(importNameNode->pn_pos.begin, &line,
-                                       &column);
+    eitherParser_.computeLineAndColumn(item->pn_pos.begin, &line, &column);
 
-    markUsedByStencil(module);
-    markUsedByStencil(localName);
-    markUsedByStencil(importName);
-    auto entry = frontend::StencilModuleEntry::importEntry(
-        module, localName, importName, line, column);
+    StencilModuleEntry entry;
+    TaggedParserAtomIndex localName;
+    if (item->isKind(ParseNodeKind::ImportSpec)) {
+      auto* spec = &item->as<BinaryNode>();
+
+      auto* importNameNode = &spec->left()->as<NameNode>();
+      auto* localNameNode = &spec->right()->as<NameNode>();
+
+      auto importName = importNameNode->atom();
+      localName = localNameNode->atom();
+
+      markUsedByStencil(module);
+      markUsedByStencil(localName);
+      markUsedByStencil(importName);
+      entry = StencilModuleEntry::importEntry(module, localName, importName,
+                                              line, column);
+    } else {
+      MOZ_ASSERT(item->isKind(ParseNodeKind::ImportNamespaceSpec));
+      auto* spec = &item->as<UnaryNode>();
+
+      auto* localNameNode = &spec->kid()->as<NameNode>();
+
+      localName = localNameNode->atom();
+
+      markUsedByStencil(module);
+      markUsedByStencil(localName);
+      entry = StencilModuleEntry::importNamespaceEntry(module, localName, line,
+                                                       column);
+    }
     if (!importEntries_.put(localName, entry)) {
       return false;
     }
@@ -1750,10 +1780,10 @@ bool ModuleBuilder::processExportFrom(frontend::BinaryNode* exportNode) {
 
   MOZ_ASSERT(exportNode->isKind(ParseNodeKind::ExportFromStmt));
 
-  ListNode* specList = &exportNode->left()->as<ListNode>();
+  auto* specList = &exportNode->left()->as<ListNode>();
   MOZ_ASSERT(specList->isKind(ParseNodeKind::ExportSpecList));
 
-  NameNode* moduleSpec = &exportNode->right()->as<NameNode>();
+  auto* moduleSpec = &exportNode->right()->as<NameNode>();
   MOZ_ASSERT(moduleSpec->isKind(ParseNodeKind::StringExpr));
 
   auto module = moduleSpec->atom();
@@ -1763,25 +1793,45 @@ bool ModuleBuilder::processExportFrom(frontend::BinaryNode* exportNode) {
   }
 
   for (ParseNode* spec : specList->contents()) {
+    uint32_t line;
+    uint32_t column;
+    eitherParser_.computeLineAndColumn(spec->pn_pos.begin, &line, &column);
+
+    StencilModuleEntry entry;
+    TaggedParserAtomIndex exportName;
     if (spec->isKind(ParseNodeKind::ExportSpec)) {
-      NameNode* localNameNode = &spec->as<BinaryNode>().left()->as<NameNode>();
-      NameNode* exportNameNode =
-          &spec->as<BinaryNode>().right()->as<NameNode>();
+      auto* importNameNode = &spec->as<BinaryNode>().left()->as<NameNode>();
+      auto* exportNameNode = &spec->as<BinaryNode>().right()->as<NameNode>();
 
-      auto bindingName = localNameNode->atom();
-      auto exportName = exportNameNode->atom();
+      auto importName = importNameNode->atom();
+      exportName = exportNameNode->atom();
 
-      if (!appendExportFromEntry(exportName, module, bindingName,
-                                 localNameNode)) {
-        return false;
-      }
+      markUsedByStencil(module);
+      markUsedByStencil(importName);
+      markUsedByStencil(exportName);
+      entry = StencilModuleEntry::exportFromEntry(module, importName,
+                                                  exportName, line, column);
+    } else if (spec->isKind(ParseNodeKind::ExportNamespaceSpec)) {
+      auto* exportNameNode = &spec->as<UnaryNode>().kid()->as<NameNode>();
+
+      exportName = exportNameNode->atom();
+
+      markUsedByStencil(module);
+      markUsedByStencil(exportName);
+      entry = StencilModuleEntry::exportNamespaceFromEntry(module, exportName,
+                                                           line, column);
     } else {
       MOZ_ASSERT(spec->isKind(ParseNodeKind::ExportBatchSpecStmt));
-      auto exportName = TaggedParserAtomIndex::WellKnown::star();
-      if (!appendExportFromEntry(TaggedParserAtomIndex::null(), module,
-                                 exportName, spec)) {
-        return false;
-      }
+
+      markUsedByStencil(module);
+      entry = StencilModuleEntry::exportBatchFromEntry(module, line, column);
+    }
+
+    if (!exportEntries_.append(entry)) {
+      return false;
+    }
+    if (exportName && !exportNames_.put(exportName)) {
+      return false;
     }
   }
 
@@ -1822,35 +1872,11 @@ bool ModuleBuilder::appendExportEntry(
     return false;
   }
 
-  if (exportName) {
-    if (!exportNames_.put(exportName)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool ModuleBuilder::appendExportFromEntry(
-    frontend::TaggedParserAtomIndex exportName,
-    frontend::TaggedParserAtomIndex moduleRequest,
-    frontend::TaggedParserAtomIndex importName, frontend::ParseNode* node) {
-  uint32_t line;
-  uint32_t column;
-  eitherParser_.computeLineAndColumn(node->pn_pos.begin, &line, &column);
-
-  markUsedByStencil(moduleRequest);
-  markUsedByStencil(importName);
-  if (exportName) {
-    markUsedByStencil(exportName);
-  }
-  auto entry = frontend::StencilModuleEntry::exportFromEntry(
-      moduleRequest, importName, exportName, line, column);
-  if (!exportEntries_.append(entry)) {
+  if (!exportNames_.put(exportName)) {
     return false;
   }
 
-  return !exportName || exportNames_.put(exportName);
+  return true;
 }
 
 bool ModuleBuilder::maybeAppendRequestedModule(
@@ -1946,36 +1972,6 @@ JSObject* js::CallModuleResolveHook(JSContext* cx,
   return result;
 }
 
-// https://tc39.es/proposal-top-level-await/#sec-getasynccycleroot
-ModuleObject* js::GetAsyncCycleRoot(ModuleObject* module) {
-  // Step 1.
-  MOZ_ASSERT(module->status() == MODULE_STATUS_EVALUATED);
-
-  // Step 2.
-  if (module->asyncParentModules()->empty()) {
-    return module;
-  }
-
-  // Step 3.
-  ModuleObject* currentModule = module;
-  while (currentModule->dfsIndex() > currentModule->dfsAncestorIndex()) {
-    MOZ_ASSERT(!currentModule->asyncParentModules()->empty());
-    ModuleObject* nextCycleModule = &currentModule->asyncParentModules()
-                                         ->get(0)
-                                         .toObject()
-                                         .as<ModuleObject>();
-    MOZ_ASSERT(nextCycleModule->dfsAncestorIndex() <=
-               currentModule->dfsAncestorIndex());
-    currentModule = nextCycleModule;
-  }
-
-  // Step 4.
-  MOZ_ASSERT(currentModule->dfsIndex() == currentModule->dfsAncestorIndex());
-
-  // Step 5.
-  return currentModule;
-}
-
 bool js::AsyncModuleExecutionFulfilledHandler(JSContext* cx, unsigned argc,
                                               Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -2030,16 +2026,12 @@ void js::AsyncModuleExecutionFulfilled(JSContext* cx,
   for (uint32_t i = 0; i < length; i++) {
     m = &module->asyncParentModules()->get(i).toObject().as<ModuleObject>();
 
-    if (module->dfsIndex() != module->dfsAncestorIndex()) {
-      MOZ_ASSERT(m->dfsAncestorIndex() <= module->dfsAncestorIndex());
-    }
-
     m->setPendingAsyncDependencies(m->pendingAsyncDependencies() - 1);
 
     if (m->pendingAsyncDependencies() == 0 && !m->hadEvaluationError()) {
       MOZ_ASSERT(m->isAsyncEvaluating());
 
-      cycleRoot = GetAsyncCycleRoot(m);
+      cycleRoot = m->getCycleRoot();
 
       if (cycleRoot->hadEvaluationError()) {
         return;
@@ -2064,7 +2056,7 @@ void js::AsyncModuleExecutionFulfilled(JSContext* cx,
 
   // Step 6.
   if (module->hasTopLevelCapability()) {
-    MOZ_ASSERT(module->dfsIndex() == module->dfsAncestorIndex());
+    MOZ_ASSERT(module->getCycleRoot() == module);
     ModuleObject::topLevelCapabilityResolve(cx, module);
   }
 
@@ -2075,7 +2067,8 @@ void js::AsyncModuleExecutionFulfilled(JSContext* cx,
 void js::AsyncModuleExecutionRejected(JSContext* cx, HandleModuleObject module,
                                       HandleValue error) {
   // Step 1.
-  MOZ_ASSERT(module->status() == MODULE_STATUS_EVALUATED);
+  MOZ_ASSERT(module->status() == MODULE_STATUS_EVALUATED ||
+             module->status() == MODULE_STATUS_EVALUATED_ERROR);
 
   // Step 2.
   if (!module->isAsyncEvaluating()) {
@@ -2098,15 +2091,12 @@ void js::AsyncModuleExecutionRejected(JSContext* cx, HandleModuleObject module,
   for (uint32_t i = 0; i < length; i++) {
     parent =
         &module->asyncParentModules()->get(i).toObject().as<ModuleObject>();
-    if (module->dfsIndex() != module->dfsAncestorIndex()) {
-      MOZ_ASSERT(parent->dfsAncestorIndex() == module->dfsAncestorIndex());
-    }
     AsyncModuleExecutionRejected(cx, parent, error);
   }
 
   // Step 7.
   if (module->hasTopLevelCapability()) {
-    MOZ_ASSERT(module->dfsIndex() == module->dfsAncestorIndex());
+    MOZ_ASSERT(module->getCycleRoot() == module);
     ModuleObject::topLevelCapabilityReject(cx, module, error);
   }
 
@@ -2244,8 +2234,10 @@ static bool OnResolvedDynamicModule(JSContext* cx, unsigned argc, Value* vp) {
     return RejectPromiseWithPendingError(cx, promise);
   }
 
-  MOZ_ASSERT(module->topLevelCapability()->as<PromiseObject>().state() ==
-             JS::PromiseState::Fulfilled);
+  MOZ_ASSERT(module->getCycleRoot()
+                 ->topLevelCapability()
+                 ->as<PromiseObject>()
+                 .state() == JS::PromiseState::Fulfilled);
 
   RootedObject ns(cx, ModuleObject::GetOrCreateModuleNamespace(cx, module));
   if (!ns) {
@@ -2413,10 +2405,10 @@ XDRResult js::XDRExportEntries(XDRState<mode>* xdr,
                                            importName, localName, lineNumber,
                                            columnNumber));
       if (!expObj) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
       if (!expVec.append(expObj)) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
   }
@@ -2424,7 +2416,7 @@ XDRResult js::XDRExportEntries(XDRState<mode>* xdr,
   if (mode == XDR_DECODE) {
     RootedArrayObject expArr(cx, js::CreateArray(cx, expVec));
     if (!expArr) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
     vec.set(expArr);
   }
@@ -2453,7 +2445,7 @@ XDRResult js::XDRRequestedModuleObject(
     reqObj.set(RequestedModuleObject::create(cx, moduleSpecifier, lineNumber,
                                              columnNumber));
     if (!reqObj) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -2487,7 +2479,7 @@ XDRResult js::XDRImportEntryObject(XDRState<mode>* xdr,
     impObj.set(ImportEntryObject::create(cx, moduleRequest, importName,
                                          localName, lineNumber, columnNumber));
     if (!impObj) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -2542,7 +2534,7 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
     enclosingScope.set(&cx->global()->emptyGlobalScope());
     module.set(ModuleObject::create(cx));
     if (!module) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -2557,7 +2549,7 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
   /* Environment Slot */
   if (mode == XDR_DECODE) {
     if (!ModuleObject::createEnvironment(cx, module)) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -2578,14 +2570,14 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
     MOZ_TRY(XDRRequestedModuleObject(xdr, &reqObj));
     if (mode == XDR_DECODE) {
       if (!reqVec.append(reqObj)) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
   }
   if (mode == XDR_DECODE) {
     RootedArrayObject reqArr(cx, js::CreateArray(cx, reqVec));
     if (!reqArr) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
     requestedModules.set(reqArr);
   }
@@ -2604,7 +2596,7 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
     MOZ_TRY(XDRImportEntryObject(xdr, &impObj));
     if (mode == XDR_DECODE) {
       if (!impVec.append(impObj)) {
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
   }
@@ -2612,7 +2604,7 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
   if (mode == XDR_DECODE) {
     RootedArrayObject impArr(cx, js::CreateArray(cx, impVec));
     if (!impArr) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
     importEntries.set(impArr);
   }
@@ -2637,7 +2629,7 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
     if (mode == XDR_DECODE) {
       if (!GetFunctionDeclarations(module.get())->append(funIndex)) {
         ReportOutOfMemory(cx);
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
   }
@@ -2661,7 +2653,7 @@ XDRResult js::XDRModuleObject(XDRState<mode>* xdr,
   if (mode == XDR_DECODE) {
     Rooted<ListObject*> asyncParentModulesList(cx, ListObject::create(cx));
     if (!asyncParentModulesList) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
 
     module->initAsyncSlots(cx, isAsyncModule == 1, asyncParentModulesList);

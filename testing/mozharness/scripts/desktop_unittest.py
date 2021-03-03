@@ -280,6 +280,24 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
                     "Examples: 'apple_silicon'",
                 },
             ],
+            [
+                ["--crash-as-pass"],
+                {
+                    "action": "store_true",
+                    "default": False,
+                    "dest": "crash_as_pass",
+                    "help": "treat harness level crash as a pass",
+                },
+            ],
+            [
+                ["--timeout-as-pass"],
+                {
+                    "action": "store_true",
+                    "default": False,
+                    "dest": "timeout_as_pass",
+                    "help": "treat harness level timeout as a pass",
+                },
+            ],
         ]
         + copy.deepcopy(testing_config_options)
         + copy.deepcopy(code_coverage_config_options)
@@ -450,17 +468,12 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
         self.register_virtualenv_module(name="mock")
         self.register_virtualenv_module(name="simplejson")
 
-        marionette_requirements_file = os.path.join(
-            dirs["abs_test_install_dir"], "config", "marionette_requirements.txt"
-        )
-        # marionette_requirements.txt must use the legacy resolver until bug 1684969 is resolved.
-        self.register_virtualenv_module(
-            requirements=[marionette_requirements_file],
-            two_pass=True,
-            legacy_resolver=True,
-        )
+        requirements_files = [
+            os.path.join(
+                dirs["abs_test_install_dir"], "config", "marionette_requirements.txt"
+            )
+        ]
 
-        requirements_files = []
         if self._query_specified_suites("mochitest") is not None:
             # mochitest is the only thing that needs this
             if PY2:
@@ -610,6 +623,12 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
 
             if c["run_failures"]:
                 base_cmd.extend(["--run-failures={}".format(c["run_failures"])])
+
+            if c["timeout_as_pass"]:
+                base_cmd.append("--timeout-as-pass")
+
+            if c["crash_as_pass"]:
+                base_cmd.append("--crash-as-pass")
 
             # set pluginsPath
             abs_res_plugins_dir = os.path.join(abs_res_dir, "plugins")

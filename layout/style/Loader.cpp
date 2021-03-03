@@ -52,6 +52,7 @@
 #include "mozilla/dom/URL.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "mozilla/AsyncEventDispatcher.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -259,14 +260,12 @@ static NotNull<const Encoding*> GetFallbackEncoding(
  ********************************/
 NS_IMPL_ISUPPORTS(SheetLoadData, nsIRunnable, nsIThreadObserver)
 
-SheetLoadData::SheetLoadData(Loader* aLoader, const nsAString& aTitle,
-                             nsIURI* aURI, StyleSheet* aSheet, bool aSyncLoad,
-                             nsINode* aOwningNode, IsAlternate aIsAlternate,
-                             MediaMatched aMediaMatches, StylePreloadKind aPreloadKind,
-                             nsICSSLoaderObserver* aObserver,
-                             nsIPrincipal* aTriggeringPrincipal,
-                             nsIReferrerInfo* aReferrerInfo,
-                             nsINode* aRequestingNode)
+SheetLoadData::SheetLoadData(
+    Loader* aLoader, const nsAString& aTitle, nsIURI* aURI, StyleSheet* aSheet,
+    bool aSyncLoad, nsINode* aOwningNode, IsAlternate aIsAlternate,
+    MediaMatched aMediaMatches, StylePreloadKind aPreloadKind,
+    nsICSSLoaderObserver* aObserver, nsIPrincipal* aTriggeringPrincipal,
+    nsIReferrerInfo* aReferrerInfo, nsINode* aRequestingNode)
     : mLoader(aLoader),
       mTitle(aTitle),
       mEncoding(nullptr),
@@ -948,7 +947,8 @@ std::tuple<RefPtr<StyleSheet>, Loader::SheetState> Loader::CreateSheet(
     nsIURI* aURI, nsIContent* aLinkingContent,
     nsIPrincipal* aTriggeringPrincipal, css::SheetParsingMode aParsingMode,
     CORSMode aCORSMode, const Encoding* aPreloadOrParentDataEncoding,
-    const nsAString& aIntegrity, bool aSyncLoad, StylePreloadKind aPreloadKind) {
+    const nsAString& aIntegrity, bool aSyncLoad,
+    StylePreloadKind aPreloadKind) {
   MOZ_ASSERT(aURI, "This path is not taken for inline stylesheets");
   LOG(("css::Loader::CreateSheet(%s)", aURI->GetSpecOrDefault().get()));
 
@@ -1713,8 +1713,8 @@ Result<Loader::LoadSheetResult, nsresult> Loader::LoadInlineStyle(
   } else {
     auto data = MakeRefPtr<SheetLoadData>(
         this, aInfo.mTitle, nullptr, sheet, false, aInfo.mContent, isAlternate,
-        matched, StylePreloadKind::None, aObserver, principal, aInfo.mReferrerInfo,
-        aInfo.mContent);
+        matched, StylePreloadKind::None, aObserver, principal,
+        aInfo.mReferrerInfo, aInfo.mContent);
     data->mLineNumber = aLineNumber;
 
     // Parse completion releases the load data.
@@ -1727,7 +1727,7 @@ Result<Loader::LoadSheetResult, nsresult> Loader::LoadInlineStyle(
     if (completed == Completed::Yes) {
       // TODO(emilio): Try to cache sheets with @import rules, maybe?
       if (isWorthCaching) {
-        mInlineSheets.Put(aBuffer, std::move(sheet));
+        mInlineSheets.InsertOrUpdate(aBuffer, std::move(sheet));
       }
     } else {
       data->mMustNotify = true;
@@ -1772,8 +1772,9 @@ Result<Loader::LoadSheetResult, nsresult> Loader::LoadStyleLink(
   LOG(("  Link sync load: '%s'", syncLoad ? "true" : "false"));
   MOZ_ASSERT_IF(syncLoad, !aObserver);
 
-  nsresult rv = CheckContentPolicy(loadingPrincipal, principal, aInfo.mURI,
-                                   context, aInfo.mNonce, StylePreloadKind::None);
+  nsresult rv =
+      CheckContentPolicy(loadingPrincipal, principal, aInfo.mURI, context,
+                         aInfo.mNonce, StylePreloadKind::None);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     // Don't fire the error event if our document is loaded as data.  We're
     // supposed to not even try to do loads in that case... Unfortunately, we
@@ -1794,8 +1795,8 @@ Result<Loader::LoadSheetResult, nsresult> Loader::LoadStyleLink(
   // Check IsAlternateSheet now, since it can mutate our document and make
   // pending sheets go to the non-pending state.
   auto isAlternate = IsAlternateSheet(aInfo.mTitle, aInfo.mHasAlternateRel);
-  auto [sheet, state] =
-      CreateSheet(aInfo, eAuthorSheetFeatures, syncLoad, StylePreloadKind::None);
+  auto [sheet, state] = CreateSheet(aInfo, eAuthorSheetFeatures, syncLoad,
+                                    StylePreloadKind::None);
 
   LOG(("  Sheet is alternate: %d", static_cast<int>(isAlternate)));
 
@@ -1957,11 +1958,11 @@ nsresult Loader::LoadChildSheet(StyleSheet& aParentSheet,
     state = SheetState::Complete;
   } else {
     // For now, use CORS_NONE for child sheets
-    std::tie(sheet, state) =
-        CreateSheet(aURL, nullptr, principal, aParentSheet.ParsingMode(),
-                    CORS_NONE, aParentData ? aParentData->mEncoding : nullptr,
-                    u""_ns,  // integrity is only checked on main sheet
-                    aParentData && aParentData->mSyncLoad, StylePreloadKind::None);
+    std::tie(sheet, state) = CreateSheet(
+        aURL, nullptr, principal, aParentSheet.ParsingMode(), CORS_NONE,
+        aParentData ? aParentData->mEncoding : nullptr,
+        u""_ns,  // integrity is only checked on main sheet
+        aParentData && aParentData->mSyncLoad, StylePreloadKind::None);
     PrepareSheet(*sheet, u""_ns, u""_ns, aMedia, IsAlternate::No,
                  IsExplicitlyEnabled::No);
   }
@@ -2003,9 +2004,9 @@ Result<RefPtr<StyleSheet>, nsresult> Loader::LoadSheetSync(
     UseSystemPrincipal aUseSystemPrincipal) {
   LOG(("css::Loader::LoadSheetSync"));
   nsCOMPtr<nsIReferrerInfo> referrerInfo = new ReferrerInfo(nullptr);
-  return InternalLoadNonDocumentSheet(aURL, StylePreloadKind::None, aParsingMode,
-                                      aUseSystemPrincipal, nullptr,
-                                      referrerInfo, nullptr, CORS_NONE, u""_ns);
+  return InternalLoadNonDocumentSheet(
+      aURL, StylePreloadKind::None, aParsingMode, aUseSystemPrincipal, nullptr,
+      referrerInfo, nullptr, CORS_NONE, u""_ns);
 }
 
 Result<RefPtr<StyleSheet>, nsresult> Loader::LoadSheet(
@@ -2018,9 +2019,10 @@ Result<RefPtr<StyleSheet>, nsresult> Loader::LoadSheet(
 }
 
 Result<RefPtr<StyleSheet>, nsresult> Loader::LoadSheet(
-    nsIURI* aURL, StylePreloadKind aPreloadKind, const Encoding* aPreloadEncoding,
-    nsIReferrerInfo* aReferrerInfo, nsICSSLoaderObserver* aObserver,
-    CORSMode aCORSMode, const nsAString& aIntegrity) {
+    nsIURI* aURL, StylePreloadKind aPreloadKind,
+    const Encoding* aPreloadEncoding, nsIReferrerInfo* aReferrerInfo,
+    nsICSSLoaderObserver* aObserver, CORSMode aCORSMode,
+    const nsAString& aIntegrity) {
   LOG(("css::Loader::LoadSheet(aURL, aObserver) api call"));
   return InternalLoadNonDocumentSheet(
       aURL, aPreloadKind, eAuthorSheetFeatures, UseSystemPrincipal::No,

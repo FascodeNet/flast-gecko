@@ -17,8 +17,6 @@ NS_IMPL_ISUPPORTS(nsSystemStatusBarCocoa, nsISystemStatusBar)
 
 NS_IMETHODIMP
 nsSystemStatusBarCocoa::AddItem(Element* aElement) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
-
   RefPtr<nsStandaloneNativeMenu> menu = new nsStandaloneNativeMenu();
   nsresult rv = menu->Init(aElement);
   if (NS_FAILED(rv)) {
@@ -26,25 +24,20 @@ nsSystemStatusBarCocoa::AddItem(Element* aElement) {
   }
 
   nsCOMPtr<nsISupports> keyPtr = aElement;
-  mItems.Put(keyPtr, new StatusItem(menu));
+  mItems.InsertOrUpdate(keyPtr, mozilla::MakeUnique<StatusItem>(menu));
 
   return NS_OK;
-
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
 NS_IMETHODIMP
 nsSystemStatusBarCocoa::RemoveItem(Element* aElement) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
-
   mItems.Remove(aElement);
-
   return NS_OK;
-
-  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
 nsSystemStatusBarCocoa::StatusItem::StatusItem(nsStandaloneNativeMenu* aMenu) : mMenu(aMenu) {
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
   MOZ_COUNT_CTOR(nsSystemStatusBarCocoa::StatusItem);
 
   NSMenu* nativeMenu = nil;
@@ -60,13 +53,19 @@ nsSystemStatusBarCocoa::StatusItem::StatusItem(nsStandaloneNativeMenu* aMenu) : 
   // know about the item so that it can update its icon as soon as it has
   // loaded.
   mMenu->SetContainerStatusBarItem(mStatusItem);
+
+  NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
 nsSystemStatusBarCocoa::StatusItem::~StatusItem() {
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
   mMenu->SetContainerStatusBarItem(nil);
   [[NSStatusBar systemStatusBar] removeStatusItem:mStatusItem];
   [mStatusItem release];
   mStatusItem = nil;
 
   MOZ_COUNT_DTOR(nsSystemStatusBarCocoa::StatusItem);
+
+  NS_OBJC_END_TRY_ABORT_BLOCK;
 }

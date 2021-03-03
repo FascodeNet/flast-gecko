@@ -18,11 +18,15 @@ class BrowsingContextTargetFront extends TargetMixin(
   constructor(client, targetFront, parentFront) {
     super(client, targetFront, parentFront);
 
-    // Cache the value of some target properties that are being returned by `attach`
-    // request and then keep them up-to-date in `reconfigure` request.
-    this.configureOptions = {
-      javascriptEnabled: null,
-    };
+    // For targets which support the Watcher and configuration actor, the status
+    // for the `javascriptEnabled` setting will be available on the configuration
+    // front, and the target will only be used to read the initial value.
+    // For other targets, _javascriptEnabled will be updated everytime
+    // `reconfigure` is called.
+    // Note: this property is marked as private but is accessed by the
+    // TargetList to provide the "isJavascriptEnabled" wrapper. It should NOT be
+    // used anywhere else.
+    this._javascriptEnabled = null;
 
     this._onTabNavigated = this._onTabNavigated.bind(this);
     this._onFrameUpdate = this._onFrameUpdate.bind(this);
@@ -91,7 +95,7 @@ class BrowsingContextTargetFront extends TargetMixin(
       const response = await super.attach();
 
       this.targetForm.threadActor = response.threadActor;
-      this.configureOptions.javascriptEnabled = response.javascriptEnabled;
+      this._javascriptEnabled = response.javascriptEnabled;
       this.traits = response.traits || {};
 
       // xpcshell tests from devtools/server/tests/xpcshell/ are implementing
@@ -107,7 +111,7 @@ class BrowsingContextTargetFront extends TargetMixin(
     const response = await super.reconfigure({ options });
 
     if (typeof options.javascriptEnabled != "undefined") {
-      this.configureOptions.javascriptEnabled = options.javascriptEnabled;
+      this._javascriptEnabled = options.javascriptEnabled;
     }
 
     return response;

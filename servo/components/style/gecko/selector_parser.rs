@@ -103,6 +103,8 @@ impl NonTSPseudoClass {
                     "-moz-read-only" => Some(NonTSPseudoClass::ReadOnly),
                     "-moz-read-write" => Some(NonTSPseudoClass::ReadWrite),
                     "-moz-focusring" => Some(NonTSPseudoClass::FocusVisible),
+                    "-moz-ui-valid" => Some(NonTSPseudoClass::UserValid),
+                    "-moz-ui-invalid" => Some(NonTSPseudoClass::UserInvalid),
                     "-webkit-autofill" => Some(NonTSPseudoClass::Autofill),
                     _ => None,
                 }
@@ -139,6 +141,9 @@ impl NonTSPseudoClass {
     fn is_enabled_in_content(&self) -> bool {
         if let NonTSPseudoClass::Autofill = *self {
             return static_prefs::pref!("layout.css.autofill.enabled");
+        }
+        if let NonTSPseudoClass::MozSubmitInvalid = *self {
+            return static_prefs::pref!("layout.css.moz-submit-invalid.enabled");
         }
         !self.has_any_flag(NonTSPseudoClassFlag::PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME)
     }
@@ -179,12 +184,13 @@ impl NonTSPseudoClass {
     /// revalidation.
     pub fn needs_cache_revalidation(&self) -> bool {
         self.state_flag().is_empty() &&
-            !matches!(*self,
-                      // :dir() depends on state only, but doesn't use state_flag
-                      // because its semantics don't quite match.  Nevertheless, it
-                      // doesn't need cache revalidation, because we already compare
-                      // states for elements and candidates.
-                      NonTSPseudoClass::Dir(_) |
+            !matches!(
+                *self,
+                // :dir() depends on state only, but doesn't use state_flag
+                // because its semantics don't quite match.  Nevertheless, it
+                // doesn't need cache revalidation, because we already compare
+                // states for elements and candidates.
+                NonTSPseudoClass::Dir(_) |
                       // :-moz-is-html only depends on the state of the document and
                       // the namespace of the element; the former is invariant
                       // across all the elements involved and the latter is already

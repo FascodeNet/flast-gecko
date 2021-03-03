@@ -34,9 +34,18 @@
       </menugroup>
       <menuseparator id="context-sep-navigation"/>
       <menuseparator id="page-menu-separator"/>
+      <menuitem id="context-viewsource-goToLine"
+                oncommand="gViewSourceUtils.getPageActor(gContextMenu.browser).promptAndGoToLine()"/>
+      <menuitem id="context-viewsource-wrapLongLines"
+                type="checkbox"
+                oncommand="gViewSourceUtils.getPageActor(gContextMenu.browser).sendAsyncMessage('ViewSource:ToggleWrapping');"/>
+      <menuitem id="context-viewsource-highlightSyntax"
+                type="checkbox"
+                oncommand="gViewSourceUtils.getPageActor(gContextMenu.browser).sendAsyncMessage('ViewSource:ToggleSyntaxHighlighting');"/>
+      <menuseparator id="context-sep-viewsource-commands"/>
       <menuitem id="spell-no-suggestions"
                 disabled="true"
-                label="&spellNoSuggestions.label;"/>
+                data-l10n-id="text-action-spell-no-suggestions"/>
       <menuitem id="spell-add-to-dictionary"
                 label="&spellAddToDictionary.label;"
                 accesskey="&spellAddToDictionary.accesskey;"
@@ -59,7 +68,7 @@
                 oncommand="gContextMenu.openLinkInTab(event);"/>
 
       <menu id="context-openlinkinusercontext-menu"
-            data-l10n-id="main-context-menu-open-link-container-tab"
+            data-l10n-id="main-context-menu-open-link-container"
             hidden="true">
         <menupopup oncommand="gContextMenu.openLinkInTab(event);"
                    onpopupshowing="return gContextMenu.createContainerMenu(event);" />
@@ -73,7 +82,7 @@
                 oncommand="gContextMenu.openLinkInPrivateWindow();"/>
       <menuseparator id="context-sep-open"/>
       <menuitem id="context-bookmarklink"
-                data-l10n-id="main-context-menu-bookmark-this-link"
+                data-l10n-id="main-context-menu-bookmark-link"
                 oncommand="gContextMenu.bookmarkLink();"/>
       <menuitem id="context-savelink"
                 data-l10n-id="main-context-menu-save-link"
@@ -85,7 +94,7 @@
                 data-l10n-id="main-context-menu-copy-email"
                 oncommand="gContextMenu.copyEmail();"/>
       <menuitem id="context-copylink"
-                data-l10n-id="main-context-menu-copy-link"
+                data-l10n-id="main-context-menu-copy-link-simple"
                 oncommand="gContextMenu.copyLink();"/>
       <menuseparator id="context-sep-copylink"/>
       <menuitem id="context-media-play"
@@ -180,13 +189,13 @@
                 oncommand="goDoCommand('cmd_copyImage');"/>
 #endif
       <menuitem id="context-copyimage"
-                data-l10n-id="main-context-menu-image-copy-location"
+                data-l10n-id="main-context-menu-image-copy-link"
                 oncommand="gContextMenu.copyMediaLocation();"/>
       <menuitem id="context-copyvideourl"
-                data-l10n-id="main-context-menu-video-copy-location"
+                data-l10n-id="main-context-menu-video-copy-link"
                 oncommand="gContextMenu.copyMediaLocation();"/>
       <menuitem id="context-copyaudiourl"
-                data-l10n-id="main-context-menu-audio-copy-location"
+                data-l10n-id="main-context-menu-audio-copy-link"
                 oncommand="gContextMenu.copyMediaLocation();"/>
       <menuitem id="context-sendimage"
                 data-l10n-id="main-context-menu-image-email"
@@ -203,7 +212,7 @@
                 onclick="checkForMiddleClick(this, event);"/>
       <menuseparator id="context-sep-setbackground"/>
       <menuitem id="context-setDesktopBackground"
-                data-l10n-id="main-context-menu-image-set-as-background"
+                data-l10n-id="main-context-menu-image-set-image-as-background"
                 oncommand="gContextMenu.setDesktopBackground();"/>
       <menuitem id="context-ctp-play"
                 data-l10n-id="main-context-menu-plugin-play"
@@ -261,7 +270,10 @@
       <menuitem id="context-undo"
                 data-l10n-id="text-action-undo"
                 command="cmd_undo"/>
-      <menuseparator id="context-sep-undo"/>
+      <menuitem id="context-redo"
+                data-l10n-id="text-action-redo"
+                command="cmd_redo"/>
+      <menuseparator id="context-sep-redo"/>
       <menuitem id="context-cut"
                 data-l10n-id="text-action-cut"
                 command="cmd_cut"/>
@@ -274,7 +286,6 @@
       <menuitem id="context-delete"
                 data-l10n-id="text-action-delete"
                 command="cmd_delete"/>
-      <menuseparator id="context-sep-paste"/>
       <menuitem id="context-selectall"
                 data-l10n-id="text-action-select-all"
                 command="cmd_selectAll"/>
@@ -283,9 +294,11 @@
                 data-l10n-id="main-context-menu-keyword"
                 oncommand="AddKeywordForSearchField();"/>
       <menuitem id="context-searchselect"
-                oncommand="BrowserSearch.loadSearchFromContext(this.searchTerms, this.usePrivate, this.principal, this.csp);"/>
+                oncommand="BrowserSearch.loadSearchFromContext(this.searchTerms, this.usePrivate, this.principal, this.csp, event);"
+                onclick="checkForMiddleClick(this, event);"/>
       <menuitem id="context-searchselect-private"
-                oncommand="BrowserSearch.loadSearchFromContext(this.searchTerms, true, this.principal, this.csp);"/>
+                oncommand="BrowserSearch.loadSearchFromContext(this.searchTerms, true, this.principal, this.csp, event);"
+                onclick="checkForMiddleClick(this, event);"/>
       <menuseparator id="context-sep-sendlinktodevice" class="sync-ui-item"
                      hidden="true"/>
       <menu id="context-sendlinktodevice"
@@ -346,9 +359,6 @@
       <menuitem id="context-viewsource"
                 data-l10n-id="main-context-menu-view-page-source"
                 oncommand="BrowserViewSource(gContextMenu.browser);"/>
-      <menuitem id="context-viewinfo"
-                data-l10n-id="main-context-menu-view-page-info"
-                oncommand="gContextMenu.viewInfo();"/>
       <menuseparator id="spell-separator"/>
       <menuitem id="spell-check-enabled"
                 label="&spellCheckToggle.label;"
@@ -384,7 +394,7 @@
                 oncommand="gContextMenu.inspectA11Y();"/>
       <menuitem id="context-inspect"
                 hidden="true"
-                data-l10n-id="main-context-menu-inspect-element"
+                data-l10n-id="main-context-menu-inspect"
                 oncommand="gContextMenu.inspectNode();"/>
       <menuseparator id="context-media-eme-separator" hidden="true"/>
       <menuitem id="context-media-eme-learnmore"

@@ -206,13 +206,11 @@
                 <menuitem id="enterFullScreenItem"
                           key="key_fullScreen" data-l10n-id="menu-view-enter-full-screen">
                   <observes element="View:FullScreen" attribute="oncommand"/>
-                  <observes element="View:FullScreen" attribute="disabled"/>
                 </menuitem>
                 <menuitem id="exitFullScreenItem"
                           key="key_fullScreen"
                           hidden="true" data-l10n-id="menu-view-exit-full-screen">
                   <observes element="View:FullScreen" attribute="oncommand"/>
-                  <observes element="View:FullScreen" attribute="disabled"/>
                 </menuitem>
 #else
                 <menuitem id="fullScreenItem"
@@ -457,13 +455,6 @@
               <menupopup id="menu_HelpPopup" onpopupshowing="buildHelpMenu();">
 <!-- Note: Items under here are cloned to the AppMenu Help submenu. The cloned items
      have their strings defined by appmenu-data-l10n-id. -->
-#ifdef MOZ_UPDATER
-                <menuitem id="checkForUpdates"
-                          data-l10n-id="menu-help-check-for-update"
-                          appmenu-data-l10n-id="appmenu-help-check-for-update"
-                          class="menuitem-iconic"
-                          oncommand="openAboutDialog();"/>
-#endif
                 <menuitem id="menu_openHelp"
                           oncommand="openHelpLink('firefox-help')"
                           onclick="checkForMiddleClick(this, event);"
@@ -482,13 +473,22 @@
                 <menuitem id="troubleShooting"
                           oncommand="openTroubleshootingPage()"
                           onclick="checkForMiddleClick(this, event);"
-                          data-l10n-id="menu-help-troubleshooting-info"
-                          appmenu-data-l10n-id="appmenu-help-troubleshooting-info"/>
+                          data-l10n-id="menu-help-more-troubleshooting-info"
+                          appmenu-data-l10n-id="appmenu-help-more-troubleshooting-info"/>
+                <menuitem id="helpSafeMode"
+                          oncommand="safeModeRestart();"
+                          data-l10n-id="menu-help-enter-troubleshoot-mode"
+                          appmenu-data-l10n-id="appmenu-help-enter-troubleshoot-mode"/>
                 <menuitem id="help_taskManager"
                           oncommand="switchToTabHavingURI('about:performance', true)"
                           onclick="checkForMiddleClick(this, event);"
                           data-l10n-id="menu-help-taskmanager"
                           appmenu-data-l10n-id="appmenu-help-taskmanager"/>
+                <menuitem id="help_reportSiteIssue"
+                          oncommand="ReportSiteIssue();"
+                          data-l10n-id="menu-help-report-site-issue"
+                          appmenu-data-l10n-id="appmenu-help-report-site-issue"
+                          hidden="true"/>
                 <menuitem id="menu_HelpPopup_reportPhishingtoolmenu"
                           disabled="true"
                           oncommand="openUILink(gSafeBrowsing.getReportURL('Phish'), event, {triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal({})});"

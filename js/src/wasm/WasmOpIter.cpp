@@ -336,6 +336,7 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I16x8AllTrue:
         case SimdOp::I32x4AnyTrue:
         case SimdOp::I32x4AllTrue:
+        case SimdOp::I64x2AllTrue:
         case SimdOp::I8x16Bitmask:
         case SimdOp::I16x8Bitmask:
         case SimdOp::I32x4Bitmask:
@@ -378,6 +379,8 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4LeU:
         case SimdOp::I32x4GeS:
         case SimdOp::I32x4GeU:
+        case SimdOp::I64x2Eq:
+        case SimdOp::I64x2Ne:
         case SimdOp::F32x4Eq:
         case SimdOp::F32x4Ne:
         case SimdOp::F32x4Lt:
@@ -543,6 +546,16 @@ OpKind wasm::Classify(OpBytes op) {
           WASM_SIMD_OP(OpKind::Load);
         case SimdOp::V128Store:
           WASM_SIMD_OP(OpKind::Store);
+        case SimdOp::V128Load8Lane:
+        case SimdOp::V128Load16Lane:
+        case SimdOp::V128Load32Lane:
+        case SimdOp::V128Load64Lane:
+          WASM_SIMD_OP(OpKind::LoadLane);
+        case SimdOp::V128Store8Lane:
+        case SimdOp::V128Store16Lane:
+        case SimdOp::V128Store32Lane:
+        case SimdOp::V128Store64Lane:
+          WASM_SIMD_OP(OpKind::StoreLane);
 #  ifdef ENABLE_WASM_SIMD_WORMHOLE
         case SimdOp::MozWHSELFTEST:
         case SimdOp::MozWHPMADDUBSW:

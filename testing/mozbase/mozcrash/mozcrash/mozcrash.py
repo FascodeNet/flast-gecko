@@ -154,6 +154,7 @@ def log_crashes(
     test=None,
     stackwalk_binary=None,
     dump_save_path=None,
+    quiet=False,
 ):
     """Log crashes using a structured logger"""
     crash_count = 0
@@ -164,9 +165,10 @@ def log_crashes(
         stackwalk_binary=stackwalk_binary,
     ):
         crash_count += 1
-        kwargs = info._asdict()
-        kwargs.pop("extra")
-        logger.crash(process=process, test=test, **kwargs)
+        if not quiet:
+            kwargs = info._asdict()
+            kwargs.pop("extra")
+            logger.crash(process=process, test=test, **kwargs)
     return crash_count
 
 
@@ -547,6 +549,11 @@ if mozinfo.isWin:
 
         log = get_logger()
         file_name = os.path.join(dump_directory, str(uuid.uuid4()) + ".dmp")
+
+        if not os.path.exists(dump_directory):
+            # `kernal32.CreateFileW` can fail to create the dmp file if the dump
+            # directory was deleted or doesn't exist (error code 3).
+            os.makedirs(dump_directory)
 
         if mozinfo.info["bits"] != ctypes.sizeof(ctypes.c_voidp) * 8 and utility_path:
             # We're not going to be able to write a minidump with ctypes if our

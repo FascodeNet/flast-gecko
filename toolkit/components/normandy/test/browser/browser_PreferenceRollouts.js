@@ -1,9 +1,19 @@
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/IndexedDB.jsm", this);
-ChromeUtils.import("resource://gre/modules/TelemetryEnvironment.jsm", this);
-ChromeUtils.import("resource://normandy/lib/PreferenceRollouts.jsm", this);
-ChromeUtils.import("resource://normandy/lib/TelemetryEvents.jsm", this);
+const { IndexedDB } = ChromeUtils.import(
+  "resource://gre/modules/IndexedDB.jsm"
+);
+const { TelemetryEnvironment } = ChromeUtils.import(
+  "resource://gre/modules/TelemetryEnvironment.jsm"
+);
+const { PreferenceRollouts } = ChromeUtils.import(
+  "resource://normandy/lib/PreferenceRollouts.jsm"
+);
+const {
+  NormandyTestUtils: {
+    factories: { preferenceRolloutFactory },
+  },
+} = ChromeUtils.import("resource://testing-common/NormandyTestUtils.jsm");
 
 decorate_task(
   PreferenceRollouts.withTestMock(),
@@ -167,9 +177,9 @@ decorate_task(
 
 // recordOriginalValue should graduate a study when all of its preferences are built-in
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withSendEventSpy,
-  async function testRecordOriginalValuesGraduates(sendEventStub) {
+  PreferenceRollouts.withTestMock(),
+  async function testRecordOriginalValuesGraduates(sendEventSpy) {
     await PreferenceRollouts.add({
       slug: "test-rollout",
       state: PreferenceRollouts.STATE_ACTIVE,
@@ -192,7 +202,7 @@ decorate_task(
       "rollouts should remain active when only one pref matches the built-in default"
     );
 
-    sendEventStub.assertEvents([]);
+    sendEventSpy.assertEvents([]);
 
     // both prefs is enough
     await PreferenceRollouts.recordOriginalValues({
@@ -206,7 +216,7 @@ decorate_task(
       "rollouts should graduate when all prefs matches the built-in defaults"
     );
 
-    sendEventStub.assertEvents([
+    sendEventSpy.assertEvents([
       [
         "graduate",
         "preference_rollout",
@@ -219,8 +229,8 @@ decorate_task(
 
 // init should mark active rollouts in telemetry
 decorate_task(
-  PreferenceRollouts.withTestMock(),
   withStub(TelemetryEnvironment, "setExperimentActive"),
+  PreferenceRollouts.withTestMock(),
   async function testInitTelemetry(setExperimentActiveStub) {
     await PreferenceRollouts.add({
       slug: "test-rollout-active-1",
@@ -271,11 +281,11 @@ decorate_task(
   PreferenceRollouts.withTestMock({
     graduationSet: new Set(["test-rollout"]),
     rollouts: [
-      {
+      preferenceRolloutFactory({
         slug: "test-rollout",
         state: PreferenceRollouts.STATE_ACTIVE,
         enrollmentId: "test-enrollment-id",
-      },
+      }),
     ],
   }),
   async function testInitGraduationSet(setExperimentActiveStub, sendEventStub) {
@@ -300,4 +310,4 @@ decorate_task(
       ],
     ]);
   }
-).only();
+);

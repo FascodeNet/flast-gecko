@@ -22,18 +22,10 @@ class WebConsoleConnectionProxy {
    *        A WebConsoleUI instance that owns this connection proxy.
    * @param {RemoteTarget} target
    *        The target that the console will connect to.
-   * @param {Boolean} needContentProcessMessagesListener
-   *        Set to true to specifically add a ContentProcessMessages listener. This is
-   *        needed for non-fission Browser Console for example.
    */
-  constructor(
-    webConsoleUI,
-    target,
-    needContentProcessMessagesListener = false
-  ) {
+  constructor(webConsoleUI, target) {
     this.webConsoleUI = webConsoleUI;
     this.target = target;
-    this.needContentProcessMessagesListener = needContentProcessMessagesListener;
     this._connecter = null;
 
     this._onTabNavigated = this._onTabNavigated.bind(this);
@@ -41,7 +33,6 @@ class WebConsoleConnectionProxy {
     this._onLastPrivateContextExited = this._onLastPrivateContextExited.bind(
       this
     );
-    this._clearLogpointMessages = this._clearLogpointMessages.bind(this);
   }
 
   /**
@@ -66,8 +57,6 @@ class WebConsoleConnectionProxy {
     const connection = (async () => {
       this.client = this.target.client;
       this.webConsoleFront = await this.target.getFront("console");
-
-      await this._attachConsole();
 
       // There is no way to view response bodies from the Browser Console, so do
       // not waste the memory.
@@ -111,23 +100,6 @@ class WebConsoleConnectionProxy {
   }
 
   /**
-   * Attach to the Web Console actor.
-   * @private
-   * @returns Promise
-   */
-  _attachConsole() {
-    if (!this.webConsoleFront || !this.needContentProcessMessagesListener) {
-      return null;
-    }
-
-    // Enable the forwarding of console messages to the parent process
-    // when we open the Browser Console or Toolbox without fission support. If Fission
-    // is enabled, we don't use the ContentProcessMessages listener, but attach to the
-    // content processes directly.
-    return this.webConsoleFront.startListeners(["ContentProcessMessages"]);
-  }
-
-  /**
    * Sets all the relevant event listeners on the webconsole client.
    *
    * @private
@@ -141,10 +113,6 @@ class WebConsoleConnectionProxy {
       "lastPrivateContextExited",
       this._onLastPrivateContextExited
     );
-    this.webConsoleFront.on(
-      "clearLogpointMessages",
-      this._clearLogpointMessages
-    );
   }
 
   /**
@@ -157,17 +125,6 @@ class WebConsoleConnectionProxy {
       "lastPrivateContextExited",
       this._onLastPrivateContextExited
     );
-    this.webConsoleFront.off(
-      "clearLogpointMessages",
-      this._clearLogpointMessages
-    );
-  }
-
-  _clearLogpointMessages(logpointId) {
-    // Some message might try to update while we are closing the toolbox.
-    if (this.webConsoleUI?.wrapper) {
-      this.webConsoleUI.wrapper.dispatchClearLogpointMessages(logpointId);
-    }
   }
 
   /**

@@ -236,7 +236,7 @@ var StarUI = {
     this._isNewBookmark = aIsNewBookmark;
     this._itemGuids = null;
 
-    this._element("editBookmarkPanelTitle").value = this._isNewBookmark
+    this._element("editBookmarkPanelTitle").textContent = this._isNewBookmark
       ? gNavigatorBundle.getString("editBookmarkPanel.newBookmarkTitle")
       : gNavigatorBundle.getString("editBookmarkPanel.editBookmarkTitle");
 
@@ -691,11 +691,9 @@ HistoryMenu.prototype = {
   },
 
   toggleHiddenTabs() {
-    if (window.gBrowser && gBrowser.visibleTabs.length < gBrowser.tabs.length) {
-      this.hiddenTabsMenu.removeAttribute("hidden");
-    } else {
-      this.hiddenTabsMenu.setAttribute("hidden", "true");
-    }
+    const isShown =
+      window.gBrowser && gBrowser.visibleTabs.length < gBrowser.tabs.length;
+    this.hiddenTabsMenu.hidden = !isShown;
   },
 
   toggleRecentlyClosedTabs: function HM_toggleRecentlyClosedTabs() {
@@ -786,11 +784,11 @@ HistoryMenu.prototype = {
     }
 
     if (!PlacesUIUtils.shouldShowTabsFromOtherComputersMenuitem()) {
-      this.syncTabsMenuitem.setAttribute("hidden", true);
+      this.syncTabsMenuitem.hidden = true;
       return;
     }
 
-    this.syncTabsMenuitem.setAttribute("hidden", false);
+    this.syncTabsMenuitem.hidden = false;
   },
 
   _onPopupShowing: function HM__onPopupShowing(aEvent) {
@@ -971,13 +969,14 @@ var BookmarksEventHandler = {
       return false;
     }
 
-    var tooltipTitle = aDocument.getElementById("bhtTitleText");
+    let tooltipTitle = aEvent.target.querySelector(".places-tooltip-title");
     tooltipTitle.hidden = !title || title == url;
     if (!tooltipTitle.hidden) {
-      tooltipTitle.textContent = title;
+      // Use `value` instead of `textContent` so cropping will apply
+      tooltipTitle.value = title;
     }
 
-    var tooltipUrl = aDocument.getElementById("bhtUrlText");
+    let tooltipUrl = aEvent.target.querySelector(".places-tooltip-uri");
     tooltipUrl.hidden = !url;
     if (!tooltipUrl.hidden) {
       tooltipUrl.value = url;
@@ -1676,8 +1675,8 @@ var BookmarkingUI = {
     let menuPopup = document.createXULElement("menupopup");
     menuPopup.append(
       alwaysShowMenuItem,
-      alwaysHideMenuItem,
-      showOnNewTabMenuItem
+      showOnNewTabMenuItem,
+      alwaysHideMenuItem
     );
     let menu = document.createXULElement("menu");
     menu.appendChild(menuPopup);
@@ -2233,6 +2232,14 @@ var BookmarkingUI = {
     let staticButtons = panelview.getElementsByTagName("toolbarbutton");
     for (let i = 0, l = staticButtons.length; i < l; ++i) {
       CustomizableUI.addShortcut(staticButtons[i]);
+
+      // While we support this panel for both Proton and non-Proton versions
+      // of the AppMenu, we only want to show icons for the non-Proton
+      // version. When Proton ships and we remove the non-Proton variant,
+      // we can remove the subviewbutton-iconic classes from the markup.
+      if (PanelUI.protonAppMenuEnabled) {
+        staticButtons[i].classList.remove("subviewbutton-iconic");
+      }
     }
 
     // Setup the Places view.
@@ -2390,9 +2397,6 @@ var BookmarkingUI = {
     }
   },
 
-  onBeginUpdateBatch() {},
-  onEndUpdateBatch() {},
-  onBeforeItemRemoved() {},
   onItemMoved(
     aItemId,
     aProperty,

@@ -955,9 +955,12 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest) {
                 contentLength == InternalResponse::UNKNOWN_BODY_SIZE);
 
   if (httpChannel) {
-    uint32_t responseStatus;
+    uint32_t responseStatus = 0;
     rv = httpChannel->GetResponseStatus(&responseStatus);
-    MOZ_ASSERT(NS_SUCCEEDED(rv));
+    if (NS_FAILED(rv)) {
+      FailWithNetworkError(rv);
+      return rv;
+    }
 
     if (mozilla::net::nsHttpChannel::IsRedirectStatus(responseStatus)) {
       if (mRequest->GetRedirectMode() == RequestRedirect::Error) {
@@ -1563,6 +1566,17 @@ void FetchDriver::SetRequestHeaders(nsIHttpChannel* aChannel,
     } else {
       DebugOnly<nsresult> rv = aChannel->SetRequestHeader(
           headers[i].mName, headers[i].mValue, alreadySet /* merge */);
+      MOZ_ASSERT(NS_SUCCEEDED(rv));
+    }
+  }
+  nsAutoCString method;
+  mRequest->GetMethod(method);
+  if (!method.EqualsLiteral("GET") && !method.EqualsLiteral("HEAD")) {
+    nsAutoString origin;
+    if (NS_SUCCEEDED(nsContentUtils::GetUTFOrigin(mPrincipal, origin))) {
+      DebugOnly<nsresult> rv = aChannel->SetRequestHeader(
+          nsDependentCString(net::nsHttp::Origin),
+          NS_ConvertUTF16toUTF8(origin), false /* merge */);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
   }

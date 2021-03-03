@@ -14,6 +14,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
   BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
+  CONTEXTUAL_SERVICES_PING_TYPES:
+    "resource:///modules/PartnerLinkAttribution.jsm",
   ExtensionSearchHandler: "resource://gre/modules/ExtensionSearchHandler.jsm",
   ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
@@ -43,6 +45,9 @@ XPCOMUtils.defineLazyServiceGetter(
 
 const DEFAULT_FORM_HISTORY_NAME = "searchbar-history";
 const SEARCH_BUTTON_ID = "urlbar-search-button";
+
+// The scalar category of TopSites click for Contextual Services
+const SCALAR_CATEGORY_TOPSITES = "contextual.services.topsites.click";
 
 let getBoundsWithoutFlushing = element =>
   element.ownerGlobal.windowUtils.getBoundsWithoutFlushing(element);
@@ -694,8 +699,13 @@ class UrlbarInput {
       return;
     }
 
+    let urlOverride;
+    if (element?.classList.contains("urlbarView-help")) {
+      urlOverride = result.payload.helpUrl;
+    }
+
     let originalUntrimmedValue = this.untrimmedValue;
-    let isCanonized = this.setValueFromResult(result, event);
+    let isCanonized = this.setValueFromResult({ result, event, urlOverride });
     let where = this._whereToOpen(event);
     let openParams = {
       allowInheritPrincipal: false,
@@ -703,7 +713,7 @@ class UrlbarInput {
 
     let selIndex = result.rowIndex;
     if (!result.payload.providesSearchMode) {
-      this.view.close(/* elementPicked */ true);
+      this.view.close({ elementPicked: true });
     }
 
     this.controller.recordSelectedResult(event, result);
@@ -719,7 +729,9 @@ class UrlbarInput {
       return;
     }
 
-    let { url, postData } = UrlbarUtils.getUrlFromResult(result);
+    let { url, postData } = urlOverride
+      ? { url: urlOverride, postData: null }
+      : UrlbarUtils.getUrlFromResult(result);
     openParams.postData = postData;
 
     switch (result.type) {
@@ -850,7 +862,7 @@ class UrlbarInput {
       }
       case UrlbarUtils.RESULT_TYPE.TIP: {
         let scalarName;
-        if (element.classList.contains("urlbarView-tip-help")) {
+        if (element.classList.contains("urlbarView-help")) {
           url = result.payload.helpUrl;
           if (!url) {
             Cu.reportError("helpUrl not specified");
@@ -960,6 +972,25 @@ class UrlbarInput {
           "browser.partnerlink.campaign.topsites"
         ),
       });
+      if (!this.isPrivate && result.providerName === "UrlbarProviderTopSites") {
+        // The position is 1-based for telemetry
+        const position = selIndex + 1;
+        Services.telemetry.keyedScalarAdd(
+          SCALAR_CATEGORY_TOPSITES,
+          `urlbar_${position}`,
+          1
+        );
+        PartnerLinkAttribution.sendContextualServicesPing(
+          {
+            position,
+            source: "urlbar",
+            tile_id: result.payload.sponsoredTileId || -1,
+            reporting_url: result.payload.sponsoredClickUrl,
+            advertiser: result.payload.title.toLocaleLowerCase(),
+          },
+          CONTEXTUAL_SERVICES_PING_TYPES.TOPSITES_SELECTION
+        );
+      }
     }
 
     this._loadURL(
@@ -986,10 +1017,13 @@ class UrlbarInput {
    *   The result that was selected or picked, null if no result was selected.
    * @param {Event} [event]
    *   The event that picked the result.
+   * @param {string} [urlOverride]
+   *   Normally the URL is taken from `result.payload.url`, but if `urlOverride`
+   *   is specified, it's used instead.
    * @returns {boolean}
    *   Whether the value has been canonized
    */
-  setValueFromResult(result = null, event = null) {
+  setValueFromResult({ result = null, event = null, urlOverride = null } = {}) {
     // Usually this is set by a previous input event, but in certain cases, like
     // when opening Top Sites on a loaded page, it wouldn't happen. To avoid
     // confusing the user, we always enforce it when a result changes our value.
@@ -1074,21 +1108,25 @@ class UrlbarInput {
     // it would end up executing a search instead of visiting it.
     let allowTrim = true;
     if (
-      result.type == UrlbarUtils.RESULT_TYPE.URL &&
-      UrlbarPrefs.get("trimURLs") &&
-      result.payload.url.startsWith(BrowserUIUtils.trimURLProtocol)
+      (urlOverride || result.type == UrlbarUtils.RESULT_TYPE.URL) &&
+      UrlbarPrefs.get("trimURLs")
     ) {
-      let fixupInfo = this._getURIFixupInfo(
-        BrowserUIUtils.trimURL(result.payload.url)
-      );
-      if (fixupInfo?.keywordAsSent) {
-        allowTrim = false;
+      let url = urlOverride || result.payload.url;
+      if (url.startsWith(BrowserUIUtils.trimURLProtocol)) {
+        let fixupInfo = this._getURIFixupInfo(BrowserUIUtils.trimURL(url));
+        if (fixupInfo?.keywordAsSent) {
+          allowTrim = false;
+        }
       }
     }
 
     if (!result.autofill) {
-      setValueAndRestoreActionType(this._getValueFromResult(result), allowTrim);
+      setValueAndRestoreActionType(
+        this._getValueFromResult(result, urlOverride),
+        allowTrim
+      );
     }
+
     this.setResultForCurrentValue(result);
     return false;
   }
@@ -1140,7 +1178,7 @@ class UrlbarInput {
       return;
     }
 
-    this.setValueFromResult(result);
+    this.setValueFromResult({ result });
   }
 
   /**
@@ -1359,7 +1397,9 @@ class UrlbarInput {
     this._hideFocus = false;
     if (this.focused) {
       this.setAttribute("focused", "true");
-      this.startLayoutExtend();
+      if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+        this.startLayoutExtend();
+      }
     }
   }
 
@@ -1593,7 +1633,9 @@ class UrlbarInput {
       return;
     }
     await this._updateLayoutBreakoutDimensions();
-    this.startLayoutExtend();
+    if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+      this.startLayoutExtend();
+    }
   }
 
   startLayoutExtend() {
@@ -1603,6 +1645,9 @@ class UrlbarInput {
       !this.hasAttribute("breakout") ||
       this.hasAttribute("breakout-extend")
     ) {
+      return;
+    }
+    if (UrlbarPrefs.get("browser.proton.urlbar.enabled") && !this.view.isOpen) {
       return;
     }
     // The Urlbar is unfocused or reduce motion is on and the view is closed.
@@ -1646,15 +1691,19 @@ class UrlbarInput {
     // If reduce motion is enabled, we want to collapse the Urlbar here so the
     // user sees only sees two states: not expanded, and expanded with the view
     // open.
+    if (!this.hasAttribute("breakout-extend") || this.view.isOpen) {
+      return;
+    }
+
     if (
-      !this.hasAttribute("breakout-extend") ||
-      this.view.isOpen ||
-      (this.getAttribute("focused") == "true" &&
-        (!this.window.gReduceMotion ||
-          !this.window.matchMedia("(prefers-reduced-motion: reduce)").matches))
+      !UrlbarPrefs.get("browser.proton.urlbar.enabled") &&
+      this.getAttribute("focused") == "true" &&
+      (!this.window.gReduceMotion ||
+        !this.window.matchMedia("(prefers-reduced-motion: reduce)").matches)
     ) {
       return;
     }
+
     this.removeAttribute("breakout-extend");
     this._toolbar.removeAttribute("urlbar-exceeds-toolbar-bounds");
   }
@@ -1878,7 +1927,7 @@ class UrlbarInput {
     return val;
   }
 
-  _getValueFromResult(result) {
+  _getValueFromResult(result, urlOverride = null) {
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.KEYWORD:
         return result.payload.input;
@@ -1895,7 +1944,7 @@ class UrlbarInput {
     }
 
     try {
-      let uri = Services.io.newURI(result.payload.url);
+      let uri = Services.io.newURI(urlOverride || result.payload.url);
       if (uri) {
         return losslessDecodeURI(uri);
       }
@@ -2379,7 +2428,9 @@ class UrlbarInput {
       }
     }
 
-    this.view.close();
+    // If we show the focus border after closing the view, it would appear to
+    // flash since this._on_blur would remove it immediately after.
+    this.view.close({ showFocusBorder: false });
   }
 
   /**
@@ -2664,7 +2715,9 @@ class UrlbarInput {
     });
 
     this.removeAttribute("focused");
-    this.endLayoutExtend();
+    if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+      this.endLayoutExtend();
+    }
 
     if (this._autofillPlaceholder && this.window.gBrowser.userTypedValue) {
       // If we were autofilling, remove the autofilled portion, by restoring
@@ -2774,7 +2827,9 @@ class UrlbarInput {
       }
     }
 
-    this.startLayoutExtend();
+    if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+      this.startLayoutExtend();
+    }
 
     if (this.focusedViaMousedown) {
       this.view.autoOpen({ event });
@@ -2841,7 +2896,13 @@ class UrlbarInput {
           this._preventClickSelectsAll = true;
           this.search(UrlbarTokenizer.RESTRICT.SEARCH);
         } else {
-          this.view.autoOpen({ event });
+          // Do not suppress the focus border if we are already focused. If we
+          // did, we'd hide the focus border briefly then show it again if the
+          // user has Top Sites disabled, creating a flashing effect.
+          this.view.autoOpen({
+            event,
+            suppressFocusBorder: !this.hasAttribute("focused"),
+          });
         }
         break;
       case this.window:
@@ -3023,7 +3084,18 @@ class UrlbarInput {
     }
     let oldEnd = oldValue.substring(this.selectionEnd);
 
-    let pasteData = UrlbarUtils.stripUnsafeProtocolOnPaste(originalPasteData);
+    let pasteData = originalPasteData;
+    try {
+      Services.uriFixup.getFixupURIInfo(
+        pasteData,
+        Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS
+      );
+    } catch (e) {
+      pasteData = pasteData.replace(/\s/g, " ");
+    }
+
+    pasteData = UrlbarUtils.stripUnsafeProtocolOnPaste(pasteData);
+
     if (originalPasteData != pasteData) {
       // Unfortunately we're not allowed to set the bits being pasted
       // so cancel this event:
@@ -3031,6 +3103,8 @@ class UrlbarInput {
       event.stopImmediatePropagation();
 
       this.inputField.value = oldStart + pasteData + oldEnd;
+      this._untrimmedValue = this.inputField.value;
+
       // Fix up cursor/selection:
       let newCursorPos = oldStart.length + pasteData.length;
       this.selectionStart = newCursorPos;

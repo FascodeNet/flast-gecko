@@ -25,10 +25,9 @@ namespace js {
 namespace frontend {
 
 SharedContext::SharedContext(JSContext* cx, Kind kind,
-                             CompilationStencil& stencil, Directives directives,
-                             SourceExtent extent)
+                             const JS::ReadOnlyCompileOptions& options,
+                             Directives directives, SourceExtent extent)
     : cx_(cx),
-      stencil_(stencil),
       extent_(extent),
       allowNewTarget_(false),
       allowSuperProperty_(false),
@@ -43,16 +42,13 @@ SharedContext::SharedContext(JSContext* cx, Kind kind,
   if (kind == Kind::FunctionBox) {
     setFlag(ImmutableFlags::IsFunction);
   } else if (kind == Kind::Module) {
-    MOZ_ASSERT(!stencil.input.options.nonSyntacticScope);
+    MOZ_ASSERT(!options.nonSyntacticScope);
     setFlag(ImmutableFlags::IsModule);
   } else if (kind == Kind::Eval) {
     setFlag(ImmutableFlags::IsForEval);
   } else {
     MOZ_ASSERT(kind == Kind::Global);
   }
-
-  // Note: This is a mix of transitive and non-transitive options.
-  const JS::ReadOnlyCompileOptions& options = stencil.input.options;
 
   // Initialize the transitive "input" flags. These are applied to all
   // SharedContext in this compilation and generally cannot be determined from
@@ -70,11 +66,11 @@ SharedContext::SharedContext(JSContext* cx, Kind kind,
   setFlag(ImmutableFlags::Strict, directives.strict());
 }
 
-GlobalSharedContext::GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
-                                         CompilationStencil& stencil,
-                                         Directives directives,
-                                         SourceExtent extent)
-    : SharedContext(cx, Kind::Global, stencil, directives, extent),
+GlobalSharedContext::GlobalSharedContext(
+    JSContext* cx, ScopeKind scopeKind,
+    const JS::ReadOnlyCompileOptions& options, Directives directives,
+    SourceExtent extent)
+    : SharedContext(cx, Kind::Global, options, directives, extent),
       scopeKind_(scopeKind),
       bindings(nullptr) {
   MOZ_ASSERT(scopeKind == ScopeKind::Global ||
@@ -82,11 +78,11 @@ GlobalSharedContext::GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
   MOZ_ASSERT(thisBinding_ == ThisBinding::Global);
 }
 
-EvalSharedContext::EvalSharedContext(JSContext* cx, CompilationStencil& stencil,
+EvalSharedContext::EvalSharedContext(JSContext* cx,
                                      CompilationState& compilationState,
                                      SourceExtent extent)
-    : SharedContext(cx, Kind::Eval, stencil, compilationState.directives,
-                    extent),
+    : SharedContext(cx, Kind::Eval, compilationState.input.options,
+                    compilationState.directives, extent),
       bindings(nullptr) {
   // Eval inherits syntax and binding rules from enclosing environment.
   allowNewTarget_ = compilationState.scopeContext.allowNewTarget;
@@ -97,24 +93,22 @@ EvalSharedContext::EvalSharedContext(JSContext* cx, CompilationStencil& stencil,
   inWith_ = compilationState.scopeContext.inWith;
 }
 
-SuspendableContext::SuspendableContext(JSContext* cx, Kind kind,
-                                       CompilationStencil& stencil,
-                                       Directives directives,
-                                       SourceExtent extent, bool isGenerator,
-                                       bool isAsync)
-    : SharedContext(cx, kind, stencil, directives, extent) {
+SuspendableContext::SuspendableContext(
+    JSContext* cx, Kind kind, const JS::ReadOnlyCompileOptions& options,
+    Directives directives, SourceExtent extent, bool isGenerator, bool isAsync)
+    : SharedContext(cx, kind, options, directives, extent) {
   setFlag(ImmutableFlags::IsGenerator, isGenerator);
   setFlag(ImmutableFlags::IsAsync, isAsync);
 }
 
 FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
-                         CompilationStencil& stencil,
                          CompilationState& compilationState,
                          Directives directives, GeneratorKind generatorKind,
-                         FunctionAsyncKind asyncKind,
+                         FunctionAsyncKind asyncKind, bool isInitialCompilation,
                          TaggedParserAtomIndex atom, FunctionFlags flags,
                          ScriptIndex index)
-    : SuspendableContext(cx, Kind::FunctionBox, stencil, directives, extent,
+    : SuspendableContext(cx, Kind::FunctionBox, compilationState.input.options,
+                         directives, extent,
                          generatorKind == GeneratorKind::Generator,
                          asyncKind == FunctionAsyncKind::AsyncFunction),
       compilationState_(compilationState),
@@ -130,7 +124,7 @@ FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
       hasDuplicateParameters(false),
       hasExprBody_(false),
       isFunctionFieldCopiedToStencil(false),
-      isInitialCompilation(stencil.isInitialStencil()),
+      isInitialCompilation(isInitialCompilation),
       isStandalone(false) {}
 
 void FunctionBox::initFromLazyFunction(JSFunction* fun,
@@ -279,18 +273,24 @@ bool FunctionBox::setAsmJSModule(const JS::WasmModule* module) {
   flags_.setIsExtended();
   flags_.setKind(FunctionFlags::AsmJS);
 
-  if (!stencil_.asmJS.putNew(index(), module)) {
+  if (!compilationState_.asmJS) {
+    compilationState_.asmJS = cx_->new_<StencilAsmJSContainer>();
+    if (!compilationState_.asmJS) {
+      return false;
+    }
+  }
+
+  if (!compilationState_.asmJS->moduleMap.putNew(index(), module)) {
     js::ReportOutOfMemory(cx_);
     return false;
   }
   return true;
 }
 
-ModuleSharedContext::ModuleSharedContext(JSContext* cx,
-                                         CompilationStencil& stencil,
-                                         ModuleBuilder& builder,
-                                         SourceExtent extent)
-    : SuspendableContext(cx, Kind::Module, stencil, Directives(true), extent,
+ModuleSharedContext::ModuleSharedContext(
+    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+    ModuleBuilder& builder, SourceExtent extent)
+    : SuspendableContext(cx, Kind::Module, options, Directives(true), extent,
                          /* isGenerator = */ false,
                          /* isAsync = */ false),
       bindings(nullptr),

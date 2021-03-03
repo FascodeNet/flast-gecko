@@ -11,9 +11,10 @@
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/DocAccessibleParent.h"
 #  include "mozilla/a11y/Platform.h"
-#  include "mozilla/a11y/ProxyAccessibleBase.h"
+#  include "mozilla/a11y/RemoteAccessibleBase.h"
 #  include "nsAccessibilityService.h"
 #endif
+#include "mozilla/Components.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
@@ -125,7 +126,7 @@
 #include "IHistory.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
-#include "GeckoProfiler.h"
+#include "mozilla/ProfilerLabels.h"
 #include "MMPrinter.h"
 #include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
@@ -299,7 +300,8 @@ void BrowserParent::AddBrowserParentToTable(layers::LayersId aLayersId,
   if (!sLayerToBrowserParentTable) {
     sLayerToBrowserParentTable = new LayerToBrowserParentTable();
   }
-  sLayerToBrowserParentTable->Put(uint64_t(aLayersId), aBrowserParent);
+  sLayerToBrowserParentTable->InsertOrUpdate(uint64_t(aLayersId),
+                                             aBrowserParent);
 }
 
 void BrowserParent::RemoveBrowserParentFromTable(layers::LayersId aLayersId) {
@@ -1280,7 +1282,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
     doc->SetCOMInterface(proxy);
     doc->MaybeInitWindowEmulation();
-    if (a11y::Accessible* outerDoc = doc->OuterDocOfRemoteBrowser()) {
+    if (a11y::LocalAccessible* outerDoc = doc->OuterDocOfRemoteBrowser()) {
       doc->SendParentCOMProxy(outerDoc);
     }
 #  endif
@@ -1461,10 +1463,10 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
     localEvent.mMessage = eMouseEnterIntoWidget;
     DebugOnly<bool> ret =
         isInputPriorityEventEnabled
-            ? SendRealMouseButtonEvent(localEvent, guid, blockId)
-            : SendNormalPriorityRealMouseButtonEvent(localEvent, guid, blockId);
-    NS_WARNING_ASSERTION(
-        ret, "SendRealMouseButtonEvent(eMouseEnterIntoWidget) failed");
+            ? SendRealMouseEnterExitWidgetEvent(localEvent, guid, blockId)
+            : SendNormalPriorityRealMouseEnterExitWidgetEvent(localEvent, guid,
+                                                              blockId);
+    NS_WARNING_ASSERTION(ret, "SendRealMouseEnterExitWidgetEvent() failed");
     MOZ_ASSERT(!ret || localEvent.HasBeenPostedToRemoteProcess());
   }
 
@@ -1495,6 +1497,18 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
             : SendNormalPriorityRealMouseMoveEventForTests(aEvent, guid,
                                                            blockId);
     NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEventForTests() failed");
+    MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+    return;
+  }
+
+  if (eMouseEnterIntoWidget == aEvent.mMessage ||
+      eMouseExitFromWidget == aEvent.mMessage) {
+    DebugOnly<bool> ret =
+        isInputPriorityEventEnabled
+            ? SendRealMouseEnterExitWidgetEvent(aEvent, guid, blockId)
+            : SendNormalPriorityRealMouseEnterExitWidgetEvent(aEvent, guid,
+                                                              blockId);
+    NS_WARNING_ASSERTION(ret, "SendRealMouseEnterExitWidgetEvent() failed");
     MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
     return;
   }
@@ -1779,12 +1793,16 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeKeyEvent(
 
 mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeMouseEvent(
     const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
-    const uint32_t& aModifierFlags, const uint64_t& aObserverId) {
+    const int16_t& aButton, const uint32_t& aModifierFlags,
+    const uint64_t& aObserverId) {
   AutoSynthesizedEventResponder responder(this, aObserverId, "mouseevent");
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (widget) {
-    widget->SynthesizeNativeMouseEvent(aPoint, aNativeMessage, aModifierFlags,
-                                       responder.GetObserver());
+    widget->SynthesizeNativeMouseEvent(
+        aPoint, static_cast<nsIWidget::NativeMouseMessage>(aNativeMessage),
+        static_cast<mozilla::MouseButton>(aButton),
+        static_cast<nsIWidget::Modifiers>(aModifierFlags),
+        responder.GetObserver());
   }
   return IPC_OK();
 }
@@ -1825,6 +1843,17 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchPoint(
     widget->SynthesizeNativeTouchPoint(aPointerId, aPointerState, aPoint,
                                        aPointerPressure, aPointerOrientation,
                                        responder.GetObserver());
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchPadPinch(
+    const TouchpadPinchPhase& aEventPhase, const float& aScale,
+    const LayoutDeviceIntPoint& aPoint, const int32_t& aModifierFlags) {
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (widget) {
+    widget->SynthesizeNativeTouchPadPinch(aEventPhase, aScale, aPoint,
+                                          aModifierFlags);
   }
   return IPC_OK();
 }
@@ -3900,7 +3929,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvVisitURI(nsIURI* aURI,
   if (NS_WARN_IF(!widget)) {
     return IPC_OK();
   }
-  nsCOMPtr<IHistory> history = services::GetHistory();
+  nsCOMPtr<IHistory> history = components::History::Service();
   if (history) {
     Unused << history->VisitURI(widget, aURI, aLastVisitedURI, aFlags);
   }
@@ -3910,7 +3939,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvVisitURI(nsIURI* aURI,
 mozilla::ipc::IPCResult BrowserParent::RecvQueryVisitedState(
     const nsTArray<RefPtr<nsIURI>>&& aURIs) {
 #ifdef MOZ_ANDROID_HISTORY
-  nsCOMPtr<IHistory> history = services::GetHistory();
+  nsCOMPtr<IHistory> history = components::History::Service();
   if (NS_WARN_IF(!history)) {
     return IPC_OK();
   }

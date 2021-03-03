@@ -15,6 +15,7 @@
 #include "NSSErrorsService.h"
 #include "TunnelUtils.h"
 #include "base/basictypes.h"
+#include "mozilla/Components.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -289,7 +290,7 @@ nsresult nsHttpTransaction::Init(
 
   mTrafficCategory = trafficCategory;
 
-  mActivityDistributor = services::GetHttpActivityDistributor();
+  mActivityDistributor = components::HttpActivityDistributor::Service();
   if (!mActivityDistributor) {
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -643,14 +644,12 @@ void nsHttpTransaction::OnTransportStatus(nsITransport* transport,
 
   if (status == NS_NET_STATUS_CONNECTED_TO ||
       status == NS_NET_STATUS_WAITING_FOR) {
-    nsISocketTransport* socketTransport =
-        mConnection ? mConnection->Transport() : nullptr;
-    if (socketTransport) {
+    if (mConnection) {
       MutexAutoLock lock(mLock);
-      socketTransport->GetSelfAddr(&mSelfAddr);
-      socketTransport->GetPeerAddr(&mPeerAddr);
-      socketTransport->ResolvedByTRR(&mResolvedByTRR);
-      socketTransport->GetEchConfigUsed(&mEchConfigUsed);
+      mConnection->GetSelfAddr(&mSelfAddr);
+      mConnection->GetPeerAddr(&mPeerAddr);
+      mResolvedByTRR = mConnection->ResolvedByTRR();
+      mEchConfigUsed = mConnection->GetEchConfigUsed();
     }
   }
 
@@ -1113,11 +1112,10 @@ void nsHttpTransaction::OnPush(Http2PushedStreamWrapper* aStream) {
     return;
   }
 
-  auto entry = mIDToStreamMap.LookupForAdd(stream->StreamID());
-  MOZ_ASSERT(!entry);
-  if (!entry) {
-    entry.OrInsert([&stream]() { return stream; });
-  }
+  mIDToStreamMap.WithEntryHandle(stream->StreamID(), [&](auto&& entry) {
+    MOZ_ASSERT(!entry);
+    entry.OrInsert(stream);
+  });
 
   if (NS_FAILED(mOnPushCallback(stream->StreamID(), stream->GetResourceUrl(),
                                 stream->GetRequestString(), this))) {
@@ -1234,6 +1232,7 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
 
   if (mFastFallbackTriggered) {
     mFastFallbackTriggered = false;
+    SetRestartReason(TRANSACTION_RESTART_HTTPS_RR_FAST_FALLBACK);
     mConnInfo = PrepareFastFallbackConnInfo(echConfigUsed);
     return;
   }
@@ -1246,11 +1245,10 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
 
   Telemetry::HistogramID id = Telemetry::TRANSACTION_ECH_RETRY_OTHERS_COUNT;
   auto updateCount = MakeScopeExit([&] {
-    uint32_t count = 0;
-    bool existed = mEchRetryCounterMap.Get(id, &count);
-    MOZ_ASSERT(existed, "table not initialized");
-    if (existed) {
-      mEchRetryCounterMap.Put(id, ++count);
+    auto entry = mEchRetryCounterMap.Lookup(id);
+    MOZ_ASSERT(entry, "table not initialized");
+    if (entry) {
+      *entry += 1;
     }
   });
 
@@ -1485,30 +1483,28 @@ void nsHttpTransaction::Close(nsresult reason) {
       (!(mCaps & NS_HTTP_STICKY_CONNECTION) ||
        (mCaps & NS_HTTP_CONNECTION_RESTARTABLE) ||
        (mEarlyDataDisposition == EARLY_425))) {
-    if (mForceRestart && NS_SUCCEEDED(Restart())) {
-      if (mResponseHead) {
-        mResponseHead->Reset();
+    if (mForceRestart) {
+      SetRestartReason(TRANSACTION_RESTART_FORCED);
+      if (NS_SUCCEEDED(Restart())) {
+        if (mResponseHead) {
+          mResponseHead->Reset();
+        }
+        mContentRead = 0;
+        mContentLength = -1;
+        delete mChunkedDecoder;
+        mChunkedDecoder = nullptr;
+        mHaveStatusLine = false;
+        mHaveAllHeaders = false;
+        mHttpResponseMatched = false;
+        mResponseIsComplete = false;
+        mDidContentStart = false;
+        mNoContent = false;
+        mSentData = false;
+        mReceivedData = false;
+        mSupportsHTTP3 = false;
+        LOG(("transaction force restarted\n"));
+        return;
       }
-      mContentRead = 0;
-      mContentLength = -1;
-      delete mChunkedDecoder;
-      mChunkedDecoder = nullptr;
-      mHaveStatusLine = false;
-      mHaveAllHeaders = false;
-      mHttpResponseMatched = false;
-      mResponseIsComplete = false;
-      mDidContentStart = false;
-      mNoContent = false;
-      mSentData = false;
-      mReceivedData = false;
-      mSupportsHTTP3 = false;
-      LOG(("transaction force restarted\n"));
-      // Only record the first restart attempt.
-      if (!mRestartCount) {
-        Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_RESTART_REASON,
-                              TRANSACTION_RESTART_FORCED);
-      }
-      return;
     }
 
     // reallySentData is meant to separate the instances where data has
@@ -1537,29 +1533,39 @@ void nsHttpTransaction::Close(nsresult reason) {
              mConnInfo ? mConnInfo->HashKey().get() : "None"));
       }
 
+      if (shouldRestartTransactionForHTTPSRR) {
+        auto toRestartReason =
+            [](nsresult aStatus) -> TRANSACTION_RESTART_REASON {
+          if (aStatus == NS_ERROR_NET_RESET) {
+            return TRANSACTION_RESTART_HTTPS_RR_NET_RESET;
+          }
+          if (aStatus == NS_ERROR_CONNECTION_REFUSED) {
+            return TRANSACTION_RESTART_HTTPS_RR_CONNECTION_REFUSED;
+          }
+          if (aStatus == NS_ERROR_UNKNOWN_HOST) {
+            return TRANSACTION_RESTART_HTTPS_RR_UNKNOWN_HOST;
+          }
+          if (aStatus == NS_ERROR_NET_TIMEOUT) {
+            return TRANSACTION_RESTART_HTTPS_RR_NET_TIMEOUT;
+          }
+          if (psm::IsNSSErrorCode(-1 * NS_ERROR_GET_CODE(aStatus))) {
+            return TRANSACTION_RESTART_HTTPS_RR_SEC_ERROR;
+          }
+          MOZ_ASSERT_UNREACHABLE("Unexpected reason");
+          return TRANSACTION_RESTART_OTHERS;
+        };
+        SetRestartReason(toRestartReason(reason));
+      } else if (!reallySentData) {
+        SetRestartReason(TRANSACTION_RESTART_NO_DATA_SENT);
+      } else if (reason == psm::GetXPCOMFromNSSError(
+                               SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA)) {
+        SetRestartReason(TRANSACTION_RESTART_DOWNGRADE_WITH_EARLY_DATA);
+      }
       // if restarting fails, then we must proceed to close the pipe,
       // which will notify the channel that the transaction failed.
       // Note that when echConfig is enabled, it's possible that we don't have a
       // usable connection info to retry.
       if (mConnInfo && NS_SUCCEEDED(Restart())) {
-        // Only record the first restart attempt.
-        if (!mRestartCount) {
-          if (shouldRestartTransactionForHTTPSRR) {
-            Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_RESTART_REASON,
-                                  TRANSACTION_RESTART_HTTPSSVC_INVOLVED);
-          } else if (!reallySentData) {
-            Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_RESTART_REASON,
-                                  TRANSACTION_RESTART_NO_DATA_SENT);
-          } else if (reason == psm::GetXPCOMFromNSSError(
-                                   SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA)) {
-            Telemetry::Accumulate(
-                Telemetry::HTTP_TRANSACTION_RESTART_REASON,
-                TRANSACTION_RESTART_DOWNGRADE_WITH_EARLY_DATA);
-          } else {
-            Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_RESTART_REASON,
-                                  TRANSACTION_RESTART_OTHERS);
-          }
-        }
         return;
       }
       // mConnInfo could be set to null in PrepareConnInfoForRetry() when we
@@ -1573,10 +1579,8 @@ void nsHttpTransaction::Close(nsresult reason) {
     }
   }
 
-  if (!mRestartCount) {
-    Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_RESTART_REASON,
-                          TRANSACTION_RESTART_NONE);
-  }
+  Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_RESTART_REASON,
+                        mRestartReason);
 
   if (!mResponseIsComplete && NS_SUCCEEDED(reason) && isHttp2or3) {
     // Responses without content-length header field are still complete if
@@ -1630,9 +1634,11 @@ void nsHttpTransaction::Close(nsresult reason) {
     // sure we parse the remaining header line, and then hopefully, the
     // response will be usable (see bug 88792).
     if (!mHaveAllHeaders) {
-      char data = '\n';
+      char data[] = "\n\n";
       uint32_t unused = 0;
-      Unused << ParseHead(&data, 1, &unused);
+      // If we have a partial line already, we actually need two \ns to finish
+      // the headers section.
+      Unused << ParseHead(data, mLineBuf.IsEmpty() ? 1 : 2, &unused);
 
       if (mResponseHead->Version() == HttpVersion::v0_9) {
         // Reject 0 byte HTTP/0.9 Responses - bug 423506
@@ -1749,6 +1755,12 @@ static inline void RemoveAlternateServiceUsedHeader(
   }
 }
 
+void nsHttpTransaction::SetRestartReason(TRANSACTION_RESTART_REASON aReason) {
+  if (mRestartReason == TRANSACTION_RESTART_NONE) {
+    mRestartReason = aReason;
+  }
+}
+
 nsresult nsHttpTransaction::Restart() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
@@ -1806,6 +1818,9 @@ nsresult nsHttpTransaction::Restart() {
   // Reset mDoNotRemoveAltSvc for the next try.
   mDoNotRemoveAltSvc = false;
   mRestarted = true;
+
+  // Use TRANSACTION_RESTART_OTHERS as a catch-all.
+  SetRestartReason(TRANSACTION_RESTART_OTHERS);
 
   return gHttpHandler->InitiateTransaction(this, mPriority);
 }
@@ -3135,12 +3150,14 @@ nsresult nsHttpTransaction::OnHTTPSRRAvailable(
 
   // echConfig is used, so initialize the retry counters to 0.
   if (!mConnInfo->GetEchConfig().IsEmpty()) {
-    mEchRetryCounterMap.Put(Telemetry::TRANSACTION_ECH_RETRY_WITH_ECH_COUNT, 0);
-    mEchRetryCounterMap.Put(Telemetry::TRANSACTION_ECH_RETRY_WITHOUT_ECH_COUNT,
-                            0);
-    mEchRetryCounterMap.Put(Telemetry::TRANSACTION_ECH_RETRY_ECH_FAILED_COUNT,
-                            0);
-    mEchRetryCounterMap.Put(Telemetry::TRANSACTION_ECH_RETRY_OTHERS_COUNT, 0);
+    mEchRetryCounterMap.InsertOrUpdate(
+        Telemetry::TRANSACTION_ECH_RETRY_WITH_ECH_COUNT, 0);
+    mEchRetryCounterMap.InsertOrUpdate(
+        Telemetry::TRANSACTION_ECH_RETRY_WITHOUT_ECH_COUNT, 0);
+    mEchRetryCounterMap.InsertOrUpdate(
+        Telemetry::TRANSACTION_ECH_RETRY_ECH_FAILED_COUNT, 0);
+    mEchRetryCounterMap.InsertOrUpdate(
+        Telemetry::TRANSACTION_ECH_RETRY_OTHERS_COUNT, 0);
   }
 
   return NS_OK;
@@ -3169,6 +3186,12 @@ void nsHttpTransaction::OnBackupConnectionReady() {
     return;
   }
 
+  if (mConnection) {
+    // The transaction will only be restarted when we already have a connection.
+    // When there is no connection, this transaction will be moved to another
+    // connection entry.
+    SetRestartReason(TRANSACTION_RESTART_HTTP3_FAST_FALLBACK);
+  }
   HandleFallback(mBackupConnInfo);
 
   mCaps |= NS_HTTP_DISALLOW_HTTP3;

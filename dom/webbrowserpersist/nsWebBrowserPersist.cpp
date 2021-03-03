@@ -572,7 +572,7 @@ nsresult nsWebBrowserPersist::StartUpload(nsIInputStream* aInputStream,
 
   // add this to the upload list
   nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(destChannel);
-  mUploadList.Put(keyPtr, new UploadData(aDestinationURI));
+  mUploadList.InsertOrUpdate(keyPtr, MakeUnique<UploadData>(aDestinationURI));
 
   return NS_OK;
 }
@@ -1507,7 +1507,8 @@ nsresult nsWebBrowserPersist::SaveChannelInternal(nsIChannel* aChannel,
   MutexAutoLock lock(mOutputMapMutex);
   // Add the output transport to the output map with the channel as the key
   nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(aChannel);
-  mOutputMap.Put(keyPtr, new OutputData(aFile, mURI, aCalcFileExt));
+  mOutputMap.InsertOrUpdate(keyPtr,
+                            MakeUnique<OutputData>(aFile, mURI, aCalcFileExt));
 
   return NS_OK;
 }
@@ -2283,10 +2284,6 @@ nsresult nsWebBrowserPersist::MakeOutputStreamFromFile(
   if (mPersistFlags & PERSIST_FLAGS_CLEANUP_ON_FAILURE) {
     // Add to cleanup list in event of failure
     auto* cleanupData = new CleanupData;
-    if (!cleanupData) {
-      NS_RELEASE(*aOutputStream);
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
     cleanupData->mFile = aFile;
     cleanupData->mIsDirectory = false;
     if (NS_IsMainThread()) {
@@ -2424,7 +2421,7 @@ nsresult nsWebBrowserPersist::FixRedirectedChannelEntry(
     // Store data again with new channel unless told to ignore redirects.
     if (!(mPersistFlags & PERSIST_FLAGS_IGNORE_REDIRECTED_DATA)) {
       nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(aNewChannel);
-      mOutputMap.Put(keyPtr, outputData.release());
+      mOutputMap.InsertOrUpdate(keyPtr, std::move(outputData));
     }
   }
 
@@ -2724,7 +2721,6 @@ nsresult nsWebBrowserPersist::MakeAndStoreLocalFilenameInURIMap(
 
   // Store the file name
   data = new URIData;
-  NS_ENSURE_TRUE(data, NS_ERROR_OUT_OF_MEMORY);
 
   data->mContentPolicyType = aContentPolicyType;
   data->mNeedsPersisting = aNeedsPersisting;
@@ -2743,7 +2739,7 @@ nsresult nsWebBrowserPersist::MakeAndStoreLocalFilenameInURIMap(
 
   if (aNeedsPersisting) mCurrentThingsToPersist++;
 
-  mURIMap.Put(spec, data);
+  mURIMap.InsertOrUpdate(spec, UniquePtr<URIData>(data));
   if (aData) {
     *aData = data;
   }

@@ -28,7 +28,7 @@ class xpcAccessibleDocument : public xpcAccessibleHyperText,
         mCache(kDefaultCacheLength),
         mRemote(false) {}
 
-  xpcAccessibleDocument(ProxyAccessible* aProxy, uint32_t aInterfaces)
+  xpcAccessibleDocument(RemoteAccessible* aProxy, uint32_t aInterfaces)
       : xpcAccessibleHyperText(aProxy, aInterfaces),
         mCache(kDefaultCacheLength),
         mRemote(true) {}
@@ -51,8 +51,8 @@ class xpcAccessibleDocument : public xpcAccessibleHyperText,
   /**
    * Return XPCOM wrapper for the internal accessible.
    */
-  xpcAccessibleGeneric* GetAccessible(Accessible* aAccessible);
-  xpcAccessibleGeneric* GetXPCAccessible(ProxyAccessible* aProxy);
+  xpcAccessibleGeneric* GetAccessible(LocalAccessible* aAccessible);
+  xpcAccessibleGeneric* GetXPCAccessible(RemoteAccessible* aProxy);
 
   virtual void Shutdown() override;
 
@@ -61,14 +61,14 @@ class xpcAccessibleDocument : public xpcAccessibleHyperText,
 
  private:
   DocAccessible* Intl() {
-    if (Accessible* acc = mIntl.AsAccessible()) {
+    if (LocalAccessible* acc = mIntl.AsAccessible()) {
       return acc->AsDoc();
     }
 
     return nullptr;
   }
 
-  void NotifyOfShutdown(Accessible* aAccessible) {
+  void NotifyOfShutdown(LocalAccessible* aAccessible) {
     MOZ_ASSERT(!mRemote);
     xpcAccessibleGeneric* xpcAcc = mCache.Get(aAccessible);
     if (xpcAcc) {
@@ -82,7 +82,7 @@ class xpcAccessibleDocument : public xpcAccessibleHyperText,
     }
   }
 
-  void NotifyOfShutdown(ProxyAccessible* aProxy) {
+  void NotifyOfShutdown(RemoteAccessible* aProxy) {
     MOZ_ASSERT(mRemote);
     xpcAccessibleGeneric* xpcAcc = mCache.Get(aProxy);
     if (xpcAcc) {
@@ -98,8 +98,8 @@ class xpcAccessibleDocument : public xpcAccessibleHyperText,
 
   friend class DocManager;
   friend class DocAccessible;
-  friend class ProxyAccessible;
-  friend class ProxyAccessibleBase<ProxyAccessible>;
+  friend class RemoteAccessible;
+  friend class RemoteAccessibleBase<RemoteAccessible>;
   friend class xpcAccessibleGeneric;
 
   xpcAccessibleDocument(const xpcAccessibleDocument&) = delete;
@@ -109,7 +109,7 @@ class xpcAccessibleDocument : public xpcAccessibleHyperText,
   bool mRemote;
 };
 
-inline xpcAccessibleGeneric* ToXPC(Accessible* aAccessible) {
+inline xpcAccessibleGeneric* ToXPC(LocalAccessible* aAccessible) {
   if (!aAccessible) return nullptr;
 
   if (aAccessible->IsApplication()) return XPCApplicationAcc();

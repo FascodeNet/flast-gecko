@@ -22,13 +22,14 @@ class xpcAccessibleHyperText : public xpcAccessibleGeneric,
                                public nsIAccessibleEditableText,
                                public nsIAccessibleHyperText {
  public:
-  explicit xpcAccessibleHyperText(Accessible* aIntl)
+  explicit xpcAccessibleHyperText(LocalAccessible* aIntl)
       : xpcAccessibleGeneric(aIntl) {
-    if (aIntl->IsHyperText() && aIntl->AsHyperText()->IsTextRole())
+    if (aIntl->IsHyperText() && aIntl->AsHyperText()->IsTextRole()) {
       mSupportedIfaces |= eText;
+    }
   }
 
-  xpcAccessibleHyperText(ProxyAccessible* aProxy, uint32_t aInterfaces)
+  xpcAccessibleHyperText(RemoteAccessible* aProxy, uint32_t aInterfaces)
       : xpcAccessibleGeneric(aProxy, aInterfaces) {
     mSupportedIfaces |= eText;
   }
@@ -44,7 +45,7 @@ class xpcAccessibleHyperText : public xpcAccessibleGeneric,
 
  private:
   HyperTextAccessible* Intl() {
-    if (Accessible* acc = mIntl.AsAccessible()) {
+    if (LocalAccessible* acc = mIntl.AsAccessible()) {
       return acc->AsHyperText();
     }
 

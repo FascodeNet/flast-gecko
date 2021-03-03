@@ -1403,20 +1403,35 @@ SearchService.prototype = {
         );
       } else {
         let policy = await this._getExtensionPolicy(engine._extensionID);
-        let manifest = policy.extension.manifest;
+        let providerSettings =
+          policy.extension.manifest?.chrome_settings_overrides?.search_provider;
 
-        if (
-          !engine.checkSearchUrlMatchesManifest(
-            manifest?.chrome_settings_overrides?.search_provider
-          )
-        ) {
+        if (!providerSettings) {
+          logConsole.debug(
+            `Add-on ${engine._extensionID} for search engine ${engine.name} no longer has an engine defined`
+          );
+          Services.telemetry.keyedScalarSet(
+            "browser.searchinit.engine_invalid_webextension",
+            engine._extensionID,
+            4
+          );
+        } else if (engine.name != providerSettings.name) {
+          logConsole.debug(
+            `Add-on ${engine._extensionID} for search engine ${engine.name} has a different name!`
+          );
+          Services.telemetry.keyedScalarSet(
+            "browser.searchinit.engine_invalid_webextension",
+            engine._extensionID,
+            5
+          );
+        } else if (!engine.checkSearchUrlMatchesManifest(providerSettings)) {
           logConsole.debug(
             `Add-on ${engine._extensionID} for search engine ${engine.name} has out-of-date manifest!`
           );
           Services.telemetry.keyedScalarSet(
             "browser.searchinit.engine_invalid_webextension",
             engine._extensionID,
-            3
+            6
           );
         }
       }
@@ -1848,13 +1863,10 @@ SearchService.prototype = {
     await this.init();
     let errCode;
     try {
-      var engine = new OpenSearchEngine({
-        uri: engineURL,
-        isAppProvided: false,
-      });
+      var engine = new OpenSearchEngine();
       engine._setIcon(iconURL, false);
       errCode = await new Promise(resolve => {
-        engine._initFromURIAndLoad(engineURL, errorCode => {
+        engine._install(engineURL, errorCode => {
           resolve(errorCode);
         });
       });
@@ -2775,12 +2787,13 @@ var engineUpdateService = {
       }
 
       logConsole.debug("updating", engine.name, updateURI.spec);
-      testEngine = new OpenSearchEngine({
-        uri: updateURI,
-        isAppProvided: false,
-      });
+      testEngine = new OpenSearchEngine();
       testEngine._engineToUpdate = engine;
-      testEngine._initFromURIAndLoad(updateURI);
+      try {
+        testEngine._install(updateURI);
+      } catch (ex) {
+        logConsole.error("Failed to update", engine.name, ex);
+      }
     } else {
       logConsole.debug("invalid updateURI");
     }

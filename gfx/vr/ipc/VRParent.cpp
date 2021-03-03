@@ -55,7 +55,6 @@ IPCResult VRParent::RecvInit(nsTArray<GfxVarUpdate>&& vars,
   gfxConfig::Inherit(Feature::D3D11_COMPOSITING,
                      devicePrefs.d3d11Compositing());
   gfxConfig::Inherit(Feature::OPENGL_COMPOSITING, devicePrefs.oglCompositing());
-  gfxConfig::Inherit(Feature::ADVANCED_LAYERS, devicePrefs.advancedLayers());
   gfxConfig::Inherit(Feature::DIRECT2D, devicePrefs.useD2D1());
 
 #if defined(XP_WIN)
@@ -84,7 +83,7 @@ mozilla::ipc::IPCResult VRParent::RecvOpenVRControllerActionPathToVR(
 
 mozilla::ipc::IPCResult VRParent::RecvOpenVRControllerManifestPathToVR(
     const VRControllerType& aType, const nsCString& aPath) {
-  mOpenVRControllerManifest.Put(static_cast<uint32_t>(aType), aPath);
+  mOpenVRControllerManifest.InsertOrUpdate(static_cast<uint32_t>(aType), aPath);
   return IPC_OK();
 }
 

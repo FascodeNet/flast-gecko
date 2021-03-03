@@ -167,9 +167,10 @@ void WindowGlobalChild::Init() {
     gWindowGlobalChildById = new WGCByIdMap();
     ClearOnShutdown(&gWindowGlobalChildById);
   }
-  auto entry = gWindowGlobalChildById->LookupForAdd(InnerWindowId());
-  MOZ_RELEASE_ASSERT(!entry, "Duplicate WindowGlobalChild entry for ID!");
-  entry.OrInsert([&] { return this; });
+  gWindowGlobalChildById->WithEntryHandle(InnerWindowId(), [&](auto&& entry) {
+    MOZ_RELEASE_ASSERT(!entry, "Duplicate WindowGlobalChild entry for ID!");
+    entry.Insert(this);
+  });
 }
 
 void WindowGlobalChild::InitWindowGlobal(nsGlobalWindowInner* aWindow) {
@@ -677,13 +678,6 @@ JSObject* WindowGlobalChild::WrapObject(JSContext* aCx,
 
 nsISupports* WindowGlobalChild::GetParentObject() {
   return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
-}
-
-void WindowGlobalChild::MaybeSendUpdateDocumentWouldPreloadResources() {
-  if (!mDocumentWouldPreloadResources) {
-    mDocumentWouldPreloadResources = true;
-    SendUpdateDocumentWouldPreloadResources();
-  }
 }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild, mWindowGlobal,

@@ -1249,12 +1249,12 @@ void MacroAssembler::extractLaneFloat64x2(uint32_t lane, FloatRegister src,
 
 void MacroAssembler::replaceLaneInt8x16(unsigned lane, Register rhs,
                                         FloatRegister lhsDest) {
-  vpinsrb(lane, rhs, lhsDest, lhsDest);
+  vpinsrb(lane, Operand(rhs), lhsDest, lhsDest);
 }
 
 void MacroAssembler::replaceLaneInt16x8(unsigned lane, Register rhs,
                                         FloatRegister lhsDest) {
-  vpinsrw(lane, rhs, lhsDest, lhsDest);
+  vpinsrw(lane, Operand(rhs), lhsDest, lhsDest);
 }
 
 void MacroAssembler::replaceLaneInt32x4(unsigned lane, Register rhs,
@@ -1397,7 +1397,7 @@ void MacroAssembler::allTrueInt16x8(FloatRegister src, Register dest) {
   ScratchSimd128Scope xtmp(*this);
   // xtmp is all-00h
   vpxor(xtmp, xtmp, xtmp);
-  // Set FFFFh if byte==0 otherwise 0000h
+  // Set FFFFh if word==0 otherwise 0000h
   // Operand ordering constraint: lhs==output
   vpcmpeqw(Operand(src), xtmp, xtmp);
   // Get all bytes' high bits
@@ -1412,9 +1412,24 @@ void MacroAssembler::allTrueInt32x4(FloatRegister src, Register dest) {
   ScratchSimd128Scope xtmp(*this);
   // xtmp is all-00h
   vpxor(xtmp, xtmp, xtmp);
-  // Set FFFFFFFFh if byte==0 otherwise 00000000h
+  // Set FFFFFFFFh if doubleword==0 otherwise 00000000h
   // Operand ordering constraint: lhs==output
   vpcmpeqd(Operand(src), xtmp, xtmp);
+  // Get all bytes' high bits
+  vpmovmskb(xtmp, dest);
+  // Now set dest to 1 if it is zero, otherwise to zero.
+  testl(dest, dest);
+  setCC(Zero, dest);
+  movzbl(dest, dest);
+}
+
+void MacroAssembler::allTrueInt64x2(FloatRegister src, Register dest) {
+  ScratchSimd128Scope xtmp(*this);
+  // xtmp is all-00h
+  vpxor(xtmp, xtmp, xtmp);
+  // Set FFFFFFFFFFFFFFFFh if quadword==0 otherwise 0000000000000000h
+  // Operand ordering constraint: lhs==output
+  vpcmpeqq(Operand(src), xtmp, xtmp);
   // Get all bytes' high bits
   vpmovmskb(xtmp, dest);
   // Now set dest to 1 if it is zero, otherwise to zero.
@@ -2257,6 +2272,13 @@ void MacroAssembler::unsignedCompareInt32x4(Assembler::Condition cond,
                                             FloatRegister temp2) {
   MacroAssemblerX86Shared::unsignedCompareInt32x4(lhsDest, Operand(rhs), cond,
                                                   lhsDest, temp1, temp2);
+}
+
+void MacroAssembler::compareInt64x2(Assembler::Condition cond,
+                                    FloatRegister rhs, FloatRegister lhsDest) {
+  MOZ_ASSERT(cond == Assembler::Condition::Equal ||
+             cond == Assembler::Condition::NotEqual);
+  MacroAssemblerX86Shared::compareInt64x2(lhsDest, Operand(rhs), cond, lhsDest);
 }
 
 void MacroAssembler::compareFloat32x4(Assembler::Condition cond,

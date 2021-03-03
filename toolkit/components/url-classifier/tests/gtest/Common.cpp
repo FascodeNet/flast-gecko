@@ -118,7 +118,7 @@ nsresult PrefixArrayToPrefixStringMap(const _PrefixArray& aPrefixArray,
   // all prefixes of that length.
   nsClassHashtable<nsUint32HashKey, _PrefixArray> table;
   for (const auto& prefix : aPrefixArray) {
-    _PrefixArray* array = table.LookupOrAdd(prefix.Length());
+    _PrefixArray* array = table.GetOrInsertNew(prefix.Length());
     array->AppendElement(prefix);
   }
 
@@ -128,7 +128,7 @@ nsresult PrefixArrayToPrefixStringMap(const _PrefixArray& aPrefixArray,
     uint32_t size = iter.Key();
     uint32_t count = iter.Data()->Length();
 
-    _Prefix* str = new _Prefix();
+    auto str = MakeUnique<_Prefix>();
     str->SetLength(size * count);
 
     char* dst = str->BeginWriting();
@@ -139,7 +139,7 @@ nsresult PrefixArrayToPrefixStringMap(const _PrefixArray& aPrefixArray,
       dst += size;
     }
 
-    aOut.Put(size, str);
+    aOut.InsertOrUpdate(size, std::move(str));
   }
 
   return NS_OK;

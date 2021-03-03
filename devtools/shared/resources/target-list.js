@@ -25,8 +25,8 @@ const {
 // eslint-disable-next-line mozilla/reject-some-requires
 loader.lazyRequireGetter(
   this,
-  "TargetFactory",
-  "devtools/client/framework/target",
+  "TabTargetFactory",
+  "devtools/client/framework/tab-target-factory",
   true
 );
 
@@ -46,35 +46,21 @@ class TargetList extends EventEmitter {
    * @fires target-tread-wrong-order-on-resume : An event that is emitted when resuming
    *        the thread throws with the "wrongOrder" error.
    *
-   * @param {RootFront} rootFront
-   *        The root front.
-   * @param {TargetFront} targetFront
-   *        The top level target to debug. Note that in case of target switching,
-   *        this may be replaced by a new one over time.
+   * @param {DescriptorFront} descriptorFront
+   *        The context to inspector identified by this descriptor.
    */
-  constructor(rootFront, targetFront) {
+  constructor(descriptorFront) {
     super();
 
-    this.rootFront = rootFront;
-
-    // Once we have descriptor for all targets we create a toolbox for,
-    // we should try to only pass the descriptor to the Toolbox constructor,
-    // and, only receive the root and descriptor front as an argument to TargetList.
-    // Bug 1573779, we only miss descriptors for workers.
-    this.descriptorFront = targetFront.descriptorFront;
-
-    // Note that this is a public attribute, used outside of this class
-    // and helps knowing what is the current top level target we debug.
-    this.targetFront = targetFront;
-    targetFront.setTargetType(this.getTargetType(targetFront));
-    targetFront.setIsTopLevel(true);
+    this.descriptorFront = descriptorFront;
+    this.rootFront = descriptorFront.client.mainRoot;
 
     // Until Watcher actor notify about new top level target when navigating to another process
     // we have to manually switch to a new target from the client side
     this.onLocalTabRemotenessChange = this.onLocalTabRemotenessChange.bind(
       this
     );
-    if (this.descriptorFront?.isLocalTab) {
+    if (this.descriptorFront.isLocalTab) {
       this.descriptorFront.on(
         "remoteness-change",
         this.onLocalTabRemotenessChange
@@ -90,9 +76,6 @@ class TargetList extends EventEmitter {
     // `watchTargets`, whose initial value is a Set of the existing target fronts at the
     // time watchTargets is called.
     this._pendingWatchTargetInitialization = new Map();
-
-    // Add the top-level target to debug to the list of targets.
-    this._targets.add(targetFront);
 
     // Listeners for target creation and destruction
     this._createListeners = new EventEmitter();
@@ -249,11 +232,23 @@ class TargetList extends EventEmitter {
    *        but still register listeners set via Legacy Listeners.
    */
   async startListening({ onlyLegacy = false } = {}) {
+    // The first time we call this method, we pull the current top level target from the descriptor
+    if (!this.targetFront) {
+      // Note that this is a public attribute, used outside of this class
+      // and helps knowing what is the current top level target we debug.
+      this.targetFront = await this.descriptorFront.getTarget();
+      this.targetFront.setTargetType(this.getTargetType(this.targetFront));
+      this.targetFront.setIsTopLevel(true);
+
+      // Add the top-level target to the list of targets.
+      this._targets.add(this.targetFront);
+    }
+
     // Cache the Watcher once for all, the first time we call `startListening()`.
     // This `watcherFront` attribute may be then used in any function in TargetList or ResourceWatcher after this.
     if (!this.watcherFront) {
       // Bug 1675763: Watcher actor is not available in all situations yet.
-      const supportsWatcher = this.descriptorFront?.traits?.watcher;
+      const supportsWatcher = this.descriptorFront.traits?.watcher;
       if (supportsWatcher) {
         this.watcherFront = await this.descriptorFront.getWatcher();
       }
@@ -267,7 +262,7 @@ class TargetList extends EventEmitter {
       if (fissionBrowserToolboxEnabled) {
         types = TargetList.ALL_TYPES;
       }
-    } else if (this.targetFront.isLocalTab) {
+    } else if (this.descriptorFront.isLocalTab) {
       types = [TargetList.TYPES.FRAME];
     }
     if (this.listenForWorkers && !types.includes(TargetList.TYPES.WORKER)) {
@@ -549,11 +544,11 @@ class TargetList extends EventEmitter {
     // the same client.
     targetFront.shouldCloseClient = false;
 
-    // Wait for the target to be destroyed so that TargetFactory clears its memoized target for this tab
+    // Wait for the target to be destroyed so that TabTargetFactory clears its memoized target for this tab
     await targetFront.once("target-destroyed");
 
     // Fetch the new target from the existing client so that the new target uses the same client.
-    const newTarget = await TargetFactory.forTab(localTab, client);
+    const newTarget = await TabTargetFactory.forTab(localTab, client);
 
     this.switchToTarget(newTarget);
   }
@@ -580,6 +575,47 @@ class TargetList extends EventEmitter {
 
   isDestroyed() {
     return this._isDestroyed;
+  }
+
+  /**
+   * Update the DevTools configuration on the server.
+   * TODO: This API is temporarily on the TargetList but should move to a
+   * command as soon as https://bugzilla.mozilla.org/show_bug.cgi?id=1691681
+   * lands.
+   */
+  async updateConfiguration(configuration) {
+    if (this.hasTargetWatcherSupport("target-configuration")) {
+      const targetConfigurationFront = await this.watcherFront.getTargetConfigurationActor();
+      await targetConfigurationFront.updateConfiguration(configuration);
+    } else {
+      await this.targetFront.reconfigure({ options: configuration });
+    }
+  }
+
+  /**
+   * Check if JavaScript is currently enabled.
+   * TODO: This API is temporarily on the TargetList but should move to a
+   * command as soon as https://bugzilla.mozilla.org/show_bug.cgi?id=1691681
+   * lands.
+   */
+  async isJavascriptEnabled(configuration) {
+    if (this.hasTargetWatcherSupport("target-configuration")) {
+      const targetConfigurationFront = await this.watcherFront.getTargetConfigurationActor();
+
+      const { javascriptEnabled } = targetConfigurationFront.configuration;
+      if (typeof javascriptEnabled === "undefined") {
+        // `javascriptEnabled` is first read by the target and then forwarded by
+        // the toolbox to the TargetConfigurationActor.
+        // If the TargetConfigurationActor does not know the value yet, fallback
+        // on the initial value cached by the target front.
+        return this.targetFront._javascriptEnabled;
+      }
+      return targetConfigurationFront.configuration.javascriptEnabled;
+    }
+
+    // For targets which don't support the Watcher + configuration actor, the
+    // javascriptEnabled setting can be read on the target front.
+    return this.targetFront._javascriptEnabled;
   }
 
   destroy() {

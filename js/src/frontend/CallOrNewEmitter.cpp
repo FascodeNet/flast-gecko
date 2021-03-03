@@ -43,7 +43,7 @@ bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
   return true;
 }
 
-MOZ_MUST_USE PropOpEmitter& CallOrNewEmitter::prepareForPropCallee(
+[[nodiscard]] PropOpEmitter& CallOrNewEmitter::prepareForPropCallee(
     bool isSuperProp) {
   MOZ_ASSERT(state_ == State::Start);
 
@@ -56,7 +56,7 @@ MOZ_MUST_USE PropOpEmitter& CallOrNewEmitter::prepareForPropCallee(
   return *poe_;
 }
 
-MOZ_MUST_USE ElemOpEmitter& CallOrNewEmitter::prepareForElemCallee(
+[[nodiscard]] ElemOpEmitter& CallOrNewEmitter::prepareForElemCallee(
     bool isSuperElem, bool isPrivate) {
   MOZ_ASSERT(state_ == State::Start);
 
@@ -177,7 +177,7 @@ bool CallOrNewEmitter::wantSpreadOperand() {
   MOZ_ASSERT(isSpread());
 
   state_ = State::WantSpreadOperand;
-  return isSingleSpread();
+  return isSingleSpread() || isPassthroughRest();
 }
 
 bool CallOrNewEmitter::emitSpreadArgumentsTest() {
@@ -211,8 +211,16 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
     }
   }
 
-  state_ = State::Arguments;
+  state_ = State::SpreadIteration;
   return true;
+}
+
+bool CallOrNewEmitter::wantSpreadIteration() {
+  MOZ_ASSERT(state_ == State::SpreadIteration);
+  MOZ_ASSERT(isSpread());
+
+  state_ = State::Arguments;
+  return !isPassthroughRest();
 }
 
 bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {

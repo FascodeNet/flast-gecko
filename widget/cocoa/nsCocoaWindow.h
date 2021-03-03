@@ -49,7 +49,6 @@ typedef struct _nsCocoaWindowList {
 
   BOOL mBeingShown;
   BOOL mDrawTitle;
-  BOOL mBrightTitlebarForeground;
   BOOL mUseMenuStyle;
   BOOL mIsAnimationSuppressed;
 
@@ -98,15 +97,13 @@ typedef struct _nsCocoaWindowList {
 - (void)setWantsTitleDrawn:(BOOL)aDrawTitle;
 - (BOOL)wantsTitleDrawn;
 
-- (void)setUseBrightTitlebarForeground:(BOOL)aBrightForeground;
-- (BOOL)useBrightTitlebarForeground;
-
 - (void)disableSetNeedsDisplay;
 - (void)enableSetNeedsDisplay;
 
 - (NSRect)getAndResetNativeDirtyRect;
 
 - (void)setUseMenuStyle:(BOOL)aValue;
+@property(nonatomic) mozilla::StyleWindowShadow shadowStyle;
 
 - (void)releaseJSObjects;
 
@@ -188,7 +185,6 @@ typedef struct _nsCocoaWindowList {
   CGFloat mUnifiedToolbarHeight;
   CGFloat mSheetAttachmentPosition;
   NSRect mWindowButtonsRect;
-  NSRect mFullScreenButtonRect;
 }
 - (void)setUnifiedToolbarHeight:(CGFloat)aHeight;
 - (CGFloat)unifiedToolbarHeight;
@@ -199,9 +195,7 @@ typedef struct _nsCocoaWindowList {
 - (void)setSheetAttachmentPosition:(CGFloat)aY;
 - (CGFloat)sheetAttachmentPosition;
 - (void)placeWindowButtons:(NSRect)aRect;
-- (void)placeFullScreenButton:(NSRect)aRect;
 - (NSPoint)windowButtonsPositionWithDefaultPosition:(NSPoint)aDefaultPosition;
-- (NSPoint)fullScreenButtonPositionWithDefaultPosition:(NSPoint)aDefaultPosition;
 - (void)windowMainStateChanged;
 @end
 
@@ -307,12 +301,13 @@ class nsCocoaWindow final : public nsBaseWidget, public nsPIWidgetCocoa {
   virtual void SetSupportsNativeFullscreen(bool aShow) override;
   virtual void SetWindowAnimationType(WindowAnimationType aType) override;
   virtual void SetDrawsTitle(bool aDrawTitle) override;
-  virtual void SetUseBrightTitlebarForeground(bool aBrightForeground) override;
   virtual nsresult SetNonClientMargins(LayoutDeviceIntMargin& aMargins) override;
   virtual void SetDrawsInTitlebar(bool aState) override;
   virtual void UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries) override;
-  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint, uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags,
+  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
+                                              NativeMouseMessage aNativeMessage,
+                                              mozilla::MouseButton aButton,
+                                              nsIWidget::Modifiers aModifierFlags,
                                               nsIObserver* aObserver) override;
   virtual nsresult SynthesizeNativeMouseScrollEvent(LayoutDeviceIntPoint aPoint,
                                                     uint32_t aNativeMessage, double aDeltaX,
@@ -356,8 +351,6 @@ class nsCocoaWindow final : public nsBaseWidget, public nsPIWidgetCocoa {
                               bool aRectIsFrameRect);
   nsresult CreatePopupContentView(const LayoutDeviceIntRect& aRect, nsWidgetInitData* aInitData);
   void DestroyNativeWindow();
-  void AdjustWindowShadow();
-  void SetWindowBackgroundBlur();
   void UpdateBounds();
   int32_t GetWorkspaceID();
 

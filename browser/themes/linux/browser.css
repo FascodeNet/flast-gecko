@@ -7,6 +7,12 @@
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 %include ../shared/browser.inc.css
+/**
+ * We intentionally do not include browser-custom-colors.inc.css,
+ * instead choosing to fall back to system colours and transparencies
+ * in order to accomodate the wider variety of system themes on that
+ * platform.
+ */
 
 :root {
   --toolbar-non-lwt-bgcolor: -moz-dialog;
@@ -17,7 +23,7 @@
   --toolbarbutton-icon-fill-opacity: .85;
 
   --panel-separator-color: ThreeDShadow;
-  --arrowpanel-dimmed: hsla(0,0%,80%,.35);
+  --arrowpanel-dimmed: hsla(0,0%,80%,.3);
   --arrowpanel-dimmed-further: hsla(0,0%,80%,.5);
   --arrowpanel-dimmed-even-further: hsla(0,0%,80%,.8);
 
@@ -26,12 +32,18 @@
   --chrome-content-separator-color: ThreeDShadow;
 }
 
+@supports -moz-bool-pref("browser.proton.enabled") {
+:root:not(:-moz-lwtheme) {
+  --focus-outline-color: -moz-accent-color;
+}
+} /*** END proton ***/
+
 #navigator-toolbox {
   --tabs-border-color: rgba(0,0,0,.3);
 }
 
 #tabbrowser-tabs {
-  --tab-line-color: highlight;
+  --tab-line-color: -moz-accent-color;
 }
 
 :root:-moz-lwtheme {
@@ -185,9 +197,11 @@ menuitem.bookmark-item {
 
 %include ../shared/urlbarView.inc.css
 
-:root {
+:root:not(:-moz-lwtheme) {
   --urlbar-popup-url-color: -moz-nativehyperlinktext;
   --urlbar-popup-action-color: -moz-nativehyperlinktext;
+  --autocomplete-popup-highlight-background: Highlight;
+  --autocomplete-popup-highlight-color: HighlightText;
 }
 
 /* Translation infobar */
@@ -251,11 +265,13 @@ menuitem.bookmark-item {
   }
 }
 
+@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
 .keyboard-focused-tab > .tab-stack > .tab-content,
 .tabbrowser-tab:focus:not([aria-activedescendant]) > .tab-stack > .tab-content {
   outline: 1px dotted;
   outline-offset: -6px;
 }
+} /*** END !proton ***/
 
 #context_reloadTab {
   list-style-image: url("moz-icon://stock/gtk-refresh?size=menu");

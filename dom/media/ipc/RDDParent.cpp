@@ -198,7 +198,6 @@ mozilla::ipc::IPCResult RDDParent::RecvInitVideoBridge(
           Feature::HW_COMPOSITING,
           Feature::D3D11_COMPOSITING,
           Feature::OPENGL_COMPOSITING,
-          Feature::ADVANCED_LAYERS,
           Feature::DIRECT2D,
           Feature::WEBGPU,
       },
@@ -271,7 +270,7 @@ void RDDParent::ActorDestroy(ActorDestroyReason aWhy) {
 
   // Wait until all RemoteDecoderManagerParent have closed.
   mShutdownBlockers.WaitUntilClear(10 * 1000 /* 10s timeout*/)
-      ->Then(GetCurrentSerialEventTarget(), __func__, [this]() {
+      ->Then(GetCurrentSerialEventTarget(), __func__, [&]() {
 
 #ifdef XP_WIN
         wmf::MFShutdown();

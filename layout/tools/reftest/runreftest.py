@@ -216,7 +216,9 @@ class ReftestResolver(object):
         """
         rv = []
         default_manifest = self.defaultManifest(suite)
+        relative_path = None
         if not os.path.isabs(test_file):
+            relative_path = test_file
             test_file = self.absManifestPath(test_file)
 
         if os.path.isdir(test_file):
@@ -227,6 +229,18 @@ class ReftestResolver(object):
                     # of include directives we get the same manifest multiple times.
                     # However reftest.js will only read each manifest once
 
+            if (
+                len(rv) == 0
+                and relative_path
+                and suite == "jstestbrowser"
+                and build_obj
+            ):
+                # The relative path can be from staging area.
+                staged_js_dir = os.path.join(
+                    build_obj.topobjdir, "dist", "test-stage", "jsreftest"
+                )
+                staged_file = os.path.join(staged_js_dir, "tests", relative_path)
+                return self.findManifest(suite, staged_file, subdirs)
         elif test_file.endswith(".list"):
             if os.path.exists(test_file):
                 rv = [(test_file, None)]
@@ -443,6 +457,9 @@ class RefTest(object):
         # mid-test, the extra reflow that is triggered can disrupt the test.
         prefs["gfx.font_loader.delay"] = 0
         prefs["gfx.font_loader.interval"] = 0
+        # Ensure bundled fonts are activated, even if not enabled by default
+        # on the platform, so that tests can rely on them.
+        prefs["gfx.bundled-fonts.activate"] = 1
         # Disable dark scrollbars because it's semi-transparent.
         prefs["widget.disable-dark-scrollbar"] = True
         prefs["reftest.isCoverageBuild"] = mozinfo.info.get("ccov", False)

@@ -56,9 +56,13 @@ void SVGElementFactory::Init() {
   sTagAtomTable = new TagAtomTable(64);
 
 #define SVG_TAG(_tag, _classname) \
-  sTagAtomTable->Put(nsGkAtoms::_tag, NS_NewSVG##_classname##Element);
+  sTagAtomTable->InsertOrUpdate(  \
+      nsGkAtoms::_tag,            \
+      SVGContentCreatorFunction(NS_NewSVG##_classname##Element));
 #define SVG_FROM_PARSER_TAG(_tag, _classname) \
-  sTagAtomTable->Put(nsGkAtoms::_tag, NS_NewSVG##_classname##Element);
+  sTagAtomTable->InsertOrUpdate(              \
+      nsGkAtoms::_tag,                        \
+      SVGContentCreatorFunction(NS_NewSVG##_classname##Element));
 #include "SVGTagList.h"
 #undef SVG_TAG
 #undef SVG_FROM_PARSER_TAG

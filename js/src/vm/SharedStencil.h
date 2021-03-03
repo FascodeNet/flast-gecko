@@ -9,7 +9,6 @@
 
 #include "mozilla/Assertions.h"     // MOZ_ASSERT, MOZ_CRASH
 #include "mozilla/Atomics.h"        // mozilla::{Atomic, SequentiallyConsistent}
-#include "mozilla/Attributes.h"     // MOZ_MUST_USE
 #include "mozilla/CheckedInt.h"     // mozilla::CheckedInt
 #include "mozilla/HashFunctions.h"  // mozilla::HahNumber, mozilla::HashBytes
 #include "mozilla/HashTable.h"      // mozilla::HashSet
@@ -26,6 +25,7 @@
 #include "js/AllocPolicy.h"      // js::SystemAllocPolicy
 #include "js/TypeDecls.h"        // JSContext,jsbytecode
 #include "js/UniquePtr.h"        // js::UniquePtr
+#include "util/EnumFlags.h"      // js::EnumFlags
 #include "util/TrailingArray.h"  // js::TrailingArray
 #include "vm/StencilEnums.h"  // js::{TryNoteKind,ImmutableScriptFlagsEnum,MutableScriptFlagsEnum}
 
@@ -214,55 +214,30 @@ struct SourceExtent {
   uint32_t column = 0;  // Count of Code Points
 };
 
-// These are wrapper types around the flag enums to provide a more appropriate
-// abstraction of the bitfields.
-template <typename EnumType>
-class ScriptFlagBase {
- protected:
-  // Stored as a uint32_t to make access more predictable from
-  // JIT code.
-  uint32_t flags_ = 0;
-
+class ImmutableScriptFlags : public EnumFlags<ImmutableScriptFlagsEnum> {
  public:
-  ScriptFlagBase() = default;
-  explicit ScriptFlagBase(uint32_t rawFlags) : flags_(rawFlags) {}
+  ImmutableScriptFlags() = default;
 
-  MOZ_MUST_USE bool hasFlag(EnumType flag) const {
-    return flags_ & static_cast<uint32_t>(flag);
-  }
-  void setFlag(EnumType flag) { flags_ |= static_cast<uint32_t>(flag); }
-  void clearFlag(EnumType flag) { flags_ &= ~static_cast<uint32_t>(flag); }
-  void setFlag(EnumType flag, bool b) {
-    if (b) {
-      setFlag(flag);
-    } else {
-      clearFlag(flag);
-    }
-  }
+  explicit ImmutableScriptFlags(FieldType rawFlags) : EnumFlags(rawFlags) {}
 
-  operator uint32_t() const { return flags_; }
-
-  ScriptFlagBase& operator|=(const uint32_t rhs) {
-    flags_ |= rhs;
-    return *this;
-  }
+  operator FieldType() const { return flags_; }
 };
 
-class ImmutableScriptFlags : public ScriptFlagBase<ImmutableScriptFlagsEnum> {
- public:
-  using ScriptFlagBase<ImmutableScriptFlagsEnum>::ScriptFlagBase;
-
-  void operator=(uint32_t flag) { flags_ = flag; }
-};
-
-class MutableScriptFlags : public ScriptFlagBase<MutableScriptFlagsEnum> {
+class MutableScriptFlags : public EnumFlags<MutableScriptFlagsEnum> {
  public:
   MutableScriptFlags() = default;
 
-  MutableScriptFlags& operator&=(const uint32_t rhs) {
+  MutableScriptFlags& operator&=(const FieldType rhs) {
     flags_ &= rhs;
     return *this;
   }
+
+  MutableScriptFlags& operator|=(const FieldType rhs) {
+    flags_ |= rhs;
+    return *this;
+  }
+
+  operator FieldType() const { return flags_; }
 };
 
 // [SMDOC] JSScript data layout (immutable)

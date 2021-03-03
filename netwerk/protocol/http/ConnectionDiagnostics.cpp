@@ -70,7 +70,8 @@ void ConnectionEntry::PrintDiagnostics(nsCString& log,
   log.AppendPrintf("   Pending Q Length = %zu\n", PendingQueueLength());
   log.AppendPrintf("   Active Conns Length = %zu\n", mActiveConns.Length());
   log.AppendPrintf("   Idle Conns Length = %zu\n", mIdleConns.Length());
-  log.AppendPrintf("   Half Opens Length = %zu\n", mHalfOpens.Length());
+  log.AppendPrintf("   DnsAndSock Length = %zu\n",
+                   mDnsAndConnectSockets.Length());
   log.AppendPrintf("   Coalescing Keys Length = %zu\n",
                    mCoalescingKeys.Length());
   log.AppendPrintf("   Spdy using = %d\n", mUsingSpdy);
@@ -84,9 +85,9 @@ void ConnectionEntry::PrintDiagnostics(nsCString& log,
     log.AppendPrintf("   :: Idle Connection #%u\n", i);
     mIdleConns[i]->PrintDiagnostics(log);
   }
-  for (i = 0; i < mHalfOpens.Length(); ++i) {
+  for (i = 0; i < mDnsAndConnectSockets.Length(); ++i) {
     log.AppendPrintf("   :: Half Open #%u\n", i);
-    mHalfOpens[i]->PrintDiagnostics(log);
+    mDnsAndConnectSockets[i]->PrintDiagnostics(log);
   }
 
   mPendingQ.PrintDiagnostics(log);
@@ -110,26 +111,29 @@ void PendingTransactionQueue::PrintDiagnostics(nsCString& log) {
   }
 }
 
-void HalfOpenSocket::PrintDiagnostics(nsCString& log) {
+void DnsAndConnectSocket::PrintDiagnostics(nsCString& log) {
   log.AppendPrintf("     has connected = %d, isSpeculative = %d\n",
                    HasConnected(), IsSpeculative());
 
   TimeStamp now = TimeStamp::Now();
 
-  if (mPrimarySynStarted.IsNull())
+  if (mPrimaryTransport.mSynStarted.IsNull()) {
     log.AppendPrintf("    primary not started\n");
-  else
+  } else {
     log.AppendPrintf("    primary started %.2fms ago\n",
-                     (now - mPrimarySynStarted).ToMilliseconds());
+                     (now - mPrimaryTransport.mSynStarted).ToMilliseconds());
+  }
 
-  if (mBackupSynStarted.IsNull())
+  if (mBackupTransport.mSynStarted.IsNull()) {
     log.AppendPrintf("    backup not started\n");
-  else
+  } else {
     log.AppendPrintf("    backup started %.2f ago\n",
-                     (now - mBackupSynStarted).ToMilliseconds());
+                     (now - mBackupTransport.mSynStarted).ToMilliseconds());
+  }
 
   log.AppendPrintf("    primary transport %d, backup transport %d\n",
-                   !!mSocketTransport.get(), !!mBackupTransport.get());
+                   !!mPrimaryTransport.mSocketTransport,
+                   !!mBackupTransport.mSocketTransport);
 }
 
 void nsHttpConnection::PrintDiagnostics(nsCString& log) {
@@ -169,12 +173,9 @@ void HttpConnectionUDP::PrintDiagnostics(nsCString& log) {
 
   log.AppendPrintf("    dontReuse = %d isReused = %d\n", mDontReuse, mIsReused);
 
-  PRIntervalTime now = PR_IntervalNow();
-  log.AppendPrintf("    time since last read = %ums\n",
-                   PR_IntervalToMilliseconds(now - mLastReadTime));
-
   log.AppendPrintf("    read/written %" PRId64 "/%" PRId64 "\n",
-                   mTotalBytesRead, mTotalBytesWritten);
+                   mHttp3Session ? mHttp3Session->BytesRead() : 0,
+                   mHttp3Session ? mHttp3Session->GetBytesWritten() : 0);
 
   log.AppendPrintf("    rtt = %ums\n", PR_IntervalToMilliseconds(mRtt));
 }
@@ -227,9 +228,9 @@ void nsHttpTransaction::PrintDiagnostics(nsCString& log) {
 void PendingTransactionInfo::PrintDiagnostics(nsCString& log) {
   log.AppendPrintf("     ::: Pending transaction\n");
   mTransaction->PrintDiagnostics(log);
-  RefPtr<HalfOpenSocket> halfOpen = do_QueryReferent(mHalfOpen);
+  RefPtr<DnsAndConnectSocket> dnsAndSock = do_QueryReferent(mDnsAndSock);
   log.AppendPrintf("     Waiting for half open sock: %p or connection: %p\n",
-                   halfOpen.get(), mActiveConn.get());
+                   dnsAndSock.get(), mActiveConn.get());
 }
 
 }  // namespace net

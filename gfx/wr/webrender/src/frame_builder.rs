@@ -9,7 +9,6 @@ use crate::clip::{ClipStore, ClipChainStack};
 use crate::spatial_tree::{SpatialTree, ROOT_SPATIAL_NODE_INDEX, SpatialNodeIndex};
 use crate::composite::{CompositorKind, CompositeState, CompositeStatePreallocator};
 use crate::debug_item::DebugItem;
-use crate::frame_graph::{Pass, SubPassSurface};
 use crate::gpu_cache::{GpuCache, GpuCacheHandle};
 use crate::gpu_types::{PrimitiveHeaders, TransformPalette, ZBufferIdGenerator};
 use crate::gpu_types::TransformData;
@@ -24,7 +23,7 @@ use crate::profiler::{self, TransactionProfile};
 use crate::render_backend::{DataStores, FrameStamp, FrameId, ScratchBuffer};
 use crate::render_target::{RenderTarget, PictureCacheTarget, TextureCacheRenderTarget};
 use crate::render_target::{RenderTargetContext, RenderTargetKind, AlphaRenderTarget, ColorRenderTarget};
-use crate::render_task_graph::{RenderTaskId, RenderTaskGraph};
+use crate::render_task_graph::{RenderTaskId, RenderTaskGraph, Pass, SubPassSurface};
 use crate::render_task_graph::{RenderPass, RenderTaskGraphBuilder};
 use crate::render_task::{RenderTaskLocation, RenderTaskKind, StaticRenderTaskSurface};
 use crate::resource_cache::{ResourceCache};
@@ -588,14 +587,16 @@ impl FrameBuilder {
 
         profile.start_time(profiler::FRAME_BATCHING_TIME);
 
+        let mut deferred_resolves = vec![];
+
         // Finish creating the frame graph and build it.
         let render_tasks = rg_builder.end_frame(
             resource_cache,
             gpu_cache,
+            &mut deferred_resolves,
         );
 
         let mut passes = Vec::new();
-        let mut deferred_resolves = vec![];
         let mut has_texture_cache_tasks = false;
         let mut prim_headers = PrimitiveHeaders::new();
         self.prim_headers_prealloc.preallocate_vec(&mut prim_headers.headers_int);
@@ -798,7 +799,6 @@ pub fn build_render_pass(
                                 render_tasks,
                                 clip_store,
                                 transforms,
-                                deferred_resolves,
                             );
                         }
 
@@ -820,7 +820,6 @@ pub fn build_render_pass(
                                 render_tasks,
                                 clip_store,
                                 transforms,
-                                deferred_resolves,
                             );
                         }
 
@@ -849,15 +848,18 @@ pub fn build_render_pass(
                     .or_insert_with(Vec::new)
                     .push(task_id);
             }
-            SubPassSurface::Persistent { surface: StaticRenderTaskSurface::TextureCache { target_kind, texture, layer, .. } } => {
+            SubPassSurface::Persistent { surface: StaticRenderTaskSurface::TextureCache { target_kind, texture, .. } } => {
                 let texture = pass.texture_cache
-                    .entry((texture, layer))
+                    .entry(texture)
                     .or_insert_with(||
                         TextureCacheRenderTarget::new(target_kind)
                     );
                 for task_id in &sub_pass.task_ids {
                     texture.add_task(*task_id, render_tasks);
                 }
+            }
+            SubPassSurface::Persistent { surface: StaticRenderTaskSurface::ReadOnly { .. } } => {
+                panic!("Should not create a render pass for read-only task locations.");
             }
         }
     }
@@ -953,7 +955,7 @@ pub fn build_render_pass(
         for (task_id, batcher) in task_ids.into_iter().zip(batchers.into_iter()) {
             profile_scope!("task");
             let task = &render_tasks[task_id];
-            let (target_rect, _) = task.get_target_rect();
+            let target_rect = task.get_target_rect();
 
             match task.location {
                 RenderTaskLocation::Static { surface: StaticRenderTaskSurface::PictureCache { ref surface, .. }, .. } => {

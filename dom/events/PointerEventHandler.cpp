@@ -76,9 +76,9 @@ void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
   switch (aEvent->mMessage) {
     case eMouseEnterIntoWidget:
       // In this case we have to know information about available mouse pointers
-      sActivePointersIds->Put(
+      sActivePointersIds->InsertOrUpdate(
           aEvent->pointerId,
-          new PointerInfo(false, aEvent->mInputSource, true, nullptr));
+          MakeUnique<PointerInfo>(false, aEvent->mInputSource, true, nullptr));
 
       MaybeCacheSpoofedPointerID(aEvent->mInputSource, aEvent->pointerId);
       break;
@@ -88,9 +88,9 @@ void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
         // XXXedgar, test could possibly synthesize a mousedown event on a
         // coordinate outside the browser window and cause aTargetContent to be
         // nullptr, not sure if this also happens on real usage.
-        sActivePointersIds->Put(
+        sActivePointersIds->InsertOrUpdate(
             pointerEvent->pointerId,
-            new PointerInfo(
+            MakeUnique<PointerInfo>(
                 true, pointerEvent->mInputSource, pointerEvent->mIsPrimary,
                 aTargetContent ? aTargetContent->OwnerDoc() : nullptr));
         MaybeCacheSpoofedPointerID(pointerEvent->mInputSource,
@@ -107,10 +107,10 @@ void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
       if (WidgetPointerEvent* pointerEvent = aEvent->AsPointerEvent()) {
         if (pointerEvent->mInputSource !=
             MouseEvent_Binding::MOZ_SOURCE_TOUCH) {
-          sActivePointersIds->Put(
+          sActivePointersIds->InsertOrUpdate(
               pointerEvent->pointerId,
-              new PointerInfo(false, pointerEvent->mInputSource,
-                              pointerEvent->mIsPrimary, nullptr));
+              MakeUnique<PointerInfo>(false, pointerEvent->mInputSource,
+                                      pointerEvent->mIsPrimary, nullptr));
         } else {
           sActivePointersIds->Remove(pointerEvent->pointerId);
         }
@@ -149,12 +149,13 @@ void PointerEventHandler::RequestPointerCaptureById(uint32_t aPointerId,
 void PointerEventHandler::SetPointerCaptureById(uint32_t aPointerId,
                                                 Element* aElement) {
   MOZ_ASSERT(aElement);
-  PointerCaptureInfo* pointerCaptureInfo = GetPointerCaptureInfo(aPointerId);
-  if (pointerCaptureInfo) {
-    pointerCaptureInfo->mPendingElement = aElement;
-  } else {
-    sPointerCaptureList->Put(aPointerId, new PointerCaptureInfo(aElement));
-  }
+  sPointerCaptureList->WithEntryHandle(aPointerId, [&](auto&& entry) {
+    if (entry) {
+      entry.Data()->mPendingElement = aElement;
+    } else {
+      entry.Insert(MakeUnique<PointerCaptureInfo>(aElement));
+    }
+  });
 }
 
 /* static */
@@ -206,7 +207,7 @@ bool PointerEventHandler::SetPointerCaptureRemoteTarget(
     return false;
   }
 
-  sPointerCaptureRemoteTargetTable->Put(aPointerId, aBrowserParent);
+  sPointerCaptureRemoteTargetTable->InsertOrUpdate(aPointerId, aBrowserParent);
   return true;
 }
 
@@ -708,6 +709,17 @@ void PointerEventHandler::NotifyDestroyPresContext(
       iter.Remove();
     }
   }
+}
+
+bool PointerEventHandler::IsDragAndDropEnabled(WidgetMouseEvent& aEvent) {
+#ifdef XP_WIN
+  if (StaticPrefs::dom_w3c_pointer_events_dispatch_by_pointer_messages()) {
+    // WM_POINTER does not support drag and drop, see bug 1692277
+    return (aEvent.mInputSource != dom::MouseEvent_Binding::MOZ_SOURCE_PEN &&
+            aEvent.mReason != WidgetMouseEvent::eSynthesized);  // bug 1692151
+  }
+#endif
+  return true;
 }
 
 /* static */

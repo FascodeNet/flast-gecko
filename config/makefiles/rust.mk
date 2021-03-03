@@ -191,6 +191,12 @@ export LIBCLANG_PATH=$(MOZ_LIBCLANG_PATH)
 export CLANG_PATH=$(MOZ_CLANG_PATH)
 export PKG_CONFIG
 export PKG_CONFIG_ALLOW_CROSS=1
+ifneq (,$(PKG_CONFIG_SYSROOT_DIR))
+export PKG_CONFIG_SYSROOT_DIR
+endif
+ifneq (,$(PKG_CONFIG_LIBDIR))
+export PKG_CONFIG_LIBDIR
+endif
 export RUST_BACKTRACE=full
 export MOZ_TOPOBJDIR=$(topobjdir)
 export PYTHON3
@@ -199,6 +205,16 @@ export PYTHON3
 ifeq ($(OS_ARCH), Darwin)
 ifdef MACOS_SDK_DIR
 export COREAUDIO_SDK_PATH=$(MACOS_SDK_DIR)
+endif
+endif
+
+ifndef RUSTC_BOOTSTRAP
+ifeq (,$(filter 1.47.% 1.48.% 1.49.%,$(RUSTC_VERSION)))
+RUSTC_BOOTSTRAP := gkrust_shared,qcms
+ifdef MOZ_RUST_SIMD
+RUSTC_BOOTSTRAP := $(RUSTC_BOOTSTRAP),encoding_rs,packed_simd
+endif
+export RUSTC_BOOTSTRAP
 endif
 endif
 

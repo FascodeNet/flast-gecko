@@ -18,7 +18,38 @@
   --tabs-navbar-shadow-size: 1px;
   --short-notification-background: #0250BB;
   --short-notification-gradient: #9059FF;
+
+  --buttons-secondary-bgcolor: hsla(0,0%,80%,.3);
+  --buttons-secondary-hover-bgcolor: hsla(0,0%,80%,.5);
+  --buttons-secondary-active-bgcolor: hsla(0,0%,80%,.8);
+  --buttons-secondary-color: currentColor;
 }
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+  :root {
+    --focus-outline-width: 0;
+  }
+}
+
+/*** END !proton ***/
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+  :root {
+    --focus-outline-width: 2px;
+    --focus-outline-color: currentColor;
+    --focus-outline: var(--focus-outline-width) solid var(--focus-outline-color);
+  }
+
+  @media not (prefers-contrast) {
+    :root {
+      --focus-outline-color: #0061E0;
+    }
+
+    :root:-moz-lwtheme-brighttext {
+      --focus-outline-color: #00DDFF;
+    }
+  }
+} /*** END proton ***/
 
 :root[extradragspace][tabsintitlebar]:not([inFullscreen]) {
   --space-above-tabbar: 8px;
@@ -62,17 +93,40 @@
   border-bottom-style: none;
 }
 
+@supports -moz-bool-pref("browser.proton.toolbar.enabled") {
+/*** Adds padding to beginning of toolbar while making that space click the first button ***/
+#nav-bar-customization-target > toolbarbutton:first-child,
+#nav-bar-customization-target > toolbaritem:first-child > toolbarbutton {
+  padding-inline-start: var(--toolbar-start-end-padding);
+}
+} /*** END proton ***/
+
 :root[sessionrestored] #nav-bar:-moz-lwtheme {
   transition: @themeTransition@;
 }
+
+/* Places tooltips */
+
+%include places/places-tooltip.inc.css
 
 /* Bookmark toolbar */
 
 #PersonalToolbar {
   overflow: clip;
   max-height: 4em;
+}
+
+@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
+#PersonalToolbar {
   padding: 2px 6px;
 }
+} /*** END !proton ***/
+
+@supports -moz-bool-pref("browser.proton.toolbar.enabled") {
+#PersonalToolbar {
+  padding-inline: 6px;
+}
+} /*** END proton ***/
 
 :root[uidensity=compact] #PersonalToolbar {
   padding-inline: 2px;
@@ -722,4 +776,9 @@ menupopup::part(drop-indicator) {
 
 #sharing-warning-proceed-to-tab:hover {
   background-color: rgb(0,62,170);
+}
+
+.webRTC-selectDevice-label {
+  margin-top: 6px;
+  font-weight: 600;
 }

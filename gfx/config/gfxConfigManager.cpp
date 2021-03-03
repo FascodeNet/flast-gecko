@@ -7,7 +7,7 @@
 #include "mozilla/gfx/gfxConfigManager.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "gfxConfig.h"
@@ -38,6 +38,8 @@ void gfxConfigManager::Init() {
       StaticPrefs::layers_gpu_process_allow_software_AtStartup();
   mWrPartialPresent =
       StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup() > 0;
+  mWrOptimizedShaders =
+      StaticPrefs::gfx_webrender_use_optimized_shaders_AtStartup();
 #ifdef XP_WIN
   mWrForceAngle = StaticPrefs::gfx_webrender_force_angle_AtStartup();
   mWrForceAngleNoGPUProcess = StaticPrefs::
@@ -68,7 +70,7 @@ void gfxConfigManager::Init() {
 #endif
   mSafeMode = gfxPlatform::InSafeMode();
 
-  mGfxInfo = services::GetGfxInfo();
+  mGfxInfo = components::GfxInfo::Service();
 
   mFeatureWr = &gfxConfig::GetFeature(Feature::WEBRENDER);
   mFeatureWrQualified = &gfxConfig::GetFeature(Feature::WEBRENDER_QUALIFIED);
@@ -76,6 +78,8 @@ void gfxConfigManager::Init() {
   mFeatureWrAngle = &gfxConfig::GetFeature(Feature::WEBRENDER_ANGLE);
   mFeatureWrDComp = &gfxConfig::GetFeature(Feature::WEBRENDER_DCOMP_PRESENT);
   mFeatureWrPartial = &gfxConfig::GetFeature(Feature::WEBRENDER_PARTIAL);
+  mFeatureWrOptimizedShaders =
+      &gfxConfig::GetFeature(Feature::WEBRENDER_OPTIMIZED_SHADERS);
   mFeatureWrSoftware = &gfxConfig::GetFeature(Feature::WEBRENDER_SOFTWARE);
 
   mFeatureHwCompositing = &gfxConfig::GetFeature(Feature::HW_COMPOSITING);
@@ -390,7 +394,31 @@ void gfxConfigManager::ConfigureWebRender() {
   if (mWrPartialPresent) {
     if (mFeatureWr->IsEnabled() || mFeatureWrSoftware->IsEnabled()) {
       mFeatureWrPartial->EnableByDefault();
+
+      nsString adapter;
+      mGfxInfo->GetAdapterDeviceID(adapter);
+      // Block partial present on Mali-T6xx and T7xx GPUs due to rendering
+      // issues. See bug 1680087.
+      if (adapter.Find("Mali-T6", /*ignoreCase*/ true) >= 0 ||
+          adapter.Find("Mali-T7", /*ignoreCase*/ true) >= 0) {
+        mFeatureWrPartial->Disable(FeatureStatus::Blocked,
+                                   "Partial present blocked on Mali-Txxx",
+                                   "FEATURE_FAILURE_PARTIAL_PRESENT_MALI"_ns);
+      }
     }
+  }
+
+  mFeatureWrOptimizedShaders->EnableByDefault();
+  if (!mWrOptimizedShaders) {
+    mFeatureWrOptimizedShaders->UserDisable("User disabled via pref",
+                                            "FEATURE_FAILURE_PREF_DISABLED"_ns);
+  }
+  ConfigureFromBlocklist(nsIGfxInfo::FEATURE_WEBRENDER_OPTIMIZED_SHADERS,
+                         mFeatureWrOptimizedShaders);
+  if (!mFeatureWr->IsEnabled()) {
+    mFeatureWrOptimizedShaders->ForceDisable(FeatureStatus::Unavailable,
+                                             "WebRender disabled",
+                                             "FEATURE_FAILURE_WR_DISABLED"_ns);
   }
 }
 

@@ -19,13 +19,13 @@ var PKT_SAVED_OVERLAY = function(options) {
   this.closeValid = true;
   this.mouseInside = false;
   this.autocloseTimer = null;
-  this.inoverflowmenu = false;
   this.dictJSON = {};
   this.autocloseTimerEnabled = false;
   this.autocloseTiming = 4500;
   this.autocloseTimingFinalState = 2000;
   this.mouseInside = false;
   this.userTags = [];
+  this.tagsDropdownOpen = false;
   this.cxt_suggested_available = 0;
   this.cxt_entered = 0;
   this.cxt_suggested = 0;
@@ -33,7 +33,6 @@ var PKT_SAVED_OVERLAY = function(options) {
   this.justaddedsuggested = false;
   this.fxasignedin = false;
   this.premiumDetailsAdded = false;
-  this.ho2 = false;
   this.fillTagContainer = function(tags, container, tagclass) {
     container.children().remove();
     for (var i = 0; i < tags.length; i++) {
@@ -45,9 +44,10 @@ var PKT_SAVED_OVERLAY = function(options) {
     }
   };
   this.fillUserTags = function() {
-    thePKT_SAVED.sendMessage("getTags", {}, function(resp) {
-      if (typeof resp == "object" && typeof resp.tags == "object") {
-        myself.userTags = resp.tags;
+    thePKT_SAVED.sendMessage("PKT_getTags", {}, function(resp) {
+      const { data } = resp;
+      if (typeof data == "object" && typeof data.tags == "object") {
+        myself.userTags = data.tags;
       }
     });
   };
@@ -61,18 +61,19 @@ var PKT_SAVED_OVERLAY = function(options) {
     $(".pkt_ext_subshell").show();
 
     thePKT_SAVED.sendMessage(
-      "getSuggestedTags",
+      "PKT_getSuggestedTags",
       {
         url: myself.savedUrl,
       },
       function(resp) {
+        const { data } = resp;
         $(".pkt_ext_suggestedtag_detail").removeClass(
           "pkt_ext_suggestedtag_detail_loading"
         );
-        if (resp.status == "success") {
+        if (data.status == "success") {
           var newtags = [];
-          for (var i = 0; i < resp.value.suggestedTags.length; i++) {
-            newtags.push(resp.value.suggestedTags[i].tag);
+          for (let i = 0; i < data.value.suggestedTags.length; i++) {
+            newtags.push(data.value.suggestedTags[i].tag);
           }
           myself.suggestedTagsLoaded = true;
           if (!myself.mouseInside) {
@@ -83,9 +84,9 @@ var PKT_SAVED_OVERLAY = function(options) {
             $(".pkt_ext_suggestedtag_detail ul"),
             "token_suggestedtag"
           );
-        } else if (resp.status == "error") {
+        } else if (data.status == "error") {
           var msg = $('<p class="suggestedtag_msg">');
-          msg.text(resp.error.message);
+          msg.text(data.error.message);
           $(".pkt_ext_suggestedtag_detail").append(msg);
           this.suggestedTagsLoaded = true;
           if (!myself.mouseInside) {
@@ -139,7 +140,7 @@ var PKT_SAVED_OVERLAY = function(options) {
   };
   this.closePopup = function() {
     myself.stopCloseTimer();
-    thePKT_SAVED.sendMessage("close");
+    thePKT_SAVED.sendMessage("PKT_close");
   };
   this.checkValidTagSubmit = function() {
     var inputlength = $.trim(
@@ -308,10 +309,10 @@ var PKT_SAVED_OVERLAY = function(options) {
         myself.checkPlaceholderStatus();
       },
       onShowDropdown() {
-        if (myself.ho2 !== "show_prompt_preview") {
-          $(".pkt_ext_item_recs").hide(); // hide recs when tag input begins
-          thePKT_SAVED.sendMessage("expandSavePanel");
-        }
+        myself.tagsDropdownOpen = true;
+      },
+      onHideDropdown() {
+        myself.tagsDropdownOpen = false;
       },
     });
     $("body").on("keydown", function(e) {
@@ -388,18 +389,19 @@ var PKT_SAVED_OVERLAY = function(options) {
       });
 
       thePKT_SAVED.sendMessage(
-        "addTags",
+        "PKT_addTags",
         {
           url: myself.savedUrl,
           tags: originaltags,
         },
         function(resp) {
-          if (resp.status == "success") {
+          const { data } = resp;
+          if (data.status == "success") {
             myself.showStateFinalMsg(myself.dictJSON.tagssaved);
-          } else if (resp.status == "error") {
+          } else if (data.status == "error") {
             $(".pkt_ext_edit_msg")
               .addClass("pkt_ext_edit_msg_error pkt_ext_edit_msg_active")
-              .text(resp.error.message);
+              .text(data.error.message);
           }
         }
       );
@@ -420,17 +422,18 @@ var PKT_SAVED_OVERLAY = function(options) {
           .text(myself.dictJSON.processingremove);
 
         thePKT_SAVED.sendMessage(
-          "deleteItem",
+          "PKT_deleteItem",
           {
             itemId: myself.savedItemId,
           },
           function(resp) {
-            if (resp.status == "success") {
+            const { data } = resp;
+            if (data.status == "success") {
               myself.showStateFinalMsg(myself.dictJSON.pageremoved);
-            } else if (resp.status == "error") {
+            } else if (data.status == "error") {
               $(".pkt_ext_edit_msg")
                 .addClass("pkt_ext_edit_msg_error pkt_ext_edit_msg_active")
-                .text(resp.error.message);
+                .text(data.error.message);
             }
           }
         );
@@ -440,11 +443,10 @@ var PKT_SAVED_OVERLAY = function(options) {
   this.initOpenListInput = function() {
     $(".pkt_ext_openpocket").click(function(e) {
       e.preventDefault();
-      thePKT_SAVED.sendMessage("openTabWithUrl", {
+      thePKT_SAVED.sendMessage("PKT_openTabWithUrl", {
         url: $(this).attr("href"),
         activate: true,
       });
-      myself.closePopup();
     });
   };
   this.showTagsError = function(msg) {
@@ -509,16 +511,6 @@ var PKT_SAVED_OVERLAY = function(options) {
       .addClass("pkt_ext_container_detailactive")
       .removeClass("pkt_ext_container_finalstate");
 
-    if (
-      initobj.ho2 &&
-      initobj.ho2 != "control" &&
-      !initobj.accountState.has_mobile &&
-      !myself.savedUrl.includes("getpocket.com")
-    ) {
-      myself.createSendToMobilePanel(initobj.ho2, initobj.displayName);
-      myself.ho2 = initobj.ho2;
-    }
-
     myself.fillUserTags();
     if (myself.suggestedTagsLoaded) {
       myself.startCloseTimer();
@@ -528,8 +520,6 @@ var PKT_SAVED_OVERLAY = function(options) {
   };
   this.renderItemRecs = function(data) {
     if (data?.recommendations?.length) {
-      $("body").addClass("recs_enabled");
-      $(".pkt_ext_subshell").show();
       // URL encode and append raw image source for Thumbor + CDN
       data.recommendations = data.recommendations.map(rec => {
         // Using array notation because there is a key titled `1` (`images` is an object)
@@ -551,29 +541,21 @@ var PKT_SAVED_OVERLAY = function(options) {
       // Right now this value is the same for all three items returned together,
       // so we can just use the first item's value for all.
       const model = data.recommendations[0].experiment;
-      $(".pkt_ext_item_recs").append(Handlebars.templates.item_recs(data));
-
-      // Resize popover to accomodate recs:
-      thePKT_SAVED.sendMessage("resizePanel", {
-        width: 350,
-        height: this.premiumStatus ? 535 : 424, // TODO: Dynamic height based on number of recs
-      });
-
+      const renderedRecs = Handlebars.templates.item_recs(data);
+      $("body").addClass("recs_enabled");
+      $(".pkt_ext_subshell").show();
+      $(".pkt_ext_item_recs").append(renderedRecs);
       $(".pkt_ext_item_recs_link").click(function(e) {
         e.preventDefault();
         const url = $(this).attr("href");
         const position = $(".pkt_ext_item_recs_link").index(this);
-        thePKT_SAVED.sendMessage("openTabWithPocketUrl", {
+        thePKT_SAVED.sendMessage("PKT_openTabWithPocketUrl", {
           url,
           model,
           position,
         });
-        myself.closePopup();
       });
     }
-  };
-  this.createSendToMobilePanel = function(ho2, displayName) {
-    PKT_SENDTOMOBILE.create(ho2, displayName, myself.premiumDetailsAdded);
   };
   this.sanitizeText = function(s) {
     var sanitizeMap = {
@@ -633,11 +615,6 @@ PKT_SAVED_OVERLAY.prototype = {
     // set host
     this.dictJSON.pockethost = this.pockethost;
 
-    // extra modifier class for collapsed state
-    if (this.inoverflowmenu) {
-      $("body").addClass("pkt_ext_saved_overflow");
-    }
-
     // extra modifier class for language
     if (this.locale) {
       $("body").addClass("pkt_ext_saved_" + this.locale);
@@ -683,16 +660,53 @@ PKT_SAVED.prototype = {
     }
     this.panelId = pktPanelMessaging.panelIdFromURL(window.location.href);
     this.overlay = new PKT_SAVED_OVERLAY();
+    this.setupMutationObserver();
 
     this.inited = true;
   },
 
   addMessageListener(messageId, callback) {
-    pktPanelMessaging.addMessageListener(this.panelId, messageId, callback);
+    pktPanelMessaging.addMessageListener(messageId, this.panelId, callback);
   },
 
   sendMessage(messageId, payload, callback) {
-    pktPanelMessaging.sendMessage(this.panelId, messageId, payload, callback);
+    pktPanelMessaging.sendMessage(messageId, this.panelId, payload, callback);
+  },
+
+  setupMutationObserver() {
+    // Select the node that will be observed for mutations
+    const targetNode = document.body;
+
+    // Options for the observer (which mutations to observe)
+    const config = { attributes: false, childList: true, subtree: true };
+
+    // Callback function to execute when mutations are observed
+    const callback = (mutationList, observer) => {
+      mutationList.forEach(mutation => {
+        switch (mutation.type) {
+          case "childList": {
+            /* One or more children have been added to and/or removed
+               from the tree.
+               (See mutation.addedNodes and mutation.removedNodes.) */
+            let clientHeight = document.body.clientHeight;
+            if (this.overlay.tagsDropdownOpen) {
+              clientHeight = Math.max(clientHeight, 252);
+            }
+            thePKT_SAVED.sendMessage("PKT_resizePanel", {
+              width: document.body.clientWidth,
+              height: clientHeight,
+            });
+            break;
+          }
+        }
+      });
+    };
+
+    // Create an observer instance linked to the callback function
+    const observer = new MutationObserver(callback);
+
+    // Start observing the target node for configured mutations
+    observer.observe(targetNode, config);
   },
 
   create() {
@@ -709,12 +723,6 @@ PKT_SAVED.prototype = {
     if (host && host.length > 1) {
       myself.overlay.pockethost = host[1];
     }
-    var inoverflowmenu = window.location.href.match(
-      /inoverflowmenu=([\w|\.]*)&?/
-    );
-    if (inoverflowmenu && inoverflowmenu.length > 1) {
-      myself.overlay.inoverflowmenu = inoverflowmenu[1] == "true";
-    }
     var locale = window.location.href.match(/locale=([\w|\.]*)&?/);
     if (locale && locale.length > 1) {
       myself.overlay.locale = locale[1].toLowerCase();
@@ -722,22 +730,20 @@ PKT_SAVED.prototype = {
 
     myself.overlay.create();
 
-    // tell back end we're ready
-    thePKT_SAVED.sendMessage("show");
-
     // wait confirmation of save before flipping to final saved state
-    thePKT_SAVED.addMessageListener("saveLink", function(resp) {
-      if (resp.status == "error") {
-        if (typeof resp.error == "object") {
-          if (resp.error.localizedKey) {
+    thePKT_SAVED.addMessageListener("PKT_saveLink", function(resp) {
+      const { data } = resp;
+      if (data.status == "error") {
+        if (typeof data.error == "object") {
+          if (data.error.localizedKey) {
             myself.overlay.showStateError(
               myself.overlay.dictJSON.pagenotsaved,
-              myself.overlay.dictJSON[resp.error.localizedKey]
+              myself.overlay.dictJSON[data.error.localizedKey]
             );
           } else {
             myself.overlay.showStateError(
               myself.overlay.dictJSON.pagenotsaved,
-              resp.error.message
+              data.error.message
             );
           }
         } else {
@@ -749,12 +755,16 @@ PKT_SAVED.prototype = {
         return;
       }
 
-      myself.overlay.showStateSaved(resp);
+      myself.overlay.showStateSaved(data);
     });
 
-    thePKT_SAVED.addMessageListener("renderItemRecs", function(payload) {
-      myself.overlay.renderItemRecs(payload);
+    thePKT_SAVED.addMessageListener("PKT_renderItemRecs", function(resp) {
+      const { data } = resp;
+      myself.overlay.renderItemRecs(data);
     });
+
+    // tell back end we're ready
+    thePKT_SAVED.sendMessage("PKT_show_saved");
   },
 };
 
@@ -769,7 +779,7 @@ $(function() {
   var pocketHost = thePKT_SAVED.overlay.pockethost;
   // send an async message to get string data
   thePKT_SAVED.sendMessage(
-    "initL10N",
+    "PKT_initL10N",
     {
       tos: [
         "https://" + pocketHost + "/tos?s=ffi&t=tos&tv=panel_tryit",
@@ -779,9 +789,10 @@ $(function() {
       ],
     },
     function(resp) {
-      window.pocketStrings = resp.strings;
+      const { data } = resp;
+      window.pocketStrings = data.strings;
       // Set the writing system direction
-      document.documentElement.setAttribute("dir", resp.dir);
+      document.documentElement.setAttribute("dir", data.dir);
       window.thePKT_SAVED.create();
     }
   );

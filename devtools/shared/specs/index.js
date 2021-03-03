@@ -10,7 +10,8 @@
 // in order to be referenced by any other spec or front module.
 
 // Declare in which spec module and front module a set of types are defined.
-// This array should be sorted by `spec` attribute.
+// This array should be sorted by `spec` attribute, and this is verified in the
+// test devtools/shared/protocol/tests/xpcshell/test_protocol_index.js
 const Types = (exports.__TypesForTests = [
   {
     types: [
@@ -283,14 +284,14 @@ const Types = (exports.__TypesForTests = [
     front: "devtools/client/fronts/symbol-iterator",
   },
   {
+    types: ["target-configuration"],
+    spec: "devtools/shared/specs/target-configuration",
+    front: "devtools/client/fronts/target-configuration",
+  },
+  {
     types: ["browsingContextTarget"],
     spec: "devtools/shared/specs/targets/browsing-context",
     front: "devtools/client/fronts/targets/browsing-context",
-  },
-  {
-    types: ["chromeWindowTarget"],
-    spec: "devtools/shared/specs/targets/chrome-window",
-    front: null,
   },
   {
     types: ["contentProcessTarget"],

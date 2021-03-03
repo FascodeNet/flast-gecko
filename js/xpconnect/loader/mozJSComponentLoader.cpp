@@ -47,7 +47,6 @@
 #include "nsContentUtils.h"
 #include "nsReadableUtils.h"
 #include "nsXULAppAPI.h"
-#include "GeckoProfiler.h"
 #include "WrapperFactory.h"
 
 #include "AutoMemMap.h"
@@ -58,6 +57,8 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/MacroForEach.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ScriptPreloader.h"
 #include "mozilla/ScopeExit.h"
@@ -120,6 +121,8 @@ static bool Dump(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  MOZ_LOG(nsContentUtils::DOMDumpLog(), mozilla::LogLevel::Debug,
+          ("[Backstage.Dump] %s", utf8str.get()));
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", utf8str.get());
 #endif
@@ -267,7 +270,7 @@ class MOZ_STACK_CLASS ComponentLoaderInfo {
 
   const nsACString& Key() { return mLocation; }
 
-  MOZ_MUST_USE nsresult GetLocation(nsCString& aLocation) {
+  [[nodiscard]] nsresult GetLocation(nsCString& aLocation) {
     nsresult rv = EnsureURI();
     NS_ENSURE_SUCCESS(rv, rv);
     return mURI->GetSpec(aLocation);
@@ -334,39 +337,6 @@ static JSObject* ResolveModuleObjectProperty(JSContext* aCx,
   return aModObj;
 }
 
-static mozilla::Result<nsCString, nsresult> ReadScript(
-    ComponentLoaderInfo& aInfo);
-
-static nsresult AnnotateScriptContents(CrashReporter::Annotation aName,
-                                       const nsACString& aURI) {
-  ComponentLoaderInfo info(aURI);
-
-  nsCString str;
-  MOZ_TRY_VAR(str, ReadScript(info));
-
-  // The crash reporter won't accept any strings with embedded nuls. We
-  // shouldn't have any here, but if we do because of data corruption, we
-  // still want the annotation. So replace any embedded nuls before
-  // annotating.
-  str.ReplaceSubstring("\0"_ns, "\\0"_ns);
-
-  CrashReporter::AnnotateCrashReport(aName, str);
-
-  return NS_OK;
-}
-
-nsresult mozJSComponentLoader::AnnotateCrashReport() {
-  Unused << AnnotateScriptContents(
-      CrashReporter::Annotation::nsAsyncShutdownComponent,
-      "resource://gre/components/nsAsyncShutdown.js"_ns);
-
-  Unused << AnnotateScriptContents(
-      CrashReporter::Annotation::AsyncShutdownModule,
-      "resource://gre/modules/AsyncShutdown.jsm"_ns);
-
-  return NS_OK;
-}
-
 const mozilla::Module* mozJSComponentLoader::LoadModule(FileLocation& aFile) {
   if (!NS_IsMainThread()) {
     MOZ_ASSERT(false, "Don't use JS components off the main thread");
@@ -396,34 +366,12 @@ const mozilla::Module* mozJSComponentLoader::LoadModule(FileLocation& aFile) {
   jsapi.Init();
   JSContext* cx = jsapi.cx();
 
-  bool isCriticalModule = StringEndsWith(spec, "/nsAsyncShutdown.js"_ns);
-
   auto entry = MakeUnique<ModuleEntry>(RootingContext::get(cx));
   RootedValue exn(cx);
   rv = ObjectForLocation(info, file, &entry->obj, &entry->thisObjectKey,
-                         &entry->location, isCriticalModule, &exn);
-  if (NS_FAILED(rv)) {
-    // Temporary debugging assertion for bug 1403348:
-    if (isCriticalModule && !exn.isUndefined()) {
-      AnnotateCrashReport();
-
-      JSAutoRealm ar(cx, xpc::PrivilegedJunkScope());
-      JS_WrapValue(cx, &exn);
-
-      nsAutoCString file;
-      uint32_t line;
-      uint32_t column;
-      nsAutoString msg;
-      nsContentUtils::ExtractErrorValues(cx, exn, file, &line, &column, msg);
-
-      NS_ConvertUTF16toUTF8 cMsg(msg);
-      MOZ_CRASH_UNSAFE_PRINTF(
-          "Failed to load module \"%s\": "
-          "[\"%s\" {file: \"%s\", line: %u}]",
-          spec.get(), cMsg.get(), file.get(), line);
-    }
-    return nullptr;
-  }
+                         &entry->location, /* aPropagateExceptions */ false,
+                         &exn);
+  NS_ENSURE_SUCCESS(rv, nullptr);
 
   nsCOMPtr<nsIComponentManager> cm;
   rv = NS_GetComponentManager(getter_AddRefs(cm));
@@ -479,7 +427,7 @@ const mozilla::Module* mozJSComponentLoader::LoadModule(FileLocation& aFile) {
 #endif
 
   // Cache this module for later
-  mModules.Put(spec, entry.get());
+  mModules.InsertOrUpdate(spec, entry.get());
 
   // The hash owns the ModuleEntry now, forget about it
   return entry.release();
@@ -1272,7 +1220,7 @@ nsresult mozJSComponentLoader::Import(JSContext* aCx,
       !mInProgressImports.Get(info.Key(), &mod)) {
     // We're trying to import a new JSM, but we're late in shutdown and this
     // will likely not succeed and might even crash, so fail here.
-    if (PastShutdownPhase(ShutdownPhase::ShutdownFinal)) {
+    if (PastShutdownPhase(ShutdownPhase::XPCOMShutdownFinal)) {
       return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
     }
 
@@ -1311,11 +1259,12 @@ nsresult mozJSComponentLoader::Import(JSContext* aCx,
       return NS_ERROR_UNEXPECTED;
     }
 
-    mLocations.Put(newEntry->resolvedURL, new nsCString(info.Key()));
+    mLocations.InsertOrUpdate(newEntry->resolvedURL,
+                              MakeUnique<nsCString>(info.Key()));
 
     RootedValue exception(aCx);
     {
-      mInProgressImports.Put(info.Key(), newEntry.get());
+      mInProgressImports.InsertOrUpdate(info.Key(), newEntry.get());
       auto cleanup =
           MakeScopeExit([&]() { mInProgressImports.Remove(info.Key()); });
 
@@ -1325,6 +1274,7 @@ nsresult mozJSComponentLoader::Import(JSContext* aCx,
     }
 
     if (NS_FAILED(rv)) {
+      mLocations.Remove(newEntry->resolvedURL);
       if (!exception.isUndefined()) {
         // An exception was thrown during compilation. Propagate it
         // out to our caller so they can report it.
@@ -1357,13 +1307,14 @@ nsresult mozJSComponentLoader::Import(JSContext* aCx,
   }
 
   if (exports && !JS_WrapObject(aCx, &exports)) {
+    mLocations.Remove(newEntry->resolvedURL);
     return NS_ERROR_FAILURE;
   }
   aModuleExports.set(exports);
 
   // Cache this module for later
   if (newEntry) {
-    mImports.Put(info.Key(), newEntry.release());
+    mImports.InsertOrUpdate(info.Key(), std::move(newEntry));
   }
 
   return NS_OK;

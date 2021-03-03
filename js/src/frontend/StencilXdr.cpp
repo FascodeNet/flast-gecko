@@ -80,7 +80,7 @@ static XDRResult XDRVectorUninitialized(XDRState<mode>* xdr,
     MOZ_ASSERT(vec.empty());
     if (!vec.resizeUninitialized(length)) {
       js::ReportOutOfMemory(xdr->cx());
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -96,7 +96,7 @@ static XDRResult XDRVectorInitialized(XDRState<mode>* xdr,
     MOZ_ASSERT(vec.empty());
     if (!vec.resize(length)) {
       js::ReportOutOfMemory(xdr->cx());
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
 
@@ -140,7 +140,7 @@ static XDRResult XDRSpanInitialized(XDRState<mode>* xdr, mozilla::Span<T>& span,
       auto* p = xdr->stencilAlloc().template newArrayUninitialized<T>(size);
       if (!p) {
         js::ReportOutOfMemory(xdr->cx());
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
       span = mozilla::Span(p, size);
 
@@ -334,7 +334,7 @@ XDRResult StencilXDR::SharedData(XDRState<mode>* xdr,
     UniquePtr<SharedImmutableScriptData> data(
         SharedImmutableScriptData::create(cx));
     if (!data) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
     MOZ_TRY(XDRImmutableScriptData<mode>(xdr, data->isd_));
     sisd = data.release();
@@ -360,6 +360,12 @@ namespace js {
 template <XDRMode mode>
 XDRResult XDRSharedDataContainer(XDRState<mode>* xdr,
                                  SharedDataContainer& sharedData) {
+  if (mode == XDR_ENCODE) {
+    if (sharedData.isBorrow()) {
+      return XDRSharedDataContainer(xdr, *sharedData.asBorrow());
+    }
+  }
+
   enum class Kind : uint8_t {
     Single,
     Vector,
@@ -395,7 +401,7 @@ XDRResult XDRSharedDataContainer(XDRState<mode>* xdr,
     case Kind::Vector: {
       if (mode == XDR_DECODE) {
         if (!sharedData.initVector(xdr->cx())) {
-          return xdr->fail(JS::TranscodeResult_Throw);
+          return xdr->fail(JS::TranscodeResult::Throw);
         }
       }
       auto& vec = *sharedData.asVector();
@@ -420,7 +426,7 @@ XDRResult XDRSharedDataContainer(XDRState<mode>* xdr,
     case Kind::Map: {
       if (mode == XDR_DECODE) {
         if (!sharedData.initMap(xdr->cx())) {
-          return xdr->fail(JS::TranscodeResult_Throw);
+          return xdr->fail(JS::TranscodeResult::Throw);
         }
       }
       auto& map = *sharedData.asMap();
@@ -432,7 +438,7 @@ XDRResult XDRSharedDataContainer(XDRState<mode>* xdr,
       if (mode == XDR_DECODE) {
         if (!map.reserve(count)) {
           js::ReportOutOfMemory(xdr->cx());
-          return xdr->fail(JS::TranscodeResult_Throw);
+          return xdr->fail(JS::TranscodeResult::Throw);
         }
       }
 
@@ -453,7 +459,7 @@ XDRResult XDRSharedDataContainer(XDRState<mode>* xdr,
 
           if (!map.putNew(index, data)) {
             js::ReportOutOfMemory(xdr->cx());
-            return xdr->fail(JS::TranscodeResult_Throw);
+            return xdr->fail(JS::TranscodeResult::Throw);
           }
         }
       }
@@ -620,8 +626,12 @@ template XDRResult XDRBaseCompilationStencil(XDRState<XDR_DECODE>* xdr,
 template <XDRMode mode>
 XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
                                 CompilationStencil& stencil) {
-  if (!stencil.asmJS.empty()) {
-    return xdr->fail(JS::TranscodeResult_Failure_AsmJSNotSupported);
+  if (stencil.asmJS) {
+    return xdr->fail(JS::TranscodeResult::Failure_AsmJSNotSupported);
+  }
+
+  if (mode == XDR_DECODE) {
+    stencil.hasExternalDependency = true;
   }
 
   MOZ_TRY(XDRBaseCompilationStencil(xdr, stencil));
@@ -633,10 +643,10 @@ XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
 
   if (stencil.scriptExtra[CompilationStencil::TopLevelIndex].isModule()) {
     if (mode == XDR_DECODE) {
-      stencil.moduleMetadata = MakeUnique<StencilModuleMetadata>();
+      stencil.moduleMetadata =
+          xdr->cx()->template new_<StencilModuleMetadata>();
       if (!stencil.moduleMetadata) {
-        js::ReportOutOfMemory(xdr->cx());
-        return xdr->fail(JS::TranscodeResult_Throw);
+        return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
 

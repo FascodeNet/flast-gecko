@@ -25,15 +25,19 @@ EXPORTS += [
     "mozView.h",
     "nsBidiKeyboard.h",
     "nsChangeObserver.h",
-    "nsCocoaDebugUtils.h",
     "nsCocoaFeatures.h",
     "nsCocoaUtils.h",
 ]
 
+EXPORTS.mozilla.widget += [
+    "NativeMenuSupport.h",
+]
+
 UNIFIED_SOURCES += [
     "GfxInfo.mm",
-    "IconLoaderHelperCocoa.mm",
+    "MOZIconHelper.mm",
     "NativeKeyBindings.mm",
+    "NativeMenuSupport.mm",
     "nsAppShell.mm",
     "nsBidiKeyboard.mm",
     "nsCocoaFeatures.mm",
@@ -87,7 +91,6 @@ SOURCES += [
     "MediaKeysEventSourceFactory.cpp",
     "nsChildView.mm",
     "nsClipboard.mm",
-    "nsCocoaDebugUtils.mm",
     "nsDragService.mm",
     "nsNativeThemeCocoa.mm",
 ]

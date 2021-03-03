@@ -7,67 +7,6 @@ var gContentWindow;
 add_task(setup_UITourTest);
 
 add_UITour_task(
-  async function test_highligh_between_pageActionButtonOnUrlbar_and_buttonOnPageActionPanel() {
-    let highlight = document.getElementById("UITourHighlight");
-    is_element_hidden(highlight, "Highlight should initially be hidden");
-
-    // Test highlighting the page action button on the urlbar
-    let pageActionPanel = BrowserPageActions.panelNode;
-    let highlightVisiblePromise = elementVisiblePromise(
-      highlight,
-      "Should show highlight"
-    );
-    gContentAPI.showHighlight("pageActionButton");
-    await highlightVisiblePromise;
-    is(
-      pageActionPanel.state,
-      "closed",
-      "Shouldn't open the page action panel while highlighting the pageActionButton"
-    );
-    is(
-      getShowHighlightTargetName(),
-      "pageActionButton",
-      "Should highlight the pageActionButton"
-    );
-
-    // Test switching the highlight to the copyURL button on the page action panel
-    let panelShownPromise = promisePanelElementShown(window, pageActionPanel);
-    highlightVisiblePromise = elementVisiblePromise(
-      highlight,
-      "Should show highlight"
-    );
-    gContentAPI.showHighlight("pageAction-copyURL");
-    await highlightVisiblePromise;
-    await panelShownPromise;
-    is(
-      pageActionPanel.state,
-      "open",
-      "Should open the page action panel for highlighting the pageAction-copyURL"
-    );
-    is(
-      getShowHighlightTargetName(),
-      "pageAction-copyURL",
-      "Should highlight the pageAction-copyURL"
-    );
-
-    // Test hiding highlight
-    let panelHiddenPromise = promisePanelElementHidden(window, pageActionPanel);
-    let highlightHiddenPromise = elementHiddenPromise(
-      highlight,
-      "Should hide highlight"
-    );
-    gContentAPI.hideHighlight();
-    await highlightHiddenPromise;
-    await panelHiddenPromise;
-    is(
-      pageActionPanel.state,
-      "closed",
-      "Should close the page action panel after hiding highlight"
-    );
-  }
-);
-
-add_UITour_task(
   async function test_highligh_between_buttonOnAppMenu_and_buttonOnPageActionPanel() {
     let highlight = document.getElementById("UITourHighlight");
     is_element_hidden(highlight, "Highlight should initially be hidden");
@@ -183,7 +122,7 @@ add_UITour_task(
       "Should show info tooltip on the emailLink button on the page action panel"
     );
 
-    // Test switching info tooltip to the customize button on the app menu
+    // Test switching info tooltip to the addons button on the app menu
     let appMenuShownPromise = promisePanelElementShown(window, appMenu);
     let pageActionPanelHiddenPromise = promisePanelElementHidden(
       window,
@@ -193,14 +132,14 @@ add_UITour_task(
       tooltip,
       "Should show info tooltip"
     );
-    await showInfoPromise("customize", "title", "text");
+    await showInfoPromise("addons", "title", "text");
     await appMenuShownPromise;
     await pageActionPanelHiddenPromise;
     await tooltipVisiblePromise;
     is(
       appMenu.state,
       "open",
-      "Should open the app menu to show info on the customize button"
+      "Should open the app menu to show info on the addons button"
     );
     is(
       pageActionPanel.state,
@@ -209,8 +148,8 @@ add_UITour_task(
     );
     is(
       getShowInfoTargetName(),
-      "customize",
-      "Should show info tooltip on the customize button on the app menu"
+      "addons",
+      "Should show info tooltip on the addons button on the app menu"
     );
 
     // Test hiding info tooltip

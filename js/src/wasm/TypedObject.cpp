@@ -187,21 +187,20 @@ OutlineTypedObject* OutlineTypedObject::createUnattached(JSContext* cx,
                                                          gc::InitialHeap heap) {
   AutoSetNewObjectMetadata metadata(cx);
 
-  RootedObjectGroup group(cx, ObjectGroup::defaultNewGroup(
-                                  cx, &OutlineTypedObject::class_,
-                                  TaggedProto(&descr->typedProto()), descr));
-  if (!group) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &descr->typedProto());
+
+  MOZ_ASSERT(gc::GetGCObjectKindForBytes(sizeof(OutlineTypedObject)) ==
+             allocKind);
 
   NewObjectKind newKind =
       (heap == gc::TenuredHeap) ? TenuredObject : GenericObject;
-  OutlineTypedObject* obj = NewObjectWithGroup<OutlineTypedObject>(
-      cx, group, gc::AllocKind::OBJECT0, newKind);
+  auto* obj = NewObjectWithGivenProtoAndKinds<OutlineTypedObject>(
+      cx, proto, allocKind, newKind);
   if (!obj) {
     return nullptr;
   }
 
+  obj->typeDescr_.init(descr);
   obj->setOwnerAndData(nullptr, nullptr);
   return obj;
 }
@@ -260,7 +259,7 @@ TypedObject* TypedObject::createZeroed(JSContext* cx, HandleTypeDescr descr,
 void OutlineTypedObject::obj_trace(JSTracer* trc, JSObject* object) {
   OutlineTypedObject& typedObj = object->as<OutlineTypedObject>();
 
-  TraceEdge(trc, typedObj.shapePtr(), "OutlineTypedObject_shape");
+  TraceEdge(trc, &typedObj.typeDescr_, "OutlineTypedObject_typedescr");
 
   if (!typedObj.owner_) {
     MOZ_ASSERT(!typedObj.data_);
@@ -337,7 +336,7 @@ bool TypedObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
                                      HandleId id, MutableHandleObject objp,
                                      MutableHandle<PropertyResult> propp) {
   if (obj->as<TypedObject>().typeDescr().hasProperty(cx, id)) {
-    propp.setNonNativeProperty();
+    propp.setTypedObjectProperty();
     objp.set(obj);
     return true;
   }
@@ -498,23 +497,25 @@ InlineTypedObject* InlineTypedObject::create(JSContext* cx,
                                              gc::InitialHeap heap) {
   gc::AllocKind allocKind = allocKindForTypeDescriptor(descr);
 
-  RootedObjectGroup group(cx, ObjectGroup::defaultNewGroup(
-                                  cx, &InlineTypedObject::class_,
-                                  TaggedProto(&descr->typedProto()), descr));
-  if (!group) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &descr->typedProto());
 
   NewObjectKind newKind =
       (heap == gc::TenuredHeap) ? TenuredObject : GenericObject;
-  return NewObjectWithGroup<InlineTypedObject>(cx, group, allocKind, newKind);
+  auto* obj = NewObjectWithGivenProtoAndKinds<InlineTypedObject>(
+      cx, proto, allocKind, newKind);
+  if (!obj) {
+    return nullptr;
+  }
+
+  obj->typeDescr_.init(descr);
+  return obj;
 }
 
 /* static */
 void InlineTypedObject::obj_trace(JSTracer* trc, JSObject* object) {
   InlineTypedObject& typedObj = object->as<InlineTypedObject>();
 
-  TraceEdge(trc, typedObj.shapePtr(), "InlineTypedObject_shape");
+  TraceEdge(trc, &typedObj.typeDescr_, "InlineTypedObject_typedescr");
 
   TypeDescr& descr = typedObj.typeDescr();
   if (descr.hasTraceList()) {
@@ -578,6 +579,7 @@ DEFINE_TYPEDOBJ_CLASS(InlineTypedObject, InlineTypedObject::obj_trace,
   debugCheckNewObject(group, shape, kind, heap);
 
   const JSClass* clasp = group->clasp();
+  MOZ_ASSERT(!clasp->isNativeObject());
   MOZ_ASSERT(::IsTypedObjectClass(clasp));
 
   JSObject* obj =

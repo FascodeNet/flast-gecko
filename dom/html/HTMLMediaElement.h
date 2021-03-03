@@ -11,6 +11,7 @@
 #include "MediaEventSource.h"
 #include "SeekTarget.h"
 #include "MediaDecoderOwner.h"
+#include "MediaElementEventRunners.h"
 #include "MediaPlaybackDelayPolicy.h"
 #include "MediaPromiseDefs.h"
 #include "TelemetryProbesReporter.h"
@@ -21,6 +22,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/StateWatching.h"
 #include "mozilla/WeakPtr.h"
+#include "mozilla/dom/DecoderDoctorNotificationBinding.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
 #include "mozilla/dom/MediaDebugInfoBinding.h"
 #include "mozilla/dom/MediaKeys.h"
@@ -148,8 +150,6 @@ class HTMLMediaElement : public nsGenericHTMLElement,
       already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
   void Init();
 
-  void ReportCanPlayTelemetry();
-
   // `eMandatory`: `timeupdate` occurs according to the spec requirement.
   // Eg.
   // https://html.spec.whatwg.org/multipage/media.html#seeking:event-media-timeupdate
@@ -159,6 +159,14 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   enum class TimeupdateType : bool {
     eMandatory = false,
     ePeriodic = true,
+  };
+
+  // This is used for event runner creation. Currently only timeupdate needs
+  // that, but it can be used to extend for other events in the future if
+  // necessary.
+  enum class EventFlag : uint8_t {
+    eNone = 0,
+    eMandatory = 1,
   };
 
   /**
@@ -295,6 +303,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
 
   // Dispatch events
   void DispatchAsyncEvent(const nsAString& aName) final;
+  void DispatchAsyncEvent(RefPtr<nsMediaEventRunner> aRunner);
 
   // Triggers a recomputation of readyState.
   void UpdateReadyState() override {
@@ -453,6 +462,9 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   void MaybeQueueTimeupdateEvent() final {
     FireTimeUpdate(TimeupdateType::ePeriodic);
   }
+
+  const TimeStamp& LastTimeupdateDispatchTime() const;
+  void UpdateLastTimeupdateDispatchTime();
 
   // WebIDL
 
@@ -642,6 +654,12 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   double TotalPlayTime() const;
   double InvisiblePlayTime() const;
   double VideoDecodeSuspendedTime() const;
+
+  // Test methods for decoder doctor.
+  void SetFormatDiagnosticsReportForMimeType(const nsAString& aMimeType,
+                                             DecoderDoctorReportType aType);
+  void SetDecodeError(const nsAString& aError, ErrorResult& aRv);
+  void SetAudioSinkFailedStartup();
 
   // Synchronously, return the next video frame and mark the element unable to
   // participate in decode suspending.
@@ -1279,12 +1297,12 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // True if this element can be captured, false otherwise.
   bool CanBeCaptured(StreamCaptureType aCaptureType);
 
-  class nsAsyncEventRunner;
-  class nsNotifyAboutPlayingRunner;
-  class nsResolveOrRejectPendingPlayPromisesRunner;
   using nsGenericHTMLElement::DispatchEvent;
   // For nsAsyncEventRunner.
   nsresult DispatchEvent(const nsAString& aName);
+
+  already_AddRefed<nsMediaEventRunner> GetEventRunner(
+      const nsAString& aName, EventFlag aFlag = EventFlag::eNone);
 
   // This method moves the mPendingPlayPromises into a temperate object. So the
   // mPendingPlayPromises is cleared after this method call.
@@ -1468,9 +1486,9 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // we're bound to when loading starts.
   nsCOMPtr<Document> mLoadBlockedDoc;
 
-  // Contains names of events that have been raised while in the bfcache.
-  // These events get re-dispatched when the bfcache is exited.
-  nsTArray<nsString> mPendingEvents;
+  // This is used to help us block/resume the event delivery.
+  class EventBlocker;
+  RefPtr<EventBlocker> mEventBlocker;
 
   // Media loading flags. See:
   //   http://www.whatwg.org/specs/web-apps/current-work/#video)
@@ -1534,6 +1552,10 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // Time that the last timeupdate event was queued. Read/Write from the
   // main thread only.
   TimeStamp mQueueTimeUpdateRunnerTime;
+
+  // Time that the last timeupdate event was fired. Read/Write from the
+  // main thread only.
+  TimeStamp mLastTimeUpdateDispatchTime;
 
   // Time that the last progress event was fired. Read/Write from the
   // main thread only.
@@ -1641,10 +1663,6 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // True if this element is suspended because the document is inactive or the
   // inactive docshell is not allowing media to play.
   bool mSuspendedByInactiveDocOrDocshell = false;
-
-  // True if event delivery is suspended (mSuspendedByInactiveDocOrDocshell
-  // must also be true).
-  bool mEventDeliveryPaused = false;
 
   // True if we're running the "load()" method.
   bool mIsRunningLoadMethod = false;
@@ -1775,6 +1793,9 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   void NotifyTextTrackModeChanged();
 
  private:
+  friend class nsMediaEventRunner;
+  friend class nsResolveOrRejectPendingPlayPromisesRunner;
+
   already_AddRefed<PlayPromise> CreatePlayPromise(ErrorResult& aRv) const;
 
   virtual void MaybeBeginCloningVisually(){};

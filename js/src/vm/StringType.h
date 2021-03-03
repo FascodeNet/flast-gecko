@@ -51,7 +51,6 @@ namespace frontend {
 class ParserAtomsTable;
 class TaggedParserAtomIndex;
 class WellKnownParserAtoms;
-class WellKnownParserAtoms_ROM;
 struct CompilationAtomCache;
 
 }  // namespace frontend
@@ -728,7 +727,7 @@ class JSRope : public JSString {
   // fallible.
   //
   // Returns the same value as if this were a linear string being hashed.
-  MOZ_MUST_USE bool hash(uint32_t* outhHash) const;
+  [[nodiscard]] bool hash(uint32_t* outhHash) const;
 
   JSString* leftChild() const {
     MOZ_ASSERT(isRope());
@@ -865,9 +864,10 @@ class JSLinearString : public JSString {
 
   /*
    * Returns true if this string's characters store an unsigned 32-bit
-   * integer value, initializing *indexp to that value if so.  (Thus if
-   * calling isIndex returns true, js::IndexToString(cx, *indexp) will be a
-   * string equal to this string.)
+   * integer value, initializing *indexp to that value if so.
+   * Leading '0' isn't allowed except 0 itself.
+   * (Thus if calling isIndex returns true, js::IndexToString(cx, *indexp) will
+   * be a string equal to this string.)
    */
   bool isIndex(uint32_t* indexp) const {
     MOZ_ASSERT(JSString::isLinear());
@@ -1236,6 +1236,9 @@ MOZ_ALWAYS_INLINE JSAtom* JSLinearString::morphAtomizedStringIntoPermanentAtom(
 
 namespace js {
 
+// Returns true if the characters of `s` store an unsigned 32-bit integer value,
+// initializing `*indexp` to that value if so.
+// Leading '0' isn't allowed except 0 itself.
 template <typename CharT>
 bool CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp);
 
@@ -1265,7 +1268,6 @@ class StaticStrings {
   friend class js::frontend::ParserAtomsTable;
   friend class js::frontend::TaggedParserAtomIndex;
   friend class js::frontend::WellKnownParserAtoms;
-  friend class js::frontend::WellKnownParserAtoms_ROM;
   friend struct js::frontend::CompilationAtomCache;
 
  private:

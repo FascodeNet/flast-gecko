@@ -13,7 +13,7 @@ module.exports = async function({ targetList, targetFront, onAvailable }) {
   // Also allow frame, but only in content toolbox, i.e. still ignore them in
   // the context of the browser toolbox as we inspect messages via the process
   // targets
-  const listenForFrames = targetList.targetFront.isLocalTab;
+  const listenForFrames = targetList.descriptorFront.isLocalTab;
 
   // Allow workers when messages aren't dispatched to the main thread.
   const listenForWorkers = !targetList.rootFront.traits
@@ -48,6 +48,12 @@ module.exports = async function({ targetList, targetFront, onAvailable }) {
 
   // Forward new message events
   webConsoleFront.on("consoleAPICall", message => {
+    // Ignore console messages that are cloned from the content process (they're handled
+    // by the cloned-content-process-messages legacy listener).
+    if (message.clonedFromContentProcess) {
+      return;
+    }
+
     message.resourceType = ResourceWatcher.TYPES.CONSOLE_MESSAGE;
     onAvailable([message]);
   });

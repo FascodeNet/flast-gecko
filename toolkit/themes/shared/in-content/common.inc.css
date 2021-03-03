@@ -8,7 +8,7 @@
 
 :root {
   --in-content-page-color: #0c0c0d;
-  --in-content-page-background: #f9f9fa;
+  --in-content-page-background: #fff;
   --in-content-text-color: var(--grey-90);
   --in-content-deemphasized-text: var(--grey-60);
   --in-content-selected-text: #fff;
@@ -41,13 +41,27 @@
   --in-content-link-color-active: var(--blue-80);
   --in-content-link-color-visited: var(--blue-60);
    /* button background states are also used for checkboxes and radiobuttons */
-  --in-content-button-background: var(--grey-90-a10);
-  --in-content-button-background-hover: var(--grey-90-a20);
-  --in-content-button-background-active: var(--grey-90-a30);
-  --in-content-primary-button-background: var(--blue-60);
-  --in-content-primary-button-background-hover: var(--blue-70);
-  --in-content-primary-button-background-active: var(--blue-80);
-  --in-content-table-background: #ebebeb;
+  --in-content-button-background: rgba(207, 207, 216, 0.33);
+  --in-content-button-background-hover: rgba(207, 207, 216, 0.66);
+  --in-content-button-background-active: rgba(207, 207, 216, 1);
+  --in-content-primary-button-background: #0061e0;
+  --in-content-primary-button-background-hover: #0250bb;
+  --in-content-primary-button-background-active: #053e94;
+  /* Once proton ships, these can probably stop being variables. */
+  --in-content-button-border-radius: 4px;
+  /* Make outline-radius slightly bigger than the border-radius,
+   * to make the thicker outline corners look smooth */
+  --in-content-focus-outline-radius: 6px;
+  --in-content-focus-outline-offset: 2px;
+  --in-content-focus-outline-color: var(--in-content-primary-button-background);
+  --in-content-button-box-shadow: transparent;
+
+  /* Note: 1px smaller than we want because we have a 1px transparent border. */
+  /* Once proton ships, these can probably stop being variables. */
+  --in-content-button-horizontal-padding: 15px;
+  --in-content-button-vertical-padding: 7px;
+
+  --in-content-table-background: #f8f8fa;
   --in-content-table-border-dark-color: #d1d1d1;
   --in-content-table-header-background: #0a84ff;
   --in-content-dialog-header-background: #f1f1f1;
@@ -101,6 +115,29 @@
   --card-shadow: var(--shadow-10);
   --card-outline-color: var(--grey-30);
   --card-shadow-hover: var(--card-shadow), 0 0 0 5px var(--card-outline-color);
+}
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+:root {
+  --in-content-page-background: #f9f9fa;
+  --in-content-button-background: var(--grey-90-a10);
+  --in-content-button-background-hover: var(--grey-90-a20);
+  --in-content-button-background-active: var(--grey-90-a30);
+  --in-content-primary-button-background: var(--blue-60);
+  --in-content-primary-button-background-hover: var(--blue-70);
+  --in-content-primary-button-background-active: var(--blue-80);
+  --in-content-button-border-radius: 2px;
+  --in-content-focus-outline-radius: 3px;
+  --in-content-focus-outline-offset: -1px;
+  --in-content-focus-outline-color: var(--in-content-border-active);
+
+  --in-content-button-horizontal-padding: 8px;
+  --in-content-button-vertical-padding: 0;
+
+  --in-content-button-box-shadow: var(--in-content-border-active-shadow);
+
+  --in-content-table-background: #ebebeb;
+}
 }
 
 @media (prefers-color-scheme: dark) {
@@ -229,7 +266,6 @@ xul|tab[selected] {
 /* html buttons */
 
 html|button {
-  padding: 3px;
   font: inherit;
 }
 
@@ -244,14 +280,42 @@ xul|menulist {
   /* !important overrides button.css for disabled and default XUL buttons: */
   color: inherit !important;
   border: 1px solid transparent; /* needed for high-contrast mode, where it'll show up */
-  border-radius: 2px;
+  border-radius: var(--in-content-button-border-radius);
   background-color: var(--in-content-button-background);
   font-weight: 400;
-  padding: 0 8px;
+  padding: var(--in-content-button-vertical-padding) var(--in-content-button-horizontal-padding);
   text-decoration: none;
   margin: 4px 8px;
   /* Ensure font-size isn't overridden by widget styling (e.g. in forms.css) */
   font-size: 1em;
+}
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+button {
+  font-weight: 600;
+}
+/* Medium and small buttons get sized to 7/14 and 6/12px padding (when adding
+ * the 1px border): */
+button.medium {
+  --in-content-button-vertical-padding: 6px;
+  --in-content-button-horizontal-padding: 13px;
+  min-height: 28px;
+  font-size: 0.95em;
+}
+
+button.small {
+  --in-content-button-vertical-padding: 5px;
+  --in-content-button-horizontal-padding: 11px;
+  min-height: 24px;
+  font-size: 0.9em;
+}
+
+/* Remove margin and padding added by button.css */
+xul|button > .button-box,
+xul|button > .button-box > .button-text {
+  padding: 0;
+  margin: 0;
+}
 }
 
 xul|button,
@@ -268,13 +332,11 @@ button:-moz-focusring,
 html|select:-moz-focusring,
 html|input:is([type="checkbox"], [type="color"], [type="radio"]):-moz-focusring,
 xul|menulist:-moz-focusring {
-  outline: 2px solid var(--in-content-border-active);
+  outline: 2px solid var(--in-content-focus-outline-color);
   /* offset outline to align with 1px border-width set for buttons/menulists above. */
-  outline-offset: -1px;
-  /* Make outline-radius slightly bigger than the border-radius set above,
-   * to make the thicker outline corners look smooth */
-  -moz-outline-radius: 3px;
-  box-shadow: 0 0 0 4px var(--in-content-border-active-shadow);
+  outline-offset: var(--in-content-focus-outline-offset);
+  -moz-outline-radius: var(--in-content-focus-outline-radius);
+  box-shadow: 0 0 0 4px var(--in-content-button-box-shadow);
 }
 
 html|input[type="radio"]:-moz-focusring {
@@ -549,11 +611,12 @@ html|input[type="checkbox"] {
   padding: 1px;
   border: 1px solid var(--in-content-box-border-color);
   border-radius: 2px;
-  margin: 0;
-  margin-inline-end: 10px;
+  margin-block: 3px; /* extend the vertical clicktarget */
+  margin-inline: 0 10px;
   background-color: var(--in-content-button-background);
   background-position: center;
   background-repeat: no-repeat;
+  flex-shrink: 0; /* avoid shrinking inside flex container */
 }
 
 xul|checkbox:not([disabled="true"]):hover > xul|*.checkbox-check,
@@ -573,6 +636,9 @@ html|input[type="checkbox"]:checked {
   color: white;
   background-color: var(--blue-60);
   border-color: transparent;
+
+  /* Style the button also when printing with "Print Backgrounds" unchecked */
+  color-adjust: exact;
 }
 
 xul|checkbox[checked] > xul|*.checkbox-check {
@@ -597,6 +663,7 @@ xul|richlistitem > xul|*.checkbox-check {
   margin: 3px 6px;
 }
 
+html|*.radio-container-with-text,
 html|*.toggle-container-with-text {
   display: flex;
   align-items: center;
@@ -614,10 +681,11 @@ xul|*.radio-check {
   height: 20px;
   border: 1px solid var(--in-content-box-border-color);
   border-radius: 100%;
-  margin: 0;
-  margin-inline-end: 10px;
+  margin-block: 3px; /* extend the vertical clicktarget */
+  margin-inline: 0 10px;
   background-color: var(--in-content-button-background);
   background-position: center;
+  flex-shrink: 0; /* avoid shrinking inside flex container */
 }
 
 html|input[type="radio"]:enabled:hover,
@@ -637,6 +705,9 @@ xul|*.radio-check[selected] {
   color: white;
   background-color: var(--blue-60);
   border-color: transparent;
+
+  /* Style the button also when printing with "Print Backgrounds" unchecked */
+  color-adjust: exact;
 }
 
 html|input[type="radio"]:checked {
@@ -1026,6 +1097,8 @@ input[type="text"][warning]:enabled:not(:focus) {
   box-shadow: 0 0 0 1px var(--yellow-60), 0 0 0 4px var(--yellow-60-a30);
 }
 
+/* Cards */
+
 .card {
   background: var(--in-content-box-background);
   /* Needed for high-contrast where the border will appear. */
@@ -1052,6 +1125,8 @@ input[type="text"][warning]:enabled:not(:focus) {
   transform: scaleX(-1);
 }
 
+/* Sidebar footer links */
+
 .sidebar-footer-list {
   list-style-type: none;
   margin-block: 0 36px;
@@ -1059,61 +1134,32 @@ input[type="text"][warning]:enabled:not(:focus) {
   padding: 0;
 }
 
-.sidebar-footer-link,
-.sidebar-footer-button > .text-link {
-  -moz-box-flex: 1;
-  margin-inline: 34px 0;
-  text-decoration: none;
-  color: currentColor;
-  width: 36px;
+.sidebar-footer-link {
   height: 36px;
   cursor: default;
-}
-
-.sidebar-footer-link {
+  border-radius: 2px;
   display: flex;
   align-items: center;
-  background-size: 16px;
-  background-repeat: no-repeat;
-  background-position-x: 13px;
-  background-position-y: 10px;
-  cursor: default;
-  -moz-context-properties: fill, fill-opacity;
-  fill: currentColor;
-  padding-inline-start: 43px;
 
-  /* These override the common styles. */
-  margin: 0;
-  font-size: .9em;
-  width: auto;
+  /* Override link style for :hover and :hover:active states */
+  text-decoration: none !important;
+  color: inherit !important;
 }
 
-.sidebar-footer-link:dir(rtl) {
-  background-position-x: right 13px;
+xul|*.sidebar-footer-link {
+  display: -moz-box;
+  -moz-box-align: center;
 }
 
-.sidebar-footer-link,
-.sidebar-footer-link:hover,
-.sidebar-footer-link:hover:active,
-.sidebar-footer-link:visited {
-  text-decoration: none;
-  color: currentColor;
-}
-
-.sidebar-footer-link:hover,
-.sidebar-footer-button > .text-link:hover {
+.sidebar-footer-link:hover {
   background-color: var(--in-content-category-background-hover);
-  border-radius: 2px;
 }
 
-.sidebar-footer-link:hover:active:not([disabled]),
-.sidebar-footer-button > .text-link:hover:active:not([disabled]) {
+.sidebar-footer-link:hover:active:not([disabled]) {
   background-color: var(--in-content-category-background-active);
-  color: currentColor;
 }
 
-.sidebar-footer-link:-moz-focusring,
-.sidebar-footer-button > .text-link:-moz-focusring {
+.sidebar-footer-link:-moz-focusring {
   outline: var(--in-content-category-outline-focus);
   outline-offset: -1px;
 }
@@ -1125,61 +1171,18 @@ input[type="text"][warning]:enabled:not(:focus) {
   height: 16px;
   margin: 10px;
   margin-inline-start: 13px;
-  vertical-align: middle;
-}
-
-.sidebar-footer-icon:hover {
-  fill: currentColor !important;
-}
-
-.sidebar-footer-button:last-of-type {
-  margin-bottom: 36px;
-}
-
-xul|*.help-icon {
-  list-style-image: url("chrome://global/skin/icons/help.svg");
-}
-
-html|*.help-icon {
-  background-image: url("chrome://global/skin/icons/help.svg");
-}
-
-.preferences-icon {
-  background-image: url("chrome://global/skin/icons/settings.svg");
-}
-
-.addons-icon {
-  list-style-image: url("chrome://mozapps/skin/extensions/extension.svg");
-  /* The add-ons icon doesn't have much (any?) margin, so make it a bit smaller. */
-  width: 14px;
-  height: 14px;
-  margin-inline-start: 15px;
 }
 
 .sidebar-footer-label {
-  margin: 0 4px;
   font-size: .9em;
+  margin: 0 4px;
   user-select: none;
 }
 
 @media (max-width: 830px) {
-  .sidebar-footer-button > .text-link {
-    -moz-box-flex: 0;
-    width: 36px;
-    height: 36px;
-    margin-inline-start: 0;
-  }
-
-  .sidebar-footer-icon {
-    margin: 10px;
-  }
-
-  .sidebar-footer-label {
-    display: none;
-  }
-
   .sidebar-footer-list {
     margin-inline-start: 40px;
+    -moz-box-align: start;
   }
 
   .sidebar-footer-link {
@@ -1189,16 +1192,29 @@ html|*.help-icon {
     margin-inline-start: 1px;
   }
 
-  .sidebar-footer-link,
-  /* We need to override the full-width RTL rule, so explicitly specify RTL. */
-  .sidebar-footer-link:dir(rtl) {
-    background-position: center;
+  .sidebar-footer-icon {
+    margin-inline-start: 10px;
   }
 
-  .sidebar-footer-link-text {
+  .sidebar-footer-label {
     display: none;
   }
 }
+
+/* Icon helper classes */
+
+xul|*.help-icon {
+  list-style-image: url("chrome://global/skin/icons/help.svg");
+}
+
+xul|*.addons-icon {
+  list-style-image: url("chrome://mozapps/skin/extensions/extension.svg");
+  /* The add-ons icon doesn't have much (any?) margin, so make it a bit smaller. */
+  scale: 87.5%;
+  translate: 6.25%;
+}
+
+/* Back button */
 
 .back-button {
   -moz-context-properties: fill;

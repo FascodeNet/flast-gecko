@@ -13,6 +13,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/Components.h"
 #include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/DocGroup.h"
@@ -294,7 +295,8 @@ void XMLHttpRequestMainThread::InitParameters(bool aAnon, bool aSystem) {
       return;
     }
 
-    nsCOMPtr<nsIPermissionManager> permMgr = services::GetPermissionManager();
+    nsCOMPtr<nsIPermissionManager> permMgr =
+        components::PermissionManager::Service();
     if (NS_WARN_IF(!permMgr)) {
       SetParameters(aAnon, false);
       return;
@@ -1073,9 +1075,9 @@ bool XMLHttpRequestMainThread::IsSafeHeader(
       return false;
     }
   }
-  const char* kCrossOriginSafeHeaders[] = {"cache-control", "content-language",
-                                           "content-type",  "expires",
-                                           "last-modified", "pragma"};
+  const char* kCrossOriginSafeHeaders[] = {
+      "cache-control", "content-language", "content-type", "content-length",
+      "expires",       "last-modified",    "pragma"};
   for (uint32_t i = 0; i < ArrayLength(kCrossOriginSafeHeaders); ++i) {
     if (aHeader.LowerCaseEqualsASCII(kCrossOriginSafeHeaders[i])) {
       return true;

@@ -1,5 +1,44 @@
 "use strict";
 
+ChromeUtils.defineModuleGetter(
+  this,
+  "TelemetryTestUtils",
+  "resource://testing-common/TelemetryTestUtils.jsm"
+);
+
+const SUBFRAME_CRASH_PRESENTED_KEY =
+  "dom.contentprocess.crash_subframe_ui_presented";
+
+/**
+ * Opens a number of tabs containing an out-of-process iframe.
+ *
+ * @param numTabs the number of tabs to open.
+ * @returns the browsing context of the iframe in the last tab opened.
+ */
+async function openTestTabs(numTabs) {
+  let iframeBC = null;
+
+  for (let count = 0; count < numTabs; count++) {
+    let tab = await BrowserTestUtils.openNewForegroundTab({
+      gBrowser,
+      url: "about:blank",
+    });
+
+    // If we load example.com in an injected subframe, we assume that this
+    // will load in its own subprocess, which we can then crash.
+    iframeBC = await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+      let iframe = content.document.createElement("iframe");
+      iframe.setAttribute("src", "http://example.com");
+
+      content.document.body.appendChild(iframe);
+      await ContentTaskUtils.waitForEvent(iframe, "load");
+      return iframe.frameLoader.browsingContext;
+    });
+  }
+
+  return iframeBC;
+}
+
 /**
  * Helper function for testing frame crashing. Some tabs are opened
  * containing frames from example.com and then the process for
@@ -9,28 +48,11 @@
  * @param numTabs the number of tabs to open.
  */
 async function testFrameCrash(numTabs) {
-  let browser, rootBC, iframeBC;
+  Services.telemetry.clearScalars();
 
-  for (let count = 0; count < numTabs; count++) {
-    let tab = await BrowserTestUtils.openNewForegroundTab({
-      gBrowser,
-      url: "about:blank",
-    });
-
-    browser = tab.linkedBrowser;
-    rootBC = browser.browsingContext;
-
-    // If we load example.com in an injected subframe, we assume that this
-    // will load in its own subprocess, which we can then crash.
-    iframeBC = await SpecialPowers.spawn(browser, [], async () => {
-      let iframe = content.document.createElement("iframe");
-      iframe.setAttribute("src", "http://example.com");
-
-      content.document.body.appendChild(iframe);
-      await ContentTaskUtils.waitForEvent(iframe, "load");
-      return iframe.frameLoader.browsingContext;
-    });
-  }
+  let iframeBC = await openTestTabs(numTabs);
+  let browser = gBrowser.selectedBrowser;
+  let rootBC = browser.browsingContext;
 
   is(iframeBC.parent, rootBC, "oop frame has root as parent");
 
@@ -98,6 +120,33 @@ async function testFrameCrash(numTabs) {
   // Next, check that the crash notification bar has appeared.
   await notificationPromise;
 
+  TelemetryTestUtils.assertScalar(
+    TelemetryTestUtils.getProcessScalars("parent"),
+    SUBFRAME_CRASH_PRESENTED_KEY,
+    1,
+    "Subframe crashed ui count"
+  );
+
+  if (numTabs > 1) {
+    // Showing another tab should increase the subframe crash UI telemetry probe as the other
+    // notification will now be visible.
+    await BrowserTestUtils.switchTab(gBrowser, gBrowser.tabs[1]);
+    TelemetryTestUtils.assertScalar(
+      TelemetryTestUtils.getProcessScalars("parent"),
+      SUBFRAME_CRASH_PRESENTED_KEY,
+      2,
+      "Subframe crashed ui count after switching tab"
+    );
+
+    await BrowserTestUtils.switchTab(gBrowser, gBrowser.tabs[2]);
+    TelemetryTestUtils.assertScalar(
+      TelemetryTestUtils.getProcessScalars("parent"),
+      SUBFRAME_CRASH_PRESENTED_KEY,
+      3,
+      "Subframe crashed ui count after switching tab again"
+    );
+  }
+
   for (let count = 1; count <= numTabs; count++) {
     let notificationBox = gBrowser.getNotificationBox(gBrowser.browsers[count]);
     let notification = notificationBox.currentNotification;
@@ -111,8 +160,14 @@ async function testFrameCrash(numTabs) {
     let buttons = notification.querySelectorAll(".notification-button");
     is(
       buttons.length,
-      2,
-      "Notification " + count + " should have only two buttons."
+      1,
+      "Notification " + count + " should have only one button."
+    );
+    let links = notification.querySelectorAll(".text-link");
+    is(
+      links.length,
+      1,
+      "Notification " + count + " should have only one link."
     );
   }
 
@@ -138,6 +193,13 @@ async function testFrameCrash(numTabs) {
   for (let count = 1; count <= numTabs; count++) {
     BrowserTestUtils.removeTab(gBrowser.selectedTab);
   }
+
+  TelemetryTestUtils.assertScalar(
+    TelemetryTestUtils.getProcessScalars("parent"),
+    SUBFRAME_CRASH_PRESENTED_KEY,
+    numTabs > 1 ? 3 : 1,
+    "Subframe crashed ui count at end of test"
+  );
 }
 
 /**
@@ -148,7 +210,7 @@ async function testFrameCrash(numTabs) {
  *  2. the crashed subframe is now pointing at "about:framecrashed"
  *     page.
  */
-add_task(async function() {
+add_task(async function test_crashframe() {
   // Open a new window with fission enabled.
   ok(
     SpecialPowers.useRemoteSubframes,
@@ -164,4 +226,43 @@ add_task(async function() {
   // Test both one tab and when four tabs are opened.
   await testFrameCrash(1);
   await testFrameCrash(4);
+});
+
+// This test checks that no notification shows when there is no minidump available. It
+// simulates the steps that occur during a crash, once with a dumpID and once without.
+add_task(async function test_nominidump() {
+  for (let dumpID of [null, "8888"]) {
+    let iframeBC = await openTestTabs(1);
+
+    let childID = iframeBC.currentWindowGlobal.domProcess.childID;
+
+    gBrowser.selectedBrowser.dispatchEvent(
+      new FrameCrashedEvent("oop-browser-crashed", {
+        browsingContextID: iframeBC,
+        childID,
+        isTopFrame: false,
+        bubbles: true,
+      })
+    );
+
+    let bag = Cc["@mozilla.org/hash-property-bag;1"].createInstance(
+      Ci.nsIWritablePropertyBag
+    );
+    bag.setProperty("abnormal", "true");
+    bag.setProperty("childID", iframeBC.currentWindowGlobal.domProcess.childID);
+    if (dumpID) {
+      bag.setProperty("dumpID", dumpID);
+    }
+
+    Services.obs.notifyObservers(bag, "ipc:content-shutdown");
+
+    let notificationBox = gBrowser.getNotificationBox(gBrowser.selectedBrowser);
+    let notification = notificationBox.currentNotification;
+    ok(
+      dumpID ? notification : !notification,
+      "notification shown for browser with no minidump"
+    );
+
+    BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  }
 });

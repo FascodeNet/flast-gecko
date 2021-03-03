@@ -40,8 +40,9 @@ NS_IMETHODIMP_(MozExternalRefCountType)
 xpcAccessibilityService::AddRef(void) {
   MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(xpcAccessibilityService)
   MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");
-  if (!nsAutoRefCnt::isThreadSafe)
+  if (!nsAutoRefCnt::isThreadSafe) {
     NS_ASSERT_OWNINGTHREAD(xpcAccessibilityService);
+  }
   nsrefcnt count = ++mRefCnt;
   NS_LOG_ADDREF(this, count, "xpcAccessibilityService", sizeof(*this));
 
@@ -193,7 +194,7 @@ xpcAccessibilityService::GetAccessibleFromCache(nsINode* aNode,
   // document accessibles are not stored in the document cache, however an
   // "unofficially" shutdown document (i.e. not from DocManager) can still
   // exist in the document cache.
-  Accessible* accessible = accService->FindAccessibleInCache(aNode);
+  LocalAccessible* accessible = accService->FindAccessibleInCache(aNode);
   if (!accessible && aNode->IsDocument()) {
     accessible = mozilla::a11y::GetExistingDocAccessible(aNode->AsDocument());
   }
@@ -209,7 +210,7 @@ xpcAccessibilityService::CreateAccessiblePivot(nsIAccessible* aRoot,
   NS_ENSURE_ARG(aRoot);
   *aPivot = nullptr;
 
-  Accessible* accessibleRoot = aRoot->ToInternalAccessible();
+  LocalAccessible* accessibleRoot = aRoot->ToInternalAccessible();
   NS_ENSURE_TRUE(accessibleRoot, NS_ERROR_INVALID_ARG);
 
   nsAccessiblePivot* pivot = new nsAccessiblePivot(accessibleRoot);
@@ -262,7 +263,6 @@ nsresult NS_GetAccessibilityService(nsIAccessibilityService** aResult) {
   }
 
   xpcAccessibilityService* service = new xpcAccessibilityService();
-  NS_ENSURE_TRUE(service, NS_ERROR_OUT_OF_MEMORY);
   xpcAccessibilityService::gXPCAccessibilityService = service;
   NS_ADDREF(*aResult = service);
 

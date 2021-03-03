@@ -19,7 +19,7 @@ use crate::resource_cache::CacheItem;
 use std::{mem, usize, f32, i32};
 use crate::texture_cache::{TextureCache, TextureCacheHandle, Eviction, TargetShader};
 use crate::render_target::RenderTargetKind;
-use crate::render_task::{RenderTask, StaticRenderTaskSurface, RenderTaskLocation};
+use crate::render_task::{RenderTask, StaticRenderTaskSurface, RenderTaskLocation, RenderTaskKind, CachedTask};
 use crate::render_task_graph::{RenderTaskGraphBuilder, RenderTaskId};
 use crate::frame_builder::add_child_render_task;
 use euclid::Scale;
@@ -60,7 +60,8 @@ pub struct RenderTaskCacheKey {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTaskCacheEntry {
-    user_data: Option<[f32; 3]>,
+    user_data: Option<[f32; 4]>,
+    target_kind: RenderTargetKind,
     is_opaque: bool,
     pub handle: TextureCacheHandle,
     /// If a render task was generated for this cache entry on _this_ frame,
@@ -175,7 +176,7 @@ impl RenderTaskCache {
             descriptor,
             TextureFilter::Linear,
             None,
-            entry.user_data.unwrap_or([0.0; 3]),
+            entry.user_data.unwrap_or([0.0; 4]),
             DirtyRect::All,
             gpu_cache,
             None,
@@ -185,15 +186,13 @@ impl RenderTaskCache {
         );
 
         // Get the allocation details in the texture cache, and store
-        // this in the render task. The renderer will draw this
-        // task into the appropriate layer and rect of the texture
-        // cache on this frame.
-        let (texture_id, texture_layer, uv_rect, _, _, _) =
+        // this in the render task. The renderer will draw this task
+        // into the appropriate rect of the texture cache on this frame.
+        let (texture_id, uv_rect, _, _, _) =
             texture_cache.get_cache_location(&entry.handle);
 
         let surface = StaticRenderTaskSurface::TextureCache {
             texture: texture_id,
-            layer: texture_layer,
             target_kind,
         };
 
@@ -209,15 +208,16 @@ impl RenderTaskCache {
         texture_cache: &mut TextureCache,
         gpu_cache: &mut GpuCache,
         rg_builder: &mut RenderTaskGraphBuilder,
-        user_data: Option<[f32; 3]>,
+        user_data: Option<[f32; 4]>,
         is_opaque: bool,
         parent: RenderTaskParent,
         surfaces: &[SurfaceInfo],
         f: F,
-    ) -> Result<RenderTaskCacheEntryHandle, ()>
+    ) -> Result<RenderTaskId, ()>
     where
         F: FnOnce(&mut RenderTaskGraphBuilder) -> Result<RenderTaskId, ()>,
     {
+        let size = key.size;
         // Get the texture cache handle for this cache key,
         // or create one.
         let cache_entries = &mut self.cache_entries;
@@ -225,6 +225,7 @@ impl RenderTaskCache {
             let entry = RenderTaskCacheEntry {
                 handle: TextureCacheHandle::invalid(),
                 user_data,
+                target_kind: RenderTargetKind::Color, // will be set below.
                 is_opaque,
                 render_task_id: None,
             };
@@ -243,6 +244,9 @@ impl RenderTaskCache {
             cache_entry.render_task_id = Some(render_task_id);
 
             let render_task = rg_builder.get_task_mut(render_task_id);
+
+            render_task.mark_cached(entry_handle.weak());
+            cache_entry.target_kind = render_task.kind.target_kind();
 
             RenderTaskCache::alloc_render_task(
                 render_task,
@@ -277,9 +281,21 @@ impl RenderTaskCache {
                     );
                 }
             }
+
+            return Ok(render_task_id);
         }
 
-        Ok(entry_handle.weak())
+        let target_kind = cache_entry.target_kind;
+        let mut task = RenderTask::new(
+            RenderTaskLocation::CacheRequest { size, },
+            RenderTaskKind::Cached(CachedTask {
+                target_kind,
+            }),
+        );
+        task.mark_cached(entry_handle.weak());
+        let render_task_id = rg_builder.add().init(task);
+
+        Ok(render_task_id)
     }
 
     pub fn get_cache_entry(

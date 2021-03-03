@@ -47,11 +47,9 @@
 
 #else  // ndef MOZ_GECKO_PROFILER
 
-namespace mozilla {
-class ProfileChunkedBuffer;
-}
+#  include "mozilla/ProfilerLabels.h"
 
-bool profiler_can_accept_markers();
+// Forward-declaration. TODO: Move to more common header, see bug 1681416.
 bool profiler_capture_backtrace_into(
     mozilla::ProfileChunkedBuffer& aChunkedBuffer,
     mozilla::StackCaptureOptions aCaptureOptions);
@@ -72,6 +70,7 @@ mozilla::ProfileBufferBlockIndex AddMarkerToBuffer(
     const mozilla::ProfilerString8View& aName,
     const mozilla::MarkerCategory& aCategory, mozilla::MarkerOptions&& aOptions,
     MarkerType aMarkerType, const PayloadArguments&... aPayloadArguments) {
+  AUTO_PROFILER_LABEL("AddMarkerToBuffer", PROFILER);
   mozilla::Unused << aMarkerType;  // Only the empty object type is useful.
   return mozilla::base_profiler_markers_detail::AddMarkerToBuffer<MarkerType>(
       aBuffer, aName, aCategory, std::move(aOptions),
@@ -174,6 +173,7 @@ class MOZ_RAII AutoProfilerTextMarker {
   }
 
   ~AutoProfilerTextMarker() {
+    AUTO_PROFILER_LABEL("TextMarker", PROFILER);
     mOptions.TimingRef().SetIntervalEnd();
     AUTO_PROFILER_STATS(AUTO_PROFILER_MARKER_TEXT);
     profiler_add_marker(

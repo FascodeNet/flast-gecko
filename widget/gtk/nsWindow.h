@@ -32,7 +32,7 @@
 #include "mozilla/Maybe.h"
 
 #ifdef ACCESSIBILITY
-#  include "mozilla/a11y/Accessible.h"
+#  include "mozilla/a11y/LocalAccessible.h"
 #endif
 #include "mozilla/EventForwards.h"
 #include "mozilla/TouchEvents.h"
@@ -229,7 +229,7 @@ class nsWindow final : public nsBaseWidget {
   void UpdateTopLevelOpaqueRegion();
 
   virtual already_AddRefed<mozilla::gfx::DrawTarget> StartRemoteDrawingInRegion(
-      LayoutDeviceIntRegion& aInvalidRegion,
+      const LayoutDeviceIntRegion& aInvalidRegion,
       mozilla::layers::BufferMode* aBufferMode) override;
   virtual void EndRemoteDrawingInRegion(
       mozilla::gfx::DrawTarget* aDrawTarget,
@@ -238,6 +238,7 @@ class nsWindow final : public nsBaseWidget {
   void SetProgress(unsigned long progressPercent);
 
 #ifdef MOZ_WAYLAND
+  bool GetCSDDecorationOffset(int* aDx, int* aDy);
   void SetEGLNativeWindowSize(const LayoutDeviceIntSize& aEGLWindowSize);
   static nsWindow* GetFocusedWindow();
 #endif
@@ -340,14 +341,16 @@ class nsWindow final : public nsBaseWidget {
 
   virtual void ReparentNativeWidget(nsIWidget* aNewParent) override;
 
-  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
-                                              uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags,
-                                              nsIObserver* aObserver) override;
+  virtual nsresult SynthesizeNativeMouseEvent(
+      LayoutDeviceIntPoint aPoint, NativeMouseMessage aNativeMessage,
+      mozilla::MouseButton aButton, nsIWidget::Modifiers aModifierFlags,
+      nsIObserver* aObserver) override;
 
   virtual nsresult SynthesizeNativeMouseMove(LayoutDeviceIntPoint aPoint,
                                              nsIObserver* aObserver) override {
-    return SynthesizeNativeMouseEvent(aPoint, GDK_MOTION_NOTIFY, 0, aObserver);
+    return SynthesizeNativeMouseEvent(
+        aPoint, NativeMouseMessage::Move, mozilla::MouseButton::eNotPressed,
+        nsIWidget::Modifiers::NO_MODIFIERS, aObserver);
   }
 
   virtual nsresult SynthesizeNativeMouseScrollEvent(
@@ -361,6 +364,10 @@ class nsWindow final : public nsBaseWidget {
                                               double aPointerPressure,
                                               uint32_t aPointerOrientation,
                                               nsIObserver* aObserver) override;
+
+  virtual nsresult SynthesizeNativeTouchPadPinch(
+      TouchpadPinchPhase aEventPhase, float aScale, LayoutDeviceIntPoint aPoint,
+      int32_t aModifierFlags) override;
 
 #ifdef MOZ_X11
   Display* XDisplay() { return mXDisplay; }
@@ -405,12 +412,12 @@ class nsWindow final : public nsBaseWidget {
     GTK_DECORATION_CLIENT,  // CSD without shadows
     GTK_DECORATION_NONE,    // WM does not support CSD at all
     GTK_DECORATION_UNKNOWN
-  } CSDSupportLevel;
+  } GtkWindowDecoration;
   /**
    * Get the support of Client Side Decoration by checking
    * the XDG_CURRENT_DESKTOP environment variable.
    */
-  static CSDSupportLevel GetSystemCSDSupportLevel();
+  static GtkWindowDecoration GetSystemGtkWindowDecoration();
 
   static bool HideTitlebarByDefault();
   static bool GetTopLevelWindowActiveState(nsIFrame* aFrame);
@@ -562,7 +569,7 @@ class nsWindow final : public nsBaseWidget {
 
   // Window titlebar rendering mode, GTK_DECORATION_NONE if it's disabled
   // for this window.
-  CSDSupportLevel mCSDSupportLevel;
+  GtkWindowDecoration mGtkWindowDecoration;
   // Use dedicated GdkWindow for mContainer
   bool mDrawToContainer;
   // If true, draw our own window titlebar.
@@ -576,7 +583,7 @@ class nsWindow final : public nsBaseWidget {
   bool mAlwaysOnTop;
 
 #ifdef ACCESSIBILITY
-  RefPtr<mozilla::a11y::Accessible> mRootAccessible;
+  RefPtr<mozilla::a11y::LocalAccessible> mRootAccessible;
 
   /**
    * Request to create the accessible for this window if it is top level.
@@ -711,7 +718,7 @@ class nsWindow final : public nsBaseWidget {
   RefPtr<mozilla::widget::IMContextWrapper> mIMContext;
 
   mozilla::UniquePtr<mozilla::CurrentX11TimeGetter> mCurrentTimeGetter;
-  static CSDSupportLevel sCSDSupportLevel;
+  static GtkWindowDecoration sGtkWindowDecoration;
 
   static bool sTransparentMainWindow;
 };

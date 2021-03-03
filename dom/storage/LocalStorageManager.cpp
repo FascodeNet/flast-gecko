@@ -99,7 +99,7 @@ nsAutoCString LocalStorageManager::CreateOrigin(
 
 LocalStorageCache* LocalStorageManager::GetCache(
     const nsACString& aOriginSuffix, const nsACString& aOriginNoSuffix) {
-  CacheOriginHashtable* table = mCaches.LookupOrAdd(aOriginSuffix);
+  CacheOriginHashtable* table = mCaches.GetOrInsertNew(aOriginSuffix);
   LocalStorageCacheHashKey* entry = table->GetEntry(aOriginNoSuffix);
   if (!entry) {
     return nullptr;
@@ -110,20 +110,17 @@ LocalStorageCache* LocalStorageManager::GetCache(
 
 already_AddRefed<StorageUsage> LocalStorageManager::GetOriginUsage(
     const nsACString& aOriginNoSuffix, const uint32_t aPrivateBrowsingId) {
-  RefPtr<StorageUsage> usage;
-  if (mUsages.Get(aOriginNoSuffix, &usage)) {
-    return usage.forget();
-  }
+  RefPtr<StorageUsage> usage = mUsages.LookupOrInsertWith(aOriginNoSuffix, [&] {
+    auto usage = MakeRefPtr<StorageUsage>(aOriginNoSuffix);
 
-  usage = new StorageUsage(aOriginNoSuffix);
+    StorageDBChild* storageChild =
+        StorageDBChild::GetOrCreate(aPrivateBrowsingId);
+    if (storageChild) {
+      storageChild->AsyncGetUsage(usage);
+    }
 
-  StorageDBChild* storageChild =
-      StorageDBChild::GetOrCreate(aPrivateBrowsingId);
-  if (storageChild) {
-    storageChild->AsyncGetUsage(usage);
-  }
-
-  mUsages.Put(aOriginNoSuffix, usage);
+    return usage;
+  });
 
   return usage.forget();
 }
@@ -131,7 +128,7 @@ already_AddRefed<StorageUsage> LocalStorageManager::GetOriginUsage(
 already_AddRefed<LocalStorageCache> LocalStorageManager::PutCache(
     const nsACString& aOriginSuffix, const nsACString& aOriginNoSuffix,
     const nsACString& aQuotaKey, nsIPrincipal* aPrincipal) {
-  CacheOriginHashtable* table = mCaches.LookupOrAdd(aOriginSuffix);
+  CacheOriginHashtable* table = mCaches.GetOrInsertNew(aOriginSuffix);
   LocalStorageCacheHashKey* entry = table->PutEntry(aOriginNoSuffix);
   RefPtr<LocalStorageCache> cache = entry->cache();
 
@@ -147,7 +144,7 @@ void LocalStorageManager::DropCache(LocalStorageCache* aCache) {
         "down?");
   }
 
-  CacheOriginHashtable* table = mCaches.LookupOrAdd(aCache->OriginSuffix());
+  CacheOriginHashtable* table = mCaches.GetOrInsertNew(aCache->OriginSuffix());
   table->RemoveEntry(aCache->OriginNoSuffix());
 }
 

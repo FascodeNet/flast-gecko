@@ -33,6 +33,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource://gre/modules/ContextualIdentityService.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
   Deprecated: "resource://gre/modules/Deprecated.jsm",
+  DevToolsSocketStatus:
+    "resource://devtools/shared/security/DevToolsSocketStatus.jsm",
   DownloadsCommon: "resource:///modules/DownloadsCommon.jsm",
   DownloadUtils: "resource://gre/modules/DownloadUtils.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
@@ -60,6 +62,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
+  PromptUtils: "resource://gre/modules/SharedPromptUtils.jsm",
   // TODO (Bug 1529552): Remove once old urlbar code goes away.
   ReaderMode: "resource://gre/modules/ReaderMode.jsm",
   RFPHelper: "resource://gre/modules/RFPHelper.jsm",
@@ -71,6 +74,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SimpleServiceDiscovery: "resource://gre/modules/SimpleServiceDiscovery.jsm",
   SiteDataManager: "resource:///modules/SiteDataManager.jsm",
   SitePermissions: "resource:///modules/SitePermissions.jsm",
+  SubDialog: "resource://gre/modules/SubDialog.jsm",
   SubDialogManager: "resource://gre/modules/SubDialog.jsm",
   TabModalPrompt: "chrome://global/content/tabprompts.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
@@ -575,11 +579,17 @@ XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "gProtonTabs",
   "browser.proton.tabs.enabled",
-  false,
-  (pref, oldValue, newValue) => {
-    document.documentElement.toggleAttribute("proton", newValue);
-  }
+  false
 );
+
+/* Import aboutWelcomeFeature from Nimbus Experiment API
+   to access experiment values */
+XPCOMUtils.defineLazyGetter(this, "aboutWelcomeFeature", () => {
+  const { ExperimentFeature } = ChromeUtils.import(
+    "resource://nimbus/ExperimentAPI.jsm"
+  );
+  return new ExperimentFeature("aboutwelcome");
+});
 
 customElements.setElementCreationCallback("translation-notification", () => {
   Services.scriptloader.loadSubScript(
@@ -720,28 +730,6 @@ function updateFxaToolbarMenu(enable, isInitialUpdate = false) {
     }
 
     Services.telemetry.setEventRecordingEnabled("fxa_avatar_menu", true);
-
-    // When the pref for a FxA service is removed, we remove it from
-    // the FxA toolbar menu as well. This is useful when the service
-    // might not be available that browser.
-    PanelMultiView.getViewNode(
-      document,
-      "PanelUI-fxa-menu-send-button"
-    ).hidden = !gFxaSendLoginUrl;
-    PanelMultiView.getViewNode(
-      document,
-      "PanelUI-fxa-menu-monitor-button"
-    ).hidden = !gFxaMonitorLoginUrl;
-    // If there are no services left, remove the label and sep.
-    let hideSvcs = !gFxaSendLoginUrl && !gFxaMonitorLoginUrl;
-    PanelMultiView.getViewNode(
-      document,
-      "fxa-menu-service-separator"
-    ).hidden = hideSvcs;
-    PanelMultiView.getViewNode(
-      document,
-      "fxa-menu-service-label"
-    ).hidden = hideSvcs;
   } else {
     mainWindowEl.removeAttribute("fxatoolbarmenu");
   }
@@ -980,18 +968,8 @@ const gStoragePressureObserver = {
         "browser.storageManager.pressureNotification.usageThresholdGB"
       );
     let msg = "";
-    let buttons = [];
+    let buttons = [{ supportPage: "storage-permissions" }];
     let usage = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
-    buttons.push({
-      "l10n-id": "space-alert-learn-more-button",
-      callback(notificationBar, button) {
-        let learnMoreURL =
-          Services.urlFormatter.formatURLPref("app.support.baseURL") +
-          "storage-permissions";
-        // This is a content URL, loaded from trusted UX.
-        openTrustedLinkIn(learnMoreURL, "tab");
-      },
-    });
     if (usage < USAGE_THRESHOLD_BYTES) {
       // The firefox-used space < 5GB, then warn user to free some disk space.
       // This is because this usage is small and not the main cause for space issue.
@@ -1000,10 +978,6 @@ const gStoragePressureObserver = {
       [msg] = await document.l10n.formatValues([
         { id: "space-alert-under-5gb-message" },
       ]);
-      buttons.push({
-        "l10n-id": "space-alert-under-5gb-ok-button",
-        callback() {},
-      });
     } else {
       // The firefox-used space >= 5GB, then guide users to about:preferences
       // to clear some data stored on firefox by websites.
@@ -1179,7 +1153,7 @@ var gPopupBlockerObserver = {
         blockedPopupAllowSite.removeAttribute("block");
       }
     } catch (e) {
-      blockedPopupAllowSite.setAttribute("hidden", "true");
+      blockedPopupAllowSite.hidden = true;
     }
 
     if (PrivateBrowsingUtils.isWindowPrivate(window)) {
@@ -1203,7 +1177,7 @@ var gPopupBlockerObserver = {
     let blockedPopupsSeparator = document.getElementById(
       "blockedPopupsSeparator"
     );
-    blockedPopupsSeparator.setAttribute("hidden", true);
+    blockedPopupsSeparator.hidden = true;
 
     browser.popupBlocker.getBlockedPopups().then(blockedPopups => {
       let foundUsablePopupURI = false;
@@ -1425,18 +1399,6 @@ var gKeywordURIFixup = {
                 Services.prefs.setBoolPref(pref, true);
               }
               openTrustedLinkIn(fixedURI.spec, "current");
-            },
-          },
-          {
-            label: gNavigatorBundle.getString("keywordURIFixup.dismiss"),
-            accessKey: gNavigatorBundle.getString(
-              "keywordURIFixup.dismiss.accesskey"
-            ),
-            callback() {
-              let notification = notificationBox.getNotificationWithValue(
-                "keyword-uri-fixup"
-              );
-              notificationBox.removeNotification(notification, true);
             },
           },
         ];
@@ -1773,9 +1735,11 @@ var gBrowserInit = {
       }
     });
 
-    this._setInitialFocus();
-
     updateFxaToolbarMenu(gFxaToolbarEnabled, true);
+
+    // Setting the focus will cause a style flush, it's preferable to call anything
+    // that will modify the DOM from within this function before this call.
+    this._setInitialFocus();
 
     this.domContentLoaded = true;
   },
@@ -1879,6 +1843,20 @@ var gBrowserInit = {
       document.getElementById("key_privatebrowsing").remove();
     }
 
+    if (BrowserUIUtils.quitShortcutDisabled) {
+      document.getElementById("key_quitApplication").remove();
+      document.getElementById("menu_FileQuitItem").removeAttribute("key");
+
+      PanelMultiView.getViewNode(
+        document,
+        "appMenu-quit-button2"
+      )?.removeAttribute("key");
+      PanelMultiView.getViewNode(
+        document,
+        "appMenu-quit-button"
+      )?.removeAttribute("key");
+    }
+
     this._loadHandled = true;
   },
 
@@ -1910,6 +1888,7 @@ var gBrowserInit = {
     this._handleURIToLoad();
 
     Services.obs.addObserver(gIdentityHandler, "perm-changed");
+    Services.obs.addObserver(gRemoteControl, "devtools-socket");
     Services.obs.addObserver(gRemoteControl, "marionette-listening");
     Services.obs.addObserver(gRemoteControl, "remote-listening");
     Services.obs.addObserver(
@@ -1953,6 +1932,15 @@ var gBrowserInit = {
     BrowserSearch.delayedStartupInit();
     gProtectionsHandler.init();
     HomePage.delayedStartup().catch(Cu.reportError);
+
+    let safeMode = document.getElementById("helpSafeMode");
+    if (Services.appinfo.inSafeMode) {
+      document.l10n.setAttributes(safeMode, "menu-help-exit-troubleshoot-mode");
+      safeMode.setAttribute(
+        "appmenu-data-l10n-id",
+        "appmenu-help-exit-troubleshoot-mode"
+      );
+    }
 
     // BiDi UI
     gBidiUI = isBidiEnabled();
@@ -2183,7 +2171,16 @@ var gBrowserInit = {
     let shouldRemoveFocusedAttribute = true;
 
     this._callWithURIToLoad(uriToLoad => {
-      if (isBlankPageURL(uriToLoad) || uriToLoad == "about:privatebrowsing") {
+      // Check if user is enrolled in an aboutWelcome experiment that has skipFocus
+      // property set to true, if yes remove focus from urlbar for about:welcome
+      const aboutWelcomeSkipUrlBarFocus =
+        uriToLoad == "about:welcome" &&
+        aboutWelcomeFeature.getValue()?.skipFocus;
+
+      if (
+        (isBlankPageURL(uriToLoad) && !aboutWelcomeSkipUrlBarFocus) ||
+        uriToLoad == "about:privatebrowsing"
+      ) {
         gURLBar.select();
         shouldRemoveFocusedAttribute = false;
         return;
@@ -2534,6 +2531,7 @@ var gBrowserInit = {
       FullZoom.destroy();
 
       Services.obs.removeObserver(gIdentityHandler, "perm-changed");
+      Services.obs.removeObserver(gRemoteControl, "devtools-socket");
       Services.obs.removeObserver(gRemoteControl, "marionette-listening");
       Services.obs.removeObserver(gRemoteControl, "remote-listening");
       Services.obs.removeObserver(
@@ -2634,10 +2632,7 @@ function HandleAppCommandEvent(evt) {
       BrowserOpenFileWindow();
       break;
     case "Print":
-      PrintUtils.startPrintWindow(
-        "app_command",
-        gBrowser.selectedBrowser.browsingContext
-      );
+      PrintUtils.startPrintWindow(gBrowser.selectedBrowser.browsingContext);
       break;
     case "Save":
       saveBrowser(gBrowser.selectedBrowser);
@@ -4255,6 +4250,9 @@ const BrowserSearch = {
    *        The principal to use for a new window or tab.
    * @param csp
    *        The content security policy to use for a new window or tab.
+   * @param flipLoadInBackground [optional]
+   *        If a modifier/middle mouse button is used:
+   *        Flip preference to load search in background tab.
    * @param engine [optional]
    *        The search engine to use for the search.
    * @param tab [optional]
@@ -4270,6 +4268,7 @@ const BrowserSearch = {
     purpose,
     triggeringPrincipal,
     csp,
+    flipLoadInBackground = false,
     engine = null,
     tab = null
   ) {
@@ -4302,7 +4301,7 @@ const BrowserSearch = {
     openLinkIn(submission.uri.spec, where || "current", {
       private: usePrivate && !PrivateBrowsingUtils.isWindowPrivate(window),
       postData: submission.postData,
-      inBackground,
+      inBackground: flipLoadInBackground ? !inBackground : inBackground,
       relatedToCurrent: true,
       triggeringPrincipal,
       csp,
@@ -4318,19 +4317,36 @@ const BrowserSearch = {
    * This should only be called from the context menu. See
    * BrowserSearch.loadSearch for the preferred API.
    */
-  async loadSearchFromContext(terms, usePrivate, triggeringPrincipal, csp) {
+  async loadSearchFromContext(
+    terms,
+    usePrivate,
+    triggeringPrincipal,
+    csp,
+    event
+  ) {
+    event = getRootEvent(event);
+    let where = whereToOpenLink(event);
+    if (where == "current") {
+      // override: historically search opens in new tab
+      where = "tab";
+    }
+    if (usePrivate && !PrivateBrowsingUtils.isWindowPrivate(window)) {
+      where = "window";
+    }
+    let flipLoadInBackground = event.button == 1 || event.ctrlKey;
+
     let { engine, url } = await BrowserSearch._loadSearch(
       terms,
-      usePrivate && !PrivateBrowsingUtils.isWindowPrivate(window)
-        ? "window"
-        : "tab",
+      where,
       usePrivate,
       "contextmenu",
       Services.scriptSecurityManager.createNullPrincipal(
         triggeringPrincipal.originAttributes
       ),
-      csp
+      csp,
+      flipLoadInBackground
     );
+
     if (engine) {
       BrowserSearchTelemetry.recordSearch(
         gBrowser.selectedBrowser,
@@ -4374,6 +4390,7 @@ const BrowserSearch = {
       "webextension",
       triggeringPrincipal,
       null,
+      false,
       engine,
       tab
     );
@@ -5741,6 +5758,15 @@ var TabsProgressListener = {
           stopwatchRunning /* we won't see STATE_START events for pre-rendered tabs */
         ) {
           if (recordLoadTelemetry) {
+            if (aBrowser.browsingContext?.topWindowContext?.hadLazyLoadImage) {
+              let timeElapsed = TelemetryStopwatch.timeElapsed(
+                histogram,
+                aBrowser
+              );
+              Services.telemetry
+                .getHistogramById("FX_LAZYLOAD_IMAGE_PAGE_LOAD_MS")
+                .add(timeElapsed);
+            }
             TelemetryStopwatch.finish(histogram, aBrowser);
             BrowserTelemetryUtils.recordSiteOriginTelemetry(browserWindows());
           }
@@ -6041,11 +6067,9 @@ nsBrowserAccess.prototype = {
         break;
       }
       case Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER: {
-        let browser = PrintUtils.startPrintWindow(
-          "window_print",
-          aOpenWindowInfo.parent,
-          { openWindowInfo: aOpenWindowInfo }
-        );
+        let browser = PrintUtils.startPrintWindow(aOpenWindowInfo.parent, {
+          openWindowInfo: aOpenWindowInfo,
+        });
         if (browser) {
           browsingContext = browser.browsingContext;
         }
@@ -6125,11 +6149,9 @@ nsBrowserAccess.prototype = {
     aSkipLoad
   ) {
     if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER) {
-      return PrintUtils.startPrintWindow(
-        "window_print",
-        aParams.openWindowInfo.parent,
-        { openWindowInfo: aParams.openWindowInfo }
-      );
+      return PrintUtils.startPrintWindow(aParams.openWindowInfo.parent, {
+        openWindowInfo: aParams.openWindowInfo,
+      });
     }
 
     if (aWhere != Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
@@ -6267,6 +6289,22 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
       el.setAttribute("data-l10n-id", el.getAttribute("data-lazy-l10n-id"));
       el.removeAttribute("data-lazy-l10n-id");
     });
+
+  // The "normal" toolbar items menu separator is hidden because it's unused
+  // when hiding the "moveToPanel" and "removeFromToolbar" items on flexible
+  // space items. But we need to ensure its hidden state is reset in the case
+  // the context menu is subsequently opened on a non-flexible space item.
+  let menuSeparator = document.getElementById("toolbarItemsMenuSeparator");
+  menuSeparator.hidden = false;
+
+  if (
+    !CustomizationHandler.isCustomizing() &&
+    CustomizableUI.isSpecialWidget(toolbarItem?.id || "")
+  ) {
+    moveToPanel.hidden = true;
+    removeFromToolbar.hidden = true;
+    menuSeparator.hidden = !showTabStripItems;
+  }
 
   if (showTabStripItems) {
     let multipleTabsSelected = !!gBrowser.multiSelectedTabsCount;
@@ -8073,6 +8111,22 @@ function ReportFalseDeceptiveSite() {
 }
 
 /**
+ * This is a temporary hack to connect a Help menu item for reporting
+ * site issues to the WebCompat team's Site Compatability Reporter
+ * WebExtension, which ships by default and is enabled on pre-release
+ * channels.
+ *
+ * Once we determine if Help is the right place for it, we'll do something
+ * slightly better than this.
+ *
+ * See bug 1690573.
+ */
+function ReportSiteIssue() {
+  let subject = { wrappedJSObject: gBrowser.selectedTab };
+  Services.obs.notifyObservers(subject, "report-site-issue");
+}
+
+/**
  * Format a URL
  * eg:
  * echo formatURL("https://addons.mozilla.org/%LOCALE%/%APP%/%VERSION%/");
@@ -8102,7 +8156,11 @@ const gRemoteControl = {
 
   updateVisualCue() {
     const mainWindow = document.documentElement;
-    if (Marionette.running || RemoteAgent.listening) {
+    if (
+      DevToolsSocketStatus.opened ||
+      Marionette.running ||
+      RemoteAgent.listening
+    ) {
       mainWindow.setAttribute("remotecontrol", "true");
     } else {
       mainWindow.removeAttribute("remotecontrol");
@@ -8393,9 +8451,7 @@ var RestoreLastSessionObserver = {
       Services.obs.addObserver(this, "sessionstore-last-session-cleared", true);
       goSetCommandEnabled("Browser:RestoreLastSession", true);
     } else if (SessionStore.willAutoRestore) {
-      document
-        .getElementById("Browser:RestoreLastSession")
-        .setAttribute("hidden", true);
+      document.getElementById("Browser:RestoreLastSession").hidden = true;
     }
   },
 
@@ -9291,6 +9347,147 @@ TabModalPromptBox.prototype = {
     return browser;
   },
 };
+
+// Handle window-modal prompts that we want to display with the same style as
+// tab-modal prompts.
+var gDialogBox = {
+  _dialog: null,
+
+  get isOpen() {
+    return !!this._dialog;
+  },
+
+  async open(uri, args) {
+    try {
+      await this._open(uri, args);
+    } catch (ex) {
+      Cu.reportError(ex);
+    } finally {
+      let dialog = document.getElementById("window-modal-dialog");
+      dialog.close();
+      dialog.style.visibility = "hidden";
+      dialog.style.height = "0";
+      dialog.style.width = "0";
+      document.documentElement.removeAttribute("window-modal-open");
+      dialog.removeEventListener("dialogopen", this);
+      this._updateMenuAndCommandState(true /* to enable */);
+      this._dialog = null;
+    }
+    return args;
+  },
+
+  handleEvent(event) {
+    if (event.type == "dialogopen") {
+      this._dialog.focus(true);
+    }
+  },
+
+  _open(uri, args) {
+    // Get this offset before we touch style below, as touching style seems
+    // to reset the cached layout bounds.
+    let offset = window.windowUtils.getBoundsWithoutFlushing(
+      gBrowser.selectedBrowser
+    ).top;
+    let parentElement = document.getElementById("window-modal-dialog");
+    // The dialog has 1em padding; compensate for that:
+    parentElement.style.marginTop = `calc(${offset}px - 1em)`;
+    parentElement.style.removeProperty("visibility");
+    parentElement.style.removeProperty("width");
+    parentElement.style.removeProperty("height");
+    document.documentElement.setAttribute("window-modal-open", true);
+    // Call this first so the contents show up and get layout, which is
+    // required for SubDialog to work.
+    parentElement.showModal();
+
+    // Disable menus and shortcuts.
+    this._updateMenuAndCommandState(false /* to disable */);
+
+    // Now actually set up the dialog contents:
+    let template = document.getElementById("window-modal-dialog-template")
+      .content.firstElementChild;
+    parentElement.addEventListener("dialogopen", this);
+    this._dialog = new SubDialog({
+      template,
+      parentElement,
+      id: "window-modal-dialog-subdialog",
+      options: {
+        consumeOutsideClicks: false,
+      },
+    });
+    let closedPromise = new Promise(resolve => {
+      this._closedCallback = function() {
+        PromptUtils.fireDialogEvent(window, "DOMModalDialogClosed");
+        resolve();
+      };
+    });
+    this._dialog.open(
+      uri,
+      {
+        features: "resizable=no",
+        modalType: Ci.nsIPrompt.MODAL_TYPE_INTERNAL_WINDOW,
+        closedCallback: () => {
+          this._closedCallback();
+        },
+      },
+      args
+    );
+    return closedPromise;
+  },
+
+  _nonUpdatableElements: new Set([
+    // Make an exception for debugging tools, for developer ease of use.
+    "key_browserConsole",
+    "key_browserToolbox",
+
+    // Don't touch the editing keys/commands which we might want inside the dialog.
+    "key_undo",
+    "key_redo",
+
+    "key_cut",
+    "key_copy",
+    "key_paste",
+    "key_delete",
+    "key_selectAll",
+  ]),
+
+  _updateMenuAndCommandState(shouldBeEnabled) {
+    let editorCommands = document.getElementById("editMenuCommands");
+    // For the following items, set or clear disabled state:
+    // - toplevel menubar items (will affect inner items on macOS)
+    // - command elements
+    // - key elements not connected to command elements.
+    for (let element of document.querySelectorAll(
+      "menubar > menu, command, key:not([command])"
+    )) {
+      if (
+        editorCommands?.contains(element) ||
+        (element.id && this._nonUpdatableElements.has(element.id))
+      ) {
+        continue;
+      }
+      if (element.nodeName == "key" && element.command) {
+        continue;
+      }
+      if (!shouldBeEnabled) {
+        if (element.getAttribute("disabled") != "true") {
+          element.setAttribute("disabled", true);
+        } else {
+          element.setAttribute("wasdisabled", true);
+        }
+      } else if (element.getAttribute("wasdisabled") != "true") {
+        element.removeAttribute("disabled");
+      } else {
+        element.removeAttribute("wasdisabled");
+      }
+    }
+  },
+};
+
+// browser.js loads in the library window, too, but we can only show prompts
+// in the main browser window:
+if (window.location.href != AppConstants.BROWSER_CHROME_URL) {
+  gDialogBox = null;
+}
 
 var ConfirmationHint = {
   _timerID: null,

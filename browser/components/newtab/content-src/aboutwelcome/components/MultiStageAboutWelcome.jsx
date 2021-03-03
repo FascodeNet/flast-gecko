@@ -136,6 +136,7 @@ export class WelcomeScreen extends React.PureComponent {
   constructor(props) {
     super(props);
     this.handleAction = this.handleAction.bind(this);
+    this.state = { alternateContent: "" };
   }
 
   handleOpenURL(action, flowParams, UTMTerm) {
@@ -193,6 +194,25 @@ export class WelcomeScreen extends React.PureComponent {
       }
     }
 
+    // Wait until we become default browser to continue rest of action.
+    if (action.waitForDefault) {
+      // Update the UI to show additional "waiting" content.
+      this.setState({ alternateContent: "waiting_for_default" });
+
+      // Keep checking frequently as we want the UI to be responsive.
+      await new Promise(resolve =>
+        (async function checkDefault() {
+          if (await window.AWIsDefaultBrowser()) {
+            resolve();
+          } else {
+            setTimeout(checkDefault, 100);
+          }
+        })()
+      );
+
+      AboutWelcomeUtils.sendActionTelemetry(props.messageId, "default_browser");
+    }
+
     // A special tiles.action.theme value indicates we should use the event's value vs provided value.
     if (action.theme) {
       let themeToUse =
@@ -209,18 +229,19 @@ export class WelcomeScreen extends React.PureComponent {
     }
   }
 
-  renderSecondaryCTA(className) {
+  renderSecondaryCTA(position) {
+    let targetElement = position
+      ? `secondary_button_${position}`
+      : `secondary_button`;
     return (
-      <div
-        className={className ? `secondary-cta ${className}` : `secondary-cta`}
-      >
-        <Localized text={this.props.content.secondary_button.text}>
+      <div className={position ? `secondary-cta ${position}` : "secondary-cta"}>
+        <Localized text={this.props.content[targetElement].text}>
           <span />
         </Localized>
-        <Localized text={this.props.content.secondary_button.label}>
+        <Localized text={this.props.content[targetElement].label}>
           <button
             className="secondary"
-            value="secondary_button"
+            value={targetElement}
             onClick={this.handleAction}
           />
         </Localized>
@@ -382,9 +403,12 @@ export class WelcomeScreen extends React.PureComponent {
   }
 
   render() {
+    // Use the provided content or switch to an alternate one.
     const { content, topSites } = this.props;
-    const hasSecondaryTopCTA =
-      content.secondary_button && content.secondary_button.position === "top";
+    if (content[this.state.alternateContent]) {
+      Object.assign(content, content[this.state.alternateContent]);
+    }
+
     const showImportableSitesDisclaimer =
       content.tiles &&
       content.tiles.type === "topsites" &&
@@ -393,8 +417,12 @@ export class WelcomeScreen extends React.PureComponent {
 
     return (
       <main className={`screen ${this.props.id}`}>
-        {hasSecondaryTopCTA ? this.renderSecondaryCTA("top") : null}
-        <div className={`brand-logo ${hasSecondaryTopCTA ? "cta-top" : ""}`} />
+        {content.secondary_button_top ? this.renderSecondaryCTA("top") : null}
+        <div
+          className={`brand-logo ${
+            content.secondary_button_top ? "cta-top" : ""
+          }`}
+        />
         <div className="welcome-text">
           <Zap hasZap={content.zap} text={content.title} />
           <Localized text={content.subtitle}>
@@ -413,12 +441,10 @@ export class WelcomeScreen extends React.PureComponent {
             />
           </Localized>
         </div>
-        {content.secondary_button && content.secondary_button.position !== "top"
-          ? this.renderSecondaryCTA()
-          : null}
         {content.help_text && content.help_text.position === "default"
           ? this.renderHelpText()
           : null}
+        {content.secondary_button ? this.renderSecondaryCTA() : null}
         <nav
           className={
             (content.help_text && content.help_text.position === "footer") ||

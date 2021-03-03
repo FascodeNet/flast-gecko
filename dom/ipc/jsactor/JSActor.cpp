@@ -243,8 +243,8 @@ already_AddRefed<Promise> JSActor::SendQuery(JSContext* aCx,
   meta.queryId() = mNextQueryId++;
   meta.kind() = JSActorMessageKind::Query;
 
-  mPendingQueries.Put(meta.queryId(),
-                      PendingQuery{promise, meta.messageName()});
+  mPendingQueries.InsertOrUpdate(meta.queryId(),
+                                 PendingQuery{promise, meta.messageName()});
 
   SendRawMessage(meta, std::move(data), CaptureJSStack(aCx), aRv);
   return promise.forget();
@@ -324,7 +324,7 @@ void JSActor::ReceiveQueryReply(JSContext* aCx,
     return;
   }
 
-  Maybe<PendingQuery> query = mPendingQueries.GetAndRemove(aMetadata.queryId());
+  Maybe<PendingQuery> query = mPendingQueries.Extract(aMetadata.queryId());
   if (NS_WARN_IF(!query)) {
     aRv.ThrowUnknownError("Received reply for non-pending query");
     return;

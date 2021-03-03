@@ -29,7 +29,7 @@ void get_uv(
     out vec2 out_uv,
     out vec4 out_uv_sample_bounds
 ) {
-    ImageResource res = fetch_image_resource(res_address);
+    ImageSource res = fetch_image_source(res_address);
     vec2 uv0 = res.uv_rect.p0;
     vec2 uv1 = res.uv_rect.p1;
 
@@ -62,7 +62,7 @@ void brush_vs(
     get_uv(
         prim_user_data.y,
         f,
-        textureSize(sColor0, 0).xy,
+        TEX_SIZE(sColor0).xy,
         1.0,
         v_backdrop_uv,
         v_backdrop_uv_sample_bounds
@@ -71,7 +71,7 @@ void brush_vs(
     get_uv(
         prim_user_data.z,
         f,
-        textureSize(sColor1, 0).xy,
+        TEX_SIZE(sColor1).xy,
         perspective_f,
         v_src_uv,
         v_src_uv_sample_bounds

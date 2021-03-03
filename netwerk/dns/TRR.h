@@ -14,10 +14,13 @@
 #include "nsIHttpPushListener.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIStreamListener.h"
-#include "nsHostResolver.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 #include "DNSPacket.h"
+#include "TRRSkippedReason.h"
+
+class AHostResolver;
+class nsHostRecord;
 
 namespace mozilla {
 namespace net {
@@ -43,56 +46,16 @@ class TRR : public Runnable,
   static const unsigned int kCnameChaseMax = 64;
 
   // when firing off a normal A or AAAA query
-  explicit TRR(AHostResolver* aResolver, nsHostRecord* aRec, enum TrrType aType)
-      : mozilla::Runnable("TRR"),
-        mRec(aRec),
-        mHostResolver(aResolver),
-        mType(aType),
-        mOriginSuffix(aRec->originSuffix) {
-    mHost = aRec->host;
-    mPB = aRec->pb;
-    MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess() || XRE_IsSocketProcess(),
-                          "TRR must be in parent or socket process");
-  }
-
+  explicit TRR(AHostResolver* aResolver, nsHostRecord* aRec,
+               enum TrrType aType);
   // when following CNAMEs
   explicit TRR(AHostResolver* aResolver, nsHostRecord* aRec, nsCString& aHost,
-               enum TrrType& aType, unsigned int aLoopCount, bool aPB)
-      : mozilla::Runnable("TRR"),
-        mHost(aHost),
-        mRec(aRec),
-        mHostResolver(aResolver),
-        mType(aType),
-        mPB(aPB),
-        mCnameLoop(aLoopCount),
-        mOriginSuffix(aRec ? aRec->originSuffix : ""_ns) {
-    MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess() || XRE_IsSocketProcess(),
-                          "TRR must be in parent or socket process");
-  }
-
+               enum TrrType& aType, unsigned int aLoopCount, bool aPB);
   // used on push
-  explicit TRR(AHostResolver* aResolver, bool aPB)
-      : mozilla::Runnable("TRR"),
-        mHostResolver(aResolver),
-        mType(TRRTYPE_A),
-        mPB(aPB) {
-    MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess() || XRE_IsSocketProcess(),
-                          "TRR must be in parent or socket process");
-  }
-
+  explicit TRR(AHostResolver* aResolver, bool aPB);
   // to verify a domain
   explicit TRR(AHostResolver* aResolver, nsACString& aHost, enum TrrType aType,
-               const nsACString& aOriginSuffix, bool aPB)
-      : mozilla::Runnable("TRR"),
-        mHost(aHost),
-        mRec(nullptr),
-        mHostResolver(aResolver),
-        mType(aType),
-        mPB(aPB),
-        mOriginSuffix(aOriginSuffix) {
-    MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess() || XRE_IsSocketProcess(),
-                          "TRR must be in parent or socket process");
-  }
+               const nsACString& aOriginSuffix, bool aPB);
 
   NS_IMETHOD Run() override;
   void Cancel(nsresult aStatus);
@@ -101,11 +64,22 @@ class TRR : public Runnable,
   RefPtr<nsHostRecord> mRec;
   RefPtr<AHostResolver> mHostResolver;
 
+  void SetTimeout(uint32_t aTimeoutMs) { mTimeoutMs = aTimeoutMs; }
+
+  nsresult ChannelStatus() { return mChannelStatus; }
+
  protected:
   virtual ~TRR() = default;
   virtual DNSPacket* GetOrCreateDNSPacket();
   virtual nsresult CreateQueryURI(nsIURI** aOutURI);
   virtual const char* ContentType() const { return "application/dns-message"; }
+  virtual DNSResolverType ResolverType() const { return DNSResolverType::TRR; }
+  virtual bool MaybeBlockRequest();
+  virtual void RecordProcessingTime(nsIChannel* aChannel);
+  virtual void ReportStatus(nsresult aStatusCode);
+  virtual void HandleTimeout();
+  virtual void HandleEncodeError(nsresult aStatusCode) {}
+  virtual void HandleDecodeError(nsresult aStatusCode);
   nsresult SendHTTPRequest();
   nsresult ReturnData(nsIChannel* aChannel);
 
@@ -140,6 +114,11 @@ class TRR : public Runnable,
   bool mFailed = false;
   bool mPB;
   DOHresp mDNS;
+  nsresult mChannelStatus = NS_OK;
+
+  // The request timeout in milliseconds. If 0 we will use the default timeout
+  // we get from the prefs.
+  uint32_t mTimeoutMs = 0;
   nsCOMPtr<nsITimer> mTimeout;
   nsCString mCname;
   uint32_t mCnameLoop = kCnameChaseMax;  // loop detection counter
@@ -147,9 +126,9 @@ class TRR : public Runnable,
   uint32_t mTTL = UINT32_MAX;
   TypeRecordResultType mResult = mozilla::AsVariant(Nothing());
 
-  nsHostRecord::TRRSkippedReason mTRRSkippedReason = nsHostRecord::TRR_UNSET;
-  void RecordReason(nsHostRecord::TRRSkippedReason reason) {
-    if (mTRRSkippedReason == nsHostRecord::TRR_UNSET) {
+  TRRSkippedReason mTRRSkippedReason = TRRSkippedReason::TRR_UNSET;
+  void RecordReason(TRRSkippedReason reason) {
+    if (mTRRSkippedReason == TRRSkippedReason::TRR_UNSET) {
       mTRRSkippedReason = reason;
     }
   }
