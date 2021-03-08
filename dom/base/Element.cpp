@@ -1014,10 +1014,7 @@ already_AddRefed<DOMRect> Element::GetBoundingClientRect() {
     return rect.forget();
   }
 
-  nsRect r = nsLayoutUtils::GetAllInFlowRectsUnion(
-      frame, nsLayoutUtils::GetContainingBlockForClientRect(frame),
-      nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
-  rect->SetLayoutRect(r);
+  rect->SetLayoutRect(frame->GetBoundingClientRect());
   return rect.forget();
 }
 
@@ -3108,8 +3105,8 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
       WidgetKeyboardEvent* keyEvent = aVisitor.mEvent->AsKeyboardEvent();
       if (keyEvent && keyEvent->mKeyCode == NS_VK_RETURN) {
         nsEventStatus status = nsEventStatus_eIgnore;
-        rv = DispatchClickEvent(MOZ_KnownLive(aVisitor.mPresContext), keyEvent,
-                                this, false, nullptr, &status);
+        rv = DispatchClickEvent(aVisitor.mPresContext, keyEvent, this, false,
+                                nullptr, &status);
         if (NS_SUCCEEDED(rv)) {
           aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
         }

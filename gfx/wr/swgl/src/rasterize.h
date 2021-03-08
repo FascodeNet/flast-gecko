@@ -696,6 +696,36 @@ static inline void prepare_row(Texture& colortex, int y, int startx, int endx,
   }
 }
 
+// Perpendicular dot-product is the dot-product of a vector with the
+// perpendicular vector of the other, i.e. dot(a, {-b.y, b.x})
+template <typename T>
+static ALWAYS_INLINE auto perpDot(T a, T b) {
+  return a.x * b.y - a.y * b.x;
+}
+
+// Check if the winding of the initial edges is flipped, requiring us to swap
+// the edges to avoid spans having negative lengths.
+template <typename T>
+static ALWAYS_INLINE bool checkIfEdgesFlipped(T l0, T l1, T r0, T r1) {
+  // If the starting point of the left edge is to the right of the starting
+  // point of the right edge, then just assume the edges are flipped.
+  if (l0.x > r0.x) {
+    return true;
+  }
+  // The left starting point is either at or to the left of the right starting
+  // point. Now we need to check if the edges possibly intersect at some point.
+  float side = perpDot(l1 - l0, r1 - r0);
+  if (side <= 0.0f) {
+    // If the edges are simply facing away from each other, then they won't
+    // intersect.
+    return false;
+  }
+  // If the lines intersect inside an edge but before the end, we assume they
+  // crossed each other and require flipping any resulting spans.
+  float t = perpDot(r0 - l0, r1 - r0);
+  return t >= 0.0f && t < side;
+}
+
 // Draw spans for each row of a given quad (or triangle) with a constant Z
 // value. The quad is assumed convex. It is clipped to fall within the given
 // clip rect. In short, this function rasterizes a quad by first finding a
@@ -707,8 +737,7 @@ static inline void prepare_row(Texture& colortex, int y, int startx, int endx,
 template <typename P>
 static inline void draw_quad_spans(int nump, Point2D p[4], uint16_t z,
                                    Interpolants interp_outs[4],
-                                   Texture& colortex, int layer,
-                                   Texture& depthtex,
+                                   Texture& colortex, Texture& depthtex,
                                    const ClipRect& clipRect) {
   // Only triangles and convex quads supported.
   assert(nump == 3 || nump == 4);
@@ -821,10 +850,10 @@ static inline void draw_quad_spans(int nump, Point2D p[4], uint16_t z,
   Edge left(y, l0, l1, interp_outs[l0i], interp_outs[l1i], l1i);
   Edge right(y, r0, r1, interp_outs[r0i], interp_outs[r1i], r0i);
   // WR does not use backface culling, so check if edges are flipped.
-  bool flipped = l0.x > r0.x || l1.x > r1.x;
+  bool flipped = checkIfEdgesFlipped(l0, l1, r0, r1);
   if (flipped) swap(left, right);
   // Get pointer to color buffer and depth buffer at current Y
-  P* fbuf = (P*)colortex.sample_ptr(0, int(y), layer);
+  P* fbuf = (P*)colortex.sample_ptr(0, int(y));
   DepthRun* fdepth = (DepthRun*)depthtex.sample_ptr(0, int(y));
   // Loop along advancing Ys, rasterizing spans at each row
   float checkY = min(min(l1.y, r1.y), clipRect.y1);
@@ -985,8 +1014,7 @@ static inline void draw_quad_spans(int nump, Point2D p[4], uint16_t z,
 template <typename P>
 static inline void draw_perspective_spans(int nump, Point3D* p,
                                           Interpolants* interp_outs,
-                                          Texture& colortex, int layer,
-                                          Texture& depthtex,
+                                          Texture& colortex, Texture& depthtex,
                                           const ClipRect& clipRect) {
   Point3D l0, r0, l1, r1;
   int l0i, r0i, l1i, r1i;
@@ -1086,10 +1114,10 @@ static inline void draw_perspective_spans(int nump, Point3D* p,
   Edge left(y, l0, l1, interp_outs[l0i], interp_outs[l1i], l1i);
   Edge right(y, r0, r1, interp_outs[r0i], interp_outs[r1i], r0i);
   // WR does not use backface culling, so check if edges are flipped.
-  bool flipped = l0.x > r0.x || l1.x > r1.x;
+  bool flipped = checkIfEdgesFlipped(l0, l1, r0, r1);
   if (flipped) swap(left, right);
   // Get pointer to color buffer and depth buffer at current Y
-  P* fbuf = (P*)colortex.sample_ptr(0, int(y), layer);
+  P* fbuf = (P*)colortex.sample_ptr(0, int(y));
   DepthRun* fdepth = (DepthRun*)depthtex.sample_ptr(0, int(y));
   // Loop along advancing Ys, rasterizing spans at each row
   float checkY = min(min(l1.y, r1.y), clipRect.y1);
@@ -1346,7 +1374,7 @@ static int clip_side(int nump, Point3D* p, Interpolants* interp, Point3D* outP,
 // have already been transformed and clipped.
 static inline void draw_perspective_clipped(int nump, Point3D* p_clip,
                                             Interpolants* interp_clip,
-                                            Texture& colortex, int layer,
+                                            Texture& colortex,
                                             Texture& depthtex) {
   // If polygon is ouside clip rect, nothing to draw.
   ClipRect clipRect(colortex);
@@ -1356,10 +1384,10 @@ static inline void draw_perspective_clipped(int nump, Point3D* p_clip,
 
   // Finally draw perspective-correct spans for the polygon.
   if (colortex.internal_format == GL_RGBA8) {
-    draw_perspective_spans<uint32_t>(nump, p_clip, interp_clip, colortex, layer,
+    draw_perspective_spans<uint32_t>(nump, p_clip, interp_clip, colortex,
                                      depthtex, clipRect);
   } else if (colortex.internal_format == GL_R8) {
-    draw_perspective_spans<uint8_t>(nump, p_clip, interp_clip, colortex, layer,
+    draw_perspective_spans<uint8_t>(nump, p_clip, interp_clip, colortex,
                                     depthtex, clipRect);
   } else {
     assert(false);
@@ -1378,7 +1406,7 @@ static inline void draw_perspective_clipped(int nump, Point3D* p_clip,
 // This process is expensive and should be avoided if possible for primitive
 // batches that are known ahead of time to not need perspective-correction.
 static void draw_perspective(int nump, Interpolants interp_outs[4],
-                             Texture& colortex, int layer, Texture& depthtex) {
+                             Texture& colortex, Texture& depthtex) {
   // Lines are not supported with perspective.
   assert(nump >= 3);
   // Convert output of vertex shader to screen space.
@@ -1399,7 +1427,7 @@ static void draw_perspective(int nump, Interpolants interp_outs[4],
                     {screen.x.y, screen.y.y, screen.z.y, w.y},
                     {screen.x.z, screen.y.z, screen.z.z, w.z},
                     {screen.x.w, screen.y.w, screen.z.w, w.w}};
-    draw_perspective_clipped(nump, p, interp_outs, colortex, layer, depthtex);
+    draw_perspective_clipped(nump, p, interp_outs, colortex, depthtex);
   } else {
     // Points cross the near or far planes, so we need to clip.
     // Start with the original 3 or 4 points...
@@ -1458,13 +1486,11 @@ static void draw_perspective(int nump, Interpolants interp_outs[4],
       if (!isfinite(w)) w = 0.0f;
       p_clip[i] = Point3D(p_clip[i].sel(X, Y, Z) * w * scale + offset, w);
     }
-    draw_perspective_clipped(nump, p_clip, interp_clip, colortex, layer,
-                             depthtex);
+    draw_perspective_clipped(nump, p_clip, interp_clip, colortex, depthtex);
   }
 }
 
-static void draw_quad(int nump, Texture& colortex, int layer,
-                      Texture& depthtex) {
+static void draw_quad(int nump, Texture& colortex, Texture& depthtex) {
   // Run vertex shader once for the primitive's vertices.
   // Reserve space for 6 sets of interpolants, in case we need to clip against
   // near and far planes in the perspective case.
@@ -1474,7 +1500,7 @@ static void draw_quad(int nump, Texture& colortex, int layer,
   vec4 pos = vertex_shader->gl_Position;
   // Check if any vertex W is different from another. If so, use perspective.
   if (test_any(pos.w != pos.w.x)) {
-    draw_perspective(nump, interp_outs, colortex, layer, depthtex);
+    draw_perspective(nump, interp_outs, colortex, depthtex);
     return;
   }
 
@@ -1540,10 +1566,10 @@ static void draw_quad(int nump, Texture& colortex, int layer,
   // Finally draw 2D spans for the quad. Currently only supports drawing to
   // RGBA8 and R8 color buffers.
   if (colortex.internal_format == GL_RGBA8) {
-    draw_quad_spans<uint32_t>(nump, p, z, interp_outs, colortex, layer,
-                              depthtex, clipRect);
+    draw_quad_spans<uint32_t>(nump, p, z, interp_outs, colortex, depthtex,
+                              clipRect);
   } else if (colortex.internal_format == GL_R8) {
-    draw_quad_spans<uint8_t>(nump, p, z, interp_outs, colortex, layer, depthtex,
+    draw_quad_spans<uint8_t>(nump, p, z, interp_outs, colortex, depthtex,
                              clipRect);
   } else {
     assert(false);
@@ -1553,8 +1579,7 @@ static void draw_quad(int nump, Texture& colortex, int layer,
 template <typename INDEX>
 static inline void draw_elements(GLsizei count, GLsizei instancecount,
                                  size_t offset, VertexArray& v,
-                                 Texture& colortex, int layer,
-                                 Texture& depthtex) {
+                                 Texture& colortex, Texture& depthtex) {
   Buffer& indices_buf = ctx->buffers[v.element_array_buffer_binding];
   if (!indices_buf.buf || offset >= indices_buf.size) {
     return;
@@ -1571,10 +1596,10 @@ static inline void draw_elements(GLsizei count, GLsizei instancecount,
     // attribs once for all instances, as they won't change across instances
     // or within an instance.
     vertex_shader->load_attribs(v.attribs, indices[0], 0, 4);
-    draw_quad(4, colortex, layer, depthtex);
+    draw_quad(4, colortex, depthtex);
     for (GLsizei instance = 1; instance < instancecount; instance++) {
       vertex_shader->load_attribs(v.attribs, indices[0], instance, 0);
-      draw_quad(4, colortex, layer, depthtex);
+      draw_quad(4, colortex, depthtex);
     }
   } else {
     for (GLsizei instance = 0; instance < instancecount; instance++) {
@@ -1587,11 +1612,11 @@ static inline void draw_elements(GLsizei count, GLsizei instancecount,
           assert(indices[i + 3] == indices[i] + 2 &&
                  indices[i + 4] == indices[i] + 1);
           vertex_shader->load_attribs(v.attribs, indices[i], instance, 4);
-          draw_quad(4, colortex, layer, depthtex);
+          draw_quad(4, colortex, depthtex);
           i += 3;
         } else {
           vertex_shader->load_attribs(v.attribs, indices[i], instance, 3);
-          draw_quad(3, colortex, layer, depthtex);
+          draw_quad(3, colortex, depthtex);
         }
       }
     }

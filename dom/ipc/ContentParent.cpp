@@ -51,9 +51,7 @@
 #include "mozilla/ContentBlockingUserInteraction.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/DataStorage.h"
-#ifdef MOZ_GLEAN
-#  include "mozilla/FOGIPC.h"
-#endif
+#include "mozilla/FOGIPC.h"
 #include "mozilla/GlobalStyleSheetCache.h"
 #include "mozilla/HangDetails.h"
 #include "mozilla/LoginReputationIPC.h"
@@ -3880,9 +3878,9 @@ mozilla::ipc::IPCResult ContentParent::RecvCloneDocumentTreeInto(
     return IPC_OK();
   }
 
-  target
-      ->ChangeRemoteness(cp->GetRemoteType(), /* aLoadID = */ 0,
-                         /* aReplaceBC = */ false, /* aSpecificGroupId = */ 0)
+  RemotenessChangeOptions options;
+  options.mRemoteType = cp->GetRemoteType();
+  target->ChangeRemoteness(options, /* aPendingSwitchId = */ 0)
       ->Then(
           GetMainThreadSerialEventTarget(), __func__,
           [source = RefPtr{source}](BrowserParent* aBp) {
@@ -6859,26 +6857,34 @@ mozilla::ipc::IPCResult ContentParent::RecvRaiseWindow(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvAdjustWindowFocus(
-    const MaybeDiscarded<BrowsingContext>& aContext, bool aCheckPermission,
-    bool aIsVisible) {
+    const MaybeDiscarded<BrowsingContext>& aContext, bool aIsVisible,
+    uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
         ("ParentIPC: Trying to send a message to dead or detached context"));
     return IPC_OK();
   }
-  CanonicalBrowsingContext* context = aContext.get_canonical();
-  BrowsingContext* parent = context->GetParent();
-  if (!parent) {
-    return IPC_OK();
-  }
-
-  CanonicalBrowsingContext* canonicalParent = parent->Canonical();
+  nsDataHashtable<nsPtrHashKey<ContentParent>, bool> processes(2);
+  processes.InsertOrUpdate(this, true);
 
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
-  ContentParent* cp = cpm->GetContentProcessById(
-      ContentParentId(canonicalParent->OwnerProcessId()));
-  Unused << cp->SendAdjustWindowFocus(context, aCheckPermission, aIsVisible);
+  CanonicalBrowsingContext* context = aContext.get_canonical();
+  while (context) {
+    BrowsingContext* parent = context->GetParent();
+    if (!parent) {
+      break;
+    }
+
+    CanonicalBrowsingContext* canonicalParent = parent->Canonical();
+    ContentParent* cp = cpm->GetContentProcessById(
+        ContentParentId(canonicalParent->OwnerProcessId()));
+    if (!processes.Get(cp)) {
+      Unused << cp->SendAdjustWindowFocus(context, aIsVisible, aActionId);
+      processes.InsertOrUpdate(cp, true);
+    }
+    context = canonicalParent;
+  }
   return IPC_OK();
 }
 
@@ -7526,9 +7532,7 @@ already_AddRefed<JSActor> ContentParent::InitJSActor(
 }
 
 IPCResult ContentParent::RecvFOGData(ByteBuf&& buf) {
-#ifdef MOZ_GLEAN
   glean::FOGData(std::move(buf));
-#endif
   return IPC_OK();
 }
 

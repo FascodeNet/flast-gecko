@@ -14,9 +14,10 @@
 #include <type_traits>  // std::has_unique_object_representations
 #include <utility>      // std::forward
 
-#include "frontend/CompilationStencil.h"  // BaseCompilationStencil
+#include "frontend/CompilationStencil.h"  // CompilationStencil
 #include "frontend/ScriptIndex.h"         // ScriptIndex
 #include "vm/JSScript.h"                  // js::CheckCompileOptionsMatch
+#include "vm/Scope.h"                     // SizeOfParserScopeData
 #include "vm/StencilEnums.h"              // js::ImmutableScriptFlagsEnum
 
 using namespace js;
@@ -31,39 +32,6 @@ template <>
 struct CanEncodeNameType<TaggedParserAtomIndex> {
   static constexpr bool value = true;
 };
-
-template <XDRMode mode, typename ScopeT>
-/* static */ XDRResult StencilXDR::ScopeSpecificData(
-    XDRState<mode>* xdr, BaseParserScopeData*& baseScopeData) {
-  using SlotInfo = typename ScopeT::SlotInfo;
-  using ScopeDataT = typename ScopeT::ParserData;
-
-  static_assert(CanEncodeNameType<typename ScopeDataT::NameType>::value);
-  static_assert(CanCopyDataToDisk<ScopeDataT>::value,
-                "ScopeData cannot be bulk-copied to disk");
-
-  static_assert(offsetof(ScopeDataT, slotInfo) == 0,
-                "slotInfo should be the first field");
-  static_assert(offsetof(ScopeDataT, trailingNames) == sizeof(SlotInfo),
-                "trailingNames should be the second field");
-
-  MOZ_TRY(xdr->align32());
-
-  const SlotInfo* slotInfo;
-  if (mode == XDR_ENCODE) {
-    ScopeDataT* scopeData = static_cast<ScopeDataT*>(baseScopeData);
-    slotInfo = &scopeData->slotInfo;
-  } else {
-    MOZ_TRY(xdr->peekData(&slotInfo));
-  }
-
-  uint32_t totalLength =
-      sizeof(SlotInfo) +
-      sizeof(AbstractBindingName<TaggedParserAtomIndex>) * slotInfo->length;
-  MOZ_TRY(xdr->borrowedData(&baseScopeData, totalLength));
-
-  return Ok();
-}
 
 template <XDRMode mode, typename T, size_t N, class AP>
 static XDRResult XDRVectorUninitialized(XDRState<mode>* xdr,
@@ -215,78 +183,50 @@ static XDRResult XDRStencilModuleMetadata(XDRState<mode>* xdr,
   return Ok();
 }
 
+template <typename ScopeT>
+/* static */ void AssertScopeSpecificDataIsEncodable() {
+  using ScopeDataT = typename ScopeT::ParserData;
+
+  static_assert(CanEncodeNameType<typename ScopeDataT::NameType>::value);
+  static_assert(CanCopyDataToDisk<ScopeDataT>::value,
+                "ScopeData cannot be bulk-copied to disk");
+}
+
 template <XDRMode mode>
 /* static */ XDRResult StencilXDR::ScopeData(
     XDRState<mode>* xdr, ScopeStencil& stencil,
     BaseParserScopeData*& baseScopeData) {
+  // WasmInstanceScope & WasmFunctionScope should not appear in stencils.
+  MOZ_ASSERT(stencil.kind_ != ScopeKind::WasmInstance);
+  MOZ_ASSERT(stencil.kind_ != ScopeKind::WasmFunction);
+  if (stencil.kind_ == ScopeKind::With) {
+    return Ok();
+  }
+
+  MOZ_TRY(xdr->align32());
+
+  static_assert(offsetof(BaseParserScopeData, length) == 0,
+                "length should be the first field");
+  uint32_t length;
+  if (mode == XDR_ENCODE) {
+    length = baseScopeData->length;
+  } else {
+    MOZ_TRY(xdr->peekRawUint32(&length));
+  }
+
+  AssertScopeSpecificDataIsEncodable<FunctionScope>();
+  AssertScopeSpecificDataIsEncodable<VarScope>();
+  AssertScopeSpecificDataIsEncodable<LexicalScope>();
+  AssertScopeSpecificDataIsEncodable<EvalScope>();
+  AssertScopeSpecificDataIsEncodable<GlobalScope>();
+  AssertScopeSpecificDataIsEncodable<ModuleScope>();
+
   // In both decoding and encoding, stencil.kind_ is now known, and
   // can be assumed.  This allows the encoding to write out the bytes
   // for the specialized scope-data type without needing to encode
   // a distinguishing prefix.
-  switch (stencil.kind_) {
-    // FunctionScope
-    case ScopeKind::Function: {
-      // Extra parentheses is for template parameters inside macro.
-      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, FunctionScope>(
-          xdr, baseScopeData)));
-      break;
-    }
-
-    // VarScope
-    case ScopeKind::FunctionBodyVar: {
-      MOZ_TRY(
-          (StencilXDR::ScopeSpecificData<mode, VarScope>(xdr, baseScopeData)));
-      break;
-    }
-
-    // LexicalScope
-    case ScopeKind::Lexical:
-    case ScopeKind::SimpleCatch:
-    case ScopeKind::Catch:
-    case ScopeKind::NamedLambda:
-    case ScopeKind::StrictNamedLambda:
-    case ScopeKind::FunctionLexical:
-    case ScopeKind::ClassBody: {
-      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, LexicalScope>(
-          xdr, baseScopeData)));
-      break;
-    }
-
-    // WithScope
-    case ScopeKind::With: {
-      // With scopes carry no scope data.
-      break;
-    }
-
-    // EvalScope
-    case ScopeKind::Eval:
-    case ScopeKind::StrictEval: {
-      MOZ_TRY(
-          (StencilXDR::ScopeSpecificData<mode, EvalScope>(xdr, baseScopeData)));
-      break;
-    }
-
-    // GlobalScope
-    case ScopeKind::Global:
-    case ScopeKind::NonSyntactic: {
-      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, GlobalScope>(
-          xdr, baseScopeData)));
-      break;
-    }
-
-    // ModuleScope
-    case ScopeKind::Module: {
-      MOZ_TRY((StencilXDR::ScopeSpecificData<mode, ModuleScope>(
-          xdr, baseScopeData)));
-      break;
-    }
-
-    // WasmInstanceScope & WasmFunctionScope should not appear in stencils.
-    case ScopeKind::WasmInstance:
-    case ScopeKind::WasmFunction:
-    default:
-      MOZ_ASSERT_UNREACHABLE("XDR unrecognized ScopeKind.");
-  }
+  uint32_t totalLength = SizeOfParserScopeData(stencil.kind_, length);
+  MOZ_TRY(xdr->borrowedData(&baseScopeData, totalLength));
 
   return Ok();
 }
@@ -472,41 +412,33 @@ XDRResult XDRSharedDataContainer(XDRState<mode>* xdr,
 }
 
 template <XDRMode mode>
-XDRResult XDRBaseCompilationStencilSpanSize(
+XDRResult XDRCompilationStencilSpanSize(
     XDRState<mode>* xdr, uint32_t* scriptSize, uint32_t* gcThingSize,
-    uint32_t* scopeSize, uint32_t* regExpSize, uint32_t* bigIntSize,
-    uint32_t* objLiteralSize) {
+    uint32_t* scopeSize, uint32_t* scriptExtraSize, uint32_t* regExpSize,
+    uint32_t* bigIntSize, uint32_t* objLiteralSize) {
   // Compress the series of span sizes, to avoid consuming extra space for
   // unused/small span sizes.
   // There will be align32 shortly after this section, so try to make the
   // padding smaller.
 
   enum XDRSpanSizeKind {
-    // The scriptSize, gcThingSize, and scopeSize fit in 1 byte, and others have
-    // a value of 0. The entire section takes 4 bytes, and expect no padding.
-    Base8Kind,
-
-    // All of the size values can fit in 1 byte each. The entire section takes 7
-    // bytes, and expect 1 byte padding.
+    // All of the size values fit in 1 byte each. The entire section takes 7
+    // bytes, and expect no padding.
     All8Kind,
 
-    // Other. This case is less than 1% in practice and indicates the stencil is
-    // already quite large, so don't try to compress. Expect 3 bytes padding for
-    // `sizeKind`.
+    // Other cases. All of the size values fit in 4 bytes each. Expect 3 bytes
+    // padding for `sizeKind`.
     All32Kind,
   };
 
   uint8_t sizeKind = All32Kind;
   if (mode == XDR_ENCODE) {
-    uint32_t mask_base = (*scriptSize) | (*gcThingSize) | (*scopeSize);
-    uint32_t mask_ext = (*regExpSize) | (*bigIntSize) | (*objLiteralSize);
+    uint32_t mask = (*scriptSize) | (*gcThingSize) | (*scopeSize) |
+                    (*scriptExtraSize) | (*regExpSize) | (*bigIntSize) |
+                    (*objLiteralSize);
 
-    if (mask_base <= 0xff) {
-      if (mask_ext == 0x00) {
-        sizeKind = Base8Kind;
-      } else if (mask_ext <= 0xFF) {
-        sizeKind = All8Kind;
-      }
+    if (mask <= 0xff) {
+      sizeKind = All8Kind;
     }
   }
   MOZ_TRY(xdr->codeUint8(&sizeKind));
@@ -515,6 +447,7 @@ XDRResult XDRBaseCompilationStencilSpanSize(
     MOZ_TRY(xdr->codeUint32(scriptSize));
     MOZ_TRY(xdr->codeUint32(gcThingSize));
     MOZ_TRY(xdr->codeUint32(scopeSize));
+    MOZ_TRY(xdr->codeUint32(scriptExtraSize));
     MOZ_TRY(xdr->codeUint32(regExpSize));
     MOZ_TRY(xdr->codeUint32(bigIntSize));
     MOZ_TRY(xdr->codeUint32(objLiteralSize));
@@ -522,6 +455,7 @@ XDRResult XDRBaseCompilationStencilSpanSize(
     uint8_t scriptSize8 = 0;
     uint8_t gcThingSize8 = 0;
     uint8_t scopeSize8 = 0;
+    uint8_t scriptExtraSize8 = 0;
     uint8_t regExpSize8 = 0;
     uint8_t bigIntSize8 = 0;
     uint8_t objLiteralSize8 = 0;
@@ -530,6 +464,7 @@ XDRResult XDRBaseCompilationStencilSpanSize(
       scriptSize8 = uint8_t(*scriptSize);
       gcThingSize8 = uint8_t(*gcThingSize);
       scopeSize8 = uint8_t(*scopeSize);
+      scriptExtraSize8 = uint8_t(*scriptExtraSize);
       regExpSize8 = uint8_t(*regExpSize);
       bigIntSize8 = uint8_t(*bigIntSize);
       objLiteralSize8 = uint8_t(*objLiteralSize);
@@ -538,21 +473,16 @@ XDRResult XDRBaseCompilationStencilSpanSize(
     MOZ_TRY(xdr->codeUint8(&scriptSize8));
     MOZ_TRY(xdr->codeUint8(&gcThingSize8));
     MOZ_TRY(xdr->codeUint8(&scopeSize8));
-
-    if (sizeKind == All8Kind) {
-      MOZ_TRY(xdr->codeUint8(&regExpSize8));
-      MOZ_TRY(xdr->codeUint8(&bigIntSize8));
-      MOZ_TRY(xdr->codeUint8(&objLiteralSize8));
-    } else {
-      MOZ_ASSERT(regExpSize8 == 0);
-      MOZ_ASSERT(bigIntSize8 == 0);
-      MOZ_ASSERT(objLiteralSize8 == 0);
-    }
+    MOZ_TRY(xdr->codeUint8(&scriptExtraSize8));
+    MOZ_TRY(xdr->codeUint8(&regExpSize8));
+    MOZ_TRY(xdr->codeUint8(&bigIntSize8));
+    MOZ_TRY(xdr->codeUint8(&objLiteralSize8));
 
     if (mode == XDR_DECODE) {
       *scriptSize = scriptSize8;
       *gcThingSize = gcThingSize8;
       *scopeSize = scopeSize8;
+      *scriptExtraSize = scriptExtraSize8;
       *regExpSize = regExpSize8;
       *bigIntSize = bigIntSize8;
       *objLiteralSize = objLiteralSize8;
@@ -563,11 +493,17 @@ XDRResult XDRBaseCompilationStencilSpanSize(
 }
 
 template <XDRMode mode>
-XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
-                                    BaseCompilationStencil& stencil) {
+XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
+                                CompilationStencil& stencil) {
+  MOZ_ASSERT(!stencil.asmJS);
+
+  if (mode == XDR_DECODE) {
+    stencil.hasExternalDependency = true;
+  }
+
   MOZ_TRY(xdr->codeUint32(&stencil.functionKey));
 
-  uint32_t scriptSize, gcThingSize, scopeSize;
+  uint32_t scriptSize, gcThingSize, scopeSize, scriptExtraSize;
   uint32_t regExpSize, bigIntSize, objLiteralSize;
   if (mode == XDR_ENCODE) {
     scriptSize = stencil.scriptData.size();
@@ -575,13 +511,15 @@ XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
     scopeSize = stencil.scopeData.size();
     MOZ_ASSERT(scopeSize == stencil.scopeNames.size());
 
+    scriptExtraSize = stencil.scriptExtra.size();
+
     regExpSize = stencil.regExpData.size();
     bigIntSize = stencil.bigIntData.size();
     objLiteralSize = stencil.objLiteralData.size();
   }
-  MOZ_TRY(XDRBaseCompilationStencilSpanSize(xdr, &scriptSize, &gcThingSize,
-                                            &scopeSize, &regExpSize,
-                                            &bigIntSize, &objLiteralSize));
+  MOZ_TRY(XDRCompilationStencilSpanSize(
+      xdr, &scriptSize, &gcThingSize, &scopeSize, &scriptExtraSize, &regExpSize,
+      &bigIntSize, &objLiteralSize));
 
   // All of the vector-indexed data elements referenced by the
   // main script tree must be materialized first.
@@ -611,32 +549,9 @@ XDRResult XDRBaseCompilationStencil(XDRState<mode>* xdr,
   MOZ_TRY(XDRSpanContent(xdr, stencil.gcThingData, gcThingSize));
 
   // Now serialize the vector of ScriptStencils.
-
   MOZ_TRY(XDRSpanContent(xdr, stencil.scriptData, scriptSize));
 
-  return Ok();
-}
-
-template XDRResult XDRBaseCompilationStencil(XDRState<XDR_ENCODE>* xdr,
-                                             BaseCompilationStencil& stencil);
-
-template XDRResult XDRBaseCompilationStencil(XDRState<XDR_DECODE>* xdr,
-                                             BaseCompilationStencil& stencil);
-
-template <XDRMode mode>
-XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
-                                CompilationStencil& stencil) {
-  if (stencil.asmJS) {
-    return xdr->fail(JS::TranscodeResult::Failure_AsmJSNotSupported);
-  }
-
-  if (mode == XDR_DECODE) {
-    stencil.hasExternalDependency = true;
-  }
-
-  MOZ_TRY(XDRBaseCompilationStencil(xdr, stencil));
-
-  MOZ_TRY(XDRSpanContent(xdr, stencil.scriptExtra));
+  MOZ_TRY(XDRSpanContent(xdr, stencil.scriptExtra, scriptExtraSize));
 
   // We don't support coding non-initial CompilationStencil.
   MOZ_ASSERT(stencil.isInitialStencil());
@@ -661,5 +576,31 @@ template XDRResult XDRCompilationStencil(XDRState<XDR_ENCODE>* xdr,
 
 template XDRResult XDRCompilationStencil(XDRState<XDR_DECODE>* xdr,
                                          CompilationStencil& stencil);
+
+template <XDRMode mode>
+XDRResult XDRCheckCompilationStencil(XDRState<mode>* xdr,
+                                     CompilationStencil& stencil) {
+  if (stencil.asmJS) {
+    return xdr->fail(JS::TranscodeResult::Failure_AsmJSNotSupported);
+  }
+
+  return Ok();
+}
+
+template XDRResult XDRCheckCompilationStencil(XDRState<XDR_ENCODE>* xdr,
+                                              CompilationStencil& stencil);
+
+template <XDRMode mode>
+XDRResult XDRCheckCompilationStencil(XDRState<mode>* xdr,
+                                     ExtensibleCompilationStencil& stencil) {
+  if (stencil.asmJS) {
+    return xdr->fail(JS::TranscodeResult::Failure_AsmJSNotSupported);
+  }
+
+  return Ok();
+}
+
+template XDRResult XDRCheckCompilationStencil(
+    XDRState<XDR_ENCODE>* xdr, ExtensibleCompilationStencil& stencil);
 
 }  // namespace js

@@ -18,7 +18,6 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/layers/LayersTypes.h"
@@ -72,6 +71,7 @@ class Shmem;
 #endif  // defined(MOZ_WIDGET_ANDROID)
 namespace dom {
 class BrowserChild;
+enum class CallerType : uint32_t;
 }  // namespace dom
 namespace plugins {
 class PluginWidgetChild;
@@ -1699,6 +1699,11 @@ class nsIWidget : public nsISupports {
   virtual nsresult SynthesizeNativeTouchTap(LayoutDeviceIntPoint aPoint,
                                             bool aLongTap,
                                             nsIObserver* aObserver);
+
+  virtual nsresult SynthesizeNativePenInput(
+      uint32_t aPointerId, TouchPointerState aPointerState,
+      LayoutDeviceIntPoint aPoint, double aPressure, uint32_t aRotation,
+      int32_t aTiltX, int32_t aTiltY, nsIObserver* aObserver) = 0;
 
   /*
    * Cancels all active simulated touch input points and pending long taps.

@@ -86,7 +86,6 @@
 using namespace mozilla;
 using namespace xpc;
 using namespace JS;
-using mozilla::dom::AutoEntryScript;
 using mozilla::dom::PerThreadAtomCache;
 
 /***************************************************************************/
@@ -610,6 +609,26 @@ nsGlobalWindowInner* WindowGlobalOrNull(JSObject* aObj) {
   JSObject* glob = JS::GetNonCCWObjectGlobal(aObj);
 
   return WindowOrNull(glob);
+}
+
+nsGlobalWindowInner* SandboxWindowOrNull(JSObject* aObj, JSContext* aCx) {
+  MOZ_ASSERT(aObj);
+
+  if (!IsSandbox(aObj)) {
+    return nullptr;
+  }
+
+  // Sandbox can't be a Proxy so it must have a static prototype.
+  JSObject* proto = GetStaticPrototype(aObj);
+  if (!proto || !IsSandboxPrototypeProxy(proto)) {
+    return nullptr;
+  }
+
+  proto = js::CheckedUnwrapDynamic(proto, aCx, /* stopAtWindowProxy = */ false);
+  if (!proto) {
+    return nullptr;
+  }
+  return WindowOrNull(proto);
 }
 
 nsGlobalWindowInner* CurrentWindowOrNull(JSContext* cx) {
@@ -1405,10 +1424,6 @@ static void ReportZoneStats(const JS::ZoneStats& zStats,
 
   ZRREPORT_GC_BYTES(pathPrefix + "jit-codes-gc-heap"_ns, zStats.jitCodesGCHeap,
                     "References to executable code pools used by the JITs.");
-
-  ZRREPORT_GC_BYTES(
-      pathPrefix + "object-groups/gc-heap"_ns, zStats.objectGroupsGCHeap,
-      "Classification and type inference information about objects.");
 
   ZRREPORT_GC_BYTES(pathPrefix + "scopes/gc-heap"_ns, zStats.scopesGCHeap,
                     "Scope information for scripts.");
@@ -2353,12 +2368,6 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
       KIND_OTHER, rtStats.zTotals.unusedGCThings.baseShape,
       "Unused base shape cells within non-empty arenas.");
 
-  REPORT_BYTES(
-      nsLiteralCString(
-          "js-main-runtime-gc-heap-committed/unused/gc-things/object-groups"),
-      KIND_OTHER, rtStats.zTotals.unusedGCThings.objectGroup,
-      "Unused object group cells within non-empty arenas.");
-
   REPORT_BYTES(nsLiteralCString(
                    "js-main-runtime-gc-heap-committed/unused/gc-things/scopes"),
                KIND_OTHER, rtStats.zTotals.unusedGCThings.scope,
@@ -2419,12 +2428,6 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
           "js-main-runtime-gc-heap-committed/used/gc-things/base-shapes"),
       KIND_OTHER, rtStats.zTotals.shapeInfo.shapesGCHeapBase,
       "Used base shape cells.");
-
-  MREPORT_BYTES(
-      nsLiteralCString(
-          "js-main-runtime-gc-heap-committed/used/gc-things/object-groups"),
-      KIND_OTHER, rtStats.zTotals.objectGroupsGCHeap,
-      "Used object group cells.");
 
   MREPORT_BYTES(nsLiteralCString(
                     "js-main-runtime-gc-heap-committed/used/gc-things/scopes"),

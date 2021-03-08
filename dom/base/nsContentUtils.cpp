@@ -126,6 +126,7 @@
 #include "mozilla/Variant.h"
 #include "mozilla/ViewportUtils.h"
 #include "mozilla/dom/AncestorIterator.h"
+#include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/AutocompleteInfoBinding.h"
 #include "mozilla/dom/AutoSuppressEventHandlingAndSuspend.h"
 #include "mozilla/dom/BindingDeclarations.h"
@@ -4617,13 +4618,21 @@ void nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent) {
     // that is a know case when we'd normally fire a mutation event, but can't
     // make that safe and so we suppress it at this time. Ideally this should
     // go away eventually.
-    if (!(aChild->IsContent() &&
-          aChild->AsContent()->IsInNativeAnonymousSubtree()) &&
+    if (!aChild->IsInNativeAnonymousSubtree() &&
         !sDOMNodeRemovedSuppressCount) {
       NS_ERROR("Want to fire DOMNodeRemoved event, but it's not safe");
       WarnScriptWasIgnored(aChild->OwnerDoc());
     }
     return;
+  }
+
+  {
+    Document* doc = aParent->OwnerDoc();
+    if (MOZ_UNLIKELY(doc->DevToolsWatchingDOMMutations()) &&
+        aChild->IsInComposedDoc() && !aChild->ChromeOnlyAccess()) {
+      DispatchChromeEvent(doc, aChild, u"devtoolschildremoved"_ns,
+                          CanBubble::eNo, Cancelable::eNo);
+    }
   }
 
   if (HasMutationListeners(aChild, NS_EVENT_BITS_MUTATION_NODEREMOVED,
@@ -10326,20 +10335,9 @@ nsGlobalWindowInner* nsContentUtils::CallerInnerWindow() {
     AutoJSAPI jsapi;
     MOZ_ALWAYS_TRUE(jsapi.Init(scope));
     JSContext* cx = jsapi.cx();
-
-    JS::Rooted<JSObject*> scopeProto(cx);
-    bool ok = JS_GetPrototype(cx, scope, &scopeProto);
-    NS_ENSURE_TRUE(ok, nullptr);
-    if (scopeProto && xpc::IsSandboxPrototypeProxy(scopeProto) &&
-        // Our current Realm on aCx is the sandbox.  Using that for the
-        // CheckedUnwrapDynamic call makes sense: if the sandbox can unwrap the
-        // window, we can use it.  And we do want CheckedUnwrapDynamic, because
-        // the whole point is to unwrap windows.
-        (scopeProto = js::CheckedUnwrapDynamic(
-             scopeProto, cx, /* stopAtWindowProxy = */ false))) {
-      global = xpc::NativeGlobal(scopeProto);
-      NS_ENSURE_TRUE(global, nullptr);
-    }
+    // Our current Realm on aCx is the sandbox.  Using that for unwrapping
+    // makes sense: if the sandbox can unwrap the window, we can use it.
+    return xpc::SandboxWindowOrNull(scope, cx);
   }
 
   // The calling window must be holding a reference, so we can return a weak

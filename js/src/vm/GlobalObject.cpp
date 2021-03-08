@@ -513,7 +513,7 @@ bool GlobalObject::resolveOffThreadConstructor(JSContext* cx,
   }
 
   if (key == JSProto_Object &&
-      !JSObject::setFlags(cx, placeholder, BaseShape::IMMUTABLE_PROTOTYPE)) {
+      !JSObject::setFlag(cx, placeholder, ObjectFlag::ImmutablePrototype)) {
     return false;
   }
 
@@ -646,8 +646,8 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx,
     global->setPrivate(nullptr);
   }
 
-  Rooted<LexicalEnvironmentObject*> lexical(
-      cx, LexicalEnvironmentObject::createGlobal(cx, global));
+  Rooted<GlobalLexicalEnvironmentObject*> lexical(
+      cx, GlobalLexicalEnvironmentObject::create(cx, global));
   if (!lexical) {
     return nullptr;
   }
@@ -712,7 +712,7 @@ GlobalObject* GlobalObject::new_(JSContext* cx, const JSClass* clasp,
   return global;
 }
 
-LexicalEnvironmentObject& GlobalObject::lexicalEnvironment() const {
+GlobalLexicalEnvironmentObject& GlobalObject::lexicalEnvironment() const {
   // The lexical environment is marked when marking the global, so we don't need
   // a read barrier here because we know the global is live.
   return *realm()->unbarrieredLexicalEnvironment();
@@ -1079,10 +1079,11 @@ bool GlobalObject::addIntrinsicValue(JSContext* cx,
 
   uint32_t slot = holder->slotSpan();
   RootedShape last(cx, holder->lastProperty());
-  Rooted<UnownedBaseShape*> base(cx, last->base()->unowned());
+  Rooted<BaseShape*> base(cx, last->base());
 
   RootedId id(cx, NameToId(name));
-  Rooted<StackShape> child(cx, StackShape(base, id, slot, 0));
+  Rooted<StackShape> child(cx,
+                           StackShape(base, last->objectFlags(), id, slot, 0));
   Shape* shape = cx->zone()->propertyTree().getChild(cx, last, child);
   if (!shape) {
     return false;

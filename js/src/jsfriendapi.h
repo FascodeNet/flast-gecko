@@ -18,10 +18,9 @@
 #include "js/ErrorReport.h"
 #include "js/Exception.h"
 #include "js/HeapAPI.h"
-#include "js/Object.h"              // JS::GetClass
-#include "js/shadow/Function.h"     // JS::shadow::Function
-#include "js/shadow/Object.h"       // JS::shadow::Object
-#include "js/shadow/ObjectGroup.h"  // JS::shadow::ObjectGroup
+#include "js/Object.h"           // JS::GetClass
+#include "js/shadow/Function.h"  // JS::shadow::Function
+#include "js/shadow/Object.h"    // JS::shadow::Object
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
@@ -364,7 +363,7 @@ JS_FRIEND_API bool UninlinedIsCrossCompartmentWrapper(const JSObject* obj);
 // getting a wrapper's realm usually doesn't make sense.
 static MOZ_ALWAYS_INLINE JS::Realm* GetNonCCWObjectRealm(JSObject* obj) {
   MOZ_ASSERT(!js::UninlinedIsCrossCompartmentWrapper(obj));
-  return reinterpret_cast<JS::shadow::Object*>(obj)->group->realm;
+  return reinterpret_cast<JS::shadow::Object*>(obj)->shape->base->realm;
 }
 
 JS_FRIEND_API void AssertSameCompartment(JSContext* cx, JSObject* obj);
@@ -594,17 +593,13 @@ static MOZ_ALWAYS_INLINE void SET_JITINFO(JSFunction* func,
 
 // All strings stored in jsids are atomized, but are not necessarily property
 // names.
-static MOZ_ALWAYS_INLINE bool JSID_IS_ATOM(jsid id) {
-  return JSID_IS_STRING(id);
-}
+static MOZ_ALWAYS_INLINE bool JSID_IS_ATOM(jsid id) { return id.isAtom(); }
 
 static MOZ_ALWAYS_INLINE bool JSID_IS_ATOM(jsid id, JSAtom* atom) {
-  return id == JS::PropertyKey::fromNonIntAtom(atom);
+  return id.isAtom(atom);
 }
 
-static MOZ_ALWAYS_INLINE JSAtom* JSID_TO_ATOM(jsid id) {
-  return (JSAtom*)JSID_TO_STRING(id);
-}
+static MOZ_ALWAYS_INLINE JSAtom* JSID_TO_ATOM(jsid id) { return id.toAtom(); }
 
 static_assert(sizeof(jsid) == sizeof(void*));
 

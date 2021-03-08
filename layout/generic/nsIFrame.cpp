@@ -566,7 +566,8 @@ static bool IsFontSizeInflationContainer(nsIFrame* aFrame,
   bool isInline =
       (nsStyleDisplay::IsInlineFlow(aFrame->GetDisplay()) ||
        RubyUtils::IsRubyBox(frameType) ||
-       (aFrame->IsFloating() && frameType == LayoutFrameType::Letter) ||
+       (aStyleDisplay->IsFloatingStyle() &&
+        frameType == LayoutFrameType::Letter) ||
        // Given multiple frames for the same node, only the
        // outer one should be considered a container.
        // (Important, e.g., for nsSelectsAreaFrame.)
@@ -2323,12 +2324,9 @@ already_AddRefed<ComputedStyle> nsIFrame::ComputeSelectionStyle(
 
 template <typename SizeOrMaxSize>
 static inline bool IsIntrinsicKeyword(const SizeOrMaxSize& aSize) {
-  if (!aSize.IsExtremumLength()) {
-    return false;
-  }
-
-  // All of the keywords except for '-moz-available' depend on intrinsic sizes.
-  return aSize.AsExtremumLength() != StyleExtremumLength::MozAvailable;
+  // All keywords other than auto/none/-moz-available depend on intrinsic sizes.
+  return aSize.IsMaxContent() || aSize.IsMinContent() ||
+         aSize.IsMozFitContent();
 }
 
 bool nsIFrame::CanBeDynamicReflowRoot() const {
@@ -6382,7 +6380,7 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
     gfxContext* aRenderingContext, const WritingMode aWM,
     const LogicalSize& aContainingBlockSize,
     const LogicalSize& aContentEdgeToBoxSizing, nscoord aBoxSizingToMarginEdge,
-    StyleExtremumLength aSize, ComputeSizeFlags aFlags) {
+    ExtremumLength aSize, ComputeSizeFlags aFlags) {
   // If 'this' is a container for font size inflation, then shrink
   // wrapping inside of it should not apply font size inflation.
   AutoMaybeDisableFontInflation an(this);
@@ -6390,20 +6388,20 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
   // min-content and max-content size by the aspect-ratio and the block size.
   // https://github.com/w3c/csswg-drafts/issues/5032
   Maybe<nscoord> intrinsicSizeFromAspectRatio =
-      aSize == StyleExtremumLength::MozAvailable
+      aSize == ExtremumLength::MozAvailable
           ? Nothing()
           : ComputeInlineSizeFromAspectRatio(aWM, aContainingBlockSize,
                                              aContentEdgeToBoxSizing, aFlags);
   nscoord result;
   switch (aSize) {
-    case StyleExtremumLength::MaxContent:
+    case ExtremumLength::MaxContent:
       result = intrinsicSizeFromAspectRatio ? *intrinsicSizeFromAspectRatio
                                             : GetPrefISize(aRenderingContext);
       NS_ASSERTION(result >= 0, "inline-size less than zero");
       return {result, intrinsicSizeFromAspectRatio
                           ? AspectRatioUsage::ToComputeISize
                           : AspectRatioUsage::None};
-    case StyleExtremumLength::MinContent:
+    case ExtremumLength::MinContent:
       result = intrinsicSizeFromAspectRatio ? *intrinsicSizeFromAspectRatio
                                             : GetMinISize(aRenderingContext);
       NS_ASSERTION(result >= 0, "inline-size less than zero");
@@ -6417,7 +6415,7 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
       return {result, intrinsicSizeFromAspectRatio
                           ? AspectRatioUsage::ToComputeISize
                           : AspectRatioUsage::None};
-    case StyleExtremumLength::MozFitContent: {
+    case ExtremumLength::MozFitContent: {
       nscoord pref = NS_UNCONSTRAINEDSIZE;
       nscoord min = 0;
       if (intrinsicSizeFromAspectRatio) {
@@ -6439,7 +6437,7 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
       NS_ASSERTION(result >= 0, "inline-size less than zero");
       return {result};
     }
-    case StyleExtremumLength::MozAvailable:
+    case ExtremumLength::MozAvailable:
       return {aContainingBlockSize.ISize(aWM) -
               (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing.ISize(aWM))};
   }
@@ -7405,6 +7403,12 @@ nsRect nsIFrame::GetNormalRect() const {
   return GetRect();
 }
 
+nsRect nsIFrame::GetBoundingClientRect() {
+  return nsLayoutUtils::GetAllInFlowRectsUnion(
+      this, nsLayoutUtils::GetContainingBlockForClientRect(this),
+      nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
+}
+
 nsPoint nsIFrame::GetPositionIgnoringScrolling() const {
   return GetParent() ? GetParent()->GetPositionOfChildIgnoringScrolling(this)
                      : GetPosition();
@@ -7628,8 +7632,7 @@ nsIFrame* nsIFrame::GetContainingBlock(
   // still be in-flow.  So we have to check to make sure that the frame
   // is really out-of-flow too.
   nsIFrame* f;
-  if (IsAbsolutelyPositioned(aStyleDisplay) &&
-      HasAnyStateBits(NS_FRAME_OUT_OF_FLOW)) {
+  if (IsAbsolutelyPositioned(aStyleDisplay)) {
     f = GetParent();  // the parent is always the containing block
   } else {
     f = GetNearestBlockContainer(GetParent());
@@ -9301,7 +9304,7 @@ static nsRect UnionBorderBoxes(
         u = childRect;
         aOutValid = true;
       } else {
-        u.UnionRectEdges(u, childRect);
+        u = u.UnionEdges(childRect);
       }
     }
   }
@@ -9402,7 +9405,7 @@ static void ComputeAndIncludeOutlineArea(nsIFrame* aFrame,
   }
 
   nsRect& vo = aOverflowAreas.InkOverflow();
-  vo.UnionRectEdges(vo, innerRect.Union(outerRect));
+  vo = vo.UnionEdges(innerRect.Union(outerRect));
 }
 
 bool nsIFrame::FinishAndStoreOverflow(OverflowAreas& aOverflowAreas,
@@ -9524,7 +9527,7 @@ bool nsIFrame::FinishAndStoreOverflow(OverflowAreas& aOverflowAreas,
       !HasAnyStateBits(NS_FRAME_SVG_LAYOUT)) {
     for (const auto otype : AllOverflowTypes()) {
       nsRect& o = aOverflowAreas.Overflow(otype);
-      o.UnionRectEdges(o, bounds);
+      o = o.UnionEdges(bounds);
     }
   }
 
@@ -9537,7 +9540,7 @@ bool nsIFrame::FinishAndStoreOverflow(OverflowAreas& aOverflowAreas,
             presContext->DeviceContext(), this, disp->EffectiveAppearance(),
             &r)) {
       nsRect& vo = aOverflowAreas.InkOverflow();
-      vo.UnionRectEdges(vo, r);
+      vo = vo.UnionEdges(r);
     }
   }
 

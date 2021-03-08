@@ -13,6 +13,7 @@
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
+#include "jit/WarpBuilderShared.h"
 #include "vm/ArgumentsObject.h"
 
 #include "vm/JSObject-inl.h"
@@ -156,7 +157,7 @@ static inline bool IsOptimizableObjectInstruction(MInstruction* ins) {
 static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
   MOZ_ASSERT(IsOptimizableObjectInstruction(ins) || ins->isGuardShape() ||
-             ins->isGuardObjectGroup() || ins->isFunctionEnvironment());
+             ins->isFunctionEnvironment());
 
   JitSpewDef(JitSpew_Escape, "Check object\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
@@ -222,20 +223,6 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
         MOZ_ASSERT(!ins->isGuardShape());
         if (obj->shape() != guard->shape()) {
           JitSpewDef(JitSpew_Escape, "has a non-matching guard shape\n", guard);
-          return true;
-        }
-        if (IsObjectEscaped(def->toInstruction(), obj)) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
-          return true;
-        }
-        break;
-      }
-
-      case MDefinition::Opcode::GuardObjectGroup: {
-        MGuardObjectGroup* guard = def->toGuardObjectGroup();
-        MOZ_ASSERT(!ins->isGuardObjectGroup());
-        if (obj->group() != guard->group()) {
-          JitSpewDef(JitSpew_Escape, "has a non-matching guard group\n", guard);
           return true;
         }
         if (IsObjectEscaped(def->toInstruction(), obj)) {
@@ -314,7 +301,6 @@ class ObjectMemoryView : public MDefinitionVisitorDefaultNoop {
   void visitStoreDynamicSlot(MStoreDynamicSlot* ins);
   void visitLoadDynamicSlot(MLoadDynamicSlot* ins);
   void visitGuardShape(MGuardShape* ins);
-  void visitGuardObjectGroup(MGuardObjectGroup* ins);
   void visitFunctionEnvironment(MFunctionEnvironment* ins);
   void visitLambda(MLambda* ins);
   void visitLambdaArrow(MLambdaArrow* ins);
@@ -632,10 +618,6 @@ void ObjectMemoryView::visitObjectGuard(MInstruction* ins,
 }
 
 void ObjectMemoryView::visitGuardShape(MGuardShape* ins) {
-  visitObjectGuard(ins, ins->object());
-}
-
-void ObjectMemoryView::visitGuardObjectGroup(MGuardObjectGroup* ins) {
   visitObjectGuard(ins, ins->object());
 }
 
@@ -1210,11 +1192,42 @@ void ArrayMemoryView::visitArrayLength(MArrayLength* ins) {
 }
 
 static inline bool IsOptimizableArgumentsInstruction(MInstruction* ins) {
-  return ins->isCreateArgumentsObject();
+  return ins->isCreateArgumentsObject() ||
+         ins->isCreateInlinedArgumentsObject();
 }
 
+class ArgumentsReplacer : public MDefinitionVisitorDefaultNoop {
+ private:
+  MIRGenerator* mir_;
+  MIRGraph& graph_;
+  MInstruction* args_;
+
+  TempAllocator& alloc() { return graph_.alloc(); }
+
+  bool isInlinedArguments() const {
+    return args_->isCreateInlinedArgumentsObject();
+  }
+
+  void visitGuardToClass(MGuardToClass* ins);
+  void visitGuardArgumentsObjectFlags(MGuardArgumentsObjectFlags* ins);
+  void visitGetArgumentsObjectArg(MGetArgumentsObjectArg* ins);
+  void visitLoadArgumentsObjectArg(MLoadArgumentsObjectArg* ins);
+  void visitArgumentsObjectLength(MArgumentsObjectLength* ins);
+  void visitApplyArgsObj(MApplyArgsObj* ins);
+
+ public:
+  ArgumentsReplacer(MIRGenerator* mir, MIRGraph& graph, MInstruction* args)
+      : mir_(mir), graph_(graph), args_(args) {
+    MOZ_ASSERT(IsOptimizableArgumentsInstruction(args_));
+  }
+
+  bool escapes(MInstruction* ins);
+  bool run();
+  void assertSuccess();
+};
+
 // Returns false if the arguments object does not escape.
-static bool IsArgumentsObjectEscaped(MInstruction* ins) {
+bool ArgumentsReplacer::escapes(MInstruction* ins) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
 
   JitSpewDef(JitSpew_Escape, "Check arguments object\n", ins);
@@ -1243,7 +1256,7 @@ static bool IsArgumentsObjectEscaped(MInstruction* ins) {
           JitSpewDef(JitSpew_Escape, "has a non-matching class guard\n", guard);
           return true;
         }
-        if (IsArgumentsObjectEscaped(guard)) {
+        if (escapes(guard)) {
           JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
           return true;
         }
@@ -1251,7 +1264,7 @@ static bool IsArgumentsObjectEscaped(MInstruction* ins) {
       }
 
       case MDefinition::Opcode::GuardArgumentsObjectFlags: {
-        if (IsArgumentsObjectEscaped(def->toInstruction())) {
+        if (escapes(def->toInstruction())) {
           JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
           return true;
         }
@@ -1261,8 +1274,8 @@ static bool IsArgumentsObjectEscaped(MInstruction* ins) {
       // This is a replaceable consumer.
       case MDefinition::Opcode::ArgumentsObjectLength:
       case MDefinition::Opcode::GetArgumentsObjectArg:
-      case MDefinition::Opcode::LoadArgumentsObjectArg:
       case MDefinition::Opcode::ApplyArgsObj:
+      case MDefinition::Opcode::LoadArgumentsObjectArg:
         break;
 
       // This instruction is a no-op used to test that scalar replacement
@@ -1279,31 +1292,6 @@ static bool IsArgumentsObjectEscaped(MInstruction* ins) {
   JitSpew(JitSpew_Escape, "ArgumentsObject is not escaped");
   return false;
 }
-
-class ArgumentsReplacer : public MDefinitionVisitorDefaultNoop {
- private:
-  MIRGenerator* mir_;
-  MIRGraph& graph_;
-  MInstruction* args_;
-
-  TempAllocator& alloc() { return graph_.alloc(); }
-
-  void visitGuardToClass(MGuardToClass* ins);
-  void visitGuardArgumentsObjectFlags(MGuardArgumentsObjectFlags* ins);
-  void visitGetArgumentsObjectArg(MGetArgumentsObjectArg* ins);
-  void visitLoadArgumentsObjectArg(MLoadArgumentsObjectArg* ins);
-  void visitArgumentsObjectLength(MArgumentsObjectLength* ins);
-  void visitApplyArgsObj(MApplyArgsObj* ins);
-
- public:
-  ArgumentsReplacer(MIRGenerator* mir, MIRGraph& graph, MInstruction* args)
-      : mir_(mir), graph_(graph), args_(args) {
-    MOZ_ASSERT(IsOptimizableArgumentsInstruction(args_));
-  }
-
-  bool run();
-  void assertSuccess();
-};
 
 // Replacing the arguments object is simpler than replacing an object
 // or array, because the arguments object does not change state.
@@ -1405,15 +1393,32 @@ void ArgumentsReplacer::visitGetArgumentsObjectArg(
     return;
   }
 
-  // We don't support setting arguments in IsArgumentsObjectEscaped,
-  // so we can load the argument from the frame without worrying
+  // We don't support setting arguments in ArgumentsReplacer::escapes,
+  // so we can load the initial value of the argument without worrying
   // about it being stale.
-  auto* index = MConstant::New(alloc(), Int32Value(ins->argno()));
-  ins->block()->insertBefore(ins, index);
+  MDefinition* getArg;
+  if (isInlinedArguments()) {
+    // Inlined frames have direct access to the actual arguments.
+    auto* actualArgs = args_->toCreateInlinedArgumentsObject();
+    if (ins->argno() < actualArgs->numActuals()) {
+      getArg = actualArgs->getArg(ins->argno())->toInstruction();
+    } else {
+      // Omitted arguments are not mapped to the arguments object, and
+      // will always be undefined.
+      auto* undef = MConstant::New(alloc(), UndefinedValue());
+      ins->block()->insertBefore(ins, undef);
+      getArg = undef;
+    }
+  } else {
+    // Load the argument from the frame.
+    auto* index = MConstant::New(alloc(), Int32Value(ins->argno()));
+    ins->block()->insertBefore(ins, index);
 
-  auto* loadArg = MGetFrameArgument::New(alloc(), index);
-  ins->block()->insertBefore(ins, loadArg);
-  ins->replaceAllUsesWith(loadArg);
+    auto* loadArg = MGetFrameArgument::New(alloc(), index);
+    ins->block()->insertBefore(ins, loadArg);
+    getArg = loadArg;
+  }
+  ins->replaceAllUsesWith(getArg);
 
   // Remove original instruction.
   ins->block()->discard(ins);
@@ -1428,22 +1433,39 @@ void ArgumentsReplacer::visitLoadArgumentsObjectArg(
 
   MDefinition* index = ins->index();
 
-  // Insert bounds check.
-  auto* length = MArgumentsLength::New(alloc());
-  ins->block()->insertBefore(ins, length);
+  MInstruction* loadArg;
+  if (isInlinedArguments()) {
+    auto* actualArgs = args_->toCreateInlinedArgumentsObject();
 
-  MInstruction* check = MBoundsCheck::New(alloc(), index, length);
-  ins->block()->insertBefore(ins, check);
+    // TODO: optimize for constant indices.
 
-  // TODO: Set special bailout kind?
-  check->setBailoutKind(ins->bailoutKind());
+    // Insert bounds check.
+    auto* length =
+        MConstant::New(alloc(), Int32Value(actualArgs->numActuals()));
+    ins->block()->insertBefore(ins, length);
 
-  if (JitOptions.spectreIndexMasking) {
-    check = MSpectreMaskIndex::New(alloc(), check, length);
+    MInstruction* check = MBoundsCheck::New(alloc(), index, length);
+    check->setBailoutKind(ins->bailoutKind());
     ins->block()->insertBefore(ins, check);
-  }
 
-  auto* loadArg = MGetFrameArgument::New(alloc(), check);
+    loadArg = MGetInlinedArgument::New(alloc(), check, actualArgs);
+  } else {
+    // Insert bounds check.
+    auto* length = MArgumentsLength::New(alloc());
+    ins->block()->insertBefore(ins, length);
+
+    MInstruction* check = MBoundsCheck::New(alloc(), index, length);
+    ins->block()->insertBefore(ins, check);
+
+    check->setBailoutKind(ins->bailoutKind());
+
+    if (JitOptions.spectreIndexMasking) {
+      check = MSpectreMaskIndex::New(alloc(), check, length);
+      ins->block()->insertBefore(ins, check);
+    }
+
+    loadArg = MGetFrameArgument::New(alloc(), check);
+  }
   ins->block()->insertBefore(ins, loadArg);
   ins->replaceAllUsesWith(loadArg);
 
@@ -1458,7 +1480,13 @@ void ArgumentsReplacer::visitArgumentsObjectLength(
     return;
   }
 
-  auto* length = MArgumentsLength::New(alloc());
+  MInstruction* length;
+  if (isInlinedArguments()) {
+    uint32_t argc = args_->toCreateInlinedArgumentsObject()->numActuals();
+    length = MConstant::New(alloc(), Int32Value(argc));
+  } else {
+    length = MArgumentsLength::New(alloc());
+  }
   ins->block()->insertBefore(ins, length);
   ins->replaceAllUsesWith(length);
 
@@ -1472,23 +1500,52 @@ void ArgumentsReplacer::visitApplyArgsObj(MApplyArgsObj* ins) {
     return;
   }
 
-  auto* numArgs = MArgumentsLength::New(alloc());
-  ins->block()->insertBefore(ins, numArgs);
+  MInstruction* newIns;
+  if (isInlinedArguments()) {
+    auto* actualArgs = args_->toCreateInlinedArgumentsObject();
+    CallInfo callInfo(alloc(), /*constructing=*/false,
+                      ins->ignoresReturnValue());
 
-  // TODO: Should we rename MApplyArgs?
-  auto* apply = MApplyArgs::New(alloc(), ins->getSingleTarget(),
-                                ins->getFunction(), numArgs, ins->getThis());
-  if (!ins->maybeCrossRealm()) {
-    apply->setNotCrossRealm();
+    callInfo.initForApplyInlinedArgs(ins->getFunction(), ins->getThis(),
+                                     actualArgs->numActuals());
+    for (uint32_t i = 0; i < actualArgs->numActuals(); i++) {
+      callInfo.initArg(i, actualArgs->getArg(i));
+    }
+
+    auto addUndefined = [this, &ins]() -> MConstant* {
+      MConstant* undef = MConstant::New(alloc(), UndefinedValue());
+      ins->block()->insertBefore(ins, undef);
+      return undef;
+    };
+
+    bool needsThisCheck = false;
+    bool isDOMCall = false;
+    auto* call = MakeCall(alloc(), addUndefined, callInfo, needsThisCheck,
+                          ins->getSingleTarget(), isDOMCall);
+    if (!ins->maybeCrossRealm()) {
+      call->setNotCrossRealm();
+    }
+    newIns = call;
+  } else {
+    auto* numArgs = MArgumentsLength::New(alloc());
+    ins->block()->insertBefore(ins, numArgs);
+
+    // TODO: Should we rename MApplyArgs?
+    auto* apply = MApplyArgs::New(alloc(), ins->getSingleTarget(),
+                                  ins->getFunction(), numArgs, ins->getThis());
+    if (!ins->maybeCrossRealm()) {
+      apply->setNotCrossRealm();
+    }
+    if (ins->ignoresReturnValue()) {
+      apply->setIgnoresReturnValue();
+    }
+    newIns = apply;
   }
-  if (ins->ignoresReturnValue()) {
-    apply->setIgnoresReturnValue();
-  }
 
-  ins->block()->insertBefore(ins, apply);
-  ins->replaceAllUsesWith(apply);
+  ins->block()->insertBefore(ins, newIns);
+  ins->replaceAllUsesWith(newIns);
 
-  apply->stealResumePoint(ins);
+  newIns->stealResumePoint(ins);
   ins->block()->discard(ins);
 }
 
@@ -1529,10 +1586,12 @@ bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
         continue;
       }
 
-      if (shouldReplaceArguments && IsOptimizableArgumentsInstruction(*ins) &&
-          !IsArgumentsObjectEscaped(*ins)) {
-        ArgumentsReplacer replaceArguments(mir, graph, *ins);
-        if (!replaceArguments.run()) {
+      if (shouldReplaceArguments && IsOptimizableArgumentsInstruction(*ins)) {
+        ArgumentsReplacer replacer(mir, graph, *ins);
+        if (replacer.escapes(*ins)) {
+          continue;
+        }
+        if (!replacer.run()) {
           return false;
         }
         continue;

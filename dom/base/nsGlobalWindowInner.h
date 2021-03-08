@@ -18,7 +18,6 @@
 #include "nsCOMPtr.h"
 #include "nsWeakReference.h"
 #include "nsDataHashtable.h"
-#include "nsJSThingHashtable.h"
 #include "nsCycleCollectionParticipant.h"
 
 // Interfaces Needed
@@ -50,10 +49,8 @@
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/WindowProxyHolder.h"
-#ifdef MOZ_GLEAN
-#  include "mozilla/glean/bindings/Glean.h"
-#  include "mozilla/glean/bindings/GleanPings.h"
-#endif
+#include "mozilla/glean/bindings/Glean.h"
+#include "mozilla/glean/bindings/GleanPings.h"
 #include "Units.h"
 #include "nsComponentManagerUtils.h"
 #include "nsSize.h"
@@ -311,19 +308,19 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   nsresult PostHandleEvent(mozilla::EventChainPostVisitor& aVisitor) override;
 
-  void Suspend();
-  void Resume();
+  void Suspend(bool aIncludeSubWindows = true);
+  void Resume(bool aIncludeSubWindows = true);
   virtual bool IsSuspended() const override;
 
   // Calling Freeze() on a window will automatically Suspend() it.  In
-  // addition, the window and its children are further treated as no longer
-  // suitable for interaction with the user.  For example, it may be marked
-  // non-visible, cannot be focused, etc.  All worker threads are also frozen
-  // bringing them to a complete stop.  A window can have Freeze() called
-  // multiple times and will only thaw after a matching number of Thaw()
-  // calls.
-  void Freeze();
-  void Thaw();
+  // addition, the window and its children (if aIncludeSubWindows is true) are
+  // further treated as no longer suitable for interaction with the user.  For
+  // example, it may be marked non-visible, cannot be focused, etc.  All worker
+  // threads are also frozen bringing them to a complete stop.  A window can
+  // have Freeze() called multiple times and will only thaw after a matching
+  // number of Thaw() calls.
+  void Freeze(bool aIncludeSubWindows = true);
+  void Thaw(bool aIncludeSubWindows = true);
   virtual bool IsFrozen() const override;
   void SyncStateFromParentWindow();
 
@@ -838,10 +835,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   bool HasActiveSpeechSynthesis();
 #endif
 
-#ifdef MOZ_GLEAN
   mozilla::glean::Glean* Glean();
   mozilla::glean::GleanPings* GleanPings();
-#endif
+
   already_AddRefed<nsICSSDeclaration> GetDefaultComputedStyle(
       mozilla::dom::Element& aElt, const nsAString& aPseudoElt,
       mozilla::ErrorResult& aError);
@@ -1065,8 +1061,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
     return (aWindow->*aMethod)(aArgs...);
   }
 
-  void FreezeInternal();
-  void ThawInternal();
+  void FreezeInternal(bool aIncludeSubWindows);
+  void ThawInternal(bool aIncludeSubWindows);
 
   mozilla::CallState ShouldReportForServiceWorkerScopeInternal(
       const nsACString& aScope, bool* aResultOut);
@@ -1444,10 +1440,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   RefPtr<mozilla::dom::SpeechSynthesis> mSpeechSynthesis;
 #endif
 
-#ifdef MOZ_GLEAN
   RefPtr<mozilla::glean::Glean> mGlean;
   RefPtr<mozilla::glean::GleanPings> mGleanPings;
-#endif
 
   // This is the CC generation the last time we called CanSkip.
   uint32_t mCanSkipCCGeneration;

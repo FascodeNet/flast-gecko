@@ -255,8 +255,11 @@ async function doPickTest({ pickHelpButton, useKeyboard }) {
     }
 
     // Pick the result.  The appropriate URL should load.
+    let loadPromise = pickHelpButton
+      ? BrowserTestUtils.waitForNewTab(gBrowser)
+      : BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
     await Promise.all([
-      BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser),
+      loadPromise,
       UrlbarTestUtils.promisePopupClose(window, () => {
         if (useKeyboard) {
           EventUtils.synthesizeKey("KEY_Enter");
@@ -271,6 +274,9 @@ async function doPickTest({ pickHelpButton, useKeyboard }) {
       "Expected URL should have loaded"
     );
 
+    if (pickHelpButton) {
+      BrowserTestUtils.removeTab(gBrowser.selectedTab);
+    }
     UrlbarProvidersManager.unregisterProvider(provider);
   });
 }
@@ -326,9 +332,21 @@ async function assertIsTestResult(index) {
     RESULT_URL,
     "The result's URL should be the expected URL"
   );
-  Assert.ok(
-    result.element.row._elements.get("helpButton"),
-    "The result should have a help button"
+
+  let { row } = result.element;
+  let helpButton = row._elements.get("helpButton");
+  Assert.ok(helpButton, "The result should have a help button");
+  Assert.ok(helpButton.id, "Help button has an ID");
+  Assert.ok(row._content.id, "Row-inner has an ID");
+  Assert.equal(
+    row.getAttribute("role"),
+    "presentation",
+    "Row should have role=presentation"
+  );
+  Assert.equal(
+    row._content.getAttribute("role"),
+    "option",
+    "Row-inner should have role=option"
   );
 }
 

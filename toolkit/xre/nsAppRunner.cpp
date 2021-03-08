@@ -35,6 +35,7 @@
 #include "mozilla/Bootstrap.h"
 #if defined(MOZ_UPDATER) && !defined(MOZ_WIDGET_ANDROID)
 #  include "nsUpdateDriver.h"
+#  include "nsUpdateSyncManager.h"
 #endif
 #include "ProfileReset.h"
 
@@ -241,11 +242,6 @@
 
 #include "mozilla/mozalloc_oom.h"
 #include "SafeMode.h"
-
-#ifdef MOZ_THUNDERBIRD
-#  include "nsIPK11TokenDB.h"
-#  include "nsIPK11Token.h"
-#endif
 
 #ifdef MOZ_BACKGROUNDTASKS
 #  include "mozilla/BackgroundTasks.h"
@@ -752,6 +748,11 @@ bool SessionHistoryInParent() {
   return FissionAutostart() ||
          StaticPrefs::
              fission_sessionHistoryInParent_AtStartup_DoNotUseDirectly();
+}
+
+bool BFCacheInParent() {
+  return SessionHistoryInParent() &&
+         StaticPrefs::fission_bfcacheInParent_DoNotUseDirectly();
 }
 
 }  // namespace mozilla
@@ -2289,6 +2290,14 @@ class ReturnAbortOnError {
     if (NS_SUCCEEDED(aRv) || aRv == NS_ERROR_LAUNCHED_CHILD_PROCESS) {
       return aRv;
     }
+#ifdef MOZ_BACKGROUNDTASKS
+    // A background task that fails to lock its profile will return
+    // NS_ERROR_UNEXPECTED and this will allow the task to exit with a
+    // non-zero exit code.
+    if (aRv == NS_ERROR_UNEXPECTED && BackgroundTasks::IsBackgroundTaskMode()) {
+      return aRv;
+    }
+#endif
     return NS_ERROR_ABORT;
   }
 
@@ -2399,6 +2408,14 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
     nsAutoString killTitle;
     rv = sb->FormatStringFromName("restartTitle", params, killTitle);
     NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+
+#ifdef MOZ_BACKGROUNDTASKS
+    if (BackgroundTasks::IsBackgroundTaskMode()) {
+      // This error is handled specially to exit with a non-zero exit code.
+      printf_stderr("%s\n", NS_LossyConvertUTF16toASCII(killMessage).get());
+      return NS_ERROR_UNEXPECTED;
+    }
+#endif
 
     if (gfxPlatform::IsHeadless()) {
       // TODO: make a way to turn off all dialogs when headless.
@@ -4157,7 +4174,12 @@ static void PR_CALLBACK ReadAheadDlls_ThreadStart(void* arg) {
 #endif
 
 #if defined(MOZ_WAYLAND)
-bool IsWaylandDisabled() {
+bool IsWaylandEnabled() {
+  const char* waylandDisplay = PR_GetEnv("WAYLAND_DISPLAY");
+  if (!waylandDisplay) {
+    return false;
+  }
+
   // MOZ_ENABLE_WAYLAND is our primary Wayland on/off switch.
   const char* waylandPref = PR_GetEnv("MOZ_ENABLE_WAYLAND");
   bool enableWayland = (waylandPref && *waylandPref);
@@ -4173,7 +4195,60 @@ bool IsWaylandDisabled() {
   if (enableWayland && gtk_check_version(3, 22, 0) != nullptr) {
     NS_WARNING("Running Wayland backen on Gtk3 < 3.22. Expect issues/glitches");
   }
-  return !enableWayland;
+  return enableWayland;
+}
+#endif
+
+#if defined(MOZ_UPDATER) && !defined(MOZ_WIDGET_ANDROID)
+bool ShouldProcessUpdates(nsXREDirProvider& aDirProvider) {
+  // Do not process updates if we're launching devtools, as evidenced by
+  // "--chrome ..." with the browser toolbox chrome document URL.
+
+  // Keep this synchronized with the value of the same name in
+  // devtools/client/framework/browser-toolbox/Launcher.jsm.  Or, for bonus
+  // points, lift this value to nsIXulRuntime or similar, so that it can be
+  // accessed in both locations.  (The prefs service isn't available at this
+  // point so the simplest manner of sharing the value is not available to us.)
+  const char* BROWSER_TOOLBOX_WINDOW_URL =
+      "chrome://devtools/content/framework/browser-toolbox/window.html";
+
+  const char* chromeParam = nullptr;
+  if (ARG_FOUND == CheckArg("chrome", &chromeParam, CheckArgFlag::None)) {
+    if (!chromeParam || !strcmp(BROWSER_TOOLBOX_WINDOW_URL, chromeParam)) {
+      NS_WARNING("!ShouldProcessUpdates(): launching devtools");
+      return false;
+    }
+  }
+
+#  ifdef MOZ_BACKGROUNDTASKS
+  // Do not process updates if we're running a background task mode and another
+  // instance is already running.  This avoids periodic maintenance updating
+  // underneath a browsing session.
+  if (BackgroundTasks::IsBackgroundTaskMode()) {
+    // At this point we have a dir provider but no XPCOM directory service.  We
+    // launch the update sync manager using that information so that it doesn't
+    // need to ask for (and fail to find) the directory service.
+    nsCOMPtr<nsIFile> anAppFile;
+    bool persistent;
+    nsresult rv = aDirProvider.GetFile(XRE_EXECUTABLE_FILE, &persistent,
+                                       getter_AddRefs(anAppFile));
+    if (NS_FAILED(rv) || !anAppFile) {
+      // Strange, but not a reason to skip processing updates.
+      return true;
+    }
+
+    auto updateSyncManager = new nsUpdateSyncManager(anAppFile);
+
+    bool otherInstance = false;
+    updateSyncManager->IsOtherInstanceRunning(&otherInstance);
+    if (otherInstance) {
+      NS_WARNING("!ShouldProcessUpdates(): other instance is running");
+      return false;
+    }
+  }
+#  endif
+
+  return true;
 }
 #endif
 
@@ -4362,13 +4437,13 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
       saveDisplayArg = true;
     }
 
-    bool disableWayland = true;
+    bool waylandEnabled = false;
 #  if defined(MOZ_WAYLAND)
-    disableWayland = IsWaylandDisabled();
+    waylandEnabled = IsWaylandEnabled();
 #  endif
     // On Wayland disabled builds read X11 DISPLAY env exclusively
     // and don't care about different displays.
-    if (disableWayland && !display_name) {
+    if (!waylandEnabled && !display_name) {
       display_name = PR_GetEnv("DISPLAY");
       if (!display_name) {
         PR_fprintf(PR_STDERR,
@@ -4466,14 +4541,17 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
 
 #ifdef MOZ_BACKGROUNDTASKS
   if (BackgroundTasks::IsBackgroundTaskMode()) {
-    nsCOMPtr<nsIFile> file;
-    nsresult rv = BackgroundTasks::GetOrCreateTemporaryProfileDirectory(
-        getter_AddRefs(file));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return 1;
-    }
+    if (!EnvHasValue("XRE_PROFILE_PATH")) {
+      // Allow tests to specify profile path via the environment.
+      nsCOMPtr<nsIFile> file;
+      nsresult rv = BackgroundTasks::GetOrCreateTemporaryProfileDirectory(
+          getter_AddRefs(file));
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return 1;
+      }
 
-    SaveFileToEnv("XRE_PROFILE_PATH", file);
+      SaveFileToEnv("XRE_PROFILE_PATH", file);
+    }
   }
 #endif
 
@@ -4532,56 +4610,66 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
 #endif
 
 #if defined(MOZ_UPDATER) && !defined(MOZ_WIDGET_ANDROID)
-  // Check for and process any available updates
-  nsCOMPtr<nsIFile> updRoot;
-  bool persistent;
-  rv = mDirProvider.GetFile(XRE_UPDATE_ROOT_DIR, &persistent,
-                            getter_AddRefs(updRoot));
-  // XRE_UPDATE_ROOT_DIR may fail. Fallback to appDir if failed
-  if (NS_FAILED(rv)) {
-    updRoot = mDirProvider.GetAppDir();
-  }
-
-  // If the MOZ_TEST_PROCESS_UPDATES environment variable already exists, then
-  // we are being called from the callback application.
-  if (EnvHasValue("MOZ_TEST_PROCESS_UPDATES")) {
-    // If the caller has asked us to log our arguments, do so.  This is used
-    // to make sure that the maintenance service successfully launches the
-    // callback application.
-    const char* logFile = nullptr;
-    if (ARG_FOUND == CheckArg("dump-args", &logFile)) {
-      FILE* logFP = fopen(logFile, "wb");
-      if (logFP) {
-        for (int i = 1; i < gRestartArgc; ++i) {
-          fprintf(logFP, "%s\n", gRestartArgv[i]);
-        }
-        fclose(logFP);
-      }
+  if (ShouldProcessUpdates(mDirProvider)) {
+    // Check for and process any available updates
+    nsCOMPtr<nsIFile> updRoot;
+    bool persistent;
+    rv = mDirProvider.GetFile(XRE_UPDATE_ROOT_DIR, &persistent,
+                              getter_AddRefs(updRoot));
+    // XRE_UPDATE_ROOT_DIR may fail. Fallback to appDir if failed
+    if (NS_FAILED(rv)) {
+      updRoot = mDirProvider.GetAppDir();
     }
-    *aExitFlag = true;
-    return 0;
-  }
 
-  // Support for processing an update and exiting. The MOZ_TEST_PROCESS_UPDATES
-  // environment variable will be part of the updater's environment and the
-  // application that is relaunched by the updater. When the application is
-  // relaunched by the updater it will be removed below and the application
-  // will exit.
-  if (CheckArg("test-process-updates")) {
-    SaveToEnv("MOZ_TEST_PROCESS_UPDATES=1");
-  }
-  nsCOMPtr<nsIFile> exeFile, exeDir;
-  rv = mDirProvider.GetFile(XRE_EXECUTABLE_FILE, &persistent,
-                            getter_AddRefs(exeFile));
-  NS_ENSURE_SUCCESS(rv, 1);
-  rv = exeFile->GetParent(getter_AddRefs(exeDir));
-  NS_ENSURE_SUCCESS(rv, 1);
-  ProcessUpdates(mDirProvider.GetGREDir(), exeDir, updRoot, gRestartArgc,
-                 gRestartArgv, mAppData->version);
-  if (EnvHasValue("MOZ_TEST_PROCESS_UPDATES")) {
-    SaveToEnv("MOZ_TEST_PROCESS_UPDATES=");
-    *aExitFlag = true;
-    return 0;
+    // If the MOZ_TEST_PROCESS_UPDATES environment variable already exists, then
+    // we are being called from the callback application.
+    if (EnvHasValue("MOZ_TEST_PROCESS_UPDATES")) {
+      // If the caller has asked us to log our arguments, do so.  This is used
+      // to make sure that the maintenance service successfully launches the
+      // callback application.
+      const char* logFile = nullptr;
+      if (ARG_FOUND == CheckArg("dump-args", &logFile)) {
+        FILE* logFP = fopen(logFile, "wb");
+        if (logFP) {
+          for (int i = 1; i < gRestartArgc; ++i) {
+            fprintf(logFP, "%s\n", gRestartArgv[i]);
+          }
+          fclose(logFP);
+        }
+      }
+      *aExitFlag = true;
+      return 0;
+    }
+
+    // Support for processing an update and exiting. The
+    // MOZ_TEST_PROCESS_UPDATES environment variable will be part of the
+    // updater's environment and the application that is relaunched by the
+    // updater. When the application is relaunched by the updater it will be
+    // removed below and the application will exit.
+    if (CheckArg("test-process-updates")) {
+      SaveToEnv("MOZ_TEST_PROCESS_UPDATES=1");
+    }
+    nsCOMPtr<nsIFile> exeFile, exeDir;
+    rv = mDirProvider.GetFile(XRE_EXECUTABLE_FILE, &persistent,
+                              getter_AddRefs(exeFile));
+    NS_ENSURE_SUCCESS(rv, 1);
+    rv = exeFile->GetParent(getter_AddRefs(exeDir));
+    NS_ENSURE_SUCCESS(rv, 1);
+    ProcessUpdates(mDirProvider.GetGREDir(), exeDir, updRoot, gRestartArgc,
+                   gRestartArgv, mAppData->version);
+    if (EnvHasValue("MOZ_TEST_PROCESS_UPDATES")) {
+      SaveToEnv("MOZ_TEST_PROCESS_UPDATES=");
+      *aExitFlag = true;
+      return 0;
+    }
+  } else {
+    if (CheckArg("test-process-updates") ||
+        EnvHasValue("MOZ_TEST_PROCESS_UPDATES")) {
+      // Support for testing *not* processing an update.  The launched process
+      // can witness this environment variable and conclude that its runtime
+      // environment resulted in not processing updates.
+      SaveToEnv("MOZ_TEST_PROCESS_UPDATES=!ShouldProcessUpdates()");
+    }
   }
 #endif
 
@@ -5011,22 +5099,6 @@ nsresult XREMain::XRE_mainRun() {
     NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
     mDirProvider.DoStartup();
-
-#ifdef MOZ_THUNDERBIRD
-    if (Preferences::GetBool("security.prompt_for_master_password_on_startup",
-                             false)) {
-      // Prompt for the master password prior to opening application windows,
-      // to avoid the race that triggers multiple prompts (see bug 177175).
-      // We use this code until we have a better solution, possibly as
-      // described in bug 177175 comment 384.
-      nsCOMPtr<nsIPK11TokenDB> db =
-          do_GetService("@mozilla.org/security/pk11tokendb;1");
-      nsCOMPtr<nsIPK11Token> token;
-      if (NS_SUCCEEDED(db->GetInternalKeyToken(getter_AddRefs(token)))) {
-        Unused << token->Login(false);
-      }
-    }
-#endif
 
     // As FilePreferences need the profile directory, we must initialize right
     // here.

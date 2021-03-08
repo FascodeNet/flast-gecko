@@ -298,13 +298,13 @@ main-context-menu-send-to-device =
     .label = Send Page to Device
     .accesskey = n
 
-main-context-menu-view-background-image =
-    .label = View Background Image
-    .accesskey = w
-
 main-context-menu-generate-new-password =
     .label = Use Generated Password…
     .accesskey = G
+
+main-context-menu-manage-logins =
+    .label = Manage Logins…
+    .accesskey = M
 
 main-context-menu-keyword =
     .label = Add a Keyword for this Search…

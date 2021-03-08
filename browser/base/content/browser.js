@@ -271,7 +271,6 @@ XPCOMUtils.defineLazyServiceGetters(this, {
     "@mozilla.org/network/serialization-helper;1",
     "nsISerializationHelper",
   ],
-  Marionette: ["@mozilla.org/remote/marionette;1", "nsIMarionette"],
   WindowsUIUtils: ["@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils"],
   BrowserHandler: ["@mozilla.org/browser/clh;1", "nsIBrowserHandler"],
 });
@@ -283,6 +282,17 @@ if (AppConstants.MOZ_CRASHREPORTER) {
     "@mozilla.org/xre/app-info;1",
     "nsICrashReporter"
   );
+}
+
+if ("@mozilla.org/remote/marionette;1" in Cc) {
+  XPCOMUtils.defineLazyServiceGetter(
+    this,
+    "Marionette",
+    "@mozilla.org/remote/marionette;1",
+    "nsIMarionette"
+  );
+} else {
+  this.Marionette = { running: false };
 }
 
 if (AppConstants.ENABLE_REMOTE_AGENT) {
@@ -582,6 +592,16 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
+/* Temporary pref while the dust settles around the updated tooltip design
+   for tabs and bookmarks toolbar. This will eventually be removed and
+   browser.proton.enabled will be used instead. */
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gProtonPlacesTooltip",
+  "browser.proton.places-tooltip.enabled",
+  false
+);
+
 /* Import aboutWelcomeFeature from Nimbus Experiment API
    to access experiment values */
 XPCOMUtils.defineLazyGetter(this, "aboutWelcomeFeature", () => {
@@ -711,10 +731,21 @@ function updateFxaToolbarMenu(enable, isInitialUpdate = false) {
     "identity.fxaccounts.enabled",
     false
   );
+
   const mainWindowEl = document.documentElement;
   const fxaPanelEl = PanelMultiView.getViewNode(document, "PanelUI-fxa");
 
-  mainWindowEl.setAttribute("fxastatus", "not_configured");
+  // To minimize the toolbar button flickering or appearing/disappearing during startup,
+  // we use this pref to anticipate the likely FxA status.
+  const statusGuess = !!Services.prefs.getStringPref(
+    "identity.fxaccounts.account.device.name",
+    ""
+  );
+  mainWindowEl.setAttribute(
+    "fxastatus",
+    statusGuess ? "signed_in" : "not_configured"
+  );
+
   fxaPanelEl.addEventListener("ViewShowing", gSync.updateSendToDeviceTitle);
 
   Services.telemetry.setEventRecordingEnabled("fxa_app_menu", true);
@@ -4469,8 +4500,10 @@ function FillHistoryMenu(aParent) {
   const tooltipCurrent = gNavigatorBundle.getString("tabHistory.current");
   const tooltipForward = gNavigatorBundle.getString("tabHistory.goForward");
 
-  function updateSessionHistory(sessionHistory, initial) {
-    let count = sessionHistory.entries.length;
+  function updateSessionHistory(sessionHistory, initial, ssInParent) {
+    let count = ssInParent
+      ? sessionHistory.count
+      : sessionHistory.entries.length;
 
     if (!initial) {
       if (count <= 1) {
@@ -4502,7 +4535,9 @@ function FillHistoryMenu(aParent) {
     let existingIndex = 0;
 
     for (let j = end - 1; j >= start; j--) {
-      let entry = sessionHistory.entries[j];
+      let entry = ssInParent
+        ? sessionHistory.getEntryAtIndex(j)
+        : sessionHistory.entries[j];
       // Explicitly check for "false" to stay backwards-compatible with session histories
       // from before the hasUserInteraction was implemented.
       if (
@@ -4514,7 +4549,7 @@ function FillHistoryMenu(aParent) {
       ) {
         continue;
       }
-      let uri = entry.url;
+      let uri = ssInParent ? entry.URI.spec : entry.url;
 
       let item =
         existingIndex < children.length
@@ -4565,20 +4600,22 @@ function FillHistoryMenu(aParent) {
     }
   }
 
-  let sessionHistory = SessionStore.getSessionHistory(
-    gBrowser.selectedTab,
-    updateSessionHistory
-  );
-  if (!sessionHistory) {
-    return false;
+  let sessionHistory = gBrowser.selectedBrowser.browsingContext.sessionHistory;
+  if (sessionHistory) {
+    // Don't show the context menu if there is only one item.
+    if (sessionHistory.count <= 1) {
+      return false;
+    }
+
+    updateSessionHistory(sessionHistory, true, true);
+  } else {
+    sessionHistory = SessionStore.getSessionHistory(
+      gBrowser.selectedTab,
+      updateSessionHistory
+    );
+    updateSessionHistory(sessionHistory, true, false);
   }
 
-  // don't display the popup for a single item
-  if (sessionHistory.entries.length <= 1) {
-    return false;
-  }
-
-  updateSessionHistory(sessionHistory, true);
   return true;
 }
 
@@ -7483,7 +7520,7 @@ var IndexedDBPromptHelper = {
     var message;
     var responseTopic;
     if (topic == this._permissionsPrompt) {
-      message = gNavigatorBundle.getFormattedString("offlineApps.available2", [
+      message = gNavigatorBundle.getFormattedString("offlineApps.available3", [
         host,
       ]);
       responseTopic = this._permissionsResponse;
@@ -7492,10 +7529,8 @@ var IndexedDBPromptHelper = {
     var observer = request.responseObserver;
 
     var mainAction = {
-      label: gNavigatorBundle.getString("offlineApps.allowStoring.label"),
-      accessKey: gNavigatorBundle.getString(
-        "offlineApps.allowStoring.accesskey"
-      ),
+      label: gNavigatorBundle.getString("offlineApps.allow.label"),
+      accessKey: gNavigatorBundle.getString("offlineApps.allow.accesskey"),
       callback() {
         observer.observe(
           null,
@@ -7507,10 +7542,8 @@ var IndexedDBPromptHelper = {
 
     var secondaryActions = [
       {
-        label: gNavigatorBundle.getString("offlineApps.dontAllow.label"),
-        accessKey: gNavigatorBundle.getString(
-          "offlineApps.dontAllow.accesskey"
-        ),
+        label: gNavigatorBundle.getString("offlineApps.block.label"),
+        accessKey: gNavigatorBundle.getString("offlineApps.block.accesskey"),
         callback() {
           observer.observe(
             null,
@@ -8960,6 +8993,10 @@ class TabDialogBox {
           this.maybeSetAllowTabSwitchPermission(event.target);
         }
       };
+
+      if (modalType == Ci.nsIPrompt.MODAL_TYPE_CONTENT) {
+        sizeTo = "limitheight";
+      }
 
       // Open dialog and resolve once it has been closed
       let dialog = dialogManager.open(

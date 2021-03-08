@@ -1270,6 +1270,12 @@ nsresult OpenRunnable::MainThreadRunInternal() {
 }
 
 void SendRunnable::RunOnMainThread(ErrorResult& aRv) {
+  nsresult rv = mProxy->mXHR->CheckCurrentGlobalCorrectness();
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    aRv = rv;
+    return;
+  }
+
   Nullable<
       DocumentOrBlobOrArrayBufferViewOrArrayBufferOrFormDataOrURLSearchParamsOrUSVString>
       payload;
@@ -1866,11 +1872,6 @@ XMLHttpRequestUpload* XMLHttpRequestWorker::GetUpload(ErrorResult& aRv) {
 
   if (!mUpload) {
     mUpload = new XMLHttpRequestUpload(this);
-
-    if (!mUpload) {
-      aRv.Throw(NS_ERROR_FAILURE);
-      return nullptr;
-    }
   }
 
   return mUpload;

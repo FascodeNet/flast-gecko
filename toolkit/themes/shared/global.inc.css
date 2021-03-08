@@ -11,6 +11,16 @@
 @namespace xul url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
 @namespace html url("http://www.w3.org/1999/xhtml");
 
+/* Lightweight theme roots */
+
+:root[lwtheme-image]:-moz-lwtheme-darktext {
+  text-shadow: 0 -0.5px 1.5px white;
+}
+
+:root[lwtheme-image]:-moz-lwtheme-brighttext {
+  text-shadow: 1px 1px 1.5px black;
+}
+
 /* General styles */
 
 *|*.plain {
@@ -24,6 +34,50 @@ html|button,
 html|input,
 html|textarea {
   font: inherit;
+}
+
+.header {
+  font-weight: bold;
+}
+
+.indent {
+  margin-inline-start: 23px;
+}
+
+.box-padded {
+  padding: 5px;
+}
+
+/* Label/description formatting */
+
+xul|description,
+xul|label {
+  cursor: default;
+  margin-block: 1px 2px;
+  margin-inline: 6px 5px;
+}
+
+xul|description {
+  margin-bottom: 4px;
+}
+
+xul|label[disabled="true"] {
+  color: GrayText;
+}
+
+.tooltip-label {
+  margin: 0;
+}
+
+/* Links */
+
+.text-link {
+  color: -moz-nativehyperlinktext;
+  cursor: pointer;
+}
+
+.text-link:hover {
+  text-decoration: underline;
 }
 
 /* Textbox context menu */
@@ -90,16 +144,16 @@ html|textarea {
   box-shadow: 0 1px 0 hsla(210,4%,10%,.05) inset;
 }
 
-.panel-footer > xul|button:not([disabled])[default] {
+.panel-footer[opinionated] > xul|button:not([disabled])[default] {
   color: white !important;
   background-color: #0060df;
 }
 
-.panel-footer > xul|button:not([disabled])[default]:hover {
+.panel-footer[opinionated] > xul|button:not([disabled])[default]:hover {
   background-color: #003eaa;
 }
 
-.panel-footer > xul|button:not([disabled])[default]:hover:active {
+.panel-footer[opinionated] > xul|button:not([disabled])[default]:hover:active {
   background-color: #002275;
 }
 

@@ -4,12 +4,12 @@
 
 use crate::{
     cow_label, identity::IdentityRecyclerFactory, ByteBuf, CommandEncoderAction, DeviceAction,
-    DropAction, RawString, TextureAction,
+    DropAction, QueueWriteAction, RawString, ShaderModuleSource, TextureAction,
 };
 
 use wgc::{gfx_select, id};
 
-use std::{fmt::Display, os::raw::c_char, ptr, slice};
+use std::{error::Error, os::raw::c_char, ptr, slice};
 
 #[repr(C)]
 pub struct ErrorBuffer {
@@ -18,9 +18,17 @@ pub struct ErrorBuffer {
 }
 
 impl ErrorBuffer {
-    fn init(&mut self, error: impl Display) {
+    fn init(&mut self, error: impl Error) {
+        use std::fmt::Write;
+
+        let mut string = format!("{}", error);
+        let mut e = error.source();
+        while let Some(source) = e {
+            write!(string, ", caused by: {}", source).unwrap();
+            e = source.source();
+        }
+
         assert_ne!(self.capacity, 0);
-        let string = format!("{}", error);
         let length = if string.len() >= self.capacity {
             log::warn!(
                 "Error length {} reached capacity {}",
@@ -106,23 +114,18 @@ pub unsafe extern "C" fn wgpu_server_instance_request_adapter(
 }
 
 #[no_mangle]
-pub extern "C" fn wgpu_server_fill_default_limits(limits: &mut wgt::Limits) {
-    *limits = wgt::Limits::default();
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn wgpu_server_adapter_request_device(
     global: &Global,
     self_id: id::AdapterId,
-    desc: &wgt::DeviceDescriptor<RawString>,
+    byte_buf: &ByteBuf,
     new_id: id::DeviceId,
     mut error_buf: ErrorBuffer,
 ) {
+    let desc: wgc::device::DeviceDescriptor = bincode::deserialize(byte_buf.as_slice()).unwrap();
     let trace_string = std::env::var("WGPU_TRACE").ok();
     let trace_path = trace_string
         .as_ref()
         .map(|string| std::path::Path::new(string.as_str()));
-    let desc = desc.map_label(cow_label);
     let (_, error) =
         gfx_select!(self_id => global.adapter_request_device(self_id, &desc, trace_path, new_id));
     if let Some(err) = error {
@@ -266,16 +269,14 @@ impl GlobalExt for Global {
                     error_buf.init(err);
                 }
             }
-            DeviceAction::CreateShaderModule(id, spirv, wgsl) => {
-                let desc = wgc::pipeline::ShaderModuleDescriptor {
-                    label: None, //TODO
-                    source: if spirv.is_empty() {
-                        wgc::pipeline::ShaderModuleSource::Wgsl(wgsl)
-                    } else {
-                        wgc::pipeline::ShaderModuleSource::SpirV(spirv)
-                    },
+            DeviceAction::CreateShaderModule(id, desc, source) => {
+                let source = match source {
+                    ShaderModuleSource::SpirV(data) => {
+                        wgc::pipeline::ShaderModuleSource::SpirV(data)
+                    }
+                    ShaderModuleSource::Wgsl(data) => wgc::pipeline::ShaderModuleSource::Wgsl(data),
                 };
-                let (_, error) = self.device_create_shader_module::<B>(self_id, &desc, id);
+                let (_, error) = self.device_create_shader_module::<B>(self_id, &desc, source, id);
                 if let Some(err) = error {
                     error_buf.init(err);
                 }
@@ -401,6 +402,34 @@ impl GlobalExt for Global {
                     error_buf.init(err);
                 }
             }
+            CommandEncoderAction::WriteTimestamp {
+                query_set_id,
+                query_index,
+            } => {
+                if let Err(err) =
+                    self.command_encoder_write_timestamp::<B>(self_id, query_set_id, query_index)
+                {
+                    error_buf.init(err);
+                }
+            }
+            CommandEncoderAction::ResolveQuerySet {
+                query_set_id,
+                start_query,
+                query_count,
+                destination,
+                destination_offset,
+            } => {
+                if let Err(err) = self.command_encoder_resolve_query_set::<B>(
+                    self_id,
+                    query_set_id,
+                    start_query,
+                    query_count,
+                    destination,
+                    destination_offset,
+                ) {
+                    error_buf.init(err);
+                }
+            }
             CommandEncoderAction::RunRenderPass {
                 base,
                 target_colors,
@@ -519,9 +548,13 @@ pub unsafe extern "C" fn wgpu_server_queue_submit(
     self_id: id::QueueId,
     command_buffer_ids: *const id::CommandBufferId,
     command_buffer_id_length: usize,
+    mut error_buf: ErrorBuffer,
 ) {
     let command_buffers = slice::from_raw_parts(command_buffer_ids, command_buffer_id_length);
-    gfx_select!(self_id => global.queue_submit(self_id, command_buffers)).unwrap();
+    let result = gfx_select!(self_id => global.queue_submit(self_id, command_buffers));
+    if let Err(err) = result {
+        error_buf.init(err);
+    }
 }
 
 /// # Safety
@@ -529,36 +562,27 @@ pub unsafe extern "C" fn wgpu_server_queue_submit(
 /// This function is unsafe as there is no guarantee that the given pointer is
 /// valid for `data_length` elements.
 #[no_mangle]
-pub unsafe extern "C" fn wgpu_server_queue_write_buffer(
+pub unsafe extern "C" fn wgpu_server_queue_write_action(
     global: &Global,
     self_id: id::QueueId,
-    buffer_id: id::BufferId,
-    buffer_offset: wgt::BufferAddress,
+    byte_buf: &ByteBuf,
     data: *const u8,
     data_length: usize,
+    mut error_buf: ErrorBuffer,
 ) {
+    let action: QueueWriteAction = bincode::deserialize(byte_buf.as_slice()).unwrap();
     let data = slice::from_raw_parts(data, data_length);
-    gfx_select!(self_id => global.queue_write_buffer(self_id, buffer_id, buffer_offset, data))
-        .unwrap();
-}
-
-/// # Safety
-///
-/// This function is unsafe as there is no guarantee that the given pointer is
-/// valid for `data_length` elements.
-#[no_mangle]
-pub unsafe extern "C" fn wgpu_server_queue_write_texture(
-    global: &Global,
-    self_id: id::QueueId,
-    destination: &wgc::command::TextureCopyView,
-    data: *const u8,
-    data_length: usize,
-    layout: &wgt::TextureDataLayout,
-    extent: &wgt::Extent3d,
-) {
-    let data = slice::from_raw_parts(data, data_length);
-    gfx_select!(self_id => global.queue_write_texture(self_id, destination, data, layout, extent))
-        .unwrap();
+    let result = match action {
+        QueueWriteAction::Buffer { dst, offset } => {
+            gfx_select!(self_id => global.queue_write_buffer(self_id, dst, offset, data))
+        }
+        QueueWriteAction::Texture { dst, layout, size } => {
+            gfx_select!(self_id => global.queue_write_texture(self_id, &dst, &data, &layout, &size))
+        }
+    };
+    if let Err(err) = result {
+        error_buf.init(err);
+    }
 }
 
 #[no_mangle]
@@ -604,7 +628,7 @@ pub extern "C" fn wgpu_server_texture_drop(global: &Global, self_id: id::Texture
 
 #[no_mangle]
 pub extern "C" fn wgpu_server_texture_view_drop(global: &Global, self_id: id::TextureViewId) {
-    gfx_select!(self_id => global.texture_view_drop(self_id)).unwrap();
+    gfx_select!(self_id => global.texture_view_drop(self_id, false)).unwrap();
 }
 
 #[no_mangle]
@@ -638,4 +662,86 @@ pub extern "C" fn wgpu_server_render_pipeline_get_bind_group_layout(
     if let Some(err) = error {
         error_buf.init(err);
     }
+}
+
+/// Encode the freeing of the selected ID into a byte buf.
+#[no_mangle]
+pub extern "C" fn wgpu_server_adapter_free(id: id::AdapterId, drop_byte_buf: &mut ByteBuf) {
+    *drop_byte_buf = DropAction::Adapter(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_device_free(id: id::DeviceId, drop_byte_buf: &mut ByteBuf) {
+    *drop_byte_buf = DropAction::Device(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_shader_module_free(
+    id: id::ShaderModuleId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::ShaderModule(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_pipeline_layout_free(
+    id: id::PipelineLayoutId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::PipelineLayout(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_bind_group_layout_free(
+    id: id::BindGroupLayoutId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::BindGroupLayout(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_bind_group_free(id: id::BindGroupId, drop_byte_buf: &mut ByteBuf) {
+    *drop_byte_buf = DropAction::BindGroup(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_command_buffer_free(
+    id: id::CommandBufferId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::CommandBuffer(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_render_bundle_free(
+    id: id::RenderBundleId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::RenderBundle(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_render_pipeline_free(
+    id: id::RenderPipelineId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::RenderPipeline(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_compute_pipeline_free(
+    id: id::ComputePipelineId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::ComputePipeline(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_buffer_free(id: id::BufferId, drop_byte_buf: &mut ByteBuf) {
+    *drop_byte_buf = DropAction::Buffer(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_texture_free(id: id::TextureId, drop_byte_buf: &mut ByteBuf) {
+    *drop_byte_buf = DropAction::Texture(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_texture_view_free(
+    id: id::TextureViewId,
+    drop_byte_buf: &mut ByteBuf,
+) {
+    *drop_byte_buf = DropAction::TextureView(id).to_byte_buf();
+}
+#[no_mangle]
+pub extern "C" fn wgpu_server_sampler_free(id: id::SamplerId, drop_byte_buf: &mut ByteBuf) {
+    *drop_byte_buf = DropAction::Sampler(id).to_byte_buf();
 }

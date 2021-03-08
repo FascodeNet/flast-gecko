@@ -213,6 +213,8 @@
 #include "nsRefreshDriver.h"
 #include "Layers.h"
 
+#include "mozilla/extensions/WebExtensionPolicy.h"
+
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
@@ -4784,12 +4786,19 @@ void nsGlobalWindowOuter::MakeScriptDialogTitle(
         nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
         "ScriptDlgNullPrincipalHeading", aOutTitle);
   } else {
-    nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
-    if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
-      NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
+    auto* addonPolicy = BasePrincipal::Cast(aSubjectPrincipal)->AddonPolicy();
+    if (addonPolicy) {
       nsContentUtils::FormatLocalizedString(
           aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
-          "ScriptDlgHeading", ucsPrePath);
+          "ScriptDlgHeading", addonPolicy->Name());
+    } else {
+      nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
+      if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
+        NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
+        nsContentUtils::FormatLocalizedString(
+            aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+            "ScriptDlgHeading", ucsPrePath);
+      }
     }
   }
 
@@ -5084,8 +5093,6 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
     if (!parent->IsInProcess()) {
       if (isActive) {
         fm->WindowRaised(this, aActionId);
-        // XXX we still need to notify framer about the focus moves to OOP
-        // iframe to generate corresponding blur event for bug 1677474.
       } else {
         ContentChild* contentChild = ContentChild::GetSingleton();
         MOZ_ASSERT(contentChild);

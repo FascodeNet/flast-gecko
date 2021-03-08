@@ -266,6 +266,59 @@ void LIRGenerator::visitCreateArgumentsObject(MCreateArgumentsObject* ins) {
   assignSafepoint(lir, ins);
 }
 
+void LIRGenerator::visitCreateInlinedArgumentsObject(
+    MCreateInlinedArgumentsObject* ins) {
+  LAllocation callObj = useRegisterAtStart(ins->getCallObject());
+  LAllocation callee = useRegisterAtStart(ins->getCallee());
+  uint32_t numActuals = ins->numActuals();
+  uint32_t numOperands = numActuals * BOX_PIECES +
+                         LCreateInlinedArgumentsObject::NumNonArgumentOperands;
+
+  auto* lir = allocateVariadic<LCreateInlinedArgumentsObject>(
+      numOperands, tempFixed(CallTempReg0));
+  if (!lir) {
+    abort(AbortReason::Alloc,
+          "OOM: LIRGenerator::visitCreateInlinedArgumentsObject");
+    return;
+  }
+
+  lir->setOperand(LCreateInlinedArgumentsObject::CallObj, callObj);
+  lir->setOperand(LCreateInlinedArgumentsObject::Callee, callee);
+  for (uint32_t i = 0; i < numActuals; i++) {
+    MDefinition* arg = ins->getArg(i);
+    uint32_t index = LCreateInlinedArgumentsObject::ArgIndex(i);
+    lir->setBoxOperand(index, useBoxOrTypedOrConstant(arg,
+                                                      /*useConstant = */ true,
+                                                      /*useAtStart = */ true));
+  }
+
+  defineReturn(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGenerator::visitGetInlinedArgument(MGetInlinedArgument* ins) {
+  LAllocation index = useRegisterAtStart(ins->index());
+  uint32_t numActuals = ins->numActuals();
+  uint32_t numOperands =
+      numActuals * BOX_PIECES + LGetInlinedArgument::NumNonArgumentOperands;
+
+  auto* lir = allocateVariadic<LGetInlinedArgument>(numOperands);
+  if (!lir) {
+    abort(AbortReason::Alloc, "OOM: LIRGenerator::visitGetInlinedArgument");
+    return;
+  }
+
+  lir->setOperand(LGetInlinedArgument::Index, index);
+  for (uint32_t i = 0; i < numActuals; i++) {
+    MDefinition* arg = ins->getArg(i);
+    uint32_t index = LGetInlinedArgument::ArgIndex(i);
+    lir->setBoxOperand(index, useBoxOrTypedOrConstant(arg,
+                                                      /*useConstant = */ true,
+                                                      /*useAtStart = */ true));
+  }
+  defineBox(lir, ins);
+}
+
 void LIRGenerator::visitGetArgumentsObjectArg(MGetArgumentsObjectArg* ins) {
   LAllocation argsObj = useRegister(ins->getArgsObject());
   LGetArgumentsObjectArg* lir =
@@ -4093,23 +4146,6 @@ void LIRGenerator::visitNurseryObject(MNurseryObject* ins) {
 
   auto* lir = new (alloc()) LNurseryObject();
   define(lir, ins);
-}
-
-void LIRGenerator::visitGuardObjectGroup(MGuardObjectGroup* ins) {
-  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-
-  if (JitOptions.spectreObjectMitigationsMisc) {
-    auto* lir = new (alloc())
-        LGuardObjectGroup(useRegisterAtStart(ins->object()), temp());
-    assignSnapshot(lir, ins->bailoutKind());
-    defineReuseInput(lir, ins, 0);
-  } else {
-    auto* lir = new (alloc())
-        LGuardObjectGroup(useRegister(ins->object()), LDefinition::BogusTemp());
-    assignSnapshot(lir, ins->bailoutKind());
-    add(lir, ins);
-    redefine(ins, ins->object());
-  }
 }
 
 void LIRGenerator::visitGuardValue(MGuardValue* ins) {

@@ -332,14 +332,6 @@ pref("browser.urlbar.suggest.quicksuggest",         true);
 // Whether the QuickSuggest experiment is enabled.
 pref("browser.urlbar.quicksuggest.enabled", false);
 
-// The URL for clicks on QuickSuggest help buttons and learn-more links.
-// TODO (bug 1693671): Replace this URL with the final URL of the blog post.
-pref("browser.urlbar.quicksuggest.helpURL", "https://www.mozilla.org/");
-
-// How many times to show the QuickSuggest onboarding help button.
-pref("browser.urlbar.quicksuggest.onboardingCount", 0);
-pref("browser.urlbar.quicksuggest.onboardingMaxCount", 5);
-
 // Whether to show search suggestions before general results like history and
 // bookmarks.
 pref("browser.urlbar.showSearchSuggestionsFirst", true);
@@ -364,6 +356,9 @@ pref("browser.urlbar.openintab", false);
 
 // If true, we show tail suggestions when available.
 pref("browser.urlbar.richSuggestions.tail", true);
+
+// If true, top sites may include sponsored ones.
+pref("browser.urlbar.sponsoredTopSites", false);
 
 // Controls the empty search behavior in Search Mode:
 //  0 - Show nothing
@@ -706,7 +701,11 @@ pref("browser.gesture.twist.threshold", 0);
 pref("browser.gesture.twist.right", "cmd_gestureRotateRight");
 pref("browser.gesture.twist.left", "cmd_gestureRotateLeft");
 pref("browser.gesture.twist.end", "cmd_gestureRotateEnd");
-pref("browser.gesture.tap", "cmd_fullZoomReset");
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+  pref("browser.gesture.tap", "cmd_fullZoomReset");
+#else
+  pref("browser.gesture.tap", "");
+#endif
 
 pref("browser.history_swipe_animation.disabled", false);
 
@@ -1472,7 +1471,7 @@ pref("trailhead.firstrun.newtab.triplets", "");
 // Separate about welcome
 pref("browser.aboutwelcome.enabled", true);
 // Used to set multistage welcome UX
-pref("browser.aboutwelcome.overrideContent", "");
+pref("browser.aboutwelcome.screens", "");
 pref("browser.aboutwelcome.skipFocus", false);
 
 // The pref that controls if the What's New panel is enabled.
@@ -1708,10 +1707,8 @@ pref("dom.storage_access.enabled", true);
 
 pref("browser.contentblocking.cryptomining.preferences.ui.enabled", true);
 pref("browser.contentblocking.fingerprinting.preferences.ui.enabled", true);
-#ifdef NIGHTLY_BUILD
-  // Enable cookieBehavior = BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN as an option in the custom category ui
-  pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled", true);
-#endif
+// Enable cookieBehavior = BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN as an option in the custom category ui
+pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled", true);
 // State Partitioning MVP UI.
 pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", true);
 

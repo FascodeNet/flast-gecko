@@ -121,9 +121,14 @@ size_t js::jit::NumInputsForCacheKind(CacheKind kind) {
 }
 #endif
 
+#ifdef DEBUG
 void CacheIRWriter::assertSameCompartment(JSObject* obj) {
   cx_->debugOnlyCheck(obj);
 }
+void CacheIRWriter::assertSameZone(Shape* shape) {
+  MOZ_ASSERT(cx_->zone() == shape->zone());
+}
+#endif
 
 StubField CacheIRWriter::readStubFieldForIon(uint32_t offset,
                                              StubField::Type type) const {
@@ -177,9 +182,6 @@ int64_t CacheIRCloner::readStubInt64(uint32_t offset) {
 
 Shape* CacheIRCloner::getShapeField(uint32_t stubOffset) {
   return reinterpret_cast<Shape*>(readStubWord(stubOffset));
-}
-ObjectGroup* CacheIRCloner::getGroupField(uint32_t stubOffset) {
-  return reinterpret_cast<ObjectGroup*>(readStubWord(stubOffset));
 }
 JSObject* CacheIRCloner::getObjectField(uint32_t stubOffset) {
   return reinterpret_cast<JSObject*>(readStubWord(stubOffset));
@@ -315,25 +317,26 @@ static ProxyStubType GetProxyStubType(JSContext* cx, HandleObject obj,
   return ProxyStubType::DOMUnshadowed;
 }
 
-static bool ValueToNameOrSymbolId(JSContext* cx, HandleValue idval,
+static bool ValueToNameOrSymbolId(JSContext* cx, HandleValue idVal,
                                   MutableHandleId id, bool* nameOrSymbol) {
   *nameOrSymbol = false;
 
-  if (!idval.isString() && !idval.isSymbol()) {
+  if (!idVal.isString() && !idVal.isSymbol() && !idVal.isUndefined() &&
+      !idVal.isNull()) {
     return true;
   }
 
-  if (!PrimitiveValueToId<CanGC>(cx, idval, id)) {
+  if (!PrimitiveValueToId<CanGC>(cx, idVal, id)) {
     return false;
   }
 
-  if (!JSID_IS_STRING(id) && !JSID_IS_SYMBOL(id)) {
+  if (!id.isAtom() && !id.isSymbol()) {
     id.set(JSID_VOID);
     return true;
   }
 
   uint32_t dummy;
-  if (JSID_IS_STRING(id) && JSID_TO_ATOM(id)->isIndex(&dummy)) {
+  if (id.isAtom() && id.toAtom()->isIndex(&dummy)) {
     id.set(JSID_VOID);
     return true;
   }
@@ -596,14 +599,16 @@ static NativeGetPropCacheability CanAttachNativeGetProp(
   return CanAttachNone;
 }
 
-static void GuardGroupProto(CacheIRWriter& writer, JSObject* obj,
-                            ObjOperandId objId) {
-  // Uses the group to determine if the prototype is unchanged. This works
-  // because groups have an immutable prototype. This can be used if the shape
-  // has the UNCACHEABLE_PROTO flag set.
+static void GuardReceiverProto(CacheIRWriter& writer, JSObject* obj,
+                               ObjOperandId objId) {
+  // Note: we guard on the actual prototype and not on the shape because this is
+  // used for sparse elements where we expect shape changes.
 
-  ObjectGroup* group = obj->group();
-  writer.guardGroupForProto(objId, group);
+  if (JSObject* proto = obj->staticPrototype()) {
+    writer.guardProto(objId, proto);
+  } else {
+    writer.guardNullProto(objId);
+  }
 }
 
 // Guard that a given object has same class and same OwnProperties (excluding
@@ -636,24 +641,6 @@ static void TestMatchingProxyReceiver(CacheIRWriter& writer, ProxyObject* obj,
   writer.guardShapeForClass(objId, obj->shape());
 }
 
-// Adds additional guards if TestMatchingReceiver* does not also imply the
-// prototype.
-static void GeneratePrototypeGuardsForReceiver(CacheIRWriter& writer,
-                                               JSObject* obj,
-                                               ObjOperandId objId) {
-  // If receiver was marked UNCACHEABLE_PROTO, the previous shape guard
-  // doesn't ensure the prototype is unchanged. In this case we must use the
-  // group to check the prototype.
-  if (obj->hasUncacheableProto()) {
-    MOZ_ASSERT(obj->is<NativeObject>());
-    GuardGroupProto(writer, obj, objId);
-  }
-
-  // The following cases already guaranteed the prototype is unchanged.
-  MOZ_ASSERT_IF(obj->is<TypedObject>() || obj->is<ProxyObject>(),
-                !obj->hasUncacheableProto());
-}
-
 static bool ProtoChainSupportsTeleporting(JSObject* obj, JSObject* holder) {
   // Any non-delegate should already have been handled since its checks are
   // always required.
@@ -668,7 +655,7 @@ static bool ProtoChainSupportsTeleporting(JSObject* obj, JSObject* holder) {
   }
 
   // The holder itself only gets reshaped by teleportation if it is not
-  // marked UNCACHEABLE_PROTO. See: ReshapeForProtoMutation.
+  // marked UncacheableProto. See: ReshapeForProtoMutation.
   return !holder->hasUncacheableProto();
 }
 
@@ -709,13 +696,12 @@ static void GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj,
   // mutated. The same mechanism as above is used. When the prototype link is
   // changed, we generate a new shape for the object. If the object whose
   // link we are mutating is itself a prototype, we regenerate shapes down
-  // the chain. This means the same two shape checks as above are sufficient.
+  // the chain by setting the UncacheableProto flag on them. This means the same
+  // two shape checks as above are sufficient.
   //
-  // An additional wrinkle is the UNCACHEABLE_PROTO shape flag. This
-  // indicates that the shape no longer implies any specific prototype. As
-  // well, the shape will not be updated by the teleporting optimization.
-  // If any shape from receiver to holder (inclusive) is UNCACHEABLE_PROTO,
-  // we don't apply the optimization.
+  // Once the UncacheableProto flag is set, it means the shape will no longer be
+  // updated by ReshapeForProtoMutation. If any shape from receiver to holder
+  // (inclusive) is UncacheableProto, we don't apply the optimization.
   //
   // See:
   //  - ReshapeForProtoMutation
@@ -724,14 +710,10 @@ static void GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj,
   MOZ_ASSERT(holder);
   MOZ_ASSERT(obj != holder);
 
-  // Only DELEGATE objects participate in teleporting so peel off the first
+  // Only Delegate objects participate in teleporting so peel off the first
   // object in the chain if needed and handle it directly.
   JSObject* pobj = obj;
   if (!obj->isDelegate()) {
-    // TestMatchingReceiver does not always ensure the prototype is
-    // unchanged, so generate extra guards as needed.
-    GeneratePrototypeGuardsForReceiver(writer, obj, objId);
-
     pobj = obj->staticPrototype();
   }
   MOZ_ASSERT(pobj->isDelegate());
@@ -745,10 +727,6 @@ static void GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj,
   if (pobj == holder) {
     return;
   }
-
-  // NOTE: We could be clever and look for a middle prototype to shape check
-  //       and elide some (but not all) of the group checks. Unless we have
-  //       real-world examples, let's avoid the complexity.
 
   // Synchronize pobj and protoId.
   MOZ_ASSERT(pobj == obj || pobj == obj->staticPrototype());
@@ -768,21 +746,17 @@ static void GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj,
 static void GeneratePrototypeHoleGuards(CacheIRWriter& writer, JSObject* obj,
                                         ObjOperandId objId,
                                         bool alwaysGuardFirstProto) {
-  if (alwaysGuardFirstProto || obj->hasUncacheableProto()) {
-    GuardGroupProto(writer, obj, objId);
+  if (alwaysGuardFirstProto) {
+    GuardReceiverProto(writer, obj, objId);
   }
 
   JSObject* pobj = obj->staticPrototype();
   while (pobj) {
     ObjOperandId protoId = writer.loadObject(pobj);
 
-    // If shape doesn't imply proto, additional guards are needed.
-    if (pobj->hasUncacheableProto()) {
-      GuardGroupProto(writer, pobj, protoId);
-    }
-
-    // Make sure the shape matches, to avoid non-dense elements or anything
-    // else that is being checked by CanAttachDenseElementHole.
+    // Make sure the shape matches, to ensure the proto is unchanged and to
+    // avoid non-dense elements or anything else that is being checked by
+    // CanAttachDenseElementHole.
     writer.guardShape(protoId, pobj->as<NativeObject>().lastProperty());
 
     // Also make sure there are no dense elements.
@@ -819,20 +793,15 @@ static bool UncacheableProtoOnChain(JSObject* obj) {
   }
 }
 
+// Emit a shape guard for all objects on the proto chain. This does NOT include
+// the receiver; callers must ensure the receiver's proto is the first proto by
+// either emitting a shape guard or a prototype guard for |objId|.
+//
+// Note: this relies on shape implying proto.
 static void ShapeGuardProtoChain(CacheIRWriter& writer, JSObject* obj,
                                  ObjOperandId objId) {
   while (true) {
     JSObject* proto = obj->staticPrototype();
-
-    // Guard on the proto if the shape does not imply the proto.
-    if (obj->hasUncacheableProto()) {
-      if (proto) {
-        writer.guardProto(objId, proto);
-      } else {
-        writer.guardNullProto(objId);
-      }
-    }
-
     if (!proto) {
       return;
     }
@@ -1269,7 +1238,7 @@ AttachDecision GetPropIRGenerator::tryAttachCrossCompartmentWrapper(
     }
 
     if (!holder) {
-      // UNCACHEABLE_PROTO may result in guards against specific
+      // ObjectFlag::UncacheableProto may result in guards against specific
       // (cross-compartment) prototype objects, so don't try to attach IC if we
       // see the flag at all.
       if (UncacheableProtoOnChain(unwrapped)) {
@@ -2647,14 +2616,24 @@ void GetPropIRGenerator::trackAttached(const char* name) {
 #endif
 }
 
-void IRGenerator::emitIdGuard(ValOperandId valId, jsid id) {
-  if (JSID_IS_SYMBOL(id)) {
+void IRGenerator::emitIdGuard(ValOperandId valId, HandleValue idVal, jsid id) {
+  if (id.isSymbol()) {
+    MOZ_ASSERT(idVal.toSymbol() == id.toSymbol());
     SymbolOperandId symId = writer.guardToSymbol(valId);
-    writer.guardSpecificSymbol(symId, JSID_TO_SYMBOL(id));
+    writer.guardSpecificSymbol(symId, id.toSymbol());
   } else {
-    MOZ_ASSERT(JSID_IS_ATOM(id));
-    StringOperandId strId = writer.guardToString(valId);
-    writer.guardSpecificAtom(strId, JSID_TO_ATOM(id));
+    MOZ_ASSERT(id.isAtom());
+    if (idVal.isUndefined()) {
+      MOZ_ASSERT(id.isAtom(cx_->names().undefined));
+      writer.guardIsUndefined(valId);
+    } else if (idVal.isNull()) {
+      MOZ_ASSERT(id.isAtom(cx_->names().null));
+      writer.guardIsNull(valId);
+    } else {
+      MOZ_ASSERT(idVal.isString());
+      StringOperandId strId = writer.guardToString(valId);
+      writer.guardSpecificAtom(strId, id.toAtom());
+    }
   }
 }
 
@@ -2668,7 +2647,7 @@ void GetPropIRGenerator::maybeEmitIdGuard(jsid id) {
 
   MOZ_ASSERT(cacheKind_ == CacheKind::GetElem ||
              cacheKind_ == CacheKind::GetElemSuper);
-  emitIdGuard(getElemKeyValueId(), id);
+  emitIdGuard(getElemKeyValueId(), idVal_, id);
 }
 
 void SetPropIRGenerator::maybeEmitIdGuard(jsid id) {
@@ -2679,7 +2658,7 @@ void SetPropIRGenerator::maybeEmitIdGuard(jsid id) {
   }
 
   MOZ_ASSERT(cacheKind_ == CacheKind::SetElem);
-  emitIdGuard(setElemKeyValueId(), id);
+  emitIdGuard(setElemKeyValueId(), idVal_, id);
 }
 
 GetNameIRGenerator::GetNameIRGenerator(JSContext* cx, HandleScript script,
@@ -2707,7 +2686,7 @@ AttachDecision GetNameIRGenerator::tryAttachStub() {
 }
 
 bool CanAttachGlobalName(JSContext* cx,
-                         Handle<LexicalEnvironmentObject*> globalLexical,
+                         Handle<GlobalLexicalEnvironmentObject*> globalLexical,
                          HandleId id, MutableHandleNativeObject holder,
                          MutableHandleShape shape) {
   // The property must be found, and it must be found as a normal data property.
@@ -2745,9 +2724,8 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameValue(ObjOperandId objId,
     return AttachDecision::NoAction;
   }
 
-  Handle<LexicalEnvironmentObject*> globalLexical =
-      env_.as<LexicalEnvironmentObject>();
-  MOZ_ASSERT(globalLexical->isGlobal());
+  Handle<GlobalLexicalEnvironmentObject*> globalLexical =
+      env_.as<GlobalLexicalEnvironmentObject>();
 
   RootedNativeObject holder(cx_);
   RootedShape shape(cx_);
@@ -2809,8 +2787,8 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameGetter(ObjOperandId objId,
     return AttachDecision::NoAction;
   }
 
-  Handle<LexicalEnvironmentObject*> globalLexical =
-      env_.as<LexicalEnvironmentObject>();
+  Handle<GlobalLexicalEnvironmentObject*> globalLexical =
+      env_.as<GlobalLexicalEnvironmentObject>();
   MOZ_ASSERT(globalLexical->isGlobal());
 
   RootedNativeObject holder(cx_);
@@ -2983,8 +2961,8 @@ AttachDecision BindNameIRGenerator::tryAttachGlobalName(ObjOperandId objId,
     return AttachDecision::NoAction;
   }
 
-  Handle<LexicalEnvironmentObject*> globalLexical =
-      env_.as<LexicalEnvironmentObject>();
+  Handle<GlobalLexicalEnvironmentObject*> globalLexical =
+      env_.as<GlobalLexicalEnvironmentObject>();
   MOZ_ASSERT(globalLexical->isGlobal());
 
   JSObject* result = nullptr;
@@ -3249,7 +3227,7 @@ AttachDecision HasPropIRGenerator::tryAttachNative(JSObject* obj,
   }
 
   Maybe<ObjOperandId> tempId;
-  emitIdGuard(keyId, key);
+  emitIdGuard(keyId, idVal_, key);
   EmitReadSlotGuard(writer, obj, holder, objId, &tempId);
   writer.loadBooleanResult(true);
   writer.returnFromIC();
@@ -3284,7 +3262,7 @@ AttachDecision HasPropIRGenerator::tryAttachSlotDoesNotExist(
     JSObject* obj, ObjOperandId objId, jsid key, ValOperandId keyId) {
   bool hasOwn = (cacheKind_ == CacheKind::HasOwn);
 
-  emitIdGuard(keyId, key);
+  emitIdGuard(keyId, idVal_, key);
   if (hasOwn) {
     TestMatchingReceiver(writer, obj, objId);
   } else {
@@ -3451,7 +3429,7 @@ AttachDecision CheckPrivateFieldIRGenerator::tryAttachNative(JSObject* obj,
   }
 
   Maybe<ObjOperandId> tempId;
-  emitIdGuard(keyId, key);
+  emitIdGuard(keyId, idVal_, key);
   EmitReadSlotGuard(writer, obj, obj, objId, &tempId);
   writer.loadBooleanResult(hasOwn);
   writer.returnFromIC();
@@ -3635,8 +3613,7 @@ static bool IsGlobalLexicalSetGName(JSOp op, NativeObject* obj,
     return false;
   }
 
-  if (!obj->is<LexicalEnvironmentObject>() ||
-      !obj->as<LexicalEnvironmentObject>().isGlobal()) {
+  if (!obj->is<GlobalLexicalEnvironmentObject>()) {
     return false;
   }
 
@@ -4116,7 +4093,7 @@ AttachDecision SetPropIRGenerator::tryAttachAddOrUpdateSparseElement(
   // Shape guard the prototype chain to avoid shadowing indexes from appearing.
   // Guard the prototype of the receiver explicitly, because the receiver's
   // shape is not being guarded as a proxy for that.
-  GuardGroupProto(writer, obj, objId);
+  GuardReceiverProto(writer, obj, objId);
 
   // Dense elements may appear on the prototype chain (and prototypes may
   // have a different notion of which elements are dense), but they can
@@ -4965,9 +4942,6 @@ AttachDecision OptimizeSpreadCallIRGenerator::tryAttachArray() {
   // Guard the object is a packed array with Array.prototype as proto.
   writer.guardShape(objId, obj->as<ArrayObject>().lastProperty());
   writer.guardArrayIsPacked(objId);
-  if (obj->hasUncacheableProto()) {
-    writer.guardProto(objId, arrProto);
-  }
 
   // Guard on Array.prototype[@@iterator].
   ObjOperandId arrProtoId = writer.loadObject(arrProto);

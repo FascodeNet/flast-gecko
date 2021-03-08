@@ -60,6 +60,7 @@
 #include "vm/JSScript.h"
 #include "vm/ModuleBuilder.h"  // js::ModuleBuilder
 #include "vm/RegExpObject.h"
+#include "vm/Scope.h"  // GetScopeDataTrailingNames
 #include "vm/SelfHosting.h"
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
@@ -266,19 +267,11 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     ReportAllocationOverflow(cx_);
     return nullptr;
   }
-  if (!compilationState_.scriptData.emplaceBack()) {
-    js::ReportOutOfMemory(cx_);
+  if (!compilationState_.appendScriptStencilAndData(cx_)) {
     return nullptr;
   }
 
-  bool isInitialStencil = this->compilationState_.isInitialStencil();
-
-  if (isInitialStencil) {
-    if (!compilationState_.scriptExtra.emplaceBack()) {
-      js::ReportOutOfMemory(cx_);
-      return nullptr;
-    }
-  }
+  bool isInitialStencil = compilationState_.isInitialStencil();
 
   // This source extent will be further filled in during the remainder of parse.
   SourceExtent extent;
@@ -994,21 +987,22 @@ static MOZ_ALWAYS_INLINE ParserBindingName* InitializeIndexedBindings(
 
 }  // namespace detail
 
-// Initialize |data->trailingNames| bindings, then set |data->slotInfo.length|
-// to the count of bindings added (which must equal |count|).
+// Initialize the trailing name bindings of |data|, then set |data->length| to
+// the count of bindings added (which must equal |count|).
 //
-// First, |firstBindings| are added to |data->trailingNames|.  Then any "steps"
-// present are performed first to last.  Each step is 1) a pointer to a member
-// of |data| to be set to the current number of bindings added, and 2) a vector
-// of |ParserBindingName|s to then copy into |data->trailingNames|.  (Thus each
-// |data| member field indicates where the corresponding vector's names start.)
+// First, |firstBindings| are added to the trailing names.  Then any
+// "steps" present are performed first to last.  Each step is 1) a pointer to a
+// member of |data| to be set to the current number of bindings added, and 2) a
+// vector of |ParserBindingName|s to then copy into |data->trailingNames|.
+// (Thus each |data| member field indicates where the corresponding vector's
+//  names start.)
 template <class Data, typename... Step>
 static MOZ_ALWAYS_INLINE void InitializeBindingData(
     Data* data, uint32_t count, const ParserBindingNameVector& firstBindings,
     Step&&... step) {
-  MOZ_ASSERT(data->slotInfo.length == 0, "data shouldn't be filled yet");
+  MOZ_ASSERT(data->length == 0, "data shouldn't be filled yet");
 
-  ParserBindingName* start = data->trailingNames.start();
+  ParserBindingName* start = GetScopeDataTrailingNamesPointer(data);
   ParserBindingName* cursor = std::uninitialized_copy(
       firstBindings.begin(), firstBindings.end(), start);
 
@@ -1019,7 +1013,7 @@ static MOZ_ALWAYS_INLINE void InitializeBindingData(
                                         std::forward<Step>(step)...);
 
   MOZ_ASSERT(PointerRangeSize(start, end) == count);
-  data->slotInfo.length = count;
+  data->length = count;
 }
 
 Maybe<GlobalScope::ParserData*> NewGlobalScopeData(JSContext* cx,

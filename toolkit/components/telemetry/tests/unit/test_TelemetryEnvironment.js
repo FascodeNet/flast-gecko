@@ -33,9 +33,7 @@ const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 const { SearchTestUtils } = ChromeUtils.import(
   "resource://testing-common/SearchTestUtils.jsm"
 );
-if (AppConstants.MOZ_GLEAN) {
-  Cu.importGlobalProperties(["Glean"]);
-}
+Cu.importGlobalProperties(["Glean"]);
 
 // AttributionCode is only needed for Firefox
 ChromeUtils.defineModuleGetter(
@@ -1069,11 +1067,9 @@ add_task(async function setup() {
   spoofGfxAdapter();
   do_get_profile();
 
-  if (AppConstants.MOZ_GLEAN) {
-    // We need to ensure FOG is initialized, otherwise we will panic trying to get test values.
-    let FOG = Cc["@mozilla.org/toolkit/glean;1"].createInstance(Ci.nsIFOG);
-    FOG.initializeFOG();
-  }
+  // We need to ensure FOG is initialized, otherwise we will panic trying to get test values.
+  let FOG = Cc["@mozilla.org/toolkit/glean;1"].createInstance(Ci.nsIFOG);
+  FOG.initializeFOG();
 
   // The system add-on must be installed before AddonManager is started.
   const distroDir = FileUtils.getDir("ProfD", ["sysfeatures", "app0"], true);
@@ -1084,7 +1080,7 @@ add_task(async function setup() {
   let system_addon = FileUtils.File(distroDir.path);
   system_addon.append("tel-system-xpi@tests.mozilla.org.xpi");
   system_addon.lastModifiedTime = SYSTEM_ADDON_INSTALL_DATE;
-  loadAddonManager(APP_ID, APP_NAME, APP_VERSION, PLATFORM_VERSION);
+  await loadAddonManager(APP_ID, APP_NAME, APP_VERSION, PLATFORM_VERSION);
 
   // The test runs in a fresh profile so starting the AddonManager causes
   // the addons database to be created (as does setting new theme).
@@ -2526,20 +2522,19 @@ if (gIsWindows) {
       checkString(data.system.hdd[k].revision);
       checkString(data.system.hdd[k].type);
     }
-    if (AppConstants.MOZ_GLEAN) {
-      if (data.system.hdd.profile.type == "SSD") {
-        Assert.equal(
-          true,
-          Glean.fogValidation.profileDiskIsSsd.testGetValue(),
-          "SSDness should be recorded in Glean"
-        );
-      } else {
-        Assert.equal(
-          false,
-          Glean.fogValidation.profileDiskIsSsd.testGetValue(),
-          "nonSSDness should be recorded in Glean"
-        );
-      }
+
+    if (data.system.hdd.profile.type == "SSD") {
+      Assert.equal(
+        true,
+        Glean.fogValidation.profileDiskIsSsd.testGetValue(),
+        "SSDness should be recorded in Glean"
+      );
+    } else {
+      Assert.equal(
+        false,
+        Glean.fogValidation.profileDiskIsSsd.testGetValue(),
+        "nonSSDness should be recorded in Glean"
+      );
     }
   });
 
@@ -2716,4 +2711,22 @@ add_task(async function test_environmentShutdown() {
   TelemetryEnvironment.unregisterChangeListener(
     "test_environmentShutdownChange"
   );
+});
+
+add_task(async function test_environmentDidntChange() {
+  // Clean the environment and check that it's reporting the correct info.
+  await TelemetryEnvironment.testCleanRestart().onInitialized();
+  let data = TelemetryEnvironment.currentEnvironment;
+  checkEnvironmentData(data);
+
+  const LISTENER_NAME = "test_environmentDidntChange";
+  TelemetryEnvironment.registerChangeListener(LISTENER_NAME, () => {
+    Assert.ok(false, "The environment didn't actually change.");
+  });
+
+  // Don't actually change the environment, but notify of a compositor abort.
+  const COMPOSITOR_ABORTED_TOPIC = "compositor:process-aborted";
+  Services.obs.notifyObservers(null, COMPOSITOR_ABORTED_TOPIC);
+
+  TelemetryEnvironment.unregisterChangeListener(LISTENER_NAME);
 });

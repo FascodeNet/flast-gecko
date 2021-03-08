@@ -241,7 +241,8 @@ static gboolean leave_notify_event_cb(GtkWidget* widget,
                                       GdkEventCrossing* event);
 static gboolean motion_notify_event_cb(GtkWidget* widget,
                                        GdkEventMotion* event);
-static gboolean button_press_event_cb(GtkWidget* widget, GdkEventButton* event);
+MOZ_CAN_RUN_SCRIPT static gboolean button_press_event_cb(GtkWidget* widget,
+                                                         GdkEventButton* event);
 static gboolean button_release_event_cb(GtkWidget* widget,
                                         GdkEventButton* event);
 static gboolean focus_in_event_cb(GtkWidget* widget, GdkEventFocus* event);
@@ -4323,8 +4324,14 @@ gboolean nsWindow::OnTouchpadPinchEvent(GdkEventTouchpadPinch* aEvent) {
     PinchGestureInput event(
         pinchGestureType, PinchGestureInput::TRACKPAD, aEvent->time,
         GetEventTimeStamp(aEvent->time), ExternalPoint(0, 0),
-        ScreenPoint(touchpadPoint.x, touchpadPoint.y), CurrentSpan,
-        PreviousSpan, KeymapWrapper::ComputeKeyModifiers(aEvent->state));
+        ScreenPoint(touchpadPoint.x, touchpadPoint.y),
+        100.0 * ((aEvent->phase == GDK_TOUCHPAD_GESTURE_PHASE_END)
+                     ? ScreenCoord(1.f)
+                     : CurrentSpan),
+        100.0 * ((aEvent->phase == GDK_TOUCHPAD_GESTURE_PHASE_END)
+                     ? ScreenCoord(1.f)
+                     : PreviousSpan),
+        KeymapWrapper::ComputeKeyModifiers(aEvent->state));
 
     DispatchPinchGestureInput(event);
   }
@@ -6453,13 +6460,46 @@ bool nsWindow::CheckForRollup(gdouble aMouseX, gdouble aMouseY, bool aIsWheel,
 /* static */
 bool nsWindow::DragInProgress(void) {
   nsCOMPtr<nsIDragService> dragService = do_GetService(kCDragServiceCID);
-
-  if (!dragService) return false;
+  if (!dragService) {
+    return false;
+  }
 
   nsCOMPtr<nsIDragSession> currentDragSession;
   dragService->GetCurrentSession(getter_AddRefs(currentDragSession));
 
   return currentDragSession != nullptr;
+}
+
+// This is an ugly workaround for
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1622107
+// We try to detect when Wayland compositor / gtk fails to deliver
+// info about finished D&D operations and cancel it on our own.
+MOZ_CAN_RUN_SCRIPT static void WaylandDragWorkaround(GdkEventButton* aEvent) {
+  static int buttonPressCountWithDrag = 0;
+
+  // We track only left button state as Firefox performs D&D on left
+  // button only.
+  if (aEvent->button != 1 || aEvent->type != GDK_BUTTON_PRESS) {
+    return;
+  }
+
+  nsCOMPtr<nsIDragService> dragService = do_GetService(kCDragServiceCID);
+  if (!dragService) {
+    return;
+  }
+  nsCOMPtr<nsIDragSession> currentDragSession;
+  dragService->GetCurrentSession(getter_AddRefs(currentDragSession));
+
+  if (currentDragSession != nullptr) {
+    buttonPressCountWithDrag++;
+    if (buttonPressCountWithDrag > 1) {
+      NS_WARNING(
+          "Quit unfinished Wayland Drag and Drop operation. Buggy Wayland "
+          "compositor?");
+      buttonPressCountWithDrag = 0;
+      dragService->EndDragSession(false, 0);
+    }
+  }
 }
 
 static bool is_mouse_in_window(GdkWindow* aWindow, gdouble aMouseX,
@@ -6901,6 +6941,10 @@ static gboolean button_press_event_cb(GtkWidget* widget,
   if (!window) return FALSE;
 
   window->OnButtonPressEvent(event);
+
+  if (gfxPlatformGtk::GetPlatform()->IsWaylandDisplay()) {
+    WaylandDragWorkaround(event);
+  }
 
   return TRUE;
 }
@@ -8133,12 +8177,10 @@ nsWindow::GtkWindowDecoration nsWindow::GetSystemGtkWindowDecoration() {
   // GTK_CSD forces CSD mode - use also CSD because window manager
   // decorations does not work with CSD.
   // We check GTK_CSD as well as gtk_window_should_use_csd() does.
-  if (sGtkWindowDecoration == GTK_DECORATION_SYSTEM) {
-    const char* csdOverride = getenv("GTK_CSD");
-    if (csdOverride && atoi(csdOverride)) {
-      sGtkWindowDecoration = GTK_DECORATION_CLIENT;
-      return sGtkWindowDecoration;
-    }
+  const char* csdOverride = getenv("GTK_CSD");
+  if (csdOverride && atoi(csdOverride)) {
+    sGtkWindowDecoration = GTK_DECORATION_CLIENT;
+    return sGtkWindowDecoration;
   }
 
   const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
@@ -8174,7 +8216,7 @@ nsWindow::GtkWindowDecoration nsWindow::GetSystemGtkWindowDecoration() {
       sGtkWindowDecoration = GTK_DECORATION_SYSTEM;
       // Elementary OS
     } else if (strstr(currentDesktop, "Pantheon") != nullptr) {
-      sGtkWindowDecoration = GTK_DECORATION_SYSTEM;
+      sGtkWindowDecoration = GTK_DECORATION_CLIENT;
     } else if (strstr(currentDesktop, "LXQt") != nullptr) {
       sGtkWindowDecoration = GTK_DECORATION_SYSTEM;
     } else if (strstr(currentDesktop, "Deepin") != nullptr) {

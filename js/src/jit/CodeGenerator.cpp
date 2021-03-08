@@ -3960,9 +3960,10 @@ void CodeGenerator::visitNewLexicalEnvironmentObject(
   pushArg(ToRegister(lir->enclosing()));
   pushArg(ImmGCPtr(lir->mir()->scope()));
 
-  using Fn = LexicalEnvironmentObject* (*)(JSContext*, Handle<LexicalScope*>,
-                                           HandleObject, gc::InitialHeap);
-  callVM<Fn, LexicalEnvironmentObject::create>(lir);
+  using Fn =
+      BlockLexicalEnvironmentObject* (*)(JSContext*, Handle<LexicalScope*>,
+                                         HandleObject, gc::InitialHeap);
+  callVM<Fn, BlockLexicalEnvironmentObject::create>(lir);
 }
 
 void CodeGenerator::visitCopyLexicalEnvironmentObject(
@@ -4291,16 +4292,6 @@ void CodeGenerator::visitGuardIsTypedArray(LGuardIsTypedArray* guard) {
   Label bail;
   masm.loadObjClassUnsafe(obj, temp);
   masm.branchIfClassIsNotTypedArray(temp, &bail);
-  bailoutFrom(&bail, guard->snapshot());
-}
-
-void CodeGenerator::visitGuardObjectGroup(LGuardObjectGroup* guard) {
-  Register obj = ToRegister(guard->input());
-  Register temp = ToTempRegisterOrInvalid(guard->temp());
-  Assembler::Condition cond =
-      guard->mir()->bailOnEquality() ? Assembler::Equal : Assembler::NotEqual;
-  Label bail;
-  masm.branchTestObjGroup(cond, obj, guard->mir()->group(), temp, obj, &bail);
   bailoutFrom(&bail, guard->snapshot());
 }
 
@@ -6622,11 +6613,11 @@ void CodeGenerator::visitNewArrayCallVM(LNewArray* lir) {
   JSObject* templateObject = lir->mir()->templateObject();
 
   if (templateObject) {
-    pushArg(ImmGCPtr(templateObject->group()));
+    pushArg(ImmGCPtr(templateObject->shape()));
     pushArg(Imm32(lir->mir()->length()));
 
-    using Fn = ArrayObject* (*)(JSContext*, uint32_t, HandleObjectGroup);
-    callVM<Fn, NewArrayWithGroup>(lir);
+    using Fn = ArrayObject* (*)(JSContext*, uint32_t, HandleShape);
+    callVM<Fn, NewArrayWithShape>(lir);
   } else {
     pushArg(Imm32(GenericObject));
     pushArg(Imm32(lir->mir()->length()));
@@ -7080,11 +7071,9 @@ void CodeGenerator::visitNewCallObject(LNewCallObject* lir) {
 
   CallObject* templateObj = lir->mir()->templateObject();
 
-  using Fn = JSObject* (*)(JSContext*, HandleShape, HandleObjectGroup);
+  using Fn = JSObject* (*)(JSContext*, HandleShape);
   OutOfLineCode* ool = oolCallVM<Fn, NewCallObject>(
-      lir,
-      ArgList(ImmGCPtr(templateObj->lastProperty()),
-              ImmGCPtr(templateObj->group())),
+      lir, ArgList(ImmGCPtr(templateObj->lastProperty())),
       StoreRegisterTo(objReg));
 
   // Inline call object creation, using the OOL path only for tricky cases.
@@ -7256,6 +7245,75 @@ void CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir) {
   using Fn = ArgumentsObject* (*)(JSContext*, JitFrameLayout*, HandleObject);
   callVM<Fn, ArgumentsObject::createForIon>(lir);
 
+  masm.bind(&done);
+}
+
+void CodeGenerator::visitCreateInlinedArgumentsObject(
+    LCreateInlinedArgumentsObject* lir) {
+  Register callObj = ToRegister(lir->getCallObject());
+  Register callee = ToRegister(lir->getCallee());
+  Register argsAddress = ToRegister(lir->temp());
+
+  // TODO: Do we have to worry about alignment here?
+
+  // Create a contiguous array of values for ArgumentsObject::create
+  // by pushing the arguments onto the stack in reverse order.
+  uint32_t argc = lir->mir()->numActuals();
+  for (uint32_t i = 0; i < argc; i++) {
+    uint32_t argNum = argc - i - 1;
+    uint32_t index = LCreateInlinedArgumentsObject::ArgIndex(argNum);
+    ConstantOrRegister arg =
+        toConstantOrRegister(lir, index, lir->mir()->getArg(argNum)->type());
+    masm.Push(arg);
+  }
+  masm.moveStackPtrTo(argsAddress);
+
+  pushArg(Imm32(argc));
+  pushArg(callObj);
+  pushArg(callee);
+  pushArg(argsAddress);
+
+  using Fn = ArgumentsObject* (*)(JSContext*, Value*, HandleFunction,
+                                  HandleObject, uint32_t);
+  callVM<Fn, ArgumentsObject::createForInlinedIon>(lir);
+
+  // Discard the array of values.
+  masm.freeStack(argc * sizeof(Value));
+}
+
+void CodeGenerator::visitGetInlinedArgument(LGetInlinedArgument* lir) {
+  Register index = ToRegister(lir->getIndex());
+  ValueOperand output = ToOutValue(lir);
+
+  uint32_t numActuals = lir->mir()->numActuals();
+  MOZ_ASSERT(numActuals > 0 && numActuals <= ArgumentsObject::MaxInlinedArgs);
+
+  // Check the first n-1 possible indices.
+  Label done;
+  for (uint32_t i = 0; i < numActuals - 1; i++) {
+    Label skip;
+    ConstantOrRegister arg = toConstantOrRegister(
+        lir, LGetInlinedArgument::ArgIndex(i), lir->mir()->getArg(i)->type());
+    masm.branch32(Assembler::NotEqual, index, Imm32(i), &skip);
+    masm.moveValue(arg, output);
+
+    masm.jump(&done);
+    masm.bind(&skip);
+  }
+
+#ifdef DEBUG
+  Label skip;
+  masm.branch32(Assembler::Equal, index, Imm32(numActuals - 1), &skip);
+  masm.assumeUnreachable("LGetInlinedArgument: invalid index");
+  masm.bind(&skip);
+#endif
+
+  // The index has already been bounds-checked, so load the last argument.
+  uint32_t lastIdx = numActuals - 1;
+  ConstantOrRegister arg =
+      toConstantOrRegister(lir, LGetInlinedArgument::ArgIndex(lastIdx),
+                           lir->mir()->getArg(lastIdx)->type());
+  masm.moveValue(arg, output);
   masm.bind(&done);
 }
 

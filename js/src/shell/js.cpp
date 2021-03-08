@@ -10,6 +10,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EnumSet.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/mozalloc.h"
 #include "mozilla/PodOperations.h"
@@ -2044,6 +2045,7 @@ static void my_LargeAllocFailCallback() {
 static const uint32_t CacheEntry_SOURCE = 0;
 static const uint32_t CacheEntry_BYTECODE = 1;
 static const uint32_t CacheEntry_KIND = 2;
+static const uint32_t CacheEntry_OPTIONS = 3;
 
 enum class BytecodeCacheKind : uint32_t {
   Undefined = 0,
@@ -2051,8 +2053,54 @@ enum class BytecodeCacheKind : uint32_t {
   Stencil,
 };
 
+// Some compile options can't be combined differently between save and load.
+//
+// CacheEntries store a CacheOption set, and on load an exception is thrown
+// if the entries are incompatible.
+
+enum CacheOptions : uint32_t {
+  IsRunOnce,
+  NoScriptRval,
+  Global,
+  NonSyntactic,
+  SourceIsLazy,
+  ForceFullParse,
+};
+
+struct CacheOptionSet : public mozilla::EnumSet<CacheOptions> {
+  using mozilla::EnumSet<CacheOptions>::EnumSet;
+
+  explicit CacheOptionSet(const CompileOptions& options) : EnumSet() {
+    initFromOptions(options);
+  }
+
+  void initFromOptions(const CompileOptions& options) {
+    if (options.noScriptRval) {
+      *this += CacheOptions::NoScriptRval;
+    }
+    if (options.isRunOnce) {
+      *this += CacheOptions::IsRunOnce;
+    }
+    if (options.sourceIsLazy) {
+      *this += CacheOptions::SourceIsLazy;
+    }
+    if (options.forceFullParse()) {
+      *this += CacheOptions::ForceFullParse;
+    }
+    if (options.nonSyntacticScope) {
+      *this += CacheOptions::NonSyntactic;
+    }
+  }
+};
+
+static bool CacheOptionsCompatible(const CacheOptionSet& a,
+                                   const CacheOptionSet& b) {
+  // If the options are identical, they are trivially compatible.
+  return a == b;
+}
+
 static const JSClass CacheEntry_class = {"CacheEntryObject",
-                                         JSCLASS_HAS_RESERVED_SLOTS(3)};
+                                         JSCLASS_HAS_RESERVED_SLOTS(4)};
 
 static bool CacheEntry(JSContext* cx, unsigned argc, JS::Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -2072,6 +2120,12 @@ static bool CacheEntry(JSContext* cx, unsigned argc, JS::Value* vp) {
   JS::SetReservedSlot(obj, CacheEntry_BYTECODE, UndefinedValue());
   JS::SetReservedSlot(obj, CacheEntry_KIND,
                       Int32Value(int32_t(BytecodeCacheKind::Undefined)));
+
+  // Fill in empty option set.
+  CacheOptionSet defaultOptions;
+  JS::SetReservedSlot(obj, CacheEntry_OPTIONS,
+                      Int32Value(defaultOptions.serialize()));
+
   args.rval().setObject(*obj);
   return true;
 }
@@ -2104,6 +2158,20 @@ static void CacheEntry_setKind(JSContext* cx, HandleObject cache,
   JS::SetReservedSlot(cache, CacheEntry_KIND, Int32Value(int32_t(kind)));
 }
 
+static bool CacheEntry_compatible(JSContext* cx, HandleObject cache,
+                                  const CacheOptionSet& currentOptionSet) {
+  CacheOptionSet cacheEntryOptions;
+  MOZ_ASSERT(CacheEntry_isCacheEntry(cache));
+  Value v = JS::GetReservedSlot(cache, CacheEntry_OPTIONS);
+  cacheEntryOptions.deserialize(v.toInt32());
+  if (!CacheOptionsCompatible(cacheEntryOptions, currentOptionSet)) {
+    JS_ReportErrorASCII(cx,
+                        "CacheEntry_compatible: Incompatible cache contents");
+    return false;
+  }
+  return true;
+}
+
 static uint8_t* CacheEntry_getBytecode(JSContext* cx, HandleObject cache,
                                        size_t* length) {
   MOZ_ASSERT(CacheEntry_isCacheEntry(cache));
@@ -2121,6 +2189,7 @@ static uint8_t* CacheEntry_getBytecode(JSContext* cx, HandleObject cache,
 }
 
 static bool CacheEntry_setBytecode(JSContext* cx, HandleObject cache,
+                                   const CacheOptionSet& cacheOptions,
                                    uint8_t* buffer, uint32_t length) {
   MOZ_ASSERT(CacheEntry_isCacheEntry(cache));
 
@@ -2135,6 +2204,8 @@ static bool CacheEntry_setBytecode(JSContext* cx, HandleObject cache,
   }
 
   JS::SetReservedSlot(cache, CacheEntry_BYTECODE, ObjectValue(*arrayBuffer));
+  JS::SetReservedSlot(cache, CacheEntry_OPTIONS,
+                      Int32Value(cacheOptions.serialize()));
   return true;
 }
 
@@ -2226,6 +2297,7 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
   bool assertEqBytecode = false;
   JS::RootedObjectVector envChain(cx);
   RootedObject callerGlobal(cx, cx->global());
+  CacheOptionSet optionSet;
 
   options.setIntroductionType("js shell evaluate")
       .setFileAndLine("@evaluate", 1);
@@ -2257,25 +2329,6 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
     if (!v.isUndefined()) {
       sourceMapURL = ToString(cx, v);
       if (!sourceMapURL) {
-        return false;
-      }
-    }
-
-    if (!JS_GetProperty(cx, opts, "global", &v)) {
-      return false;
-    }
-    if (!v.isUndefined()) {
-      if (v.isObject()) {
-        global = js::CheckedUnwrapDynamic(&v.toObject(), cx,
-                                          /* stopAtWindowProxy = */ false);
-        if (!global) {
-          return false;
-        }
-      }
-      if (!global || !(JS::GetClass(global)->flags & JSCLASS_IS_GLOBAL)) {
-        JS_ReportErrorNumberASCII(
-            cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
-            "\"global\" passed to evaluate()", "not a global object");
         return false;
       }
     }
@@ -2326,12 +2379,6 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     if (!v.isUndefined()) {
-      if (loadBytecode) {
-        JS_ReportErrorASCII(cx,
-                            "Can't use both loadBytecode and envChainObject");
-        return false;
-      }
-
       if (!v.isObject()) {
         JS_ReportErrorNumberASCII(
             cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
@@ -2369,7 +2416,59 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
     }
+
+    if (saveIncrementalBytecode && assertEqBytecode) {
+      JS_ReportErrorASCII(
+          cx, "saveIncrementalBytecode cannot be used with assertEqBytecode.");
+      return false;
+    }
+
+    // NOTE: Check custom "global" after handling all CompileOption-related
+    //       properties.
+    if (!JS_GetProperty(cx, opts, "global", &v)) {
+      return false;
+    }
+    if (!v.isUndefined()) {
+      if (v.isObject()) {
+        global = js::CheckedUnwrapDynamic(&v.toObject(), cx,
+                                          /* stopAtWindowProxy = */ false);
+        if (!global) {
+          return false;
+        }
+      }
+      if (!global || !(JS::GetClass(global)->flags & JSCLASS_IS_GLOBAL)) {
+        JS_ReportErrorNumberASCII(
+            cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
+            "\"global\" passed to evaluate()", "not a global object");
+        return false;
+      }
+
+      // Validate the consistency between the passed CompileOptions and
+      // global's option.
+      {
+        JSAutoRealm ar(cx, global);
+        JS::CompileOptions globalOptions(cx);
+
+        // If the passed global discards source, delazification isn't allowed.
+        // The CompileOption should discard source as well.
+        if (globalOptions.discardSource && !options.discardSource) {
+          JS_ReportErrorASCII(cx, "discardSource option mismatch");
+          return false;
+        }
+        if (globalOptions.instrumentationKinds !=
+            options.instrumentationKinds) {
+          JS_ReportErrorASCII(cx, "instrumentationKinds mismatch");
+          return false;
+        }
+      }
+    }
   }
+
+  if (envChain.length() != 0) {
+    options.setNonSyntacticScope(true);
+  }
+
+  optionSet.initFromOptions(options);
 
   AutoStableStringChars codeChars(cx);
   if (!codeChars.initTwoByte(cx, code)) {
@@ -2384,6 +2483,11 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
   if (loadBytecode) {
     size_t loadLength = 0;
     uint8_t* loadData = nullptr;
+
+    if (!CacheEntry_compatible(cx, cacheEntry, optionSet)) {
+      return false;
+    }
+
     loadData = CacheEntry_getBytecode(cx, cacheEntry, &loadLength);
     if (!loadData) {
       return false;
@@ -2393,10 +2497,6 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     loadCacheKind = CacheEntry_getKind(cx, cacheEntry);
-  }
-
-  if (envChain.length() != 0) {
-    options.setNonSyntacticScope(true);
   }
 
   {
@@ -2561,7 +2661,8 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     uint8_t* saveData = saveBuffer.extractOrCopyRawBuffer();
-    if (!CacheEntry_setBytecode(cx, cacheEntry, saveData, saveLength)) {
+    if (!CacheEntry_setBytecode(cx, cacheEntry, optionSet, saveData,
+                                saveLength)) {
       js_free(saveData);
       return false;
     }
@@ -4540,33 +4641,6 @@ static bool ShapeOf(JSContext* cx, unsigned argc, JS::Value* vp) {
   return true;
 }
 
-static bool GroupOf(JSContext* cx, unsigned argc, JS::Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  if (!args.get(0).isObject()) {
-    JS_ReportErrorASCII(cx, "groupOf: object expected");
-    return false;
-  }
-  RootedObject obj(cx, &args[0].toObject());
-  ObjectGroup* group = obj->group();
-  args.rval().set(JS_NumberValue(double(uintptr_t(group) >> 3)));
-  return true;
-}
-
-static bool UnwrappedObjectsHaveSameShape(JSContext* cx, unsigned argc,
-                                          JS::Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  if (!args.get(0).isObject() || !args.get(1).isObject()) {
-    JS_ReportErrorASCII(cx, "2 objects expected");
-    return false;
-  }
-
-  RootedObject obj1(cx, UncheckedUnwrap(&args[0].toObject()));
-  RootedObject obj2(cx, UncheckedUnwrap(&args[1].toObject()));
-
-  args.rval().setBoolean(obj1->shape() == obj2->shape());
-  return true;
-}
-
 static bool Sleep_fn(JSContext* cx, unsigned argc, Value* vp) {
   ShellContext* sc = GetShellContext(cx);
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -5390,12 +5464,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
   // Emplace the top-level stencil.
   MOZ_ASSERT(compilationState.scriptData.length() ==
              CompilationStencil::TopLevelIndex);
-  if (!compilationState.scriptData.emplaceBack()) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-  if (!compilationState.scriptExtra.emplaceBack()) {
-    ReportOutOfMemory(cx);
+  if (!compilationState.appendScriptStencilAndData(cx)) {
     return false;
   }
 
@@ -6662,13 +6731,6 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
     }
     if (v.isBoolean() && v.toBoolean()) {
       creationOptions.setNewCompartmentAndZone();
-    }
-
-    if (!JS_GetProperty(cx, opts, "disableLazyParsing", &v)) {
-      return false;
-    }
-    if (v.isBoolean()) {
-      behaviors.setDisableLazyParsing(v.toBoolean());
     }
 
     if (!JS_GetProperty(cx, opts, "discardSource", &v)) {
@@ -8952,16 +9014,6 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "shapeOf(obj)",
 "  Get the shape of obj (an implementation detail)."),
 
-    JS_FN_HELP("groupOf", GroupOf, 1, 0,
-"groupOf(obj)",
-"  Get the group of obj (an implementation detail)."),
-
-    JS_FN_HELP("unwrappedObjectsHaveSameShape", UnwrappedObjectsHaveSameShape, 2, 0,
-"unwrappedObjectsHaveSameShape(obj1, obj2)",
-"  Returns true iff obj1 and obj2 have the same shape, false otherwise. Both\n"
-"  objects are unwrapped first, so this can be used on objects from different\n"
-"  globals."),
-
 #ifdef DEBUG
     JS_FN_HELP("arrayInfo", ArrayInfo, 1, 0,
 "arrayInfo(a1, a2, ...)",
@@ -9153,8 +9205,6 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "         compartment and zone.\n"
 "      invisibleToDebugger: If true, the global will be invisible to the\n"
 "         debugger (default false)\n"
-"      disableLazyParsing: If true, don't create lazy scripts for functions\n"
-"         (default false).\n"
 "      discardSource: If true, discard source after compiling a script\n"
 "         (default false).\n"
 "      useWindowProxy: the global will be created with a WindowProxy attached. In this\n"

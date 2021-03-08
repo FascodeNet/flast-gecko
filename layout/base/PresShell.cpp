@@ -522,8 +522,7 @@ class MOZ_STACK_CLASS nsPresShellEventCB : public EventDispatchingCallback {
         frame = mPresShell->GetRootFrame();
       }
       if (frame) {
-        frame->HandleEvent(MOZ_KnownLive(aVisitor.mPresContext),
-                           aVisitor.mEvent->AsGUIEvent(),
+        frame->HandleEvent(aVisitor.mPresContext, aVisitor.mEvent->AsGUIEvent(),
                            &aVisitor.mEventStatus);
       }
     }
@@ -2366,7 +2365,7 @@ NS_IMETHODIMP
 PresShell::PageMove(bool aForward, bool aExtend) {
   nsIFrame* frame = nullptr;
   if (!aExtend) {
-    frame = do_QueryFrame(GetScrollableFrameToScroll(VerticalScollDirection));
+    frame = do_QueryFrame(GetScrollableFrameToScroll(VerticalScrollDirection));
     // If there is no scrollable frame, get the frame to move caret instead.
   }
   if (!frame || frame->PresContext() != mPresContext) {
@@ -2386,7 +2385,7 @@ PresShell::PageMove(bool aForward, bool aExtend) {
 NS_IMETHODIMP
 PresShell::ScrollPage(bool aForward) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(VerticalScollDirection);
+      GetScrollableFrameToScroll(VerticalScrollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2402,7 +2401,7 @@ PresShell::ScrollPage(bool aForward) {
 NS_IMETHODIMP
 PresShell::ScrollLine(bool aForward) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(VerticalScollDirection);
+      GetScrollableFrameToScroll(VerticalScrollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2440,7 +2439,7 @@ PresShell::ScrollCharacter(bool aRight) {
 NS_IMETHODIMP
 PresShell::CompleteScroll(bool aForward) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(VerticalScollDirection);
+      GetScrollableFrameToScroll(VerticalScrollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2779,8 +2778,7 @@ void PresShell::FrameNeedsReflow(nsIFrame* aFrame,
       for (nsIFrame* a = subtreeRoot; a && !FRAME_IS_REFLOW_ROOT(a);
            a = a->GetParent()) {
         a->MarkIntrinsicISizesDirty();
-        if (a->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) &&
-            a->IsAbsolutelyPositioned()) {
+        if (a->IsAbsolutelyPositioned()) {
           // If we get here, 'a' is abspos, so its subtree's intrinsic sizing
           // has no effect on its ancestors' intrinsic sizing. So, don't loop
           // upwards any further.
@@ -3357,7 +3355,7 @@ static void AccumulateFrameBounds(nsIFrame* aContainerFrame, nsIFrame* aFrame,
     // We can't use nsRect::UnionRect since it drops empty rects on
     // the floor, and we need to include them.  (Thus we need
     // aHaveRect to know when to drop the initial value on the floor.)
-    aRect.UnionRectEdges(aRect, transformedBounds);
+    aRect = aRect.UnionEdges(transformedBounds);
   } else {
     aHaveRect = true;
     aRect = transformedBounds;
@@ -4845,6 +4843,8 @@ UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
   // appropriate nsDisplayAsyncZoom display items. This code handles the general
   // case with nested async zooms (even though that never actually happens),
   // because it fell out of the implementation for free.
+  //
+  // TODO: Do we need to do the same for ancestor transforms?
   for (nsPresContext* ctx = GetPresContext(); ctx;
        ctx = ctx->GetParentPresContext()) {
     PresShell* shell = ctx->PresShell();
@@ -4885,7 +4885,7 @@ UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
   // determine the offset of the reference frame for the display list
   // to the root frame. This will allow the coordinates used when painting
   // to all be offset from the same point
-  info->mRootOffset = ancestorFrame->GetOffsetTo(rootFrame);
+  info->mRootOffset = ancestorFrame->GetBoundingClientRect().TopLeft();
   rangeRect.MoveBy(info->mRootOffset);
   aSurfaceRect.UnionRect(aSurfaceRect, rangeRect);
 
@@ -9316,7 +9316,7 @@ static CallState FreezeSubDocument(Document& aDocument) {
   return CallState::Continue;
 }
 
-void PresShell::Freeze() {
+void PresShell::Freeze(bool aIncludeSubDocuments) {
   mUpdateApproximateFrameVisibilityEvent.Revoke();
 
   MaybeReleaseCapturingContent();
@@ -9327,7 +9327,7 @@ void PresShell::Freeze() {
 
   mPaintingSuppressed = true;
 
-  if (mDocument) {
+  if (aIncludeSubDocuments && mDocument) {
     mDocument->EnumerateSubDocuments(FreezeSubDocument);
   }
 
@@ -9370,14 +9370,14 @@ void PresShell::FireOrClearDelayedEvents(bool aFireEvents) {
   }
 }
 
-void PresShell::Thaw() {
+void PresShell::Thaw(bool aIncludeSubDocuments) {
   nsPresContext* presContext = GetPresContext();
   if (presContext &&
       presContext->RefreshDriver()->GetPresContext() == presContext) {
     presContext->RefreshDriver()->Thaw();
   }
 
-  if (mDocument) {
+  if (aIncludeSubDocuments && mDocument) {
     mDocument->EnumerateSubDocuments([](Document& aSubDoc) {
       if (PresShell* presShell = aSubDoc.GetPresShell()) {
         presShell->Thaw();

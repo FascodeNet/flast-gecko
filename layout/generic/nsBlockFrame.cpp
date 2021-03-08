@@ -1531,8 +1531,8 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   }
 
   nsRect areaBounds = nsRect(0, 0, aMetrics.Width(), aMetrics.Height());
-  ComputeOverflowAreas(areaBounds, reflowInput->mStyleDisplay,
-                       blockEndEdgeOfChildren, aMetrics.mOverflowAreas);
+  aMetrics.mOverflowAreas = ComputeOverflowAreas(
+      areaBounds, reflowInput->mStyleDisplay, blockEndEdgeOfChildren);
   // Factor overflow container child bounds into the overflow area
   aMetrics.mOverflowAreas.UnionWith(ocBounds);
   // Factor pushed float child bounds into the overflow area
@@ -2089,10 +2089,9 @@ static void ConsiderBlockEndEdgeOfChildren(const WritingMode aWritingMode,
   }
 }
 
-void nsBlockFrame::ComputeOverflowAreas(const nsRect& aBounds,
-                                        const nsStyleDisplay* aDisplay,
-                                        nscoord aBEndEdgeOfChildren,
-                                        OverflowAreas& aOverflowAreas) {
+OverflowAreas nsBlockFrame::ComputeOverflowAreas(const nsRect& aBounds,
+                                                 const nsStyleDisplay* aDisplay,
+                                                 nscoord aBEndEdgeOfChildren) {
   // Compute the overflow areas of our children
   // XXX_perf: This can be done incrementally.  It is currently one of
   // the things that makes incremental reflow O(N^2).
@@ -2134,7 +2133,7 @@ void nsBlockFrame::ComputeOverflowAreas(const nsRect& aBounds,
          ToString(areas.ScrollableOverflow()).c_str());
 #endif
 
-  aOverflowAreas = areas;
+  return areas;
 }
 
 void nsBlockFrame::UnionChildOverflow(OverflowAreas& aOverflowAreas) {
@@ -3373,27 +3372,19 @@ static inline bool IsNonAutoNonZeroBSize(const StyleSize& aCoord) {
   // return false here, so we treat them like 'auto' pending a real
   // implementation. (See bug 1126420.)
   //
-  // FIXME (bug 567039, bug 527285)
-  // This isn't correct for the 'fill' value, which should more
-  // likely (but not necessarily, depending on the available space)
-  // be returning true.
-  if (aCoord.IsAuto() || aCoord.IsExtremumLength()) {
+  // FIXME (bug 567039, bug 527285) This isn't correct for the 'fill' value,
+  // which should more likely (but not necessarily, depending on the available
+  // space) be returning true.
+  if (aCoord.BehavesLikeInitialValueOnBlockAxis()) {
     return false;
   }
-  if (aCoord.IsLengthPercentage()) {
-    // If we evaluate the length/percent/calc at a percentage basis of
-    // both nscoord_MAX and 0, and it's zero both ways, then it's a zero
-    // length, percent, or combination thereof.  Test > 0 so we clamp
-    // negative calc() results to 0.
-    return aCoord.AsLengthPercentage().Resolve(nscoord_MAX) > 0 ||
-           aCoord.AsLengthPercentage().Resolve(0) > 0;
-  }
-  MOZ_ASSERT(false, "unexpected unit for height or min-height");
-  return true;
-}
-
-static bool BehavesLikeInitialValueOnBlockAxis(const StyleSize& aCoord) {
-  return aCoord.IsAuto() || aCoord.IsExtremumLength();
+  MOZ_ASSERT(aCoord.IsLengthPercentage());
+  // If we evaluate the length/percent/calc at a percentage basis of
+  // both nscoord_MAX and 0, and it's zero both ways, then it's a zero
+  // length, percent, or combination thereof.  Test > 0 so we clamp
+  // negative calc() results to 0.
+  return aCoord.AsLengthPercentage().Resolve(nscoord_MAX) > 0 ||
+         aCoord.AsLengthPercentage().Resolve(0) > 0;
 }
 
 /* virtual */
@@ -3417,7 +3408,7 @@ bool nsBlockFrame::IsSelfEmpty() {
   // FIXME: Handle the case that both inline and block sizes are auto.
   // https://github.com/w3c/csswg-drafts/issues/5060.
   // Note: block-size could be zero or auto/intrinsic keywords here.
-  if (BehavesLikeInitialValueOnBlockAxis(position->BSize(wm)) &&
+  if (position->BSize(wm).BehavesLikeInitialValueOnBlockAxis() &&
       position->mAspectRatio.HasFiniteRatio()) {
     return false;
   }
@@ -6456,7 +6447,7 @@ static bool FindLineFor(nsIFrame* aChild, const nsFrameList& aFrameList,
 void nsBlockFrame::StealFrame(nsIFrame* aChild) {
   MOZ_ASSERT(aChild->GetParent() == this);
 
-  if (aChild->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) && aChild->IsFloating()) {
+  if (aChild->IsFloating()) {
     RemoveFloat(aChild);
     return;
   }
@@ -7215,8 +7206,7 @@ nsLineBox* nsBlockFrame::GetFirstLineContaining(nscoord y) {
 /* virtual */
 void nsBlockFrame::ChildIsDirty(nsIFrame* aChild) {
   // See if the child is absolutely positioned
-  if (aChild->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) &&
-      aChild->IsAbsolutelyPositioned()) {
+  if (aChild->IsAbsolutelyPositioned()) {
     // do nothing
   } else if (aChild == GetOutsideMarker()) {
     // The ::marker lives in the first line, unless the first line has

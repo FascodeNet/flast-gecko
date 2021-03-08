@@ -83,7 +83,6 @@ function getVisibleMenuItems(aMenu, aData) {
         item.id != "spell-no-suggestions" &&
         item.id != "spell-add-dictionaries-main" &&
         item.id != "context-savelinktopocket" &&
-        item.id != "fill-login-saved-passwords" &&
         item.id != "fill-login-no-logins" &&
         // XXX Screenshots doesn't have an access key. This needs
         // at least bug 1320462 fixing first.
@@ -431,12 +430,16 @@ async function test_contextmenu(selector, menuItems, options = {}) {
 
   if (menuItems) {
     if (Services.prefs.getBoolPref("devtools.inspector.enabled", true)) {
-      const inspectItems = ["---", null];
+      const inspectItems =
+        menuItems.includes("context-viewsource") ||
+        menuItems.includes("context-viewpartialsource-selection")
+          ? []
+          : ["---", null];
       if (Services.prefs.getBoolPref("devtools.accessibility.enabled", true)) {
         inspectItems.push("context-inspect-a11y", true);
       }
-
       inspectItems.push("context-inspect", true);
+
       menuItems = menuItems.concat(inspectItems);
     }
 

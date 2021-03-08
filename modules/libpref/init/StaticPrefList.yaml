@@ -1780,15 +1780,6 @@
   value: false
   mirror: always
 
-# When dom.event.wheel-deltaMode-lines.disabled is true, this is the lines to
-# pixels multiplier that gets used.
-#
-# The value here is taken from PIXELS_PER_LINE_SCALE from pdf.js.
-- name: dom.event.wheel-deltaMode-lines-to-pixel-scale
-  type: uint32_t
-  value: 30
-  mirror: always
-
 #if defined(XP_MACOSX)
 # Whether to disable treating ctrl click as right click
 - name: dom.event.treat_ctrl_click_as_right_click.disabled
@@ -3346,12 +3337,6 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
-# Is support for Navigator.webdriver enabled?
-- name: dom.webdriver.enabled
-  type: bool
-  value: true
-  mirror: always
-
 # In case Touch API is enabled, this pref controls whether to support
 # ontouch* event handlers, document.createTouch, document.createTouchList and
 # document.createEvent("TouchEvent").
@@ -3517,6 +3502,11 @@
 - name: dom.webidl.test2
   type: bool
   value: true
+  mirror: always
+
+- name: dom.webidl.crosscontext_hasinstance.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NOT_NIGHTLY_BUILD@
   mirror: always
 
 # WebShare API - exposes navigator.share()
@@ -3747,6 +3737,13 @@
   type: bool
   value: false
   mirror: once
+  do_not_use_directly: true
+
+# If session history is stored in the parent process, enable bfcache for it.
+- name: fission.bfcacheInParent
+  type: bool
+  value: false
+  mirror: always
   do_not_use_directly: true
 
 # Allow renaming of process names to the origin on nightly
@@ -4365,8 +4362,8 @@
   mirror: once
 
 # Whether to load fonts (e.g. Twemoji Mozilla) bundled with the application:
-#  -1 - Auto behavior based on OS version (currently, disables loading on Win8.1 or later,
-#       or on "low-memory" Android devices)
+#  -1 - Auto behavior based on OS version (currently, disables loading on
+#       "low-memory" Android devices)
 #   0 - Skip loading any bundled fonts
 #   1 - Always load bundled fonts
 - name: gfx.bundled-fonts.activate
@@ -4495,11 +4492,19 @@
   value: false
   mirror: always
 
-# Prefer EGL over GLX if available.
-- name: gfx.prefer-x11-egl
+#ifdef MOZ_X11
+# Whether to force using GLX over EGL.
+- name: gfx.x11-egl.force-disabled
   type: bool
   value: false
   mirror: once
+
+# Whether to force using EGL over GLX.
+- name: gfx.x11-egl.force-enabled
+  type: bool
+  value: false
+  mirror: once
+#endif
 
 - name: gfx.testing.device-fail
   type: RelaxedAtomicBool
@@ -4622,11 +4627,7 @@
 
 - name: gfx.webrender.enable-capture
   type: bool
-#ifdef NIGHTLY_BUILD
-  value: true
-#else
   value: false
-#endif
   mirror: once
 
 - name: gfx.webrender.dl.dump-parent
@@ -4881,7 +4882,7 @@
 
 - name: gfx.webrender.software.d3d11.upload-mode
   type: RelaxedAtomicInt32
-  value: 4 
+  value: 4
   mirror: always
 
 # Whether to allow widgets that don't support acceleration to use WebRender
@@ -6191,6 +6192,13 @@
 - name: layout.css.cross-fade.enabled
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+  rust: true
+
+# Is support for color-mix on content enabled?
+- name: layout.css.color-mix.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
   rust: true
 
@@ -9022,6 +9030,12 @@
   value: false
   mirror: always
 
+# Whether to record the telemetry event when a JAR channel is failed to load.
+- name: network.jar.record_failure_reason
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "nglayout."
 #---------------------------------------------------------------------------
@@ -9072,7 +9086,7 @@
 
 - name: permissions.isolateBy.privateBrowsing
   type: RelaxedAtomicBool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -10547,13 +10561,7 @@
 # entry in python/mozbuild/mozbuild/mozinfo.py
 - name: widget.non-native-theme.enabled
   type: RelaxedAtomicBool
-#if defined(XP_LINUX) && defined(NIGHTLY_BUILD) && !defined(ANDROID)
-  value: true
-#elif defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
-  value: true
-#else
-  value: false
-#endif
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # The size in CSS pixels at full zoom of the minimum scrollbar width.

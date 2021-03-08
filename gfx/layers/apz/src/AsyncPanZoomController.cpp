@@ -860,7 +860,7 @@ bool AsyncPanZoomController::ArePointerEventsConsumable(
         // In the case of the root APZC with any dynamic toolbar, it
         // shoule be pannable if there is room moving the dynamic
         // toolbar.
-        (IsRootContent() && CanScrollDownwardsWithDynamicToolbar())));
+        (IsRootContent() && CanVerticalScrollWithDynamicToolbar())));
 
   bool pannable;
 
@@ -2227,16 +2227,38 @@ bool AsyncPanZoomController::CanScroll(ScrollDirection aDirection) const {
   return false;
 }
 
-bool AsyncPanZoomController::CanScrollDownwardsWithDynamicToolbar() const {
+bool AsyncPanZoomController::CanVerticalScrollWithDynamicToolbar() const {
   MOZ_ASSERT(IsRootContent());
 
   RecursiveMutexAutoLock lock(mRecursiveMutex);
-  return mY.CanScrollDownwardsWithDynamicToolbar();
+  return mY.CanVerticalScrollWithDynamicToolbar();
 }
 
 bool AsyncPanZoomController::CanScrollDownwards() const {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
   return mY.CanScrollTo(eSideBottom);
+}
+
+SideBits AsyncPanZoomController::ScrollableDirections() const {
+  SideBits result;
+  {  // scope lock to respect lock ordering with APZCTreeManager::mTreeLock
+    // which will be acquired in the `GetCompositorFixedLayerMargins` below.
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    result = mX.ScrollableDirections() | mY.ScrollableDirections();
+  }
+
+  if (IsRootContent()) {
+    if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
+      ScreenMargin fixedLayerMargins =
+          treeManagerLocal->GetCompositorFixedLayerMargins();
+      {
+        RecursiveMutexAutoLock lock(mRecursiveMutex);
+        result |= mY.ScrollableDirectionsWithDynamicToolbar(fixedLayerMargins);
+      }
+    }
+  }
+
+  return result;
 }
 
 bool AsyncPanZoomController::IsContentOfHonouredTargetRightToLeft(
@@ -4863,6 +4885,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
   }
 
   bool scrollOffsetUpdated = false;
+  bool smoothScrollRequested = false;
   for (const auto& scrollUpdate : aScrollMetadata.GetScrollUpdates()) {
     APZC_LOG("%p processing scroll update %s\n", this,
              ToString(scrollUpdate).c_str());
@@ -4886,7 +4909,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
 
     if (scrollUpdate.GetMode() == ScrollMode::Smooth ||
         scrollUpdate.GetMode() == ScrollMode::SmoothMsd) {
-      scrollOffsetUpdated = true;
+      smoothScrollRequested = true;
 
       // Requests to animate the visual scroll position override requests to
       // simply update the visual scroll offset to a particular point. Since
@@ -5055,6 +5078,12 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     for (auto& sampledState : mSampledState) {
       sampledState.ClampVisualScrollOffset(Metrics());
     }
+  }
+
+  if (smoothScrollRequested && !scrollOffsetUpdated) {
+    mExpectedGeckoMetrics.UpdateFrom(aLayerMetrics);
+    // Need to acknowledge the request.
+    needContentRepaint = true;
   }
 
   // If `isDefault` is true, this APZC is a "new" one (this is the first time

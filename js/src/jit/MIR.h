@@ -963,7 +963,6 @@ using CompilerFunction = CompilerGCPointer<JSFunction*>;
 using CompilerBaseScript = CompilerGCPointer<BaseScript*>;
 using CompilerPropertyName = CompilerGCPointer<PropertyName*>;
 using CompilerShape = CompilerGCPointer<Shape*>;
-using CompilerObjectGroup = CompilerGCPointer<ObjectGroup*>;
 
 // An instruction is an SSA name that is inserted into a basic block's IR
 // stream.
@@ -3116,6 +3115,64 @@ class MCreateArgumentsObject : public MUnaryInstruction,
   [[nodiscard]] bool writeRecoverData(
       CompactBufferWriter& writer) const override;
   bool canRecoverOnBailout() const override { return true; }
+};
+
+// Eager initialization of arguments object for inlined function
+class MCreateInlinedArgumentsObject : public MVariadicInstruction,
+                                      public NoFloatPolicyAfter<0>::Data {
+  MCreateInlinedArgumentsObject() : MVariadicInstruction(classOpcode) {
+    setResultType(MIRType::Object);
+  }
+
+  static const size_t NumNonArgumentOperands = 2;
+
+ public:
+  INSTRUCTION_HEADER(CreateInlinedArgumentsObject)
+  static MCreateInlinedArgumentsObject* New(TempAllocator& alloc,
+                                            MDefinition* callObj,
+                                            MDefinition* callee,
+                                            MDefinitionVector& args);
+  NAMED_OPERANDS((0, getCallObject), (1, getCallee))
+
+  MDefinition* getArg(uint32_t idx) const {
+    return getOperand(idx + NumNonArgumentOperands);
+  }
+  uint32_t numActuals() const { return numOperands() - NumNonArgumentOperands; }
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  bool possiblyCalls() const override { return true; }
+
+  [[nodiscard]] bool writeRecoverData(
+      CompactBufferWriter& writer) const override;
+  bool canRecoverOnBailout() const override { return true; }
+};
+
+class MGetInlinedArgument : public MVariadicInstruction,
+                            public UnboxedInt32Policy<0>::Data {
+  MGetInlinedArgument() : MVariadicInstruction(classOpcode) {
+    setResultType(MIRType::Value);
+  }
+
+  static const size_t NumNonArgumentOperands = 1;
+
+ public:
+  INSTRUCTION_HEADER(GetInlinedArgument)
+  static MGetInlinedArgument* New(TempAllocator& alloc, MDefinition* index,
+                                  MCreateInlinedArgumentsObject* args);
+  NAMED_OPERANDS((0, index))
+
+  MDefinition* getArg(uint32_t idx) const {
+    return getOperand(idx + NumNonArgumentOperands);
+  }
+  uint32_t numActuals() const { return numOperands() - NumNonArgumentOperands; }
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
 };
 
 class MGetArgumentsObjectArg : public MUnaryInstruction,
@@ -9392,52 +9449,6 @@ class MGuardFunctionScript : public MUnaryInstruction,
   }
 };
 
-// Guard on an object's group, inclusively or exclusively.
-class MGuardObjectGroup : public MUnaryInstruction,
-                          public SingleObjectPolicy::Data {
-  CompilerObjectGroup group_;
-  bool bailOnEquality_;
-
-  MGuardObjectGroup(MDefinition* obj, ObjectGroup* group, bool bailOnEquality)
-      : MUnaryInstruction(classOpcode, obj),
-        group_(group),
-        bailOnEquality_(bailOnEquality) {
-    setGuard();
-    setMovable();
-    setResultType(MIRType::Object);
-  }
-
- public:
-  INSTRUCTION_HEADER(GuardObjectGroup)
-  TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, object))
-
-  const ObjectGroup* group() const { return group_; }
-  bool bailOnEquality() const { return bailOnEquality_; }
-  bool congruentTo(const MDefinition* ins) const override {
-    if (!ins->isGuardObjectGroup()) {
-      return false;
-    }
-    if (group() != ins->toGuardObjectGroup()->group()) {
-      return false;
-    }
-    if (bailOnEquality() != ins->toGuardObjectGroup()->bailOnEquality()) {
-      return false;
-    }
-    return congruentIfOperandsEqual(ins);
-  }
-  AliasSet getAliasSet() const override {
-    return AliasSet::Load(AliasSet::ObjectFields);
-  }
-  AliasType mightAlias(const MDefinition* def) const override {
-    // These instructions don't modify the group only the shape.
-    if (def->isAddAndStoreSlot() || def->isAllocateAndStoreSlot()) {
-      return AliasType::NoAlias;
-    }
-    return AliasType::MayAlias;
-  };
-};
-
 // Guard on an object's identity, inclusively or exclusively.
 class MGuardObjectIdentity : public MBinaryInstruction,
                              public SingleObjectPolicy::Data {
@@ -9753,7 +9764,7 @@ class MFunctionEnvironment : public MUnaryInstruction,
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
-// Allocate a new LexicalEnvironmentObject.
+// Allocate a new BlockLexicalEnvironmentObject.
 class MNewLexicalEnvironmentObject : public MUnaryInstruction,
                                      public SingleObjectPolicy::Data {
   CompilerGCPointer<LexicalScope*> scope_;
@@ -9773,7 +9784,7 @@ class MNewLexicalEnvironmentObject : public MUnaryInstruction,
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
-// Allocate a new LexicalEnvironmentObject from existing one
+// Allocate a new BlockLexicalEnvironmentObject from an existing one.
 class MCopyLexicalEnvironmentObject : public MUnaryInstruction,
                                       public SingleObjectPolicy::Data {
   bool copySlots_;
@@ -10905,9 +10916,9 @@ class MPostWriteElementBarrier
 };
 
 class MNewNamedLambdaObject : public MNullaryInstruction {
-  CompilerGCPointer<LexicalEnvironmentObject*> templateObj_;
+  CompilerGCPointer<NamedLambdaObject*> templateObj_;
 
-  explicit MNewNamedLambdaObject(LexicalEnvironmentObject* templateObj)
+  explicit MNewNamedLambdaObject(NamedLambdaObject* templateObj)
       : MNullaryInstruction(classOpcode), templateObj_(templateObj) {
     setResultType(MIRType::Object);
   }
@@ -10916,7 +10927,7 @@ class MNewNamedLambdaObject : public MNullaryInstruction {
   INSTRUCTION_HEADER(NewNamedLambdaObject)
   TRIVIAL_NEW_WRAPPERS
 
-  LexicalEnvironmentObject* templateObj() { return templateObj_; }
+  NamedLambdaObject* templateObj() { return templateObj_; }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
