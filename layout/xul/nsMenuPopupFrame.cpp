@@ -52,16 +52,18 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_xul.h"
+#include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/KeyboardEvent.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include <algorithm>
 #ifdef MOZ_WAYLAND
-#  include <gdk/gdk.h>
-#  include <gdk/gdkx.h>
-#  include <gdk/gdkwayland.h>
+#  include "mozilla/WidgetUtilsGtk.h"
 #endif /* MOZ_WAYLAND */
+#ifdef XP_MACOSX
+#  include "mozilla/widget/NativeMenuSupport.h"
+#endif
 
 #include "X11UndefineNone.h"
 
@@ -70,6 +72,7 @@ using mozilla::dom::Document;
 using mozilla::dom::Element;
 using mozilla::dom::Event;
 using mozilla::dom::KeyboardEvent;
+using mozilla::widget::NativeMenu;
 
 int8_t nsMenuPopupFrame::sDefaultLevelIsTop = -1;
 
@@ -129,6 +132,12 @@ nsMenuPopupFrame::nsMenuPopupFrame(ComputedStyle* aStyle,
   sDefaultLevelIsTop =
       Preferences::GetBool("ui.panel.default_level_parent", false);
 }  // ctor
+
+nsMenuPopupFrame::~nsMenuPopupFrame() {
+  if (mNativeMenu) {
+    mNativeMenu->RemoveObserver(this);
+  }
+}
 
 void nsMenuPopupFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
                             nsIFrame* aPrevInFlow) {
@@ -546,8 +555,7 @@ void nsMenuPopupFrame::LayoutPopup(nsBoxLayoutState& aState,
   prefSize = XULBoundsCheck(minSize, prefSize, maxSize);
 
 #ifdef MOZ_WAYLAND
-  static bool inWayland = gdk_display_get_default() &&
-                          !GDK_IS_X11_DISPLAY(gdk_display_get_default());
+  static bool inWayland = mozilla::widget::GdkIsWaylandDisplay();
 #else
   static bool inWayland = false;
 #endif
@@ -905,6 +913,40 @@ void nsMenuPopupFrame::InitializePopupAtScreen(nsIContent* aTriggerContent,
   mPositionedOffset = 0;
 }
 
+bool nsMenuPopupFrame::InitializePopupAsNativeContextMenu(
+    nsIContent* aTriggerContent, int32_t aXPos, int32_t aYPos) {
+  RefPtr<NativeMenu> menu;
+#ifdef XP_MACOSX
+  if (mContent->IsElement()) {
+    menu = mozilla::widget::NativeMenuSupport::CreateNativeContextMenu(
+        mContent->AsElement());
+  }
+#endif
+  if (!menu) {
+    return false;
+  }
+
+  mTriggerContent = aTriggerContent;
+  mNativeMenu = menu;
+  mPopupState = ePopupClosed;  // Treat native popups as closed.
+  mAnchorContent = nullptr;
+  mScreenRect = nsIntRect(aXPos, aYPos, 0, 0);
+  mXPos = 0;
+  mYPos = 0;
+  mFlip = FlipType_Default;
+  mPopupAnchor = POPUPALIGNMENT_NONE;
+  mPopupAlignment = POPUPALIGNMENT_NONE;
+  mPosition = POPUPPOSITION_UNKNOWN;
+  mIsContextMenu = true;
+  mAdjustOffsetForContextMenu = true;
+  mAnchorType = MenuPopupAnchorType_Point;
+  mPositionedOffset = 0;
+
+  mNativeMenu->AddObserver(this);
+
+  return true;
+}
+
 void nsMenuPopupFrame::InitializePopupAtRect(nsIContent* aTriggerContent,
                                              const nsAString& aPosition,
                                              const nsIntRect& aRect,
@@ -912,6 +954,17 @@ void nsMenuPopupFrame::InitializePopupAtRect(nsIContent* aTriggerContent,
   InitializePopup(nullptr, aTriggerContent, aPosition, 0, 0,
                   MenuPopupAnchorType_Rect, aAttributesOverride);
   mScreenRect = aRect;
+}
+
+void nsMenuPopupFrame::ShowNativeMenu() {
+  MOZ_RELEASE_ASSERT(mNativeMenu);
+  bool succeeded = mNativeMenu->ShowAsContextMenu(
+      DesktopPoint::FromUnknownPoint(mScreenRect.TopLeft()));
+  if (!succeeded) {
+    // preventDefault() was called on the popupshowing event.
+    mNativeMenu->RemoveObserver(this);
+    mNativeMenu = nullptr;
+  }
 }
 
 void nsMenuPopupFrame::ShowPopup(bool aIsContextMenu) {
@@ -953,6 +1006,18 @@ void nsMenuPopupFrame::ShowPopup(bool aIsContextMenu) {
   }
 
   mShouldAutoPosition = true;
+}
+
+void nsMenuPopupFrame::OnNativeMenuClosed() {
+  if (!mNativeMenu) {
+    return;
+  }
+
+  // The native menu has closed.
+  // Null out mNativeMenu so that we don't keep it (and mContent) alive
+  // unnecessarily, and unregister ourselves first.
+  mNativeMenu->RemoveObserver(this);
+  mNativeMenu = nullptr;
 }
 
 void nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState) {
@@ -1342,6 +1407,22 @@ nsRect nsMenuPopupFrame::ComputeAnchorRect(nsPresContext* aRootPresContext,
       PresContext()->AppUnitsPerDevPixel());
 }
 
+static void NotifyPositionUpdatedForRemoteContents(nsIContent* aContent) {
+  for (nsIContent* content = aContent->GetFirstChild(); content;
+       content = content->GetNextSibling()) {
+    if (content->IsXULElement(nsGkAtoms::browser) &&
+        content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::remote,
+                                          nsGkAtoms::_true, eIgnoreCase)) {
+      if (dom::BrowserParent* browserParent =
+              dom::BrowserParent::GetFrom(content)) {
+        browserParent->NotifyPositionUpdatedForContentsInPopup();
+      }
+    } else {
+      NotifyPositionUpdatedForRemoteContents(content);
+    }
+  }
+}
+
 nsresult nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame,
                                             bool aIsMove, bool aSizedToPopup) {
   if (!mShouldAutoPosition) return NS_OK;
@@ -1450,8 +1531,7 @@ nsresult nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame,
       // the popup's margin.
 
 #ifdef MOZ_WAYLAND
-      if (gdk_display_get_default() &&
-          !GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
+      if (mozilla::widget::GdkIsWaylandDisplay()) {
         screenPoint = nsPoint(anchorRect.x, anchorRect.y);
         mAnchorRect = anchorRect;
       }
@@ -1588,8 +1668,7 @@ nsresult nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame,
       // because we don't know the absolute position of the window on the
       // screen.
 #ifdef MOZ_WAYLAND
-    static bool inWayland = gdk_display_get_default() &&
-                            !GDK_IS_X11_DISPLAY(gdk_display_get_default());
+    static bool inWayland = mozilla::widget::GdkIsWaylandDisplay();
 #else
     static bool inWayland = false;
 #endif
@@ -1700,6 +1779,14 @@ nsresult nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame,
     }
   }
 
+  // In the case this popup has remote contents having OOP iframes, it's
+  // possible that OOP iframe's nsSubDocumentFrame has been already reflowed
+  // thus, we will never have a chance to tell this parent browser's position
+  // update to the OOP documents without notifying it explicitly.
+  if (HasRemoteContent()) {
+    NotifyPositionUpdatedForRemoteContents(mContent);
+  }
+
   return NS_OK;
 }
 
@@ -1729,8 +1816,7 @@ LayoutDeviceIntRect nsMenuPopupFrame::GetConstraintRect(
   nsCOMPtr<nsIScreenManager> sm(
       do_GetService("@mozilla.org/gfx/screenmanager;1"));
 #ifdef MOZ_WAYLAND
-  static bool inWayland = gdk_display_get_default() &&
-                          !GDK_IS_X11_DISPLAY(gdk_display_get_default());
+  static bool inWayland = mozilla::widget::GdkIsWaylandDisplay();
 #else
   static bool inWayland = false;
 #endif

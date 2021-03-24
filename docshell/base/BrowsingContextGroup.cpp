@@ -16,28 +16,26 @@
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/ThrottledEventQueue.h"
 #include "nsFocusManager.h"
+#include "nsTHashMap.h"
 
 namespace mozilla {
 namespace dom {
 
 static StaticRefPtr<BrowsingContextGroup> sChromeGroup;
 
-static StaticAutoPtr<
-    nsDataHashtable<nsUint64HashKey, RefPtr<BrowsingContextGroup>>>
+static StaticAutoPtr<nsTHashMap<uint64_t, RefPtr<BrowsingContextGroup>>>
     sBrowsingContextGroups;
 
 already_AddRefed<BrowsingContextGroup> BrowsingContextGroup::GetOrCreate(
     uint64_t aId) {
   if (!sBrowsingContextGroups) {
     sBrowsingContextGroups =
-        new nsDataHashtable<nsUint64HashKey, RefPtr<BrowsingContextGroup>>();
+        new nsTHashMap<nsUint64HashKey, RefPtr<BrowsingContextGroup>>();
     ClearOnShutdown(&sBrowsingContextGroups);
   }
 
-  RefPtr<BrowsingContextGroup> group =
-      sBrowsingContextGroups->LookupOrInsertWith(
-          aId, [&aId] { return do_AddRef(new BrowsingContextGroup(aId)); });
-  return group.forget();
+  return do_AddRef(sBrowsingContextGroups->LookupOrInsertWith(
+      aId, [&aId] { return do_AddRef(new BrowsingContextGroup(aId)); }));
 }
 
 already_AddRefed<BrowsingContextGroup> BrowsingContextGroup::Create() {
@@ -53,13 +51,13 @@ BrowsingContextGroup::BrowsingContextGroup(uint64_t aId) : mId(aId) {
 }
 
 void BrowsingContextGroup::Register(nsISupports* aContext) {
-  MOZ_ASSERT(!mDestroyed);
+  MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(aContext);
   mContexts.PutEntry(aContext);
 }
 
 void BrowsingContextGroup::Unregister(nsISupports* aContext) {
-  MOZ_ASSERT(!mDestroyed);
+  MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(aContext);
   mContexts.RemoveEntry(aContext);
 
@@ -67,7 +65,7 @@ void BrowsingContextGroup::Unregister(nsISupports* aContext) {
 }
 
 void BrowsingContextGroup::EnsureHostProcess(ContentParent* aProcess) {
-  MOZ_ASSERT(!mDestroyed);
+  MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(this != sChromeGroup,
                         "cannot have content host for chrome group");
   MOZ_DIAGNOSTIC_ASSERT(aProcess->GetRemoteType() != PREALLOC_REMOTE_TYPE,
@@ -119,7 +117,7 @@ static void CollectContextInitializers(
 }
 
 void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
-  MOZ_ASSERT(!mDestroyed);
+  MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(aProcess && !aProcess->IsLaunching());
   MOZ_DIAGNOSTIC_ASSERT(aProcess->GetRemoteType() != PREALLOC_REMOTE_TYPE);
 
@@ -161,7 +159,8 @@ void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
     }
 
     if (focused || active) {
-      Unused << aProcess->SendSetupFocusedAndActive(focused, active);
+      Unused << aProcess->SendSetupFocusedAndActive(
+          focused, active, fm->GetActionIdForActiveBrowsingContextInChrome());
     }
   }
 }
@@ -221,12 +220,13 @@ bool BrowsingContextGroup::ShouldSuspendAllTopLevelContexts() const {
 BrowsingContextGroup::~BrowsingContextGroup() { Destroy(); }
 
 void BrowsingContextGroup::Destroy() {
-#ifdef DEBUG
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   if (mDestroyed) {
-    MOZ_ASSERT(mHosts.Count() == 0);
-    MOZ_ASSERT(mSubscribers.Count() == 0);
-    MOZ_ASSERT_IF(sBrowsingContextGroups,
-                  sBrowsingContextGroups->Get(Id()) != this);
+    MOZ_DIAGNOSTIC_ASSERT(mHosts.Count() == 0);
+    MOZ_DIAGNOSTIC_ASSERT(mSubscribers.Count() == 0);
+    MOZ_DIAGNOSTIC_ASSERT_IF(sBrowsingContextGroups,
+                             !sBrowsingContextGroups->Contains(Id()) ||
+                                 *sBrowsingContextGroups->Lookup(Id()) != this);
   }
   mDestroyed = true;
 #endif
@@ -249,12 +249,12 @@ void BrowsingContextGroup::Destroy() {
 }
 
 void BrowsingContextGroup::AddKeepAlive() {
-  MOZ_ASSERT(!mDestroyed);
+  MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   mKeepAliveCount++;
 }
 
 void BrowsingContextGroup::RemoveKeepAlive() {
-  MOZ_ASSERT(!mDestroyed);
+  MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(mKeepAliveCount > 0);
   mKeepAliveCount--;
 
@@ -395,8 +395,8 @@ BrowsingContextGroup* BrowsingContextGroup::GetChromeGroup() {
 
 void BrowsingContextGroup::GetDocGroups(nsTArray<DocGroup*>& aDocGroups) {
   MOZ_ASSERT(NS_IsMainThread());
-  for (auto iter = mDocGroups.ConstIter(); !iter.Done(); iter.Next()) {
-    aDocGroups.AppendElement(iter.Data());
+  for (const auto& entry : mDocGroups) {
+    aDocGroups.AppendElement(entry.GetData());
   }
 }
 
@@ -451,7 +451,8 @@ void BrowsingContextGroup::GetAllGroups(
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(BrowsingContextGroup, mContexts,
                                       mToplevels, mHosts, mSubscribers,
-                                      mTimerEventQueue, mWorkerEventQueue)
+                                      mTimerEventQueue, mWorkerEventQueue,
+                                      mDocGroups)
 
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(BrowsingContextGroup, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(BrowsingContextGroup, Release)

@@ -239,6 +239,7 @@ static bool LockD3DTexture(T* aTexture) {
 
 template <typename T>
 static bool HasKeyedMutex(T* aTexture) {
+  MOZ_ASSERT(aTexture);
   RefPtr<IDXGIKeyedMutex> mutex;
   aTexture->QueryInterface((IDXGIKeyedMutex**)getter_AddRefs(mutex));
   return !!mutex;
@@ -265,11 +266,11 @@ D3D11TextureData::D3D11TextureData(ID3D11Texture2D* aTexture,
       mFormat(aFormat),
       mNeedsClear(aFlags & ALLOC_CLEAR_BUFFER),
       mNeedsClearWhite(aFlags & ALLOC_CLEAR_BUFFER_WHITE),
+      mHasSynchronization(HasKeyedMutex(aTexture)),
       mIsForOutOfBandContent(aFlags & ALLOC_FOR_OUT_OF_BAND_CONTENT),
       mTexture(aTexture),
       mAllocationFlags(aFlags) {
   MOZ_ASSERT(aTexture);
-  mHasSynchronization = HasKeyedMutex(aTexture);
 }
 
 static void DestroyDrawTarget(RefPtr<DrawTarget>& aDT,
@@ -684,7 +685,7 @@ void DXGIYCbCrTextureData::Deallocate(LayersIPCChannel*) {
 }
 
 TextureFlags DXGIYCbCrTextureData::GetTextureFlags() const {
-  TextureFlags flags = TextureFlags::DEALLOCATE_MAIN_THREAD;
+  TextureFlags flags = TextureFlags::NO_FLAGS;
   // With WebRender, resource open happens asynchronously on RenderThread.
   // During opening the resource on host side, TextureClient needs to be alive.
   // With WAIT_HOST_USAGE_END, keep TextureClient alive during host side usage.
@@ -1012,7 +1013,11 @@ void DXGITextureHostD3D11::PushResourceUpdates(
       MOZ_ASSERT(aImageKeys.length() == 1);
 
       wr::ImageDescriptor descriptor(mSize, GetFormat());
-      auto imageType = aResources.GetBackendType() == WebRenderBackend::SOFTWARE
+      // Prefer TextureExternal unless the backend requires TextureRect.
+      TextureHost::NativeTexturePolicy policy =
+          TextureHost::BackendNativeTexturePolicy(aResources.GetBackendType(),
+                                                  mSize);
+      auto imageType = policy == TextureHost::NativeTexturePolicy::REQUIRE
                            ? wr::ExternalImageType::TextureHandle(
                                  wr::ImageBufferKind::TextureRect)
                            : wr::ExternalImageType::TextureHandle(
@@ -1034,7 +1039,11 @@ void DXGITextureHostD3D11::PushResourceUpdates(
                                       mFormat == gfx::SurfaceFormat::NV12
                                           ? gfx::SurfaceFormat::R8G8
                                           : gfx::SurfaceFormat::R16G16);
-      auto imageType = aResources.GetBackendType() == WebRenderBackend::SOFTWARE
+      // Prefer TextureExternal unless the backend requires TextureRect.
+      TextureHost::NativeTexturePolicy policy =
+          TextureHost::BackendNativeTexturePolicy(aResources.GetBackendType(),
+                                                  mSize);
+      auto imageType = policy == TextureHost::NativeTexturePolicy::REQUIRE
                            ? wr::ExternalImageType::TextureHandle(
                                  wr::ImageBufferKind::TextureRect)
                            : wr::ExternalImageType::TextureHandle(
@@ -1289,7 +1298,14 @@ void DXGIYCbCrTextureHostD3D11::PushResourceUpdates(
   auto method = aOp == TextureHost::ADD_IMAGE
                     ? &wr::TransactionBuilder::AddExternalImage
                     : &wr::TransactionBuilder::UpdateExternalImage;
-  auto imageType = aResources.GetBackendType() == WebRenderBackend::SOFTWARE
+
+  // Prefer TextureExternal unless the backend requires TextureRect.
+  // Use a size that is the maximum of the Y and CbCr sizes.
+  IntSize textureSize = std::max(mSizeY, mSizeCbCr);
+  TextureHost::NativeTexturePolicy policy =
+      TextureHost::BackendNativeTexturePolicy(aResources.GetBackendType(),
+                                              textureSize);
+  auto imageType = policy == TextureHost::NativeTexturePolicy::REQUIRE
                        ? wr::ExternalImageType::TextureHandle(
                              wr::ImageBufferKind::TextureRect)
                        : wr::ExternalImageType::TextureHandle(

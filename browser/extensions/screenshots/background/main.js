@@ -39,16 +39,15 @@ this.main = (function() {
     }
   }
 
-  function setIconActive(active, tabId) {
-    const path = active ? "icons/icon-highlight-32-v2.svg" : "icons/icon-v2.svg";
-    browser.pageAction.setIcon({tabId, path});
+  function setIconActive(active) {
+    browser.experiments.screenshots.setIcon(active);
   }
 
   function toggleSelector(tab) {
     return analytics.refreshTelemetryPref()
       .then(() => selectorLoader.toggle(tab.id))
       .then(active => {
-        setIconActive(active, tab.id);
+        setIconActive(active);
         return active;
       })
       .catch((error) => {
@@ -60,32 +59,19 @@ this.main = (function() {
       });
   }
 
-  function shouldOpenMyShots(url) {
-    return /^about:(?:newtab|blank|home)/i.test(url) || /^resource:\/\/activity-streams\//i.test(url);
-  }
-
   // This is called by startBackground.js, where is registered as a click
   // handler for the webextension page action.
   exports.onClicked = catcher.watchFunction((tab) => {
     _startShotFlow(tab, "toolbar-button");
   });
 
-  exports.onClickedContextMenu = catcher.watchFunction((info, tab) => {
+  exports.onClickedContextMenu = catcher.watchFunction((tab) => {
     _startShotFlow(tab, "context-menu");
   });
 
   exports.onCommand = catcher.watchFunction((tab) => {
     _startShotFlow(tab, "keyboard-shortcut");
   });
-
-  const _openMyShots = (tab, inputType) => {
-    catcher.watchPromise(analytics.refreshTelemetryPref().then(() => {
-      sendEvent("goto-myshots", inputType, {incognito: tab.incognito});
-    }));
-    catcher.watchPromise(
-      auth.maybeLogin()
-      .then(() => browser.tabs.update({url: backend + "/shots"})));
-  };
 
   const _startShotFlow = (tab, inputType) => {
     if (!tab) {
@@ -96,9 +82,6 @@ this.main = (function() {
       senderror.showError({
         popupMessage: "UNSHOOTABLE_PAGE",
       });
-      return;
-    } else if (shouldOpenMyShots(tab.url)) {
-      _openMyShots(tab, inputType);
       return;
     }
 
@@ -115,9 +98,6 @@ this.main = (function() {
   };
 
   function urlEnabled(url) {
-    if (shouldOpenMyShots(url)) {
-      return true;
-    }
     // Allow screenshots on urls related to web pages in reader mode.
     if (url && url.startsWith("about:reader?url=")) {
       return true;
@@ -260,7 +240,7 @@ this.main = (function() {
   });
 
   communication.register("closeSelector", (sender) => {
-    setIconActive(false, sender.tab.id);
+    setIconActive(false);
   });
 
   communication.register("abortStartShot", () => {

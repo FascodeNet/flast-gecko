@@ -400,8 +400,8 @@ struct Texture {
   uint32_t clear_val = 0;
   uint32_t* cleared_rows = nullptr;
 
-  void init_depth_runs(uint16_t z);
-  void fill_depth_runs(uint16_t z, const IntRect& scissor);
+  void init_depth_runs(uint32_t z);
+  void fill_depth_runs(uint32_t z, const IntRect& scissor);
 
   void enable_delayed_clear(uint32_t val) {
     delay_clear = height;
@@ -472,7 +472,7 @@ struct Texture {
         // just to be safe. All other texture types and use-cases should be
         // safe to omit padding.
         size_t padding =
-            internal_format == GL_DEPTH_COMPONENT16 || max(width, min_width) < 2
+            internal_format == GL_DEPTH_COMPONENT24 || max(width, min_width) < 2
                 ? sizeof(Float)
                 : 0;
         char* new_buf = (char*)realloc(buf, size + padding);
@@ -1158,6 +1158,8 @@ const char* GetString(GLenum name) {
       return "Software WebRender";
     case GL_VERSION:
       return "3.2";
+    case GL_SHADING_LANGUAGE_VERSION:
+      return "1.50";
     default:
       debugf("unhandled glGetString parameter %x\n", name);
       assert(false);
@@ -1562,7 +1564,7 @@ void PixelStorei(GLenum name, GLint param) {
 static GLenum remap_internal_format(GLenum format) {
   switch (format) {
     case GL_DEPTH_COMPONENT:
-      return GL_DEPTH_COMPONENT16;
+      return GL_DEPTH_COMPONENT24;
     case GL_RGBA:
       return GL_RGBA8;
     case GL_RED:
@@ -1854,10 +1856,11 @@ void RenderbufferStorage(GLenum target, GLenum internal_format, GLsizei width,
   }
   switch (internal_format) {
     case GL_DEPTH_COMPONENT:
+    case GL_DEPTH_COMPONENT16:
     case GL_DEPTH_COMPONENT24:
     case GL_DEPTH_COMPONENT32:
-      // Force depth format to 16 bits...
-      internal_format = GL_DEPTH_COMPONENT16;
+      // Force depth format to 24 bits...
+      internal_format = GL_DEPTH_COMPONENT24;
       break;
   }
   set_tex_storage(ctx->textures[r.texture], internal_format, width, height);
@@ -2033,11 +2036,18 @@ void FramebufferRenderbuffer(GLenum target, GLenum attachment,
 
 }  // extern "C"
 
-static inline Framebuffer* get_framebuffer(GLenum target) {
+static inline Framebuffer* get_framebuffer(GLenum target,
+                                           bool fallback = false) {
   if (target == GL_FRAMEBUFFER) {
     target = GL_DRAW_FRAMEBUFFER;
   }
-  return ctx->framebuffers.find(ctx->get_binding(target));
+  Framebuffer* fb = ctx->framebuffers.find(ctx->get_binding(target));
+  if (fallback && !fb) {
+    // If the specified framebuffer isn't found and a fallback is requested,
+    // use the default framebuffer.
+    fb = &ctx->framebuffers[0];
+  }
+  return fb;
 }
 
 template <typename T>
@@ -2093,9 +2103,11 @@ static void clear_buffer(Texture& t, T value, IntRect bb, int skip_start = 0,
   skip_end = max(skip_end, skip_start);
   assert(sizeof(T) == t.bpp());
   size_t stride = t.stride();
-  // When clearing multiple full-width rows, collapse them into a single
-  // large "row" to avoid redundant setup from clearing each row individually.
-  if (bb.width() == t.width && bb.height() > 1 && skip_start >= skip_end) {
+  // When clearing multiple full-width rows, collapse them into a single large
+  // "row" to avoid redundant setup from clearing each row individually. Note
+  // that we can only safely do this if the stride is tightly packed.
+  if (bb.width() == t.width && bb.height() > 1 && skip_start >= skip_end &&
+      (t.should_free() || stride == t.width * sizeof(T))) {
     bb.x1 += (stride / sizeof(T)) * (bb.height() - 1);
     bb.y1 = bb.y0 + 1;
   }
@@ -2240,7 +2252,7 @@ void InitDefaultFramebuffer(int x, int y, int width, int height, int stride,
   }
   // Ensure dimensions of the depth buffer match the color buffer.
   Texture& depthtex = ctx->textures[fb.depth_attachment];
-  set_tex_storage(depthtex, GL_DEPTH_COMPONENT16, width, height);
+  set_tex_storage(depthtex, GL_DEPTH_COMPONENT24, width, height);
   depthtex.offset = IntPoint(x, y);
 }
 
@@ -2255,10 +2267,25 @@ void* GetColorBuffer(GLuint fbo, GLboolean flush, int32_t* width,
     prepare_texture(colortex);
   }
   assert(colortex.offset == IntPoint(0, 0));
-  *width = colortex.width;
-  *height = colortex.height;
-  *stride = colortex.stride();
+  if (width) {
+    *width = colortex.width;
+  }
+  if (height) {
+    *height = colortex.height;
+  }
+  if (stride) {
+    *stride = colortex.stride();
+  }
   return colortex.buf ? colortex.sample_ptr(0, 0) : nullptr;
+}
+
+void ResolveFramebuffer(GLuint fbo) {
+  Framebuffer* fb = ctx->framebuffers.find(fbo);
+  if (!fb || !fb->color_attachment) {
+    return;
+  }
+  Texture& colortex = ctx->textures[fb->color_attachment];
+  prepare_texture(colortex);
 }
 
 void SetTextureBuffer(GLuint texid, GLenum internal_format, GLsizei width,
@@ -2292,19 +2319,16 @@ void ClearTexSubImage(GLuint texture, GLint level, GLint xoffset, GLint yoffset,
   }
   assert(zoffset == 0 && depth == 1);
   IntRect scissor = {xoffset, yoffset, xoffset + width, yoffset + height};
-  if (t.internal_format == GL_DEPTH_COMPONENT16) {
-    uint16_t value = 0xFFFF;
+  if (t.internal_format == GL_DEPTH_COMPONENT24) {
+    uint32_t value = 0xFFFFFF;
     switch (format) {
       case GL_DEPTH_COMPONENT:
         switch (type) {
           case GL_DOUBLE:
-            value = uint16_t(*(const GLdouble*)data * 0xFFFF);
+            value = uint32_t(*(const GLdouble*)data * 0xFFFFFF);
             break;
           case GL_FLOAT:
-            value = uint16_t(*(const GLfloat*)data * 0xFFFF);
-            break;
-          case GL_UNSIGNED_SHORT:
-            value = uint16_t(*(const GLushort*)data);
+            value = uint32_t(*(const GLfloat*)data * 0xFFFFFF);
             break;
           default:
             assert(false);
@@ -2379,25 +2403,25 @@ void ClearTexSubImage(GLuint texture, GLint level, GLint xoffset, GLint yoffset,
       break;
   }
 
-    switch (t.internal_format) {
-      case GL_RGBA8:
-        // Clear color needs to swizzle to BGRA.
-        request_clear<uint32_t>(t,
-                                (color & 0xFF00FF00) |
-                                    ((color << 16) & 0xFF0000) |
-                                    ((color >> 16) & 0xFF),
-                                scissor);
-        break;
-      case GL_R8:
-        request_clear<uint8_t>(t, uint8_t(color & 0xFF), scissor);
-        break;
-      case GL_RG8:
-        request_clear<uint16_t>(t, uint16_t(color & 0xFFFF), scissor);
-        break;
-      default:
-        assert(false);
-        break;
-    }
+  switch (t.internal_format) {
+    case GL_RGBA8:
+      // Clear color needs to swizzle to BGRA.
+      request_clear<uint32_t>(t,
+                              (color & 0xFF00FF00) |
+                                  ((color << 16) & 0xFF0000) |
+                                  ((color >> 16) & 0xFF),
+                              scissor);
+      break;
+    case GL_R8:
+      request_clear<uint8_t>(t, uint8_t(color & 0xFF), scissor);
+      break;
+    case GL_RG8:
+      request_clear<uint16_t>(t, uint16_t(color & 0xFFFF), scissor);
+      break;
+    default:
+      assert(false);
+      break;
+  }
 }
 
 void ClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type,
@@ -2409,7 +2433,7 @@ void ClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type,
 }
 
 void Clear(GLbitfield mask) {
-  Framebuffer& fb = *get_framebuffer(GL_DRAW_FRAMEBUFFER);
+  Framebuffer& fb = *get_framebuffer(GL_DRAW_FRAMEBUFFER, true);
   if ((mask & GL_COLOR_BUFFER_BIT) && fb.color_attachment) {
     Texture& t = ctx->textures[fb.color_attachment];
     IntRect scissor = ctx->scissortest
@@ -2619,7 +2643,10 @@ void DrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
     return;
   }
 
-  Framebuffer& fb = *get_framebuffer(GL_DRAW_FRAMEBUFFER);
+  Framebuffer& fb = *get_framebuffer(GL_DRAW_FRAMEBUFFER, true);
+  if (!fb.color_attachment) {
+    return;
+  }
   Texture& colortex = ctx->textures[fb.color_attachment];
   if (!colortex.buf) {
     return;
@@ -2629,7 +2656,7 @@ void DrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
          colortex.internal_format == GL_R8);
   Texture& depthtex = ctx->textures[ctx->depthtest ? fb.depth_attachment : 0];
   if (depthtex.buf) {
-    assert(depthtex.internal_format == GL_DEPTH_COMPONENT16);
+    assert(depthtex.internal_format == GL_DEPTH_COMPONENT24);
     assert(colortex.width == depthtex.width &&
            colortex.height == depthtex.height);
     assert(colortex.offset == depthtex.offset);

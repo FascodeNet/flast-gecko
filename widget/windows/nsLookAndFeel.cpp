@@ -122,6 +122,8 @@ void nsLookAndFeel::RefreshImpl() {
   }
   mCaretBlinkTime = -1;
 
+  mCacheValidBits.reset();
+
   mInitialized = false;
 }
 
@@ -226,7 +228,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
       idx = COLOR_GRAYTEXT;
       break;
     case ColorID::Highlight:
-    case ColorID::MozAccentColor:
     case ColorID::MozHtmlCellhighlight:
     case ColorID::MozMenuhover:
       idx = COLOR_HIGHLIGHT;
@@ -245,7 +246,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
       }
       // Fall through
     case ColorID::Highlighttext:
-    case ColorID::MozAccentColorForeground:
     case ColorID::MozHtmlCellhighlighttext:
       idx = COLOR_HIGHLIGHTTEXT;
       break;
@@ -312,19 +312,19 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
     case ColorID::MozCellhighlight:
       idx = COLOR_3DFACE;
       break;
-    case ColorID::MozWinAccentcolor:
+    case ColorID::MozAccentColor:
       if (mHasColorAccent) {
         aColor = mColorAccent;
       } else {
         // Seems to be the default color (hardcoded because of bug 1065998)
-        aColor = NS_RGB(158, 158, 158);
+        aColor = NS_RGB(0, 120, 215);
       }
       return NS_OK;
-    case ColorID::MozWinAccentcolortext:
+    case ColorID::MozAccentColorForeground:
       if (mHasColorAccentText) {
         aColor = mColorAccentText;
       } else {
-        aColor = NS_RGB(0, 0, 0);
+        aColor = NS_RGB(255, 255, 255);
       }
       return NS_OK;
     case ColorID::MozWinMediatext:
@@ -596,6 +596,12 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::SystemUsesDarkTheme:
       res = SystemWantsDarkTheme(aResult);
       break;
+    case IntID::SystemVerticalScrollbarWidth:
+      aResult = WinUtils::GetSystemMetricsForDpi(SM_CXVSCROLL, 96);
+      break;
+    case IntID::SystemHorizontalScrollbarHeight:
+      aResult = WinUtils::GetSystemMetricsForDpi(SM_CXHSCROLL, 96);
+      break;
     case IntID::PrefersReducedMotion: {
       BOOL enableAnimation = TRUE;
       ::SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enableAnimation,
@@ -604,14 +610,25 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       break;
     }
     case IntID::PrimaryPointerCapabilities: {
-      PointerCapabilities caps =
-          widget::WinUtils::GetPrimaryPointerCapabilities();
-      aResult = static_cast<int32_t>(caps);
+      if (!mCacheValidBits[PrimaryPointerCapabilitiesKind] &&
+          !XRE_IsContentProcess()) {
+        mPrimaryPointerCapabilities = static_cast<int32_t>(
+            widget::WinUtils::GetPrimaryPointerCapabilities());
+        mCacheValidBits[PrimaryPointerCapabilitiesKind] = true;
+      }
+
+      aResult = mPrimaryPointerCapabilities;
       break;
     }
     case IntID::AllPointerCapabilities: {
-      PointerCapabilities caps = widget::WinUtils::GetAllPointerCapabilities();
-      aResult = static_cast<int32_t>(caps);
+      if (!mCacheValidBits[AllPointerCapabilitiesKind] &&
+          !XRE_IsContentProcess()) {
+        mAllPointerCapabilities =
+            static_cast<int32_t>(widget::WinUtils::GetAllPointerCapabilities());
+        mCacheValidBits[AllPointerCapabilitiesKind] = true;
+      }
+
+      aResult = mAllPointerCapabilities;
       break;
     }
     default:
@@ -835,6 +852,14 @@ LookAndFeelCache nsLookAndFeel::GetCacheImpl() {
   lafInt.value() = GetInt(IntID::WindowsThemeIdentifier);
   cache.mInts().AppendElement(lafInt);
 
+  lafInt.id() = IntID::PrimaryPointerCapabilities;
+  lafInt.value() = GetInt(IntID::PrimaryPointerCapabilities);
+  cache.mInts().AppendElement(lafInt);
+
+  lafInt.id() = IntID::AllPointerCapabilities;
+  lafInt.value() = GetInt(IntID::AllPointerCapabilities);
+  cache.mInts().AppendElement(lafInt);
+
   for (size_t i = size_t(LookAndFeel::FontID::MINIMUM);
        i <= size_t(LookAndFeel::FontID::MAXIMUM); ++i) {
     cache.mFonts().AppendElement(GetLookAndFeelFont(LookAndFeel::FontID(i)));
@@ -861,6 +886,12 @@ void nsLookAndFeel::DoSetCache(const LookAndFeelCache& aCache) {
         break;
       case IntID::WindowsThemeIdentifier:
         mNativeThemeId = entry.value();
+        break;
+      case IntID::PrimaryPointerCapabilities:
+        mPrimaryPointerCapabilities = entry.value();
+        break;
+      case IntID::AllPointerCapabilities:
+        mAllPointerCapabilities = entry.value();
         break;
       default:
         MOZ_ASSERT_UNREACHABLE("Bogus Int ID in cache");

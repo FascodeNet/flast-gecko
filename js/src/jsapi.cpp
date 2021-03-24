@@ -3082,20 +3082,26 @@ JS_PUBLIC_API bool JSPropertySpec::getValue(JSContext* cx,
                                             MutableHandleValue vp) const {
   MOZ_ASSERT(!isAccessor());
 
-  if (u.value.type == JSVAL_TYPE_STRING) {
-    RootedAtom atom(cx, Atomize(cx, u.value.string, strlen(u.value.string)));
-    if (!atom) {
-      return false;
+  switch (u.value.type) {
+    case ValueWrapper::Type::String: {
+      RootedAtom atom(cx, Atomize(cx, u.value.string, strlen(u.value.string)));
+      if (!atom) {
+        return false;
+      }
+      vp.setString(atom);
+      return true;
     }
-    vp.setString(atom);
-  } else if (u.value.type == JSVAL_TYPE_DOUBLE) {
-    vp.setDouble(u.value.double_);
-  } else {
-    MOZ_ASSERT(u.value.type == JSVAL_TYPE_INT32);
-    vp.setInt32(u.value.int32);
+
+    case ValueWrapper::Type::Int32:
+      vp.setInt32(u.value.int32);
+      return true;
+
+    case ValueWrapper::Type::Double:
+      vp.setDouble(u.value.double_);
+      return true;
   }
 
-  return true;
+  MOZ_CRASH("Unexpected type");
 }
 
 bool PropertySpecNameToId(JSContext* cx, JSPropertySpec::Name name,
@@ -5287,11 +5293,8 @@ JS_PUBLIC_API void JS_SetGlobalJitCompilerOption(JSContext* cx,
     case JSJITCOMPILER_SPECTRE_INDEX_MASKING:
       jit::JitOptions.spectreIndexMasking = !!value;
       break;
-    case JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS_BARRIERS:
-      jit::JitOptions.spectreObjectMitigationsBarriers = !!value;
-      break;
-    case JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS_MISC:
-      jit::JitOptions.spectreObjectMitigationsMisc = !!value;
+    case JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS:
+      jit::JitOptions.spectreObjectMitigations = !!value;
       break;
     case JSJITCOMPILER_SPECTRE_STRING_MITIGATIONS:
       jit::JitOptions.spectreStringMitigations = !!value;
@@ -5428,9 +5431,7 @@ JS_PUBLIC_API bool JS_CharsToId(JSContext* cx, JS::TwoByteChars chars,
     return false;
   }
 #ifdef DEBUG
-  uint32_t dummy;
-  MOZ_ASSERT(!atom->isIndex(&dummy),
-             "API misuse: |chars| must not encode an index");
+  MOZ_ASSERT(!atom->isIndex(), "API misuse: |chars| must not encode an index");
 #endif
   idp.set(AtomToId(atom));
   return true;
@@ -5701,8 +5702,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
     size_t cursorIndex) {
-  Rooted<UniquePtr<XDRDecoder>> decoder(
-      cx, js::MakeUnique<XDRDecoder>(cx, &options, buffer, cursorIndex));
+  auto decoder = js::MakeUnique<XDRDecoder>(cx, &options, buffer, cursorIndex);
   if (!decoder) {
     ReportOutOfMemory(cx);
     return JS::TranscodeResult::Throw;
@@ -5720,7 +5720,7 @@ static JS::TranscodeResult DecodeStencil(JSContext* cx,
                                          frontend::CompilationInput& input,
                                          frontend::CompilationStencil& stencil,
                                          size_t cursorIndex) {
-  XDRStencilDecoder decoder(cx, &input.options, buffer, cursorIndex);
+  XDRStencilDecoder decoder(cx, buffer, cursorIndex);
 
   if (!input.initForGlobal(cx)) {
     return JS::TranscodeResult::Throw;
@@ -5773,8 +5773,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     const TranscodeRange& range, JS::MutableHandleScript scriptp) {
-  Rooted<UniquePtr<XDRDecoder>> decoder(
-      cx, js::MakeUnique<XDRDecoder>(cx, &options, range));
+  auto decoder = js::MakeUnique<XDRDecoder>(cx, &options, range);
   if (!decoder) {
     ReportOutOfMemory(cx);
     return JS::TranscodeResult::Throw;

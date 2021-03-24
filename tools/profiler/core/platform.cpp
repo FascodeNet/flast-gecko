@@ -59,6 +59,9 @@
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/Services.h"
 #include "mozilla/StackWalk.h"
+#ifdef XP_WIN
+#  include "mozilla/StackWalkThread.h"
+#endif
 #include "mozilla/StaticPtr.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
@@ -270,17 +273,15 @@ static uint32_t AvailableFeatures() {
 static uint32_t DefaultFeatures() {
   return ProfilerFeature::Java | ProfilerFeature::JS | ProfilerFeature::Leaf |
          ProfilerFeature::StackWalk | ProfilerFeature::Threads |
-         ProfilerFeature::Screenshots;
+         ProfilerFeature::CPUUtilization | ProfilerFeature::Screenshots;
 }
 
 // Extra default features when MOZ_PROFILER_STARTUP is set (even if not
 // available).
 static uint32_t StartupExtraDefaultFeatures() {
-  // Enable CPUUtilization by default for startup profiles as it is useful to
-  // see when startup alternates between CPU intensive tasks and being blocked.
   // Enable file I/Os by default for startup profiles as startup is heavy on
   // I/O operations.
-  return ProfilerFeature::CPUUtilization | ProfilerFeature::FileIOAll;
+  return ProfilerFeature::FileIOAll;
 }
 
 // The class is a thin shell around mozglue PlatformMutex. It does not preserve
@@ -1688,40 +1689,19 @@ struct AutoWalkJSStack {
   }
 };
 
-// Merges the profiling stack, native stack, and JS stack, outputting the
-// details to aCollector.
-static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
-                        const RegisteredThread& aRegisteredThread,
-                        const Registers& aRegs, const NativeStack& aNativeStack,
-                        ProfilerStackCollector& aCollector,
-                        JsFrameBuffer aJsFrames) {
-  // WARNING: this function runs within the profiler's "critical section".
-  // WARNING: this function might be called while the profiler is inactive, and
-  //          cannot rely on ActivePS.
-
-  const ProfilingStack& profilingStack =
-      aRegisteredThread.RacyRegisteredThread().ProfilingStack();
-  const js::ProfilingStackFrame* profilingStackFrames = profilingStack.frames;
-  uint32_t profilingStackFrameCount = profilingStack.stackSize();
-  JSContext* context = aRegisteredThread.GetJSContext();
-
-  // Make a copy of the JS stack into a JSFrame array. This is necessary since,
-  // like the native stack, the JS stack is iterated youngest-to-oldest and we
-  // need to iterate oldest-to-youngest when adding frames to aInfo.
-
-  // Non-periodic sampling passes Nothing() as the buffer write position to
-  // ProfilingFrameIterator to avoid incorrectly resetting the buffer position
-  // of sampled JIT frames inside the JS engine.
-  Maybe<uint64_t> samplePosInBuffer;
-  if (!aIsSynchronous) {
-    // aCollector.SamplePositionInBuffer() will return Nothing() when
-    // profiler_suspend_and_sample_thread is called from the background hang
-    // reporter.
-    samplePosInBuffer = aCollector.SamplePositionInBuffer();
-  }
-  uint32_t jsCount = 0;
+// Make a copy of the JS stack into a JSFrame array, and return the number of
+// copied frames.
+// This copy is necessary since, like the native stack, the JS stack is iterated
+// youngest-to-oldest and we need to iterate oldest-to-youngest in MergeStacks.
+static uint32_t ExtractJsFrames(bool aIsSynchronous,
+                                const RegisteredThread& aRegisteredThread,
+                                const Registers& aRegs,
+                                ProfilerStackCollector& aCollector,
+                                JsFrameBuffer aJsFrames) {
+  uint32_t jsFramesCount = 0;
 
   // Only walk jit stack if profiling frame iterator is turned on.
+  JSContext* context = aRegisteredThread.GetJSContext();
   if (context && JS::IsProfilingEnabledForContext(context)) {
     AutoWalkJSStack autoWalkJSStack;
 
@@ -1732,26 +1712,58 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
       registerState.lr = aRegs.mLR;
       registerState.fp = aRegs.mFP;
 
-      JS::ProfilingFrameIterator jsIter(context, registerState,
-                                        samplePosInBuffer);
-      for (; jsCount < MAX_JS_FRAMES && !jsIter.done(); ++jsIter) {
+      // Non-periodic sampling passes Nothing() as the buffer write position to
+      // ProfilingFrameIterator to avoid incorrectly resetting the buffer
+      // position of sampled JIT frames inside the JS engine.
+      Maybe<uint64_t> samplePosInBuffer;
+      if (!aIsSynchronous) {
+        // aCollector.SamplePositionInBuffer() will return Nothing() when
+        // profiler_suspend_and_sample_thread is called from the background hang
+        // reporter.
+        samplePosInBuffer = aCollector.SamplePositionInBuffer();
+      }
+
+      for (JS::ProfilingFrameIterator jsIter(context, registerState,
+                                             samplePosInBuffer);
+           !jsIter.done(); ++jsIter) {
         if (aIsSynchronous || jsIter.isWasm()) {
-          uint32_t extracted =
-              jsIter.extractStack(aJsFrames, jsCount, MAX_JS_FRAMES);
-          jsCount += extracted;
-          if (jsCount == MAX_JS_FRAMES) {
+          jsFramesCount +=
+              jsIter.extractStack(aJsFrames, jsFramesCount, MAX_JS_FRAMES);
+          if (jsFramesCount == MAX_JS_FRAMES) {
             break;
           }
         } else {
           Maybe<JS::ProfilingFrameIterator::Frame> frame =
               jsIter.getPhysicalFrameWithoutLabel();
           if (frame.isSome()) {
-            aJsFrames[jsCount++] = frame.value();
+            aJsFrames[jsFramesCount++] = std::move(frame).ref();
+            if (jsFramesCount == MAX_JS_FRAMES) {
+              break;
+            }
           }
         }
       }
     }
   }
+
+  return jsFramesCount;
+}
+
+// Merges the profiling stack, native stack, and JS stack, outputting the
+// details to aCollector.
+static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
+                        const RegisteredThread& aRegisteredThread,
+                        const Registers& aRegs, const NativeStack& aNativeStack,
+                        ProfilerStackCollector& aCollector,
+                        JsFrameBuffer aJsFrames, uint32_t aJsFramesCount) {
+  // WARNING: this function runs within the profiler's "critical section".
+  // WARNING: this function might be called while the profiler is inactive, and
+  //          cannot rely on ActivePS.
+
+  const ProfilingStack& profilingStack =
+      aRegisteredThread.RacyRegisteredThread().ProfilingStack();
+  const js::ProfilingStackFrame* profilingStackFrames = profilingStack.frames;
+  uint32_t profilingStackFrameCount = profilingStack.stackSize();
 
   // While the profiling stack array is ordered oldest-to-youngest, the JS and
   // native arrays are ordered youngest-to-oldest. We must add frames to aInfo
@@ -1759,7 +1771,7 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
   // and native arrays backwards. Note: this means the terminating condition
   // jsIndex and nativeIndex is being < 0.
   uint32_t profilingStackIndex = 0;
-  int32_t jsIndex = jsCount - 1;
+  int32_t jsIndex = aJsFramesCount - 1;
   int32_t nativeIndex = aNativeStack.mCount - 1;
 
   uint8_t* lastLabelFrameStackAddr = nullptr;
@@ -1927,9 +1939,15 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
   // synchronous samples, and we also don't want to do it for calls to
   // profiler_suspend_and_sample_thread() from the background hang reporter -
   // in that case, aCollector.BufferRangeStart() will return Nothing().
-  if (!aIsSynchronous && context && aCollector.BufferRangeStart()) {
-    uint64_t bufferRangeStart = *aCollector.BufferRangeStart();
-    JS::SetJSContextProfilerSampleBufferRangeStart(context, bufferRangeStart);
+  if (!aIsSynchronous) {
+    aCollector.BufferRangeStart().apply(
+        [&aRegisteredThread](uint64_t aBufferRangeStart) {
+          JSContext* context = aRegisteredThread.GetJSContext();
+          if (context) {
+            JS::SetJSContextProfilerSampleBufferRangeStart(context,
+                                                           aBufferRangeStart);
+          }
+        });
   }
 }
 
@@ -1967,8 +1985,8 @@ static void DoFramePointerBacktrace(PSLockRef aLock,
 
   const void* stackEnd = aRegisteredThread.StackTop();
   if (aRegs.mFP >= aRegs.mSP && aRegs.mFP <= stackEnd) {
-    FramePointerStackWalk(StackWalkCallback, /* skipFrames */ 0, maxFrames,
-                          &aNativeStack, reinterpret_cast<void**>(aRegs.mFP),
+    FramePointerStackWalk(StackWalkCallback, maxFrames, &aNativeStack,
+                          reinterpret_cast<void**>(aRegs.mFP),
                           const_cast<void*>(stackEnd));
   }
 }
@@ -1993,8 +2011,8 @@ static void DoMozStackWalkBacktrace(PSLockRef aLock,
 
   HANDLE thread = GetThreadHandle(aRegisteredThread.GetPlatformData());
   MOZ_ASSERT(thread);
-  MozStackWalkThread(StackWalkCallback, /* skipFrames */ 0, maxFrames,
-                     &aNativeStack, thread, /* context */ nullptr);
+  MozStackWalkThread(StackWalkCallback, maxFrames, &aNativeStack, thread,
+                     /* context */ nullptr);
 }
 #endif
 
@@ -2226,6 +2244,9 @@ static inline void DoSharedSample(
   MOZ_RELEASE_ASSERT(ActivePS::Exists(aLock));
 
   ProfileBufferCollector collector(aBuffer, aSamplePos, aBufferRangeStart);
+  JsFrameBuffer& jsFrames = CorePS::JsFrames(aLock);
+  const uint32_t jsFramesCount = ExtractJsFrames(
+      aIsSynchronous, aRegisteredThread, aRegs, collector, jsFrames);
   NativeStack nativeStack;
 #if defined(HAVE_NATIVE_UNWIND)
   if (ActivePS::FeatureStackWalk(aLock) &&
@@ -2233,12 +2254,12 @@ static inline void DoSharedSample(
     DoNativeBacktrace(aLock, aRegisteredThread, aRegs, nativeStack);
 
     MergeStacks(ActivePS::Features(aLock), aIsSynchronous, aRegisteredThread,
-                aRegs, nativeStack, collector, CorePS::JsFrames(aLock));
+                aRegs, nativeStack, collector, jsFrames, jsFramesCount);
   } else
 #endif
   {
     MergeStacks(ActivePS::Features(aLock), aIsSynchronous, aRegisteredThread,
-                aRegs, nativeStack, collector, CorePS::JsFrames(aLock));
+                aRegs, nativeStack, collector, jsFrames, jsFramesCount);
 
     // We can't walk the whole native stack, but we can record the top frame.
     if (ActivePS::FeatureLeaf(aLock) &&
@@ -5905,6 +5926,10 @@ void profiler_suspend_and_sample_thread(int aThreadId, uint32_t aFeatures,
             // The target thread is now suspended. Collect a native backtrace,
             // and call the callback.
             bool isSynchronous = false;
+            JsFrameBuffer& jsFrames = CorePS::JsFrames(lock);
+            const uint32_t jsFramesCount = ExtractJsFrames(
+                isSynchronous, registeredThread, aRegs, aCollector, jsFrames);
+
 #if defined(HAVE_FASTINIT_NATIVE_UNWIND)
             if (aSampleNative) {
           // We can only use FramePointerStackWalk or MozStackWalk from
@@ -5921,12 +5946,12 @@ void profiler_suspend_and_sample_thread(int aThreadId, uint32_t aFeatures,
 #  endif
 
               MergeStacks(aFeatures, isSynchronous, registeredThread, aRegs,
-                          nativeStack, aCollector, CorePS::JsFrames(lock));
+                          nativeStack, aCollector, jsFrames, jsFramesCount);
             } else
 #endif
             {
               MergeStacks(aFeatures, isSynchronous, registeredThread, aRegs,
-                          nativeStack, aCollector, CorePS::JsFrames(lock));
+                          nativeStack, aCollector, jsFrames, jsFramesCount);
 
               if (ProfilerFeature::HasLeaf(aFeatures)) {
                 aCollector.CollectNativeLeafAddr((void*)aRegs.mPC);

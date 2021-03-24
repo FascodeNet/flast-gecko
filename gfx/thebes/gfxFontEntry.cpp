@@ -836,7 +836,7 @@ static_assert(int(Script::NUM_SCRIPT_CODES) <= FEATURE_SCRIPT_MASK,
 bool gfxFontEntry::SupportsOpenTypeFeature(Script aScript,
                                            uint32_t aFeatureTag) {
   if (!mSupportedFeatures) {
-    mSupportedFeatures = MakeUnique<nsDataHashtable<nsUint32HashKey, bool>>();
+    mSupportedFeatures = MakeUnique<nsTHashMap<nsUint32HashKey, bool>>();
   }
 
   // note: high-order three bytes *must* be unique for each feature
@@ -898,7 +898,7 @@ bool gfxFontEntry::SupportsOpenTypeFeature(Script aScript,
 const hb_set_t* gfxFontEntry::InputsForOpenTypeFeature(Script aScript,
                                                        uint32_t aFeatureTag) {
   if (!mFeatureInputs) {
-    mFeatureInputs = MakeUnique<nsDataHashtable<nsUint32HashKey, hb_set_t*>>();
+    mFeatureInputs = MakeUnique<nsTHashMap<nsUint32HashKey, hb_set_t*>>();
   }
 
   NS_ASSERTION(aFeatureTag == HB_TAG('s', 'u', 'p', 's') ||
@@ -954,7 +954,7 @@ const hb_set_t* gfxFontEntry::InputsForOpenTypeFeature(Script aScript,
 
 bool gfxFontEntry::SupportsGraphiteFeature(uint32_t aFeatureTag) {
   if (!mSupportedFeatures) {
-    mSupportedFeatures = MakeUnique<nsDataHashtable<nsUint32HashKey, bool>>();
+    mSupportedFeatures = MakeUnique<nsTHashMap<nsUint32HashKey, bool>>();
   }
 
   // note: high-order three bytes *must* be unique for each feature
@@ -1449,6 +1449,8 @@ void gfxFontEntry::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
   if (mFeatureInputs) {
     aSizes->mFontTableCacheSize +=
         mFeatureInputs->ShallowSizeOfIncludingThis(aMallocSizeOf);
+    // XXX Can't this simply be
+    // aSizes->mFontTableCacheSize += 8192 * mFeatureInputs->Count();
     for (auto iter = mFeatureInputs->ConstIter(); !iter.Done(); iter.Next()) {
       // There's no API to get the real size of an hb_set, so we'll use
       // an approximation based on knowledge of the implementation.
@@ -1751,14 +1753,12 @@ void gfxFontFamily::FindFontForChar(GlobalFontMatch* aMatchData) {
     return;
   }
 
-#ifdef MOZ_GECKO_PROFILER
   nsCString charAndName;
   if (profiler_can_accept_markers()) {
     charAndName = nsPrintfCString("\\u%x %s", aMatchData->mCh, mName.get());
   }
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("gfxFontFamily::FindFontForChar",
                                         LAYOUT, charAndName);
-#endif
 
   AutoTArray<gfxFontEntry*, 4> entries;
   FindAllFontsForStyle(aMatchData->mStyle, entries,

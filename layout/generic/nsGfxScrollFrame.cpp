@@ -3423,6 +3423,15 @@ void ScrollFrameHelper::AppendScrollPartsTo(nsDisplayListBuilder* aBuilder,
           aBuilder, scrollParts[i],
           visible + mOuter->GetOffsetTo(scrollParts[i]),
           dirty + mOuter->GetOffsetTo(scrollParts[i]));
+      if (scrollParts[i]->IsTransformed()) {
+        nsPoint toOuterReferenceFrame;
+        const nsIFrame* outerReferenceFrame = aBuilder->FindReferenceFrameFor(
+            scrollParts[i]->GetParent(), &toOuterReferenceFrame);
+        toOuterReferenceFrame += scrollParts[i]->GetPosition();
+
+        buildingForChild.SetReferenceFrameAndCurrentOffset(
+            outerReferenceFrame, toOuterReferenceFrame);
+      }
       nsDisplayListBuilder::AutoCurrentScrollbarInfoSetter infoSetter(
           aBuilder, scrollTargetId, scrollDirection, createLayer);
 
@@ -3470,8 +3479,8 @@ static bool ShouldBeClippedByFrame(nsIFrame* aClipFrame,
 static void ClipItemsExceptCaret(
     nsDisplayList* aList, nsDisplayListBuilder* aBuilder, nsIFrame* aClipFrame,
     const DisplayItemClipChain* aExtraClip,
-    nsDataHashtable<nsPtrHashKey<const DisplayItemClipChain>,
-                    const DisplayItemClipChain*>& aCache) {
+    nsTHashMap<nsPtrHashKey<const DisplayItemClipChain>,
+               const DisplayItemClipChain*>& aCache) {
   for (nsDisplayItem* i = aList->GetBottom(); i; i = i->GetAbove()) {
     if (!ShouldBeClippedByFrame(aClipFrame, i->Frame())) {
       continue;
@@ -3500,8 +3509,8 @@ static void ClipListsExceptCaret(nsDisplayListCollection* aLists,
                                  nsDisplayListBuilder* aBuilder,
                                  nsIFrame* aClipFrame,
                                  const DisplayItemClipChain* aExtraClip) {
-  nsDataHashtable<nsPtrHashKey<const DisplayItemClipChain>,
-                  const DisplayItemClipChain*>
+  nsTHashMap<nsPtrHashKey<const DisplayItemClipChain>,
+             const DisplayItemClipChain*>
       cache;
   ClipItemsExceptCaret(aLists->BorderBackground(), aBuilder, aClipFrame,
                        aExtraClip, cache);
@@ -3756,20 +3765,20 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                 : disp->mOverflowClipBoxBlock) ==
                StyleOverflowClipBox::ContentBox;
     // We only clip if there is *scrollable* overflow, to avoid clipping
-    // *visual* overflow unnecessarily.
+    // *ink* overflow unnecessarily.
     nsRect clipRect = effectiveScrollPort + aBuilder->ToReferenceFrame(mOuter);
+    nsMargin padding = mOuter->GetUsedPadding();
+    if (!cbH) {
+      padding.left = padding.right = nscoord(0);
+    }
+    if (!cbV) {
+      padding.top = padding.bottom = nscoord(0);
+    }
+    clipRect.Deflate(padding);
+
     nsRect so = mScrolledFrame->ScrollableOverflowRect();
     if ((cbH && (clipRect.width != so.width || so.x < 0)) ||
         (cbV && (clipRect.height != so.height || so.y < 0))) {
-      nsMargin padding = mOuter->GetUsedPadding();
-      if (!cbH) {
-        padding.left = padding.right = nscoord(0);
-      }
-      if (!cbV) {
-        padding.top = padding.bottom = nscoord(0);
-      }
-      clipRect.Deflate(padding);
-
       // The non-inflated clip needs to be set on all non-caret items.
       // We prepare an extra DisplayItemClipChain here that will be intersected
       // with those items after they've been created.
@@ -4191,6 +4200,10 @@ nsRect ScrollFrameHelper::RestrictToRootDisplayPort(
     return aDisplayportBase;
   }
 
+  // Make sure we aren't trying to restrict to our own displayport, which is a
+  // circular dependency.
+  MOZ_ASSERT(!mIsRoot || rootPresContext != pc);
+
   nsRect rootDisplayPort;
   bool hasDisplayPort =
       rootFrame->GetContent() && DisplayPortUtils::GetDisplayPort(
@@ -4373,7 +4386,10 @@ bool ScrollFrameHelper::DecideScrollableLayer(
 
         // Only restrict to the root displayport bounds if necessary,
         // as the required coordinate transformation is expensive.
-        if (usingDisplayPort) {
+        // And don't call RestrictToRootDisplayPort if we would be trying to
+        // restrict to our own display port, which doesn't make sense (ie if we
+        // are a root scroll frame in a process root prescontext).
+        if (usingDisplayPort && (!mIsRoot || pc->GetParentPresContext())) {
           displayportBase = RestrictToRootDisplayPort(displayportBase);
           MOZ_LOG(sDisplayportLog, LogLevel::Verbose,
                   ("Scroll id %" PRIu64 " has restricted base %s\n", viewID,
@@ -5162,8 +5178,10 @@ auto ScrollFrameHelper::GetPageLoadingState() -> LoadingState {
   if (ds) {
     nsCOMPtr<nsIContentViewer> cv;
     ds->GetContentViewer(getter_AddRefs(cv));
-    loadCompleted = cv->GetLoadCompleted();
-    stopped = cv->GetIsStopped();
+    if (cv) {
+      loadCompleted = cv->GetLoadCompleted();
+      stopped = cv->GetIsStopped();
+    }
   }
   return loadCompleted
              ? (stopped ? LoadingState::Stopped : LoadingState::Loaded)
@@ -5722,11 +5740,8 @@ ScrollFrameHelper::ScrollEndEvent::Run() {
 void ScrollFrameHelper::FireScrollEvent() {
   nsIContent* content = mOuter->GetContent();
   nsPresContext* prescontext = mOuter->PresContext();
-#ifdef MOZ_GECKO_PROFILER
-  nsCOMPtr<nsIDocShell> docShell = prescontext->GetDocShell();
   AUTO_PROFILER_TRACING_MARKER_DOCSHELL("Paint", "FireScrollEvent", GRAPHICS,
-                                        docShell);
-#endif
+                                        prescontext->GetDocShell());
 
   MOZ_ASSERT(mScrollEvent);
   mScrollEvent->Revoke();

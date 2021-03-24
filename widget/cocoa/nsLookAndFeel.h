@@ -56,26 +56,18 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nscolor mColorTextSelectBackground;
   nscolor mColorTextSelectBackgroundDisabled;
   nscolor mColorHighlight;
-  nscolor mColorMenuHover;
   nscolor mColorTextSelectForeground;
-  nscolor mColorMenuHoverText;
-  nscolor mColorButtonText;
-  bool mHasColorButtonText;
-  nscolor mColorButtonHoverText;
+  nscolor mColorAlternateSelectedControlText;
+  nscolor mColorControlText;
   nscolor mColorText;
   nscolor mColorWindowText;
-  nscolor mColorActiveCaption;
+  nscolor mColorGrid;
   nscolor mColorActiveBorder;
   nscolor mColorGrayText;
-  nscolor mColorInactiveBorder;
-  nscolor mColorInactiveCaption;
+  nscolor mColorControlBackground;
   nscolor mColorScrollbar;
   nscolor mColorThreeDHighlight;
-  nscolor mColorMenu;
-  nscolor mColorWindowFrame;
-  nscolor mColorFieldText;
   nscolor mColorDialog;
-  nscolor mColorDialogText;
   nscolor mColorDragTargetZone;
   nscolor mColorChromeActive;
   nscolor mColorChromeInactive;
@@ -86,7 +78,10 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nscolor mColorCellHighlight;
   nscolor mColorEvenTreeRow;
   nscolor mColorOddTreeRow;
-  nscolor mColorActiveSourceListSelection;
+  nscolor mColorMenuFontSmoothingBg;
+  nscolor mColorSourceListFontSmoothingBg;
+  nscolor mColorSourceListSelectionFontSmoothingBg;
+  nscolor mColorActiveSourceListSelectionFontSmoothingBg;
 
   bool mInitialized;
 

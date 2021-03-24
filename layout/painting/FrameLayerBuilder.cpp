@@ -62,6 +62,7 @@
 #include "nsPrintfCString.h"
 #include "nsSubDocumentFrame.h"
 #include "nsTransitionManager.h"
+#include "nsTHashMap.h"
 
 using namespace mozilla::layers;
 using namespace mozilla::gfx;
@@ -1269,8 +1270,7 @@ class PaintedLayerDataTree {
    * A hash map for quick access the node belonging to a particular animated
    * geometry root.
    */
-  nsDataHashtable<nsPtrHashKey<AnimatedGeometryRoot>, PaintedLayerDataNode*>
-      mNodes;
+  nsTHashMap<nsPtrHashKey<AnimatedGeometryRoot>, PaintedLayerDataNode*> mNodes;
 
   bool mForInactiveLayer;
 };
@@ -1692,7 +1692,7 @@ class ContainerState {
     Maybe<size_t> mAncestorIndex;
   };
 
-  nsDataHashtable<nsGenericHashKey<MaskLayerKey>, RefPtr<ImageLayer>>
+  nsTHashMap<nsGenericHashKey<MaskLayerKey>, RefPtr<ImageLayer>>
       mRecycledMaskImageLayers;
   // Keep display port of AGR to avoid wasting time on doing the same
   // thing repeatly.
@@ -2628,7 +2628,7 @@ LayerManager::PaintedLayerCreationHint ContainerState::GetLayerCreationHint(
   // root chain.
   for (AnimatedGeometryRoot* agr = aAnimatedGeometryRoot;
        agr && agr != mContainerAnimatedGeometryRoot; agr = agr->mParentAGR) {
-    nsIFrame* fParent = nsLayoutUtils::GetCrossDocParentFrame(*agr);
+    nsIFrame* fParent = nsLayoutUtils::GetCrossDocParentFrameInProcess(*agr);
     if (!fParent) {
       break;
     }
@@ -4354,7 +4354,7 @@ nsIntRegion ContainerState::ComputeOpaqueRect(
   // container layer is going to be the rootmost layer, otherwise transforms
   // etc will mess us up (and opaque contributions from other containers are
   // not needed).
-  if (!nsLayoutUtils::GetCrossDocParentFrame(mContainerFrame)) {
+  if (!nsLayoutUtils::GetCrossDocParentFrameInProcess(mContainerFrame)) {
     mBuilder->AddWindowOpaqueRegion(aItem->Frame(), opaqueClipped.GetBounds());
   }
   opaquePixels = ScaleRegionToInsidePixels(opaqueClipped, snapOpaque);
@@ -5609,7 +5609,8 @@ void ContainerState::CollectOldLayers() {
       NS_ASSERTION(maskLayer->GetType() == Layer::TYPE_IMAGE,
                    "Could not recycle mask layer, unsupported layer type.");
       mRecycledMaskImageLayers.InsertOrUpdate(
-          MaskLayerKey(layer, Nothing()), static_cast<ImageLayer*>(maskLayer));
+          MaskLayerKey(layer, Nothing()),
+          RefPtr{static_cast<ImageLayer*>(maskLayer)});
     }
     for (size_t i = 0; i < layer->GetAncestorMaskLayerCount(); i++) {
       Layer* maskLayer = layer->GetAncestorMaskLayerAt(i);
@@ -5617,7 +5618,8 @@ void ContainerState::CollectOldLayers() {
       NS_ASSERTION(maskLayer->GetType() == Layer::TYPE_IMAGE,
                    "Could not recycle mask layer, unsupported layer type.");
       mRecycledMaskImageLayers.InsertOrUpdate(
-          MaskLayerKey(layer, Some(i)), static_cast<ImageLayer*>(maskLayer));
+          MaskLayerKey(layer, Some(i)),
+          RefPtr{static_cast<ImageLayer*>(maskLayer)});
     }
   }
 }

@@ -327,13 +327,14 @@ class nsContextMenu {
     this.initMiscItems();
     this.initSpellingItems();
     this.initSaveItems();
+    this.initSyncItems();
     this.initClipboardItems();
     this.initMediaPlayerItems();
     this.initLeaveDOMFullScreenItems();
     this.initClickToPlayItems();
     this.initPasswordManagerItems();
-    this.initSyncItems();
     this.initViewSourceItems();
+    this.initScreenshotItem();
 
     this.showHideSeparators(aXulMenu);
     if (!aXulMenu.showHideSeparators) {
@@ -429,20 +430,37 @@ class nsContextMenu {
         this.onAudio ||
         this.onTextInput
       ) && this.inTabBrowser;
-    this.showItem("context-navigation", shouldShow);
+    if (AppConstants.platform == "macosx") {
+      for (let id of [
+        "context-back",
+        "context-forward",
+        "context-reload",
+        "context-stop",
+        "context-sep-navigation",
+      ]) {
+        this.showItem(id, shouldShow);
+      }
+    } else {
+      this.showItem("context-navigation", shouldShow);
+    }
 
     let stopped =
       XULBrowserWindow.stopCommand.getAttribute("disabled") == "true";
 
     let stopReloadItem = "";
-    if (shouldShow || !this.inTabBrowser) {
-      stopReloadItem = stopped || !this.inTabBrowser ? "reload" : "stop";
+    if (shouldShow) {
+      stopReloadItem = stopped ? "reload" : "stop";
     }
 
     this.showItem("context-reload", stopReloadItem == "reload");
     this.showItem("context-stop", stopReloadItem == "stop");
 
     function initBackForwardMenuItemTooltip(menuItemId, l10nId, shortcutId) {
+      // On macOS regular menuitems are used and the shortcut isn't added
+      if (AppConstants.platform == "macosx") {
+        return;
+      }
+
       let shortcut = document.getElementById(shortcutId);
       if (shortcut) {
         shortcut = ShortcutUtils.prettifyShortcut(shortcut);
@@ -797,6 +815,13 @@ class nsContextMenu {
 
     // Copy link location depends on whether we're on a non-mailto link.
     this.showItem("context-copylink", this.onLink && !this.onMailtoLink);
+    let copyLinkSeparator = document.getElementById("context-sep-copylink");
+    // Show "Copy Link" and "Copy" with no divider, and "copy link" and "Send link to Device" with no divider between.
+    // Other cases will show a divider.
+    copyLinkSeparator.toggleAttribute(
+      "ensureHidden",
+      this.onLink && !this.onMailtoLink && !this.onImage && this.syncItemsShown
+    );
 
     this.showItem("context-copyvideourl", this.onVideo);
     this.showItem("context-copyaudiourl", this.onAudio);
@@ -920,7 +945,7 @@ class nsContextMenu {
   }
 
   initPasswordManagerItems() {
-    let showFill = false;
+    let showUseSavedLogin = false;
     let showGenerate = false;
     let showManage = false;
     let enableGeneration = Services.logins.isLoggedIn;
@@ -930,7 +955,6 @@ class nsContextMenu {
       if (!this.isLoginForm()) {
         return;
       }
-      showFill = true;
       showManage = true;
 
       // Disable the fill option if the user hasn't unlocked with their master password
@@ -946,20 +970,19 @@ class nsContextMenu {
       let onPasswordLikeField = PASSWORD_FIELDNAME_HINTS.includes(
         loginFillInfo.activeField.fieldNameHint
       );
+
       // Set the correct label for the fill menu
       let fillMenu = document.getElementById("fill-login");
       if (onPasswordLikeField) {
-        fillMenu.setAttribute("label", fillMenu.getAttribute("label-password"));
         fillMenu.setAttribute(
-          "accesskey",
-          fillMenu.getAttribute("accesskey-password")
+          "data-l10n-id",
+          "main-context-menu-use-saved-password"
         );
       } else {
         // On a username field
-        fillMenu.setAttribute("label", fillMenu.getAttribute("label-login"));
         fillMenu.setAttribute(
-          "accesskey",
-          fillMenu.getAttribute("accesskey-login")
+          "data-l10n-id",
+          "main-context-menu-use-saved-login"
         );
       }
 
@@ -973,6 +996,8 @@ class nsContextMenu {
         Services.logins.getLoginSavingEnabled(formOrigin);
 
       if (disableFill) {
+        showUseSavedLogin = true;
+
         // No need to update the submenu if the fill item is disabled.
         return;
       }
@@ -984,16 +1009,15 @@ class nsContextMenu {
         formOrigin
       );
 
-      this.showItem("fill-login-no-logins", !fragment);
-
       if (!fragment) {
         return;
       }
+
+      showUseSavedLogin = true;
       let popup = document.getElementById("fill-login-popup");
-      let insertBeforeElement = document.getElementById("fill-login-no-logins");
-      popup.insertBefore(fragment, insertBeforeElement);
+      popup.appendChild(fragment);
     } finally {
-      this.showItem("fill-login", showFill);
+      this.showItem("fill-login", showUseSavedLogin);
       this.showItem("fill-login-generated-password", showGenerate);
       this.showItem("manage-saved-logins", showManage);
       this.setItemAttr(
@@ -1001,11 +1025,15 @@ class nsContextMenu {
         "disabled",
         !enableGeneration
       );
+      this.showItem(
+        "passwordmgr-items-separator",
+        showUseSavedLogin || showGenerate || showManage
+      );
     }
   }
 
   initSyncItems() {
-    gSync.updateContentContextMenu(this);
+    this.syncItemsShown = gSync.updateContentContextMenu(this);
   }
 
   initViewSourceItems() {
@@ -1043,6 +1071,7 @@ class nsContextMenu {
 
   // Iterate over the visible items on the menu and its submenus and
   // hide any duplicated separators next to each other.
+  // The attribute "ensureHidden" will override this process and keep a particular separator hidden in special cases.
   showHideSeparators(aPopup) {
     let lastVisibleSeparator = null;
     let count = 0;
@@ -1054,7 +1083,10 @@ class nsContextMenu {
       }
 
       if (menuItem.localName == "menuseparator") {
-        if (!count) {
+        // Individual separators can have the `ensureHidden` attribute added to avoid them
+        // becoming visible. We also set `count` to 0 below because otherwise the
+        // next separator would be made visible, with the same visual effect.
+        if (!count || menuItem.hasAttribute("ensureHidden")) {
           menuItem.hidden = true;
         } else {
           menuItem.hidden = false;
@@ -1078,6 +1110,28 @@ class nsContextMenu {
     if (!count && lastVisibleSeparator) {
       lastVisibleSeparator.hidden = true;
     }
+  }
+
+  initScreenshotItem() {
+    // About pages other than about:reader are not currently supported by
+    // screenshots (see Bug 1620992)
+    let uri = this.contentData?.documentURIObject;
+    let shouldShow =
+      !screenshotsDisabled &&
+      (uri.scheme != "about" || uri.spec.startsWith("about:reader")) &&
+      this.inTabBrowser &&
+      !this.onTextInput &&
+      !this.onLink &&
+      !this.onPlainTextLink &&
+      !this.onImage &&
+      !this.onVideo &&
+      !this.onAudio &&
+      !this.onEditable &&
+      !this.onPassword &&
+      !this.inFrame;
+
+    this.showItem("context-sep-screenshots", shouldShow);
+    this.showItem("context-take-screenshot", shouldShow);
   }
 
   openPasswordManager() {
@@ -1241,6 +1295,10 @@ class nsContextMenu {
     });
   }
 
+  takeScreenshot() {
+    Services.obs.notifyObservers(null, "menuitem-screenshot", true);
+  }
+
   // View Partial Source
   viewPartialSource() {
     let { browser } = this;
@@ -1334,11 +1392,15 @@ class nsContextMenu {
 
   // Change current window to the URL of the image, video, or audio.
   viewMedia(e) {
+    let where = whereToOpenLink(e, false, false);
+    if (where == "current") {
+      where = "tab";
+    }
     let referrerInfo = this.contentData.referrerInfo;
     let systemPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
     if (this.onCanvas) {
       this._canvasToBlobURL(this.targetIdentifier).then(function(blobURL) {
-        openUILink(blobURL, e, {
+        openUILinkIn(blobURL, where, {
           referrerInfo,
           triggeringPrincipal: systemPrincipal,
         });
@@ -1349,7 +1411,9 @@ class nsContextMenu {
         this.principal,
         Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT
       );
-      openUILink(this.mediaURL, e, {
+
+      // Default to opening in a new tab.
+      openUILinkIn(this.mediaURL, where, {
         referrerInfo,
         forceAllowDataURI: true,
         triggeringPrincipal: this.principal,
@@ -2068,6 +2132,14 @@ class nsContextMenu {
 
     menuItem.hidden = !showSearchSelect;
     menuItemPrivate.hidden = !showPrivateSearchSelect;
+    let frameSeparator = document.getElementById("frame-sep");
+
+    // Add a divider between "Search X for Y" and "This Frame", and between "Search X for Y" and "Check Spelling",
+    // but no divider in other cases.
+    frameSeparator.toggleAttribute(
+      "ensureHidden",
+      !showSearchSelect && this.inFrame
+    );
     // If we're not showing the menu items, we can skip formatting the labels.
     if (!showSearchSelect) {
       return;
@@ -2142,3 +2214,10 @@ XPCOMUtils.defineLazyModuleGetters(nsContextMenu, {
   LoginManagerContextMenu: "resource://gre/modules/LoginManagerContextMenu.jsm",
   DevToolsShim: "chrome://devtools-startup/content/DevToolsShim.jsm",
 });
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "screenshotsDisabled",
+  "extensions.screenshots.disabled",
+  false
+);

@@ -268,10 +268,10 @@ void PuppetWidget::Invalidate(const LayoutDeviceIntRect& aRect) {
     return;
   }
 
-  if (mBrowserChild && !aRect.IsEmpty()) {
-    if (RefPtr<nsRefreshDriver> refreshDriver = GetTopLevelRefreshDriver()) {
-      refreshDriver->ScheduleViewManagerFlush();
-    }
+  if (mBrowserChild && !aRect.IsEmpty() && !mWidgetPaintTask.IsPending()) {
+    mWidgetPaintTask = new WidgetPaintTask(this);
+    nsCOMPtr<nsIRunnable> event(mWidgetPaintTask.get());
+    SchedulerGroup::Dispatch(TaskCategory::Other, event.forget());
   }
 }
 
@@ -522,6 +522,15 @@ nsresult PuppetWidget::SynthesizeNativePenInput(
   mBrowserChild->SendSynthesizeNativePenInput(aPointerId, aPointerState, aPoint,
                                               aPressure, aRotation, aTiltX,
                                               aTiltY, notifier.SaveObserver());
+  return NS_OK;
+}
+
+nsresult PuppetWidget::SynthesizeNativeTouchpadDoubleTap(
+    LayoutDeviceIntPoint aPoint, uint32_t aModifierFlags) {
+  if (!mBrowserChild) {
+    return NS_ERROR_FAILURE;
+  }
+  mBrowserChild->SendSynthesizeNativeTouchpadDoubleTap(aPoint, aModifierFlags);
   return NS_OK;
 }
 
@@ -954,11 +963,31 @@ void PuppetWidget::SetChild(PuppetWidget* aChild) {
   mChild = aChild;
 }
 
+NS_IMETHODIMP
+PuppetWidget::WidgetPaintTask::Run() {
+  if (mWidget) {
+    mWidget->Paint();
+  }
+  return NS_OK;
+}
+
+void PuppetWidget::Paint() {
+  if (!GetCurrentWidgetListener()) return;
+
+  mWidgetPaintTask.Revoke();
+
+  RefPtr<PuppetWidget> strongThis(this);
+
+  GetCurrentWidgetListener()->WillPaintWindow(this);
+
+  if (GetCurrentWidgetListener()) {
+    GetCurrentWidgetListener()->DidPaintWindow();
+  }
+}
+
 void PuppetWidget::PaintNowIfNeeded() {
-  if (IsVisible()) {
-    if (RefPtr<nsRefreshDriver> refreshDriver = GetTopLevelRefreshDriver()) {
-      refreshDriver->DoTick();
-    }
+  if (IsVisible() && mWidgetPaintTask.IsPending()) {
+    Paint();
   }
 }
 

@@ -7,6 +7,44 @@
 
 # The following section contains the accessibility scalars.
 a11y:
+  HCM_background:
+    bug_numbers:
+      - 1694717
+    description: >
+      Unsigned int tracking the user's prefered background color \
+      (logged when HCM is enabled).
+    expires: never
+    kind: uint
+    notification_emails:
+      - accessibility@mozilla.com
+      - mreschenberg@mozilla.com
+    products:
+      - 'firefox'
+      - 'fennec'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
+    keyed: false
+
+  HCM_foreground:
+    bug_numbers:
+      - 1694717
+    description: >
+      Unsigned int tracking the user's prefered foreground color \
+      (logged when HCM is enabled).
+    expires: never
+    kind: uint
+    notification_emails:
+      - accessibility@mozilla.com
+      - mreschenberg@mozilla.com
+    products:
+      - 'firefox'
+      - 'fennec'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
+    keyed: false
+
   backplate:
     bug_numbers:
       - 1539212
@@ -54,7 +92,7 @@ a11y:
     expires: "62"
     kind: boolean
     notification_emails:
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2279,7 +2317,7 @@ dom.contentprocess:
   crash_subframe_ui_presented:
     bug_numbers:
       - 1676943
-    description: >  
+    description: >
       The number of times the subframe crash UI is shown to the user. This
       only triggers when a tab containing the subframe is switched to.
     expires: "98"
@@ -2735,7 +2773,7 @@ devtools.tool:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2756,7 +2794,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2775,7 +2813,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2795,7 +2833,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2817,7 +2855,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2837,7 +2875,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2856,7 +2894,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2877,7 +2915,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2898,7 +2936,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2919,8 +2957,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
-      - mislam@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2938,7 +2975,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4037,6 +4074,36 @@ idb.failure:
       - 'fennec'
     record_in_processes:
       - 'main'
+  unknown_objectstore_empty_database:
+    bug_numbers:
+      - 1669730
+    description: >
+      Tracking the number of attempts to open an unknown objectstore on an
+      empty IndexedDB database.
+    expires: "89"
+    kind: uint
+    notification_emails:
+      - storage-telemetry@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
+  unknown_objectstore_non_empty_database:
+    bug_numbers:
+      - 1669730
+    description: >
+      Tracking the number of attempts to open an unknown objectstore on a
+      non-empty IndexedDB database.
+    expires: "89"
+    kind: uint
+    notification_emails:
+      - storage-telemetry@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
 
 # The following section contains scalars for the PDF viewer.
 pdf.viewer:
@@ -4059,9 +4126,10 @@ pdf.viewer:
     bug_numbers:
       - 1566882
       - 1666979
+      - 1689264
     description: >
       How many times PDF Viewer fallback bar was shown.
-    expires: "88"
+    expires: "92"
     kind: uint
     notification_emails:
       - bdahl@mozilla.com
@@ -4075,9 +4143,10 @@ pdf.viewer:
     bug_numbers:
       - 1566882
       - 1666979
+      - 1689264
     description: >
       How many times PDF Viewer print functionality was used.
-    expires: "88"
+    expires: "92"
     kind: uint
     notification_emails:
       - bdahl@mozilla.com
@@ -4773,6 +4842,7 @@ browser.search:
       - 1614777
       - 1619954
       - 1656135
+      - 1694852
     description: >
       Records bytes that have been transferred for search requests, including
       top-level documents, sub-resources, iframes and search suggestions.
@@ -4781,7 +4851,7 @@ browser.search:
         <search-provider-name>-pb
         sggt-<search-engine-id>
         sggt-<search-engine-id>-pb
-    expires: "89"
+    expires: "96"
     keyed: true
     kind: uint
     notification_emails:
@@ -6730,7 +6800,7 @@ contextual.services.quicksuggest:
     bug_numbers:
       - 1693927
     description: >
-      A keyed uint recording how many times the user has viewed Firefox Suggests
+      A keyed uint recording how many times the user has viewed Firefox Suggest
       (a.k.a. Quick Suggest) results in the urlbar. The key is the 1-based index
       of each result.
     expires: never
@@ -7329,16 +7399,16 @@ corroborate:
     record_in_processes:
       - main
 
-privacy.feature:
-  first_party_isolation_enabled:
+cache:
+  integrity_check_count:
     bug_numbers:
-      - 1631676
+      - 1687685
     description: >
-      The value of preference "privacy.firstparty.isolate"
-    expires: "never"
-    kind: boolean
+      The number of errors detected by a Cache API pragma_integrity_check() run in response to a constraint error detected by a VACUUM after performing a schema upgrade.
+    expires: "96"
+    kind: uint
     notification_emails:
-      - gachen@mozilla.com
+      - storage-telemetry@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'

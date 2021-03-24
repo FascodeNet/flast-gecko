@@ -17,6 +17,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "nsGkAtoms.h"
 #include "nsUnicodeProperties.h"
@@ -38,6 +39,7 @@
 #ifdef MOZ_WIDGET_GTK
 #  include <gdk/gdk.h>
 #  include "gfxPlatformGtk.h"
+#  include "mozilla/WidgetUtilsGtk.h"
 #endif
 
 #ifdef MOZ_X11
@@ -715,7 +717,7 @@ static void PreparePattern(FcPattern* aPattern, bool aIsPrinterFont) {
     int lcdfilter;
     if (FcPatternGet(aPattern, FC_LCD_FILTER, 0, &value) == FcResultNoMatch) {
       GdkDisplay* dpy = gdk_display_get_default();
-      if (GDK_IS_X11_DISPLAY(dpy) &&
+      if (mozilla::widget::GdkIsX11Display(dpy) &&
           GetXftInt(GDK_DISPLAY_XDISPLAY(dpy), "lcdfilter", &lcdfilter)) {
         FcPatternAddInteger(aPattern, FC_LCD_FILTER, lcdfilter);
       }
@@ -1380,11 +1382,11 @@ void gfxFcPlatformFontList::AddPatternToFontList(
   GetFaceNames(aFont, aFamilyName, psname, fullname);
   if (!psname.IsEmpty()) {
     ToLowerCase(psname);
-    mLocalNames.InsertOrUpdate(psname, aFont);
+    mLocalNames.InsertOrUpdate(psname, RefPtr{aFont});
   }
   if (!fullname.IsEmpty()) {
     ToLowerCase(fullname);
-    mLocalNames.InsertOrUpdate(fullname, aFont);
+    mLocalNames.InsertOrUpdate(fullname, RefPtr{aFont});
   }
 }
 
@@ -1495,8 +1497,8 @@ void gfxFcPlatformFontList::ReadSystemFontList(
   // (see https://bugs.freedesktop.org/show_bug.cgi?id=26718), so when using
   // an older version, we manually append it to the unparsed pattern.
   if (FcGetVersion() < 20900) {
-    for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
-      auto family = static_cast<gfxFontconfigFontFamily*>(iter.Data().get());
+    for (const auto& entry : mFontFamilies) {
+      auto* family = static_cast<gfxFontconfigFontFamily*>(entry.GetWeak());
       family->AddFacesToFontList([&](FcPattern* aPat, bool aAppFonts) {
         char* s = (char*)FcNameUnparse(aPat);
         nsDependentCString patternStr(s);
@@ -1511,8 +1513,8 @@ void gfxFcPlatformFontList::ReadSystemFontList(
       });
     }
   } else {
-    for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
-      auto family = static_cast<gfxFontconfigFontFamily*>(iter.Data().get());
+    for (const auto& entry : mFontFamilies) {
+      auto* family = static_cast<gfxFontconfigFontFamily*>(entry.GetWeak());
       family->AddFacesToFontList([&](FcPattern* aPat, bool aAppFonts) {
         char* s = (char*)FcNameUnparse(aPat);
         nsDependentCString patternStr(s);
@@ -1541,7 +1543,11 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
 
 #ifdef MOZ_BUNDLED_FONTS
   if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
+    TimeStamp start = TimeStamp::Now();
     ActivateBundledFonts();
+    TimeStamp end = TimeStamp::Now();
+    Telemetry::Accumulate(Telemetry::FONTLIST_BUNDLEDFONTS_ACTIVATE,
+                          (end - start).ToMilliseconds());
   }
 #endif
 
@@ -1904,12 +1910,12 @@ gfxFontEntry* gfxFcPlatformFontList::LookupLocalFont(
   }
 
   // if name is not in the global list, done
-  FcPattern* fontPattern = mLocalNames.Get(keyName);
+  const auto fontPattern = mLocalNames.Lookup(keyName);
   if (!fontPattern) {
     return nullptr;
   }
 
-  return new gfxFontconfigFontEntry(aFontName, fontPattern, aWeightForEntry,
+  return new gfxFontconfigFontEntry(aFontName, *fontPattern, aWeightForEntry,
                                     aStretchForEntry, aStyleForEntry);
 }
 

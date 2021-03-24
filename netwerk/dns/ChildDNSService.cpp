@@ -40,7 +40,7 @@ already_AddRefed<ChildDNSService> ChildDNSService::GetSingleton() {
                 XRE_IsContentProcess() || XRE_IsSocketProcess());
 
   if (!gChildDNSService) {
-    if (!NS_IsMainThread()) {
+    if (NS_WARN_IF(!NS_IsMainThread())) {
       return nullptr;
     }
     gChildDNSService = new ChildDNSService();
@@ -309,6 +309,11 @@ ChildDNSService::GetCurrentTrrMode(nsIDNSService::ResolverMode* aMode) {
 
   *aMode = mTRRServiceParent->Mode();
   return NS_OK;
+}
+
+NS_IMETHODIMP
+ChildDNSService::GetCurrentTrrConfirmationState(uint32_t* aConfirmationState) {
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP

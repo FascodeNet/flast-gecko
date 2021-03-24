@@ -660,6 +660,7 @@ with modules["FILES"]:
     errors["NS_ERROR_FILE_READ_ONLY"] = FAILURE(19)
     errors["NS_ERROR_FILE_DIR_NOT_EMPTY"] = FAILURE(20)
     errors["NS_ERROR_FILE_ACCESS_DENIED"] = FAILURE(21)
+    errors["NS_ERROR_FILE_FS_CORRUPTED"] = FAILURE(22)
 
     errors["NS_SUCCESS_FILE_DIRECTORY_EMPTY"] = SUCCESS(1)
     # Result codes used by nsIDirectoryServiceProvider2
@@ -785,6 +786,13 @@ with modules["DOM"]:
     # context.
     errors["NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI"] = FAILURE(1037)
 
+    # The request failed because there are too many recursive iframes or
+    # objects being loaded.
+    errors["NS_ERROR_RECURSIVE_DOCUMENT_LOAD"] = FAILURE(1038)
+
+    # WebExtension content script may not load this URL.
+    errors["NS_ERROR_DOM_WEBEXT_CONTENT_SCRIPT_URI"] = FAILURE(1039)
+
     # May be used to indicate when e.g. setting a property value didn't
     # actually change the value, like for obj.foo = "bar"; obj.foo = "bar";
     # the second assignment throws NS_SUCCESS_DOM_NO_OPERATION.
@@ -828,6 +836,11 @@ with modules["EDITOR"]:
     # don't make this as a success code since it's not check with NS_FAILED()
     # and may keep handling the operation unexpectedly.
     errors["NS_ERROR_EDITOR_ACTION_CANCELED"] = FAILURE(3)
+
+    # An error code that indicates that there is no editable selection ranges.
+    # E.g., Selection has no range, caret is in non-editable element,
+    # non-collapsed range crosses editing host boundaries.
+    errors["NS_ERROR_EDITOR_NO_EDITABLE_RANGE"] = FAILURE(4)
 
     errors["NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND"] = SUCCESS(1)
     errors["NS_SUCCESS_EDITOR_FOUND_TARGET"] = SUCCESS(2)
@@ -878,7 +891,6 @@ with modules["XPCONNECT"]:
     errors["NS_ERROR_XPC_SECURITY_MANAGER_VETO"] = FAILURE(39)
     errors["NS_ERROR_XPC_INTERFACE_NOT_SCRIPTABLE"] = FAILURE(40)
     errors["NS_ERROR_XPC_INTERFACE_NOT_FROM_NSISUPPORTS"] = FAILURE(41)
-    errors["NS_ERROR_XPC_CANT_GET_JSOBJECT_OF_DOM_OBJECT"] = FAILURE(42)
     errors["NS_ERROR_XPC_CANT_SET_READ_ONLY_CONSTANT"] = FAILURE(43)
     errors["NS_ERROR_XPC_CANT_SET_READ_ONLY_ATTRIBUTE"] = FAILURE(44)
     errors["NS_ERROR_XPC_CANT_SET_READ_ONLY_METHOD"] = FAILURE(45)

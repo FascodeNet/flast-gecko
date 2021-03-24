@@ -152,6 +152,9 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
     }
   }
 
+  /** Returns whether a form control should be default-focusable. */
+  bool IsFormControlDefaultFocusable(bool aWithMouse) const;
+
   /**
    * Returns the count of descendants (inclusive of this node) in
    * the uncomposed document that are explicitly set as editable.
@@ -675,9 +678,6 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
       RegUnRegAccessKey(false);
     }
   }
-
- private:
-  void RegUnRegAccessKey(bool aDoReg);
 
  protected:
   virtual nsresult BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,

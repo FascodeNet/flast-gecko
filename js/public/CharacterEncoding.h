@@ -9,12 +9,15 @@
 
 #include "mozilla/Range.h"
 #include "mozilla/Span.h"
-#include "mozilla/Utf8.h"
 
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
 class JSLinearString;
+
+namespace mozilla {
+union Utf8Unit;
+}
 
 namespace JS {
 
@@ -233,7 +236,7 @@ inline Latin1CharsZ LossyTwoByteCharsToNewLatin1CharsZ(JSContext* cx,
 }
 
 template <typename CharT>
-extern UTF8CharsZ CharsToNewUTF8CharsZ(JSContext* maybeCx,
+extern UTF8CharsZ CharsToNewUTF8CharsZ(JSContext* cx,
                                        const mozilla::Range<CharT> chars);
 
 JS_PUBLIC_API uint32_t Utf8ToOneUcs4Char(const uint8_t* utf8Buffer,

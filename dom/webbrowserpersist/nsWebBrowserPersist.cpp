@@ -582,69 +582,56 @@ void nsWebBrowserPersist::SerializeNextFile() {
   MOZ_ASSERT(mWalkStack.Length() == 0);
 
   // First, handle gathered URIs.
-  // Count how many URIs in the URI map require persisting
-  uint32_t urisToPersist = 0;
-  if (mURIMap.Count() > 0) {
-    // This is potentially O(n^2), when taking into account the
-    // number of times this method is called.  If it becomes a
-    // bottleneck, the count of not-yet-persisted URIs could be
-    // maintained separately.
-    for (auto iter = mURIMap.Iter(); !iter.Done(); iter.Next()) {
-      URIData* data = iter.UserData();
-      if (data->mNeedsPersisting && !data->mSaved) {
-        urisToPersist++;
-      }
+  // This is potentially O(n^2), when taking into account the
+  // number of times this method is called.  If it becomes a
+  // bottleneck, the count of not-yet-persisted URIs could be
+  // maintained separately, and we can skip iterating mURIMap if there are none.
+
+  // Persist each file in the uri map. The document(s)
+  // will be saved after the last one of these is saved.
+  for (const auto& entry : mURIMap) {
+    URIData* data = entry.GetWeak();
+
+    if (!data->mNeedsPersisting || data->mSaved) {
+      continue;
     }
-  }
 
-  if (urisToPersist > 0) {
-    NS_ENSURE_SUCCESS_VOID(rv);
-    // Persist each file in the uri map. The document(s)
-    // will be saved after the last one of these is saved.
-    for (auto iter = mURIMap.Iter(); !iter.Done(); iter.Next()) {
-      URIData* data = iter.UserData();
+    // Create a URI from the key.
+    nsCOMPtr<nsIURI> uri;
+    rv = NS_NewURI(getter_AddRefs(uri), entry.GetKey(), data->mCharset.get());
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      break;
+    }
 
-      if (!data->mNeedsPersisting || data->mSaved) {
-        continue;
-      }
+    // Make a URI to save the data to.
+    nsCOMPtr<nsIURI> fileAsURI = data->mDataPath;
+    rv = AppendPathToURI(fileAsURI, data->mFilename, fileAsURI);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      break;
+    }
 
-      // Create a URI from the key.
-      nsCOMPtr<nsIURI> uri;
-      rv = NS_NewURI(getter_AddRefs(uri), iter.Key(), data->mCharset.get());
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        break;
-      }
+    rv = SaveURIInternal(uri, data->mTriggeringPrincipal,
+                         data->mContentPolicyType, 0, nullptr,
+                         data->mCookieJarSettings, nullptr, nullptr, fileAsURI,
+                         true, mIsPrivate);
+    // If SaveURIInternal fails, then it will have called EndDownload,
+    // which means that |data| is no longer valid memory. We MUST bail.
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      break;
+    }
 
-      // Make a URI to save the data to.
-      nsCOMPtr<nsIURI> fileAsURI = data->mDataPath;
-      rv = AppendPathToURI(fileAsURI, data->mFilename, fileAsURI);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        break;
-      }
+    if (rv == NS_OK) {
+      // URIData.mFile will be updated to point to the correct
+      // URI object when it is fixed up with the right file extension
+      // in OnStartRequest
+      data->mFile = fileAsURI;
+      data->mSaved = true;
+    } else {
+      data->mNeedsFixup = false;
+    }
 
-      rv = SaveURIInternal(uri, data->mTriggeringPrincipal,
-                           data->mContentPolicyType, 0, nullptr,
-                           data->mCookieJarSettings, nullptr, nullptr,
-                           fileAsURI, true, mIsPrivate);
-      // If SaveURIInternal fails, then it will have called EndDownload,
-      // which means that |data| is no longer valid memory. We MUST bail.
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        break;
-      }
-
-      if (rv == NS_OK) {
-        // URIData.mFile will be updated to point to the correct
-        // URI object when it is fixed up with the right file extension
-        // in OnStartRequest
-        data->mFile = fileAsURI;
-        data->mSaved = true;
-      } else {
-        data->mNeedsFixup = false;
-      }
-
-      if (mSerializingOutput) {
-        break;
-      }
+    if (mSerializingOutput) {
+      break;
     }
   }
 
@@ -704,11 +691,11 @@ void nsWebBrowserPersist::SerializeNextFile() {
   // mTargetBaseURI is used to create the relative URLs and will be different
   // with each serialized document.
   RefPtr<FlatURIMap> flatMap = new FlatURIMap(targetBaseSpec);
-  for (auto iter = mURIMap.Iter(); !iter.Done(); iter.Next()) {
+  for (const auto& uriEntry : mURIMap) {
     nsAutoCString mapTo;
-    nsresult rv = iter.UserData()->GetLocalURI(mTargetBaseURI, mapTo);
+    nsresult rv = uriEntry.GetWeak()->GetLocalURI(mTargetBaseURI, mapTo);
     if (NS_SUCCEEDED(rv) || !mapTo.IsVoid()) {
-      flatMap->Add(iter.Key(), mapTo);
+      flatMap->Add(uriEntry.GetKey(), mapTo);
     }
   }
   mFlatURIMap = std::move(flatMap);
@@ -1837,7 +1824,7 @@ void nsWebBrowserPersist::Cleanup() {
     MutexAutoLock lock(mOutputMapMutex);
     mOutputMap.SwapElements(outputMapCopy);
   }
-  for (auto iter = outputMapCopy.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = outputMapCopy.ConstIter(); !iter.Done(); iter.Next()) {
     nsCOMPtr<nsIChannel> channel = do_QueryInterface(iter.Key());
     if (channel) {
       channel->Cancel(NS_BINDING_ABORTED);
@@ -1845,7 +1832,7 @@ void nsWebBrowserPersist::Cleanup() {
   }
   outputMapCopy.Clear();
 
-  for (auto iter = mUploadList.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mUploadList.ConstIter(); !iter.Done(); iter.Next()) {
     nsCOMPtr<nsIChannel> channel = do_QueryInterface(iter.Key());
     if (channel) {
       channel->Cancel(NS_BINDING_ABORTED);
@@ -2392,7 +2379,7 @@ nsresult nsWebBrowserPersist::FixRedirectedChannelEntry(
   nsCOMPtr<nsIURI> originalURI;
   aNewChannel->GetOriginalURI(getter_AddRefs(originalURI));
   nsISupports* matchingKey = nullptr;
-  for (auto iter = mOutputMap.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mOutputMap.ConstIter(); !iter.Done(); iter.Next()) {
     nsISupports* key = iter.Key();
     nsCOMPtr<nsIChannel> thisChannel = do_QueryInterface(key);
     nsCOMPtr<nsIURI> thisURI;
@@ -2434,7 +2421,7 @@ void nsWebBrowserPersist::CalcTotalProgress() {
 
   if (mOutputMap.Count() > 0) {
     // Total up the progress of each output stream
-    for (auto iter = mOutputMap.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = mOutputMap.ConstIter(); !iter.Done(); iter.Next()) {
       // Only count toward total progress if destination file is local.
       OutputData* data = iter.UserData();
       nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(data->mFile);
@@ -2447,7 +2434,7 @@ void nsWebBrowserPersist::CalcTotalProgress() {
 
   if (mUploadList.Count() > 0) {
     // Total up the progress of each upload
-    for (auto iter = mUploadList.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = mUploadList.ConstIter(); !iter.Done(); iter.Next()) {
       UploadData* data = iter.UserData();
       if (data) {
         mTotalCurrentProgress += data->mSelfProgress;

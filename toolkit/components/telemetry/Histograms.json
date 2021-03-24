@@ -1399,6 +1399,17 @@
     "n_buckets": 50,
     "description": "Time(ms) spent on reading family names from all fonts"
   },
+  "FONTLIST_BUNDLEDFONTS_ACTIVATE": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "expires_in_version": "never",
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com"],
+    "bug_numbers": [1696162],
+    "kind": "exponential",
+    "high": 30000,
+    "n_buckets": 50,
+    "description": "Time(ms) spent activating additional fonts bundled with the product"
+  },
   "DWRITEFONT_DELAYEDINITFONTLIST_TOTAL": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -1702,6 +1713,19 @@
     "n_buckets": 50,
     "description": "Time between receiving a keypress event on the event loop and compositing its result onto the screen (ms)",
     "bug_numbers": [1506537, 1580077]
+  },
+  "MOUSEUP_FOLLOWED_BY_CLICK_PRESENT_LATENCY": {
+    "record_in_processes": [ "main", "gpu" ],
+    "products": ["firefox", "geckoview_streaming"],
+    "alert_emails": [ "perf-telemetry-alerts@mozilla.com", "sefeng@mozilla.com" ],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "releaseChannelCollection": "opt-out",
+    "low": 1,
+    "high": 200000,
+    "n_buckets": 50,
+    "description": "Time between receiving a mouseup which follow by a mouseclick on the event loop and compositing its result onto the screen (ms)",
+    "bug_numbers": [1698643]
   },
   "SCROLL_PRESENT_LATENCY": {
     "record_in_processes": ["main", "gpu"],
@@ -2194,6 +2218,18 @@
     "bug_numbers": [1675503],
     "keyed": true,
     "description": "The time between navigationStart and the first contentful paint of a foreground http or https root content document, in milliseconds. The contentful paint timestamp is taken during display list building and does not include rasterization or compositing of that paint. This is collected only on page load where the main document uses or suppports HTTP3"
+  },
+  "HTTPS_RR_OPEN_TO_FIRST_SENT": {
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "bug_numbers": [1697480],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 30000,
+    "n_buckets": 50,
+    "keyed": true,
+    "description": "HTTP channel(keys: uses_https_rr_page, uses_https_rr_sub, no_https_rr_page, no_https_rr_sub): Open -> first byte of request sent (ms)"
   },
   "HTTP_PROXY_TYPE": {
     "record_in_processes": ["main", "content"],
@@ -3372,6 +3408,18 @@
     "n_buckets": 100,
     "description": "Time from submission to dispatch of HTTP/3 transaction (ms)"
   },
+  "TRANSACTION_WAIT_TIME_HTTPS_RR": {
+    "record_in_processes": ["main", "socket"],
+    "products": ["firefox"],
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"],
+    "bug_numbers": [1697480],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 5000,
+    "n_buckets": 100,
+    "keyed": true,
+    "description": "Time from submission to dispatch of transaction when HTTPS RR is used (ms)"
+  },
   "TRANSACTION_WAIT_TIME_HTTP2_SUP_HTTP3": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
@@ -3395,11 +3443,11 @@
     "n_values": 3,
     "description": "Does a response has a h3(1), other quic(2) or non(0) alt-protocol advertisement."
   },
-  "HTTP3_CONNECTION_CLOSE_CODE_2": {
-    "record_in_processes": ["main", "content"],
+  "HTTP3_CONNECTION_CLOSE_CODE_3": {
+    "record_in_processes": ["main", "socket"],
     "products": ["firefox"],
-    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "bug_numbers": [1605099, 1688091, 1693738],
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com", "kershaw@mozilla.com"],
+    "bug_numbers": [1605099, 1688091, 1693738, 1695785],
     "expires_in_version": "never",
     "releaseChannelCollection": "opt-out",
     "kind": "enumerated",
@@ -7892,6 +7940,18 @@
     "keyed": true,
     "description": "How long it took to import logins (passwords) from another browser, keyed by the name of the browser. The time for users to unlock Keychain on macOS is included in this time."
   },
+  "PWMGR_IMPORT_LOGINS_FROM_FILE_MS": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "bug_numbers": [1688653],
+    "alert_emails": ["sfoster@mozilla.com", "passwords-dev@mozilla.org"],
+    "expires_in_version": "99",
+    "kind": "exponential",
+    "n_buckets": 70,
+    "high": 100000,
+    "releaseChannelCollection": "opt-out",
+    "description": "How long it took to import logins (passwords) from a CSV/TSV file. The time for users to unlock Keychain on macOS is included in this time."
+  },
   "FX_MIGRATION_BOOKMARKS_JANK_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox"],
@@ -7930,6 +7990,18 @@
     "releaseChannelCollection": "opt-out",
     "keyed": true,
     "description": "Accumulated timer delay (variance between when the timer was expected to fire and when it actually fired) in milliseconds as an indicator for decreased main-thread responsiveness while importing logins / passwords from another browser, keyed by the name of the browser (see gAvailableMigratorKeys in MigrationUtils.jsm). The import is happening on a background thread and should ideally not affect the UI noticeably. The time with the blocking Keychain dialog on macOS can skew this data."
+  },
+  "PWMGR_IMPORT_LOGINS_FROM_FILE_JANK_MS": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "bug_numbers": [1338522, 1584261, 1643431, 1678204],
+    "alert_emails": ["sfoster@mozilla.com", "passwords-dev@mozilla.org"],
+    "expires_in_version": "99",
+    "kind": "exponential",
+    "n_buckets": 20,
+    "high": 60000,
+    "releaseChannelCollection": "opt-out",
+    "description": "Accumulated timer delay (variance between when the timer was expected to fire and when it actually fired) in milliseconds as an indicator for decreased main-thread responsiveness while importing logins / passwords from a CSV/TSV file. The import is happening on a background thread and should ideally not affect the UI noticeably. The time with the blocking Keychain dialog on macOS can skew this data."
   },
   "FX_MIGRATION_BOOKMARKS_ROOTS": {
     "record_in_processes": ["main"],
@@ -7981,6 +8053,17 @@
     "releaseChannelCollection": "opt-out",
     "keyed": true,
     "description": "How many logins (passwords) we imported from another browser, keyed by the name of the browser."
+  },
+  "PWMGR_IMPORT_LOGINS_FROM_FILE_CATEGORICAL": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "bug_numbers": [1688653],
+    "alert_emails": ["sfoster@mozilla.com", "passwords-dev@mozilla.org"],
+    "expires_in_version": "99",
+    "kind": "categorical",
+    "labels": ["added", "modified", "error", "no_change"],
+    "releaseChannelCollection": "opt-out",
+    "description": "Results of login import from a CSV/TSV file, by category"
   },
   "FX_STARTUP_MIGRATION_BROWSER_COUNT": {
     "record_in_processes": ["main"],
@@ -9921,10 +10004,10 @@
   "PDF_VIEWER_DOCUMENT_VERSION_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["other", "v1_0", "v1_1", "v1_2", "v1_3", "v1_4", "v1_5", "v1_6", "v1_7", "v1_8", "v1_9", "v2_0", "v2_1", "v2_2", "v2_3"],
     "description": "The PDF document version (1.1, 1.2, etc.)"
@@ -9932,10 +10015,10 @@
   "PDF_VIEWER_DOCUMENT_GENERATOR_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["acrobat_distiller", "acrobat_pdfwriter", "adobe_livecycle", "adobe_pdf_library", "adobe_photoshop", "ghostscript", "tcpdf", "cairo", "dvipdfm", "dvips", "pdftex", "pdfkit", "itext", "prince", "quarkxpress", "mac_os_x", "microsoft", "openoffice", "oracle", "luradocument", "pdf_xchange", "antenna_house", "aspose_cells", "fpdf", "other"],
     "description": "The PDF document generator"
@@ -9943,10 +10026,10 @@
   "PDF_VIEWER_DOCUMENT_SIZE_KB": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "exponential",
     "low": 2,
     "high": 65536,
@@ -9956,10 +10039,10 @@
   "PDF_VIEWER_FONT_TYPES_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["UNKNOWN", "TYPE1", "TYPE1C", "CIDFONTTYPE0", "CIDFONTTYPE0C", "TRUETYPE", "CIDFONTTYPE2", "TYPE3", "OPENTYPE", "TYPE0", "MMTYPE1"],
     "description": "The PDF document font types used"
@@ -9967,10 +10050,10 @@
   "PDF_VIEWER_EMBED_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["object_embed", "iframe"],
     "description": "A PDF document was embedded using OBJECT/EMBED and or an IFRAME"
@@ -9978,10 +10061,10 @@
   "PDF_VIEWER_FORM_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["acroform", "xfa"],
     "description": "If a form was used, its type."
@@ -9989,10 +10072,10 @@
   "PDF_VIEWER_STREAM_TYPES_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1566882, 1666979],
+    "bug_numbers": [1566882, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["UNKNOWN", "FLATE", "LZW", "DCT", "JPX", "JBIG", "A85", "AHX", "CCF", "RLX"],
     "description": "The PDF document compression stream types used"
@@ -10012,10 +10095,10 @@
   "PDF_VIEWER_FALLBACK_REASON": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1630844, 1666979],
+    "bug_numbers": [1630844, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["unknown", "forms", "javaScript", "smask", "shadingPattern", "font", "errorTilingPattern", "errorExtGState", "errorXObject", "errorFontLoadType3", "errorFontState", "errorFontMissing", "errorFontTranslate", "errorColorSpace", "errorOperatorList", "errorFontToUnicode", "errorFontLoadNative", "errorFontGetPath"],
     "description": "The reason the fallback bar was shown."
@@ -10023,10 +10106,10 @@
   "PDF_VIEWER_FALLBACK_ERROR": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1643402, 1666979],
+    "bug_numbers": [1643402, 1666979, 1689264],
     "kind": "categorical",
     "labels": ["unknown", "forms", "javaScript", "smask", "shadingPattern", "font", "errorTilingPattern", "errorExtGState", "errorXObject", "errorFontLoadType3", "errorFontState", "errorFontMissing", "errorFontTranslate", "errorColorSpace", "errorOperatorList", "errorFontToUnicode", "errorFontLoadNative", "errorFontGetPath"],
     "description": "All errors that could trigger the fallback bar, even after the bar is shown."
@@ -10034,10 +10117,10 @@
   "PDF_VIEWER_TAGGED": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
-    "expires_in_version": "88",
+    "expires_in_version": "92",
     "alert_emails": ["bdahl@mozilla.com"],
     "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1673128, 1666979],
+    "bug_numbers": [1673128, 1666979, 1689264],
     "kind": "boolean",
     "description": "If a PDF is tagged."
   },
@@ -10156,7 +10239,7 @@
     "record_in_processes": ["main"],
     "products": ["firefox"],
     "alert_emails": ["jwatt@jwatt.org"],
-    "expires_in_version": "88",
+    "expires_in_version": "95",
     "description": "Milliseconds taken on the background thread only for print background tasks. Keys describe the task, usually the information being retrieved, current possible keys are: DefaultSettings, MarginsForPaper, Printers, NamedPrinter, NamedOrDefaultPrinter, SupportsDuplex, SupportsColor, SupportsCollation, PaperList.",
     "keyed": true,
     "kind": "exponential",
@@ -10169,7 +10252,7 @@
     "record_in_processes": ["main"],
     "products": ["firefox"],
     "alert_emails": ["jwatt@jwatt.org"],
-    "expires_in_version": "88",
+    "expires_in_version": "95",
     "description": "Milliseconds taken for print background tasks from spawning to background thread back to before resolving or rejecting on the main thread. See PRINT_BACKGROUND_TASK_TIME_MS for key description.",
     "keyed": true,
     "kind": "exponential",

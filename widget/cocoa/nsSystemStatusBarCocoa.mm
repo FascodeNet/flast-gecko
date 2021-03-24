@@ -7,21 +7,22 @@
 
 #include "nsComponentManagerUtils.h"
 #include "nsSystemStatusBarCocoa.h"
-#include "nsStandaloneNativeMenu.h"
+#include "NativeMenuMac.h"
 #include "nsObjCExceptions.h"
 #include "mozilla/dom/Element.h"
 
 using mozilla::dom::Element;
+using mozilla::widget::NativeMenuMac;
 
 NS_IMPL_ISUPPORTS(nsSystemStatusBarCocoa, nsISystemStatusBar)
 
 NS_IMETHODIMP
 nsSystemStatusBarCocoa::AddItem(Element* aElement) {
-  RefPtr<nsStandaloneNativeMenu> menu = new nsStandaloneNativeMenu();
-  nsresult rv = menu->Init(aElement);
-  if (NS_FAILED(rv)) {
-    return rv;
+  if (!aElement->IsAnyOfXULElements(nsGkAtoms::menu, nsGkAtoms::menupopup)) {
+    return NS_ERROR_FAILURE;
   }
+
+  RefPtr<NativeMenuMac> menu = new NativeMenuMac(aElement);
 
   nsCOMPtr<nsISupports> keyPtr = aElement;
   mItems.InsertOrUpdate(keyPtr, mozilla::MakeUnique<StatusItem>(menu));
@@ -35,17 +36,14 @@ nsSystemStatusBarCocoa::RemoveItem(Element* aElement) {
   return NS_OK;
 }
 
-nsSystemStatusBarCocoa::StatusItem::StatusItem(nsStandaloneNativeMenu* aMenu) : mMenu(aMenu) {
+nsSystemStatusBarCocoa::StatusItem::StatusItem(NativeMenuMac* aMenu) : mMenu(aMenu) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
   MOZ_COUNT_CTOR(nsSystemStatusBarCocoa::StatusItem);
 
-  NSMenu* nativeMenu = nil;
-  mMenu->GetNativeMenu(reinterpret_cast<void**>(&nativeMenu));
-
   mStatusItem =
       [[NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength] retain];
-  mStatusItem.menu = nativeMenu;
+  mStatusItem.menu = mMenu->NativeNSMenu();
   mStatusItem.highlightMode = YES;
 
   // We want the status item to get its image from menu item that mMenu was

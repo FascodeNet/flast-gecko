@@ -2,13 +2,55 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@supports -moz-bool-pref("browser.proton.enabled") {
 @media not (prefers-contrast) {
+  @supports -moz-bool-pref("browser.proton.enabled") {
   :root:not(:-moz-lwtheme) {
-    --buttons-secondary-bgcolor: rgb(240,240,244);
-    --buttons-secondary-hover-bgcolor: rgb(224,224,230);
-    --buttons-secondary-active-bgcolor: rgb(207,207,216);
-    --buttons-secondary-color: rgb(91,91,102);
+    --buttons-primary-button-bgcolor: rgb(0,97,224);
+    --buttons-primary-button-hover-bgcolor: rgb(2,80,187);
+    --buttons-primary-button-active-bgcolor: rgb(5,62,148);
+    --buttons-primary-button-color: rgb(251,251,254);
+    --button-bgcolor: rgb(240,240,244);
+    --button-hover-bgcolor: rgb(224,224,230);
+    --button-active-bgcolor: rgb(207,207,216);
+    --button-color: rgb(21,20,26);
+    --buttons-box-shadow: transparent;
+
+    --focus-outline-color: var(--buttons-primary-button-bgcolor);
+    --focus-outline-offset: 2px;
+
+    --checkbox-border-color: rgb(143,143,157);
+    --checkbox-unchecked-bgcolor: rgb(240,240,244);
+    --checkbox-unchecked-hover-bgcolor: rgb(224,224,230);
+    --checkbox-unchecked-active-bgcolor: rgb(207,207,216);
+    --checkbox-checked-border-color: rgb(0,97,224);
+    --checkbox-checked-bgcolor: rgb(0,97,224);
+    --checkbox-checked-color: rgb(251,251,254);
+    --checkbox-checked-hover-bgcolor: rgb(2,80,187);
+    --checkbox-checked-active-bgcolor: rgb(5,62,148);
+
+    --default-arrowpanel-background: #fff;
+    --default-arrowpanel-color: rgb(21,20,26);
+
+    --arrowpanel-dimmed: color-mix(in srgb, currentColor 12%, transparent);
+    --arrowpanel-dimmed-further: color-mix(in srgb, currentColor 20%, transparent);
+    --arrowpanel-dimmed-even-further: color-mix(in srgb, currentColor 27%, transparent);
+
+    --error-text-color: #C50042;
+
+    --input-error-border-color: #E22850;
   }
+  } /** END Proton **/
+
+  @supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+  :root:not(:-moz-lwtheme) {
+    --urlbar-popup-action-color: rgb(21,20,26);
+    --urlbar-separator-color: rgb(240,240,244);
+    --toolbar-field-border-color: transparent;
+    --arrowpanel-border-color: transparent;
+
+    --autocomplete-popup-highlight-background: var(--arrowpanel-dimmed);
+    --autocomplete-popup-highlight-color: rgb(21,20,26);
+    --urlbar-result-hover-bgcolor: rgb(240,240,244);
+  }
+  } /** END Proton **/
 }
-} /** END Proton **/

@@ -15,12 +15,12 @@ rev = "01c7a0da8d34059f7dae8ab9e7512529ff16347a"
 [source."https://github.com/mozilla/neqo"]
 git = "https://github.com/mozilla/neqo"
 replace-with = "vendored-sources"
-tag = "v0.4.21"
+tag = "v0.4.23"
 
 [source."https://github.com/mozilla/mp4parse-rust"]
 git = "https://github.com/mozilla/mp4parse-rust"
 replace-with = "vendored-sources"
-rev = "ccbe4eb8a96d64e58414ec70d2479c7f363e6763"
+rev = "94c3b1f368c82aefcbf51967f6aa296a9ccceb69"
 
 [source."https://github.com/mozilla/cubeb-pulse-rs"]
 git = "https://github.com/mozilla/cubeb-pulse-rs"
@@ -76,6 +76,11 @@ rev = "21c26326f5f45f415c49eac4ba5bc41a2f961321"
 git = "https://github.com/jfkthame/mapped_hyph.git"
 replace-with = "vendored-sources"
 rev = "578d7058a638c955a597f035ce1a11049c3021d7"
+
+[source."https://github.com/hsivonen/xmldecl"]
+git = "https://github.com/hsivonen/xmldecl"
+replace-with = "vendored-sources"
+rev = "a74f7df5bf6cb11194fb74daa0c3cf42f326fd90"
 
 [source."https://github.com/hsivonen/packed_simd"]
 git = "https://github.com/hsivonen/packed_simd"

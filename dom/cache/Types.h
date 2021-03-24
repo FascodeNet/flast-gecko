@@ -9,7 +9,7 @@
 
 #include <functional>
 #include <stdint.h>
-#include "mozilla/dom/quota/OriginMetadata.h"
+#include "mozilla/dom/quota/CommonMetadata.h"
 #include "nsCOMPtr.h"
 #include "nsIFile.h"
 #include "nsIInputStream.h"
@@ -30,6 +30,7 @@ typedef int64_t CacheId;
 static const CacheId INVALID_CACHE_ID = -1;
 
 // XXX Rename to OriginMetadata.
+// XXX Consider inheritance from ClientMetadata.
 struct QuotaInfo : quota::OriginMetadata {
   nsCOMPtr<nsIFile> mDir;
   int64_t mDirectoryLockId = -1;

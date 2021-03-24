@@ -18,6 +18,7 @@
 #include "mozilla/TextEditor.h"
 #include "mozilla/StaticPrefs_html5.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_accessibility.h"
 
 #include "nscore.h"
 #include "nsGenericHTMLElement.h"
@@ -1589,6 +1590,21 @@ bool nsGenericHTMLElement::LegacyTouchAPIEnabled(JSContext* aCx,
   return TouchEvent::LegacyAPIEnabled(aCx, aGlobal);
 }
 
+bool nsGenericHTMLElement::IsFormControlDefaultFocusable(
+    bool aWithMouse) const {
+  if (!aWithMouse) {
+    return true;
+  }
+  switch (StaticPrefs::accessibility_mouse_focuses_formcontrol()) {
+    case 0:
+      return false;
+    case 1:
+      return true;
+    default:
+      return !IsInChromeDocument();
+  }
+}
+
 //----------------------------------------------------------------------
 
 nsGenericHTMLFormElement::nsGenericHTMLFormElement(
@@ -1962,10 +1978,7 @@ bool nsGenericHTMLFormElement::IsHTMLFocusable(bool aWithMouse,
     return true;
   }
 
-#ifdef XP_MACOSX
-  *aIsFocusable = (!aWithMouse || nsFocusManager::sMouseFocusesFormControl) &&
-                  *aIsFocusable;
-#endif
+  *aIsFocusable = *aIsFocusable && IsFormControlDefaultFocusable(aWithMouse);
   return false;
 }
 
@@ -2376,29 +2389,6 @@ bool nsGenericHTMLElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
   *aIsFocusable = (tabIndex >= 0 || (!disabled && attrVal.isSome()));
 
   return disallowOverridingFocusability;
-}
-
-void nsGenericHTMLElement::RegUnRegAccessKey(bool aDoReg) {
-  // first check to see if we have an access key
-  nsAutoString accessKey;
-  GetAttr(kNameSpaceID_None, nsGkAtoms::accesskey, accessKey);
-  if (accessKey.IsEmpty()) {
-    return;
-  }
-
-  // We have an access key, so get the ESM from the pres context.
-  nsPresContext* presContext = GetPresContext(eForUncomposedDoc);
-
-  if (presContext) {
-    EventStateManager* esm = presContext->EventStateManager();
-
-    // Register or unregister as appropriate.
-    if (aDoReg) {
-      esm->RegisterAccessKey(this, (uint32_t)accessKey.First());
-    } else {
-      esm->UnregisterAccessKey(this, (uint32_t)accessKey.First());
-    }
-  }
 }
 
 bool nsGenericHTMLElement::PerformAccesskey(bool aKeyCausesActivation,

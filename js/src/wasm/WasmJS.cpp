@@ -520,39 +520,6 @@ bool wasm::CodeCachingAvailable(JSContext* cx) {
   return StreamingCompilationAvailable(cx) && IonAvailable(cx);
 }
 
-// As the return values from the underlying buffer accessors will become size_t
-// before long, they are captured as size_t here.
-
-uint32_t wasm::ByteLength32(Handle<ArrayBufferObjectMaybeShared*> buffer) {
-  size_t len = buffer->byteLength().get();
-  MOZ_ASSERT(len <= size_t(MaxMemory32Pages) * PageSize);
-  return uint32_t(len);
-}
-
-uint32_t wasm::ByteLength32(const ArrayBufferObjectMaybeShared& buffer) {
-  size_t len = buffer.byteLength().get();
-  MOZ_ASSERT(len <= size_t(MaxMemory32Pages) * PageSize);
-  return uint32_t(len);
-}
-
-uint32_t wasm::ByteLength32(const WasmArrayRawBuffer* buffer) {
-  size_t len = buffer->byteLength().get();
-  MOZ_ASSERT(len <= size_t(MaxMemory32Pages) * PageSize);
-  return uint32_t(len);
-}
-
-uint32_t wasm::ByteLength32(const ArrayBufferObject& buffer) {
-  size_t len = buffer.byteLength().get();
-  MOZ_ASSERT(len <= size_t(MaxMemory32Pages) * PageSize);
-  return uint32_t(len);
-}
-
-uint32_t wasm::VolatileByteLength32(const SharedArrayRawBuffer* buffer) {
-  size_t len = buffer->volatileByteLength().get();
-  MOZ_ASSERT(len <= size_t(MaxMemory32Pages) * PageSize);
-  return uint32_t(len);
-}
-
 // ============================================================================
 // Imports
 
@@ -773,7 +740,7 @@ static bool DescribeScriptedCaller(JSContext* cx, ScriptedCaller* caller,
 
 static bool ParseCompileOptions(JSContext* cx, HandleValue maybeOptions,
                                 FeatureOptions* options) {
-  if (WasmSimdWormholeFlag(cx)) {
+  if (SimdWormholeAvailable(cx)) {
     if (maybeOptions.isObject()) {
       RootedValue wormholeVal(cx);
       RootedObject obj(cx, &maybeOptions.toObject());
@@ -1501,7 +1468,7 @@ bool WasmModuleObject::customSections(JSContext* cx, unsigned argc, Value* vp) {
     if (name.length() != cs.name.length()) {
       continue;
     }
-    if (memcmp(name.begin(), cs.name.begin(), name.length())) {
+    if (memcmp(name.begin(), cs.name.begin(), name.length()) != 0) {
       continue;
     }
 
@@ -2466,7 +2433,7 @@ bool WasmMemoryObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  if (limits.initial > MaxMemory32Pages) {
+  if (limits.initial > MaxMemory32Pages()) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_MEM_IMP_LIMIT);
     return false;
@@ -2475,7 +2442,8 @@ bool WasmMemoryObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   ConvertMemoryPagesToBytes(&limits);
 
   RootedArrayBufferObjectMaybeShared buffer(cx);
-  if (!CreateWasmBuffer(cx, MemoryKind::Memory32, limits, &buffer)) {
+  if (!CreateWasmBuffer32(cx, limits.initial, limits.maximum,
+                          limits.shared == wasm::Shareable::True, &buffer)) {
     return false;
   }
 
@@ -2509,10 +2477,10 @@ bool WasmMemoryObject::bufferGetterImpl(JSContext* cx, const CallArgs& args) {
   RootedArrayBufferObjectMaybeShared buffer(cx, &memoryObj->buffer());
 
   if (memoryObj->isShared()) {
-    uint32_t memoryLength = memoryObj->volatileMemoryLength32();
-    MOZ_ASSERT(memoryLength >= ByteLength32(buffer));
+    size_t memoryLength = memoryObj->volatileMemoryLength().get();
+    MOZ_ASSERT(memoryLength >= buffer->byteLength().get());
 
-    if (memoryLength > ByteLength32(buffer)) {
+    if (memoryLength > buffer->byteLength().get()) {
       RootedSharedArrayBufferObject newBuffer(
           cx,
           SharedArrayBufferObject::New(cx, memoryObj->sharedArrayRawBuffer(),
@@ -2614,7 +2582,7 @@ bool WasmMemoryObject::typeImpl(JSContext* cx, const CallArgs& args) {
   }
 
   uint32_t minimumPages = mozilla::AssertedCast<uint32_t>(
-      memoryObj->volatileMemoryLength32() / wasm::PageSize);
+      memoryObj->volatileMemoryLength().get() / wasm::PageSize);
   if (!props.append(IdValuePair(NameToId(cx->names().minimum),
                                 Int32Value(minimumPages)))) {
     return false;
@@ -2640,11 +2608,11 @@ bool WasmMemoryObject::type(JSContext* cx, unsigned argc, Value* vp) {
 }
 #endif
 
-uint32_t WasmMemoryObject::volatileMemoryLength32() const {
+BufferSize WasmMemoryObject::volatileMemoryLength() const {
   if (isShared()) {
-    return VolatileByteLength32(sharedArrayRawBuffer());
+    return sharedArrayRawBuffer()->volatileByteLength();
   }
-  return ByteLength32(buffer());
+  return buffer().byteLength();
 }
 
 bool WasmMemoryObject::isShared() const {
@@ -2679,8 +2647,10 @@ WasmMemoryObject::InstanceSet* WasmMemoryObject::getOrCreateObservers(
 
 bool WasmMemoryObject::isHuge() const {
 #ifdef WASM_SUPPORTS_HUGE_MEMORY
-  static_assert(MaxMemory32Bytes < HugeMappedSize,
-                "Non-huge buffer may be confused as huge");
+  // TODO: Turn this into a static_assert, if we are able to make
+  // MaxMemory32Bytes() constexpr once the dust settles for the 4GB heaps.
+  MOZ_ASSERT(MaxMemory32Bytes() < HugeMappedSize,
+             "Non-huge buffer may be confused as huge");
   return buffer().wasmMappedSize() >= HugeMappedSize;
 #else
   return false;
@@ -2691,15 +2661,19 @@ bool WasmMemoryObject::movingGrowable() const {
   return !isHuge() && !buffer().wasmMaxSize();
 }
 
-uint32_t WasmMemoryObject::boundsCheckLimit32() const {
+BufferSize WasmMemoryObject::boundsCheckLimit() const {
   if (!buffer().isWasm() || isHuge()) {
-    return ByteLength32(buffer());
+    return buffer().byteLength();
   }
   size_t mappedSize = buffer().wasmMappedSize();
-  MOZ_ASSERT(mappedSize <= UINT32_MAX);
+  // See clamping performed in CreateSpecificWasmBuffer()
+  MOZ_ASSERT(mappedSize < UINT32_MAX);
+  MOZ_ASSERT(mappedSize % wasm::PageSize == 0);
   MOZ_ASSERT(mappedSize >= wasm::GuardSize);
   MOZ_ASSERT(wasm::IsValidBoundsCheckImmediate(mappedSize - wasm::GuardSize));
-  return mappedSize - wasm::GuardSize;
+  size_t limit = mappedSize - wasm::GuardSize;
+  MOZ_ASSERT(limit <= MaxMemory32BoundsCheckLimit());
+  return BufferSize(limit);
 }
 
 bool WasmMemoryObject::addMovingGrowObserver(JSContext* cx,
@@ -2725,13 +2699,19 @@ uint32_t WasmMemoryObject::growShared(HandleWasmMemoryObject memory,
   SharedArrayRawBuffer* rawBuf = memory->sharedArrayRawBuffer();
   SharedArrayRawBuffer::Lock lock(rawBuf);
 
-  MOZ_ASSERT(VolatileByteLength32(rawBuf) % PageSize == 0);
-  uint32_t oldNumPages = VolatileByteLength32(rawBuf) / PageSize;
+  MOZ_ASSERT(rawBuf->volatileByteLength().get() % PageSize == 0);
+  uint32_t oldNumPages = rawBuf->volatileByteLength().get() / PageSize;
 
   CheckedInt<uint32_t> newSize = oldNumPages;
   newSize += delta;
   newSize *= PageSize;
   if (!newSize.isValid()) {
+    return -1;
+  }
+
+  // Always check against the max here, do not rely on the buffer resizers to
+  // use the correct limit, they don't have enough context.
+  if (newSize.value() > MaxMemory32Bytes()) {
     return -1;
   }
 
@@ -2758,15 +2738,16 @@ uint32_t WasmMemoryObject::grow(HandleWasmMemoryObject memory, uint32_t delta,
 
   RootedArrayBufferObject oldBuf(cx, &memory->buffer().as<ArrayBufferObject>());
 
-  MOZ_ASSERT(ByteLength32(oldBuf) % PageSize == 0);
-  uint32_t oldNumPages = ByteLength32(oldBuf) / PageSize;
+  MOZ_ASSERT(oldBuf->byteLength().get() % PageSize == 0);
+  uint32_t oldNumPages = oldBuf->byteLength().get() / PageSize;
 
-  // FIXME (large ArrayBuffer): This does not allow 65536 pages, which is
-  // technically the max.  That may be a webcompat problem.  We can fix this
-  // once wasmMovingGrowToSize and wasmGrowToSizeInPlace accept size_t rather
-  // than uint32_t.  See the FIXME in WasmConstants.h for additional
-  // information.
-  static_assert(MaxMemory32Pages <= UINT32_MAX / PageSize, "Avoid overflows");
+  // TODO (large ArrayBuffer): This does not allow 65536 pages.  See more
+  // information at the definition of MaxMemory32Bytes().
+  //
+  // TODO: Turn this into a static_assert, if we are able to make
+  // MaxMemory32Bytes() constexpr once the dust settles for the 4GB heaps.
+  MOZ_ASSERT(MaxMemory32Pages() <= UINT32_MAX / PageSize,
+             "Avoid 32-bit overflows");
 
   CheckedInt<uint32_t> newSize = oldNumPages;
   newSize += delta;
@@ -2777,7 +2758,7 @@ uint32_t WasmMemoryObject::grow(HandleWasmMemoryObject memory, uint32_t delta,
 
   // Always check against the max here, do not rely on the buffer resizers to
   // use the correct limit, they don't have enough context.
-  if (newSize.value() > MaxMemory32Pages * PageSize) {
+  if (newSize.value() > MaxMemory32Bytes()) {
     return -1;
   }
 
@@ -3378,7 +3359,7 @@ void WasmGlobalObject::finalize(JSFreeOp* fop, JSObject* obj) {
 }
 
 /* static */
-WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal hval,
+WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal value,
                                            bool isMutable, HandleObject proto) {
   AutoSetNewObjectMetadata metadata(cx);
   RootedWasmGlobalObject obj(
@@ -3390,7 +3371,7 @@ WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal hval,
   MOZ_ASSERT(obj->isNewborn());
   MOZ_ASSERT(obj->isTenured(), "assumed by global.set post barriers");
 
-  GCPtrVal* val = js_new<GCPtrVal>(Val(hval.get().type()));
+  GCPtrVal* val = js_new<GCPtrVal>(Val(value.get().type()));
   if (!val) {
     ReportOutOfMemory(cx);
     return nullptr;
@@ -3400,7 +3381,7 @@ WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal hval,
 
   // It's simpler to initialize the cell after the object has been created,
   // to avoid needing to root the cell before the object creation.
-  obj->val() = hval.get();
+  obj->val() = value.get();
 
   MOZ_ASSERT(!obj->isNewborn());
 
@@ -3713,8 +3694,8 @@ WasmExceptionObject* WasmExceptionObject::create(JSContext* cx,
                    MemoryUse::WasmExceptionTag);
 
   wasm::ValTypeVector* newValueTypes = js_new<ValTypeVector>();
-  for (uint32_t i = 0; i < type.length(); i++) {
-    if (!newValueTypes->append(type[i])) {
+  for (auto t : type) {
+    if (!newValueTypes->append(t)) {
       return nullptr;
     }
   }
@@ -3815,8 +3796,8 @@ bool WasmRuntimeExceptionObject::construct(JSContext* cx, unsigned argc,
 
 /* static */
 WasmRuntimeExceptionObject* WasmRuntimeExceptionObject::create(
-    JSContext* cx, wasm::SharedExceptionTag tag,
-    HandleArrayBufferObject values) {
+    JSContext* cx, wasm::SharedExceptionTag tag, HandleArrayBufferObject values,
+    HandleArrayObject refs) {
   RootedObject proto(
       cx, &cx->global()->getPrototype(JSProto_WasmRuntimeException).toObject());
 
@@ -3832,6 +3813,7 @@ WasmRuntimeExceptionObject* WasmRuntimeExceptionObject::create(
                    MemoryUse::WasmRuntimeExceptionTag);
 
   obj->initFixedSlot(VALUES_SLOT, ObjectValue(*values));
+  obj->initFixedSlot(REFS_SLOT, ObjectValue(*refs));
 
   MOZ_ASSERT(!obj->isNewborn());
 
@@ -3840,7 +3822,7 @@ WasmRuntimeExceptionObject* WasmRuntimeExceptionObject::create(
 
 bool WasmRuntimeExceptionObject::isNewborn() const {
   MOZ_ASSERT(is<WasmRuntimeExceptionObject>());
-  return getReservedSlot(VALUES_SLOT).isUndefined();
+  return getReservedSlot(REFS_SLOT).isUndefined();
 }
 
 const JSPropertySpec WasmRuntimeExceptionObject::properties[] = {
@@ -3854,6 +3836,10 @@ const JSFunctionSpec WasmRuntimeExceptionObject::static_methods[] = {JS_FS_END};
 
 ExceptionTag& WasmRuntimeExceptionObject::tag() const {
   return *(ExceptionTag*)getReservedSlot(TAG_SLOT).toPrivate();
+}
+
+ArrayObject& WasmRuntimeExceptionObject::refs() const {
+  return getReservedSlot(REFS_SLOT).toObject().as<ArrayObject>();
 }
 
 // ============================================================================
@@ -4875,3 +4861,27 @@ static const ClassSpec WebAssemblyClassSpec = {CreateWebAssemblyObject,
 const JSClass js::WasmNamespaceObject::class_ = {
     js_WebAssembly_str, JSCLASS_HAS_CACHED_PROTO(JSProto_WebAssembly),
     JS_NULL_CLASS_OPS, &WebAssemblyClassSpec};
+
+// Sundry
+
+#ifdef JS_64BIT
+// TODO (large ArrayBuffer):
+//
+// This should be upped to (size_t(UINT32_MAX) + 1) / PageSize, see the
+// companion TODO in WasmMemoryObject::grow() for additional information.
+// Doing so is hard.
+//
+// The "-2" here accounts for the !huge-memory case in CreateSpecificWasmBuffer,
+// which is guarding against an overflow.  Also see
+// WasmMemoryObject::boundsCheckLimit() for related assertions.
+size_t wasm::MaxMemory32Pages() {
+  size_t desired = MaxMemory32LimitField - 2;
+  size_t actual = ArrayBufferObject::maxBufferByteLength() / PageSize;
+  return std::min(desired, actual);
+}
+#else
+size_t wasm::MaxMemory32Pages() {
+  MOZ_ASSERT(ArrayBufferObject::maxBufferByteLength() >= INT32_MAX / PageSize);
+  return INT32_MAX / PageSize;
+}
+#endif

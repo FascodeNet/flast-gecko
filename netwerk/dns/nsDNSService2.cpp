@@ -629,29 +629,66 @@ NS_IMPL_ISUPPORTS(nsDNSService, nsIDNSService, nsPIDNSService, nsIObserver,
  * singleton instance ctor/dtor methods
  ******************************************************************************/
 static StaticRefPtr<nsDNSService> gDNSService;
+static Atomic<bool> gInited(false);
+
+already_AddRefed<nsIDNSService> GetOrInitDNSService() {
+  if (gInited) {
+    return nsDNSService::GetXPCOMSingleton();
+  }
+
+  nsCOMPtr<nsIDNSService> dns = nullptr;
+  auto initTask = [&dns]() { dns = do_GetService(NS_DNSSERVICE_CID); };
+  if (!NS_IsMainThread()) {
+    // Forward to the main thread synchronously.
+    RefPtr<nsIThread> mainThread = do_GetMainThread();
+    if (!mainThread) {
+      return nullptr;
+    }
+
+    SyncRunnable::DispatchToThread(mainThread,
+                                   new SyncRunnable(NS_NewRunnableFunction(
+                                       "GetOrInitDNSService", initTask)));
+  } else {
+    initTask();
+  }
+
+  return dns.forget();
+}
 
 already_AddRefed<nsIDNSService> nsDNSService::GetXPCOMSingleton() {
-  if (nsIOService::UseSocketProcess()) {
-    if (XRE_IsSocketProcess()) {
+  auto getDNSHelper = []() -> already_AddRefed<nsIDNSService> {
+    if (nsIOService::UseSocketProcess()) {
+      if (XRE_IsSocketProcess()) {
+        return GetSingleton();
+      }
+
+      if (XRE_IsContentProcess() || XRE_IsParentProcess()) {
+        return ChildDNSService::GetSingleton();
+      }
+
+      return nullptr;
+    }
+
+    if (XRE_IsParentProcess()) {
       return GetSingleton();
     }
 
-    if (XRE_IsContentProcess() || XRE_IsParentProcess()) {
+    if (XRE_IsContentProcess() || XRE_IsSocketProcess()) {
       return ChildDNSService::GetSingleton();
     }
 
     return nullptr;
+  };
+
+  if (gInited) {
+    return getDNSHelper();
   }
 
-  if (XRE_IsParentProcess()) {
-    return GetSingleton();
+  nsCOMPtr<nsIDNSService> dns = getDNSHelper();
+  if (dns) {
+    gInited = true;
   }
-
-  if (XRE_IsContentProcess() || XRE_IsSocketProcess()) {
-    return ChildDNSService::GetSingleton();
-  }
-
-  return nullptr;
+  return dns.forget();
 }
 
 already_AddRefed<nsDNSService> nsDNSService::GetSingleton() {
@@ -751,7 +788,7 @@ nsresult nsDNSService::ReadPrefs(const char* name) {
                                            nsTokenizerFlags::SeparatorOptional>(
              localDomains, ',')
              .ToRange()) {
-      mLocalDomains.PutEntry(token);
+      mLocalDomains.Insert(token);
     }
   }
   if (!name || !strcmp(name, kPrefDnsForceResolve)) {
@@ -959,7 +996,7 @@ nsresult nsDNSService::AsyncResolveInternal(
 
     res = mResolver;
     idn = mIDN;
-    localDomain = mLocalDomains.GetEntry(aHostname);
+    localDomain = mLocalDomains.Contains(aHostname);
   }
 
   if (mNotifyResolution) {
@@ -1038,7 +1075,7 @@ nsresult nsDNSService::CancelAsyncResolveInternal(
 
     res = mResolver;
     idn = mIDN;
-    localDomain = mLocalDomains.GetEntry(aHostname);
+    localDomain = mLocalDomains.Contains(aHostname);
   }
   if (!res) {
     return NS_ERROR_OFFLINE;
@@ -1170,7 +1207,7 @@ nsresult nsDNSService::ResolveInternal(
     MutexAutoLock lock(mLock);
     res = mResolver;
     idn = mIDN;
-    localDomain = mLocalDomains.GetEntry(aHostname);
+    localDomain = mLocalDomains.Contains(aHostname);
   }
 
   if (mNotifyResolution) {
@@ -1401,6 +1438,15 @@ nsDNSService::GetCurrentTrrMode(nsIDNSService::ResolverMode* aMode) {
   *aMode = nsIDNSService::MODE_NATIVEONLY;  // The default mode.
   if (mTrrService) {
     *aMode = mTrrService->Mode();
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDNSService::GetCurrentTrrConfirmationState(uint32_t* aConfirmationState) {
+  *aConfirmationState = uint32_t(TRRService::CONFIRM_OFF);
+  if (mTrrService) {
+    *aConfirmationState = mTrrService->ConfirmationState();
   }
   return NS_OK;
 }

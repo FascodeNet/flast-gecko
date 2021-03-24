@@ -20,12 +20,12 @@ const TEST_CASES = [
   {
     type: "http",
     testURL: "http://example.com",
-    img_url: `url("chrome://global/skin/icons/connection-mixed-active-loaded.svg")`,
+    img_url: `url("chrome://global/skin/icons/security-broken.svg")`,
   },
   {
     type: "https",
     testURL: "https://example.com",
-    img_url: `url("chrome://browser/skin/connection-secure.svg")`,
+    img_url: `url("chrome://global/skin/icons/security.svg")`,
   },
   {
     type: "non-chrome about page",
@@ -35,7 +35,11 @@ const TEST_CASES = [
   {
     type: "chrome about page",
     testURL: "about:preferences",
-    img_url: `url("chrome://branding/content/identity-icons-brand.svg")`,
+    img_url: UrlbarPrefs.get("browser.proton.urlbar.enabled")
+      ? `url("chrome://branding/content/icon${
+          window.devicePixelRatio > 1 ? 32 : 16
+        }.png")`
+      : `url("chrome://branding/content/identity-icons-brand.svg")`,
   },
   {
     type: "file",
@@ -50,17 +54,17 @@ const TEST_CASES = [
   {
     type: "mixedPassiveContent",
     testURL: kBaseURI + "file_mixedPassiveContent.html",
-    img_url: `url("chrome://global/skin/icons/connection-mixed-passive-loaded.svg")`,
+    img_url: `url("chrome://global/skin/icons/security-warning.svg")`,
   },
   {
     type: "mixedActiveContent",
     testURL: kBaseURI + "file_csp_block_all_mixedcontent.html",
-    img_url: `url("chrome://browser/skin/connection-secure.svg")`,
+    img_url: `url("chrome://global/skin/icons/security.svg")`,
   },
   {
     type: "certificateError",
     testURL: "https://self-signed.example.com",
-    img_url: `url("chrome://global/skin/icons/connection-mixed-passive-loaded.svg")`,
+    img_url: `url("chrome://global/skin/icons/security-warning.svg")`,
   },
   {
     type: "localhost",
@@ -75,17 +79,17 @@ const TEST_CASES = [
   {
     type: "data URI",
     testURL: "data:text/html,<div>",
-    img_url: `url("chrome://global/skin/icons/connection-mixed-active-loaded.svg")`,
+    img_url: `url("chrome://global/skin/icons/security-broken.svg")`,
   },
   {
     type: "view-source HTTP",
     testURL: "view-source:http://example.com/",
-    img_url: `url("chrome://global/skin/icons/connection-mixed-active-loaded.svg")`,
+    img_url: `url("chrome://global/skin/icons/security-broken.svg")`,
   },
   {
     type: "view-source HTTPS",
     testURL: "view-source:https://example.com/",
-    img_url: `url("chrome://browser/skin/connection-secure.svg")`,
+    img_url: `url("chrome://global/skin/icons/security.svg")`,
   },
 ];
 

@@ -52,7 +52,7 @@ fn process_imports(shader_dir: &str, shader: &str, included: &mut HashSet<String
 }
 
 fn translate_shader(shader_key: &str, shader_dir: &str) {
-    let mut imported = String::from("#define SWGL 1\n");
+    let mut imported = String::from("#define SWGL 1\n#define __VERSION__ 150\n");
     let _ = write!(imported, "#define WR_MAX_VERTEX_TEXTURE_WIDTH {}U\n",
                    webrender_build::MAX_VERTEX_TEXTURE_WIDTH);
 
@@ -73,10 +73,11 @@ fn translate_shader(shader_key: &str, shader_dir: &str) {
     std::fs::write(&imp_name, imported).unwrap();
 
     let mut build = cc::Build::new();
+    build.no_default_flags(true);
     if build.get_compiler().is_like_msvc() {
-        build.flag("/EP");
+        build.flag("/EP").flag("/u");
     } else {
-        build.flag("-xc").flag("-P");
+        build.flag("-xc").flag("-P").flag("-undef");
     }
     build.file(&imp_name);
     let vs = build.clone()
@@ -135,9 +136,15 @@ fn main() {
     println!("cargo:rerun-if-changed=src/texture.h");
     println!("cargo:rerun-if-changed=src/vector_type.h");
     println!("cargo:rerun-if-changed=src/gl.cc");
-    cc::Build::new()
-        .cpp(true)
-        .file("src/gl.cc")
+    let mut build = cc::Build::new();
+    build.cpp(true);
+
+    // SWGL relies heavily on inlining for performance so override -Oz with -O2
+    if build.get_compiler().args().contains(&std::ffi::OsString::from("-Oz")) {
+        build.flag("-O2");
+    }
+
+    build.file("src/gl.cc")
         .flag("-std=c++17")
         .flag("-UMOZILLA_CONFIG_H")
         .flag("-fno-exceptions")

@@ -830,6 +830,9 @@ nsresult nsLookAndFeel::NativeGetFloat(FloatID aID, float& aResult) {
       EnsureInit();
       aResult = mCaretRatio;
       break;
+    case FloatID::TextScaleFactor:
+      aResult = gfxPlatformGtk::GetFontScaleFactor();
+      break;
     default:
       aResult = -1.0;
       rv = NS_ERROR_FAILURE;
@@ -1182,9 +1185,13 @@ void nsLookAndFeel::EnsureInit() {
       mMozScrollbar = mThemedScrollbar = widget::sScrollbarColor.ToABGR();
       mThemedScrollbarInactive = widget::sScrollbarColor.ToABGR();
       mThemedScrollbarThumb = widget::sScrollbarThumbColor.ToABGR();
-      mThemedScrollbarThumbHover = widget::sScrollbarThumbColorHover.ToABGR();
-      mThemedScrollbarThumbActive = widget::sScrollbarThumbColorActive.ToABGR();
-      mThemedScrollbarThumbInactive = widget::sScrollbarThumbColor.ToABGR();
+      mThemedScrollbarThumbHover =
+          nsNativeBasicTheme::AdjustUnthemedScrollbarThumbColor(
+              mThemedScrollbarThumb, NS_EVENT_STATE_HOVER);
+      mThemedScrollbarThumbActive =
+          nsNativeBasicTheme::AdjustUnthemedScrollbarThumbColor(
+              mThemedScrollbarThumb, NS_EVENT_STATE_ACTIVE);
+      mThemedScrollbarThumbInactive = mThemedScrollbarThumb;
     }
   }
 
@@ -1311,7 +1318,7 @@ void nsLookAndFeel::EnsureInit() {
     mAccentColorForeground = mTextSelectedText;
     if (RelativeLuminanceUtils::Compute(mAccentColor) >
         RelativeLuminanceUtils::Compute(mAccentColorForeground)) {
-      std::exchange(mAccentColor, mAccentColorForeground);
+      std::swap(mAccentColor, mAccentColorForeground);
     }
   }
 

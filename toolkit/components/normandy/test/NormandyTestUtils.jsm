@@ -3,6 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
+const { Preferences } = ChromeUtils.import(
+  "resource://gre/modules/Preferences.jsm"
+);
 const { AddonStudies } = ChromeUtils.import(
   "resource://normandy/lib/AddonStudies.jsm"
 );
@@ -25,6 +28,11 @@ let _preferenceRolloutFactoryId = 0;
 
 let testGlobals = {};
 
+const preferenceBranches = {
+  user: Preferences,
+  default: new Preferences({ defaultBranch: true }),
+};
+
 const NormandyTestUtils = {
   init({ add_task } = {}) {
     testGlobals.add_task = add_task;
@@ -41,10 +49,8 @@ const NormandyTestUtils = {
       }
 
       // Generate a slug from userFacingName
-      let {
-        userFacingName = `Test study ${_preferenceStudyFactoryId++}`,
-        slug,
-      } = attrs;
+      let recipeId = _addonStudyFactoryId++;
+      let { userFacingName = `Test study ${recipeId}`, slug } = attrs;
       delete attrs.slug;
       if (userFacingName && !slug) {
         slug = userFacingName.replace(" ", "-").toLowerCase();
@@ -52,7 +58,7 @@ const NormandyTestUtils = {
 
       return Object.assign(
         {
-          recipeId: _addonStudyFactoryId++,
+          recipeId,
           slug,
           userFacingName: "Test study",
           userFacingDescription: "test description",
@@ -194,8 +200,8 @@ const NormandyTestUtils = {
    * @param {[Function]} args
    * @example
    *   decorate_task(
-   *     withMockPreferences,
-   *     withMockNormandyApi,
+   *     withMockPreferences(),
+   *     withMockNormandyApi(),
    *     async function myTest(mockPreferences, mockApi) {
    *       // Do a test
    *     }
@@ -211,12 +217,12 @@ const NormandyTestUtils = {
 
   withMockRecipeCollection(recipes = []) {
     return function wrapper(testFunc) {
-      return async function inner(...args) {
+      return async function inner(args) {
         let recipeIds = new Set();
         for (const recipe of recipes) {
           if (!recipe.id || recipeIds.has(recipe.id)) {
             throw new Error(
-              "To use withMockRecipeCollection, each recipe must have a unique ID"
+              "To use withMockRecipeCollection each recipe must have a unique ID"
             );
           }
           recipeIds.add(recipe.id);
@@ -238,12 +244,12 @@ const NormandyTestUtils = {
         let lastModified = await db.getLastModified();
         await db.importChanges({}, lastModified + 1);
 
-        const collectionHelper = {
+        const mockRecipeCollection = {
           async addRecipes(newRecipes) {
             for (const recipe of newRecipes) {
               if (!recipe.id || recipeIds.has(recipe)) {
                 throw new Error(
-                  "To use withMockRecipeCollection, each recipe must have a unique ID"
+                  "To use withMockRecipeCollection each recipe must have a unique ID"
                 );
               }
             }
@@ -262,12 +268,58 @@ const NormandyTestUtils = {
         };
 
         try {
-          await testFunc(...args, collectionHelper);
+          await testFunc({ ...args, mockRecipeCollection });
         } finally {
           db = await RecipeRunner._remoteSettingsClientForTesting.db;
           await db.clear();
           lastModified = await db.getLastModified();
           await db.importChanges({}, lastModified + 1);
+        }
+      };
+    };
+  },
+
+  MockPreferences: class {
+    constructor() {
+      this.oldValues = { user: {}, default: {} };
+    }
+
+    set(name, value, branch = "user") {
+      this.preserve(name, branch);
+      preferenceBranches[branch].set(name, value);
+    }
+
+    preserve(name, branch) {
+      if (!(name in this.oldValues[branch])) {
+        this.oldValues[branch][name] = preferenceBranches[branch].get(
+          name,
+          undefined
+        );
+      }
+    }
+
+    cleanup() {
+      for (const [branchName, values] of Object.entries(this.oldValues)) {
+        const preferenceBranch = preferenceBranches[branchName];
+        for (const [name, value] of Object.entries(values)) {
+          if (value !== undefined) {
+            preferenceBranch.set(name, value);
+          } else {
+            preferenceBranch.reset(name);
+          }
+        }
+      }
+    }
+  },
+
+  withMockPreferences() {
+    return function(testFunction) {
+      return async function inner(args) {
+        const mockPreferences = new NormandyTestUtils.MockPreferences();
+        try {
+          await testFunction({ ...args, mockPreferences });
+        } finally {
+          mockPreferences.cleanup();
         }
       };
     };

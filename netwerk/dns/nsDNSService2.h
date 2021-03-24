@@ -14,7 +14,7 @@
 #include "nsIObserver.h"
 #include "nsHostResolver.h"
 #include "nsString.h"
-#include "nsTHashtable.h"
+#include "nsTHashSet.h"
 #include "nsHashKeys.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Attributes.h"
@@ -98,7 +98,7 @@ class nsDNSService final : public nsPIDNSService,
   bool mNotifyResolution;
   bool mOfflineLocalhost;
   bool mForceResolveOn;
-  nsTHashtable<nsCStringHashKey> mLocalDomains;
+  nsTHashSet<nsCString> mLocalDomains;
   RefPtr<mozilla::net::TRRService> mTrrService;
   mozilla::Atomic<bool, mozilla::Relaxed> mHasSocksProxy;
 
@@ -109,5 +109,7 @@ class nsDNSService final : public nsPIDNSService,
   bool mODoHActivated = false;
   nsClassHashtable<nsCStringHashKey, nsTArray<nsCString>> mFailedSVCDomainNames;
 };
+
+already_AddRefed<nsIDNSService> GetOrInitDNSService();
 
 #endif  // nsDNSService2_h__

@@ -17,6 +17,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Mutex.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticMutex.h"
@@ -28,7 +29,7 @@
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "nsAppRunner.h"
 #include "nsContentUtils.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsExceptionHandler.h"
 #include "nsIMemoryReporter.h"
@@ -42,10 +43,6 @@
 #ifdef MOZ_TASK_TRACER
 #  include "GeckoTaskTracer.h"
 using namespace mozilla::tasktracer;
-#endif
-
-#ifdef MOZ_GECKO_PROFILER
-#  include "GeckoProfiler.h"
 #endif
 
 // Undo the damage done by mozzconf.h
@@ -496,7 +493,7 @@ class ChannelCountReporter final : public nsIMemoryReporter {
     }
   };
 
-  using CountTable = nsDataHashtable<nsDepCharHashKey, ChannelCounts>;
+  using CountTable = nsTHashMap<nsDepCharHashKey, ChannelCounts>;
 
   static StaticMutex sChannelCountMutex;
   static CountTable* sChannelCounts;
@@ -511,22 +508,22 @@ class ChannelCountReporter final : public nsIMemoryReporter {
     if (!sChannelCounts) {
       return NS_OK;
     }
-    for (auto iter = sChannelCounts->Iter(); !iter.Done(); iter.Next()) {
-      nsPrintfCString pathNow("ipc-channels/%s", iter.Key());
-      nsPrintfCString pathMax("ipc-channels-peak/%s", iter.Key());
+    for (const auto& entry : *sChannelCounts) {
+      nsPrintfCString pathNow("ipc-channels/%s", entry.GetKey());
+      nsPrintfCString pathMax("ipc-channels-peak/%s", entry.GetKey());
       nsPrintfCString descNow(
           "Number of IPC channels for"
           " top-level actor type %s",
-          iter.Key());
+          entry.GetKey());
       nsPrintfCString descMax(
           "Peak number of IPC channels for"
           " top-level actor type %s",
-          iter.Key());
+          entry.GetKey());
 
       aHandleReport->Callback(""_ns, pathNow, KIND_OTHER, UNITS_COUNT,
-                              iter.Data().mNow, descNow, aData);
+                              entry.GetData().mNow, descNow, aData);
       aHandleReport->Callback(""_ns, pathMax, KIND_OTHER, UNITS_COUNT,
-                              iter.Data().mMax, descMax, aData);
+                              entry.GetData().mMax, descMax, aData);
     }
     return NS_OK;
   }
@@ -2793,7 +2790,6 @@ void MessageChannel::AddProfilerMarker(const IPC::Message& aMessage,
                                        MessageDirection aDirection) {
   mMonitor->AssertCurrentThreadOwns();
 
-#ifdef MOZ_GECKO_PROFILER
   if (profiler_feature_active(ProfilerFeature::IPCMessages)) {
     int32_t pid = mListener->OtherPidMaybeInvalid();
     // Only record markers for IPCs with a valid pid.
@@ -2802,13 +2798,12 @@ void MessageChannel::AddProfilerMarker(const IPC::Message& aMessage,
     // profiler itself, and also to avoid possible re-entrancy issues.
     if (pid != kInvalidProcessId && !profiler_is_locked_on_current_thread()) {
       // The current timestamp must be given to the `IPCMarker` payload.
-      const TimeStamp now = TimeStamp::NowUnfuzzed();
+      [[maybe_unused]] const TimeStamp now = TimeStamp::NowUnfuzzed();
       PROFILER_MARKER("IPC", IPC, MarkerTiming::InstantAt(now), IPCMarker, now,
                       now, pid, aMessage.seqno(), aMessage.type(), mSide,
                       aDirection, MessagePhase::Endpoint, aMessage.is_sync());
     }
   }
-#endif
 }
 
 int32_t MessageChannel::GetTopmostMessageRoutingId() const {

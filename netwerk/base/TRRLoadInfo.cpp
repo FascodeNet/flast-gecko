@@ -155,6 +155,14 @@ TRRLoadInfo::SetHasStoragePermission(bool aHasStoragePermission) {
 }
 
 NS_IMETHODIMP
+TRRLoadInfo::GetIsMetaRefresh(bool* aResult) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetIsMetaRefresh(bool aResult) { return NS_ERROR_NOT_IMPLEMENTED; }
+
+NS_IMETHODIMP
 TRRLoadInfo::GetForceInheritPrincipal(bool* aInheritPrincipal) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -488,6 +496,16 @@ TRRLoadInfo::GetAllowListFutureDocumentsCreatedFromThisRedirectChain(
 NS_IMETHODIMP
 TRRLoadInfo::SetAllowListFutureDocumentsCreatedFromThisRedirectChain(
     bool aValue) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::GetNeedForCheckingAntiTrackingHeuristic(bool* aValue) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetNeedForCheckingAntiTrackingHeuristic(bool aValue) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

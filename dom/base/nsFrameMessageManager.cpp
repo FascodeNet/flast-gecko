@@ -69,7 +69,7 @@
 #include "nsContentUtils.h"
 #include "nsCycleCollectionNoteChild.h"
 #include "nsCycleCollectionParticipant.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsError.h"
 #include "nsFrameMessageManager.h"
@@ -294,8 +294,8 @@ void nsFrameMessageManager::AddWeakMessageListener(
   // this to happen; it will break e.g. RemoveWeakMessageListener.  So let's
   // check that we're not getting ourselves into that situation.
   nsCOMPtr<nsISupports> canonical = do_QueryInterface(listener);
-  for (auto iter = mListeners.Iter(); !iter.Done(); iter.Next()) {
-    nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners = iter.UserData();
+  for (const auto& entry : mListeners) {
+    nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners = entry.GetWeak();
     uint32_t count = listeners->Length();
     for (uint32_t i = 0; i < count; i++) {
       nsWeakPtr weakListener = listeners->ElementAt(i).mWeakListener;
@@ -972,7 +972,7 @@ struct MessageManagerReferentCount {
   size_t mWeakAlive;
   size_t mWeakDead;
   nsTArray<nsString> mSuspectMessages;
-  nsDataHashtable<nsStringHashKey, uint32_t> mMessageCounter;
+  nsTHashMap<nsStringHashKey, uint32_t> mMessageCounter;
 };
 
 }  // namespace
@@ -998,14 +998,14 @@ NS_IMPL_ISUPPORTS(MessageManagerReporter, nsIMemoryReporter)
 void MessageManagerReporter::CountReferents(
     nsFrameMessageManager* aMessageManager,
     MessageManagerReferentCount* aReferentCount) {
-  for (auto it = aMessageManager->mListeners.Iter(); !it.Done(); it.Next()) {
-    nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners = it.UserData();
+  for (const auto& entry : aMessageManager->mListeners) {
+    nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners = entry.GetWeak();
     uint32_t listenerCount = listeners->Length();
     if (listenerCount == 0) {
       continue;
     }
 
-    nsString key(it.Key());
+    nsString key(entry.GetKey());
     const uint32_t currentCount =
         (aReferentCount->mMessageCounter.LookupOrInsert(key, 0) +=
          listenerCount);
@@ -1130,7 +1130,7 @@ nsresult NS_NewGlobalMessageManager(nsISupports** aResult) {
   return NS_OK;
 }
 
-nsDataHashtable<nsStringHashKey, nsMessageManagerScriptHolder*>*
+nsTHashMap<nsStringHashKey, nsMessageManagerScriptHolder*>*
     nsMessageManagerScriptExecutor::sCachedScripts = nullptr;
 StaticRefPtr<nsScriptCacheCleaner>
     nsMessageManagerScriptExecutor::sScriptCacheCleaner;
@@ -1138,7 +1138,7 @@ StaticRefPtr<nsScriptCacheCleaner>
 void nsMessageManagerScriptExecutor::DidCreateScriptLoader() {
   if (!sCachedScripts) {
     sCachedScripts =
-        new nsDataHashtable<nsStringHashKey, nsMessageManagerScriptHolder*>;
+        new nsTHashMap<nsStringHashKey, nsMessageManagerScriptHolder*>;
     sScriptCacheCleaner = new nsScriptCacheCleaner();
   }
 }
@@ -1570,8 +1570,8 @@ nsresult NS_NewChildProcessMessageManager(nsISupports** aResult) {
 }
 
 void nsFrameMessageManager::MarkForCC() {
-  for (auto iter = mListeners.Iter(); !iter.Done(); iter.Next()) {
-    nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners = iter.UserData();
+  for (const auto& entry : mListeners) {
+    nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners = entry.GetWeak();
     uint32_t count = listeners->Length();
     for (uint32_t i = 0; i < count; i++) {
       MessageListener* strongListener = listeners->ElementAt(i).mStrongListener;

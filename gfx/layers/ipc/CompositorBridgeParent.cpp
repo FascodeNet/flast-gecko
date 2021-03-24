@@ -423,6 +423,11 @@ LayersId CompositorBridgeParent::RootLayerTreeId() {
 }
 
 CompositorBridgeParent::~CompositorBridgeParent() {
+  MOZ_DIAGNOSTIC_ASSERT(
+      !mCanSend,
+      "ActorDestroy or RecvWillClose should have been called first.");
+  MOZ_DIAGNOSTIC_ASSERT(mRefCnt == 0,
+                        "ActorDealloc should have been called first.");
   nsTArray<PTextureParent*> textures;
   ManagedPTextureParent(textures);
   // We expect all textures to be destroyed by now.
@@ -430,6 +435,10 @@ CompositorBridgeParent::~CompositorBridgeParent() {
   for (unsigned int i = 0; i < textures.Length(); ++i) {
     RefPtr<TextureHost> tex = TextureHost::AsTextureHost(textures[i]);
     tex->DeallocateDeviceData();
+  }
+  // Check if WebRender/Compositor was shutdown.
+  if (mWrBridge || mCompositor) {
+    gfxCriticalNote << "CompositorBridgeParent destroyed without shutdown";
   }
 }
 
@@ -1762,9 +1771,16 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
   MOZ_ASSERT(mWidget);
 
 #ifdef XP_WIN
-  if (mWidget && (DeviceManagerDx::Get()->CanUseDComp() ||
-                  gfxVars::UseWebRenderFlipSequentialWin())) {
-    mWidget->AsWindows()->EnsureCompositorWindow();
+  if (mWidget && mWidget->AsWindows()) {
+    const auto options = mWidget->GetCompositorOptions();
+    if (!options.UseSoftwareWebRender() &&
+        (DeviceManagerDx::Get()->CanUseDComp() ||
+         gfxVars::UseWebRenderFlipSequentialWin())) {
+      mWidget->AsWindows()->EnsureCompositorWindow();
+    } else if (options.UseSoftwareWebRender() &&
+               mWidget->AsWindows()->GetCompositorHwnd()) {
+      mWidget->AsWindows()->DestroyCompositorWindow();
+    }
   }
 #endif
 

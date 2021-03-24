@@ -3,7 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ---
 job-defaults:
-    worker-type: t-win10-64-hw
+    worker-type: t-win10-64-1803-hw
     fetches:
         build:
             - artifact: target.perftests.tests.tar.gz
@@ -70,8 +70,9 @@ livesites:
         - [g-image, netwerk/test/perf/perftest_http3_google_image.js]
         - [g-search, netwerk/test/perf/perftest_http3_google_search.js]
         - [lq-fetch, netwerk/test/perf/perftest_http3_lucasquicfetch.js]
-        - [ytw, netwerk/test/perf/perftest_http3_youtube_watch.js]
-        - [ytw-scroll, netwerk/test/perf/perftest_http3_youtube_watch_scroll.js]
+        # broken: bug 1695871
+        # - [ytw, netwerk/test/perf/perftest_http3_youtube_watch.js]
+        # - [ytw-scroll, netwerk/test/perf/perftest_http3_youtube_watch_scroll.js]
     perftest-metrics:
         by-perftest:
             cloudflare:
@@ -87,8 +88,9 @@ livesites:
             g-image: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint, imagesPerSecond, imageLoadTime]
             g-search: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint]
             lq-fetch: [navigationTiming, pageTimings, resources, timeToContentfulPaint, resourceLoadTime, imagesLoaded, imagesMissed]
-            ytw: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint, droppedFrames, decodedFrames]
-            ytw-scroll: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint, droppedFrames, decodedFrames]
+            # broken: bug 1695871
+            # ytw: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint, droppedFrames, decodedFrames]
+            # ytw-scroll: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint, droppedFrames, decodedFrames]
             default: [navigationTiming, pageTimings, resources, firstPaint, timeToContentfulPaint]
     # Leave this here so people know this exists when looking
     # for examples
@@ -123,10 +125,11 @@ livesites:
                 - ["60s", browsertime.waitTime=60000]
             lq-fetch:
                 - [null, "browsertime.waitTime=1000,browsertime.cycles=5"]
-            ytw:
-                - [null, browsertime.waitTime=20000]
-            ytw-scroll:
-                - [null, browsertime.waitTime=20000]
+            # broken: bug 1695871
+            # ytw:
+            #     - [null, browsertime.waitTime=20000]
+            # ytw-scroll:
+            #     - [null, browsertime.waitTime=20000]
             default:
                 - [null, browsertime.waitTime=1000]
     run:
@@ -171,3 +174,26 @@ controlled:
             --browsertime-geckodriver ${MOZ_FETCHES_DIR}/geckodriver.exe
             --browsertime-node ${MOZ_FETCHES_DIR}/node/node.exe
             --output $MOZ_FETCHES_DIR/../artifacts
+
+perfstats:
+    description: Run PerfStats pageload test
+    treeherder:
+        symbol: perftest(win-perfstats)
+    attributes:
+        batch: false
+        cron: false
+    run:
+        command: >-
+            mkdir -p $MOZ_FETCHES_DIR/../artifacts &&
+            cd $MOZ_FETCHES_DIR &&
+            python3.exe python/mozperftest/mozperftest/runner.py
+            --browsertime-binary ${MOZ_FETCHES_DIR}/firefox/firefox.exe
+            --flavor desktop-browser
+            --browsertime-geckodriver ${MOZ_FETCHES_DIR}/geckodriver.exe
+            --browsertime-node ${MOZ_FETCHES_DIR}/node/node.exe
+            --output $MOZ_FETCHES_DIR/../artifacts
+            --perfherder
+            --perfherder-metrics name:HttpChannelCompletion_Cache,unit:ms name:HttpChannelCompletion_Network,unit:ms
+            --browsertime-iterations 10
+            --hooks testing/performance/hooks_perfstats.py
+            testing/performance/perftest_perfstats.js

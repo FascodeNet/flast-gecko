@@ -107,9 +107,7 @@
 #  include "mozilla/WindowsProcessMitigations.h"
 #  include "mozilla/WinHeaderOnlyUtils.h"
 #  include "mozilla/mscom/ProcessRuntime.h"
-#  if defined(MOZ_GECKO_PROFILER)
-#    include "mozilla/mscom/ProfilerMarkers.h"
-#  endif  // defined(MOZ_GECKO_PROFILER)
+#  include "mozilla/mscom/ProfilerMarkers.h"
 #  include "mozilla/widget/AudioSession.h"
 #  include "WinTokenUtils.h"
 
@@ -309,6 +307,7 @@ nsString gProcessStartupShortcut;
 #    define PANGO_ENABLE_BACKEND
 #    include <pango/pangofc-fontmap.h>
 #  endif
+#  include "mozilla/WidgetUtilsGtk.h"
 #  include <gtk/gtk.h>
 #  ifdef MOZ_WAYLAND
 #    include <gdk/gdkwayland.h>
@@ -495,6 +494,9 @@ static const char kPrefFissionExperimentEnrollmentStatus[] =
 static const char kPrefFissionExperimentStartupEnrollmentStatus[] =
     "fission.experiment.startupEnrollmentStatus";
 
+static const char kPrefNonNativeThemeEnabled[] =
+    "widget.non-native-theme.enabled";
+
 // The computed FissionAutostart value for the session, read by content
 // processes to initialize gFissionAutostart.
 //
@@ -579,13 +581,13 @@ bool BrowserTabsRemoteAutostart() {
   return gBrowserTabsRemoteAutostart;
 }
 
-}  // namespace mozilla
-
-static bool FissionExperimentEnrolled() {
+bool FissionExperimentEnrolled() {
   MOZ_ASSERT(XRE_IsParentProcess());
   return gFissionExperimentStatus == nsIXULRuntime::eExperimentStatusControl ||
          gFissionExperimentStatus == nsIXULRuntime::eExperimentStatusTreatment;
 }
+
+}  // namespace mozilla
 
 static void FissionExperimentDisqualify() {
   MOZ_ASSERT(XRE_IsParentProcess());
@@ -728,6 +730,12 @@ static void EnsureFissionAutostartInitialized() {
   Preferences::SetBool(kPrefFissionAutostartSession, gFissionAutostart,
                        PrefValueKind::Default);
   Preferences::Lock(kPrefFissionAutostartSession);
+
+  if (gFissionExperimentStatus == nsIXULRuntime::eExperimentStatusControl ||
+      gFissionExperimentStatus == nsIXULRuntime::eExperimentStatusTreatment) {
+    Preferences::SetBool(kPrefNonNativeThemeEnabled, true,
+                         PrefValueKind::Default);
+  }
 
   // If we're actively enrolled in the fission experiment, disqualify the user
   // from the experiment if the fission pref is modified.
@@ -2429,7 +2437,7 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
     if (aUnlocker) {
       int32_t button;
 #ifdef MOZ_WIDGET_ANDROID
-      java::GeckoAppShell::KillAnyZombies();
+      // On Android we always kill the process if the lock is still being held
       button = 0;
 #else
       const uint32_t flags = (nsIPromptService::BUTTON_TITLE_IS_STRING *
@@ -2456,15 +2464,8 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
         return LaunchChild(false, true);
       }
     } else {
-#ifdef MOZ_WIDGET_ANDROID
-      if (java::GeckoAppShell::UnlockProfile()) {
-        return NS_LockProfilePath(aProfileDir, aProfileLocalDir, nullptr,
-                                  aResult);
-      }
-#else
       rv = ps->Alert(nullptr, killTitle.get(), killMessage.get());
       NS_ENSURE_SUCCESS_LOG(rv, rv);
-#endif
     }
 
     return NS_ERROR_ABORT;
@@ -4458,14 +4459,12 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
         PR_fprintf(PR_STDERR, "Error: cannot open display: %s\n", display_name);
         return 1;
       }
-      gdk_display_manager_set_default_display(gdk_display_manager_get(),
-                                              mGdkDisplay);
       if (saveDisplayArg) {
-        if (GDK_IS_X11_DISPLAY(mGdkDisplay)) {
+        if (GdkIsX11Display(mGdkDisplay)) {
           SaveWordToEnv("DISPLAY", nsDependentCString(display_name));
         }
 #  ifdef MOZ_WAYLAND
-        else if (!GDK_IS_X11_DISPLAY(mGdkDisplay)) {
+        else if (GdkIsWaylandDisplay(mGdkDisplay)) {
           SaveWordToEnv("WAYLAND_DISPLAY", nsDependentCString(display_name));
         }
 #  endif
@@ -4894,10 +4893,8 @@ nsresult XREMain::XRE_mainRun() {
   auto dllServicesDisable =
       MakeScopeExit([&dllServices]() { dllServices->DisableFull(); });
 
-#  if defined(MOZ_GECKO_PROFILER)
   mozilla::mscom::InitProfilerMarkers();
-#  endif  // defined(MOZ_GECKO_PROFILER)
-#endif    // defined(XP_WIN)
+#endif  // defined(XP_WIN)
 
   // We need the appStartup pointer to span multiple scopes, so we declare
   // it here.
@@ -5534,7 +5531,6 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   // XRE_mainRun wants to initialize the JSContext after reading user prefs.
 
   mScopedXPCOM = MakeUnique<ScopedXPCOMStartup>();
-  if (!mScopedXPCOM) return 1;
 
   rv = mScopedXPCOM->Initialize(/* aInitJSContext = */ false);
   NS_ENSURE_SUCCESS(rv, 1);

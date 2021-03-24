@@ -14,7 +14,6 @@ const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-Cu.importGlobalProperties(["Glean"]);
 
 const LOGGER_NAME = "Toolkit.Telemetry";
 const LOGGER_PREFIX = "ClientID::";
@@ -246,7 +245,17 @@ var ClientIDImpl = {
       // fall through to next option
     }
 
-    // We're missing one or both IDs from the DRS state file, generate new ones.
+    // Absent or broken state file? Check prefs as last resort.
+    if (!hasCurrentClientID) {
+      const cachedID = this.getCachedClientID();
+      // Calling `updateClientID` with `null` logs an error, which breaks tests.
+      if (cachedID) {
+        hasCurrentClientID = this.updateClientID(cachedID);
+      }
+    }
+
+    // We're missing one or both IDs from the DRS state file and prefs.
+    // Generate new ones.
     if (!hasCurrentClientID) {
       Services.telemetry.scalarSet("telemetry.generated_new_client_id", true);
       this.updateClientID(CommonUtils.generateUUID());
@@ -288,7 +297,7 @@ var ClientIDImpl = {
       try {
         await IOUtils.makeDirectory(gDatareportingPath);
       } catch (ex) {
-        if (ex.name != "NotAllowedError") {
+        if (!(ex instanceof DOMException) || ex.name !== "AbortError") {
           throw ex;
         }
       }
@@ -476,8 +485,6 @@ var ClientIDImpl = {
     }
 
     this._clientID = id;
-
-    Glean.fogValidation.legacyTelemetryClientId.set(this._clientID);
 
     this._clientIDHash = null;
     Services.prefs.setStringPref(PREF_CACHED_CLIENTID, this._clientID);

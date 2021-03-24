@@ -24,7 +24,7 @@
 #include "nsRefPtrHashtable.h"
 #include "nsString.h"
 #include "nsTArrayForwardDeclare.h"
-#include "nsTHashtable.h"
+#include "nsTHashSet.h"
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
 #  include "nsIFile.h"
@@ -262,16 +262,6 @@ class ContentChild final : public PContentChild,
   PBenchmarkStorageChild* AllocPBenchmarkStorageChild();
 
   bool DeallocPBenchmarkStorageChild(PBenchmarkStorageChild* aActor);
-
-  PPresentationChild* AllocPPresentationChild();
-
-  bool DeallocPPresentationChild(PPresentationChild* aActor);
-
-  mozilla::ipc::IPCResult RecvNotifyPresentationReceiverLaunched(
-      PBrowserChild* aIframe, const nsString& aSessionId);
-
-  mozilla::ipc::IPCResult RecvNotifyPresentationReceiverCleanUp(
-      const nsString& aSessionId);
 
   mozilla::ipc::IPCResult RecvNotifyEmptyHTTPCache();
 
@@ -741,10 +731,12 @@ class ContentChild final : public PContentChild,
       bool aIsLeavingDocument, bool aAdjustWidget, uint64_t aActionId);
   mozilla::ipc::IPCResult RecvSetupFocusedAndActive(
       const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
-      const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext);
-  mozilla::ipc::IPCResult RecvReviseActiveBrowsingContext(
       const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
       uint64_t aActionId);
+  mozilla::ipc::IPCResult RecvReviseActiveBrowsingContext(
+      uint64_t aOldActionId,
+      const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
+      uint64_t aNewActionId);
   mozilla::ipc::IPCResult RecvMaybeExitFullscreen(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
@@ -853,7 +845,7 @@ class ContentChild final : public PContentChild,
   nsTArray<mozilla::UniquePtr<AlertObserver>> mAlertObservers;
   RefPtr<ConsoleListener> mConsoleListener;
 
-  nsTHashtable<nsPtrHashKey<nsIObserver>> mIdleObservers;
+  nsTHashSet<nsIObserver*> mIdleObservers;
 
   nsTArray<nsCString> mAvailableDictionaries;
 

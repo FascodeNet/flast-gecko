@@ -6,14 +6,13 @@
 
 :root {
   /* ::::: Variables ::::: */
-  --arrowpanel-padding: 16px;
   --default-arrowpanel-background: #fff;
   --default-arrowpanel-color: hsl(0,0%,10%);
   --default-arrowpanel-border-color: hsla(210,4%,10%,.05);
   --arrowpanel-background: var(--default-arrowpanel-background);
   --arrowpanel-color: var(--default-arrowpanel-color);
   --arrowpanel-border-color: var(--default-arrowpanel-border-color);
-  --arrowpanel-border-radius: 3.5px;
+  --arrowpanel-border-radius: 8px;
   --panel-disabled-color: GrayText;
   --panel-description-color: hsl(0,0%,50%);
 
@@ -25,6 +24,12 @@
   color: -moz-DialogText;
   font: message-box;
 }
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+:root {
+  --arrowpanel-border-radius: 3.5px;
+}
+} /** END not Proton **/
 
 /* ::::: Alert icons :::::*/
 
@@ -53,24 +58,6 @@
 
 .question-icon {
   list-style-image: url("chrome://global/skin/icons/question-64.png");
-}
-
-/* ::::: iframe ::::: */
-
-xul|iframe {
-  border: none;
-  width: 100px;
-  height: 100px;
-  min-width: 10px;
-  min-height: 10px;
-}
-
-@supports -moz-bool-pref("layout.css.emulate-moz-box-with-flex") {
-  /* In emulation, <iframe> is block instead of inline, so reset the width/height */
-  xul|iframe {
-    width: auto;
-    height: auto;
-  }
 }
 
 /* Separators */

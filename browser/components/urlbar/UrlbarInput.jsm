@@ -22,6 +22,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
   ReaderMode: "resource://gre/modules/ReaderMode.jsm",
   PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.jsm",
+  SearchUIUtils: "resource:///modules/SearchUIUtils.jsm",
   SearchUtils: "resource://gre/modules/SearchUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
@@ -259,6 +260,9 @@ class UrlbarInput {
 
     this._initCopyCutController();
     this._initPasteAndGo();
+    if (UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+      this.addSearchEngineHelper = new AddSearchEngineHelper(this);
+    }
 
     // Tracks IME composition.
     this._compositionState = UrlbarUtils.COMPOSITION.NONE;
@@ -1998,10 +2002,7 @@ class UrlbarInput {
     // if the caret isn't at the end of the input.
     if (
       !allowAutofill ||
-      this._autofillPlaceholder.length <= value.length ||
-      !this._autofillPlaceholder
-        .toLocaleLowerCase()
-        .startsWith(value.toLocaleLowerCase())
+      !UrlbarUtils.canAutofillURL(this._autofillPlaceholder, value)
     ) {
       this._autofillPlaceholder = "";
     } else if (
@@ -2390,7 +2391,7 @@ class UrlbarInput {
         browser.currentURI &&
         url === browser.currentURI.spec
       ) {
-        this.window.SitePermissions.clearTemporaryPermissions(browser);
+        this.window.SitePermissions.clearTemporaryBlockPermissions(browser);
       }
     }
 
@@ -3094,15 +3095,23 @@ class UrlbarInput {
     }
     let oldEnd = oldValue.substring(this.selectionEnd);
 
-    let pasteData = originalPasteData;
+    let isURLAssumed = true;
     try {
-      Services.uriFixup.getFixupURIInfo(
-        pasteData,
-        Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS
+      const { keywordAsSent } = Services.uriFixup.getFixupURIInfo(
+        originalPasteData,
+        Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS |
+          Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP
       );
-    } catch (e) {
-      pasteData = pasteData.replace(/\s/g, " ");
-    }
+      isURLAssumed = !keywordAsSent;
+    } catch (e) {}
+
+    // In some cases, the data pasted will contain newline codes. In order to
+    // achive the behavior expected by user, remove newline codes when URL is
+    // assumed. When keywords are assumed, replace all whitespace characters
+    // including newline with a space.
+    let pasteData = isURLAssumed
+      ? originalPasteData.replace(/[\r\n]/g, "")
+      : originalPasteData.replace(/\s/g, " ");
 
     pasteData = UrlbarUtils.stripUnsafeProtocolOnPaste(pasteData);
 
@@ -3527,4 +3536,195 @@ class CopyCutController {
   }
 
   onEvent() {}
+}
+
+/**
+ * Manages the Add Search Engine contextual menu entries.
+ *
+ * @note setEnginesFromBrowser must be invoked from the outside when the
+ *       page provided engines list changes.
+ */
+class AddSearchEngineHelper {
+  constructor(input) {
+    this.document = input.document;
+
+    this.shortcutButtons = input.view.oneOffSearchButtons;
+
+    let contextMenu = input.querySelector("moz-input-box").menupopup;
+    this.contextSeparator = this.document.createXULElement("menuseparator");
+    this.contextSeparator.setAttribute("anonid", "add-engine-separator");
+    this.contextSeparator.classList.add("menuseparator-add-engine");
+    this.contextSeparator.collapsed = true;
+    contextMenu.appendChild(this.contextSeparator);
+
+    // Since the contextual menu is not opened often, compared to the urlbar
+    // results panel, we update it just before showing it, instead of spending
+    // time on every page load.
+    contextMenu.addEventListener(
+      "popupshowing",
+      this._onContextMenu.bind(this)
+    );
+
+    XPCOMUtils.defineLazyGetter(this, "_bundle", () =>
+      Services.strings.createBundle("chrome://browser/locale/search.properties")
+    );
+  }
+
+  /**
+   * If there's more than this number of engines, the context menu offers
+   * them in a submenu.
+   */
+  get maxInlineEngines() {
+    return 3;
+  }
+
+  /**
+   * Invoked by browser when the list of available engines changes.
+   * @param {object} browser The invoking browser.
+   */
+  setEnginesFromBrowser(browser) {
+    this.browsingContext = browser.browsingContext;
+    // Make a copy of the array for state comparison.
+    let engines = browser.engines?.slice() || [];
+    if (!this._sameEngines(this.engines, engines)) {
+      this.engines = engines;
+
+      // Update shortcut buttons. We only add `maxInlineEngines` engines, to
+      // cover the most common cases, others can be added from the context menu.
+      this.shortcutButtons.updateWebEngines(
+        engines.slice(0, this.maxInlineEngines).map(e => ({
+          name: e.title,
+          tooltip: this._bundle.formatStringFromName("cmd_addFoundEngine", [
+            e.title,
+          ]),
+          uri: e.uri,
+          get icon() {
+            // The icon is actually the browser favicon, that may not be in
+            // place yet, it will be fetched from the browser when the ui
+            // element is built.
+            return e.icon;
+          },
+        }))
+      );
+    }
+  }
+
+  /**
+   * Adds an OpenSearch engine.
+   * @param {string} uri The engine url.
+   * @param {string} icon The engine icon url.
+   * @returns {Promise} resolved once the addition is complete.
+   * @resolves {boolean} whether the engine was added.
+   * @rejects never
+   */
+  addSearchEngine({ uri, icon }) {
+    return SearchUIUtils.addOpenSearchEngine(
+      uri,
+      icon,
+      this.browsingContext
+    ).catch(ex => {
+      console.error(ex);
+      return false;
+    });
+  }
+
+  _sameEngines(engines1, engines2) {
+    if (engines1?.length != engines2?.length) {
+      return false;
+    }
+    return ObjectUtils.deepEqual(
+      engines1.map(e => e.title),
+      engines2.map(e => e.title)
+    );
+  }
+
+  _createMenuitem(engine, index) {
+    let elt = this.document.createXULElement("menuitem");
+    elt.setAttribute("anonid", `add-engine-${index}`);
+    elt.classList.add("menuitem-iconic");
+    elt.classList.add("context-menu-add-engine");
+    elt.setAttribute(
+      "label",
+      this._bundle.formatStringFromName("cmd_addFoundEngine", [engine.title])
+    );
+    elt.setAttribute("uri", engine.uri);
+    if (engine.icon) {
+      elt.setAttribute("image", engine.icon);
+    } else {
+      elt.removeAttribute("image", engine.icon);
+    }
+    elt.addEventListener("command", this._onCommand.bind(this));
+    return elt;
+  }
+
+  _createMenu(engine) {
+    let elt = this.document.createXULElement("menu");
+    elt.setAttribute("anonid", "add-engine-menu");
+    elt.classList.add("menu-iconic");
+    elt.classList.add("context-menu-add-engine");
+    elt.setAttribute(
+      "label",
+      this._bundle.GetStringFromName("cmd_addFoundEngineMenu")
+    );
+    if (engine.icon) {
+      elt.setAttribute("image", engine.icon);
+    }
+    let popup = this.document.createXULElement("menupopup");
+    elt.appendChild(popup);
+    return elt;
+  }
+
+  _refreshContextMenu() {
+    let engines = this.engines;
+    this.contextSeparator.collapsed = !engines.length;
+    let curElt = this.contextSeparator;
+    // Remove the previous items, if any.
+    for (let elt = curElt.nextElementSibling; elt; ) {
+      let nextElementSibling = elt.nextElementSibling;
+      elt.remove();
+      elt = nextElementSibling;
+    }
+
+    // If the page provides too many engines, we only show a single menu entry
+    // with engines in a submenu.
+    if (engines.length > this.maxInlineEngines) {
+      // Set the menu button's image to the image of the first engine.  The
+      // offered engines may have differing images, so there's no perfect
+      // choice here.
+      let elt = this._createMenu(engines[0]);
+      this.contextSeparator.insertAdjacentElement("afterend", elt);
+      curElt = elt.lastElementChild;
+    }
+
+    // Insert the engines, either in the contextual menu or the sub menu.
+    for (let i = 0; i < engines.length; ++i) {
+      let elt = this._createMenuitem(engines[i], i);
+      if (curElt.localName == "menupopup") {
+        curElt.appendChild(elt);
+      } else {
+        curElt.insertAdjacentElement("afterend", elt);
+      }
+      curElt = elt;
+    }
+  }
+
+  _onContextMenu(event) {
+    // Ignore sub-menus.
+    if (event.target == event.currentTarget) {
+      this._refreshContextMenu();
+    }
+  }
+
+  _onCommand(event) {
+    this.addSearchEngine({
+      uri: event.target.getAttribute("uri"),
+      icon: event.target.getAttribute("image"),
+    }).then(added => {
+      if (added) {
+        // Remove the offered engine from the list. The browser updated the
+        // engines list at this point, so we just have to refresh the menu.)
+        this._refreshContextMenu();
+      }
+    });
+  }
 }

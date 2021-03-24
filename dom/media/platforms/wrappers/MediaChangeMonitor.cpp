@@ -132,7 +132,7 @@ class H264ChangeMonitor : public MediaChangeMonitor::CodecChangeMonitor {
       mCurrentConfig.mDisplay.width = spsdata.display_width;
       mCurrentConfig.mDisplay.height = spsdata.display_height;
       mCurrentConfig.mColorDepth = spsdata.ColorDepth();
-      mCurrentConfig.mColorSpace = spsdata.ColorSpace();
+      mCurrentConfig.mColorSpace = Some(spsdata.ColorSpace());
       mCurrentConfig.mColorRange = spsdata.video_full_range_flag
                                        ? gfx::ColorRange::FULL
                                        : gfx::ColorRange::LIMITED;
@@ -198,6 +198,9 @@ class VPXChangeMonitor : public MediaChangeMonitor::CodecChangeMonitor {
       rv = NS_ERROR_DOM_MEDIA_NEED_NEW_DECODER;
     } else if (mCurrentConfig.mImage != info.mImage ||
                mCurrentConfig.mDisplay != info.mDisplay) {
+      // We can't properly determine the image rect if we're changing
+      // resolution based on sample information.
+      mCurrentConfig.ResetImageRect();
       PROFILER_MARKER_TEXT("VPX Stream Init Discrepancy", MEDIA_PLAYBACK, {},
                            "VPXChangeMonitor::CheckForChange has detected a "
                            "discrepancy between initialization data and stream "
@@ -208,7 +211,7 @@ class VPXChangeMonitor : public MediaChangeMonitor::CodecChangeMonitor {
     mCurrentConfig.mImage = info.mImage;
     mCurrentConfig.mDisplay = info.mDisplay;
     mCurrentConfig.mColorDepth = gfx::ColorDepthForBitDepth(info.mBitDepth);
-    mCurrentConfig.mColorSpace = info.ColorSpace();
+    mCurrentConfig.mColorSpace = Some(info.ColorSpace());
     mCurrentConfig.mColorRange = info.ColorRange();
     if (mCodec == VPXDecoder::Codec::VP9) {
       VPXDecoder::GetVPCCBox(mCurrentConfig.mExtraData, info);

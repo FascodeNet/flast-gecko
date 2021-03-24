@@ -9,9 +9,13 @@
 #import <Cocoa/Cocoa.h>
 
 #include "mozilla/UniquePtr.h"
-#include "nsMenuBaseX.h"
+#include "mozilla/WeakPtr.h"
+
+#include "nsISupports.h"
+#include "nsMenuParentX.h"
 #include "nsMenuGroupOwnerX.h"
 #include "nsChangeObserver.h"
+#include "nsTArray.h"
 #include "nsString.h"
 
 class nsMenuBarX;
@@ -75,10 +79,11 @@ class Element;
 
 // Once instantiated, this object lives until its DOM node or its parent window is destroyed.
 // Do not hold references to this, they can become invalid any time the DOM node can be destroyed.
-class nsMenuBarX : public nsMenuGroupOwnerX, public nsChangeObserver {
+class nsMenuBarX : public nsMenuParentX, public nsChangeObserver, public mozilla::SupportsWeakPtr {
  public:
-  nsMenuBarX();
-  virtual ~nsMenuBarX();
+  explicit nsMenuBarX(mozilla::dom::Element* aElement);
+
+  NS_INLINE_DECL_REFCOUNTING(nsMenuBarX)
 
   static NativeMenuItemTarget* sNativeEventTarget;
   static nsMenuBarX* sLastGeckoMenuBarPainted;
@@ -92,12 +97,10 @@ class nsMenuBarX : public nsMenuGroupOwnerX, public nsChangeObserver {
   // nsChangeObserver
   NS_DECL_CHANGEOBSERVER
 
-  // nsMenuObjectX
-  void* NativeData() override { return (void*)mNativeMenu; }
-  nsMenuObjectTypeX MenuObjectType() override { return eMenuBarObjectType; }
+  // nsMenuParentX
+  nsMenuBarX* AsMenuBar() override { return this; }
 
   // nsMenuBarX
-  nsresult Create(mozilla::dom::Element* aElement);
   uint32_t GetMenuCount();
   bool MenuContainsAppMenu();
   nsMenuX* GetMenuAt(uint32_t aIndex);
@@ -110,11 +113,21 @@ class nsMenuBarX : public nsMenuGroupOwnerX, public nsChangeObserver {
   void SetNeedsRebuild();
   void ApplicationMenuOpened();
   bool PerformKeyEquivalent(NSEvent* aEvent);
+  GeckoNSMenu* NativeNSMenu() { return mNativeMenu; }
+
+  // If aChild is one of our child menus, insert aChild's native menu item in our native menu at the
+  // right location.
+  void InsertChildNativeMenuItem(nsMenuX* aChild) override;
+
+  // Remove aChild's native menu item from our native menu.
+  void RemoveChildNativeMenuItem(nsMenuX* aChild) override;
 
  protected:
+  virtual ~nsMenuBarX();
+
   void ConstructNativeMenus();
   void ConstructFallbackNativeMenus();
-  void InsertMenuAtIndex(mozilla::UniquePtr<nsMenuX>&& aMenu, uint32_t aIndex);
+  void InsertMenuAtIndex(RefPtr<nsMenuX>&& aMenu, uint32_t aIndex);
   void RemoveMenuAtIndex(uint32_t aIndex);
   RefPtr<mozilla::dom::Element> HideItem(mozilla::dom::Document* aDocument, const nsAString& aID);
   void AquifyMenuBar();
@@ -122,7 +135,19 @@ class nsMenuBarX : public nsMenuGroupOwnerX, public nsChangeObserver {
                                       int aTag, NativeMenuItemTarget* aTarget);
   void CreateApplicationMenu(nsMenuX* aMenu);
 
-  nsTArray<mozilla::UniquePtr<nsMenuX>> mMenuArray;
+  // Calculates the index at which aChild's NSMenuItem should be inserted into our NSMenu.
+  // The order of NSMenuItems in the NSMenu is the same as the order of nsMenuX objects in
+  // mMenuArray; there are two differences:
+  //  - mMenuArray contains both visible and invisible menus, and the NSMenu only contains visible
+  //    menus.
+  //  - Our NSMenu may also contain an item for the app menu, whereas mMenuArray never does.
+  // So the insertion index is equal to the number of visible previous siblings of aChild in
+  // mMenuArray, plus one if the app menu is present.
+  NSInteger CalculateNativeInsertionPoint(nsMenuX* aChild);
+
+  RefPtr<nsIContent> mContent;
+  RefPtr<nsMenuGroupOwnerX> mMenuGroupOwner;
+  nsTArray<RefPtr<nsMenuX>> mMenuArray;
   GeckoNSMenu* mNativeMenu;  // root menu, representing entire menu bar
   bool mNeedsRebuild;
   ApplicationMenuDelegate* mApplicationMenuDelegate;

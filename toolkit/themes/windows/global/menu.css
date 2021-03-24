@@ -39,6 +39,7 @@ menucaption {
   menu > .menu-iconic-text,
   menuitem > .menu-iconic-text {
     appearance: none;
+    margin-inline-start: 0 !important; /* need !important to override the other !important below... */
   }
 }
 }
@@ -148,8 +149,17 @@ menucaption {
   .menu-right {
     appearance: none;
     list-style-image: url("chrome://global/skin/icons/menu-arrow.svg");
-    -moz-context-properties: fill;
+    -moz-context-properties: fill, fill-opacity;
     fill: currentColor;
+    fill-opacity: var(--menu-icon-opacity);
+    margin-inline-end: 1em;
+    padding-top: 0;
+  }
+
+  .menu-right > image {
+    /* Do not make this smaller than the size of the svg, but upscale for
+     * people with large fonts. */
+    width: max(1em, 16px);
   }
 
   .menu-right:-moz-locale-dir(rtl) {
@@ -232,7 +242,7 @@ menuitem[_moz-menuactive="true"] {
   menu[_moz-menuactive="true"]:not([disabled="true"]),
   menuitem[_moz-menuactive="true"]:not([disabled="true"]) {
     background-color: var(--menuitem-hover-background-color);
-    color: var(--menuitem-hover-color);
+    color: var(--menuitem-color);
   }
 }
 }
@@ -335,11 +345,27 @@ menuitem[type="radio"] > .menu-iconic-left > .menu-iconic-icon {
 
 @supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
-  /* For Windows 10, checkbox and radio button menu items need the default
+  menupopup[needsgutter] menu:not([icon]),
+  menupopup[needsgutter] menuitem:not([checked="true"]):not([icon]) {
+    padding-inline-start: 36px;
+  }
+
+  /* For Windows 10, checkbox, radio and iconified menuitems need the default
      appearance disabled so they pick up our custom styles instead. */
+  .menu-iconic-left,
   menuitem[type="checkbox"],
   menuitem[type="radio"] {
-    appearance: none;
+    appearance: none !important; /* to override more specific selectors above. */
+    min-width: unset;
+  }
+
+  .menu-iconic > .menu-iconic-left,
+  .menuitem-iconic > .menu-iconic-left {
+    margin-inline-end: 1em;
+  }
+
+  menuitem[checked="true"] {
+    padding-inline-start: 12px;
   }
 
   /* We need to do something to override the default style for selected
@@ -347,10 +373,12 @@ menuitem[type="radio"] > .menu-iconic-left > .menu-iconic-icon {
      Windows versions looks pretty bad with the Win10 styles, so for now we'll
      insert a generic checkmark icon for both types. */
   menuitem[checked="true"] > .menu-iconic-left {
-    appearance: none !important;
-    -moz-context-properties: fill;
+    -moz-context-properties: fill, fill-opacity;
     fill: currentColor;
+    fill-opacity: var(--menu-icon-opacity);
     list-style-image: url("chrome://global/skin/icons/check.svg");
+    width: 16px;
+    margin-inline-end: 8px;
   }
   menuitem[checked="true"] > .menu-iconic-left > .menu-iconic-icon {
     display: initial;

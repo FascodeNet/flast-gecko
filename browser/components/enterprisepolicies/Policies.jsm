@@ -205,6 +205,16 @@ var Policies = {
     },
   },
 
+  BackgroundAppUpdate: {
+    onBeforeAddons(manager, param) {
+      if (param) {
+        manager.disallowFeature("app-background-update-off");
+      } else {
+        manager.disallowFeature("app-background-update-on");
+      }
+    },
+  },
+
   BlockAboutAddons: {
     onBeforeUIStartup(manager, param) {
       if (param) {
@@ -1203,12 +1213,13 @@ var Policies = {
             "pref.browser.homepage.disable_button.restore_default",
             true
           );
-          if (param.URL != "about:blank") {
-            manager.disallowFeature("removeHomeButtonByDefault");
-          }
         } else {
           // Clear out old run once modification that is no longer used.
           clearRunOnceModification("setHomepage");
+        }
+        // If a homepage has been set via policy, show the home button
+        if (param.URL != "about:blank") {
+          manager.disallowFeature("removeHomeButtonByDefault");
         }
       }
       if (param.StartPage) {
@@ -1961,6 +1972,31 @@ var Policies = {
     },
   },
 
+  ShowHomeButton: {
+    onBeforeAddons(manager, param) {
+      if (param) {
+        manager.disallowFeature("removeHomeButtonByDefault");
+      }
+    },
+    onAllWindowsRestored(manager, param) {
+      if (param) {
+        let homeButtonPlacement = CustomizableUI.getPlacementOfWidget(
+          "home-button"
+        );
+        if (!homeButtonPlacement) {
+          let placement = CustomizableUI.getPlacementOfWidget("forward-button");
+          CustomizableUI.addWidgetToArea(
+            "home-button",
+            CustomizableUI.AREA_NAVBAR,
+            placement.position + 2
+          );
+        }
+      } else {
+        CustomizableUI.removeWidgetFromArea("home-button");
+      }
+    },
+  },
+
   SSLVersionMax: {
     onBeforeAddons(manager, param) {
       let tlsVersion;
@@ -2040,7 +2076,11 @@ var Policies = {
         manager.disallowFeature("urlbarinterventions");
       }
       if ("SkipOnboarding") {
-        setAndLockPref("browser.aboutwelcome.enabled", false);
+        setDefaultPref(
+          "browser.aboutwelcome.enabled",
+          !param.SkipOnboarding,
+          locked
+        );
       }
     },
   },

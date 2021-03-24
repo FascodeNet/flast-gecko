@@ -354,7 +354,7 @@ uint64_t LocalAccessible::VisibilityState() const {
     }
 
     if (!parentFrame) {
-      parentFrame = nsLayoutUtils::GetCrossDocParentFrame(curFrame);
+      parentFrame = nsLayoutUtils::GetCrossDocParentFrameInProcess(curFrame);
       // Even if we couldn't find the parent frame, it might mean we are in an
       // out-of-process iframe, try to see if |frame| is scrolled out in an
       // scrollable frame in a cross-process ancestor document.
@@ -636,8 +636,22 @@ nsRect LocalAccessible::RelativeBounds(nsIFrame** aBoundingFrame) const {
     }
 
     *aBoundingFrame = nsLayoutUtils::GetContainingBlockForClientRect(frame);
-    return nsLayoutUtils::GetAllInFlowRectsUnion(
+    nsRect unionRect = nsLayoutUtils::GetAllInFlowRectsUnion(
         frame, *aBoundingFrame, nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
+
+    if (unionRect.IsEmpty()) {
+      // If we end up with a 0x0 rect from above (or one with negative
+      // height/width) we should try using the ink overflow rect instead. If we
+      // use this rect, our relative bounds will match the bounds of what
+      // appears visually. We do this because some web authors (icloud.com for
+      // example) employ things like 0x0 buttons with visual overflow. Without
+      // this, such frames aren't navigable by screen readers.
+      nsRect overflow = frame->InkOverflowRectRelativeToSelf();
+      nsLayoutUtils::TransformRect(frame, *aBoundingFrame, overflow);
+      return overflow;
+    }
+
+    return unionRect;
   }
 
   return nsRect();

@@ -190,6 +190,12 @@ def test_perfdocs_gatherer_fetch_perfdocs_tree(
     assert not gatherer._perfdocs_tree
 
     gatherer.fetch_perfdocs_tree()
+
+    expected = "Found 1 perfdocs directories"
+    args, _ = logger.log.call_args
+
+    assert expected in args[0]
+    assert logger.log.call_count == 1
     assert gatherer._perfdocs_tree
 
     expected = ["path", "yml", "rst", "static"]
@@ -346,7 +352,7 @@ def test_perfdocs_verifier_not_existing_suite_in_test_list(
 
     expected = (
         "Could not find an existing suite for suite - bad suite name?",
-        perfdocs_sample["config"],
+        os.path.realpath(perfdocs_sample["config"]),
     )
     args, _ = logger.warning.call_args
 
@@ -511,10 +517,10 @@ def test_perfdocs_framework_gatherers_urls(logger, structured_logger, perfdocs_s
     # suties the urls are generated correctly for the test under
     # every suite
     for suite, suitetests in fg.get_test_list().items():
-        url = fg._urls.get(suite)
+        url = fg._descriptions.get(suite)
         assert url is not None
-        assert url[0]["test_name"] == "Example"
-        assert url[0]["url"] == "Example_url"
+        assert url[0]["name"] == "Example"
+        assert url[0]["test_url"] == "Example_url"
 
     perfdocs_tree = gn._perfdocs_tree[0]
     yaml_content = read_yaml(

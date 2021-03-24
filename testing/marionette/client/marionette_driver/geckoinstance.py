@@ -84,7 +84,6 @@ class GeckoInstance(object):
         # Disable idle-daily notifications to avoid expensive operations
         # that may cause unexpected test timeouts.
         "idle.lastDailyNotification": -1,
-        "javascript.options.showInConsole": True,
         # Disable recommended automation prefs in CI
         "marionette.prefs.recommended": False,
         # Disable download and usage of OpenH264, and Widevine plugins
@@ -275,10 +274,9 @@ class GeckoInstance(object):
             args["preferences"].update(
                 {
                     "devtools.browsertoolbox.panel": "jsdebugger",
-                    "devtools.debugger.remote-enabled": True,
                     "devtools.chrome.enabled": True,
                     "devtools.debugger.prompt-connection": False,
-                    "marionette.debugging.clicktostart": True,
+                    "devtools.debugger.remote-enabled": True,
                 }
             )
 

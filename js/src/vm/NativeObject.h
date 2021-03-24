@@ -594,6 +594,27 @@ class NativeObject : public JSObject {
   // with the object's new slot span.
   MOZ_ALWAYS_INLINE bool setLastProperty(JSContext* cx, Shape* shape);
 
+  // Optimized version of setLastProperty for when |shape| is a new data
+  // property and |shape->previous() == lastProperty()|.
+  MOZ_ALWAYS_INLINE bool setLastPropertyForNewDataProperty(JSContext* cx,
+                                                           Shape* shape);
+
+  MOZ_ALWAYS_INLINE bool canReuseShapeForNewProperties(Shape* shape) const {
+    if (lastProperty()->numFixedSlots() != shape->numFixedSlots()) {
+      return false;
+    }
+    if (lastProperty()->inDictionary() || shape->inDictionary()) {
+      return false;
+    }
+    if (lastProperty()->base() != shape->base()) {
+      return false;
+    }
+    MOZ_ASSERT(lastProperty()->getObjectClass() == shape->getObjectClass());
+    MOZ_ASSERT(lastProperty()->proto() == shape->proto());
+    MOZ_ASSERT(lastProperty()->realm() == shape->realm());
+    return lastProperty()->objectFlags() == shape->objectFlags();
+  }
+
   // Newly-created TypedArrays that map a SharedArrayBuffer are
   // marked as shared by giving them an ObjectElements that has the
   // ObjectElements::SHARED_MEMORY flag set.
@@ -791,19 +812,16 @@ class NativeObject : public JSObject {
   inline void* getPrivateMaybeForwarded() const;
 
   uint32_t numUsedFixedSlots() const {
-    uint32_t nslots = lastProperty()->slotSpan(getClass());
+    uint32_t nslots = lastProperty()->slotSpan();
     return std::min(nslots, numFixedSlots());
   }
 
   uint32_t slotSpan() const {
     if (inDictionaryMode()) {
       return dictionaryModeSlotSpan();
-    } else {
-      MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == 0);
-      // Get the class from the object group rather than the base shape to avoid
-      // a race between Shape::ensureOwnBaseShape and background sweeping.
-      return lastProperty()->slotSpan(getClass());
     }
+    MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == 0);
+    return lastProperty()->slotSpan();
   }
 
   uint32_t dictionaryModeSlotSpan() const {

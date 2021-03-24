@@ -45,7 +45,8 @@ void* Pointer::ToPtr(FontList* aFontList) const {
   // If the Pointer refers to a block we have not yet mapped in this process,
   // we first need to retrieve new block handle(s) from the parent and update
   // our mBlocks list.
-  if (block >= aFontList->mBlocks.Length()) {
+  auto& blocks = aFontList->mBlocks;
+  if (block >= blocks.Length()) {
     if (XRE_IsParentProcess()) {
       // Shouldn't happen! A content process tried to pass a bad Pointer?
       return nullptr;
@@ -61,9 +62,18 @@ void* Pointer::ToPtr(FontList* aFontList) const {
     if (!NS_IsMainThread() || !aFontList->UpdateShmBlocks()) {
       return nullptr;
     }
-    MOZ_ASSERT(block < aFontList->mBlocks.Length());
+    MOZ_ASSERT(block < blocks.Length(), "failure in UpdateShmBlocks?");
+    // This is wallpapering bug 1667977; it's unclear if we will always survive
+    // this, as the content process may be unable to shape/render text if all
+    // font lookups are failing.
+    // In at least some cases, however, this can occur transiently while the
+    // font list is being rebuilt by the parent; content will then be notified
+    // that the list has changed, and should refresh everything successfully.
+    if (block >= blocks.Length()) {
+      return nullptr;
+    }
   }
-  return static_cast<char*>(aFontList->mBlocks[block]->Memory()) + Offset();
+  return static_cast<char*>(blocks[block]->Memory()) + Offset();
 }
 
 void String::Assign(const nsACString& aString, FontList* aList) {
@@ -782,11 +792,11 @@ void FontList::SetAliases(
   // aAliasTable, then sort them and store into the fontlist.
   nsTArray<Family::InitData> aliasArray;
   aliasArray.SetCapacity(aAliasTable.Count());
-  for (auto i = aAliasTable.Iter(); !i.Done(); i.Next()) {
+  for (const auto& entry : aAliasTable) {
     aliasArray.AppendElement(Family::InitData(
-        i.Key(), i.Data()->mBaseFamily, i.Data()->mIndex, i.Data()->mVisibility,
-        i.Data()->mBundled, i.Data()->mBadUnderline, i.Data()->mForceClassic,
-        true));
+        entry.GetKey(), entry.GetData()->mBaseFamily, entry.GetData()->mIndex,
+        entry.GetData()->mVisibility, entry.GetData()->mBundled,
+        entry.GetData()->mBadUnderline, entry.GetData()->mForceClassic, true));
   }
   aliasArray.Sort();
 
@@ -828,8 +838,7 @@ void FontList::SetAliases(
 }
 
 void FontList::SetLocalNames(
-    nsDataHashtable<nsCStringHashKey, LocalFaceRec::InitData>&
-        aLocalNameTable) {
+    nsTHashMap<nsCStringHashKey, LocalFaceRec::InitData>& aLocalNameTable) {
   MOZ_ASSERT(XRE_IsParentProcess());
   Header& header = GetHeader();
   if (header.mLocalFaceCount > 0) {
@@ -837,7 +846,7 @@ void FontList::SetLocalNames(
   }
   nsTArray<nsCString> faceArray;
   faceArray.SetCapacity(aLocalNameTable.Count());
-  for (auto i = aLocalNameTable.Iter(); !i.Done(); i.Next()) {
+  for (auto i = aLocalNameTable.ConstIter(); !i.Done(); i.Next()) {
     faceArray.AppendElement(i.Key());
   }
   faceArray.Sort();

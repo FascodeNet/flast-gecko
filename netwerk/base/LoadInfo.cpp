@@ -578,6 +578,8 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
       mDocumentHasUserInteracted(rhs.mDocumentHasUserInteracted),
       mAllowListFutureDocumentsCreatedFromThisRedirectChain(
           rhs.mAllowListFutureDocumentsCreatedFromThisRedirectChain),
+      mNeedForCheckingAntiTrackingHeuristic(
+          rhs.mNeedForCheckingAntiTrackingHeuristic),
       mCspNonce(rhs.mCspNonce),
       mSkipContentSniffing(rhs.mSkipContentSniffing),
       mHttpsOnlyStatus(rhs.mHttpsOnlyStatus),
@@ -586,6 +588,7 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
       mIsInDevToolsContext(rhs.mIsInDevToolsContext),
       mParserCreatedScript(rhs.mParserCreatedScript),
       mHasStoragePermission(rhs.mHasStoragePermission),
+      mIsMetaRefresh(rhs.mIsMetaRefresh),
       mIsFromProcessingFrameAttributes(rhs.mIsFromProcessingFrameAttributes),
       mLoadingEmbedderPolicy(rhs.mLoadingEmbedderPolicy) {}
 
@@ -621,10 +624,11 @@ LoadInfo::LoadInfo(
     bool aIsPreflight, bool aLoadTriggeredFromExternal,
     bool aServiceWorkerTaintingSynthesized, bool aDocumentHasUserInteracted,
     bool aAllowListFutureDocumentsCreatedFromThisRedirectChain,
-    const nsAString& aCspNonce, bool aSkipContentSniffing,
-    uint32_t aHttpsOnlyStatus, bool aHasValidUserGestureActivation,
-    bool aAllowDeprecatedSystemRequests, bool aIsInDevToolsContext,
-    bool aParserCreatedScript, bool aHasStoragePermission,
+    bool aNeedForCheckingAntiTrackingHeuristic, const nsAString& aCspNonce,
+    bool aSkipContentSniffing, uint32_t aHttpsOnlyStatus,
+    bool aHasValidUserGestureActivation, bool aAllowDeprecatedSystemRequests,
+    bool aIsInDevToolsContext, bool aParserCreatedScript,
+    bool aHasStoragePermission, bool aIsMetaRefresh,
     uint32_t aRequestBlockingReason, nsINode* aLoadingContext,
     nsILoadInfo::CrossOriginEmbedderPolicy aLoadingEmbedderPolicy)
     : mLoadingPrincipal(aLoadingPrincipal),
@@ -681,6 +685,8 @@ LoadInfo::LoadInfo(
       mDocumentHasUserInteracted(aDocumentHasUserInteracted),
       mAllowListFutureDocumentsCreatedFromThisRedirectChain(
           aAllowListFutureDocumentsCreatedFromThisRedirectChain),
+      mNeedForCheckingAntiTrackingHeuristic(
+          aNeedForCheckingAntiTrackingHeuristic),
       mCspNonce(aCspNonce),
       mSkipContentSniffing(aSkipContentSniffing),
       mHttpsOnlyStatus(aHttpsOnlyStatus),
@@ -689,6 +695,7 @@ LoadInfo::LoadInfo(
       mIsInDevToolsContext(aIsInDevToolsContext),
       mParserCreatedScript(aParserCreatedScript),
       mHasStoragePermission(aHasStoragePermission),
+      mIsMetaRefresh(aIsMetaRefresh),
       mIsFromProcessingFrameAttributes(false),
       mLoadingEmbedderPolicy(aLoadingEmbedderPolicy) {
   // Only top level TYPE_DOCUMENT loads can have a null loadingPrincipal
@@ -1012,6 +1019,18 @@ LoadInfo::GetHasStoragePermission(bool* aHasStoragePermission) {
 NS_IMETHODIMP
 LoadInfo::SetHasStoragePermission(bool aHasStoragePermission) {
   mHasStoragePermission = aHasStoragePermission;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetIsMetaRefresh(bool* aIsMetaRefresh) {
+  *aIsMetaRefresh = mIsMetaRefresh;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetIsMetaRefresh(bool aIsMetaRefresh) {
+  mIsMetaRefresh = aIsMetaRefresh;
   return NS_OK;
 }
 
@@ -1525,6 +1544,19 @@ LoadInfo::GetAllowListFutureDocumentsCreatedFromThisRedirectChain(
 NS_IMETHODIMP
 LoadInfo::SetAllowListFutureDocumentsCreatedFromThisRedirectChain(bool aValue) {
   mAllowListFutureDocumentsCreatedFromThisRedirectChain = aValue;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetNeedForCheckingAntiTrackingHeuristic(bool* aValue) {
+  MOZ_ASSERT(aValue);
+  *aValue = mNeedForCheckingAntiTrackingHeuristic;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetNeedForCheckingAntiTrackingHeuristic(bool aValue) {
+  mNeedForCheckingAntiTrackingHeuristic = aValue;
   return NS_OK;
 }
 

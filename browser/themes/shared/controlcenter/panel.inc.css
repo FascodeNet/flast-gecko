@@ -370,7 +370,7 @@
 }
 
 .identity-popup-security-connection {
-  background-image: url(chrome://global/skin/icons/connection-mixed-active-loaded.svg);
+  background-image: url(chrome://global/skin/icons/security-broken.svg);
 }
 
 #identity-popup[connection=chrome] .identity-popup-security-connection {
@@ -382,7 +382,7 @@
 }
 
 #identity-popup[connection^=secure] .identity-popup-security-connection {
-  background-image: url(chrome://browser/skin/connection-secure.svg);
+  background-image: url(chrome://global/skin/icons/security.svg);
   -moz-context-properties: fill;
 }
 
@@ -398,13 +398,13 @@
 /* Use [isbroken] to make sure we don't show a warning lock on an http page. See Bug 1192162. */
 #identity-popup[ciphers=weak] .identity-popup-security-connection,
 #identity-popup[mixedcontent~=passive-loaded][isbroken] .identity-popup-security-connection {
-  background-image: url(chrome://global/skin/icons/connection-mixed-passive-loaded.svg);
+  background-image: url(chrome://global/skin/icons/security-warning.svg);
   -moz-context-properties: fill, fill-opacity;
 }
 
 #identity-popup[connection=secure-cert-user-overridden] .identity-popup-security-connection,
 #identity-popup[connection=cert-error-page] .identity-popup-security-connection {
-  background-image: url(chrome://global/skin/icons/connection-mixed-passive-loaded.svg);
+  background-image: url(chrome://global/skin/icons/security-warning.svg);
   fill: unset;
   -moz-context-properties: fill;
 }
@@ -512,12 +512,12 @@ description#identity-popup-content-verifier,
   content: url(chrome://browser/skin/back-12.svg);
   -moz-context-properties: fill, fill-opacity;
   fill-opacity: .6;
-  transform: scaleX(-1) translateY(1px);
+  transform: translateY(1px);
   float: inline-end;
 }
 
-.protections-popup-category:-moz-locale-dir(rtl)::after {
-  transform: scaleX(1) translateY(1px);
+.protections-popup-category:-moz-locale-dir(ltr)::after {
+  scale: -1 1;
 }
 
 /* This subview could get filled with a lot of trackers, set a maximum size
@@ -839,7 +839,7 @@ description#identity-popup-content-verifier,
   margin: 0;
   width: 16px;
   height: 16px;
-  list-style-image: url(chrome://browser/skin/panel-icon-cancel.svg);
+  list-style-image: url(chrome://global/skin/icons/close.svg);
   -moz-context-properties: fill;
   fill: currentColor;
 }

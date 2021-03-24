@@ -43,8 +43,6 @@ function setup() {
   // make all native resolve calls "secretly" resolve localhost instead
   prefs.setBoolPref("network.dns.native-is-localhost", true);
 
-  // 0 - off, 1 - race, 2 TRR first, 3 TRR only, 4 shadow
-  prefs.setIntPref("network.trr.mode", 2); // TRR first
   prefs.setBoolPref("network.trr.wait-for-portal", false);
   // don't confirm that TRR is working, just go!
   prefs.setCharPref("network.trr.confirmationNS", "skip");
@@ -66,11 +64,10 @@ function setup() {
 
 setup();
 registerCleanupFunction(() => {
+  prefs.clearUserPref("network.trr.mode");
   prefs.clearUserPref("network.http.spdy.enabled");
   prefs.clearUserPref("network.http.spdy.enabled.http2");
   prefs.clearUserPref("network.dns.localDomains");
-  prefs.clearUserPref("network.dns.native-is-localhost");
-  prefs.clearUserPref("network.trr.mode");
   prefs.clearUserPref("network.trr.uri");
   prefs.clearUserPref("network.trr.credentials");
   prefs.clearUserPref("network.trr.wait-for-portal");
@@ -82,6 +79,7 @@ registerCleanupFunction(() => {
   prefs.clearUserPref("network.trr.clear-cache-on-pref-change");
   prefs.clearUserPref("network.dns.upgrade_with_https_rr");
   prefs.clearUserPref("network.dns.use_https_rr_as_altsvc");
+  prefs.clearUserPref("network.dns.native-is-localhost");
 });
 
 class DNSListener {
@@ -117,24 +115,26 @@ add_task(async function testStoreIPHint() {
     `https://foo.example.com:${trrServer.port}/dns-query`
   );
 
-  await trrServer.registerDoHAnswers("test.IPHint.com", "HTTPS", [
-    {
-      name: "test.IPHint.com",
-      ttl: 55,
-      type: "HTTPS",
-      flush: false,
-      data: {
-        priority: 1,
+  await trrServer.registerDoHAnswers("test.IPHint.com", "HTTPS", {
+    answers: [
+      {
         name: "test.IPHint.com",
-        values: [
-          { key: "alpn", value: ["h2", "h3"] },
-          { key: "port", value: 8888 },
-          { key: "ipv4hint", value: ["1.2.3.4", "5.6.7.8"] },
-          { key: "ipv6hint", value: ["::1", "fe80::794f:6d2c:3d5e:7836"] },
-        ],
+        ttl: 55,
+        type: "HTTPS",
+        flush: false,
+        data: {
+          priority: 1,
+          name: "test.IPHint.com",
+          values: [
+            { key: "alpn", value: ["h2", "h3"] },
+            { key: "port", value: 8888 },
+            { key: "ipv4hint", value: ["1.2.3.4", "5.6.7.8"] },
+            { key: "ipv6hint", value: ["::1", "fe80::794f:6d2c:3d5e:7836"] },
+          ],
+        },
       },
-    },
-  ]);
+    ],
+  });
 
   let listener = new DNSListener();
 

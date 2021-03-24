@@ -16,9 +16,8 @@
 #include "frontend/BytecodeCompiler.h"  // IsIdentifier
 #include "frontend/CompilationStencil.h"
 #include "frontend/NameCollections.h"
-#include "frontend/StencilXdr.h"  // CanCopyDataToDisk
-#include "util/StringBuffer.h"    // StringBuffer
-#include "util/Text.h"            // AsciiDigitToNumber
+#include "util/StringBuffer.h"  // StringBuffer
+#include "util/Text.h"          // AsciiDigitToNumber
 #include "util/Unicode.h"
 #include "vm/JSContext.h"
 #include "vm/Printer.h"  // Sprinter, QuoteString
@@ -28,38 +27,6 @@
 
 using namespace js;
 using namespace js::frontend;
-
-namespace js {
-
-template <>
-class InflatedChar16Sequence<LittleEndianChars> {
- private:
-  LittleEndianChars chars_;
-  size_t idx_;
-  size_t len_;
-
- public:
-  InflatedChar16Sequence(LittleEndianChars chars, size_t length)
-      : chars_(chars), idx_(0), len_(length) {}
-
-  bool hasMore() { return idx_ < len_; }
-
-  char16_t next() {
-    MOZ_ASSERT(hasMore());
-    return chars_[idx_++];
-  }
-
-  HashNumber computeHash() const {
-    auto copy = *this;
-    HashNumber hash = 0;
-    while (copy.hasMore()) {
-      hash = mozilla::AddToHash(hash, copy.next());
-    }
-    return hash;
-  }
-};
-
-}  // namespace js
 
 namespace js {
 namespace frontend {
@@ -369,10 +336,6 @@ bool ParserAtomsTable::addPlaceholder(JSContext* cx) {
   }
   return true;
 }
-
-ParserAtomSpanBuilder::ParserAtomSpanBuilder(JSRuntime* rt,
-                                             ParserAtomSpan& entries)
-    : wellKnownTable_(*rt->commonParserNames), entries_(entries) {}
 
 bool ParserAtomSpanBuilder::allocate(JSContext* cx, LifoAlloc& alloc,
                                      size_t count) {
@@ -972,37 +935,6 @@ bool WellKnownParserAtoms::init(JSContext* cx) {
 }
 
 } /* namespace frontend */
-} /* namespace js */
-
-// XDR code.
-namespace js {
-
-template <XDRMode mode>
-XDRResult XDRParserAtom(XDRState<mode>* xdr, ParserAtom** atomp) {
-  static_assert(CanCopyDataToDisk<ParserAtom>::value,
-                "ParserAtom cannot be bulk-copied to disk.");
-
-  MOZ_TRY(xdr->align32());
-
-  const ParserAtom* header;
-  if (mode == XDR_ENCODE) {
-    header = *atomp;
-  } else {
-    MOZ_TRY(xdr->peekData(&header));
-  }
-
-  const uint32_t CharSize =
-      header->hasLatin1Chars() ? sizeof(JS::Latin1Char) : sizeof(char16_t);
-  uint32_t totalLength = sizeof(ParserAtom) + (CharSize * header->length());
-
-  MOZ_TRY(xdr->borrowedData(atomp, totalLength));
-
-  return Ok();
-}
-
-template XDRResult XDRParserAtom(XDRState<XDR_ENCODE>* xdr, ParserAtom** atomp);
-template XDRResult XDRParserAtom(XDRState<XDR_DECODE>* xdr, ParserAtom** atomp);
-
 } /* namespace js */
 
 bool JSRuntime::initializeParserAtoms(JSContext* cx) {

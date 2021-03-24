@@ -56,6 +56,7 @@
 #include <stdint.h>
 #include "nsClassHashtable.h"
 #include "nsTHashtable.h"
+#include "nsTHashMap.h"
 
 #include <stdlib.h>
 #include <algorithm>
@@ -984,8 +985,8 @@ class nsDisplayListBuilder {
   void RemoveModifiedWindowRegions();
   void ClearRetainedWindowRegions();
 
-  const nsDataHashtable<nsPtrHashKey<RemoteBrowser>, EffectsInfo>&
-  GetEffectUpdates() const {
+  const nsTHashMap<nsPtrHashKey<RemoteBrowser>, EffectsInfo>& GetEffectUpdates()
+      const {
     return mEffectsUpdates;
   }
 
@@ -1848,7 +1849,7 @@ class nsDisplayListBuilder {
       nsIFrame* aAnimatedGeometryRoot, bool aIsAsync,
       AnimatedGeometryRoot* aParent = nullptr);
 
-  nsDataHashtable<nsPtrHashKey<nsIFrame>, RefPtr<AnimatedGeometryRoot>>
+  nsTHashMap<nsIFrame*, RefPtr<AnimatedGeometryRoot>>
       mFrameToAnimatedGeometryRootMap;
 
   /**
@@ -1925,12 +1926,12 @@ class nsDisplayListBuilder {
 
   // will-change budget tracker
   typedef uint32_t DocumentWillChangeBudget;
-  nsDataHashtable<nsPtrHashKey<const nsPresContext>, DocumentWillChangeBudget>
+  nsTHashMap<nsPtrHashKey<const nsPresContext>, DocumentWillChangeBudget>
       mDocumentWillChangeBudgets;
 
   // Any frame listed in this set is already counted in the budget
   // and thus is in-budget.
-  nsDataHashtable<nsPtrHashKey<const nsIFrame>, FrameWillChangeBudget>
+  nsTHashMap<nsPtrHashKey<const nsIFrame>, FrameWillChangeBudget>
       mFrameWillChangeBudgets;
 
   uint8_t mBuildingExtraPagesForPageNum;
@@ -1940,7 +1941,7 @@ class nsDisplayListBuilder {
   // Set of frames already counted in budget
   nsTHashtable<nsPtrHashKey<nsIFrame>> mAGRBudgetSet;
 
-  nsDataHashtable<nsPtrHashKey<RemoteBrowser>, EffectsInfo> mEffectsUpdates;
+  nsTHashMap<nsPtrHashKey<RemoteBrowser>, EffectsInfo> mEffectsUpdates;
 
   // Relative to mCurrentFrame.
   nsRect mVisibleRect;
@@ -4481,13 +4482,6 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
                                     nsIFrame* aFrameForBounds = nullptr);
   ~nsDisplayBackgroundImage() override;
 
-  bool RestoreState() override {
-    bool superChanged = nsDisplayImageContainer::RestoreState();
-    bool opacityChanged = (mOpacity != 1.0f);
-    mOpacity = 1.0f;
-    return (superChanged || opacityChanged);
-  }
-
   NS_DISPLAY_DECL_NAME("Background", TYPE_BACKGROUND)
 
   /**
@@ -4528,13 +4522,6 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
   mozilla::Maybe<nscolor> IsUniform(
       nsDisplayListBuilder* aBuilder) const override;
 
-  bool CanApplyOpacity() const override { return true; }
-
-  void ApplyOpacity(nsDisplayListBuilder* aBuilder, float aOpacity,
-                    const DisplayItemClipChain* aClip) override {
-    mOpacity = aOpacity;
-  }
-
   /**
    * GetBounds() returns the background painting area.
    */
@@ -4574,11 +4561,6 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
   void UpdateDrawResult(mozilla::image::ImgDrawResult aResult) override {
     nsDisplayBackgroundGeometry::UpdateDrawResult(this, aResult);
   }
-
-  static nsRegion GetInsideClipRegion(const nsDisplayItem* aItem,
-                                      StyleGeometryBox aClip,
-                                      const nsRect& aRect,
-                                      const nsRect& aBackgroundRect);
 
   bool ShouldFixToViewport(nsDisplayListBuilder* aBuilder) const override {
     return mShouldFixToViewport;
@@ -4648,7 +4630,6 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
   /* Whether the image should be treated as fixed to the viewport. */
   bool mShouldFixToViewport;
   uint32_t mImageFlags;
-  float mOpacity;
 };
 
 /**

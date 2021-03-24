@@ -280,6 +280,9 @@ class PuppetWidget : public nsBaseWidget,
       LayoutDeviceIntPoint aPoint, double aPressure, uint32_t aRotation,
       int32_t aTiltX, int32_t aTiltY, nsIObserver* aObserver) override;
 
+  virtual nsresult SynthesizeNativeTouchpadDoubleTap(
+      LayoutDeviceIntPoint aPoint, uint32_t aModifierFlags) override;
+
   virtual void StartAsyncScrollbarDrag(
       const AsyncDragMetrics& aDragMetrics) override;
 
@@ -313,6 +316,8 @@ class PuppetWidget : public nsBaseWidget,
   virtual void OnMemoryPressure(layers::MemoryPressureReason aWhy) override;
 
  private:
+  void Paint();
+
   void SetChild(PuppetWidget* aChild);
 
   nsresult RequestIMEToCommitComposition(bool aCancel);
@@ -337,6 +342,17 @@ class PuppetWidget : public nsBaseWidget,
   // IMEStateManager, the cache is valid.
   bool HaveValidInputContextCache() const;
 
+  class WidgetPaintTask : public Runnable {
+   public:
+    NS_DECL_NSIRUNNABLE
+    explicit WidgetPaintTask(PuppetWidget* widget)
+        : Runnable("PuppetWidget::WidgetPaintTask"), mWidget(widget) {}
+    void Revoke() { mWidget = nullptr; }
+
+   private:
+    PuppetWidget* mWidget;
+  };
+
   nsRefreshDriver* GetTopLevelRefreshDriver() const;
 
   // BrowserChild normally holds a strong reference to this PuppetWidget
@@ -349,6 +365,7 @@ class PuppetWidget : public nsBaseWidget,
   // The "widget" to which we delegate events if we don't have an
   // event handler.
   RefPtr<PuppetWidget> mChild;
+  nsRevocableEventPtr<WidgetPaintTask> mWidgetPaintTask;
   RefPtr<layers::MemoryPressureObserver> mMemoryPressureObserver;
   // XXX/cjones: keeping this around until we teach LayerManager to do
   // retained-content-only transactions

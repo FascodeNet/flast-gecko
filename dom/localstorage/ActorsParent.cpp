@@ -92,7 +92,7 @@
 #include "nsBaseHashtable.h"
 #include "nsCOMPtr.h"
 #include "nsClassHashtable.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsError.h"
 #include "nsExceptionHandler.h"
@@ -125,7 +125,7 @@
 #include "nsStringFlags.h"
 #include "nsStringFwd.h"
 #include "nsTArray.h"
-#include "nsTHashtable.h"
+#include "nsTHashSet.h"
 #include "nsTLiteralString.h"
 #include "nsTStringRepr.h"
 #include "nsThreadUtils.h"
@@ -1203,6 +1203,7 @@ class Connection final : public CachingDatabaseConnection {
   nsCOMPtr<nsITimer> mFlushTimer;
   UniquePtr<ArchivedOriginScope> mArchivedOriginScope;
   ConnectionWriteOptimizer mWriteOptimizer;
+  // XXX Consider changing this to ClientMetadata.
   const OriginMetadata mOriginMetadata;
   nsString mDirectoryPath;
   /**
@@ -1419,7 +1420,7 @@ class Datastore final
    * PrepareDatastoreOps register themselves with the Datastore at
    * and unregister in PrepareDatastoreOp::Cleanup.
    */
-  nsTHashtable<nsPtrHashKey<PrepareDatastoreOp>> mPrepareDatastoreOps;
+  nsTHashSet<PrepareDatastoreOp*> mPrepareDatastoreOps;
   /**
    * PreparedDatastore instances register themselves with their associated
    * Datastore at construction time and unregister at destruction time.  They
@@ -1427,24 +1428,24 @@ class Datastore final
    * from closing itself via MaybeClose(), thereby giving the document enough
    * time to load and access LocalStorage.
    */
-  nsTHashtable<nsPtrHashKey<PreparedDatastore>> mPreparedDatastores;
+  nsTHashSet<PreparedDatastore*> mPreparedDatastores;
   /**
    * A database is live (and in this hashtable) if it has a live LSDatabase
    * actor.  There is at most one Database per origin per content process.  Each
    * Database corresponds to an LSDatabase in its associated content process.
    */
-  nsTHashtable<nsPtrHashKey<Database>> mDatabases;
+  nsTHashSet<Database*> mDatabases;
   /**
    * A database is active if it has a non-null `mSnapshot`.  As long as there
    * are any active databases final deltas can't be calculated and
    * `UpdateUsage()` can't be invoked.
    */
-  nsTHashtable<nsPtrHashKey<Database>> mActiveDatabases;
+  nsTHashSet<Database*> mActiveDatabases;
   /**
    * Non-authoritative hashtable representation of mOrderedItems for efficient
    * lookup.
    */
-  nsDataHashtable<nsStringHashKey, LSValue> mValues;
+  nsTHashMap<nsStringHashKey, LSValue> mValues;
   /**
    * The authoritative ordered state of the Datastore; mValue also exists as an
    * unordered hashtable for efficient lookup.
@@ -1469,7 +1470,7 @@ class Datastore final
             RefPtr<DirectoryLock>&& aDirectoryLock,
             RefPtr<Connection>&& aConnection,
             RefPtr<QuotaObject>&& aQuotaObject,
-            nsDataHashtable<nsStringHashKey, LSValue>& aValues,
+            nsTHashMap<nsStringHashKey, LSValue>& aValues,
             nsTArray<LSItemInfo>&& aOrderedItems);
 
   Maybe<DirectoryLock&> MaybeDirectoryLockRef() const {
@@ -1833,7 +1834,7 @@ class Snapshot final : public PBackgroundLSSnapshotParent {
    * other values must be null.  (Note: this could also be done when
    * mLoadKeysReceived is true as a further optimization, but is not.)
    */
-  nsTHashtable<nsStringHashKey> mUnknownItems;
+  nsTHashSet<nsString> mUnknownItems;
   /**
    * Values that have changed in mDatastore as reported by SaveItem
    * notifications that are not yet known to the child LSSnapshot.
@@ -1844,7 +1845,7 @@ class Snapshot final : public PBackgroundLSSnapshotParent {
    * are changed/evicted from the Datastore as they happen, as reported to us by
    * SaveItem notifications.
    */
-  nsDataHashtable<nsStringHashKey, LSValue> mValues;
+  nsTHashMap<nsStringHashKey, LSValue> mValues;
   /**
    * Latched state of mDatastore's keys during a SaveItem notification with
    * aAffectsOrder=true.  The ordered keys needed to be saved off so that a
@@ -1903,9 +1904,8 @@ class Snapshot final : public PBackgroundLSSnapshotParent {
   Snapshot(Database* aDatabase, const nsAString& aDocumentURI);
 
   void Init(nsTHashtable<nsStringHashKey>& aLoadedItems,
-            nsTHashtable<nsStringHashKey>& aUnknownItems,
-            uint32_t aNextLoadIndex, uint32_t aTotalLength,
-            int64_t aInitialUsage, int64_t aPeakUsage,
+            nsTHashSet<nsString>&& aUnknownItems, uint32_t aNextLoadIndex,
+            uint32_t aTotalLength, int64_t aInitialUsage, int64_t aPeakUsage,
             LSSnapshot::LoadState aLoadState, bool aHasOtherProcessObservers) {
     AssertIsOnBackgroundThread();
     MOZ_ASSERT(aInitialUsage >= 0);
@@ -1917,7 +1917,7 @@ class Snapshot final : public PBackgroundLSSnapshotParent {
     MOZ_ASSERT(mPeakUsage == -1);
 
     mLoadedItems.SwapElements(aLoadedItems);
-    mUnknownItems.SwapElements(aUnknownItems);
+    mUnknownItems = std::move(aUnknownItems);
     mNextLoadIndex = aNextLoadIndex;
     mTotalLength = aTotalLength;
     mUsage = aInitialUsage;
@@ -2172,7 +2172,7 @@ class PrepareDatastoreOp
   RefPtr<Datastore> mDatastore;
   UniquePtr<ArchivedOriginScope> mArchivedOriginScope;
   LoadDataOp* mLoadDataOp;
-  nsDataHashtable<nsStringHashKey, LSValue> mValues;
+  nsTHashMap<nsStringHashKey, LSValue> mValues;
   nsTArray<LSItemInfo> mOrderedItems;
   OriginMetadata mOriginMetadata;
   nsCString mMainThreadOrigin;
@@ -2769,7 +2769,7 @@ Atomic<int32_t, Relaxed> gSnapshotGradualPrefill(
     kDefaultSnapshotGradualPrefill);
 Atomic<bool> gClientValidation(kDefaultClientValidation);
 
-typedef nsDataHashtable<nsCStringHashKey, int64_t> UsageHashtable;
+typedef nsTHashMap<nsCStringHashKey, int64_t> UsageHashtable;
 
 StaticAutoPtr<ArchivedOriginHashtable> gArchivedOrigins;
 
@@ -3513,8 +3513,8 @@ Result<int64_t, nsresult> ConnectionWriteOptimizer::Perform(
     LS_TRY(PerformTruncate(aConnection, aShadowWrites));
   }
 
-  for (auto iter = mWriteInfos.ConstIter(); !iter.Done(); iter.Next()) {
-    const WriteInfo* const writeInfo = iter.Data().get();
+  for (const auto& entry : mWriteInfos) {
+    const WriteInfo* const writeInfo = entry.GetWeak();
 
     switch (writeInfo->GetType()) {
       case WriteInfo::InsertItem:
@@ -4250,7 +4250,7 @@ Datastore::Datastore(const OriginMetadata& aOriginMetadata,
                      RefPtr<DirectoryLock>&& aDirectoryLock,
                      RefPtr<Connection>&& aConnection,
                      RefPtr<QuotaObject>&& aQuotaObject,
-                     nsDataHashtable<nsStringHashKey, LSValue>& aValues,
+                     nsTHashMap<nsStringHashKey, LSValue>& aValues,
                      nsTArray<LSItemInfo>&& aOrderedItems)
     : mDirectoryLock(std::move(aDirectoryLock)),
       mConnection(std::move(aConnection)),
@@ -4321,22 +4321,22 @@ void Datastore::NoteLivePrepareDatastoreOp(
     PrepareDatastoreOp* aPrepareDatastoreOp) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aPrepareDatastoreOp);
-  MOZ_ASSERT(!mPrepareDatastoreOps.GetEntry(aPrepareDatastoreOp));
+  MOZ_ASSERT(!mPrepareDatastoreOps.Contains(aPrepareDatastoreOp));
   MOZ_ASSERT(mDirectoryLock);
   MOZ_ASSERT(!mClosed);
 
-  mPrepareDatastoreOps.PutEntry(aPrepareDatastoreOp);
+  mPrepareDatastoreOps.Insert(aPrepareDatastoreOp);
 }
 
 void Datastore::NoteFinishedPrepareDatastoreOp(
     PrepareDatastoreOp* aPrepareDatastoreOp) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aPrepareDatastoreOp);
-  MOZ_ASSERT(mPrepareDatastoreOps.GetEntry(aPrepareDatastoreOp));
+  MOZ_ASSERT(mPrepareDatastoreOps.Contains(aPrepareDatastoreOp));
   MOZ_ASSERT(mDirectoryLock);
   MOZ_ASSERT(!mClosed);
 
-  mPrepareDatastoreOps.RemoveEntry(aPrepareDatastoreOp);
+  mPrepareDatastoreOps.Remove(aPrepareDatastoreOp);
 
   QuotaManager::GetRef().MaybeRecordShutdownStep(
       quota::Client::LS, "PrepareDatastoreOp finished"_ns);
@@ -4371,22 +4371,22 @@ void Datastore::NoteLivePreparedDatastore(
     PreparedDatastore* aPreparedDatastore) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aPreparedDatastore);
-  MOZ_ASSERT(!mPreparedDatastores.GetEntry(aPreparedDatastore));
+  MOZ_ASSERT(!mPreparedDatastores.Contains(aPreparedDatastore));
   MOZ_ASSERT(mDirectoryLock);
   MOZ_ASSERT(!mClosed);
 
-  mPreparedDatastores.PutEntry(aPreparedDatastore);
+  mPreparedDatastores.Insert(aPreparedDatastore);
 }
 
 void Datastore::NoteFinishedPreparedDatastore(
     PreparedDatastore* aPreparedDatastore) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aPreparedDatastore);
-  MOZ_ASSERT(mPreparedDatastores.GetEntry(aPreparedDatastore));
+  MOZ_ASSERT(mPreparedDatastores.Contains(aPreparedDatastore));
   MOZ_ASSERT(mDirectoryLock);
   MOZ_ASSERT(!mClosed);
 
-  mPreparedDatastores.RemoveEntry(aPreparedDatastore);
+  mPreparedDatastores.Remove(aPreparedDatastore);
 
   QuotaManager::GetRef().MaybeRecordShutdownStep(
       quota::Client::LS, "PreparedDatastore finished"_ns);
@@ -4397,22 +4397,22 @@ void Datastore::NoteFinishedPreparedDatastore(
 void Datastore::NoteLiveDatabase(Database* aDatabase) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aDatabase);
-  MOZ_ASSERT(!mDatabases.GetEntry(aDatabase));
+  MOZ_ASSERT(!mDatabases.Contains(aDatabase));
   MOZ_ASSERT(mDirectoryLock);
   MOZ_ASSERT(!mClosed);
 
-  mDatabases.PutEntry(aDatabase);
+  mDatabases.Insert(aDatabase);
 }
 
 void Datastore::NoteFinishedDatabase(Database* aDatabase) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aDatabase);
-  MOZ_ASSERT(mDatabases.GetEntry(aDatabase));
-  MOZ_ASSERT(!mActiveDatabases.GetEntry(aDatabase));
+  MOZ_ASSERT(mDatabases.Contains(aDatabase));
+  MOZ_ASSERT(!mActiveDatabases.Contains(aDatabase));
   MOZ_ASSERT(mDirectoryLock);
   MOZ_ASSERT(!mClosed);
 
-  mDatabases.RemoveEntry(aDatabase);
+  mDatabases.Remove(aDatabase);
 
   QuotaManager::GetRef().MaybeRecordShutdownStep(quota::Client::LS,
                                                  "Database finished"_ns);
@@ -4423,21 +4423,21 @@ void Datastore::NoteFinishedDatabase(Database* aDatabase) {
 void Datastore::NoteActiveDatabase(Database* aDatabase) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aDatabase);
-  MOZ_ASSERT(mDatabases.GetEntry(aDatabase));
-  MOZ_ASSERT(!mActiveDatabases.GetEntry(aDatabase));
+  MOZ_ASSERT(mDatabases.Contains(aDatabase));
+  MOZ_ASSERT(!mActiveDatabases.Contains(aDatabase));
   MOZ_ASSERT(!mClosed);
 
-  mActiveDatabases.PutEntry(aDatabase);
+  mActiveDatabases.Insert(aDatabase);
 }
 
 void Datastore::NoteInactiveDatabase(Database* aDatabase) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aDatabase);
-  MOZ_ASSERT(mDatabases.GetEntry(aDatabase));
-  MOZ_ASSERT(mActiveDatabases.GetEntry(aDatabase));
+  MOZ_ASSERT(mDatabases.Contains(aDatabase));
+  MOZ_ASSERT(mActiveDatabases.Contains(aDatabase));
   MOZ_ASSERT(!mClosed);
 
-  mActiveDatabases.RemoveEntry(aDatabase);
+  mActiveDatabases.Remove(aDatabase);
 
   if (!mActiveDatabases.Count() && mPendingUsageDeltas.Length()) {
     int64_t finalDelta = 0;
@@ -4760,9 +4760,9 @@ void Datastore::Clear(Database* aDatabase) {
 
   if (mValues.Count()) {
     int64_t delta = 0;
-    for (auto iter = mValues.ConstIter(); !iter.Done(); iter.Next()) {
-      const nsAString& key = iter.Key();
-      const LSValue& value = iter.Data();
+    for (const auto& entry : mValues) {
+      const nsAString& key = entry.GetKey();
+      const LSValue& value = entry.GetData();
 
       delta += -static_cast<int64_t>(key.Length()) -
                static_cast<int64_t>(value.UTF16Length());
@@ -4925,9 +4925,7 @@ void Datastore::NoteChangedObserverArray(
     const nsTArray<NotNull<Observer*>>& aObservers) {
   AssertIsOnBackgroundThread();
 
-  for (auto iter = mActiveDatabases.ConstIter(); !iter.Done(); iter.Next()) {
-    Database* database = iter.Get()->GetKey();
-
+  for (Database* database : mActiveDatabases) {
     Snapshot* snapshot = database->GetSnapshot();
     MOZ_ASSERT(snapshot);
 
@@ -5051,8 +5049,8 @@ void Datastore::ConnectionClosedCallback() {
     QuotaManager* quotaManager = QuotaManager::Get();
     MOZ_ASSERT(quotaManager);
 
-    quotaManager->ResetUsageForClient(PERSISTENCE_TYPE_DEFAULT, mOriginMetadata,
-                                      mozilla::dom::quota::Client::LS);
+    quotaManager->ResetUsageForClient(
+        ClientMetadata{mOriginMetadata, mozilla::dom::quota::Client::LS});
   }
 
   mConnection = nullptr;
@@ -5088,9 +5086,7 @@ void Datastore::NotifySnapshots(Database* aDatabase, const nsAString& aKey,
                                 const LSValue& aOldValue, bool aAffectsOrder) {
   AssertIsOnBackgroundThread();
 
-  for (auto iter = mDatabases.ConstIter(); !iter.Done(); iter.Next()) {
-    Database* database = iter.Get()->GetKey();
-
+  for (Database* database : mDatabases) {
     MOZ_ASSERT(database);
 
     if (database == aDatabase) {
@@ -5367,9 +5363,9 @@ mozilla::ipc::IPCResult Database::RecvPBackgroundLSSnapshotConstructor(
   mDatastore->GetSnapshotLoadInfo(aKey, addKeyToUnknownItems, loadedItems,
                                   itemInfos, nextLoadIndex, loadState);
 
-  nsTHashtable<nsStringHashKey> unknownItems;
+  nsTHashSet<nsString> unknownItems;
   if (addKeyToUnknownItems) {
-    unknownItems.PutEntry(aKey);
+    unknownItems.Insert(aKey);
   }
 
   uint32_t totalLength = mDatastore->GetLength();
@@ -5385,8 +5381,9 @@ mozilla::ipc::IPCResult Database::RecvPBackgroundLSSnapshotConstructor(
 
   bool hasOtherProcessObservers = mDatastore->HasOtherProcessObservers(this);
 
-  snapshot->Init(loadedItems, unknownItems, nextLoadIndex, totalLength,
-                 initialUsage, peakUsage, loadState, hasOtherProcessObservers);
+  snapshot->Init(loadedItems, std::move(unknownItems), nextLoadIndex,
+                 totalLength, initialUsage, peakUsage, loadState,
+                 hasOtherProcessObservers);
 
   RegisterSnapshot(snapshot);
 
@@ -5449,7 +5446,7 @@ void Snapshot::SaveItem(const nsAString& aKey, const LSValue& aOldValue,
     return;
   }
 
-  if (!mLoadedItems.GetEntry(aKey) && !mUnknownItems.GetEntry(aKey)) {
+  if (!mLoadedItems.Contains(aKey) && !mUnknownItems.Contains(aKey)) {
     mValues.LookupOrInsert(aKey, aOldValue);
   }
 
@@ -5697,7 +5694,7 @@ mozilla::ipc::IPCResult Snapshot::RecvLoadValueAndMoreItems(
     return IPC_FAIL_NO_REASON(this);
   }
 
-  if (mLoadedItems.GetEntry(aKey) || mUnknownItems.GetEntry(aKey)) {
+  if (mLoadedItems.Contains(aKey) || mUnknownItems.Contains(aKey)) {
     ASSERT_UNLESS_FUZZING();
     return IPC_FAIL_NO_REASON(this);
   }
@@ -5710,7 +5707,7 @@ mozilla::ipc::IPCResult Snapshot::RecvLoadValueAndMoreItems(
   }
 
   if (aValue->IsVoid()) {
-    mUnknownItems.PutEntry(aKey);
+    mUnknownItems.Insert(aKey);
   } else {
     mLoadedItems.PutEntry(aKey);
 
@@ -5806,9 +5803,10 @@ mozilla::ipc::IPCResult Snapshot::RecvLoadValueAndMoreItems(
     mLoadedItems.Clear();
     mUnknownItems.Clear();
 #ifdef DEBUG
-    for (auto iter = mValues.ConstIter(); !iter.Done(); iter.Next()) {
-      MOZ_ASSERT(iter.Data().IsVoid());
-    }
+    const bool allValuesVoid =
+        std::all_of(mValues.cbegin(), mValues.cend(),
+                    [](const auto& entry) { return entry.GetData().IsVoid(); });
+    MOZ_ASSERT(allValuesVoid);
 #endif
     mValues.Clear();
     mLoadedAllItems = true;
@@ -6804,8 +6802,7 @@ nsresult PrepareDatastoreOp::DatabaseWork() {
                       quotaManager->GetDirectoryForOrigin(
                           PERSISTENCE_TYPE_DEFAULT, Origin()));
 
-        quotaManager->EnsureQuotaForOrigin(PERSISTENCE_TYPE_DEFAULT,
-                                           mOriginMetadata);
+        quotaManager->EnsureQuotaForOrigin(mOriginMetadata);
 
         return directoryEntry;
       }()));
@@ -7940,49 +7937,28 @@ bool ArchivedOriginScope::HasMatches(
   AssertIsOnIOThread();
   MOZ_ASSERT(aHashtable);
 
-  struct Matcher {
-    ArchivedOriginHashtable* mHashtable;
+  return mData.match(
+      [aHashtable](const Origin& aOrigin) {
+        const nsCString hashKey = GetArchivedOriginHashKey(
+            aOrigin.OriginSuffix(), aOrigin.OriginNoSuffix());
 
-    explicit Matcher(ArchivedOriginHashtable* aHashtable)
-        : mHashtable(aHashtable) {}
-
-    bool operator()(const Origin& aOrigin) {
-      nsCString hashKey = GetArchivedOriginHashKey(aOrigin.OriginSuffix(),
-                                                   aOrigin.OriginNoSuffix());
-
-      ArchivedOriginInfo* archivedOriginInfo;
-      return mHashtable->Get(hashKey, &archivedOriginInfo);
-    }
-
-    bool operator()(const Prefix& aPrefix) {
-      for (auto iter = mHashtable->ConstIter(); !iter.Done(); iter.Next()) {
-        const auto& archivedOriginInfo = iter.Data();
-
-        if (archivedOriginInfo->mOriginNoSuffix == aPrefix.OriginNoSuffix()) {
-          return true;
-        }
-      }
-
-      return false;
-    }
-
-    bool operator()(const Pattern& aPattern) {
-      for (auto iter = mHashtable->ConstIter(); !iter.Done(); iter.Next()) {
-        const auto& archivedOriginInfo = iter.Data();
-
-        if (aPattern.GetPattern().Matches(
-                archivedOriginInfo->mOriginAttributes)) {
-          return true;
-        }
-      }
-
-      return false;
-    }
-
-    bool operator()(const Null& aNull) { return mHashtable->Count(); }
-  };
-
-  return mData.match(Matcher(aHashtable));
+        return aHashtable->Contains(hashKey);
+      },
+      [aHashtable](const Pattern& aPattern) {
+        return std::any_of(aHashtable->cbegin(), aHashtable->cend(),
+                           [&aPattern](const auto& entry) {
+                             return aPattern.GetPattern().Matches(
+                                 entry.GetData()->mOriginAttributes);
+                           });
+      },
+      [aHashtable](const Prefix& aPrefix) {
+        return std::any_of(aHashtable->cbegin(), aHashtable->cend(),
+                           [&aPrefix](const auto& entry) {
+                             return entry.GetData()->mOriginNoSuffix ==
+                                    aPrefix.OriginNoSuffix();
+                           });
+      },
+      [aHashtable](const Null& aNull) { return !aHashtable->IsEmpty(); });
 }
 
 void ArchivedOriginScope::RemoveMatches(
@@ -8519,16 +8495,17 @@ nsCString QuotaClient::GetShutdownStatus() const {
     data.AppendInt(static_cast<uint32_t>(gPrepareDatastoreOps->Length()));
     data.Append(" (");
 
-    nsTHashtable<nsCStringHashKey> ids;
+    // XXX What's the purpose of adding these to a hashtable before joining them
+    // to the string? (Maybe this used to be an ordered container before???)
+    nsTHashSet<nsCString> ids;
+    std::transform(gPrepareDatastoreOps->cbegin(), gPrepareDatastoreOps->cend(),
+                   MakeInserter(ids), [](const auto& prepareDatastoreOp) {
+                     nsCString id;
+                     prepareDatastoreOp->Stringify(id);
+                     return id;
+                   });
 
-    for (const auto& prepareDatastoreOp : *gPrepareDatastoreOps) {
-      nsCString id;
-      prepareDatastoreOp->Stringify(id);
-
-      ids.PutEntry(id);
-    }
-
-    StringifyTableKeys(ids, data);
+    StringJoinAppend(data, ", "_ns, ids);
 
     data.Append(")\n");
   }
@@ -8538,16 +8515,17 @@ nsCString QuotaClient::GetShutdownStatus() const {
     data.AppendInt(gDatastores->Count());
     data.Append(" (");
 
-    nsTHashtable<nsCStringHashKey> ids;
+    // XXX It might be confusing to remove duplicates here, as the actual list
+    // won't match the count then.
+    nsTHashSet<nsCString> ids;
+    std::transform(gDatastores->Values().cbegin(), gDatastores->Values().cend(),
+                   MakeInserter(ids), [](const auto& entry) {
+                     nsCString id;
+                     entry->Stringify(id);
+                     return id;
+                   });
 
-    for (const auto& entry : *gDatastores) {
-      nsCString id;
-      entry.GetData()->Stringify(id);
-
-      ids.PutEntry(id);
-    }
-
-    StringifyTableKeys(ids, data);
+    StringJoinAppend(data, ", "_ns, ids);
 
     data.Append(")\n");
   }
@@ -8557,16 +8535,17 @@ nsCString QuotaClient::GetShutdownStatus() const {
     data.AppendInt(static_cast<uint32_t>(gLiveDatabases->Length()));
     data.Append(" (");
 
-    nsTHashtable<nsCStringHashKey> ids;
+    // XXX It might be confusing to remove duplicates here, as the actual list
+    // won't match the count then.
+    nsTHashSet<nsCString> ids;
+    std::transform(gLiveDatabases->cbegin(), gLiveDatabases->cend(),
+                   MakeInserter(ids), [](const auto& database) {
+                     nsCString id;
+                     database->Stringify(id);
+                     return id;
+                   });
 
-    for (const auto& database : *gLiveDatabases) {
-      nsCString id;
-      database->Stringify(id);
-
-      ids.PutEntry(id);
-    }
-
-    StringifyTableKeys(ids, data);
+    StringJoinAppend(data, ", "_ns, ids);
 
     data.Append(")\n");
   }

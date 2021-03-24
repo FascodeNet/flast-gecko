@@ -528,7 +528,7 @@ void IdentifierMapEntry::FireChangeCallbacks(Element* aOldElement,
                                              bool aImageOnly) {
   if (!mChangeCallbacks) return;
 
-  for (auto iter = mChangeCallbacks->ConstIter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mChangeCallbacks->Iter(); !iter.Done(); iter.Next()) {
     IdentifierMapEntry::ChangeCallbackEntry* entry = iter.Get();
     // Don't fire image changes for non-image observers, and don't fire element
     // changes for image observers when an image override is active.
@@ -695,7 +695,7 @@ void IdentifierMapEntry::RemoveNameElement(Element* aElement) {
   }
 }
 
-bool IdentifierMapEntry::HasIdElementExposedAsHTMLDocumentProperty() {
+bool IdentifierMapEntry::HasIdElementExposedAsHTMLDocumentProperty() const {
   Element* idElement = GetIdElement();
   return idElement &&
          nsGenericHTMLElement::ShouldExposeIdAsHTMLDocumentProperty(idElement);
@@ -859,8 +859,8 @@ void ExternalResourceMap::Traverse(
     nsCycleCollectionTraversalCallback* aCallback) const {
   // mPendingLoads will get cleared out as the requests complete, so
   // no need to worry about those here.
-  for (auto iter = mMap.ConstIter(); !iter.Done(); iter.Next()) {
-    ExternalResourceMap::ExternalResource* resource = iter.UserData();
+  for (const auto& entry : mMap) {
+    ExternalResourceMap::ExternalResource* resource = entry.GetWeak();
 
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*aCallback,
                                        "mExternalResourceMap.mMap entry"
@@ -880,8 +880,8 @@ void ExternalResourceMap::Traverse(
 }
 
 void ExternalResourceMap::HideViewers() {
-  for (auto iter = mMap.Iter(); !iter.Done(); iter.Next()) {
-    nsCOMPtr<nsIContentViewer> viewer = iter.UserData()->mViewer;
+  for (const auto& entry : mMap) {
+    nsCOMPtr<nsIContentViewer> viewer = entry.GetData()->mViewer;
     if (viewer) {
       viewer->Hide();
     }
@@ -889,8 +889,8 @@ void ExternalResourceMap::HideViewers() {
 }
 
 void ExternalResourceMap::ShowViewers() {
-  for (auto iter = mMap.Iter(); !iter.Done(); iter.Next()) {
-    nsCOMPtr<nsIContentViewer> viewer = iter.UserData()->mViewer;
+  for (const auto& entry : mMap) {
+    nsCOMPtr<nsIContentViewer> viewer = entry.GetData()->mViewer;
     if (viewer) {
       viewer->Show();
     }
@@ -1449,7 +1449,9 @@ Document::Document(const char* aContentType)
       mCachedTabSizeGeneration(0),
       mNextFormNumber(0),
       mNextControlNumber(0),
-      mPreloadService(this) {
+      mPreloadService(this),
+      mShouldNotifyFetchSuccess(false),
+      mShouldNotifyFormOrPasswordRemoved(false) {
   MOZ_LOG(gDocumentLeakPRLog, LogLevel::Debug, ("DOCUMENT %p created", this));
 
   SetIsInDocument();
@@ -2396,6 +2398,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrototypeDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMidasCommandManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAll)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocGroup)
 
   // Traverse all our nsCOMArrays.
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPreloadingImages)
@@ -2444,10 +2447,10 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
   }
 
   // XXX: This should be not needed once bug 1569185 lands.
-  for (auto it = tmp->mL10nProtoElements.ConstIter(); !it.Done(); it.Next()) {
+  for (const auto& entry : tmp->mL10nProtoElements) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mL10nProtoElements key");
-    cb.NoteXPCOMChild(it.Key());
-    CycleCollectionNoteChild(cb, it.UserData(), "mL10nProtoElements value");
+    cb.NoteXPCOMChild(entry.GetKey());
+    CycleCollectionNoteChild(cb, entry.GetWeak(), "mL10nProtoElements value");
   }
 
   for (size_t i = 0; i < tmp->mPendingFrameStaticClones.Length(); ++i) {
@@ -2526,6 +2529,12 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAll)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mReferrerInfo)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPreloadReferrerInfo)
+
+  if (tmp->mDocGroup && tmp->mDocGroup->GetBrowsingContextGroup()) {
+    tmp->mDocGroup->GetBrowsingContextGroup()->RemoveDocument(
+        tmp->mDocGroup->GetKey(), tmp);
+  }
+  tmp->mDocGroup = nullptr;
 
   if (tmp->IsTopLevelContentDocument()) {
     RemoveToplevelLoadingDocument(tmp);
@@ -4962,6 +4971,7 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_EXEC_COMMAND);
     return false;
   }
+  // Otherwise, don't throw exception for compatibility with Chrome.
 
   // if they are requesting UI from us, let's fail since we have no UI
   if (aShowUI) {
@@ -4991,7 +5001,6 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
   }
 
   if (commandData.mCommand == Command::GetHTML) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
@@ -5052,8 +5061,7 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
     // Otherwise, we should use EditorCommand instance (which is singleton
     // instance) when it's enabled.
     editorCommand = commandData.mGetEditorCommandFunc();
-    if (NS_WARN_IF(!editorCommand)) {
-      aRv.Throw(NS_ERROR_FAILURE);
+    if (!editorCommand) {
       return false;
     }
 
@@ -5111,13 +5119,11 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
     // their own editor.
     RefPtr<nsCommandManager> commandManager = GetMidasCommandManager();
     if (!commandManager) {
-      aRv.Throw(NS_ERROR_FAILURE);
       return false;
     }
 
     nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
     if (!window) {
-      aRv.Throw(NS_ERROR_FAILURE);
       return false;
     }
 
@@ -5128,9 +5134,9 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
     }
 
     MOZ_ASSERT(commandData.IsPasteCommand());
-    aRv =
+    nsresult rv =
         commandManager->DoCommand(commandData.mXULCommandName, nullptr, window);
-    return !aRv.ErrorCodeIs(NS_SUCCESS_DOM_NO_OPERATION) && !aRv.Failed();
+    return NS_SUCCEEDED(rv) && rv != NS_SUCCESS_DOM_NO_OPERATION;
   }
 
   // Now, our target is fixed to the editor.  So, we can use EditorCommand
@@ -5144,9 +5150,9 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
   // require additional parameter, we can use `DoCommand()`.
   if (adjustedValue.IsEmpty() || paramType == EditorCommandParamType::None) {
     MOZ_ASSERT(!(paramType & EditorCommandParamType::Bool));
-    aRv = editorCommand->DoCommand(commandData.mCommand, *maybeHTMLEditor,
-                                   &aSubjectPrincipal);
-    return !aRv.ErrorCodeIs(NS_SUCCESS_DOM_NO_OPERATION) && !aRv.Failed();
+    nsresult rv = editorCommand->DoCommand(
+        commandData.mCommand, *maybeHTMLEditor, &aSubjectPrincipal);
+    return NS_SUCCEEDED(rv) && rv != NS_SUCCESS_DOM_NO_OPERATION;
   }
 
   // If the EditorCommand requires `bool` parameter, `adjustedValue` must be
@@ -5155,10 +5161,10 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
   if (!!(paramType & EditorCommandParamType::Bool)) {
     MOZ_ASSERT(adjustedValue.EqualsLiteral("true") ||
                adjustedValue.EqualsLiteral("false"));
-    aRv = editorCommand->DoCommandParam(
+    nsresult rv = editorCommand->DoCommandParam(
         commandData.mCommand, Some(adjustedValue.EqualsLiteral("true")),
         *maybeHTMLEditor, &aSubjectPrincipal);
-    return !aRv.ErrorCodeIs(NS_SUCCESS_DOM_NO_OPERATION) && !aRv.Failed();
+    return NS_SUCCEEDED(rv) && rv != NS_SUCCESS_DOM_NO_OPERATION;
   }
 
   // Now, the EditorCommand requires `nsAString` or `nsACString` parameter
@@ -5168,9 +5174,10 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
   // `String` or not first.
   if (!!(paramType & EditorCommandParamType::String)) {
     MOZ_ASSERT(!adjustedValue.IsVoid());
-    aRv = editorCommand->DoCommandParam(commandData.mCommand, adjustedValue,
-                                        *maybeHTMLEditor, &aSubjectPrincipal);
-    return !aRv.ErrorCodeIs(NS_SUCCESS_DOM_NO_OPERATION) && !aRv.Failed();
+    nsresult rv =
+        editorCommand->DoCommandParam(commandData.mCommand, adjustedValue,
+                                      *maybeHTMLEditor, &aSubjectPrincipal);
+    return NS_SUCCEEDED(rv) && rv != NS_SUCCESS_DOM_NO_OPERATION;
   }
 
   // Finally, `paramType` should have `CString`.  We should use
@@ -5178,9 +5185,9 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
   if (!!(paramType & EditorCommandParamType::CString)) {
     NS_ConvertUTF16toUTF8 utf8Value(adjustedValue);
     MOZ_ASSERT(!utf8Value.IsVoid());
-    aRv = editorCommand->DoCommandParam(commandData.mCommand, utf8Value,
-                                        *maybeHTMLEditor, &aSubjectPrincipal);
-    return !aRv.ErrorCodeIs(NS_SUCCESS_DOM_NO_OPERATION) && !aRv.Failed();
+    nsresult rv = editorCommand->DoCommandParam(
+        commandData.mCommand, utf8Value, *maybeHTMLEditor, &aSubjectPrincipal);
+    return NS_SUCCEEDED(rv) && rv != NS_SUCCESS_DOM_NO_OPERATION;
   }
 
   MOZ_ASSERT_UNREACHABLE(
@@ -5196,6 +5203,7 @@ bool Document::QueryCommandEnabled(const nsAString& aHTMLCommandName,
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_ENABLED);
     return false;
   }
+  // Otherwise, don't throw exception for compatibility with Chrome.
 
   InternalCommandData commandData = ConvertToInternalCommand(aHTMLCommandName);
   if (commandData.mCommand == Command::DoNothing) {
@@ -5220,13 +5228,11 @@ bool Document::QueryCommandEnabled(const nsAString& aHTMLCommandName,
   // get command manager and dispatch command to our window if it's acceptable
   RefPtr<nsCommandManager> commandManager = GetMidasCommandManager();
   if (!commandManager) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
   nsPIDOMWindowOuter* window = GetWindow();
   if (!window) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
@@ -5241,6 +5247,7 @@ bool Document::QueryCommandIndeterm(const nsAString& aHTMLCommandName,
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_INDETERM);
     return false;
   }
+  // Otherwise, don't throw exception for compatibility with Chrome.
 
   InternalCommandData commandData = ConvertToInternalCommand(aHTMLCommandName);
   if (commandData.mCommand == Command::DoNothing) {
@@ -5255,20 +5262,18 @@ bool Document::QueryCommandIndeterm(const nsAString& aHTMLCommandName,
   // get command manager and dispatch command to our window if it's acceptable
   RefPtr<nsCommandManager> commandManager = GetMidasCommandManager();
   if (!commandManager) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
   nsPIDOMWindowOuter* window = GetWindow();
   if (!window) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
   RefPtr<nsCommandParams> params = new nsCommandParams();
-  aRv = commandManager->GetCommandState(commandData.mXULCommandName, window,
-                                        params);
-  if (aRv.Failed()) {
+  nsresult rv = commandManager->GetCommandState(commandData.mXULCommandName,
+                                                window, params);
+  if (NS_FAILED(rv)) {
     return false;
   }
 
@@ -5285,6 +5290,7 @@ bool Document::QueryCommandState(const nsAString& aHTMLCommandName,
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_STATE);
     return false;
   }
+  // Otherwise, don't throw exception for compatibility with Chrome.
 
   InternalCommandData commandData = ConvertToInternalCommand(aHTMLCommandName);
   if (commandData.mCommand == Command::DoNothing) {
@@ -5299,13 +5305,11 @@ bool Document::QueryCommandState(const nsAString& aHTMLCommandName,
   // get command manager and dispatch command to our window if it's acceptable
   RefPtr<nsCommandManager> commandManager = GetMidasCommandManager();
   if (!commandManager) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
   nsPIDOMWindowOuter* window = GetWindow();
   if (!window) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return false;
   }
 
@@ -5316,9 +5320,9 @@ bool Document::QueryCommandState(const nsAString& aHTMLCommandName,
   }
 
   RefPtr<nsCommandParams> params = new nsCommandParams();
-  aRv = commandManager->GetCommandState(commandData.mXULCommandName, window,
-                                        params);
-  if (aRv.Failed()) {
+  nsresult rv = commandManager->GetCommandState(commandData.mXULCommandName,
+                                                window, params);
+  if (NS_FAILED(rv)) {
     return false;
   }
 
@@ -5331,32 +5335,32 @@ bool Document::QueryCommandState(const nsAString& aHTMLCommandName,
   switch (commandData.mCommand) {
     case Command::FormatJustifyLeft: {
       nsAutoCString currentValue;
-      aRv = params->GetCString("state_attribute", currentValue);
-      if (aRv.Failed()) {
+      nsresult rv = params->GetCString("state_attribute", currentValue);
+      if (NS_FAILED(rv)) {
         return false;
       }
       return currentValue.EqualsLiteral("left");
     }
     case Command::FormatJustifyRight: {
       nsAutoCString currentValue;
-      aRv = params->GetCString("state_attribute", currentValue);
-      if (aRv.Failed()) {
+      nsresult rv = params->GetCString("state_attribute", currentValue);
+      if (NS_FAILED(rv)) {
         return false;
       }
       return currentValue.EqualsLiteral("right");
     }
     case Command::FormatJustifyCenter: {
       nsAutoCString currentValue;
-      aRv = params->GetCString("state_attribute", currentValue);
-      if (aRv.Failed()) {
+      nsresult rv = params->GetCString("state_attribute", currentValue);
+      if (NS_FAILED(rv)) {
         return false;
       }
       return currentValue.EqualsLiteral("center");
     }
     case Command::FormatJustifyFull: {
       nsAutoCString currentValue;
-      aRv = params->GetCString("state_attribute", currentValue);
-      if (aRv.Failed()) {
+      nsresult rv = params->GetCString("state_attribute", currentValue);
+      if (NS_FAILED(rv)) {
         return false;
       }
       return currentValue.EqualsLiteral("justify");
@@ -5378,6 +5382,7 @@ bool Document::QueryCommandSupported(const nsAString& aHTMLCommandName,
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_SUPPORTED);
     return false;
   }
+  // Otherwise, don't throw exception for compatibility with Chrome.
 
   InternalCommandData commandData = ConvertToInternalCommand(aHTMLCommandName);
   if (commandData.mCommand == Command::DoNothing) {
@@ -5416,6 +5421,7 @@ void Document::QueryCommandValue(const nsAString& aHTMLCommandName,
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_VALUE);
     return;
   }
+  // Otherwise, don't throw exception for compatibility with Chrome.
 
   InternalCommandData commandData = ConvertToInternalCommand(aHTMLCommandName);
   if (commandData.mCommand == Command::DoNothing) {
@@ -5431,13 +5437,11 @@ void Document::QueryCommandValue(const nsAString& aHTMLCommandName,
   // get command manager and dispatch command to our window if it's acceptable
   RefPtr<nsCommandManager> commandManager = GetMidasCommandManager();
   if (!commandManager) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return;
   }
 
   nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
   if (!window) {
-    aRv.Throw(NS_ERROR_FAILURE);
     return;
   }
 
@@ -5445,31 +5449,30 @@ void Document::QueryCommandValue(const nsAString& aHTMLCommandName,
   // GetCommandState like the other commands
   RefPtr<nsCommandParams> params = new nsCommandParams();
   if (commandData.mCommand == Command::GetHTML) {
-    aRv = params->SetBool("selection_only", true);
-    if (aRv.Failed()) {
+    nsresult rv = params->SetBool("selection_only", true);
+    if (NS_FAILED(rv)) {
       return;
     }
-    aRv = params->SetCString("format", "text/html"_ns);
-    if (aRv.Failed()) {
+    rv = params->SetCString("format", "text/html"_ns);
+    if (NS_FAILED(rv)) {
       return;
     }
-    aRv =
-        commandManager->DoCommand(commandData.mXULCommandName, params, window);
-    if (aRv.Failed()) {
+    rv = commandManager->DoCommand(commandData.mXULCommandName, params, window);
+    if (NS_FAILED(rv)) {
       return;
     }
     params->GetString("result", aValue);
     return;
   }
 
-  aRv = params->SetCString("state_attribute", ""_ns);
-  if (aRv.Failed()) {
+  nsresult rv = params->SetCString("state_attribute", ""_ns);
+  if (NS_FAILED(rv)) {
     return;
   }
 
-  aRv = commandManager->GetCommandState(commandData.mXULCommandName, window,
-                                        params);
-  if (aRv.Failed()) {
+  rv = commandManager->GetCommandState(commandData.mXULCommandName, window,
+                                       params);
+  if (NS_FAILED(rv)) {
     return;
   }
 
@@ -5504,6 +5507,22 @@ void Document::MaybeEditingStateChanged() {
                             &Document::MaybeEditingStateChanged));
     }
   }
+}
+
+void Document::NotifyFetchOrXHRSuccess() {
+  if (mShouldNotifyFetchSuccess) {
+    nsContentUtils::DispatchEventOnlyToChrome(
+        this, ToSupports(this), u"DOMDocFetchSuccess"_ns, CanBubble::eNo,
+        Cancelable::eNo, /* DefaultAction */ nullptr);
+  }
+}
+
+void Document::SetNotifyFetchSuccess(bool aShouldNotify) {
+  mShouldNotifyFetchSuccess = aShouldNotify;
+}
+
+void Document::SetNotifyFormOrPasswordRemoved(bool aShouldNotify) {
+  mShouldNotifyFormOrPasswordRemoved = aShouldNotify;
 }
 
 void Document::TearingDownEditor() {
@@ -6612,6 +6631,22 @@ bool Document::RemoveFromBFCacheSync() {
   if (nsCOMPtr<nsIBFCacheEntry> entry = GetBFCacheEntry()) {
     entry->RemoveFromBFCacheSync();
     return true;
+  }
+
+  if (XRE_IsContentProcess()) {
+    if (BrowsingContext* bc = GetBrowsingContext()) {
+      BrowsingContext* top = bc->Top();
+      if (top->GetIsInBFCache()) {
+        ContentChild* cc = ContentChild::GetSingleton();
+        // IPC is asynchronous but the caller is supposed to check the return
+        // value. The reason for 'Sync' in the method name is that the old
+        // implementation may run scripts. There is Async variant in
+        // the old session history implementation for the cases where
+        // synchronous operation isn't safe.
+        cc->SendRemoveFromBFCache(top);
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -8124,7 +8159,8 @@ already_AddRefed<Attr> Document::CreateAttributeNS(
 }
 
 void Document::ResolveScheduledSVGPresAttrs() {
-  for (auto iter = mLazySVGPresElements.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mLazySVGPresElements.ConstIter(); !iter.Done();
+       iter.Next()) {
     SVGElement* svg = iter.Get()->GetKey();
     svg->UpdateContentDeclarationBlock();
   }
@@ -9619,16 +9655,20 @@ nsINode* Document::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv) {
       // a descendant contentDocument, so we check if the frameElement of this
       // document or any of its parents is the adopted node or one of its
       // descendants.
-      Document* doc = this;
-      do {
-        if (nsPIDOMWindowOuter* win = doc->GetWindow()) {
-          nsCOMPtr<nsINode> node = win->GetFrameElementInternal();
-          if (node && node->IsInclusiveDescendantOf(adoptedNode)) {
-            rv.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
-            return nullptr;
-          }
+      RefPtr<BrowsingContext> bc = GetBrowsingContext();
+      while (bc) {
+        nsCOMPtr<nsINode> node = bc->GetEmbedderElement();
+        if (node && node->IsInclusiveDescendantOf(adoptedNode)) {
+          rv.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
+          return nullptr;
         }
-      } while ((doc = doc->GetInProcessParentDocument()));
+
+        if (XRE_IsParentProcess()) {
+          bc = bc->Canonical()->GetParentCrossChromeBoundary();
+        } else {
+          bc = bc->GetParent();
+        }
+      }
 
       // Remove from parent.
       nsCOMPtr<nsINode> parent = adoptedNode->GetParentNode();
@@ -9824,9 +9864,11 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
   CSSToScreenScale defaultScale =
       layoutDeviceScale * LayoutDeviceToScreenScale(1.0);
 
-  // Special behaviour for desktop mode, provided we are not on an about: page
+  // Special behaviour for desktop mode, provided we are not on an about: page,
+  // or fullscreen.
+  const bool fullscreen = Fullscreen();
   nsPIDOMWindowOuter* win = GetWindow();
-  if (win && win->IsDesktopModeViewport() && !IsAboutPage()) {
+  if (win && win->IsDesktopModeViewport() && !IsAboutPage() && !fullscreen) {
     CSSCoord viewportWidth =
         StaticPrefs::browser_viewport_desktopWidth() / fullZoom;
     CSSToScreenScale scaleToFit(aDisplaySize.width / viewportWidth);
@@ -9838,7 +9880,8 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
                           nsViewportInfo::ZoomBehaviour::Mobile);
   }
 
-  if (!nsLayoutUtils::ShouldHandleMetaViewport(this)) {
+  // We ignore viewport meta tage etc when in fullscreen, see bug 1696717.
+  if (fullscreen || !nsLayoutUtils::ShouldHandleMetaViewport(this)) {
     return nsViewportInfo(aDisplaySize, defaultScale,
                           nsLayoutUtils::AllowZoomingForDocument(this)
                               ? nsViewportInfo::ZoomFlag::AllowZoom
@@ -12109,15 +12152,15 @@ Document* Document::GetTemplateContentsOwner() {
         GetScriptHandlingObject(hasHadScriptObject);
 
     nsCOMPtr<Document> document;
-    nsresult rv = NS_NewDOMDocument(getter_AddRefs(document),
-                                    u""_ns,   // aNamespaceURI
-                                    u""_ns,   // aQualifiedName
-                                    nullptr,  // aDoctype
-                                    Document::GetDocumentURI(),
-                                    Document::GetDocBaseURI(), NodePrincipal(),
-                                    true,          // aLoadedAsData
-                                    scriptObject,  // aEventObject
-                                    DocumentFlavorHTML);
+    nsresult rv = NS_NewDOMDocument(
+        getter_AddRefs(document),
+        u""_ns,   // aNamespaceURI
+        u""_ns,   // aQualifiedName
+        nullptr,  // aDoctype
+        Document::GetDocumentURI(), Document::GetDocBaseURI(), NodePrincipal(),
+        true,          // aLoadedAsData
+        scriptObject,  // aEventObject
+        IsHTMLDocument() ? DocumentFlavorHTML : DocumentFlavorXML);
     NS_ENSURE_SUCCESS(rv, nullptr);
 
     mTemplateContentsOwner = document;
@@ -15277,7 +15320,8 @@ void Document::ScheduleIntersectionObserverNotification() {
 void Document::NotifyIntersectionObservers() {
   nsTArray<RefPtr<DOMIntersectionObserver>> observers(
       mIntersectionObservers.Count());
-  for (auto iter = mIntersectionObservers.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mIntersectionObservers.ConstIter(); !iter.Done();
+       iter.Next()) {
     DOMIntersectionObserver* observer = iter.Get()->GetKey();
     observers.AppendElement(observer);
   }
@@ -16766,7 +16810,7 @@ void Document::DoCacheAllKnownLangPrefs() {
   data->GetFontPrefsForLang(nsGkAtoms::x_math);
   // https://bugzilla.mozilla.org/show_bug.cgi?id=1362599#c12
   data->GetFontPrefsForLang(nsGkAtoms::Unicode);
-  for (auto iter = mLanguagesUsed.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mLanguagesUsed.ConstIter(); !iter.Done(); iter.Next()) {
     data->GetFontPrefsForLang(iter.Get()->GetKey());
   }
   mMayNeedFontPrefsUpdate = false;
@@ -16867,6 +16911,23 @@ nsIPrincipal* Document::EffectiveStoragePrincipal() const {
   }
 
   return mActiveStoragePrincipal = mPartitionedPrincipal;
+}
+
+nsIPrincipal* Document::GetPrincipalForPrefBasedHacks() const {
+  // If the document is sandboxed document or data: document, we should
+  // get URI of the parent document.
+  for (const Document* document = this;
+       document && document->IsContentDocument();
+       document = document->GetInProcessParentDocument()) {
+    // The document URI may be about:blank even if it comes from actual web
+    // site.  Therefore, we need to check the URI of its principal.
+    nsIPrincipal* principal = document->NodePrincipal();
+    if (principal->GetIsNullPrincipal()) {
+      continue;
+    }
+    return principal;
+  }
+  return nullptr;
 }
 
 void Document::SetIsInitialDocument(bool aIsInitialDocument) {

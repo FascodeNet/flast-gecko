@@ -12,14 +12,7 @@
 ''':'
 # Commands that are to be run with Python 2.
 py2commands="
-    awsy-test
-    jsshell-bench
-    mozharness
-    raptor
-    raptor-test
     telemetry-tests-client
-    test
-    wpt-metadata-merge
 "
 
 # Commands that are to be run with the system Python 3 instead of the
@@ -66,6 +59,7 @@ get_command() {
                 shift 2
             fi
             ;;
+        --no-interactive) shift;;
         --log-interval) shift;;
         --log-no-times) shift;;
         -h) shift;;

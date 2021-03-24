@@ -18,9 +18,8 @@
 #include "mozilla/widget/CompositorWidget.h"
 
 #ifdef MOZ_WAYLAND
+#  include "mozilla/WidgetUtilsGtk.h"
 #  include "mozilla/widget/GtkCompositorWidget.h"
-#  include <gdk/gdk.h>
-#  include <gdk/gdkx.h>
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -37,12 +36,11 @@ namespace mozilla::wr {
 UniquePtr<RenderCompositor> RenderCompositorEGL::Create(
     RefPtr<widget::CompositorWidget> aWidget, nsACString& aError) {
 #ifdef MOZ_WAYLAND
-  if (!gdk_display_get_default() ||
-      GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
+  if (!gfx::gfxVars::UseEGL()) {
     return nullptr;
   }
 #endif
-  if (!RenderThread::Get()->SharedGL()) {
+  if (!RenderThread::Get()->SingletonGL()) {
     gfxCriticalNote << "Failed to get shared GL context";
     return nullptr;
   }
@@ -204,7 +202,7 @@ bool RenderCompositorEGL::Resume() {
 bool RenderCompositorEGL::IsPaused() { return mEGLSurface == EGL_NO_SURFACE; }
 
 gl::GLContext* RenderCompositorEGL::gl() const {
-  return RenderThread::Get()->SharedGL();
+  return RenderThread::Get()->SingletonGL();
 }
 
 bool RenderCompositorEGL::MakeCurrent() {

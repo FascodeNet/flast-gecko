@@ -1692,6 +1692,10 @@ WritingMode nsIFrame::WritingModeForLine(WritingMode aSelfWM,
   return writingMode;
 }
 
+nsRect nsIFrame::GetMarginRect() const {
+  return GetMarginRectRelativeToSelf() + GetPosition();
+}
+
 nsRect nsIFrame::GetMarginRectRelativeToSelf() const {
   nsMargin m = GetUsedMargin().ApplySkipSides(GetSkipSides());
   nsRect r(0, 0, mRect.width, mRect.height);
@@ -3648,6 +3652,7 @@ void nsIFrame::BuildDisplayListForStackingContext(
       nsPoint toOuterReferenceFrame;
       const nsIFrame* outerReferenceFrame =
           aBuilder->FindReferenceFrameFor(GetParent(), &toOuterReferenceFrame);
+      toOuterReferenceFrame += GetPosition();
 
       buildingDisplayList.SetReferenceFrameAndCurrentOffset(
           outerReferenceFrame, toOuterReferenceFrame);
@@ -4740,7 +4745,9 @@ nsresult nsIFrame::SelectByTypeAtPoint(nsPresContext* aPresContext,
   }
 
   ContentOffsets offsets = GetContentOffsetsFromPoint(aPoint, SKIP_HIDDEN);
-  if (!offsets.content) return NS_ERROR_FAILURE;
+  if (!offsets.content) {
+    return NS_ERROR_FAILURE;
+  }
 
   int32_t offset;
   nsIFrame* frame = nsFrameSelection::GetFrameForNodeOffset(
@@ -4823,20 +4830,34 @@ nsresult nsIFrame::PeekBackwardAndForward(nsSelectionAmount aAmountBack,
     }
   }
 
-  // Use peek offset one way then the other:
+  // Search backward for a boundary.
   nsPeekOffsetStruct startpos(aAmountBack, eDirPrevious, baseOffset,
                               nsPoint(0, 0), aJumpLines,
                               true,  // limit on scrolled views
                               false, false, false);
   rv = baseFrame->PeekOffset(&startpos);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
-  nsPeekOffsetStruct endpos(aAmountForward, eDirNext, aStartPos, nsPoint(0, 0),
+  // If the backward search stayed within the same frame, search forward from
+  // that position for the end boundary; but if it crossed out to a sibling or
+  // ancestor, start from the original position.
+  if (startpos.mResultFrame == baseFrame) {
+    baseOffset = startpos.mContentOffset;
+  } else {
+    baseFrame = this;
+    baseOffset = aStartPos;
+  }
+
+  nsPeekOffsetStruct endpos(aAmountForward, eDirNext, baseOffset, nsPoint(0, 0),
                             aJumpLines,
                             true,  // limit on scrolled views
                             false, false, false);
-  rv = PeekOffset(&endpos);
-  if (NS_FAILED(rv)) return rv;
+  rv = baseFrame->PeekOffset(&endpos);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   // Keep frameSelection alive.
   RefPtr<nsFrameSelection> frameSelection = GetFrameSelection();
@@ -4849,13 +4870,17 @@ nsresult nsIFrame::PeekBackwardAndForward(nsSelectionAmount aAmountBack,
       MOZ_KnownLive(startpos.mResultContent) /* bug 1636889 */,
       startpos.mContentOffset, startpos.mContentOffset, focusMode,
       CARET_ASSOCIATE_AFTER);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   rv = frameSelection->HandleClick(
       MOZ_KnownLive(endpos.mResultContent) /* bug 1636889 */,
       endpos.mContentOffset, endpos.mContentOffset,
       nsFrameSelection::FocusMode::kExtendSelection, CARET_ASSOCIATE_BEFORE);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   // maintain selection
   return frameSelection->MaintainSelection(aAmountBack);
@@ -5131,7 +5156,7 @@ static FrameContentRange GetRangeForFrame(const nsIFrame* aFrame) {
   }
 
   nsIContent* parent = content->GetParent();
-  if (aFrame->IsBlockFrameOrSubclass() || !parent) {
+  if (aFrame->IsBlockOutside() || !parent) {
     return FrameContentRange(content, 0, content->GetChildCount());
   }
 
@@ -6213,7 +6238,14 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
       result.BSize(aWM) = nsLayoutUtils::ComputeBSizeValue(
           aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
           styleBSize.AsLengthPercentage());
-    } else if (aspectRatio && result.ISize(aWM) != NS_UNCONSTRAINEDSIZE) {
+    } else if (aspectRatio) {
+      // If both inline and block dimensions are auto (i.e. weak size
+      // constraints), the block axis is the ratio-dependent axis.
+      // If we have a super large inline size, aspect-ratio should still be
+      // applied. That's why we apply aspect-ratio unconditionally for auto
+      // block size here.
+      // FIXME: Bug 1690423 moves this part below the handle of grid, so this
+      // shouldn't affect grid layout.
       result.BSize(aWM) = aspectRatio.ComputeRatioDependentSize(
           LogicalAxis::eLogicalAxisBlock, aWM, result.ISize(aWM),
           boxSizingAdjust);
@@ -6848,7 +6880,7 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
      * coordinates to our parent.
      */
     if (isTransformed) {
-      NS_ASSERTION(nsLayoutUtils::GetCrossDocParentFrame(this),
+      NS_ASSERTION(nsLayoutUtils::GetCrossDocParentFrameInProcess(this),
                    "Cannot transform the viewport frame!");
 
       result = result * nsDisplayTransform::GetResultingTransformMatrix(
@@ -6983,7 +7015,7 @@ static void InvalidateRenderingObservers(nsIFrame* aDisplayRoot,
   SVGObserverUtils::InvalidateDirectRenderingObservers(aFrame);
   nsIFrame* parent = aFrame;
   while (parent != aDisplayRoot &&
-         (parent = nsLayoutUtils::GetCrossDocParentFrame(parent)) &&
+         (parent = nsLayoutUtils::GetCrossDocParentFrameInProcess(parent)) &&
          !parent->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
     SVGObserverUtils::InvalidateDirectRenderingObservers(parent);
   }
@@ -7038,7 +7070,7 @@ static void InvalidateFrameInternal(nsIFrame* aFrame, bool aHasDisplayItem,
   if (nsLayoutUtils::IsPopup(aFrame)) {
     needsSchedulePaint = true;
   } else {
-    nsIFrame* parent = nsLayoutUtils::GetCrossDocParentFrame(aFrame);
+    nsIFrame* parent = nsLayoutUtils::GetCrossDocParentFrameInProcess(aFrame);
     while (parent &&
            !parent->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
       if (aHasDisplayItem && !parent->HasAnyStateBits(NS_FRAME_IS_NONDISPLAY)) {
@@ -7053,7 +7085,7 @@ static void InvalidateFrameInternal(nsIFrame* aFrame, bool aHasDisplayItem,
         needsSchedulePaint = true;
         break;
       }
-      parent = nsLayoutUtils::GetCrossDocParentFrame(parent);
+      parent = nsLayoutUtils::GetCrossDocParentFrameInProcess(parent);
     }
     if (!parent) {
       needsSchedulePaint = true;
@@ -7421,13 +7453,14 @@ nsRect nsIFrame::GetOverflowRect(OverflowType aType) const {
   // areas will invalidate the appropriate area, so any (mis)uses of
   // this method will be fixed up.
 
-  if (mOverflow.mType == NS_FRAME_OVERFLOW_LARGE) {
+  if (mOverflow.mType == OverflowStorageType::Large) {
     // there is an overflow rect, and it's not stored as deltas but as
     // a separately-allocated rect
     return GetOverflowAreasProperty()->Overflow(aType);
   }
 
-  if (aType == OverflowType::Ink && mOverflow.mType != NS_FRAME_OVERFLOW_NONE) {
+  if (aType == OverflowType::Ink &&
+      mOverflow.mType != OverflowStorageType::None) {
     return InkOverflowFromDeltas();
   }
 
@@ -7435,7 +7468,7 @@ nsRect nsIFrame::GetOverflowRect(OverflowType aType) const {
 }
 
 OverflowAreas nsIFrame::GetOverflowAreas() const {
-  if (mOverflow.mType == NS_FRAME_OVERFLOW_LARGE) {
+  if (mOverflow.mType == OverflowStorageType::Large) {
     // there is an overflow rect, and it's not stored as deltas but as
     // a separately-allocated rect
     return *GetOverflowAreasProperty();
@@ -7455,6 +7488,10 @@ OverflowAreas nsIFrame::GetOverflowAreasRelativeToSelf() const {
     }
   }
   return OverflowAreas(InkOverflowRect(), ScrollableOverflowRect());
+}
+
+OverflowAreas nsIFrame::GetOverflowAreasRelativeToParent() const {
+  return GetOverflowAreas() + mRect.TopLeft();
 }
 
 nsRect nsIFrame::ScrollableOverflowRectRelativeToParent() const {
@@ -9118,21 +9155,18 @@ a11y::AccType nsIFrame::AccessibleType() {
 #endif
 
 bool nsIFrame::ClearOverflowRects() {
-  if (mOverflow.mType == NS_FRAME_OVERFLOW_NONE) {
+  if (mOverflow.mType == OverflowStorageType::None) {
     return false;
   }
-  if (mOverflow.mType == NS_FRAME_OVERFLOW_LARGE) {
+  if (mOverflow.mType == OverflowStorageType::Large) {
     RemoveProperty(OverflowAreasProperty());
   }
-  mOverflow.mType = NS_FRAME_OVERFLOW_NONE;
+  mOverflow.mType = OverflowStorageType::None;
   return true;
 }
 
-/** Set the overflowArea rect, storing it as deltas or a separate rect
- * depending on its size in relation to the primary frame rect.
- */
 bool nsIFrame::SetOverflowAreas(const OverflowAreas& aOverflowAreas) {
-  if (mOverflow.mType == NS_FRAME_OVERFLOW_LARGE) {
+  if (mOverflow.mType == OverflowStorageType::Large) {
     OverflowAreas* overflow = GetOverflowAreasProperty();
     bool changed = *overflow != aOverflowAreas;
     *overflow = aOverflowAreas;
@@ -9149,8 +9183,8 @@ bool nsIFrame::SetOverflowAreas(const OverflowAreas& aOverflowAreas) {
       b = vis.YMost() - mRect.height;  // bottom: positive is downwards
   if (aOverflowAreas.ScrollableOverflow().IsEqualEdges(
           nsRect(nsPoint(0, 0), GetSize())) &&
-      l <= NS_FRAME_OVERFLOW_DELTA_MAX && t <= NS_FRAME_OVERFLOW_DELTA_MAX &&
-      r <= NS_FRAME_OVERFLOW_DELTA_MAX && b <= NS_FRAME_OVERFLOW_DELTA_MAX &&
+      l <= InkOverflowDeltas::kMax && t <= InkOverflowDeltas::kMax &&
+      r <= InkOverflowDeltas::kMax && b <= InkOverflowDeltas::kMax &&
       // we have to check these against zero because we *never* want to
       // set a frame as having no overflow in this function.  This is
       // because FinishAndStoreOverflow calls this function prior to
@@ -9160,17 +9194,17 @@ bool nsIFrame::SetOverflowAreas(const OverflowAreas& aOverflowAreas) {
       // so that our eventual SetRect/SetSize will know that it has to
       // reset our overflow areas.
       (l | t | r | b) != 0) {
-    VisualDeltas oldDeltas = mOverflow.mVisualDeltas;
+    InkOverflowDeltas oldDeltas = mOverflow.mInkOverflowDeltas;
     // It's a "small" overflow area so we store the deltas for each edge
     // directly in the frame, rather than allocating a separate rect.
     // If they're all zero, that's fine; we're setting things to
     // no-overflow.
-    mOverflow.mVisualDeltas.mLeft = l;
-    mOverflow.mVisualDeltas.mTop = t;
-    mOverflow.mVisualDeltas.mRight = r;
-    mOverflow.mVisualDeltas.mBottom = b;
+    mOverflow.mInkOverflowDeltas.mLeft = l;
+    mOverflow.mInkOverflowDeltas.mTop = t;
+    mOverflow.mInkOverflowDeltas.mRight = r;
+    mOverflow.mInkOverflowDeltas.mBottom = b;
     // There was no scrollable overflow before, and there isn't now.
-    return oldDeltas != mOverflow.mVisualDeltas;
+    return oldDeltas != mOverflow.mInkOverflowDeltas;
   } else {
     bool changed =
         !aOverflowAreas.ScrollableOverflow().IsEqualEdges(
@@ -9178,7 +9212,7 @@ bool nsIFrame::SetOverflowAreas(const OverflowAreas& aOverflowAreas) {
         !aOverflowAreas.InkOverflow().IsEqualEdges(InkOverflowFromDeltas());
 
     // it's a large overflow area that we need to store as a property
-    mOverflow.mType = NS_FRAME_OVERFLOW_LARGE;
+    mOverflow.mType = OverflowStorageType::Large;
     AddProperty(OverflowAreasProperty(), new OverflowAreas(aOverflowAreas));
     return changed;
   }
@@ -10823,7 +10857,7 @@ void nsIFrame::SetParent(nsContainerFrame* aParent) {
     for (nsIFrame* f = aParent;
          f && !f->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT |
                                   NS_FRAME_IS_NONDISPLAY);
-         f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
+         f = nsLayoutUtils::GetCrossDocParentFrameInProcess(f)) {
       f->AddStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT);
     }
   }
@@ -10893,7 +10927,7 @@ static bool IsFrameScrolledOutOfView(const nsIFrame* aTarget,
   // find the first scrollable frame or root frame if we are in a fixed pos
   // subtree
   for (nsIFrame* f = const_cast<nsIFrame*>(aParent); f;
-       f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
+       f = nsLayoutUtils::GetCrossDocParentFrameInProcess(f)) {
     nsIScrollableFrame* scrollableFrame = do_QueryFrame(f);
     if (scrollableFrame) {
       clipParent = f;

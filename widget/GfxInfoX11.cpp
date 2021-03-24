@@ -26,6 +26,7 @@
 
 #include <gdk/gdkx.h>
 #ifdef MOZ_WAYLAND
+#  include "mozilla/WidgetUtilsGtk.h"
 #  include "mozilla/widget/nsWaylandDisplay.h"
 #  include "mozilla/widget/DMABufLibWrapper.h"
 #endif
@@ -52,7 +53,6 @@ nsresult GfxInfo::Init() {
   mIsMesa = false;
   mIsAccelerated = true;
   mIsWayland = false;
-  mIsWaylandDRM = false;
   mIsXWayland = false;
   mHasMultipleGPUs = false;
   mGlxTestError = false;
@@ -70,8 +70,6 @@ void GfxInfo::AddCrashReportAnnotations() {
       CrashReporter::Annotation::AdapterDriverVersion, mDriverVersion);
   CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::IsWayland,
                                      mIsWayland);
-  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::IsWaylandDRM,
-                                     mIsWaylandDRM);
   CrashReporter::AnnotateCrashReport(
       CrashReporter::Annotation::DesktopEnvironment, mDesktopEnvironment);
 
@@ -462,13 +460,7 @@ void GfxInfo::GetData() {
 
   mAdapterDescription.Assign(glRenderer);
 #ifdef MOZ_WAYLAND
-  mIsWayland = gdk_display_get_default() &&
-               !GDK_IS_X11_DISPLAY(gdk_display_get_default());
-  if (mIsWayland) {
-    mIsWaylandDRM = GetDMABufDevice()->IsDMABufVAAPIEnabled() ||
-                    GetDMABufDevice()->IsDMABufWebGLEnabled() ||
-                    GetDMABufDevice()->IsDMABufTexturesEnabled();
-  }
+  mIsWayland = GdkIsWaylandDisplay();
 #endif
 
   // Make a best effort guess at whether or not we are using the XWayland compat
@@ -827,8 +819,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
 #  endif
 #endif
 
-#if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || \
-    defined(__i386) || defined(__amd64__)
+#if defined(_M_X64) || defined(__amd64__)
     // Initial Linux release population for SW-WR.
     if (mozilla::supports_avx2()) {
       APPEND_TO_DRIVER_BLOCKLIST_EXT(
@@ -991,13 +982,7 @@ NS_IMETHODIMP
 GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) {
   GetData();
   if (mIsWayland) {
-    if (mIsWaylandDRM) {
-      aWindowProtocol =
-          GfxDriverInfo::GetWindowProtocol(WindowProtocol::WaylandDRM);
-    } else {
-      aWindowProtocol =
-          GfxDriverInfo::GetWindowProtocol(WindowProtocol::Wayland);
-    }
+    aWindowProtocol = GfxDriverInfo::GetWindowProtocol(WindowProtocol::Wayland);
   } else if (mIsXWayland) {
     aWindowProtocol =
         GfxDriverInfo::GetWindowProtocol(WindowProtocol::XWayland);

@@ -440,15 +440,6 @@ void MacroAssembler::createGCObject(Register obj, Register temp,
   initGCThing(obj, temp, templateObj, initContents);
 }
 
-// Inlined equivalent of gc::AllocateNonObject, without failure case handling.
-// Non-object allocation does not need to worry about slots, so can take a
-// simpler path.
-void MacroAssembler::allocateNonObject(Register result, Register temp,
-                                       gc::AllocKind allocKind, Label* fail) {
-  checkAllocatorState(fail);
-  freeListAllocate(result, temp, allocKind, fail);
-}
-
 // Inline version of Nursery::allocateString.
 void MacroAssembler::nurseryAllocateString(Register result, Register temp,
                                            gc::AllocKind allocKind,
@@ -2064,20 +2055,6 @@ void MacroAssembler::assumeUnreachable(const char* output) {
   breakpoint();
 }
 
-template <typename T>
-void MacroAssembler::assertTestInt32(Condition cond, const T& value,
-                                     const char* output) {
-#ifdef DEBUG
-  Label ok;
-  branchTestInt32(cond, value, &ok);
-  assumeUnreachable(output);
-  bind(&ok);
-#endif
-}
-
-template void MacroAssembler::assertTestInt32(Condition, const Address&,
-                                              const char*);
-
 void MacroAssembler::printf(const char* output) {
 #ifdef JS_MASM_VERBOSE
   AllocatableRegisterSet regs(RegisterSet::Volatile());
@@ -2229,15 +2206,6 @@ void MacroAssembler::tracelogStopId(Register logger, Register textId) {
   PopRegsInMask(save);
 }
 #endif
-
-void MacroAssembler::convertInt32ValueToDouble(const Address& address,
-                                               Register scratch, Label* done) {
-  branchTestInt32(Assembler::NotEqual, address, done);
-  unboxInt32(address, scratch);
-  ScratchDoubleScope fpscratch(*this);
-  convertInt32ToDouble(scratch, fpscratch);
-  storeDouble(fpscratch, address);
-}
 
 void MacroAssembler::convertInt32ValueToDouble(ValueOperand val) {
   Label done;
@@ -2837,12 +2805,6 @@ void MacroAssembler::Push(const Register64 reg) {
 #endif
 }
 
-void MacroAssembler::PushValue(const Address& addr) {
-  MOZ_ASSERT(addr.base != getStackPointer());
-  pushValue(addr);
-  framePushed_ += sizeof(Value);
-}
-
 void MacroAssembler::PushEmptyRooted(VMFunctionData::RootType rootType) {
   switch (rootType) {
     case VMFunctionData::RootNone:
@@ -3010,6 +2972,8 @@ void MacroAssembler::callWithABINoProfiler(void* fun, MoveOp::Type result,
     Address flagAddr(ReturnReg, JSContext::offsetOfInUnsafeCallWithABI());
     store32(Imm32(1), flagAddr);
     pop(ReturnReg);
+    // On arm64, SP may be < PSP now (that's OK).
+    // eg testcase: tests/bug1375074.js
   }
 #endif
 
@@ -3027,6 +2991,8 @@ void MacroAssembler::callWithABINoProfiler(void* fun, MoveOp::Type result,
     assumeUnreachable("callWithABI: callee did not use AutoUnsafeCallWithABI");
     bind(&ok);
     pop(ReturnReg);
+    // On arm64, SP may be < PSP now (that's OK).
+    // eg testcase: tests/bug1375074.js
   }
 #endif
 }
@@ -3524,44 +3490,6 @@ void MacroAssembler::loadFunctionName(Register func, Register output,
   bind(&hasName);
 }
 
-void MacroAssembler::branchTestObjTypeDescr(Condition cond, Register obj,
-                                            Register descr, Register scratch,
-                                            Register spectreRegToZero,
-                                            Label* label) {
-  MOZ_ASSERT(obj != scratch);
-  MOZ_ASSERT(obj != descr);
-  MOZ_ASSERT(spectreRegToZero != scratch);
-
-  if (JitOptions.spectreObjectMitigationsMisc) {
-    move32(Imm32(0), scratch);
-  }
-
-  branchPtr(cond, Address(obj, TypedObject::offsetOfTypeDescr()), descr, label);
-
-  if (JitOptions.spectreObjectMitigationsMisc) {
-    spectreMovePtr(cond, scratch, spectreRegToZero);
-  }
-}
-
-void MacroAssembler::branchTestObjTypeDescr(Condition cond, Register obj,
-                                            TypeDescr* descr, Register scratch,
-                                            Register spectreRegToZero,
-                                            Label* label) {
-  MOZ_ASSERT(obj != scratch);
-  MOZ_ASSERT(spectreRegToZero != scratch);
-
-  if (JitOptions.spectreObjectMitigationsMisc) {
-    move32(Imm32(0), scratch);
-  }
-
-  branchPtr(cond, Address(obj, TypedObject::offsetOfTypeDescr()),
-            ImmGCPtr(descr), label);
-
-  if (JitOptions.spectreObjectMitigationsMisc) {
-    spectreMovePtr(cond, scratch, spectreRegToZero);
-  }
-}
-
 void MacroAssembler::branchTestObjCompartment(Condition cond, Register obj,
                                               const Address& compartment,
                                               Register scratch, Label* label) {
@@ -3724,7 +3652,7 @@ CodeOffset MacroAssembler::wasmCallBuiltinInstanceMethod(
     Label noTrap;
     switch (failureMode) {
       case wasm::FailureMode::Infallible:
-        MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE();
+        MOZ_CRASH();
       case wasm::FailureMode::FailOnNegI32:
         branchTest32(Assembler::NotSigned, ReturnReg, ReturnReg, &noTrap);
         break;
@@ -4044,11 +3972,6 @@ void MacroAssembler::memoryBarrierBefore(const Synchronization& sync) {
 
 void MacroAssembler::memoryBarrierAfter(const Synchronization& sync) {
   memoryBarrier(sync.barrierAfter);
-}
-
-void MacroAssembler::BranchGCPtr::emit(MacroAssembler& masm) {
-  MOZ_ASSERT(isInitialized());
-  masm.branchPtr(cond(), reg(), ptr_, jump());
 }
 
 void MacroAssembler::debugAssertIsObject(const ValueOperand& val) {

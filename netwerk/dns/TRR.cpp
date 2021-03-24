@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "DNS.h"
+#include "DNSUtils.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentUtils.h"
 #include "nsHttpHandler.h"
@@ -32,7 +33,6 @@
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/SyncRunnable.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tokenizer.h"
@@ -134,64 +134,6 @@ TRR::Run() {
   return NS_OK;
 }
 
-static void InitHttpHandler() {
-  nsresult rv;
-  nsCOMPtr<nsIIOService> ios = do_GetIOService(&rv);
-  if (NS_FAILED(rv)) {
-    return;
-  }
-
-  nsCOMPtr<nsIProtocolHandler> handler;
-  rv = ios->GetProtocolHandler("http", getter_AddRefs(handler));
-  if (NS_FAILED(rv)) {
-    return;
-  }
-}
-
-nsresult TRR::CreateChannelHelper(nsIURI* aUri, nsIChannel** aResult) {
-  *aResult = nullptr;
-
-  if (NS_IsMainThread() && !XRE_IsSocketProcess()) {
-    nsresult rv;
-    nsCOMPtr<nsIIOService> ios(do_GetIOService(&rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return NS_NewChannel(
-        aResult, aUri, nsContentUtils::GetSystemPrincipal(),
-        nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-        nsIContentPolicy::TYPE_OTHER,
-        nullptr,  // nsICookieJarSettings
-        nullptr,  // PerformanceStorage
-        nullptr,  // aLoadGroup
-        nullptr,  // aCallbacks
-        nsIRequest::LOAD_NORMAL, ios);
-  }
-
-  // Unfortunately, we can only initialize gHttpHandler on main thread.
-  if (!gHttpHandler) {
-    nsCOMPtr<nsIEventTarget> main = GetMainThreadEventTarget();
-    if (main) {
-      // Forward to the main thread synchronously.
-      SyncRunnable::DispatchToThread(
-          main, new SyncRunnable(NS_NewRunnableFunction(
-                    "InitHttpHandler", []() { InitHttpHandler(); })));
-    }
-  }
-
-  if (!gHttpHandler) {
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  RefPtr<TRRLoadInfo> loadInfo =
-      new TRRLoadInfo(aUri, nsIContentPolicy::TYPE_OTHER);
-  return gHttpHandler->CreateTRRServiceChannel(aUri,
-                                               nullptr,   // givenProxyInfo
-                                               0,         // proxyResolveFlags
-                                               nullptr,   // proxyURI
-                                               loadInfo,  // aLoadInfo
-                                               aResult);
-}
-
 DNSPacket* TRR::GetOrCreateDNSPacket() {
   if (!mPacket) {
     mPacket = MakeUnique<DNSPacket>();
@@ -224,6 +166,12 @@ bool TRR::MaybeBlockRequest() {
     // let NS resolves skip the blocklist check
     // we also don't check the blocklist for TRR only requests
     MOZ_ASSERT(mRec);
+
+    // If TRRService isn't enabled anymore for the req, don't do TRR.
+    if (!gTRRService->Enabled(mRec->mEffectiveTRRMode)) {
+      RecordReason(TRRSkippedReason::TRR_MODE_NOT_ENABLED);
+      return true;
+    }
 
     if (UseDefaultServer() &&
         gTRRService->IsTemporarilyBlocked(mHost, mOriginSuffix, mPB, true)) {
@@ -313,7 +261,7 @@ nsresult TRR::SendHTTPRequest() {
   }
 
   nsCOMPtr<nsIChannel> channel;
-  rv = CreateChannelHelper(dnsURI, getter_AddRefs(channel));
+  rv = DNSUtils::CreateChannelHelper(dnsURI, getter_AddRefs(channel));
   if (NS_FAILED(rv) || !channel) {
     LOG(("TRR:SendHTTPRequest: NewChannel failed!\n"));
     return rv;
@@ -672,24 +620,25 @@ void TRR::SaveAdditionalRecords(
     return;
   }
   nsresult rv;
-  for (auto iter = aRecords.ConstIter(); !iter.Done(); iter.Next()) {
-    if (iter.Data() && iter.Data()->mAddresses.IsEmpty()) {
+  for (const auto& recordEntry : aRecords) {
+    if (recordEntry.GetData() && recordEntry.GetData()->mAddresses.IsEmpty()) {
       // no point in adding empty records.
       continue;
     }
     RefPtr<nsHostRecord> hostRecord;
     rv = mHostResolver->GetHostRecord(
-        iter.Key(), EmptyCString(), nsIDNSService::RESOLVE_TYPE_DEFAULT,
-        mRec->flags, AF_UNSPEC, mRec->pb, mRec->originSuffix,
-        getter_AddRefs(hostRecord));
+        recordEntry.GetKey(), EmptyCString(),
+        nsIDNSService::RESOLVE_TYPE_DEFAULT, mRec->flags, AF_UNSPEC, mRec->pb,
+        mRec->originSuffix, getter_AddRefs(hostRecord));
     if (NS_FAILED(rv)) {
       LOG(("Failed to get host record for additional record %s",
-           nsCString(iter.Key()).get()));
+           nsCString(recordEntry.GetKey()).get()));
       continue;
     }
-    RefPtr<AddrInfo> ai(new AddrInfo(iter.Key(), ResolverType(), TRRTYPE_A,
-                                     std::move(iter.Data()->mAddresses),
-                                     iter.Data()->mTtl));
+    RefPtr<AddrInfo> ai(
+        new AddrInfo(recordEntry.GetKey(), ResolverType(), TRRTYPE_A,
+                     std::move(recordEntry.GetData()->mAddresses),
+                     recordEntry.GetData()->mTtl));
     mHostResolver->MaybeRenewHostRecord(hostRecord);
 
     // Since we're not actually calling NameLookup for this record, we need
@@ -699,7 +648,8 @@ void TRR::SaveAdditionalRecords(
     hostRecord->mEffectiveTRRMode = mRec->mEffectiveTRRMode;
     RefPtr<AddrHostRecord> addrRec = do_QueryObject(hostRecord);
     addrRec->mTrrStart = TimeStamp::Now();
-    LOG(("Completing lookup for additional: %s", nsCString(iter.Key()).get()));
+    LOG(("Completing lookup for additional: %s",
+         nsCString(recordEntry.GetKey()).get()));
     (void)mHostResolver->CompleteLookup(hostRecord, NS_OK, ai, mPB,
                                         mOriginSuffix, TRRSkippedReason::TRR_OK,
                                         this);

@@ -288,10 +288,10 @@ bool gCanRecordExtended;
 nsClassHashtable<nsCStringHashKey, EventKey> gEventNameIDMap(kEventCount);
 
 // The CategoryName set.
-nsTHashtable<nsCStringHashKey> gCategoryNames;
+nsTHashSet<nsCString> gCategoryNames;
 
 // This tracks the IDs of the categories for which recording is enabled.
-nsTHashtable<nsCStringHashKey> gEnabledCategories;
+nsTHashSet<nsCString> gEnabledCategories;
 
 // The main event storage. Events are inserted here, keyed by process id and
 // in recording order.
@@ -386,21 +386,21 @@ EventKey* GetEventKey(const StaticMutexAutoLock& lock,
 
 static bool CheckExtraKeysValid(const EventKey& eventKey,
                                 const ExtraArray& extra) {
-  nsTHashtable<nsCStringHashKey> validExtraKeys;
+  nsTHashSet<nsCString> validExtraKeys;
   if (!eventKey.dynamic) {
     const CommonEventInfo& common = gEventInfo[eventKey.id].common_info;
     for (uint32_t i = 0; i < common.extra_count; ++i) {
-      validExtraKeys.PutEntry(common.extra_key(i));
+      validExtraKeys.Insert(common.extra_key(i));
     }
   } else if (gDynamicEventInfo) {
     const DynamicEventInfo& info = (*gDynamicEventInfo)[eventKey.id];
     for (uint32_t i = 0, len = info.extra_keys.Length(); i < len; ++i) {
-      validExtraKeys.PutEntry(info.extra_keys[i]);
+      validExtraKeys.Insert(info.extra_keys[i]);
     }
   }
 
   for (uint32_t i = 0; i < extra.Length(); ++i) {
-    if (!validExtraKeys.GetEntry(extra[i].key)) {
+    if (!validExtraKeys.Contains(extra[i].key)) {
       return false;
     }
   }
@@ -459,7 +459,7 @@ RecordEventResult RecordEvent(const StaticMutexAutoLock& lock,
                                   processType, dynamicNonBuiltin);
 
   // Check whether this event's category has recording enabled
-  if (!gEnabledCategories.GetEntry(GetCategory(lock, *eventKey))) {
+  if (!gEnabledCategories.Contains(GetCategory(lock, *eventKey))) {
     return RecordEventResult::Ok;
   }
 
@@ -537,13 +537,13 @@ void RegisterEvents(const StaticMutexAutoLock& lock, const nsACString& category,
 
   // If it is a builtin, add the category name in order to enable it later.
   if (aBuiltin) {
-    gCategoryNames.PutEntry(category);
+    gCategoryNames.Insert(category);
   }
 
   if (!aBuiltin) {
     // Now after successful registration enable recording for this category
     // (if not a dynamic builtin).
-    gEnabledCategories.PutEntry(category);
+    gEnabledCategories.Insert(category);
   }
 }
 
@@ -704,11 +704,11 @@ void TelemetryEvent::InitializeGlobalState(bool aCanRecordBase,
     gEventNameIDMap.InsertOrUpdate(
         UniqueEventName(info),
         UniquePtr<EventKey>{new EventKey{eventId, false}});
-    gCategoryNames.PutEntry(info.common_info.category());
+    gCategoryNames.Insert(info.common_info.category());
   }
 
   // A hack until bug 1691156 is fixed
-  gEnabledCategories.PutEntry("avif"_ns);
+  gEnabledCategories.Insert("avif"_ns);
 
   gInitDone = true;
 }
@@ -1247,8 +1247,8 @@ nsresult TelemetryEvent::CreateSnapshots(uint32_t aDataset, bool aClear,
     auto snapshotter = [aDataset, &locker, &processEvents, &leftovers, aClear,
                         optional_argc,
                         aEventLimit](EventRecordsMapType& aProcessStorage) {
-      for (auto iter = aProcessStorage.Iter(); !iter.Done(); iter.Next()) {
-        const EventRecordArray* eventStorage = iter.UserData();
+      for (const auto& entry : aProcessStorage) {
+        const EventRecordArray* eventStorage = entry.GetWeak();
         EventRecordArray events;
         EventRecordArray leftoverEvents;
 
@@ -1267,12 +1267,11 @@ nsresult TelemetryEvent::CreateSnapshots(uint32_t aDataset, bool aClear,
         }
 
         if (events.Length()) {
-          const char* processName = GetNameForProcessID(ProcessID(iter.Key()));
-          processEvents.AppendElement(
-              std::make_pair(processName, std::move(events)));
+          const char* processName =
+              GetNameForProcessID(ProcessID(entry.GetKey()));
+          processEvents.EmplaceBack(processName, std::move(events));
           if (leftoverEvents.Length()) {
-            leftovers.AppendElement(
-                std::make_pair(iter.Key(), std::move(leftoverEvents)));
+            leftovers.EmplaceBack(entry.GetKey(), std::move(leftoverEvents));
           }
         }
       }
@@ -1342,9 +1341,9 @@ void TelemetryEvent::SetEventRecordingEnabled(const nsACString& category,
   }
 
   if (enabled) {
-    gEnabledCategories.PutEntry(category);
+    gEnabledCategories.Insert(category);
   } else {
-    gEnabledCategories.RemoveEntry(category);
+    gEnabledCategories.Remove(category);
   }
 }
 
@@ -1355,7 +1354,7 @@ size_t TelemetryEvent::SizeOfIncludingThis(
 
   auto getSizeOfRecords = [aMallocSizeOf](auto& storageMap) {
     size_t partial = storageMap.ShallowSizeOfExcludingThis(aMallocSizeOf);
-    for (auto iter = storageMap.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = storageMap.ConstIter(); !iter.Done(); iter.Next()) {
       EventRecordArray* eventRecords = iter.UserData();
       partial += eventRecords->ShallowSizeOfIncludingThis(aMallocSizeOf);
 

@@ -8,7 +8,7 @@
 %include ../shared/browser-custom-colors.inc.css
 
 :root {
-  --toolbar-non-lwt-bgcolor: #f9f9fa;
+  --toolbar-non-lwt-bgcolor: #f9f9fb;
   --toolbar-non-lwt-textcolor: #0c0c0d;
   --toolbar-non-lwt-bgimage: none;
 
@@ -19,13 +19,8 @@
   --toolbarbutton-icon-fill-opacity: .7;
 
   --panel-separator-color: hsla(210,4%,10%,.14);
-  --arrowpanel-dimmed: hsla(0,0%,80%,.3);
-  --arrowpanel-dimmed-further: hsla(0,0%,80%,.5);
-  --arrowpanel-dimmed-even-further: hsla(0,0%,80%,.8);
 
   --arrowpanel-field-background: rgba(249,249,250,.3);
-
-  --urlbar-separator-color: hsla(0,0%,16%,.2);
 
   --chrome-content-separator-color: #e1e1e2;
 }
@@ -36,11 +31,6 @@
 
 :root[lwt-popup-brighttext] {
   --panel-separator-color: rgba(249,249,250,.1);
-
-  --arrowpanel-dimmed: rgba(249,249,250,.1);
-  --arrowpanel-dimmed-further: rgba(249,249,250,.15);
-  --arrowpanel-dimmed-even-further: rgba(249,249,250,.2);
-
   --arrowpanel-field-background: rgba(12,12,13,.3);
 }
 
@@ -48,6 +38,12 @@
   appearance: none;
   --tabs-border-color: rgba(0,0,0,.2);
 }
+
+@supports -moz-bool-pref("browser.proton.enabled") {
+#navigator-toolbox:not(:-moz-lwtheme) {
+  background-color: #f0f0f4;
+}
+} /*** END proton ***/
 
 #navigator-toolbox:not(:-moz-lwtheme):-moz-window-inactive {
   --tabs-border-color: rgba(0,0,0,.05);
@@ -75,13 +71,22 @@
 }
 
 #tabbrowser-tabs {
-  --tab-line-color: #0a84ff;
+  --tab-line-color: -moz-accent-color;
 }
 
 #navigator-toolbox toolbarbutton:-moz-lwtheme {
   color: inherit;
   text-shadow: inherit;
 }
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+:root[OSXLionFullscreen]:not(:-moz-lwtheme) :is(#navigator-toolbox, #sidebar-box) {
+  /* Make the toolbar opaque using this color that simulates the
+  -moz-mac-vibrant-toolbar-dark effect. This hides vibrancy, but it also
+  ensures that we can't see #browser through the transparent toolbar. */
+  background-color: #232323;
+}
+} /*** END !proton ***/
 
 /** Begin titlebar **/
 
@@ -119,11 +124,20 @@
   border-top: 1px solid rgba(0,0,0,0.65);
 }
 
-.browser-toolbar:not(.titlebar-color) {
+.browser-toolbar {
   appearance: none;
+}
+
+.browser-toolbar:not(.titlebar-color) {
   background: var(--toolbar-bgcolor);
   color: var(--toolbar-color);
 }
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
+.browser-toolbar.titlebar-color:not(:-moz-lwtheme) {
+  appearance: auto;
+}
+} /* END !proton */
 
 /* Draw the bottom border of the tabs toolbar when titlebar isn't using vibrancy */
 :root:not([inFullscreen], [tabsintitlebar]) #nav-bar:not([tabs-hidden="true"]),
@@ -137,10 +151,12 @@
   position: relative;
 }
 
+@supports not -moz-bool-pref("browser.proton.enabled") {
 #PersonalToolbar:not(:-moz-lwtheme):-moz-window-inactive,
 #nav-bar:not(:-moz-lwtheme):-moz-window-inactive {
   background-color: -moz-mac-chrome-inactive;
 }
+} /* END !proton */
 
 /* ----- BOOKMARK TOOLBAR ----- */
 
@@ -181,13 +197,7 @@
 %include ../shared/toolbarbutton-icons.inc.css
 %include ../shared/menupanel.inc.css
 
-/* Override OSX-specific toolkit findbar button styles */
-.findbar-button {
-  background-image: none !important;
-  box-shadow: none !important;
-  border: none;
-}
-
+@supports not -moz-bool-pref("browser.proton.enabled") {
 /* On Mac, native buttons keep their full opacity when they become disabled
  * and only the glyph or text on top of them becomes less opaque. */
 :root:not([customizing]) #back-button[disabled="true"] {
@@ -198,6 +208,7 @@
    * we need to hard code the value for now. */
   fill-opacity: 0.28;
 }
+} /* END !proton */
 
 /* Inactive elements are faded out on OSX */
 .toolbarbutton-1:not(:hover):-moz-window-inactive,
@@ -218,6 +229,14 @@
 
 %include ../shared/urlbar-searchbar.inc.css
 
+@media not (prefers-contrast) {
+  @supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+  :root:not(:-moz-lwtheme) #urlbar:not([focused="true"]) {
+    --urlbar-box-bgcolor: white;
+  }
+  } /*** END proton ***/
+}
+
 #urlbar,
 #searchbar {
   font-size: 1.25em;
@@ -233,6 +252,14 @@
  * even in non-Latin scripts. */
 #urlbar-input {
   line-height: 1.745em;
+}
+
+/* Move the margin to the parent element to properly position the ::after badge */
+moz-input-box > menupopup .context-menu-add-engine > .menu-iconic-left > .menu-iconic-icon {
+  margin-inline: 0;
+}
+moz-input-box > menupopup .context-menu-add-engine > .menu-iconic-left {
+  margin-inline: 0 5px;
 }
 
 %include ../shared/identity-block/identity-block.inc.css
@@ -461,12 +488,6 @@
 
 /* ----- CONTENT ----- */
 
-.browserContainer > findbar {
-  /* Use the default background gradient from findBar.css */
-  background-color: transparent;
-  color: -moz-DialogText;
-}
-
 .openintabs-menuitem {
   list-style-image: none;
 }
@@ -527,6 +548,7 @@
   padding-top: var(--space-above-tabbar);
 }
 
+@supports not -moz-bool-pref("browser.proton.enabled") {
 #TabsToolbar:not(:-moz-lwtheme) {
   color: #333;
 }
@@ -544,6 +566,7 @@
 .tabbrowser-tab[visuallyselected=true]:not(:-moz-lwtheme) {
   -moz-font-smoothing-background-color: var(--toolbar-bgcolor);
 }
+} /* END !proton */
 
 #tabbrowser-tabs {
   -moz-box-align: stretch;
@@ -624,12 +647,6 @@
 #UITourTooltipClose {
   margin-inline-end: -10px;
   margin-top: -14px;
-}
-
-%include ../shared/contextmenu.inc.css
-
-#context-navigation > .menuitem-iconic {
-  padding-inline: 0;
 }
 
 .cui-widget-panelview[id^=PanelUI-webext-] {

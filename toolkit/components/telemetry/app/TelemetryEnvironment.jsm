@@ -19,7 +19,6 @@ const { ObjectUtils } = ChromeUtils.import(
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-Cu.importGlobalProperties(["Glean"]);
 
 const Utils = TelemetryUtils;
 
@@ -256,6 +255,8 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["browser.search.widget.inNavBar", { what: RECORD_DEFAULTPREF_VALUE }],
   ["browser.startup.homepage", { what: RECORD_PREF_STATE }],
   ["browser.startup.page", { what: RECORD_PREF_VALUE }],
+  ["browser.touchmode.auto", { what: RECORD_PREF_VALUE }],
+  ["browser.uidensity", { what: RECORD_PREF_VALUE }],
   ["browser.urlbar.suggest.searches", { what: RECORD_PREF_VALUE }],
   ["devtools.chrome.enabled", { what: RECORD_PREF_VALUE }],
   ["devtools.debugger.enabled", { what: RECORD_PREF_VALUE }],
@@ -1095,9 +1096,6 @@ EnvironmentCache.prototype = {
 
     if (AppConstants.platform == "win") {
       this._hddData = await Services.sysinfo.diskInfo;
-      Glean.fogValidation.profileDiskIsSsd.set(
-        this._hddData.profile.type == "SSD"
-      );
       let osData = await Services.sysinfo.osInfo;
 
       if (!this._initTask) {

@@ -31,12 +31,22 @@ exclude: true
 - ⚠️ Deprecate the [`MediaElement`][65.11] API to be removed in v91.
   Please use [`MediaSession`][81.6] for media events and control.
   ([bug 1693584]({{bugzilla}}1693584)).
+- ⚠️ Deprecate [`GeckoResult.ALLOW`][89.6] and [`GeckoResult.DENY`][89.7] in
+  favor of [`GeckoResult.allow`][89.8] and [`GeckoResult.deny`][89.9].
+  ([bug 1697270]({{bugzilla}}1697270)).
+- ⚠️ Update [`SessionState`][88.10] to handle null states/strings more gracefully.
+  ([bug 1685486]({{bugzilla}}1685486)).
 
 [88.1]: {{javadoc_uri}}/WebExtension.Download.html#update-org.mozilla.geckoview.WebExtension.Download.Info-
 [88.2]: {{javadoc_uri}}/PanZoomController.html#onTouchEventForDetailResult
 [88.3]: {{javadoc_uri}}/GeckoView.html#onTouchEventForDetailResult
 [88.4]: {{javadoc_uri}}/PanZoomController.html#onTouchEventForResult
 [88.5]: {{javadoc_uri}}/GeckoView.html#onTouchEventForResult
+[88.6]: {{javadoc_uri}}/GeckoResult.html#ALLOW
+[88.7]: {{javadoc_uri}}/GeckoResult.html#DENY
+[88.8]: {{javadoc_uri}}/GeckoResult.html#allow--
+[88.9]: {{javadoc_uri}}/GeckoResult.html#deny--
+[88.10]: {{javadoc_uri}}/GeckoSession.SessionState.html
 
 ## v87
 - ⚠ Added [`WebExtension.DownloadInitData`][87.1] class that can be used to
@@ -49,6 +59,8 @@ exclude: true
   ([bug 1689745]({{bugzilla}}1689745))
 - Added support for HTTPS-only mode to [`GeckoRuntimeSettings`][87.5] via
   [`setAllowInsecureConnections`][87.6].
+- Removed [`JSONException`] throws from [`SessionState.fromString`][87.7], fixed annotations,
+  and clarified null-handling a bit.
   
 [87.1]: {{javadoc_uri}}/WebExtension.DownloadInitData.html
 [87.2]: {{javadoc_uri}}/WebExtension.Download.Info.html
@@ -56,6 +68,7 @@ exclude: true
 [87.4]: {{javadoc_uri}}/Image.ImageProcessingException.html
 [87.5]: {{javadoc_uri}}/GeckoRuntimeSettings.html
 [87.6]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setAllowInsecureConnections-int-
+[87.7]: {{javadoc_uri}}/GeckoSession.SessionState.html#fromString-java.lang.String-
 
 ## v86
 - Removed deprecated [`ContentDelegate#onExternalResponse(GeckoSession, WebResponseInfo)`].
@@ -921,4 +934,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: f97675adf85a37a764245f17806897b796d4a546
+[api-version]: f6ad9d26fbb3880d60970a1f25e406096c9efca0

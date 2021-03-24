@@ -2,9 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::ImageBufferKind;
+use api::{ImageBufferKind, units::DeviceSize};
 use crate::batch::{BatchKey, BatchKind, BrushBatchKind, BatchFeatures};
-use crate::composite::CompositeSurfaceFormat;
+use crate::composite::{CompositeFeatures, CompositeSurfaceFormat};
 use crate::device::{Device, Program, ShaderError};
 use euclid::default::Transform3D;
 use crate::glyph_rasterizer::GlyphFormat;
@@ -22,11 +22,22 @@ use std::rc::Rc;
 
 use webrender_build::shader::{ShaderFeatures, ShaderFeatureFlags, get_shader_features};
 
-pub(crate) fn get_feature_string(kind: ImageBufferKind) -> &'static str {
-    match kind {
-        ImageBufferKind::Texture2D => "TEXTURE_2D",
-        ImageBufferKind::TextureRect => "TEXTURE_RECT",
-        ImageBufferKind::TextureExternal => "TEXTURE_EXTERNAL",
+/// Which extension version to use for texture external support.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TextureExternalVersion {
+    // GL_OES_EGL_image_external_essl3 (Compatible with ESSL 3.0 and
+    // later shaders, but not supported on all GLES 3 devices.)
+    ESSL3,
+    // GL_OES_EGL_image_external (Compatible with ESSL 1.0 shaders)
+    ESSL1,
+}
+
+fn get_feature_string(kind: ImageBufferKind, texture_external_version: TextureExternalVersion) -> &'static str {
+    match (kind, texture_external_version) {
+        (ImageBufferKind::Texture2D, _) => "TEXTURE_2D",
+        (ImageBufferKind::TextureRect, _) => "TEXTURE_RECT",
+        (ImageBufferKind::TextureExternal, TextureExternalVersion::ESSL3) => "TEXTURE_EXTERNAL",
+        (ImageBufferKind::TextureExternal, TextureExternalVersion::ESSL1) => "TEXTURE_EXTERNAL_ESSL1",
     }
 }
 
@@ -127,6 +138,7 @@ impl LazilyCompiledShader {
         &mut self,
         device: &mut Device,
         projection: &Transform3D<f32>,
+        texture_size: Option<DeviceSize>,
         renderer_errors: &mut Vec<RendererError>,
     ) {
         let update_projection = self.cached_projection != *projection;
@@ -138,6 +150,9 @@ impl LazilyCompiledShader {
             }
         };
         device.bind_program(program);
+        if let Some(texture_size) = texture_size {
+            device.set_shader_texture_size(program, texture_size);
+        }
         if update_projection {
             device.set_uniforms(program, projection);
             // thanks NLL for this (`program` technically borrows `self`)
@@ -217,7 +232,9 @@ impl LazilyCompiledShader {
             let vertex_descriptor = match vertex_format {
                 VertexArrayKind::Primitive => &desc::PRIM_INSTANCES,
                 VertexArrayKind::LineDecoration => &desc::LINE,
-                VertexArrayKind::Gradient => &desc::GRADIENT,
+                VertexArrayKind::FastLinearGradient => &desc::FAST_LINEAR_GRADIENT,
+                VertexArrayKind::RadialGradient => &desc::RADIAL_GRADIENT,
+                VertexArrayKind::ConicGradient => &desc::CONIC_GRADIENT,
                 VertexArrayKind::Blur => &desc::BLUR,
                 VertexArrayKind::ClipImage => &desc::CLIP_IMAGE,
                 VertexArrayKind::ClipRect => &desc::CLIP_RECT,
@@ -543,7 +560,9 @@ pub struct Shaders {
     pub cs_border_solid: LazilyCompiledShader,
     pub cs_scale: Vec<Option<LazilyCompiledShader>>,
     pub cs_line_decoration: LazilyCompiledShader,
-    pub cs_gradient: LazilyCompiledShader,
+    pub cs_fast_linear_gradient: LazilyCompiledShader,
+    pub cs_radial_gradient: LazilyCompiledShader,
+    pub cs_conic_gradient: LazilyCompiledShader,
     pub cs_svg_filter: LazilyCompiledShader,
 
     // Brush shaders
@@ -553,8 +572,6 @@ pub struct Shaders {
     brush_blend: BrushShader,
     brush_mix_blend: BrushShader,
     brush_yuv_image: Vec<Option<BrushShader>>,
-    brush_conic_gradient: BrushShader,
-    brush_radial_gradient: BrushShader,
     brush_linear_gradient: BrushShader,
     brush_opacity: BrushShader,
     brush_opacity_aa: BrushShader,
@@ -591,6 +608,9 @@ pub struct Shaders {
     // shaders with WR_FEATURE flags on or off based on the type of image
     // buffer we're sourcing from (see IMAGE_BUFFER_KINDS).
     pub composite_rgba: Vec<Option<LazilyCompiledShader>>,
+    // A faster set of rgba composite shaders that do not support UV clamping
+    // or color modulation.
+    pub composite_rgba_fast_path: Vec<Option<LazilyCompiledShader>>,
     // The same set of composite shaders but with WR_FEATURE_YUV added.
     pub composite_yuv: Vec<Option<LazilyCompiledShader>>,
 }
@@ -608,9 +628,20 @@ impl Shaders {
             device.get_capabilities().supports_advanced_blend_equation &&
             options.allow_advanced_blend_equation;
 
+        let texture_external_version = if device.get_capabilities().supports_image_external_essl3 {
+            TextureExternalVersion::ESSL3
+        } else {
+            TextureExternalVersion::ESSL1
+        };
         let mut shader_flags = match gl_type {
             GlType::Gl => ShaderFeatureFlags::GL,
-            GlType::Gles => ShaderFeatureFlags::GLES | ShaderFeatureFlags::TEXTURE_EXTERNAL,
+            GlType::Gles => {
+                let texture_external_flag = match texture_external_version {
+                    TextureExternalVersion::ESSL3 => ShaderFeatureFlags::TEXTURE_EXTERNAL,
+                    TextureExternalVersion::ESSL1 => ShaderFeatureFlags::TEXTURE_EXTERNAL_ESSL1,
+                };
+                ShaderFeatureFlags::GLES | texture_external_flag
+            }
         };
         shader_flags.set(ShaderFeatureFlags::ADVANCED_BLEND_EQUATION, use_advanced_blend_equation);
         shader_flags.set(ShaderFeatureFlags::DUAL_SOURCE_BLENDING, use_dual_source_blending);
@@ -641,34 +672,6 @@ impl Shaders {
             "brush_mix_blend",
             device,
             &[],
-            options.precache_flags,
-            &shader_list,
-            false /* advanced blend */,
-            false /* dual source */,
-        )?;
-
-        let brush_conic_gradient = BrushShader::new(
-            "brush_conic_gradient",
-            device,
-            if options.enable_dithering {
-               &[DITHERING_FEATURE]
-            } else {
-               &[]
-            },
-            options.precache_flags,
-            &shader_list,
-            false /* advanced blend */,
-            false /* dual source */,
-        )?;
-
-        let brush_radial_gradient = BrushShader::new(
-            "brush_radial_gradient",
-            device,
-            if options.enable_dithering {
-               &[DITHERING_FEATURE]
-            } else {
-               &[]
-            },
             options.precache_flags,
             &shader_list,
             false /* advanced blend */,
@@ -780,7 +783,10 @@ impl Shaders {
         }
         for image_buffer_kind in &IMAGE_BUFFER_KINDS {
             if has_platform_support(*image_buffer_kind, &gl_type) {
-                let feature_string = get_feature_string(*image_buffer_kind);
+                let feature_string = get_feature_string(
+                    *image_buffer_kind,
+                    texture_external_version,
+                );
 
                 let mut features = Vec::new();
                 if feature_string != "" {
@@ -854,11 +860,18 @@ impl Shaders {
             brush_fast_image.push(None);
         }
         for buffer_kind in 0 .. IMAGE_BUFFER_KINDS.len() {
-            if !has_platform_support(IMAGE_BUFFER_KINDS[buffer_kind], &gl_type) {
+            if !has_platform_support(IMAGE_BUFFER_KINDS[buffer_kind], &gl_type)
+                // Brush shaders are not ESSL1 compatible
+                || (IMAGE_BUFFER_KINDS[buffer_kind] == ImageBufferKind::TextureExternal
+                    && texture_external_version == TextureExternalVersion::ESSL1)
+            {
                 continue;
             }
 
-            let feature_string = get_feature_string(IMAGE_BUFFER_KINDS[buffer_kind]);
+            let feature_string = get_feature_string(
+                IMAGE_BUFFER_KINDS[buffer_kind],
+                texture_external_version,
+            );
             if feature_string != "" {
                 image_features.push(feature_string);
             }
@@ -892,44 +905,62 @@ impl Shaders {
         // All yuv_image configuration.
         let mut yuv_features = Vec::new();
         let mut rgba_features = Vec::new();
+        let mut fast_path_features = Vec::new();
         let yuv_shader_num = IMAGE_BUFFER_KINDS.len();
         let mut brush_yuv_image = Vec::new();
         let mut composite_yuv = Vec::new();
         let mut composite_rgba = Vec::new();
+        let mut composite_rgba_fast_path = Vec::new();
         // PrimitiveShader is not clonable. Use push() to initialize the vec.
         for _ in 0 .. yuv_shader_num {
             brush_yuv_image.push(None);
             composite_yuv.push(None);
             composite_rgba.push(None);
+            composite_rgba_fast_path.push(None);
         }
         for image_buffer_kind in &IMAGE_BUFFER_KINDS {
             if has_platform_support(*image_buffer_kind, &gl_type) {
                 yuv_features.push("YUV");
+                fast_path_features.push("FAST_PATH");
 
-                let feature_string = get_feature_string(*image_buffer_kind);
+                let index = Self::get_compositing_shader_index(
+                    *image_buffer_kind,
+                );
+
+                let feature_string = get_feature_string(
+                    *image_buffer_kind,
+                    texture_external_version,
+                );
                 if feature_string != "" {
                     yuv_features.push(feature_string);
                     rgba_features.push(feature_string);
+                    fast_path_features.push(feature_string);
                 }
 
-                let brush_shader = BrushShader::new(
-                    "brush_yuv_image",
-                    device,
-                    &yuv_features,
-                    options.precache_flags,
-                    &shader_list,
-                    false /* advanced blend */,
-                    false /* dual source */,
-                )?;
+                // YUV shaders are not compatible with ESSL1
+                if *image_buffer_kind != ImageBufferKind::TextureExternal ||
+                    texture_external_version == TextureExternalVersion::ESSL3 {
+                    let brush_shader = BrushShader::new(
+                        "brush_yuv_image",
+                        device,
+                        &yuv_features,
+                        options.precache_flags,
+                        &shader_list,
+                        false /* advanced blend */,
+                        false /* dual source */,
+                    )?;
+                    brush_yuv_image[index] = Some(brush_shader);
 
-                let composite_yuv_shader = LazilyCompiledShader::new(
-                    ShaderKind::Composite,
-                    "composite",
-                    &yuv_features,
-                    device,
-                    options.precache_flags,
-                    &shader_list,
-                )?;
+                    let composite_yuv_shader = LazilyCompiledShader::new(
+                        ShaderKind::Composite,
+                        "composite",
+                        &yuv_features,
+                        device,
+                        options.precache_flags,
+                        &shader_list,
+                    )?;
+                    composite_yuv[index] = Some(composite_yuv_shader);
+                }
 
                 let composite_rgba_shader = LazilyCompiledShader::new(
                     ShaderKind::Composite,
@@ -940,15 +971,24 @@ impl Shaders {
                     &shader_list,
                 )?;
 
+                let composite_rgba_fast_path_shader = LazilyCompiledShader::new(
+                    ShaderKind::Composite,
+                    "composite",
+                    &fast_path_features,
+                    device,
+                    options.precache_flags,
+                    &shader_list,
+                )?;
+
                 let index = Self::get_compositing_shader_index(
                     *image_buffer_kind,
                 );
-                brush_yuv_image[index] = Some(brush_shader);
-                composite_yuv[index] = Some(composite_yuv_shader);
                 composite_rgba[index] = Some(composite_rgba_shader);
+                composite_rgba_fast_path[index] = Some(composite_rgba_fast_path_shader);
 
                 yuv_features.clear();
-                rgba_features.clear()
+                rgba_features.clear();
+                fast_path_features.clear();
             }
         }
 
@@ -961,9 +1001,27 @@ impl Shaders {
             &shader_list,
         )?;
 
-        let cs_gradient = LazilyCompiledShader::new(
-            ShaderKind::Cache(VertexArrayKind::Gradient),
-            "cs_gradient",
+        let cs_fast_linear_gradient = LazilyCompiledShader::new(
+            ShaderKind::Cache(VertexArrayKind::FastLinearGradient),
+            "cs_fast_linear_gradient",
+            &[],
+            device,
+            options.precache_flags,
+            &shader_list,
+        )?;
+
+        let cs_radial_gradient = LazilyCompiledShader::new(
+            ShaderKind::Cache(VertexArrayKind::RadialGradient),
+            "cs_radial_gradient",
+            &[],
+            device,
+            options.precache_flags,
+            &shader_list,
+        )?;
+
+        let cs_conic_gradient = LazilyCompiledShader::new(
+            ShaderKind::Cache(VertexArrayKind::ConicGradient),
+            "cs_conic_gradient",
             &[],
             device,
             options.precache_flags,
@@ -993,7 +1051,9 @@ impl Shaders {
             cs_blur_rgba8,
             cs_border_segment,
             cs_line_decoration,
-            cs_gradient,
+            cs_fast_linear_gradient,
+            cs_radial_gradient,
+            cs_conic_gradient,
             cs_border_solid,
             cs_scale,
             cs_svg_filter,
@@ -1003,8 +1063,6 @@ impl Shaders {
             brush_blend,
             brush_mix_blend,
             brush_yuv_image,
-            brush_conic_gradient,
-            brush_radial_gradient,
             brush_linear_gradient,
             brush_opacity,
             brush_opacity_aa,
@@ -1017,6 +1075,7 @@ impl Shaders {
             ps_split_composite,
             ps_clear,
             composite_rgba,
+            composite_rgba_fast_path,
             composite_yuv,
         })
     }
@@ -1029,13 +1088,23 @@ impl Shaders {
         &mut self,
         format: CompositeSurfaceFormat,
         buffer_kind: ImageBufferKind,
+        features: CompositeFeatures,
     ) -> &mut LazilyCompiledShader {
         match format {
             CompositeSurfaceFormat::Rgba => {
-                let shader_index = Self::get_compositing_shader_index(buffer_kind);
-                self.composite_rgba[shader_index]
-                    .as_mut()
-                    .expect("bug: unsupported rgba shader requested")
+                if features.contains(CompositeFeatures::NO_UV_CLAMP)
+                    && features.contains(CompositeFeatures::NO_COLOR_MODULATION)
+                {
+                    let shader_index = Self::get_compositing_shader_index(buffer_kind);
+                    self.composite_rgba_fast_path[shader_index]
+                        .as_mut()
+                        .expect("bug: unsupported rgba fast path shader requested")
+                } else {
+                    let shader_index = Self::get_compositing_shader_index(buffer_kind);
+                    self.composite_rgba[shader_index]
+                        .as_mut()
+                        .expect("bug: unsupported rgba shader requested")
+                }
             }
             CompositeSurfaceFormat::Yuv => {
                 let shader_index = Self::get_compositing_shader_index(buffer_kind);
@@ -1097,9 +1166,7 @@ impl Shaders {
                     BrushBatchKind::MixBlend { .. } => {
                         &mut self.brush_mix_blend
                     }
-                    BrushBatchKind::LinearGradient |
-                    BrushBatchKind::RadialGradient |
-                    BrushBatchKind::ConicGradient => {
+                    BrushBatchKind::LinearGradient => {
                         // SWGL uses a native clip mask implementation that bypasses the shader.
                         // Don't consider it in that case when deciding whether or not to use
                         // an alpha-pass shader.
@@ -1117,8 +1184,6 @@ impl Shaders {
                         }
                         match brush_kind {
                             BrushBatchKind::LinearGradient => &mut self.brush_linear_gradient,
-                            BrushBatchKind::RadialGradient => &mut self.brush_radial_gradient,
-                            BrushBatchKind::ConicGradient => &mut self.brush_conic_gradient,
                             _ => panic!(),
                         }
                     }
@@ -1161,8 +1226,6 @@ impl Shaders {
         self.brush_solid.deinit(device);
         self.brush_blend.deinit(device);
         self.brush_mix_blend.deinit(device);
-        self.brush_conic_gradient.deinit(device);
-        self.brush_radial_gradient.deinit(device);
         self.brush_linear_gradient.deinit(device);
         self.brush_opacity.deinit(device);
         self.brush_opacity_aa.deinit(device);
@@ -1190,13 +1253,20 @@ impl Shaders {
             }
         }
         self.cs_border_solid.deinit(device);
-        self.cs_gradient.deinit(device);
+        self.cs_fast_linear_gradient.deinit(device);
+        self.cs_radial_gradient.deinit(device);
+        self.cs_conic_gradient.deinit(device);
         self.cs_line_decoration.deinit(device);
         self.cs_border_segment.deinit(device);
         self.ps_split_composite.deinit(device);
         self.ps_clear.deinit(device);
 
         for shader in self.composite_rgba {
+            if let Some(shader) = shader {
+                shader.deinit(device);
+            }
+        }
+        for shader in self.composite_rgba_fast_path {
             if let Some(shader) = shader {
                 shader.deinit(device);
             }

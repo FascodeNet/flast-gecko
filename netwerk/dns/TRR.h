@@ -68,6 +68,15 @@ class TRR : public Runnable,
 
   nsresult ChannelStatus() { return mChannelStatus; }
 
+  enum RequestPurpose {
+    Resolve,
+    Confirmation,
+    Blocklist,
+  };
+
+  RequestPurpose Purpose() { return mPurpose; }
+  void SetPurpose(RequestPurpose aPurpose) { mPurpose = aPurpose; }
+
  protected:
   virtual ~TRR() = default;
   virtual DNSPacket* GetOrCreateDNSPacket();
@@ -100,8 +109,6 @@ class TRR : public Runnable,
   void SaveAdditionalRecords(
       const nsClassHashtable<nsCStringHashKey, DOHresp>& aRecords);
 
-  nsresult CreateChannelHelper(nsIURI* aUri, nsIChannel** aResult);
-
   friend class TRRServiceChannel;
   static nsresult SetupTRRServiceChannelInternal(
       nsIHttpChannel* aChannel, bool aUseGet, const nsACString& aContentType);
@@ -115,6 +122,8 @@ class TRR : public Runnable,
   bool mPB;
   DOHresp mDNS;
   nsresult mChannelStatus = NS_OK;
+
+  RequestPurpose mPurpose = Resolve;
 
   // The request timeout in milliseconds. If 0 we will use the default timeout
   // we get from the prefs.

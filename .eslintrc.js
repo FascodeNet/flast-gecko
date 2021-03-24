@@ -127,20 +127,17 @@ module.exports = {
     {
       ...browserTestConfig,
       files: browserTestPaths.map(path => `${path}**`),
-      excludedFiles: "devtools/**",
     },
     {
       ...removeOverrides(mochitestTestConfig),
       files: mochitestTestPaths.map(path => `${path}**`),
       excludedFiles: [
-        "devtools/**",
         "security/manager/ssl/tests/mochitest/browser/**",
       ],
     },
     {
       ...removeOverrides(chromeTestConfig),
       files: chromeTestPaths.map(path => `${path}**`),
-      excludedFiles: ["devtools/**"],
     },
     {
       env: {
@@ -247,6 +244,7 @@ module.exports = {
         "dom/security/test/general/**",
         "dom/security/test/https-only/**",
         "dom/security/test/mixedcontentblocker/**",
+        "dom/security/test/sec-fetch/**",
         "dom/security/test/sri/**",
         "dom/security/test/referrer-policy/**",
         "dom/serviceworkers/**",
@@ -378,25 +376,13 @@ module.exports = {
         "docshell/test/chrome/test_viewsource_forbidden_in_iframe.xhtml",
       ],
       rules: {
-        "dot-notation": "off",
         "no-global-assign": "off",
         "no-octal": "off",
-        "object-shorthand": "off",
-        "mozilla/consistent-if-bracing": "off",
-        "mozilla/no-compare-against-boolean-literals": "off",
-        "mozilla/no-useless-parameters": "off",
         "mozilla/no-useless-removeEventListener": "off",
-        "mozilla/use-cc-etc": "off",
         "mozilla/use-services": "off",
         "mozilla/use-chromeutils-generateqi": "off",
-        "consistent-return": "off",
         "no-delete-var": "off",
         "no-redeclare": "off",
-        "no-sequences": "off",
-        "no-shadow": "off",
-        "no-undef": "off",
-        "no-unused-vars": "off",
-        "no-useless-call": "off",
       },
     },
     {

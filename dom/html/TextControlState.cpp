@@ -1017,12 +1017,10 @@ TextInputListener::HandleEvent(Event* aEvent) {
 
 nsresult TextInputListener::OnEditActionHandled(TextEditor& aTextEditor) {
   if (mFrame) {
+    // XXX Do we still need this or can we just remove the mFrame and
+    // frame.IsAlive() conditions below?
     AutoWeakFrame weakFrame = mFrame;
 
-    nsITextControlFrame* frameBase = do_QueryFrame(mFrame);
-    nsTextControlFrame* frame = static_cast<nsTextControlFrame*>(frameBase);
-    NS_ASSERTION(frame, "Where is our frame?");
-    //
     // Update the undo / redo menus
     //
     size_t numUndoItems = aTextEditor.NumberOfUndoItems();
@@ -1037,23 +1035,18 @@ nsresult TextInputListener::OnEditActionHandled(TextEditor& aTextEditor) {
     }
 
     if (weakFrame.IsAlive()) {
-      HandleValueChanged(frame);
+      HandleValueChanged();
     }
   }
 
   return mTextControlState ? mTextControlState->OnEditActionHandled() : NS_OK;
 }
 
-void TextInputListener::HandleValueChanged(nsTextControlFrame* aFrame) {
+void TextInputListener::HandleValueChanged() {
   // Make sure we know we were changed (do NOT set this to false if there are
   // no undo items; JS could change the value and we'd still need to save it)
   if (mSetValueChanged) {
-    if (!aFrame) {
-      nsITextControlFrame* frameBase = do_QueryFrame(mFrame);
-      aFrame = static_cast<nsTextControlFrame*>(frameBase);
-      NS_ASSERTION(aFrame, "Where is our frame?");
-    }
-    aFrame->SetValueChanged(true);
+    mTxtCtrlElement->SetValueChanged(true);
   }
 
   if (!mSettingValue) {
@@ -1223,8 +1216,8 @@ class MOZ_STACK_CLASS AutoTextControlHandlingState {
     // mTextInputListener by ourselves since TextEditor users special path
     // for the performance.
     mTextInputListener->SettingValue(true);
-    mTextInputListener->SetValueChanged(mValueSetterOptions.contains(
-        ValueSetterOption::UpdateOverlayTextVisibilityAndInvalidateFrame));
+    mTextInputListener->SetValueChanged(
+        mValueSetterOptions.contains(ValueSetterOption::SetValueChanged));
     mEditActionHandled = false;
     // Even if falling back to `TextControlState::SetValueWithoutTextEditor()`
     // due to editor destruction, it shouldn't dispatch "beforeinput" event
@@ -1245,7 +1238,7 @@ class MOZ_STACK_CLASS AutoTextControlHandlingState {
    * OnEditActionHandled() is called when the TextEditor handles something
    * and immediately before dispatching "input" event.
    */
-  MOZ_CAN_RUN_SCRIPT MOZ_MUST_USE nsresult OnEditActionHandled() {
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult OnEditActionHandled() {
     MOZ_ASSERT(!mEditActionHandled);
     mEditActionHandled = true;
     if (!Is(TextControlAction::SetValue)) {
@@ -1255,13 +1248,6 @@ class MOZ_STACK_CLASS AutoTextControlHandlingState {
       mTextInputListener->SetValueChanged(true);
       mTextInputListener->SettingValue(
           mParent && mParent->IsHandling(TextControlAction::SetValue));
-      if (!mValueSetterOptions.contains(
-              ValueSetterOption::
-                  UpdateOverlayTextVisibilityAndInvalidateFrame)) {
-        // Listener doesn't update frame, but it is required for
-        // placeholder
-        mTextControlState.ValueWasChanged();
-      }
     }
     if (!IsOriginalTextControlFrameAlive()) {
       return SetValueWithoutTextEditorAgain() ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
@@ -1280,7 +1266,7 @@ class MOZ_STACK_CLASS AutoTextControlHandlingState {
    * SetValueWithoutTextEditorAgain() should be called if the frame for
    * mTextControlState was destroyed during setting value.
    */
-  MOZ_CAN_RUN_SCRIPT MOZ_MUST_USE bool SetValueWithoutTextEditorAgain() {
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT bool SetValueWithoutTextEditorAgain() {
     MOZ_ASSERT(!IsOriginalTextControlFrameAlive());
     // If the frame was destroyed because of a flush somewhere inside
     // TextEditor, mBoundFrame here will be nullptr.  But it's also
@@ -1291,15 +1277,13 @@ class MOZ_STACK_CLASS AutoTextControlHandlingState {
       return true;
     }
     // XXX It's odd to drop flags except
-    //     ValueSetterOption::UpdateOverlayTextVisibilityAndInvalidateFrame.
+    //     ValueSetterOption::SetValueChanged.
     //     Probably, this intended to drop ValueSetterOption::BySetUserInputAPI
     //     and ValueSetterOption::ByContentAPI, but other flags are added later.
     ErrorResult error;
     AutoTextControlHandlingState handlingSetValueWithoutEditor(
         mTextControlState, TextControlAction::SetValue, mSettingValue,
-        mOldValue,
-        mValueSetterOptions &
-            ValueSetterOption::UpdateOverlayTextVisibilityAndInvalidateFrame,
+        mOldValue, mValueSetterOptions & ValueSetterOption::SetValueChanged,
         error);
     if (error.Failed()) {
       MOZ_ASSERT(error.ErrorCodeIs(NS_ERROR_OUT_OF_MEMORY));
@@ -1402,9 +1386,7 @@ TextControlState::TextControlState(TextControlElement* aOwningElement)
       mEverInited(false),
       mEditorInitialized(false),
       mValueTransferInProgress(false),
-      mSelectionCached(true),
-      mPlaceholderVisibility(false),
-      mPreviewVisibility(false)
+      mSelectionCached(true)
 // When adding more member variable initializations here, add the same
 // also to ::Construct.
 {
@@ -1424,8 +1406,6 @@ TextControlState* TextControlState::Construct(
     state->mEditorInitialized = false;
     state->mValueTransferInProgress = false;
     state->mSelectionCached = true;
-    state->mPlaceholderVisibility = false;
-    state->mPreviewVisibility = false;
     // When adding more member variable initializations here, add the same
     // also to the constructor.
     return state;
@@ -2850,8 +2830,8 @@ bool TextControlState::SetValueWithoutTextEditor(
     mValue.emplace();
   }
 
-  // We can't just early-return here, because ValueWasChanged and
-  // OnValueChanged below still need to be called.
+  // We can't just early-return here, because OnValueChanged below still need to
+  // be called.
   if (!mValue->Equals(aHandlingSetValue.GetSettingValue()) ||
       !StaticPrefs::dom_input_skip_cursor_move_for_same_value_set()) {
     bool handleSettingValue = true;
@@ -2979,7 +2959,6 @@ bool TextControlState::SetValueWithoutTextEditor(
     }
   }
 
-  ValueWasChanged();
   return true;
 }
 
@@ -3013,8 +2992,6 @@ void TextControlState::InitializeKeyboardEventListeners() {
   mSelCon->SetScrollableFrame(mBoundFrame->GetScrollTargetFrame());
 }
 
-void TextControlState::ValueWasChanged() { UpdateOverlayTextVisibility(true); }
-
 void TextControlState::SetPreviewText(const nsAString& aValue, bool aNotify) {
   // If we don't have a preview div, there's nothing to do.
   Element* previewDiv = GetPreviewNode();
@@ -3027,8 +3004,6 @@ void TextControlState::SetPreviewText(const nsAString& aValue, bool aNotify) {
   nsContentUtils::RemoveNewlines(previewValue);
   MOZ_ASSERT(previewDiv->GetFirstChild(), "preview div has no child");
   previewDiv->GetFirstChild()->AsText()->SetText(previewValue, aNotify);
-
-  UpdateOverlayTextVisibility(aNotify);
 }
 
 void TextControlState::GetPreviewText(nsAString& aValue) {
@@ -3043,24 +3018,6 @@ void TextControlState::GetPreviewText(nsAString& aValue) {
 
   aValue.Truncate();
   text->AppendTo(aValue);
-}
-
-void TextControlState::UpdateOverlayTextVisibility(bool aNotify) {
-  nsAutoString value, previewValue;
-  bool valueIsEmpty = !HasNonEmptyValue();
-  GetPreviewText(previewValue);
-
-  mPreviewVisibility = valueIsEmpty && !previewValue.IsEmpty();
-  mPlaceholderVisibility = valueIsEmpty && previewValue.IsEmpty();
-
-  if (mPlaceholderVisibility && !StaticPrefs::dom_placeholder_show_on_focus()) {
-    mPlaceholderVisibility =
-        !nsContentUtils::IsFocusedContent(mTextCtrlElement);
-  }
-
-  if (mBoundFrame && aNotify) {
-    mBoundFrame->InvalidateFrame();
-  }
 }
 
 bool TextControlState::EditorHasComposition() {

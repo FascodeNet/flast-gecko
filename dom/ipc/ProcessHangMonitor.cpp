@@ -14,6 +14,7 @@
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
@@ -304,7 +305,7 @@ class HangMonitorParent : public PProcessHangMonitorParent,
   bool mShutdownDone;
   // Map from plugin ID to crash dump ID. Protected by
   // mBrowserCrashDumpHashLock.
-  nsDataHashtable<nsUint32HashKey, nsString> mBrowserCrashDumpIds;
+  nsTHashMap<nsUint32HashKey, nsString> mBrowserCrashDumpIds;
   Mutex mBrowserCrashDumpHashLock;
   mozilla::ipc::TaskFactory<HangMonitorParent> mMainThreadTaskFactory;
 };
@@ -877,23 +878,28 @@ void HangMonitorParent::ClearHangNotification() {
 bool HangMonitorParent::TakeBrowserMinidump(const PluginHangData& aPhd,
                                             nsString& aCrashId) {
   MutexAutoLock lock(mBrowserCrashDumpHashLock);
-  if (!mBrowserCrashDumpIds.Get(aPhd.pluginId(), &aCrashId)) {
-    nsCOMPtr<nsIFile> browserDump;
-    if (CrashReporter::TakeMinidump(getter_AddRefs(browserDump), true)) {
-      if (!CrashReporter::GetIDFromMinidump(browserDump, aCrashId) ||
-          aCrashId.IsEmpty()) {
-        browserDump->Remove(false);
-        NS_WARNING(
-            "Failed to generate timely browser stack, "
-            "this is bad for plugin hang analysis!");
-      } else {
-        mBrowserCrashDumpIds.InsertOrUpdate(aPhd.pluginId(), aCrashId);
-        return true;
-      }
-    }
-  }
+  return mBrowserCrashDumpIds.WithEntryHandle(
+      aPhd.pluginId(), [&](auto&& entry) {
+        if (entry) {
+          aCrashId = entry.Data();
+        } else {
+          nsCOMPtr<nsIFile> browserDump;
+          if (CrashReporter::TakeMinidump(getter_AddRefs(browserDump), true)) {
+            if (!CrashReporter::GetIDFromMinidump(browserDump, aCrashId) ||
+                aCrashId.IsEmpty()) {
+              browserDump->Remove(false);
+              NS_WARNING(
+                  "Failed to generate timely browser stack, "
+                  "this is bad for plugin hang analysis!");
+            } else {
+              entry.Insert(aCrashId);
+              return true;
+            }
+          }
+        }
 
-  return false;
+        return false;
+      });
 }
 
 mozilla::ipc::IPCResult HangMonitorParent::RecvHangEvidence(
@@ -1187,9 +1193,10 @@ HangMonitoredProcess::TerminatePlugin() {
 }
 
 NS_IMETHODIMP
-HangMonitoredProcess::IsReportForBrowser(nsFrameLoader* aFrameLoader,
-                                         bool* aResult) {
+HangMonitoredProcess::IsReportForBrowserOrChildren(nsFrameLoader* aFrameLoader,
+                                                   bool* aResult) {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
+  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
 
   if (!mActor) {
     *aResult = false;
@@ -1198,13 +1205,22 @@ HangMonitoredProcess::IsReportForBrowser(nsFrameLoader* aFrameLoader,
 
   NS_ENSURE_STATE(aFrameLoader);
 
-  BrowserParent* tp = BrowserParent::GetFrom(aFrameLoader);
-  if (!tp) {
-    *aResult = false;
-    return NS_OK;
+  AutoTArray<RefPtr<BrowsingContext>, 10> bcs;
+  bcs.AppendElement(aFrameLoader->GetExtantBrowsingContext());
+  while (!bcs.IsEmpty()) {
+    RefPtr<BrowsingContext> bc = bcs[bcs.Length() - 1];
+    bcs.RemoveLastElement();
+    if (!bc) {
+      continue;
+    }
+    if (mContentParent == bc->Canonical()->GetContentParent()) {
+      *aResult = true;
+      return NS_OK;
+    }
+    bc->GetChildren(bcs);
   }
 
-  *aResult = mContentParent == tp->Manager();
+  *aResult = false;
   return NS_OK;
 }
 

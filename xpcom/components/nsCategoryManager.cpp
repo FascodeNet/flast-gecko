@@ -135,11 +135,11 @@ CategoryEnumerator* CategoryEnumerator::Create(
     return nullptr;
   }
 
-  for (auto iter = aTable.Iter(); !iter.Done(); iter.Next()) {
+  for (const auto& entry : aTable) {
     // if a category has no entries, we pretend it doesn't exist
-    CategoryNode* aNode = iter.UserData();
+    CategoryNode* aNode = entry.GetWeak();
     if (aNode->Count()) {
-      enumObj->mArray[enumObj->mCount++] = iter.Key();
+      enumObj->mArray[enumObj->mCount++] = entry.GetKey();
     }
   }
 
@@ -677,14 +677,12 @@ void NS_CreateServicesFromCategory(const char* aCategory, nsISupports* aOrigin,
       // try an observer, if it implements it.
       nsCOMPtr<nsIObserver> observer = do_QueryInterface(instance);
       if (observer) {
-#ifdef MOZ_GECKO_PROFILER
         nsPrintfCString profilerStr("%s (%s)", aObserverTopic,
                                     entryString.get());
         AUTO_PROFILER_MARKER_TEXT("Category observer notification", OTHER,
                                   MarkerStack::Capture(), profilerStr);
         AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING_NONSENSITIVE(
             "Category observer notification -", OTHER, profilerStr);
-#endif
 
         observer->Observe(aOrigin, aObserverTopic,
                           aObserverData ? aObserverData : u"");

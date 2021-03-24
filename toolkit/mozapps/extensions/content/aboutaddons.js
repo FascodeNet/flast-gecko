@@ -82,7 +82,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-const PLUGIN_ICON_URL = "chrome://global/skin/plugins/plugin.svg";
+const PLUGIN_ICON_URL = "chrome://global/skin/icons/plugin.svg";
 const EXTENSION_ICON_URL =
   "chrome://mozapps/skin/extensions/extensionGeneric.svg";
 const BUILTIN_THEME_PREVIEWS = new Map([
@@ -111,6 +111,10 @@ if (
   BUILTIN_THEME_PREVIEWS.set(
     "firefox-compact-proton-dark@mozilla.org",
     "chrome://mozapps/content/extensions/firefox-compact-dark.svg"
+  );
+  BUILTIN_THEME_PREVIEWS.set(
+    "firefox-compact-proton-light@mozilla.org",
+    "chrome://mozapps/content/extensions/firefox-compact-light.svg"
   );
 }
 
@@ -1764,6 +1768,8 @@ class DiscoverButton extends CategoryButton {
 }
 customElements.define("discover-button", DiscoverButton, { extends: "button" });
 
+// Create the button-group element so it gets loaded.
+document.createElement("button-group");
 class CategoriesBox extends customElements.get("button-group") {
   constructor() {
     super();
@@ -3110,10 +3116,8 @@ class AddonCard extends HTMLElement {
         case "remove":
           {
             this.panel.hide();
-            let {
-              remove,
-              report,
-            } = windowRoot.ownerGlobal.BrowserAddonUI.promptRemoveExtension(
+            let { BrowserAddonUI } = windowRoot.ownerGlobal;
+            let { remove, report } = await BrowserAddonUI.promptRemoveExtension(
               addon
             );
             let value = remove ? "accepted" : "cancelled";

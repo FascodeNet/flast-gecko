@@ -50,6 +50,7 @@
 #include "nsGtkKeyUtils.h"
 #include "nsGtkCursors.h"
 #include "ScreenHelperGTK.h"
+#include "WidgetUtilsGtk.h"
 
 #include <gtk/gtk.h>
 #include <gtk/gtkx.h>
@@ -1108,6 +1109,10 @@ void nsWindow::ApplySizeConstraints(void) {
 
     uint32_t hints = 0;
     if (mSizeConstraints.mMinSize != LayoutDeviceIntSize(0, 0)) {
+      if (!mIsX11Display) {
+        gtk_widget_set_size_request(GTK_WIDGET(mContainer), geometry.min_width,
+                                    geometry.min_height);
+      }
       AddCSDDecorationSize(&geometry.min_width, &geometry.min_height);
       hints |= GDK_HINT_MIN_SIZE;
       LOG(("nsWindow::ApplySizeConstraints [%p] min size %d %d\n", (void*)this,
@@ -2167,7 +2172,7 @@ guint32 nsWindow::GetLastUserInputTime() {
   // button and key releases.  Therefore use the most recent of
   // gdk_x11_display_get_user_time and the last time that we have seen.
   GdkDisplay* gdkDisplay = gdk_display_get_default();
-  guint32 timestamp = GDK_IS_X11_DISPLAY(gdkDisplay)
+  guint32 timestamp = GdkIsX11Display(gdkDisplay)
                           ? gdk_x11_display_get_user_time(gdkDisplay)
                           : gtk_get_current_event_time();
 
@@ -2485,7 +2490,7 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
     case NS_NATIVE_DISPLAY: {
 #ifdef MOZ_X11
       GdkDisplay* gdkDisplay = gdk_display_get_default();
-      if (gdkDisplay && GDK_IS_X11_DISPLAY(gdkDisplay)) {
+      if (GdkIsX11Display(gdkDisplay)) {
         return GDK_DISPLAY_XDISPLAY(gdkDisplay);
       }
 #endif /* MOZ_X11 */
@@ -4333,6 +4338,10 @@ gboolean nsWindow::OnTouchpadPinchEvent(GdkEventTouchpadPinch* aEvent) {
                      : PreviousSpan),
         KeymapWrapper::ComputeKeyModifiers(aEvent->state));
 
+    double deltaY = event.ComputeDeltaY(this);
+    gfx::IntPoint lineOrPageDelta = PinchGestureInput::GetIntegerDeltaForEvent(
+        (aEvent->phase == GDK_TOUCHPAD_GESTURE_PHASE_BEGIN), 0, deltaY);
+    event.mLineOrPageDeltaY = lineOrPageDelta.y;
     DispatchPinchGestureInput(event);
   }
   return TRUE;
@@ -4856,6 +4865,14 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
       // the drawing window
       mGdkWindow = gtk_widget_get_window(eventWidget);
 
+#ifdef MOZ_WAYLAND
+      if (mIsX11Display && gfx::gfxVars::UseEGL() && isAccelerated) {
+        mCompositorInitiallyPaused = true;
+        mNeedsCompositorResume = true;
+        MaybeResumeCompositor();
+      }
+#endif
+
       if (mWindowType == eWindowType_popup) {
         // gdk does not automatically set the cursor for "temporary"
         // windows, which are what gtk uses for popups.
@@ -4962,6 +4979,9 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                            G_CALLBACK(settings_changed_cb), this);
     g_signal_connect_after(default_settings, "notify::gtk-xft-dpi",
                            G_CALLBACK(settings_xft_dpi_changed_cb), this);
+    // Text resolution affects system fonts and widget sizes.
+    g_signal_connect_after(default_settings, "notify::resolution",
+                           G_CALLBACK(settings_changed_cb), this);
     // For remote LookAndFeel, to refresh the content processes' copies:
     g_signal_connect_after(default_settings, "notify::gtk-cursor-blink-time",
                            G_CALLBACK(settings_changed_cb), this);
@@ -7060,7 +7080,7 @@ static gboolean key_press_event_cb(GtkWidget* widget, GdkEventKey* event) {
 #    define KeyPress 2
 #  endif
   GdkDisplay* gdkDisplay = gtk_widget_get_display(widget);
-  if (GDK_IS_X11_DISPLAY(gdkDisplay)) {
+  if (GdkIsX11Display(gdkDisplay)) {
     Display* dpy = GDK_DISPLAY_XDISPLAY(gdkDisplay);
     while (XPending(dpy)) {
       XEvent next_event;
@@ -8169,7 +8189,7 @@ nsWindow::GtkWindowDecoration nsWindow::GetSystemGtkWindowDecoration() {
 
   // nsWindow::GetSystemGtkWindowDecoration can be called from various threads
   // so we can't use gfxPlatformGtk here.
-  if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
+  if (GdkIsWaylandDisplay()) {
     sGtkWindowDecoration = GTK_DECORATION_CLIENT;
     return sGtkWindowDecoration;
   }

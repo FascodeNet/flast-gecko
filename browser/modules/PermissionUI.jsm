@@ -596,8 +596,11 @@ var PermissionPromptPrototype = {
       options.hideClose = true;
     }
 
-    if (protonDoorhangersEnabled && !options.hasOwnProperty("opinionated")) {
-      options.opinionated = false;
+    if (
+      protonDoorhangersEnabled &&
+      !mainAction.hasOwnProperty("disableHighlight")
+    ) {
+      mainAction.disableHighlight = true;
     }
 
     options.eventCallback = (topic, nextRemovalReason, isCancel) => {
@@ -794,13 +797,6 @@ GeolocationPermissionPrompt.prototype = {
     }
     gBrowser.updateBrowserSharing(this.browser, { geo: state });
 
-    let devicePermOrigins = this.browser.getDevicePermissionOrigins("geo");
-    if (!state) {
-      devicePermOrigins.delete(this.principal.origin);
-      return;
-    }
-    devicePermOrigins.add(this.principal.origin);
-
     // Update last access timestamp
     let host;
     try {
@@ -888,22 +884,22 @@ XRPermissionPrompt.prototype = {
 
   get message() {
     if (this.principal.schemeIs("file")) {
-      return gBrowserBundle.GetStringFromName("xr.shareWithFile3");
+      return gBrowserBundle.GetStringFromName("xr.shareWithFile4");
     }
 
-    return gBrowserBundle.formatStringFromName("xr.shareWithSite3", ["<>"]);
+    return gBrowserBundle.formatStringFromName("xr.shareWithSite4", ["<>"]);
   },
 
   get promptActions() {
     return [
       {
-        label: gBrowserBundle.GetStringFromName("xr.allow"),
-        accessKey: gBrowserBundle.GetStringFromName("xr.allow.accesskey"),
+        label: gBrowserBundle.GetStringFromName("xr.allow2"),
+        accessKey: gBrowserBundle.GetStringFromName("xr.allow2.accesskey"),
         action: SitePermissions.ALLOW,
       },
       {
-        label: gBrowserBundle.GetStringFromName("xr.dontAllow"),
-        accessKey: gBrowserBundle.GetStringFromName("xr.dontAllow.accesskey"),
+        label: gBrowserBundle.GetStringFromName("xr.block"),
+        accessKey: gBrowserBundle.GetStringFromName("xr.block.accesskey"),
         action: SitePermissions.BLOCK,
       },
     ];
@@ -997,7 +993,7 @@ DesktopNotificationPermissionPrompt.prototype = {
 
   get message() {
     return gBrowserBundle.formatStringFromName(
-      "webNotifications.receiveFromSite2",
+      "webNotifications.receiveFromSite3",
       ["<>"]
     );
   },
@@ -1005,9 +1001,9 @@ DesktopNotificationPermissionPrompt.prototype = {
   get promptActions() {
     let actions = [
       {
-        label: gBrowserBundle.GetStringFromName("webNotifications.allow"),
+        label: gBrowserBundle.GetStringFromName("webNotifications.allow2"),
         accessKey: gBrowserBundle.GetStringFromName(
-          "webNotifications.allow.accesskey"
+          "webNotifications.allow2.accesskey"
         ),
         action: SitePermissions.ALLOW,
         scope: SitePermissions.SCOPE_PERSISTENT,
@@ -1022,13 +1018,19 @@ DesktopNotificationPermissionPrompt.prototype = {
         action: SitePermissions.BLOCK,
       });
     }
+
+    let isBrowserPrivate = PrivateBrowsingUtils.isBrowserPrivate(this.browser);
     actions.push({
-      label: gBrowserBundle.GetStringFromName("webNotifications.never"),
-      accessKey: gBrowserBundle.GetStringFromName(
-        "webNotifications.never.accesskey"
-      ),
+      label: isBrowserPrivate
+        ? gBrowserBundle.GetStringFromName("webNotifications.block")
+        : gBrowserBundle.GetStringFromName("webNotifications.alwaysBlock"),
+      accessKey: isBrowserPrivate
+        ? gBrowserBundle.GetStringFromName("webNotifications.block.accesskey")
+        : gBrowserBundle.GetStringFromName(
+            "webNotifications.alwaysBlock.accesskey"
+          ),
       action: SitePermissions.BLOCK,
-      scope: PrivateBrowsingUtils.isBrowserPrivate(this.browser)
+      scope: isBrowserPrivate
         ? SitePermissions.SCOPE_SESSION
         : SitePermissions.SCOPE_PERSISTENT,
     });
@@ -1036,22 +1038,29 @@ DesktopNotificationPermissionPrompt.prototype = {
   },
 
   get postPromptActions() {
-    return [
+    let actions = [
       {
-        label: gBrowserBundle.GetStringFromName("webNotifications.allow"),
+        label: gBrowserBundle.GetStringFromName("webNotifications.allow2"),
         accessKey: gBrowserBundle.GetStringFromName(
-          "webNotifications.allow.accesskey"
+          "webNotifications.allow2.accesskey"
         ),
         action: SitePermissions.ALLOW,
       },
-      {
-        label: gBrowserBundle.GetStringFromName("webNotifications.never"),
-        accessKey: gBrowserBundle.GetStringFromName(
-          "webNotifications.never.accesskey"
-        ),
-        action: SitePermissions.BLOCK,
-      },
     ];
+
+    let isBrowserPrivate = PrivateBrowsingUtils.isBrowserPrivate(this.browser);
+    actions.push({
+      label: isBrowserPrivate
+        ? gBrowserBundle.GetStringFromName("webNotifications.block")
+        : gBrowserBundle.GetStringFromName("webNotifications.alwaysBlock"),
+      accessKey: isBrowserPrivate
+        ? gBrowserBundle.GetStringFromName("webNotifications.block.accesskey")
+        : gBrowserBundle.GetStringFromName(
+            "webNotifications.alwaysBlock.accesskey"
+          ),
+      action: SitePermissions.BLOCK,
+    });
+    return actions;
   },
 };
 
@@ -1083,24 +1092,11 @@ PersistentStoragePermissionPrompt.prototype = {
     let learnMoreURL =
       Services.urlFormatter.formatURLPref("app.support.baseURL") +
       "storage-permissions";
-    let options = {
+    return {
       learnMoreURL,
       displayURI: false,
       name: this.getPrincipalName(),
-      checkbox: {
-        show:
-          !this.principal.schemeIs("file") &&
-          !PrivateBrowsingUtils.isWindowPrivate(this.browser.ownerGlobal),
-      },
     };
-
-    if (options.checkbox.show) {
-      options.checkbox.label = gBrowserBundle.GetStringFromName(
-        "persistentStorage.remember"
-      );
-    }
-
-    return options;
   },
 
   get notificationID() {

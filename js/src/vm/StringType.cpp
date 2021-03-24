@@ -651,11 +651,10 @@ JSLinearString* JSRope::flattenInternal(JSContext* maybecx) {
   JSString* str = this;
   CharT* pos;
 
-  // JSString::setFlattenData() is used to store a tagged pointer to the
-  // parent node. The tag indicates what to do when we return to the parent.
-  static const uintptr_t Tag_Mask = 0x3;
-  static const uintptr_t Tag_FinishNode = 0x0;
-  static const uintptr_t Tag_VisitRightChild = 0x1;
+  // JSString::setFlattenData() is used to store a tagged pointer to the parent
+  // node. These flags indicates what to do when we return to the parent.
+  static constexpr uintptr_t Flag_FinishNode = 0;
+  static constexpr uintptr_t Flag_VisitRightChild = Cell::USER_BIT;
 
   AutoCheckCannotGC nogc;
 
@@ -711,7 +710,7 @@ JSLinearString* JSRope::flattenInternal(JSContext* maybecx) {
         // 'child' will be post-barriered during the later traversal.
         MOZ_ASSERT(child->isRope());
         str->setNonInlineChars(wholeChars);
-        child->setFlattenData(uintptr_t(str) | Tag_VisitRightChild);
+        child->setFlattenData(str, Flag_VisitRightChild);
         str = child;
       }
       if (b == WithIncrementalBarrier) {
@@ -771,7 +770,7 @@ first_visit_node : {
   str->setNonInlineChars(pos);
   if (left.isRope()) {
     /* Return to this node when 'left' done, then goto visit_right_child. */
-    left.setFlattenData(uintptr_t(str) | Tag_VisitRightChild);
+    left.setFlattenData(str, Flag_VisitRightChild);
     str = &left;
     goto first_visit_node;
   }
@@ -782,7 +781,7 @@ visit_right_child : {
   JSString& right = *str->d.s.u3.right;
   if (right.isRope()) {
     /* Return to this node when 'right' done, then goto finish_node. */
-    right.setFlattenData(uintptr_t(str) | Tag_FinishNode);
+    right.setFlattenData(str, Flag_FinishNode);
     str = &right;
     goto first_visit_node;
   }
@@ -808,13 +807,14 @@ finish_node : {
 
     return &this->asLinear();
   }
-  uintptr_t flattenData;
+  JSString* parent;
+  uintptr_t flattenFlags;
   uint32_t len = pos - str->nonInlineCharsRaw<CharT>();
   if constexpr (std::is_same_v<CharT, char16_t>) {
-    flattenData = str->unsetFlattenData(len, INIT_DEPENDENT_FLAGS);
+    parent = str->unsetFlattenData(len, INIT_DEPENDENT_FLAGS, &flattenFlags);
   } else {
-    flattenData =
-        str->unsetFlattenData(len, INIT_DEPENDENT_FLAGS | LATIN1_CHARS_BIT);
+    parent = str->unsetFlattenData(len, INIT_DEPENDENT_FLAGS | LATIN1_CHARS_BIT,
+                                   &flattenFlags);
   }
   str->d.s.u3.base = (JSLinearString*)this; /* will be true on exit */
 
@@ -831,11 +831,11 @@ finish_node : {
     bufferIfNursery->putWholeCell(str);
   }
 
-  str = (JSString*)(flattenData & ~Tag_Mask);
-  if ((flattenData & Tag_Mask) == Tag_VisitRightChild) {
+  str = parent;
+  if (flattenFlags == Flag_VisitRightChild) {
     goto visit_right_child;
   }
-  MOZ_ASSERT((flattenData & Tag_Mask) == Tag_FinishNode);
+  MOZ_ASSERT(flattenFlags == Flag_FinishNode);
   goto finish_node;
 }
 }
@@ -1197,7 +1197,7 @@ bool js::CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp) {
   uint32_t c = 0;
 
   if (index != 0) {
-    /* Consume remaining characters only if the first character isn't '0'. */
+    // Consume remaining characters only if the first character isn't '0'.
     while (cp < end && IsAsciiDigit(*cp)) {
       oldIndex = index;
       c = AsciiDigitToNumber(*cp);
@@ -1206,17 +1206,17 @@ bool js::CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp) {
     }
   }
 
-  /* It's not an integer index if there are characters after the number. */
+  // It's not an integer index if there are characters after the number.
   if (cp != end) {
     return false;
   }
 
-  /*
-   * Look out for "4294967296" and larger-number strings that fit in
-   * UINT32_CHAR_BUFFER_LENGTH: only unsigned 32-bit integers shall pass.
-   */
-  if (oldIndex < UINT32_MAX / 10 ||
-      (oldIndex == UINT32_MAX / 10 && c <= (UINT32_MAX % 10))) {
+  // Look out for "4294967295" and larger-number strings that fit in
+  // UINT32_CHAR_BUFFER_LENGTH: only unsigned 32-bit integers less than or equal
+  // to MAX_ARRAY_INDEX shall pass.
+  if (oldIndex < MAX_ARRAY_INDEX / 10 ||
+      (oldIndex == MAX_ARRAY_INDEX / 10 && c <= (MAX_ARRAY_INDEX % 10))) {
+    MOZ_ASSERT(index <= MAX_ARRAY_INDEX);
     *indexp = index;
     return true;
   }
@@ -1230,17 +1230,41 @@ template bool js::CheckStringIsIndex(const char16_t* s, size_t length,
                                      uint32_t* indexp);
 
 template <typename CharT>
-/* static */
-bool JSLinearString::isIndexSlow(const CharT* s, size_t length,
-                                 uint32_t* indexp) {
-  return js::CheckStringIsIndex(s, length, indexp);
+static uint32_t AtomCharsToIndex(const CharT* s, size_t length) {
+  // Chars are known to be a valid index value (as determined by
+  // CheckStringIsIndex) that didn't fit in the "index value" bits in the
+  // header.
+
+  MOZ_ASSERT(length > 0);
+  MOZ_ASSERT(length <= UINT32_CHAR_BUFFER_LENGTH);
+
+  RangedPtr<const CharT> cp(s, length);
+  const RangedPtr<const CharT> end(s + length, s, length);
+
+  MOZ_ASSERT(IsAsciiDigit(*cp));
+  uint32_t index = AsciiDigitToNumber(*cp++);
+  MOZ_ASSERT(index != 0);
+
+  while (cp < end) {
+    MOZ_ASSERT(IsAsciiDigit(*cp));
+    index = 10 * index + AsciiDigitToNumber(*cp);
+    cp++;
+  }
+
+  MOZ_ASSERT(index <= MAX_ARRAY_INDEX);
+  return index;
 }
 
-template bool JSLinearString::isIndexSlow(const Latin1Char* s, size_t length,
-                                          uint32_t* indexp);
+uint32_t JSAtom::getIndexSlow() const {
+  MOZ_ASSERT(isIndex());
+  MOZ_ASSERT(!hasIndexValue());
 
-template bool JSLinearString::isIndexSlow(const char16_t* s, size_t length,
-                                          uint32_t* indexp);
+  size_t len = length();
+
+  AutoCheckCannotGC nogc;
+  return hasLatin1Chars() ? AtomCharsToIndex(latin1Chars(nogc), len)
+                          : AtomCharsToIndex(twoByteChars(nogc), len);
+}
 
 constexpr StaticStrings::SmallCharTable StaticStrings::createSmallCharTable() {
   SmallCharTable array{};
@@ -1305,7 +1329,7 @@ bool StaticStrings::init(JSContext* cx) {
 
     // Static string initialization can not race, so allow even without the
     // lock.
-    intStaticTable[i]->maybeInitializeIndex(i, true);
+    intStaticTable[i]->setIsIndex(i);
   }
 
   return true;

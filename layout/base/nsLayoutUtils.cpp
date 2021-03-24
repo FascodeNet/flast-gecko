@@ -112,7 +112,7 @@
 #include "nsCSSProps.h"
 #include "nsCSSPseudoElements.h"
 #include "nsCSSRendering.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDeckFrame.h"
 #include "nsDisplayList.h"
 #include "nsFlexContainerFrame.h"
@@ -188,7 +188,7 @@ typedef nsStyleTransformMatrix::TransformReferenceBox TransformReferenceBox;
 
 static ViewID sScrollIdCounter = ScrollableLayerGuid::START_SCROLL_ID;
 
-typedef nsDataHashtable<nsUint64HashKey, nsIContent*> ContentMap;
+typedef nsTHashMap<nsUint64HashKey, nsIContent*> ContentMap;
 static ContentMap* sContentMap = nullptr;
 static ContentMap& GetContentMap() {
   if (!sContentMap) {
@@ -561,9 +561,7 @@ void nsLayoutUtils::UnionChildOverflow(nsIFrame* aFrame,
       continue;
     }
     for (nsIFrame* child : list) {
-      OverflowAreas childOverflow =
-          child->GetOverflowAreas() + child->GetPosition();
-      aOverflowAreas.UnionWith(childOverflow);
+      aOverflowAreas.UnionWith(child->GetOverflowAreasRelativeToParent());
     }
   }
 }
@@ -690,6 +688,10 @@ bool nsLayoutUtils::AsyncPanZoomEnabled(const nsIFrame* aFrame) {
 
 bool nsLayoutUtils::AllowZoomingForDocument(
     const mozilla::dom::Document* aDocument) {
+  if (aDocument->GetPresShell() &&
+      !aDocument->GetPresShell()->AsyncPanZoomEnabled()) {
+    return false;
+  }
   // True if we allow zooming for all documents on this platform, or if we are
   // in RDM and handling meta viewports, which force zoom under some
   // circumstances.
@@ -988,8 +990,8 @@ nsIFrame* nsLayoutUtils::GetFloatFromPlaceholder(nsIFrame* aFrame) {
 }
 
 // static
-nsIFrame* nsLayoutUtils::GetCrossDocParentFrame(const nsIFrame* aFrame,
-                                                nsPoint* aExtraOffset) {
+nsIFrame* nsLayoutUtils::GetCrossDocParentFrameInProcess(
+    const nsIFrame* aFrame, nsPoint* aCrossDocOffset) {
   nsIFrame* p = aFrame->GetParent();
   if (p) {
     return p;
@@ -1009,13 +1011,19 @@ nsIFrame* nsLayoutUtils::GetCrossDocParentFrame(const nsIFrame* aFrame,
   }
 
   p = v->GetFrame();
-  if (p && aExtraOffset) {
+  if (p && aCrossDocOffset) {
     nsSubDocumentFrame* subdocumentFrame = do_QueryFrame(p);
     MOZ_ASSERT(subdocumentFrame);
-    *aExtraOffset += subdocumentFrame->GetExtraOffset();
+    *aCrossDocOffset += subdocumentFrame->GetExtraOffset();
   }
 
   return p;
+}
+
+// static
+nsIFrame* nsLayoutUtils::GetCrossDocParentFrame(const nsIFrame* aFrame,
+                                                nsPoint* aCrossDocOffset) {
+  return GetCrossDocParentFrameInProcess(aFrame, aCrossDocOffset);
 }
 
 // static
@@ -2944,10 +2952,10 @@ void PrintHitTestInfoStats(nsDisplayList* aList) {
 // Apply a batch of effects updates generated during a paint to their
 // respective remote browsers.
 static void ApplyEffectsUpdates(
-    const nsDataHashtable<nsPtrHashKey<RemoteBrowser>, EffectsInfo>& aUpdates) {
-  for (auto iter = aUpdates.ConstIter(); !iter.Done(); iter.Next()) {
-    auto browser = iter.Key();
-    auto update = iter.Data();
+    const nsTHashMap<nsPtrHashKey<RemoteBrowser>, EffectsInfo>& aUpdates) {
+  for (const auto& entry : aUpdates) {
+    auto* browser = entry.GetKey();
+    const auto& update = entry.GetData();
     browser->UpdateEffects(update);
   }
 }
@@ -7945,7 +7953,7 @@ nsMargin nsLayoutUtils::ScrollbarAreaToExcludeFromCompositionBoundsFor(
   }
   bool isRootScrollFrame = aScrollFrame == presShell->GetRootScrollFrame();
   bool isRootContentDocRootScrollFrame =
-      isRootScrollFrame && presContext->IsRootContentDocument();
+      isRootScrollFrame && presContext->IsRootContentDocumentCrossProcess();
   if (!isRootContentDocRootScrollFrame) {
     return nsMargin();
   }

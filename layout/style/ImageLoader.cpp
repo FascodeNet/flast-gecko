@@ -568,7 +568,7 @@ static void InvalidateImages(nsIFrame* aFrame, imgIRequest* aRequest,
     nsIFrame* f = aFrame;
     while (f && !f->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
       SVGObserverUtils::InvalidateDirectRenderingObservers(f);
-      f = nsLayoutUtils::GetCrossDocParentFrame(f);
+      f = nsLayoutUtils::GetCrossDocParentFrameInProcess(f);
     }
   }
 
@@ -663,7 +663,6 @@ void GlobalImageObserver::Notify(imgIRequest* aRequest, int32_t aType,
 
 void ImageLoader::Notify(imgIRequest* aRequest, int32_t aType,
                          const nsIntRect* aData) {
-#ifdef MOZ_GECKO_PROFILER
   nsCString uriString;
   if (profiler_is_active()) {
     nsCOMPtr<nsIURI> uri;
@@ -675,7 +674,6 @@ void ImageLoader::Notify(imgIRequest* aRequest, int32_t aType,
 
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("ImageLoader::Notify", OTHER,
                                         uriString);
-#endif
 
   if (aType == imgINotificationObserver::SIZE_AVAILABLE) {
     nsCOMPtr<imgIContainer> image;

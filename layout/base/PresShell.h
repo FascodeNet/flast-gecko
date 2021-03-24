@@ -95,9 +95,7 @@ class GeckoMVMContext;
 class OverflowChangedTracker;
 class StyleSheet;
 
-#ifdef MOZ_GECKO_PROFILER
 class ProfileChunkedBuffer;
-#endif
 
 #ifdef ACCESSIBILITY
 namespace a11y {
@@ -680,20 +678,6 @@ class PresShell final : public nsStubDocumentObserver,
    * we don't recur into our children.
    */
   bool IsPaintingSuppressed() const { return mPaintingSuppressed; }
-
-  /**
-   * Pause painting by freezing the refresh driver of this and all parent
-   * presentations. This may not have the desired effect if this pres shell
-   * has its own refresh driver.
-   */
-  void PausePainting();
-
-  /**
-   * Resume painting by thawing the refresh driver of this and all parent
-   * presentations. This may not have the desired effect if this pres shell
-   * has its own refresh driver.
-   */
-  void ResumePainting();
 
   /**
    * Unsuppress painting.
@@ -2881,13 +2865,11 @@ class PresShell final : public nsStubDocumentObserver,
   // Reflow roots that need to be reflowed.
   DirtyRootsList mDirtyRoots;
 
-#ifdef MOZ_GECKO_PROFILER
   // These two fields capture call stacks of any changes that require a restyle
   // or a reflow. Only the first change per restyle / reflow is recorded (the
   // one that caused a call to SetNeedStyleFlush() / SetNeedLayoutFlush()).
   UniquePtr<ProfileChunkedBuffer> mStyleCause;
   UniquePtr<ProfileChunkedBuffer> mReflowCause;
-#endif
 
   nsTArray<UniquePtr<DelayedEvent>> mDelayedEvents;
 
@@ -3079,8 +3061,6 @@ class PresShell final : public nsStubDocumentObserver,
   bool mFontSizeInflationForceEnabled : 1;
   bool mFontSizeInflationDisabledInMasterProcess : 1;
   bool mFontSizeInflationEnabled : 1;
-
-  bool mPaintingIsFrozen : 1;
 
   // If a document belongs to an invisible DocShell, this flag must be set
   // to true, so we can avoid any paint calls for widget related to this

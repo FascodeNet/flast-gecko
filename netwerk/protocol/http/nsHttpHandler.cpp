@@ -757,7 +757,7 @@ nsresult nsHttpHandler::AsyncOnChannelRedirect(
   newChan->GetURI(getter_AddRefs(newURI));
   MOZ_ASSERT(newURI);
 
-  AntiTrackingRedirectHeuristic(oldChan, oldURI, newChan, newURI);
+  PrepareForAntiTrackingRedirectHeuristic(oldChan, oldURI, newChan, newURI);
 
   DynamicFpiRedirectHeuristic(oldChan, oldURI, newChan, newURI);
 
@@ -2675,7 +2675,7 @@ void nsHttpHandler::ExcludeHttp2(const nsHttpConnectionInfo* ci) {
   mConnMgr->ExcludeHttp2(ci);
   if (!mExcludedHttp2Origins.Contains(ci->GetOrigin())) {
     MutexAutoLock lock(mHttpExclusionLock);
-    mExcludedHttp2Origins.PutEntry(ci->GetOrigin());
+    mExcludedHttp2Origins.Insert(ci->GetOrigin());
   }
 }
 
@@ -2690,7 +2690,7 @@ void nsHttpHandler::ExcludeHttp3(const nsHttpConnectionInfo* ci) {
   mConnMgr->ExcludeHttp3(ci);
   if (!mExcludedHttp3Origins.Contains(ci->GetRoutedHost())) {
     MutexAutoLock lock(mHttpExclusionLock);
-    mExcludedHttp3Origins.PutEntry(ci->GetRoutedHost());
+    mExcludedHttp3Origins.Insert(ci->GetRoutedHost());
   }
 }
 
@@ -2864,6 +2864,18 @@ bool nsHttpHandler::FallbackToOriginIfConfigsAreECHAndAllFailed() const {
 
 bool nsHttpHandler::UseHTTPSRRForSpeculativeConnection() const {
   return StaticPrefs::network_dns_use_https_rr_for_speculative_connection();
+}
+
+void nsHttpHandler::ExcludeHTTPSRRHost(const nsACString& aHost) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  mExcludedHostsForHTTPSRRUpgrade.Insert(aHost);
+}
+
+bool nsHttpHandler::IsHostExcludedForHTTPSRR(const nsACString& aHost) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return mExcludedHostsForHTTPSRRUpgrade.Contains(aHost);
 }
 
 }  // namespace mozilla::net

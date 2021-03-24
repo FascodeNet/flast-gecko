@@ -17,7 +17,7 @@
 #include "mozilla/dom/PWindowGlobalParent.h"
 #include "mozilla/dom/WindowContext.h"
 #include "mozilla/dom/WindowGlobalActorsBinding.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsRefPtrHashtable.h"
 #include "nsWrapperCache.h"
 #include "nsISupports.h"
@@ -153,7 +153,7 @@ class WindowGlobalParent final : public WindowContext,
   already_AddRefed<Promise> GetSecurityInfo(ErrorResult& aRv);
 
   static already_AddRefed<WindowGlobalParent> CreateDisconnected(
-      const WindowGlobalInit& aInit, bool aInProcess = false);
+      const WindowGlobalInit& aInit);
 
   // Initialize the mFrameLoader fields for a created WindowGlobalParent. Must
   // be called after setting the Manager actor.
@@ -264,7 +264,7 @@ class WindowGlobalParent final : public WindowContext,
  private:
   WindowGlobalParent(CanonicalBrowsingContext* aBrowsingContext,
                      uint64_t aInnerWindowId, uint64_t aOuterWindowId,
-                     bool aInProcess, FieldValues&& aInit);
+                     FieldValues&& aInit);
 
   ~WindowGlobalParent();
 
@@ -302,7 +302,7 @@ class WindowGlobalParent final : public WindowContext,
     void UpdateSiteOriginsFrom(WindowGlobalParent* aParent, bool aIncrease);
     void Accumulate();
 
-    nsDataHashtable<nsCStringHashKey, int32_t> mOriginMap;
+    nsTHashMap<nsCStringHashKey, int32_t> mOriginMap;
     uint32_t mMaxOrigins = 0;
   };
 

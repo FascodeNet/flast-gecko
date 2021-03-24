@@ -16,7 +16,7 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-// This is a simplified/combined version of promiseApzRepaintsFlushed and
+// This is a simplified/combined version of promiseOnlyApzControllerFlushed and
 // promiseAllPaintsDone.  We need this function because, unfortunately, there is
 // no easy way to use paint_listeners.js' functions and apz_test_utils.js'
 // functions in popup contents opened by extensions either as scripts in the
@@ -152,18 +152,7 @@ add_task(async () => {
   );
 
   // Send native mouse wheel to scroll the content in the popup.
-  await new Promise(resolve => {
-    synthesizeNativeWheelAndWaitForObserver(
-      browserForPopup,
-      50,
-      50,
-      0,
-      -100,
-      () => {
-        resolve();
-      }
-    );
-  });
+  await promiseNativeWheelAndWaitForObserver(browserForPopup, 50, 50, 0, -100);
 
   // Flush APZ repaints and waits for MozAfterPaint to make sure the scroll has
   // been reflected on the main thread.

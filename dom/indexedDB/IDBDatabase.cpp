@@ -313,9 +313,9 @@ void IDBDatabase::RevertToPreviousState() {
 void IDBDatabase::RefreshSpec(bool aMayDelete) {
   AssertIsOnOwningThread();
 
-  for (auto iter = mTransactions.Iter(); !iter.Done(); iter.Next()) {
+  for (auto* weakTransaction : mTransactions) {
     const auto transaction =
-        SafeRefPtr{iter.Get()->GetKey(), AcquireStrongRefFromRawPtr{}};
+        SafeRefPtr{weakTransaction, AcquireStrongRefFromRawPtr{}};
     MOZ_ASSERT(transaction);
     transaction->AssertIsOnOwningThread();
     transaction->RefreshSpec(aMayDelete);
@@ -549,6 +549,14 @@ RefPtr<IDBTransaction> IDBDatabase::Transaction(
           return objectStore.metadata().name() == name;
         });
     if (foundIt == end) {
+      Telemetry::ScalarAdd(
+          storeNames.IsEmpty()
+              ? Telemetry::ScalarID::
+                    IDB_FAILURE_UNKNOWN_OBJECTSTORE_EMPTY_DATABASE
+              : Telemetry::ScalarID::
+                    IDB_FAILURE_UNKNOWN_OBJECTSTORE_NON_EMPTY_DATABASE,
+          1);
+
       // Not using nsPrintfCString in case "name" has embedded nulls.
       aRv.ThrowNotFoundError("'"_ns + NS_ConvertUTF16toUTF8(name) +
                              "' is not a known object store name"_ns);
@@ -682,7 +690,7 @@ void IDBDatabase::RegisterTransaction(IDBTransaction& aTransaction) {
   aTransaction.AssertIsOnOwningThread();
   MOZ_ASSERT(!mTransactions.Contains(&aTransaction));
 
-  mTransactions.PutEntry(&aTransaction);
+  mTransactions.Insert(&aTransaction);
 }
 
 void IDBDatabase::UnregisterTransaction(IDBTransaction& aTransaction) {
@@ -690,7 +698,7 @@ void IDBDatabase::UnregisterTransaction(IDBTransaction& aTransaction) {
   aTransaction.AssertIsOnOwningThread();
   MOZ_ASSERT(mTransactions.Contains(&aTransaction));
 
-  mTransactions.RemoveEntry(&aTransaction);
+  mTransactions.Remove(&aTransaction);
 }
 
 void IDBDatabase::AbortTransactions(bool aShouldWarn) {
@@ -713,8 +721,7 @@ void IDBDatabase::AbortTransactions(bool aShouldWarn) {
   StrongTransactionArray transactionsToAbort;
   transactionsToAbort.SetCapacity(mTransactions.Count());
 
-  for (const auto& entry : mTransactions) {
-    IDBTransaction* transaction = entry.GetKey();
+  for (IDBTransaction* const transaction : mTransactions) {
     MOZ_ASSERT(transaction);
 
     transaction->AssertIsOnOwningThread();

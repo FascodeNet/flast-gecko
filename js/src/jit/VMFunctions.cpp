@@ -1165,7 +1165,7 @@ int32_t GetIndexFromString(JSString* str) {
     return -1;
   }
 
-  uint32_t index = UINT32_MAX;
+  uint32_t index = UINT32_MAX;  // Initialize this to appease Valgrind.
   if (!str->asLinear().isIndex(&index) || index > INT32_MAX) {
     return -1;
   }
@@ -2006,7 +2006,8 @@ bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp) {
         }
       }
     } else if (obj->is<TypedObject>()) {
-      if (obj->as<TypedObject>().typeDescr().hasProperty(cx, id)) {
+      RootedTypedObject typedObj(cx, &obj->as<TypedObject>());
+      if (typedObj->rttValue().hasProperty(cx, typedObj, id)) {
         vp[1].setBoolean(true);
         return true;
       }

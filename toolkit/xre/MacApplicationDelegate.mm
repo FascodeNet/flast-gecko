@@ -13,6 +13,7 @@
 // for details.
 
 #import <Cocoa/Cocoa.h>
+#include "NativeMenuMac.h"
 #import <Carbon/Carbon.h>
 
 #include "nsCOMPtr.h"
@@ -34,6 +35,7 @@
 #include "nsString.h"
 #include "nsCommandLineServiceMac.h"
 #include "nsCommandLine.h"
+#include "nsStandaloneNativeMenu.h"
 
 class AutoAutoreleasePool {
  public:
@@ -246,20 +248,21 @@ void ProcessPendingGetURLAppleEvents() {
       do_GetService("@mozilla.org/widget/macdocksupport;1", &rv);
   if (NS_FAILED(rv) || !dockSupport) return menu;
 
-  nsCOMPtr<nsIStandaloneNativeMenu> dockMenu;
-  rv = dockSupport->GetDockMenu(getter_AddRefs(dockMenu));
-  if (NS_FAILED(rv) || !dockMenu) return menu;
+  nsCOMPtr<nsIStandaloneNativeMenu> dockMenuInterface;
+  rv = dockSupport->GetDockMenu(getter_AddRefs(dockMenuInterface));
+  if (NS_FAILED(rv) || !dockMenuInterface) return menu;
 
-  // Determine if the dock menu items should be displayed. This also gives
-  // the menu the opportunity to update itself before display.
-  bool shouldShowItems;
-  rv = dockMenu->MenuWillOpen(&shouldShowItems);
-  if (NS_FAILED(rv) || !shouldShowItems) return menu;
+  RefPtr<mozilla::widget::NativeMenuMac> dockMenu =
+      static_cast<nsStandaloneNativeMenu*>(dockMenuInterface.get())->GetNativeMenu();
+
+  // Give the menu the opportunity to update itself before display.
+  dockMenu->MenuWillOpen();
 
   // Obtain a copy of the native menu.
-  NSMenu* nativeDockMenu;
-  rv = dockMenu->GetNativeMenu(reinterpret_cast<void**>(&nativeDockMenu));
-  if (NS_FAILED(rv) || !nativeDockMenu) return menu;
+  NSMenu* nativeDockMenu = dockMenu->NativeNSMenu();
+  if (!nativeDockMenu) {
+    return menu;
+  }
 
   // Loop through the application-specific dock menu and insert its
   // contents into the dock menu that we are building for Cocoa.

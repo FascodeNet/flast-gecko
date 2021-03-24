@@ -619,10 +619,14 @@ def vc_toolchain_search_path(vc_compiler_path, original_path):
 clang_search_path = bootstrap_search_path("clang/bin")
 
 
-@depends(bootstrap_search_path("rustc/bin", when="MOZ_AUTOMATION"), original_path)
+@depends(
+    bootstrap_search_path("rustc/bin", when="MOZ_AUTOMATION"),
+    bootstrap_search_path_order,
+    original_path,
+)
 @imports("os")
 @imports(_from="os", _import="environ")
-def rust_search_path(rust_path, original_path):
+def rust_search_path(rust_path, search_order, original_path):
     result = list(rust_path or original_path)
     # Also add the rustup install directory for cargo/rustc.
     cargo_home = environ.get("CARGO_HOME", "")
@@ -631,7 +635,10 @@ def rust_search_path(rust_path, original_path):
     else:
         cargo_home = os.path.expanduser(os.path.join("~", ".cargo"))
     rustup_path = os.path.join(cargo_home, "bin")
-    result.append(rustup_path)
+    if search_order == "prepend":
+        result.insert(0, rustup_path)
+    else:
+        result.append(rustup_path)
     return result
 
 
@@ -2603,8 +2610,26 @@ add_gcc_flag(
 option("--enable-fuzzing", help="Enable fuzzing support")
 
 
+@depends(build_project)
+def js_build(build_project):
+    return build_project == "js"
+
+
+option(
+    "--enable-js-fuzzilli",
+    when=js_build,
+    help="Enable fuzzilli support for the JS engine",
+)
+
+
 @depends("--enable-fuzzing")
 def enable_fuzzing(value):
+    if value:
+        return True
+
+
+@depends("--enable-js-fuzzilli", when=js_build)
+def enable_js_fuzzilli(value):
     if value:
         return True
 
@@ -2625,9 +2650,9 @@ def enable_libfuzzer(fuzzing, afl, c_compiler, target):
         return True
 
 
-@depends(enable_fuzzing, enable_aflfuzzer, enable_libfuzzer)
-def enable_fuzzing_interfaces(fuzzing, afl, libfuzzer):
-    if fuzzing and (afl or libfuzzer):
+@depends(enable_fuzzing, enable_aflfuzzer, enable_libfuzzer, enable_js_fuzzilli)
+def enable_fuzzing_interfaces(fuzzing, afl, libfuzzer, enable_js_fuzzilli):
+    if fuzzing and (afl or libfuzzer) and not enable_js_fuzzilli:
         return True
 
 
@@ -2642,6 +2667,9 @@ set_config("FUZZING_INTERFACES", enable_fuzzing_interfaces)
 set_define("FUZZING_INTERFACES", enable_fuzzing_interfaces)
 add_old_configure_assignment("FUZZING_INTERFACES", enable_fuzzing_interfaces)
 
+set_config("FUZZING_JS_FUZZILLI", enable_js_fuzzilli)
+set_define("FUZZING_JS_FUZZILLI", enable_js_fuzzilli)
+
 
 @depends(
     c_compiler.try_compile(
@@ -2650,8 +2678,9 @@ add_old_configure_assignment("FUZZING_INTERFACES", enable_fuzzing_interfaces)
         check_msg="whether the C compiler supports -fsanitize=fuzzer-no-link",
     ),
     tsan,
+    enable_js_fuzzilli,
 )
-def libfuzzer_flags(value, tsan):
+def libfuzzer_flags(value, tsan, enable_js_fuzzilli):
     if tsan:
         # With ThreadSanitizer, we should not use any libFuzzer instrumentation because
         # it is incompatible (e.g. there are races on global sanitizer coverage counters).
@@ -2664,7 +2693,11 @@ def libfuzzer_flags(value, tsan):
         #   - dom/media/webrtc/transport/third_party/nICEr/nicer.gyp
         return namespace(no_link_flag_supported=False, use_flags=[])
 
-    if value:
+    if enable_js_fuzzilli:
+        # Fuzzilli comes with its own trace-pc interceptors and flag requirements.
+        no_link_flag_supported = False
+        use_flags = ["-fsanitize-coverage=trace-pc-guard", "-g"]
+    elif value:
         no_link_flag_supported = True
         # recommended for (and only supported by) clang >= 6
         use_flags = ["-fsanitize=fuzzer-no-link"]
@@ -2727,7 +2760,7 @@ def make_shared_library(target, compiler):
 
     cc = ["$(CC)", "$(COMPUTED_C_LDFLAGS)"]
     cxx = ["$(CXX)", "$(COMPUTED_CXX_LDFLAGS)"]
-    flags = ["$(PGO_CFLAGS)", "$(DSO_PIC_CFLAGS)", "$(DSO_LDOPTS)"]
+    flags = ["$(PGO_CFLAGS)", "$(DSO_LDOPTS)"]
     output = ["-o", "$@"]
 
     if target.kernel == "Darwin":

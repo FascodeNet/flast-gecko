@@ -22,6 +22,7 @@
 #include "mozilla/Vector.h"
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
+#include "nsIGlobalObject.h"
 #include "nsIScriptElement.h"
 #include "ScriptKind.h"
 
@@ -55,13 +56,17 @@ class ScriptFetchOptions {
 
   ScriptFetchOptions(mozilla::CORSMode aCORSMode,
                      enum ReferrerPolicy aReferrerPolicy, Element* aElement,
-                     nsIPrincipal* aTriggeringPrincipal);
+                     nsIPrincipal* aTriggeringPrincipal,
+                     nsIGlobalObject* aWebExtGlobal);
 
   const mozilla::CORSMode mCORSMode;
   const enum ReferrerPolicy mReferrerPolicy;
   bool mIsPreload;
   nsCOMPtr<Element> mElement;
   nsCOMPtr<nsIPrincipal> mTriggeringPrincipal;
+  // Global that initiated this request, when using a WebExtension
+  // content-script.
+  nsCOMPtr<nsIGlobalObject> mWebExtGlobal;
 };
 
 /*
@@ -258,6 +263,13 @@ class ScriptLoadRequest
     return mFetchOptions->mTriggeringPrincipal;
   }
 
+  // This will return nullptr in most cases,
+  // unless this is a module being imported by a WebExtension content script.
+  // In that case it's the Sandbox global executing that code.
+  nsIGlobalObject* GetWebExtGlobal() const {
+    return mFetchOptions->mWebExtGlobal;
+  }
+
   // Make this request a preload (speculative) request.
   void SetIsPreloadRequest() {
     MOZ_ASSERT(!GetScriptElement());
@@ -379,13 +391,11 @@ class ScriptLoadRequestList : private mozilla::LinkedList<ScriptLoadRequest> {
     insertBack(aElem);
   }
 
-  MOZ_MUST_USE
   already_AddRefed<ScriptLoadRequest> Steal(ScriptLoadRequest* aElem) {
     aElem->removeFrom(*this);
     return dont_AddRef(aElem);
   }
 
-  MOZ_MUST_USE
   already_AddRefed<ScriptLoadRequest> StealFirst() {
     MOZ_ASSERT(!isEmpty());
     return Steal(getFirst());

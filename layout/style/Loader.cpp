@@ -2181,6 +2181,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Loader)
   for (nsCOMPtr<nsICSSLoaderObserver>& obs : tmp->mObservers.ForwardRange()) {
     ImplCycleCollectionTraverse(cb, obs, "mozilla::css::Loader.mObservers");
   }
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocGroup)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Loader)
@@ -2192,6 +2193,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Loader)
   }
   tmp->mInlineSheets.Clear();
   tmp->mObservers.Clear();
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocGroup)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(Loader, AddRef)
@@ -2203,11 +2205,11 @@ size_t Loader::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
   n += mObservers.ShallowSizeOfExcludingThis(aMallocSizeOf);
 
   n += mInlineSheets.ShallowSizeOfExcludingThis(aMallocSizeOf);
-  for (auto iter = mInlineSheets.ConstIter(); !iter.Done(); iter.Next()) {
-    n += iter.Key().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+  for (const auto& entry : mInlineSheets) {
+    n += entry.GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
     // If the sheet has a parent, then its parent will report it so we don't
     // have to worry about it here.
-    const StyleSheet* sheet = iter.UserData();
+    const StyleSheet* sheet = entry.GetWeak();
     MOZ_ASSERT(!sheet->GetParentSheet(),
                "How did an @import rule end up here?");
     if (!sheet->GetOwnerNode()) {

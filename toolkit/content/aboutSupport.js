@@ -1202,9 +1202,8 @@ var snapshotFormatters = {
 
     const iconUp = "chrome://global/skin/icons/arrow-up-12.svg";
     const iconDown = "chrome://global/skin/icons/arrow-dropdown-12.svg";
-    const iconFolder = "chrome://global/skin/icons/findFile.svg";
-    const iconUnsigned =
-      "chrome://global/skin/icons/connection-mixed-active-loaded.svg";
+    const iconFolder = "chrome://global/skin/icons/folder.svg";
+    const iconUnsigned = "chrome://global/skin/icons/security-broken.svg";
     const outerTHead = $("third-party-modules-thead");
     const outerTBody = $("third-party-modules-tbody");
 
@@ -1800,8 +1799,8 @@ function setupEventListeners() {
         promptBody,
         restartButtonLabel,
       ] = await document.l10n.formatValues([
-        { id: "startup-cache-dialog-title" },
-        { id: "startup-cache-dialog-body" },
+        { id: "startup-cache-dialog-title2" },
+        { id: "startup-cache-dialog-body2" },
         { id: "restart-button-label" },
       ]);
       const buttonFlags =
@@ -1809,7 +1808,7 @@ function setupEventListeners() {
         Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_CANCEL +
         Services.prompt.BUTTON_POS_0_DEFAULT;
       const result = Services.prompt.confirmEx(
-        window,
+        window.docShell.chromeEventHandler.ownerGlobal,
         promptTitle,
         promptBody,
         buttonFlags,

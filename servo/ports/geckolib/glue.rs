@@ -1713,19 +1713,19 @@ pub unsafe extern "C" fn Servo_AuthorStyles_RemoveStyleSheet(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_AuthorStyles_ForceDirty(styles: &mut RawServoAuthorStyles) {
+pub extern "C" fn Servo_AuthorStyles_ForceDirty(styles: &mut RawServoAuthorStyles) {
     let styles = AuthorStyles::<GeckoStyleSheet>::from_ffi_mut(styles);
     styles.stylesheets.force_dirty();
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_AuthorStyles_IsDirty(styles: &RawServoAuthorStyles) -> bool {
+pub extern "C" fn Servo_AuthorStyles_IsDirty(styles: &RawServoAuthorStyles) -> bool {
     let styles = AuthorStyles::<GeckoStyleSheet>::from_ffi(styles);
     styles.stylesheets.dirty()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_AuthorStyles_Flush(
+pub extern "C" fn Servo_AuthorStyles_Flush(
     styles: &mut RawServoAuthorStyles,
     document_set: &RawServoStyleSet,
 ) {
@@ -1738,13 +1738,19 @@ pub unsafe extern "C" fn Servo_AuthorStyles_Flush(
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let guard = global_style_data.shared_lock.read();
 
-    let document_data = PerDocumentStyleData::from_ffi(document_set).borrow();
-
-    let stylist = &document_data.stylist;
+    let mut document_data = PerDocumentStyleData::from_ffi(document_set).borrow_mut();
 
     // TODO(emilio): This is going to need an element or something to do proper
     // invalidation in Shadow roots.
-    styles.flush::<GeckoElement>(stylist.device(), stylist.quirks_mode(), &guard);
+    styles.flush::<GeckoElement>(&mut document_data.stylist, &guard);
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_StyleSet_RemoveUniqueEntriesFromAuthorStylesCache(
+    document_set: &RawServoStyleSet,
+) {
+    let mut document_data = PerDocumentStyleData::from_ffi(document_set).borrow_mut();
+    document_data.stylist.remove_unique_author_data_cache_entries();
 }
 
 #[no_mangle]
@@ -2859,6 +2865,9 @@ macro_rules! apply_font_desc_list {
                 eCSSFontDesc_FontVariationSettings => variation_settings,
                 eCSSFontDesc_FontLanguageOverride => language_override,
                 eCSSFontDesc_Display => display,
+                eCSSFontDesc_AscentOverride => ascent_override,
+                eCSSFontDesc_DescentOverride => descent_override,
+                eCSSFontDesc_LineGapOverride => line_gap_override,
             ]
             invalid: [
                 eCSSFontDesc_UNKNOWN,
@@ -2935,7 +2944,7 @@ macro_rules! simple_font_descriptor_getter_impl {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontWeight(
+pub extern "C" fn Servo_FontFaceRule_GetFontWeight(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::ComputedFontWeightRange,
 ) -> bool {
@@ -2943,7 +2952,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontWeight(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStretch(
+pub extern "C" fn Servo_FontFaceRule_GetFontStretch(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::ComputedFontStretchRange,
 ) -> bool {
@@ -2951,7 +2960,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStretch(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStyle(
+pub extern "C" fn Servo_FontFaceRule_GetFontStyle(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::ComputedFontStyleDescriptor,
 ) -> bool {
@@ -2959,7 +2968,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStyle(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontDisplay(
+pub extern "C" fn Servo_FontFaceRule_GetFontDisplay(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::FontDisplay,
 ) -> bool {
@@ -2967,11 +2976,41 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontDisplay(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontLanguageOverride(
+pub extern "C" fn Servo_FontFaceRule_GetFontLanguageOverride(
     rule: &RawServoFontFaceRule,
     out: &mut computed::FontLanguageOverride,
 ) -> bool {
     simple_font_descriptor_getter_impl!(rule, out, language_override, compute_non_system)
+}
+
+// Returns a Percentage of -1.0 if the override descriptor is present but 'normal'
+// rather than an actual percentage value.
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetAscentOverride(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, ascent_override, compute)
+}
+
+// Returns a Percentage of -1.0 if the override descriptor is present but 'normal'
+// rather than an actual percentage value.
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetDescentOverride(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, descent_override, compute)
+}
+
+// Returns a Percentage of -1.0 if the override descriptor is present but 'normal'
+// rather than an actual percentage value.
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetLineGapOverride(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, line_gap_override, compute)
 }
 
 #[no_mangle]
@@ -3096,7 +3135,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFeatureSettings(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetDescriptorCssText(
+pub extern "C" fn Servo_FontFaceRule_GetDescriptorCssText(
     rule: &RawServoFontFaceRule,
     desc: nsCSSFontDesc,
     result: &mut nsACString,
@@ -6741,7 +6780,7 @@ pub unsafe extern "C" fn Servo_ParseFontShorthandForMatching(
 
     *stretch = match font.font_stretch {
         FontStretch::Keyword(ref k) => k.compute().0,
-        FontStretch::Stretch(ref p) => p.get(),
+        FontStretch::Stretch(ref p) => p.0.get(),
         FontStretch::System(_) => return false,
     };
 
@@ -6820,7 +6859,7 @@ pub unsafe extern "C" fn Servo_InvalidateStyleForDocStateChanges(
         .map(|(data, _origin)| data)
         .chain(non_document_styles.iter().map(|author_styles| {
             let styles: &_ = AuthorStyles::<GeckoStyleSheet>::from_ffi(author_styles);
-            &styles.data
+            &*styles.data
         }));
 
     let root = GeckoElement(root);

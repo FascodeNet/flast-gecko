@@ -41,7 +41,7 @@
 #endif
 
 #ifdef MOZ_WIDGET_GTK
-#  include <gdk/gdkx.h>
+#  include "mozilla/WidgetUtilsGtk.h"
 #endif
 
 #ifdef MOZ_WAYLAND
@@ -143,7 +143,7 @@ void RenderThread::ShutDownTask(layers::SynchronousTask* aTask) {
   layers::SharedSurfacesParent::Shutdown();
 
   ClearAllBlobImageResources();
-  ClearSharedGL();
+  ClearSingletonGL();
   ClearSharedSurfacePool();
 }
 
@@ -764,7 +764,7 @@ RenderTextureHost* RenderThread::GetRenderTexture(
 
 void RenderThread::InitDeviceTask() {
   MOZ_ASSERT(IsInRenderThread());
-  MOZ_ASSERT(!mSharedGL);
+  MOZ_ASSERT(!mSingletonGL);
 
   if (gfx::gfxVars::UseSoftwareWebRender()) {
     // Ensure we don't instantiate any shared GL context when SW-WR is used.
@@ -772,13 +772,13 @@ void RenderThread::InitDeviceTask() {
   }
 
   nsAutoCString err;
-  mSharedGL = CreateGLContext(err);
+  mSingletonGL = CreateGLContext(err);
   if (gfx::gfxVars::UseWebRenderProgramBinaryDisk()) {
     mProgramCache = MakeUnique<WebRenderProgramCache>(ThreadPool().Raw());
   }
   // Query the shared GL context to force the
   // lazy initialization to happen now.
-  SharedGL();
+  SingletonGL();
 }
 
 #ifndef XP_WIN
@@ -898,35 +898,35 @@ bool RenderThread::IsHandlingWebRenderError() {
   return mHandlingWebRenderError;
 }
 
-gl::GLContext* RenderThread::SharedGL() {
+gl::GLContext* RenderThread::SingletonGL() {
   nsAutoCString err;
-  auto gl = SharedGL(err);
+  auto gl = SingletonGL(err);
   if (!err.IsEmpty()) {
     gfxCriticalNote << err.get();
   }
   return gl;
 }
 
-gl::GLContext* RenderThread::SharedGL(nsACString& aError) {
+gl::GLContext* RenderThread::SingletonGL(nsACString& aError) {
   MOZ_ASSERT(IsInRenderThread());
-  if (!mSharedGL) {
-    mSharedGL = CreateGLContext(aError);
+  if (!mSingletonGL) {
+    mSingletonGL = CreateGLContext(aError);
     mShaders = nullptr;
   }
-  if (mSharedGL && !mShaders) {
-    mShaders = MakeUnique<WebRenderShaders>(mSharedGL, mProgramCache.get());
+  if (mSingletonGL && !mShaders) {
+    mShaders = MakeUnique<WebRenderShaders>(mSingletonGL, mProgramCache.get());
   }
 
-  return mSharedGL.get();
+  return mSingletonGL.get();
 }
 
-void RenderThread::ClearSharedGL() {
+void RenderThread::ClearSingletonGL() {
   MOZ_ASSERT(IsInRenderThread());
   if (mSurfacePool) {
-    mSurfacePool->DestroyGLResourcesForContext(mSharedGL);
+    mSurfacePool->DestroyGLResourcesForContext(mSingletonGL);
   }
   mShaders = nullptr;
-  mSharedGL = nullptr;
+  mSingletonGL = nullptr;
 }
 
 RefPtr<layers::SurfacePool> RenderThread::SharedSurfacePool() {
@@ -1093,12 +1093,17 @@ static already_AddRefed<gl::GLContext> CreateGLContextANGLE(
 #if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WAYLAND)
 static already_AddRefed<gl::GLContext> CreateGLContextEGL() {
   // Create GLContext with dummy EGLSurface.
+  bool forHardwareWebRender = true;
+  // SW-WR uses CompositorOGL in native compositor.
+  if (gfx::gfxVars::UseSoftwareWebRender()) {
+    forHardwareWebRender = false;
+  }
   RefPtr<gl::GLContext> gl =
       gl::GLContextProviderEGL::CreateForCompositorWidget(
-          nullptr, /* aWebRender */ true, /* aForceAccelerated */ true);
+          nullptr, forHardwareWebRender, /* aForceAccelerated */ true);
   if (!gl || !gl->MakeCurrent()) {
-    gfxCriticalNote << "Failed GL context creation for WebRender: "
-                    << gfx::hexa(gl.get());
+    gfxCriticalNote << "Failed GL context creation for hardware WebRender: "
+                    << forHardwareWebRender;
     return nullptr;
   }
   return gl.forget();
@@ -1125,8 +1130,7 @@ static already_AddRefed<gl::GLContext> CreateGLContext(nsACString& aError) {
 #elif defined(MOZ_WIDGET_ANDROID)
   gl = CreateGLContextEGL();
 #elif defined(MOZ_WAYLAND)
-  if (gdk_display_get_default() &&
-      !GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
+  if (gfx::gfxVars::UseEGL()) {
     gl = CreateGLContextEGL();
   }
 #elif XP_MACOSX

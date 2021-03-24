@@ -71,7 +71,6 @@ class TCPListener {
    *     A driver instance.
    */
   driverFactory() {
-    MarionettePrefs.contentListener = false;
     return new GeckoDriver(this);
   }
 
@@ -286,10 +285,7 @@ class TCPConnection {
     }
 
     if (cmd.name != "WebDriver:NewSession") {
-      assert.session(
-        this.driver,
-        "Tried to run command without establishing a connection"
-      );
+      assert.session(this.driver.currentSession);
     }
 
     let rv = await fn.bind(this.driver)(cmd);

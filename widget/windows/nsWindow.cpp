@@ -897,15 +897,16 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
   if (aInitData->mWindowType == eWindowType_toplevel && !aParent &&
       !sFirstTopLevelWindowCreated) {
     sFirstTopLevelWindowCreated = true;
-    auto skeletonUIResult = ConsumePreXULSkeletonUIHandle();
-    if (skeletonUIResult.isErr()) {
+    mWnd = ConsumePreXULSkeletonUIHandle();
+    auto skeletonUIError = GetPreXULSkeletonUIErrorReason();
+    if (skeletonUIError) {
       nsAutoString errorString(
-          GetPreXULSkeletonUIErrorString(skeletonUIResult.unwrapErr()));
+          GetPreXULSkeletonUIErrorString(skeletonUIError.value()));
       Telemetry::ScalarSet(
           Telemetry::ScalarID::STARTUP_SKELETON_UI_DISABLED_REASON,
           errorString);
-    } else {
-      mWnd = skeletonUIResult.unwrap();
+    }
+    if (mWnd) {
       MOZ_ASSERT(style == kPreXULSkeletonUIWindowStyle,
                  "The skeleton UI window style should match the expected "
                  "style for the first window created");
@@ -1595,8 +1596,7 @@ void nsWindow::Show(bool bState) {
     // Initialize the UI state - this would normally happen below, but since
     // we're actually already showing, we won't hit it in the normal way.
     ::SendMessageW(mWnd, WM_CHANGEUISTATE,
-                   MAKEWPARAM(UIS_INITIALIZE, UISF_HIDEFOCUS | UISF_HIDEACCEL),
-                   0);
+                   MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
   }
 
   if (mWindowType == eWindowType_popup) {
@@ -1701,10 +1701,9 @@ void nsWindow::Show(bool bState) {
 
       if (!wasVisible && (mWindowType == eWindowType_toplevel ||
                           mWindowType == eWindowType_dialog)) {
-        // when a toplevel window or dialog is shown, initialize the UI state
-        ::SendMessageW(
-            mWnd, WM_CHANGEUISTATE,
-            MAKEWPARAM(UIS_INITIALIZE, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
+        // When a toplevel window or dialog is shown, initialize the UI state
+        ::SendMessageW(mWnd, WM_CHANGEUISTATE,
+                       MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
       }
     } else {
       // Clear contents to avoid ghosting of old content if we display
@@ -1997,9 +1996,9 @@ void nsWindow::Move(double aX, double aY) {
       if (WinUtils::LogToPhysFactor(mWnd) != oldScale) {
         ChangedDPI();
       }
-    }
 
-    SetThemeRegion();
+      SetThemeRegion();
+    }
 
     ResizeDirectManipulationViewport();
   }
@@ -2063,9 +2062,9 @@ void nsWindow::Resize(double aWidth, double aHeight, bool aRepaint) {
         ChangedDPI();
       }
       SetThemeRegion();
-
-      ResizeDirectManipulationViewport();
     }
+
+    ResizeDirectManipulationViewport();
   }
 
   if (aRepaint) Invalidate();
@@ -2148,9 +2147,9 @@ void nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
       }
       SetThemeRegion();
-
-      ResizeDirectManipulationViewport();
     }
+
+    ResizeDirectManipulationViewport();
   }
 
   if (aRepaint) Invalidate();
@@ -5312,6 +5311,21 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
             }
           }
         }
+
+        // UserInteractionMode, ConvertibleSlateMode, SystemDockMode may cause
+        // @media(pointer) queries to change, which layout needs to know about
+        //
+        // (WM_SETTINGCHANGE will be sent to all top-level windows, so we
+        //  only respond to the hidden top-level window to avoid hammering
+        //  layout with a bunch of NotifyThemeChanged() calls)
+        //
+        if (mWindowType == eWindowType_invisible) {
+          if (!wcscmp(lParamString, L"UserInteractionMode") ||
+              !wcscmp(lParamString, L"ConvertibleSlateMode") ||
+              !wcscmp(lParamString, L"SystemDockMode")) {
+            NotifyThemeChanged(widget::ThemeChangeKind::MediaQueriesOnly);
+          }
+        }
       }
     } break;
 
@@ -6199,9 +6213,10 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         if (action == UIS_SET || action == UIS_CLEAR) {
           int32_t flags = HIWORD(wParam);
           UIStateChangeType showFocusRings = UIStateChangeType_NoChange;
-          if (flags & UISF_HIDEFOCUS)
+          if (flags & UISF_HIDEFOCUS) {
             showFocusRings = (action == UIS_SET) ? UIStateChangeType_Clear
                                                  : UIStateChangeType_Set;
+          }
           NotifyUIStateChanged(showFocusRings);
         }
       }
@@ -8538,8 +8553,8 @@ void nsWindow::PickerClosed() {
 }
 
 bool nsWindow::WidgetTypePrefersSoftwareWebRender() const {
-  return (StaticPrefs::gfx_webrender_software_unaccelerated_widget_allow() &&
-          mTransparencyMode == eTransparencyTransparent) ||
+  return (mTransparencyMode == eTransparencyTransparent &&
+          StaticPrefs::gfx_webrender_software_unaccelerated_widget_allow()) ||
          nsBaseWidget::WidgetTypePrefersSoftwareWebRender();
 }
 

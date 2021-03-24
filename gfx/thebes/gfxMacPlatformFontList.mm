@@ -580,8 +580,6 @@ class gfxMacFontFamily final : public gfxFontFamily {
 
   virtual void FindStyleVariations(FontInfoData* aFontInfoData = nullptr);
 
-  virtual bool IsSingleFaceFamily() const { return false; }
-
  protected:
   double mSizeHint;
 };
@@ -833,7 +831,11 @@ gfxMacPlatformFontList::gfxMacPlatformFontList()
     // We activate bundled fonts if the pref is > 0 (on) or < 0 (auto), only an
     // explicit value of 0 (off) will disable them.
     if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
+      TimeStamp start = TimeStamp::Now();
       ActivateBundledFonts();
+      TimeStamp end = TimeStamp::Now();
+      Telemetry::Accumulate(Telemetry::FONTLIST_BUNDLEDFONTS_ACTIVATE,
+                            (end - start).ToMilliseconds());
     }
 #endif
 
@@ -929,7 +931,7 @@ void gfxMacPlatformFontList::ReadSystemFontList(nsTArray<FontFamilyListEntry>* a
   }
   // Now collect the list of available families, with visibility attributes.
   for (auto f = mFontFamilies.Iter(); !f.Done(); f.Next()) {
-    auto macFamily = static_cast<gfxMacFontFamily*>(f.Data().get());
+    auto macFamily = f.Data().get();
     if (macFamily->IsSingleFaceFamily()) {
       continue;  // skip, this will be recreated separately in the child
     }
@@ -1081,6 +1083,11 @@ void gfxMacPlatformFontList::InitAliasesForSingleFaceList() {
         break;
       }
     }
+  }
+  if (!mAliasTable.IsEmpty()) {
+    // This will be updated when the font loader completes, but we require
+    // at least the Osaka-Mono alias to be available immediately.
+    SharedFontList()->SetAliases(mAliasTable);
   }
 }
 

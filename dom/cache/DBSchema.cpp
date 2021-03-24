@@ -21,6 +21,7 @@
 #include "mozilla/net/MozURL.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/StaticPrefs_extensions.h"
+#include "mozilla/Telemetry.h"
 #include "mozIStorageConnection.h"
 #include "mozIStorageStatement.h"
 #include "mozStorageHelper.h"
@@ -74,7 +75,7 @@ const int32_t kHackyDowngradeSchemaVersion = 25;
 const int32_t kHackyPaddingSizePresentVersion = 27;
 //
 // Update this whenever the DB schema is changed.
-const int32_t kLatestSchemaVersion = 27;
+const int32_t kLatestSchemaVersion = 28;
 // ---------
 // The following constants define the SQL schema.  These are defined in the
 // same order the SQL should be executed in CreateOrMigrateSchema().  They are
@@ -438,6 +439,33 @@ class MOZ_RAII AutoDisableForeignKeyChecking {
   bool mForeignKeyCheckingDisabled;
 };
 
+nsresult IntegrityCheck(mozIStorageConnection& aConn) {
+  // CACHE_INTEGRITY_CHECK_COUNT is designed to report at most once.
+  static bool reported = false;
+  if (reported) {
+    return NS_OK;
+  }
+
+  CACHE_TRY_INSPECT(const auto& stmt,
+                    quota::CreateAndExecuteSingleStepStatement(
+                        aConn,
+                        "SELECT COUNT(*) FROM pragma_integrity_check() "
+                        "WHERE integrity_check != 'ok';"_ns));
+
+  CACHE_TRY_INSPECT(const auto& result,
+                    MOZ_TO_RESULT_INVOKE_TYPED(nsString, *stmt, GetString, 0));
+
+  nsresult rv;
+  const uint32_t count = result.ToInteger(&rv);
+  CACHE_TRY(OkIf(NS_SUCCEEDED(rv)), rv);
+
+  Telemetry::ScalarSet(Telemetry::ScalarID::CACHE_INTEGRITY_CHECK_COUNT, count);
+
+  reported = true;
+
+  return NS_OK;
+}
+
 nsresult CreateOrMigrateSchema(mozIStorageConnection& aConn) {
   MOZ_ASSERT(!NS_IsMainThread());
 
@@ -478,7 +506,7 @@ nsresult CreateOrMigrateSchema(mozIStorageConnection& aConn) {
         aConn.ExecuteSimpleSQL(nsLiteralCString(kIndexResponseHeadersName)));
     CACHE_TRY(aConn.ExecuteSimpleSQL(nsLiteralCString(kTableResponseUrlList)));
     CACHE_TRY(aConn.ExecuteSimpleSQL(nsLiteralCString(kTableStorage)));
-    CACHE_TRY(aConn.SetSchemaVersion(kHackyDowngradeSchemaVersion));
+    CACHE_TRY(aConn.SetSchemaVersion(kLatestSchemaVersion));
     CACHE_TRY_UNWRAP(schemaVersion, GetEffectiveSchemaVersion(aConn));
   }
 
@@ -491,9 +519,14 @@ nsresult CreateOrMigrateSchema(mozIStorageConnection& aConn) {
     // if a new migration is incorrect by fast failing on the corruption.
     // Unfortunately, this must be performed outside of the transaction.
 
-    // XXX We don't propagate an error from vacuuming right now, due to Bug
-    // 1687685, contrary to the comment above saying we are failing fast.
-    CACHE_TRY(aConn.ExecuteSimpleSQL("VACUUM"_ns), NS_OK);
+    CACHE_TRY(ToResult(aConn.ExecuteSimpleSQL("VACUUM"_ns))
+                  .orElse([&aConn](const nsresult rv) -> Result<Ok, nsresult> {
+                    if (rv == NS_ERROR_STORAGE_CONSTRAINT) {
+                      CACHE_TRY(IntegrityCheck(aConn));
+                    }
+
+                    return Err(rv);
+                  }));
   }
 
   return NS_OK;
@@ -808,7 +841,7 @@ Result<Maybe<SavedResponse>, nsresult> StorageMatch(
 
   // If we are given a cache to check, then simply find its cache ID
   // and perform the match.
-  if (!aParams.cacheName().EqualsLiteral("")) {
+  if (aParams.cacheNameSet()) {
     CACHE_TRY_INSPECT(
         const auto& maybeCacheId,
         StorageGetCacheId(aConn, aNamespace, aParams.cacheName()));
@@ -2288,6 +2321,7 @@ nsresult MigrateFrom23To24(mozIStorageConnection& aConn, bool& aRewriteSchema);
 nsresult MigrateFrom24To25(mozIStorageConnection& aConn, bool& aRewriteSchema);
 nsresult MigrateFrom25To26(mozIStorageConnection& aConn, bool& aRewriteSchema);
 nsresult MigrateFrom26To27(mozIStorageConnection& aConn, bool& aRewriteSchema);
+nsresult MigrateFrom27To28(mozIStorageConnection& aConn, bool& aRewriteSchema);
 // Configure migration functions to run for the given starting version.
 constexpr Migration sMigrationList[] = {
     Migration{15, MigrateFrom15To16}, Migration{16, MigrateFrom16To17},
@@ -2296,7 +2330,9 @@ constexpr Migration sMigrationList[] = {
     Migration{21, MigrateFrom21To22}, Migration{22, MigrateFrom22To23},
     Migration{23, MigrateFrom23To24}, Migration{24, MigrateFrom24To25},
     Migration{25, MigrateFrom25To26}, Migration{26, MigrateFrom26To27},
+    Migration{27, MigrateFrom27To28},
 };
+
 nsresult RewriteEntriesSchema(mozIStorageConnection& aConn) {
   CACHE_TRY(aConn.ExecuteSimpleSQL("PRAGMA writable_schema = ON"_ns));
 
@@ -2696,9 +2732,12 @@ nsresult MigrateFrom21To22(mozIStorageConnection& aConn, bool& aRewriteSchema) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   // Add the request_integrity column.
+  CACHE_TRY(aConn.ExecuteSimpleSQL(
+      "ALTER TABLE entries "
+      "ADD COLUMN request_integrity TEXT NOT NULL DEFAULT '';"_ns));
+
   CACHE_TRY(
-      aConn.ExecuteSimpleSQL("ALTER TABLE entries "
-                             "ADD COLUMN request_integrity TEXT NULL"_ns));
+      aConn.ExecuteSimpleSQL("UPDATE entries SET request_integrity = '';"_ns));
 
   CACHE_TRY(aConn.SetSchemaVersion(22));
 
@@ -2766,6 +2805,22 @@ nsresult MigrateFrom26To27(mozIStorageConnection& aConn, bool& aRewriteSchema) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   CACHE_TRY(aConn.SetSchemaVersion(kHackyDowngradeSchemaVersion));
+
+  return NS_OK;
+}
+
+nsresult MigrateFrom27To28(mozIStorageConnection& aConn, bool& aRewriteSchema) {
+  MOZ_ASSERT(!NS_IsMainThread());
+
+  // In Bug 1264178, we added a column request_integrity into table entries.
+  // However, at that time, the default value for the existing rows is NULL
+  // which against the statement in kTableEntries. Thus, we need to have another
+  // upgrade to update these values to an empty string.
+  CACHE_TRY(
+      aConn.ExecuteSimpleSQL("UPDATE entries SET request_integrity = '' "
+                             "WHERE request_integrity is NULL;"_ns));
+
+  CACHE_TRY(aConn.SetSchemaVersion(28));
 
   return NS_OK;
 }

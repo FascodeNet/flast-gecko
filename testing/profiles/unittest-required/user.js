@@ -92,7 +92,6 @@ user_pref("dom.ipc.tabs.shutdownTimeoutSecs", 0);
 user_pref("dom.min_background_timeout_value", 1000);
 user_pref("dom.popup_maximum", -1);
 user_pref("dom.block_multiple_popups", false);
-user_pref("dom.presentation.testing.simulate-receiver", false);
 // Prevent connection to the push server for tests.
 user_pref("dom.push.connection.enabled", false);
 user_pref("dom.successive_dialog_time_limit", 0);
@@ -146,7 +145,6 @@ user_pref("identity.fxaccounts.remote.root", "https://{server}/");
 // Avoid idle-daily notifications, to avoid expensive operations that may
 // cause unexpected test timeouts.
 user_pref("idle.lastDailyNotification", -1);
-user_pref("javascript.options.showInConsole", true);
 // Make sure CSS error reporting is enabled for tests
 user_pref("layout.css.report_errors", true);
 // Disable spammy layout warnings because they pollute test logs

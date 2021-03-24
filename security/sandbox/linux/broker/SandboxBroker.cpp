@@ -107,11 +107,8 @@ SandboxBroker::~SandboxBroker() {
 SandboxBroker::Policy::Policy() = default;
 SandboxBroker::Policy::~Policy() = default;
 
-SandboxBroker::Policy::Policy(const Policy& aOther) {
-  for (auto iter = aOther.mMap.ConstIter(); !iter.Done(); iter.Next()) {
-    mMap.InsertOrUpdate(iter.Key(), iter.Data());
-  }
-}
+SandboxBroker::Policy::Policy(const Policy& aOther)
+    : mMap(aOther.mMap.Clone()) {}
 
 // Chromium
 // sandbox/linux/syscall_broker/broker_file_permission.cc
@@ -147,23 +144,19 @@ void SandboxBroker::Policy::AddPath(int aPerms, const char* aPath,
                                     AddCondition aCond) {
   nsDependentCString path(aPath);
   MOZ_ASSERT(path.Length() <= kMaxPathLen);
-  int perms;
   if (aCond == AddIfExistsNow) {
     struct stat statBuf;
     if (lstat(aPath, &statBuf) != 0) {
       return;
     }
   }
-  if (!mMap.Get(path, &perms)) {
-    perms = MAY_ACCESS;
-  } else {
-    MOZ_ASSERT(perms & MAY_ACCESS);
-  }
+  auto& perms = mMap.LookupOrInsert(path, MAY_ACCESS);
+  MOZ_ASSERT(perms & MAY_ACCESS);
+
   if (SandboxInfo::Get().Test(SandboxInfo::kVerbose)) {
     SANDBOX_LOG_ERROR("policy for %s: %d -> %d", aPath, perms, perms | aPerms);
   }
   perms |= aPerms;
-  mMap.InsertOrUpdate(path, perms);
 }
 
 void SandboxBroker::Policy::AddTree(int aPerms, const char* aPath) {
@@ -229,18 +222,15 @@ void SandboxBroker::Policy::AddPrefix(int aPerms, const char* aPath) {
 
 void SandboxBroker::Policy::AddPrefixInternal(int aPerms,
                                               const nsACString& aPath) {
-  int origPerms;
-  if (!mMap.Get(aPath, &origPerms)) {
-    origPerms = MAY_ACCESS;
-  } else {
-    MOZ_ASSERT(origPerms & MAY_ACCESS);
-  }
-  int newPerms = origPerms | aPerms | RECURSIVE;
+  auto& perms = mMap.LookupOrInsert(aPath, MAY_ACCESS);
+  MOZ_ASSERT(perms & MAY_ACCESS);
+
+  int newPerms = perms | aPerms | RECURSIVE;
   if (SandboxInfo::Get().Test(SandboxInfo::kVerbose)) {
     SANDBOX_LOG_ERROR("policy for %s: %d -> %d",
-                      PromiseFlatCString(aPath).get(), origPerms, newPerms);
+                      PromiseFlatCString(aPath).get(), perms, newPerms);
   }
-  mMap.InsertOrUpdate(aPath, newPerms);
+  perms = newPerms;
 }
 
 void SandboxBroker::Policy::AddFilePrefix(int aPerms, const char* aDir,
@@ -304,9 +294,9 @@ void SandboxBroker::Policy::FixRecursivePermissions() {
     SANDBOX_LOG_ERROR("fixing recursive policy entries");
   }
 
-  for (auto iter = oldMap.ConstIter(); !iter.Done(); iter.Next()) {
-    const nsACString& path = iter.Key();
-    const int& localPerms = iter.Data();
+  for (const auto& entry : oldMap) {
+    const nsACString& path = entry.GetKey();
+    const int& localPerms = entry.GetData();
     int inheritedPerms = 0;
 
     nsAutoCString ancestor(path);
@@ -366,9 +356,9 @@ int SandboxBroker::Policy::Lookup(const nsACString& aPath) const {
   // directory permission. We'll have to check the entire
   // whitelist for the best match (slower).
   int allPerms = 0;
-  for (auto iter = mMap.ConstIter(); !iter.Done(); iter.Next()) {
-    const nsACString& whiteListPath = iter.Key();
-    const int& perms = iter.Data();
+  for (const auto& entry : mMap) {
+    const nsACString& whiteListPath = entry.GetKey();
+    const int& perms = entry.GetData();
 
     if (!(perms & RECURSIVE)) continue;
 

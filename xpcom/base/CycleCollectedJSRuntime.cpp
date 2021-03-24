@@ -1010,6 +1010,11 @@ void CycleCollectedJSRuntime::GCSliceCallback(JSContext* aContext,
           using MS = mozilla::MarkerSchema;
           MS schema{MS::Location::markerChart, MS::Location::markerTable,
                     MS::Location::timelineMemory};
+          schema.AddStaticLabelValue(
+              "Description",
+              "Summary data for an entire major GC, encompassing a set of "
+              "incremental slices. The main thread is not blocked for the "
+              "entire major GC interval, only for the individual slices.");
           // No display instructions here, there is special handling in the
           // front-end.
           return schema;
@@ -1040,6 +1045,10 @@ void CycleCollectedJSRuntime::GCSliceCallback(JSContext* aContext,
           using MS = mozilla::MarkerSchema;
           MS schema{MS::Location::markerChart, MS::Location::markerTable,
                     MS::Location::timelineMemory};
+          schema.AddStaticLabelValue(
+              "Description",
+              "One slice of an incremental garbage collection (GC). The main "
+              "thread is blocked during this time.");
           // No display instructions here, there is special handling in the
           // front-end.
           return schema;
@@ -1147,6 +1156,11 @@ void CycleCollectedJSRuntime::GCNurseryCollectionCallback(
         using MS = mozilla::MarkerSchema;
         MS schema{MS::Location::markerChart, MS::Location::markerTable,
                   MS::Location::timelineMemory};
+        schema.AddStaticLabelValue(
+            "Description",
+            "A minor GC (aka nursery collection) to clear out the buffer used "
+            "for recent allocations and move surviving data to the tenured "
+            "(long-lived) heap.");
         // No display instructions here, there is special handling in the
         // front-end.
         return schema;
@@ -1802,8 +1816,8 @@ void CycleCollectedJSRuntime::PrepareWaitingZonesForGC() {
   if (mZonesWaitingForGC.Count() == 0) {
     JS::PrepareForFullGC(cx);
   } else {
-    for (auto iter = mZonesWaitingForGC.Iter(); !iter.Done(); iter.Next()) {
-      JS::PrepareZoneForGC(cx, iter.Get()->GetKey());
+    for (const auto& key : mZonesWaitingForGC) {
+      JS::PrepareZoneForGC(cx, key);
     }
     mZonesWaitingForGC.Clear();
   }
@@ -1815,7 +1829,7 @@ void CycleCollectedJSRuntime::OnZoneDestroyed(JSFreeOp* aFop, JS::Zone* aZone) {
   // happen if a zone is added to the set during an incremental GC in which it
   // is later destroyed.
   CycleCollectedJSRuntime* runtime = Get();
-  runtime->mZonesWaitingForGC.RemoveEntry(aZone);
+  runtime->mZonesWaitingForGC.Remove(aZone);
 }
 
 void CycleCollectedJSRuntime::EnvironmentPreparer::invoke(

@@ -51,11 +51,13 @@ class FontFace final : public nsISupports, public nsWrapperCache {
           const nsTArray<gfxFontFeature>& aFeatureSettings,
           const nsTArray<gfxFontVariation>& aVariationSettings,
           uint32_t aLanguageOverride, gfxCharacterMap* aUnicodeRanges,
-          StyleFontDisplay aFontDisplay, RangeFlags aRangeFlags)
+          StyleFontDisplay aFontDisplay, RangeFlags aRangeFlags,
+          float aAscentOverride, float aDescentOverride, float aLineGapOverride)
         : gfxUserFontEntry(aFontSet, aFontFaceSrcList, aWeight, aStretch,
                            aStyle, aFeatureSettings, aVariationSettings,
                            aLanguageOverride, aUnicodeRanges, aFontDisplay,
-                           aRangeFlags) {}
+                           aRangeFlags, aAscentOverride, aDescentOverride,
+                           aLineGapOverride) {}
 
     virtual void SetLoadState(UserFontLoadState aLoadState) override;
     virtual void GetUserFontSets(nsTArray<gfxUserFontSet*>& aResult) override;
@@ -91,6 +93,9 @@ class FontFace final : public nsISupports, public nsWrapperCache {
   void GetFontVariationSettings(nsTArray<gfxFontVariation>&) const;
   void GetSources(nsTArray<StyleFontFaceSourceListComponent>&) const;
   Maybe<StyleFontLanguageOverride> GetFontLanguageOverride() const;
+  Maybe<StylePercentage> GetAscentOverride() const;
+  Maybe<StylePercentage> GetDescentOverride() const;
+  Maybe<StylePercentage> GetLineGapOverride() const;
 
   gfxUserFontEntry* CreateUserFontEntry();
   gfxUserFontEntry* GetUserFontEntry() const { return mUserFontEntry; }
@@ -171,6 +176,12 @@ class FontFace final : public nsISupports, public nsWrapperCache {
   void SetVariationSettings(const nsACString& aValue, ErrorResult& aRv);
   void GetDisplay(nsACString& aResult);
   void SetDisplay(const nsACString& aValue, ErrorResult& aRv);
+  void GetAscentOverride(nsACString& aResult);
+  void SetAscentOverride(const nsACString& aValue, ErrorResult& aRv);
+  void GetDescentOverride(nsACString& aResult);
+  void SetDescentOverride(const nsACString& aValue, ErrorResult& aRv);
+  void GetLineGapOverride(nsACString& aResult);
+  void SetLineGapOverride(const nsACString& aValue, ErrorResult& aRv);
 
   FontFaceLoadStatus Status();
   Promise* Load(ErrorResult& aRv);

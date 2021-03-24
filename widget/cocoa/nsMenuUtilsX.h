@@ -7,13 +7,13 @@
 #define nsMenuUtilsX_h_
 
 #include "nscore.h"
-#include "nsMenuBaseX.h"
 #include "nsStringFwd.h"
 
 #import <Cocoa/Cocoa.h>
 
 class nsIContent;
 class nsMenuBarX;
+class nsMenuX;
 
 // Namespace containing utility functions used in our native menu implementation.
 namespace nsMenuUtilsX {
@@ -24,7 +24,6 @@ unsigned int MacModifiersForGeckoModifiers(uint8_t geckoModifiers);
 nsMenuBarX* GetHiddenWindowMenuBar();   // returned object is not retained
 NSMenuItem* GetStandardEditMenuItem();  // returned object is not retained
 bool NodeIsHiddenOrCollapsed(nsIContent* aContent);
-int CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuObjectX* aChild);
 
 // Find the menu item by following the path aLocationString from aRootMenu.
 // aLocationString is a '|'-separated list of integers, where each integer is
@@ -33,6 +32,15 @@ int CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuObjectX* aChild)
 // app menu can be skipped during the search.
 NSMenuItem* NativeMenuItemWithLocation(NSMenu* aRootMenu, NSString* aLocationString,
                                        bool aIsMenuBar);
+
+// Traverse the menu tree and check that there are no cycles or NSMenu(Item) objects that are used
+// more than once. If inconsistencies are found, these functions crash the process.
+void CheckNativeMenuConsistency(NSMenu* aMenu);
+void CheckNativeMenuConsistency(NSMenuItem* aMenuItem);
+
+// Print out debugging information about the native menu tree structure.
+void DumpNativeMenu(NSMenu* aMenu);
+void DumpNativeMenuItem(NSMenuItem* aMenuItem);
 
 }  // namespace nsMenuUtilsX
 

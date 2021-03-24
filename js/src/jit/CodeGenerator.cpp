@@ -2533,6 +2533,11 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
                  Address(shared, RegExpShared::offsetOfGroupsTemplate()),
                  ImmWord(0), &oolEntry);
 
+  // Similarly, if the |hasIndices| flag is set, fall back to the OOL stub.
+  masm.branchTest32(Assembler::NonZero,
+                    Address(shared, RegExpShared::offsetOfFlags()),
+                    Imm32(int32_t(JS::RegExpFlag::HasIndices)), &oolEntry);
+
   // Construct the result.
   Register object = temp1;
   Label matchResultFallback, matchResultJoin;
@@ -12106,8 +12111,7 @@ void CodeGenerator::addGetPropertyCache(LInstruction* ins,
   CacheKind kind = CacheKind::GetElem;
   if (id.constant() && id.value().isString()) {
     JSString* idString = id.value().toString();
-    uint32_t dummy;
-    if (idString->isAtom() && !idString->asAtom().isIndex(&dummy)) {
+    if (idString->isAtom() && !idString->asAtom().isIndex()) {
       kind = CacheKind::GetProp;
     }
   }
@@ -12124,8 +12128,7 @@ void CodeGenerator::addSetPropertyCache(LInstruction* ins,
   CacheKind kind = CacheKind::SetElem;
   if (id.constant() && id.value().isString()) {
     JSString* idString = id.value().toString();
-    uint32_t dummy;
-    if (idString->isAtom() && !idString->asAtom().isIndex(&dummy)) {
+    if (idString->isAtom() && !idString->asAtom().isIndex()) {
       kind = CacheKind::SetProp;
     }
   }
@@ -12173,8 +12176,7 @@ void CodeGenerator::visitGetPropSuperCache(LGetPropSuperCache* ins) {
   CacheKind kind = CacheKind::GetElemSuper;
   if (id.constant() && id.value().isString()) {
     JSString* idString = id.value().toString();
-    uint32_t dummy;
-    if (idString->isAtom() && !idString->asAtom().isIndex(&dummy)) {
+    if (idString->isAtom() && !idString->asAtom().isIndex()) {
       kind = CacheKind::GetPropSuper;
     }
   }
@@ -12288,22 +12290,11 @@ void CodeGenerator::visitTypeOfV(LTypeOfV* lir) {
   const JSAtomState& names = gen->runtime->names();
   Label done;
 
-  OutOfLineTypeOfV* ool = nullptr;
-  if (lir->mir()->inputMaybeCallableOrEmulatesUndefined()) {
-    // The input may be a callable object (result is "function") or may
-    // emulate undefined (result is "undefined"). Use an OOL path.
-    ool = new (alloc()) OutOfLineTypeOfV(lir);
-    addOutOfLineCode(ool, lir->mir());
-    masm.branchTestObject(Assembler::Equal, tag, ool->entry());
-  } else {
-    // Input is not callable and does not emulate undefined, so if
-    // it's an object the result is always "object".
-    Label notObject;
-    masm.branchTestObject(Assembler::NotEqual, tag, &notObject);
-    masm.movePtr(ImmGCPtr(names.object), output);
-    masm.jump(&done);
-    masm.bind(&notObject);
-  }
+  // The input may be a callable object (result is "function") or may
+  // emulate undefined (result is "undefined"). Use an OOL path.
+  auto* ool = new (alloc()) OutOfLineTypeOfV(lir);
+  addOutOfLineCode(ool, lir->mir());
+  masm.branchTestObject(Assembler::Equal, tag, ool->entry());
 
   Label notNumber;
   masm.branchTestNumber(Assembler::NotEqual, tag, &notNumber);
@@ -15204,6 +15195,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
       case wasm::ValType::F64:
         argMir = ToMIRType(sig.args()[i]);
         break;
+      case wasm::ValType::Rtt:
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected argument type when calling from ion to wasm");
       case wasm::ValType::Ref:
@@ -15275,6 +15267,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
         MOZ_ASSERT(lir->mir()->type() == MIRType::Double);
         MOZ_ASSERT(ToFloatRegister(lir->output()) == ReturnDoubleReg);
         break;
+      case wasm::ValType::Rtt:
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
       case wasm::ValType::Ref:

@@ -31,6 +31,7 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/nsHTTPSOnlyUtils.h"
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/dom/WindowGlobalParent.h"
@@ -1559,6 +1560,12 @@ HttpBaseChannel::GetEncodedBodySize(uint64_t* aEncodedBodySize) {
 NS_IMETHODIMP
 HttpBaseChannel::GetSupportsHTTP3(bool* aSupportsHTTP3) {
   *aSupportsHTTP3 = mSupportsHTTP3;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::GetHasHTTPSRR(bool* aHasHTTPSRR) {
+  *aHasHTTPSRR = LoadHasHTTPSRR();
   return NS_OK;
 }
 
@@ -4290,9 +4297,6 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
     CallQueryInterface(newChannel, realChannel.StartAssignment());
     if (realChannel) {
       realChannel->SetTopWindowURI(mTopWindowURI);
-
-      realChannel->StoreTaintedOriginFlag(
-          ShouldTaintReplacementChannelOrigin(newURI));
     }
 
     // update the DocumentURI indicator since we are being redirected.
@@ -4347,8 +4351,8 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
   // transfer any properties
   nsCOMPtr<nsIWritablePropertyBag> bag(do_QueryInterface(newChannel));
   if (bag) {
-    for (auto iter = mPropertyHash.Iter(); !iter.Done(); iter.Next()) {
-      bag->SetProperty(iter.Key(), iter.UserData());
+    for (const auto& entry : mPropertyHash) {
+      bag->SetProperty(entry.GetKey(), entry.GetWeak());
     }
   }
 
@@ -4373,40 +4377,6 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
   // This channel has been redirected. Don't report timing info.
   StoreTimingEnabled(false);
   return NS_OK;
-}
-
-bool HttpBaseChannel::ShouldTaintReplacementChannelOrigin(nsIURI* aNewURI) {
-  if (LoadTaintedOriginFlag()) {
-    return true;
-  }
-
-  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
-  if (!ssm) {
-    return true;
-  }
-  bool isPrivateWin = mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
-  nsresult rv = ssm->CheckSameOriginURI(aNewURI, mURI, false, isPrivateWin);
-  if (NS_SUCCEEDED(rv)) {
-    return false;
-  }
-  // If aNewURI <-> mURI are not same-origin we need to taint unless
-  // mURI <-> mOriginalURI/LoadingPrincipal are same origin.
-
-  if (mLoadInfo->GetLoadingPrincipal()) {
-    bool sameOrigin = false;
-    rv = mLoadInfo->GetLoadingPrincipal()->IsSameOrigin(mURI, isPrivateWin,
-                                                        &sameOrigin);
-    if (NS_FAILED(rv)) {
-      return true;
-    }
-    return !sameOrigin;
-  }
-  if (!mOriginalURI) {
-    return true;
-  }
-
-  rv = ssm->CheckSameOriginURI(mOriginalURI, mURI, false, isPrivateWin);
-  return NS_FAILED(rv);
 }
 
 // Redirect Tracking
@@ -5131,6 +5101,15 @@ nsresult HttpBaseChannel::CheckRedirectLimit(uint32_t aRedirectFlags) const {
 
   if (mRedirectCount >= mRedirectionLimit) {
     LOG(("redirection limit reached!\n"));
+    return NS_ERROR_REDIRECT_LOOP;
+  }
+
+  // in case https-only mode is enabled which upgrades top-level requests to
+  // https and the page answers with a redirect (meta, 302, win.location, ...)
+  // then this method can break the cycle which causes the https-only exception
+  // page to appear.
+  if (nsHTTPSOnlyUtils::IsUpgradeDowngradeEndlessLoop(mURI, mLoadInfo)) {
+    LOG(("upgrade downgrade redirect loop!\n"));
     return NS_ERROR_REDIRECT_LOOP;
   }
 

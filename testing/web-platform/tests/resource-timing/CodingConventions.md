@@ -26,6 +26,12 @@ with recurring patterns.
 *   Consistent use of anonymous functions
     *   prefer
         ```
+        const func1 = param1 => {
+          body();
+        }
+        const func2 = (param1, param2) => {
+          body();
+        }
         fn(param => {
             body();
         });
@@ -34,6 +40,12 @@ with recurring patterns.
         over
 
         ```
+        function func1(param1) {
+          body();
+        }
+        function func2(param1, param2) {
+          body();
+        }
         fn(function(param) {
             body();
         });
@@ -50,6 +62,11 @@ with recurring patterns.
         web performance APIs, in general).
 *   Prefer [`fetch_tests_from_window`][3] to collect test results from embedded
     iframes instead of hand-rolled `postMessage` approaches
+*   Use the [`assert_*`][4] family of functions to check conformance to the spec
+    but throw exceptions explicitly when the test itself is broken.
+    *    A failed assert indicates "the implementation doesn't conform to the
+         spec"
+    *    Other uncaught exceptions indicate "the test case itself has a bug"
 *   Where possible, we want tests to be scalable - adding another test case
     should be as simple as calling the tests with new parameters, rather than
     copying an existing test and modifying it.
@@ -57,3 +74,4 @@ with recurring patterns.
 [1]: https://www.w3.org/TR/resource-timing-2/
 [2]: https://web-platform-tests.org/writing-tests/testharness-api.html#promise-tests
 [3]: https://web-platform-tests.org/writing-tests/testharness-api.html#consolidating-tests-from-other-documents
+[4]: https://web-platform-tests.org/writing-tests/testharness-api.html#list-of-assertions

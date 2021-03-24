@@ -54,9 +54,11 @@
   padding-inline-end: 59px;
 }
 
+@supports not -moz-bool-pref("browser.proton.doorhangers.enabled") {
 #downloadsHistory {
   padding-inline: 14px;
 }
+} /** END not Proton **/
 
 @item@ > toolbarseparator {
   margin: 10px 0;
@@ -119,7 +121,9 @@
 }
 
 @item@[verdict="Uncommon"] .downloadBlockedBadge {
-  background-image: url("chrome://browser/skin/info.svg");
+  -moz-context-properties: fill;
+  fill: #00a1f2;
+  background-image: url("chrome://global/skin/icons/info-filled.svg");
 }
 
 .downloadContainer {
@@ -202,15 +206,19 @@
 /*** Button icons ***/
 
 .downloadIconCancel > .button-box > .button-icon {
-  list-style-image: url("chrome://browser/skin/panel-icon-cancel.svg");
+  list-style-image: url("chrome://global/skin/icons/close.svg");
 }
 
 .downloadIconShow > .button-box > .button-icon {
-  list-style-image: url("chrome://global/skin/icons/findFile.svg");
+%ifdef XP_MACOSX
+  list-style-image: url("chrome://global/skin/icons/search-glass.svg");
+%else
+  list-style-image: url("chrome://global/skin/icons/folder.svg");
+%endif
 }
 
 .downloadIconRetry > .button-box > .button-icon {
-  list-style-image: url("chrome://browser/skin/panel-icon-retry.svg");
+  list-style-image: url("chrome://browser/skin/reload.svg");
 }
 
 .downloadIconSubviewArrow > .button-box > .button-icon {

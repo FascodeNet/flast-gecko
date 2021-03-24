@@ -51,6 +51,7 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/scache/StartupCache.h"
+#include "mozilla/Telemetry.h"
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -464,7 +465,7 @@ hb_face_t* FT2FontEntry::CreateHBFace() const {
 
 bool FT2FontEntry::HasFontTable(uint32_t aTableTag) {
   if (mAvailableTables.Count() > 0) {
-    return mAvailableTables.GetEntry(aTableTag);
+    return mAvailableTables.Contains(aTableTag);
   }
 
   // If we haven't created a FreeType face already, try to avoid that by
@@ -484,7 +485,7 @@ bool FT2FontEntry::HasFontTable(uint32_t aTableTag) {
         totalTables = hb_face_get_table_tags(face, startOffset, &count, tags);
         startOffset += count;
         while (count-- > 0) {
-          mAvailableTables.PutEntry(tags[count]);
+          mAvailableTables.Insert(tags[count]);
         }
       } while (startOffset < totalTables);
       hb_face_destroy(face);
@@ -492,9 +493,9 @@ bool FT2FontEntry::HasFontTable(uint32_t aTableTag) {
       // Failed to create the HarfBuzz face! The font is probably broken.
       // Put a dummy entry in mAvailableTables so that we don't bother
       // re-trying here.
-      mAvailableTables.PutEntry(uint32_t(-1));
+      mAvailableTables.Insert(uint32_t(-1));
     }
-    return mAvailableTables.GetEntry(aTableTag);
+    return mAvailableTables.Contains(aTableTag);
   }
 
   RefPtr<SharedFTFace> face = GetFTFace();
@@ -702,7 +703,7 @@ class FontNameCache {
   size_t EntryCount() const { return mMap.EntryCount(); }
 
   void DropStaleEntries() {
-    for (auto iter = mMap.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = mMap.ConstIter(); !iter.Done(); iter.Next()) {
       auto entry = static_cast<FNCMapEntry*>(iter.Get());
       if (!entry->mFileExists) {
         iter.Remove();
@@ -717,7 +718,7 @@ class FontNameCache {
 
     LOG(("Writing FontNameCache:"));
     nsAutoCString buf;
-    for (auto iter = mMap.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = mMap.ConstIter(); !iter.Done(); iter.Next()) {
       auto entry = static_cast<FNCMapEntry*>(iter.Get());
       MOZ_ASSERT(entry->mFileExists);
       buf.Append(entry->mFilename);
@@ -1370,7 +1371,7 @@ void gfxFT2FontList::AppendFacesFromOmnijarEntry(nsZipArchive* aArchive,
 // if aSortFaces is true this will sort faces to give priority to "standard"
 // font files.
 static void FinalizeFamilyMemberList(nsCStringHashKey::KeyType aKey,
-                                     RefPtr<gfxFontFamily>& aFamily,
+                                     const RefPtr<gfxFontFamily>& aFamily,
                                      bool aSortFaces) {
   gfxFontFamily* family = aFamily.get();
 
@@ -1475,7 +1476,11 @@ void gfxFT2FontList::FindFonts() {
   if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() > 0 ||
       (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() < 0 &&
        NS_SUCCEEDED(mem->IsLowMemoryPlatform(&lowmem)) && !lowmem)) {
+    TimeStamp start = TimeStamp::Now();
     FindFontsInOmnijar(mFontNameCache.get());
+    TimeStamp end = TimeStamp::Now();
+    Telemetry::Accumulate(Telemetry::FONTLIST_BUNDLEDFONTS_ACTIVATE,
+                          (end - start).ToMilliseconds());
   }
 
   // Look for downloaded fonts in a profile-agnostic "fonts" directory.
@@ -1610,21 +1615,21 @@ void gfxFT2FontList::AppendFaceFromFontListEntry(const FontListEntry& aFLE,
 }
 
 void gfxFT2FontList::ReadSystemFontList(nsTArray<FontListEntry>* aList) {
-  for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
-    auto family = static_cast<FT2FontFamily*>(iter.Data().get());
+  for (const auto& entry : mFontFamilies) {
+    auto family = static_cast<FT2FontFamily*>(entry.GetData().get());
     family->AddFacesToFontList(aList);
   }
 }
 
 static void LoadSkipSpaceLookupCheck(
-    nsTHashtable<nsCStringHashKey>& aSkipSpaceLookupCheck) {
+    nsTHashSet<nsCString>& aSkipSpaceLookupCheck) {
   AutoTArray<nsCString, 5> skiplist;
   gfxFontUtils::GetPrefsFontList(
       "font.whitelist.skip_default_features_space_check", skiplist);
   uint32_t numFonts = skiplist.Length();
   for (uint32_t i = 0; i < numFonts; i++) {
     ToLowerCase(skiplist[i]);
-    aSkipSpaceLookupCheck.PutEntry(skiplist[i]);
+    aSkipSpaceLookupCheck.Insert(skiplist[i]);
   }
 }
 
@@ -1638,9 +1643,9 @@ nsresult gfxFT2FontList::InitFontListForPlatform() {
 
     // Finalize the families by sorting faces into standard order
     // and marking "simple" families.
-    for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
-      nsCStringHashKey::KeyType key = iter.Key();
-      RefPtr<gfxFontFamily>& family = iter.Data();
+    for (const auto& entry : mFontFamilies) {
+      nsCStringHashKey::KeyType key = entry.GetKey();
+      const RefPtr<gfxFontFamily>& family = entry.GetData();
       FinalizeFamilyMemberList(key, family, /* aSortFaces */ true);
     }
 
@@ -1658,9 +1663,9 @@ nsresult gfxFT2FontList::InitFontListForPlatform() {
 
   // We don't need to sort faces (because they were already sorted by the
   // chrome process, so we just maintain the existing order)
-  for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
-    nsCStringHashKey::KeyType key = iter.Key();
-    RefPtr<gfxFontFamily>& family = iter.Data();
+  for (const auto& entry : mFontFamilies) {
+    nsCStringHashKey::KeyType key = entry.GetKey();
+    const RefPtr<gfxFontFamily>& family = entry.GetData();
     FinalizeFamilyMemberList(key, family, /* aSortFaces */ false);
   }
 
@@ -1723,10 +1728,10 @@ gfxFontEntry* gfxFT2FontList::LookupLocalFont(const nsACString& aFontName,
   // walk over list of names
   FT2FontEntry* fontEntry = nullptr;
 
-  for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mFontFamilies.ConstIter(); !iter.Done(); iter.Next()) {
     // Check family name, based on the assumption that the
     // first part of the full name is the family name
-    RefPtr<gfxFontFamily>& fontFamily = iter.Data();
+    const RefPtr<gfxFontFamily>& fontFamily = iter.Data();
 
     // does the family name match up to the length of the family name?
     const nsCString& family = fontFamily->Name();

@@ -20,6 +20,10 @@ const PASSWORD_INPUT_ADDED_COALESCING_THRESHOLD_MS = 1;
 const AUTOCOMPLETE_AFTER_RIGHT_CLICK_THRESHOLD_MS = 400;
 const AUTOFILL_STATE = "autofill";
 
+const SUBMIT_FORM_SUBMIT = 1;
+const SUBMIT_PAGE_NAVIGATION = 2;
+const SUBMIT_FORM_IS_REMOVED = 3;
+
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
@@ -337,6 +341,26 @@ const observer = {
           }
         }
         docState.fieldModificationsByRootElement.set(formLikeRoot, true);
+        // Keep track of the modified formless password field to trigger form submission
+        // when it is removed from DOM.
+        let alreadyModifiedFormLessField = true;
+        if (ChromeUtils.getClassName(formLikeRoot) !== "HTMLFormElement") {
+          alreadyModifiedFormLessField = docState.formlessModifiedPasswordFields.has(
+            field
+          );
+          if (!alreadyModifiedFormLessField) {
+            docState.formlessModifiedPasswordFields.add(field);
+          }
+        }
+
+        // Infer form submission only when there has been an user interaction on the form
+        // or the formless password field.
+        if (
+          LoginHelper.formRemovalCaptureEnabled &&
+          (!alreadyModified || !alreadyModifiedFormLessField)
+        ) {
+          ownerDocument.setNotifyFetchSuccess(true);
+        }
 
         if (
           // When the password field value is cleared or entirely replaced we don't treat it as
@@ -657,6 +681,14 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
     }
 
     switch (event.type) {
+      case "DOMDocFetchSuccess": {
+        if (this.shouldIgnoreLoginManagerEvent(event)) {
+          break;
+        }
+
+        this.onDOMDocFetchSuccess(event);
+        break;
+      }
       case "DOMFormBeforeSubmit": {
         if (this.shouldIgnoreLoginManagerEvent(event)) {
           break;
@@ -673,6 +705,14 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
         this.onDOMFormHasPassword(event);
         let formLike = LoginFormFactory.createFromForm(event.originalTarget);
         InsecurePasswordUtils.reportInsecurePasswords(formLike);
+        break;
+      }
+      case "DOMFormRemoved":
+      case "DOMInputPasswordRemoved": {
+        if (this.shouldIgnoreLoginManagerEvent(event)) {
+          break;
+        }
+        this.onDOMFormRemoved(event);
         break;
       }
       case "DOMInputPasswordAdded": {
@@ -748,6 +788,111 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
     }
   }
 
+  /**
+   * This method sets up form removal listener for form and password fields that
+   * users have interacted with.
+   */
+  onDOMDocFetchSuccess(event) {
+    let document = event.target;
+    let docState = this.stateForDocument(document);
+    let weakModificationsRootElements = ChromeUtils.nondeterministicGetWeakMapKeys(
+      docState.fieldModificationsByRootElement
+    );
+
+    log(
+      "onDOMDocFetchSuccess: modificationsByRootElement approx size:",
+      weakModificationsRootElements.length,
+      "document:",
+      document
+    );
+    // Start to listen to form/password removed event after receiving a fetch/xhr
+    // complete event.
+    document.setNotifyFormOrPasswordRemoved(true);
+    this.docShell.chromeEventHandler.addEventListener(
+      "DOMFormRemoved",
+      this,
+      true
+    );
+    this.docShell.chromeEventHandler.addEventListener(
+      "DOMInputPasswordRemoved",
+      this,
+      true
+    );
+
+    for (let rootElement of weakModificationsRootElements) {
+      if (ChromeUtils.getClassName(rootElement) === "HTMLFormElement") {
+        // If we create formLike when it is removed, we might not have the
+        // right elements at that point, so create formLike object now.
+        let formLike = LoginFormFactory.createFromForm(rootElement);
+        docState.formLikeByObservedNode.set(rootElement, formLike);
+      }
+    }
+
+    let weakFormlessModifiedPasswordFields = ChromeUtils.nondeterministicGetWeakSetKeys(
+      docState.formlessModifiedPasswordFields
+    );
+
+    log(
+      "onDOMDocFetchSuccess: formlessModifiedPasswordFields approx size:",
+      weakFormlessModifiedPasswordFields.length,
+      "document:",
+      document
+    );
+    for (let passwordField of weakFormlessModifiedPasswordFields) {
+      let formLike = LoginFormFactory.createFromField(passwordField);
+      // force elements lazy getter being called.
+      if (formLike.elements.length) {
+        docState.formLikeByObservedNode.set(passwordField, formLike);
+      }
+    }
+
+    // Observers have been setted up, removed the listener.
+    document.setNotifyFetchSuccess(false);
+  }
+
+  /*
+   * Trigger capture when a form/formless password is removed from DOM.
+   * This method is used to capture logins for cases where form submit events
+   * are not used.
+   *
+   * The heuristic works as follow:
+   * 1. Set up 'DOMDocFetchSuccess' event listener when users have interacted
+   *    with a form (by calling setNotifyFetchSuccess)
+   * 2. After receiving `DOMDocFetchSuccess`, set up form removal event listener
+   *    (see onDOMDocFetchSuccess)
+   * 3. When a form is removed, onDOMFormRemoved triggers the login capture
+   *    code.
+   */
+  onDOMFormRemoved(event) {
+    let document = event.composedTarget.ownerDocument;
+    let docState = this.stateForDocument(document);
+
+    let formLike = docState.formLikeByObservedNode.get(event.target);
+    if (!formLike) {
+      return;
+    }
+
+    log("form is removed");
+    this._onFormSubmit(formLike, SUBMIT_FORM_IS_REMOVED);
+
+    docState.formLikeByObservedNode.delete(event.target);
+    let weakObserveredNodes = ChromeUtils.nondeterministicGetWeakMapKeys(
+      docState.formLikeByObservedNode
+    );
+
+    if (!weakObserveredNodes.length) {
+      document.setNotifyFormOrPasswordRemoved(false);
+      this.docShell.chromeEventHandler.removeEventListener(
+        "DOMFormRemoved",
+        this
+      );
+      this.docShell.chromeEventHandler.removeEventListener(
+        "DOMInputPasswordRemoved",
+        this
+      );
+    }
+  }
+
   onDOMFormBeforeSubmit(event) {
     if (!event.isTrusted) {
       return;
@@ -757,7 +902,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
     // can grab form data before it might be modified (see bug 257781).
     log("notified before form submission");
     let formLike = LoginFormFactory.createFromForm(event.target);
-    this._onFormSubmit(formLike);
+    this._onFormSubmit(formLike, SUBMIT_FORM_SUBMIT);
   }
 
   onDocumentVisibilityChange(event) {
@@ -999,6 +1144,18 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
          * Anything entered into an <input> that we think might be a password
          */
         possiblePasswords: new Set(),
+
+        /**
+         * Keeps track of the formLike of nodes (form or formless password field)
+         * that we are watching when they are removed from DOM.
+         */
+        formLikeByObservedNode: new WeakMap(),
+
+        /**
+         * Keeps track of all formless password fields that have been
+         * updated by the user.
+         */
+        formlessModifiedPasswordFields: new WeakFieldSet(),
       };
       this._loginFormStateByDocument.set(document, loginFormState);
     }
@@ -1231,7 +1388,11 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
    */
   _getPasswordFields(
     form,
-    { fieldOverrideRecipe = null, minPasswordLength = 0 } = {}
+    {
+      fieldOverrideRecipe = null,
+      minPasswordLength = 0,
+      ignoreConnect = false,
+    } = {}
   ) {
     // Locate the password fields in the form.
     let pwFields = [];
@@ -1240,7 +1401,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
       if (
         ChromeUtils.getClassName(element) !== "HTMLInputElement" ||
         !element.hasBeenTypePassword ||
-        !element.isConnected
+        (!element.isConnected && !ignoreConnect)
       ) {
         continue;
       }
@@ -1308,6 +1469,9 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
    * @param {LoginForm} form
    * @param {bool} isSubmission
    * @param {Set} recipes
+   * @param {Object} options
+   * @param {bool} [options.ignoreConnect] - Whether to ignore checking isConnected
+   *                                         of the element.
    * @return {Object} {usernameField, newPasswordField, oldPasswordField, confirmPasswordField}
    *
    * usernameField may be null.
@@ -1321,7 +1485,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
    * this method will only return a non-null usernameField if the
    * LoginForm has a password field.
    */
-  _getFormFields(form, isSubmission, recipes) {
+  _getFormFields(form, isSubmission, recipes, { ignoreConnect = false } = {}) {
     let usernameField = null;
     let newPasswordField = null;
     let oldPasswordField = null;
@@ -1372,6 +1536,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
       pwFields = this._getPasswordFields(form, {
         fieldOverrideRecipe,
         minPasswordLength: isSubmission ? minSubmitPasswordLength : 0,
+        ignoreConnect,
       });
     }
 
@@ -1387,7 +1552,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
 
       for (let i = pwFields[0].index - 1; i >= 0; i--) {
         let element = form.elements[i];
-        if (!LoginHelper.isUsernameFieldType(element)) {
+        if (!LoginHelper.isUsernameFieldType(element, { ignoreConnect })) {
           continue;
         }
 
@@ -1593,7 +1758,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
       }
 
       let formLike = LoginFormFactory.getForRootElement(formRoot);
-      this._onFormSubmit(formLike);
+      this._onFormSubmit(formLike, SUBMIT_PAGE_NAVIGATION);
     }
   }
 
@@ -1605,7 +1770,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
    *
    * @param {LoginForm} form
    */
-  _onFormSubmit(form) {
+  _onFormSubmit(form, reason) {
     log("_onFormSubmit", form);
 
     this._maybeSendFormInteractionMessage(
@@ -1614,6 +1779,9 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
       {
         targetField: null,
         isSubmission: true,
+        // When this is trigger by inferring from form removal, the form is not
+        // connected anymore, skip checking isConnected in this case.
+        ignoreConnect: reason == SUBMIT_FORM_IS_REMOVED,
       }
     );
   }
@@ -1634,7 +1802,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
   _maybeSendFormInteractionMessage(
     form,
     messageName,
-    { targetField, isSubmission, triggeredByFillingGenerated }
+    { targetField, isSubmission, triggeredByFillingGenerated, ignoreConnect }
   ) {
     let doc = form.ownerDocument;
     let win = doc.defaultView;
@@ -1680,7 +1848,7 @@ this.LoginManagerChild = class LoginManagerChild extends JSWindowActorChild {
         newPasswordField,
         oldPasswordField,
         confirmPasswordField,
-      } = this._getFormFields(form, true, recipes);
+      } = this._getFormFields(form, true, recipes, { ignoreConnect });
 
       // It's possible the field triggering this message isn't one of those found by _getFormFields' heuristics
       if (

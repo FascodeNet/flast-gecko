@@ -1048,6 +1048,18 @@ bool nsStyleSVGReset::HasMask() const {
 }
 
 // --------------------
+// nsStylePage
+//
+
+nsChangeHint nsStylePage::CalcDifference(const nsStylePage& aNewData) const {
+  // Page rule styling only matters when printing or using print preview.
+  if (aNewData.mSize != mSize) {
+    return nsChangeHint_NeutralChange;
+  }
+  return nsChangeHint_Empty;
+}
+
+// --------------------
 // nsStylePosition
 //
 nsStylePosition::nsStylePosition(const Document& aDocument)
@@ -2758,17 +2770,14 @@ void nsStyleContent::TriggerImageLoads(Document& aDoc,
 
   for (size_t i = 0; i < items.Length(); ++i) {
     auto& item = items[i];
-    if (!item.IsUrl()) {
+    if (!item.IsImage()) {
       continue;
     }
-    auto& url = item.AsUrl();
-    if (url.IsImageResolved()) {
-      continue;
-    }
-    auto* oldUrl = i < oldItems.Length() && oldItems[i].IsUrl()
-                       ? &oldItems[i].AsUrl()
-                       : nullptr;
-    const_cast<StyleComputedImageUrl&>(url).ResolveImage(aDoc, oldUrl);
+    auto& image = item.AsImage();
+    auto* oldImage = i < oldItems.Length() && oldItems[i].IsImage()
+                         ? &oldItems[i].AsImage()
+                         : nullptr;
+    const_cast<StyleImage&>(image).ResolveImage(aDoc, oldImage);
   }
 }
 
@@ -2850,7 +2859,9 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mWhiteSpace(StyleWhiteSpace::Normal),
       mHyphens(StyleHyphens::Manual),
       mRubyAlign(StyleRubyAlign::SpaceAround),
-      mRubyPosition(StyleRubyPosition::Over),
+      mRubyPosition(StaticPrefs::layout_css_ruby_position_alternate_enabled()
+                        ? StyleRubyPosition::AlternateOver
+                        : StyleRubyPosition::Over),
       mTextSizeAdjust(StyleTextSizeAdjust::Auto),
       mTextCombineUpright(NS_STYLE_TEXT_COMBINE_UPRIGHT_NONE),
       mControlCharacterVisibility(

@@ -997,7 +997,6 @@ STATIC_ATOMS = [
     Atom("prefersContrast", "prefers-contrast"),
     Atom("prefix", "prefix"),
     Atom("preload", "preload"),
-    Atom("mozpresentation", "mozpresentation"),
     Atom("preserve", "preserve"),
     Atom("preserveSpace", "preserve-space"),
     Atom("preventdefault", "preventdefault"),
@@ -1886,9 +1885,7 @@ STATIC_ATOMS = [
     Atom("ondevicemotion", "ondevicemotion"),
     Atom("ondeviceorientation", "ondeviceorientation"),
     Atom("onabsolutedeviceorientation", "onabsolutedeviceorientation"),
-    Atom("ondeviceproximity", "ondeviceproximity"),
     Atom("onmozorientationchange", "onmozorientationchange"),
-    Atom("onuserproximity", "onuserproximity"),
     # light sensor support
     Atom("ondevicelight", "ondevicelight"),
     # MediaDevices device change event
@@ -2430,7 +2427,6 @@ STATIC_ATOMS = [
     PseudoElementAtom("PseudoElement_firstLine", ":first-line"),
     PseudoElementAtom("PseudoElement_selection", ":selection"),
     PseudoElementAtom("PseudoElement_mozFocusInner", ":-moz-focus-inner"),
-    PseudoElementAtom("PseudoElement_mozComplexControlWrapper", ":-moz-complex-control-wrapper"),
     PseudoElementAtom("PseudoElement_mozNumberSpinBox", ":-moz-number-spin-box"),
     PseudoElementAtom("PseudoElement_mozNumberSpinUp", ":-moz-number-spin-up"),
     PseudoElementAtom("PseudoElement_mozNumberSpinDown", ":-moz-number-spin-down"),

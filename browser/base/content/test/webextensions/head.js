@@ -238,11 +238,13 @@ function checkPermissionString(string, key, param, msg) {
  *        in this array is itself a 2-element array with the string key
  *        for the item (e.g., "webextPerms.description.foo") and an
  *        optional formatting parameter.
+ * @param {boolean} sideloaded
+ *        Whether the notification is for a sideloaded extenion.
  */
-function checkNotification(panel, checkIcon, permissions) {
+function checkNotification(panel, checkIcon, permissions, sideloaded) {
   let icon = panel.getAttribute("icon");
   let ul = document.getElementById("addon-webext-perm-list");
-  let header = document.getElementById("addon-webext-perm-intro");
+  let singleDataEl = document.getElementById("addon-webext-perm-single-entry");
   let learnMoreLink = document.getElementById("addon-webext-perm-info");
 
   if (checkIcon instanceof RegExp) {
@@ -256,27 +258,53 @@ function checkNotification(panel, checkIcon, permissions) {
     is(icon, checkIcon, "Notification icon is correct");
   }
 
-  is(
-    ul.childElementCount,
-    permissions.length,
-    `Permissions list has ${permissions.length} entries`
-  );
-  if (!permissions.length) {
-    ok(header.hidden, "Permissions header is hidden");
-    ok(learnMoreLink.hidden, "Permissions learn more is hidden");
-  } else {
-    ok(!header.hidden, "Permissions header is visible");
-    ok(!learnMoreLink.hidden, "Permissions learn more is visible");
+  let description = panel.querySelector(".popup-notification-description")
+    .textContent;
+  let expectedDescription = "webextPerms.header";
+  if (permissions.length) {
+    expectedDescription += "WithPerms";
   }
+  if (sideloaded) {
+    expectedDescription = "webextPerms.sideloadHeader";
+  }
+  checkPermissionString(
+    description,
+    expectedDescription,
+    undefined,
+    `Description is the expected one`
+  );
+  is(
+    learnMoreLink.hidden,
+    !permissions.length,
+    "Permissions learn more is hidden if there are no permissions"
+  );
 
-  for (let i in permissions) {
-    let [key, param] = permissions[i];
-    checkPermissionString(
-      ul.children[i].textContent,
-      key,
-      param,
-      `Permission number ${i + 1} is correct`
+  if (!permissions.length) {
+    ok(ul.hidden, "Permissions list is hidden");
+    ok(singleDataEl.hidden, "Single permission data entry is hidden");
+    ok(
+      !(ul.childElementCount || singleDataEl.textContent),
+      "Permission list and single permission element have no entries"
     );
+  } else if (permissions.length === 1) {
+    ok(ul.hidden, "Permissions list is hidden");
+    ok(!ul.childElementCount, "Permission list has no entries");
+    ok(singleDataEl.textContent, "Single permission data label has been set");
+  } else {
+    ok(singleDataEl.hidden, "Single permission data entry is hidden");
+    ok(
+      !singleDataEl.textContent,
+      "Single permission data label has not been set"
+    );
+    for (let i in permissions) {
+      let [key, param] = permissions[i];
+      checkPermissionString(
+        ul.children[i].textContent,
+        key,
+        param,
+        `Permission number ${i + 1} is correct`
+      );
+    }
   }
 }
 

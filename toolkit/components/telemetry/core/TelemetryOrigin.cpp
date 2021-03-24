@@ -7,7 +7,7 @@
 #include "Telemetry.h"
 #include "TelemetryOrigin.h"
 
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsIObserverService.h"
 #include "nsPrintfCString.h"
 #include "nsTArray.h"
@@ -112,14 +112,14 @@ static StaticMutex gTelemetryOriginMutex;
 typedef nsTArray<Tuple<const char*, const char*>> OriginHashesList;
 UniquePtr<OriginHashesList> gOriginHashesList;
 
-typedef nsDataHashtable<nsCStringHashKey, size_t> OriginToIndexMap;
+typedef nsTHashMap<nsCStringHashKey, size_t> OriginToIndexMap;
 UniquePtr<OriginToIndexMap> gOriginToIndexMap;
 
-typedef nsDataHashtable<nsCStringHashKey, size_t> HashToIndexMap;
+typedef nsTHashMap<nsCStringHashKey, size_t> HashToIndexMap;
 UniquePtr<HashToIndexMap> gHashToIndexMap;
 
-typedef nsDataHashtable<nsCStringHashKey, uint32_t> OriginBag;
-typedef nsDataHashtable<OriginMetricIDHashKey, OriginBag> IdToOriginBag;
+typedef nsTHashMap<nsCStringHashKey, uint32_t> OriginBag;
+typedef nsTHashMap<OriginMetricIDHashKey, OriginBag> IdToOriginBag;
 
 UniquePtr<IdToOriginBag> gMetricToOriginBag;
 
@@ -187,10 +187,9 @@ uint32_t PrioDataCount(const StaticMutexAutoLock& lock) {
 // [(metric1, [[1], [1]]), (metric1, [[0], [1]])]
 nsresult AppEncodeTo(const StaticMutexAutoLock& lock,
                      IdBoolsPairArray& aResult) {
-  auto iter = gMetricToOriginBag->ConstIter();
-  for (; !iter.Done(); iter.Next()) {
-    OriginMetricID id = iter.Key();
-    const OriginBag& bag = iter.Data();
+  for (const auto& bagEntry : *gMetricToOriginBag) {
+    OriginMetricID id = bagEntry.GetKey();
+    const OriginBag& bag = bagEntry.GetData();
 
     uint32_t generation = 1;
     uint32_t maxGeneration = 1;
@@ -211,13 +210,12 @@ nsresult AppEncodeTo(const StaticMutexAutoLock& lock,
         metricDatum = false;
       }
 
-      auto originIt = bag.ConstIter();
-      for (; !originIt.Done(); originIt.Next()) {
-        uint32_t originCount = originIt.Data();
+      for (const auto& originEntry : bag) {
+        uint32_t originCount = originEntry.GetData();
         if (originCount >= generation) {
           maxGeneration = std::max(maxGeneration, originCount);
 
-          const nsACString& origin = originIt.Key();
+          const nsACString& origin = originEntry.GetKey();
           size_t index;
           if (!gOriginToIndexMap->Get(origin, &index)) {
             return NS_ERROR_FAILURE;
@@ -426,13 +424,8 @@ nsresult TelemetryOrigin::GetOriginSnapshot(bool aClear, JSContext* aCx,
 
       gMetricToOriginBag->SwapElements(copy);
     } else {
-      auto iter = gMetricToOriginBag->ConstIter();
-      for (; !iter.Done(); iter.Next()) {
-        OriginBag& bag = copy.LookupOrInsert(iter.Key());
-        auto originIt = iter.Data().ConstIter();
-        for (; !originIt.Done(); originIt.Next()) {
-          bag.InsertOrUpdate(originIt.Key(), originIt.Data());
-        }
+      for (const auto& entry : *gMetricToOriginBag) {
+        copy.InsertOrUpdate(entry.GetKey(), entry.GetData().Clone());
       }
     }
   }
@@ -443,22 +436,21 @@ nsresult TelemetryOrigin::GetOriginSnapshot(bool aClear, JSContext* aCx,
     return NS_ERROR_FAILURE;
   }
   aResult.setObject(*rootObj);
-  for (auto iter = copy.ConstIter(); !iter.Done(); iter.Next()) {
+  for (const auto& entry : copy) {
     JS::RootedObject originsObj(aCx, JS_NewPlainObject(aCx));
     if (NS_WARN_IF(!originsObj)) {
       return NS_ERROR_FAILURE;
     }
-    if (!JS_DefineProperty(aCx, rootObj, GetNameForMetricID(iter.Key()),
+    if (!JS_DefineProperty(aCx, rootObj, GetNameForMetricID(entry.GetKey()),
                            originsObj, JSPROP_ENUMERATE)) {
       NS_WARNING("Failed to define property in origin snapshot.");
       return NS_ERROR_FAILURE;
     }
 
-    auto originIt = iter.Data().ConstIter();
-    for (; !originIt.Done(); originIt.Next()) {
+    for (const auto& originEntry : entry.GetData()) {
       if (!JS_DefineProperty(aCx, originsObj,
-                             nsPromiseFlatCString(originIt.Key()).get(),
-                             originIt.Data(), JSPROP_ENUMERATE)) {
+                             nsPromiseFlatCString(originEntry.GetKey()).get(),
+                             originEntry.GetData(), JSPROP_ENUMERATE)) {
         NS_WARNING("Failed to define origin and count in snapshot.");
         return NS_ERROR_FAILURE;
       }

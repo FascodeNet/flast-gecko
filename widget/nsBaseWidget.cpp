@@ -122,7 +122,7 @@ int32_t nsIWidget::sPointerIdCounter = 0;
 // Some statics from nsIWidget.h
 /*static*/
 uint64_t AutoObserverNotifier::sObserverId = 0;
-/*static*/ nsDataHashtable<nsUint64HashKey, nsCOMPtr<nsIObserver>>
+/*static*/ nsTHashMap<uint64_t, nsCOMPtr<nsIObserver>>
     AutoObserverNotifier::sSavedObservers;
 
 // The maximum amount of time to let the EnableDragDrop runnable wait in the
@@ -1223,7 +1223,8 @@ already_AddRefed<LayerManager> nsBaseWidget::CreateCompositorSession(
     bool supportsAcceleration = WidgetTypeSupportsAcceleration();
     bool enableWR;
     bool enableSWWR;
-    if (supportsAcceleration) {
+    if (supportsAcceleration ||
+        StaticPrefs::gfx_webrender_unaccelerated_widget_force()) {
       enableWR = gfx::gfxVars::UseWebRender();
       enableSWWR = gfx::gfxVars::UseSoftwareWebRender();
     } else if (WidgetTypePrefersSoftwareWebRender()) {
@@ -1237,7 +1238,16 @@ already_AddRefed<LayerManager> nsBaseWidget::CreateCompositorSession(
 #ifdef XP_WIN
     if (supportsAcceleration) {
       options.SetAllowSoftwareWebRenderD3D11(
-          StaticPrefs::gfx_webrender_software_d3d11_AtStartup());
+          gfx::gfxVars::AllowSoftwareWebRenderD3D11());
+    }
+#elif defined(MOZ_WIDGET_ANDROID)
+    MOZ_ASSERT(supportsAcceleration);
+    options.SetAllowSoftwareWebRenderOGL(
+        StaticPrefs::gfx_webrender_software_opengl_AtStartup());
+#elif defined(MOZ_WIDGET_GTK)
+    if (supportsAcceleration) {
+      options.SetAllowSoftwareWebRenderOGL(
+          StaticPrefs::gfx_webrender_software_opengl_AtStartup());
     }
 #endif
 
@@ -2145,9 +2155,9 @@ void nsIWidget::UpdateRegisteredPluginWindowVisibility(
   // Our visible list is associated with a compositor which is associated with
   // a specific top level window. We use the parent widget during iteration
   // to skip the plugin widgets owned by other top level windows.
-  for (auto iter = sPluginWidgetList->Iter(); !iter.Done(); iter.Next()) {
-    const void* windowId = iter.Key();
-    nsIWidget* widget = iter.UserData();
+  for (const auto& entry : *sPluginWidgetList) {
+    const void* windowId = entry.GetKey();
+    nsIWidget* widget = entry.GetWeak();
 
     MOZ_ASSERT(windowId);
     MOZ_ASSERT(widget);
@@ -2170,9 +2180,9 @@ void nsIWidget::CaptureRegisteredPlugins(uintptr_t aOwnerWidget) {
   // Our visible list is associated with a compositor which is associated with
   // a specific top level window. We use the parent widget during iteration
   // to skip the plugin widgets owned by other top level windows.
-  for (auto iter = sPluginWidgetList->Iter(); !iter.Done(); iter.Next()) {
-    DebugOnly<const void*> windowId = iter.Key();
-    nsIWidget* widget = iter.UserData();
+  for (const auto& entry : *sPluginWidgetList) {
+    DebugOnly<const void*> windowId = entry.GetKey();
+    nsIWidget* widget = entry.GetWeak();
 
     MOZ_ASSERT(windowId);
     MOZ_ASSERT(widget);

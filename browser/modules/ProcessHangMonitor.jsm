@@ -391,7 +391,7 @@ var ProcessHangMonitor = {
   findActiveReport(browser) {
     let frameLoader = browser.frameLoader;
     for (let report of this._activeReports.keys()) {
-      if (report.isReportForBrowser(frameLoader)) {
+      if (report.isReportForBrowserOrChildren(frameLoader)) {
         return report;
       }
     }
@@ -404,7 +404,7 @@ var ProcessHangMonitor = {
   findPausedReport(browser) {
     let frameLoader = browser.frameLoader;
     for (let [report] of this._pausedReports) {
-      if (report.isReportForBrowser(frameLoader)) {
+      if (report.isReportForBrowserOrChildren(frameLoader)) {
         return report;
       }
     }
@@ -572,7 +572,7 @@ var ProcessHangMonitor = {
 
       let addonName = aps.getExtensionName(report.addonId);
 
-      message = bundle.getFormattedString("processHang.add-on.label", [
+      message = bundle.getFormattedString("processHang.add-on.label2", [
         addonName,
         brandShortName,
       ]);
@@ -584,7 +584,7 @@ var ProcessHangMonitor = {
             "https://support.mozilla.org/kb/warning-unresponsive-script#w_other-causes",
         },
         {
-          label: bundle.getString("processHang.button_stop_sandbox.label"),
+          label: bundle.getString("processHang.button_stop_sandbox.label2"),
           accessKey: bundle.getString(
             "processHang.button_stop_sandbox.accessKey"
           ),

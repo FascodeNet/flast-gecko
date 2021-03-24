@@ -819,7 +819,8 @@ class nsDocShell final : public nsDocLoader,
   // FireOnLocationChange is called.
   // In all other cases false is returned.
   bool SetCurrentURI(nsIURI* aURI, nsIRequest* aRequest,
-                     bool aFireOnLocationChange, uint32_t aLocationFlags);
+                     bool aFireOnLocationChange, bool aIsInitialAboutBlank,
+                     uint32_t aLocationFlags);
 
   // The following methods deal with saving and restoring content viewers
   // in session history.
@@ -953,7 +954,7 @@ class nsDocShell final : public nsDocLoader,
   bool IsFrame() { return mBrowsingContext->IsFrame(); }
   bool CanSetOriginAttributes();
   bool ShouldBlockLoadingForBackButton();
-  bool ShouldDiscardLayoutState(nsIHttpChannel* aChannel);
+  static bool ShouldDiscardLayoutState(nsIHttpChannel* aChannel);
   bool HasUnloadedParent();
   bool JustStartedNetworkLoad();
   bool NavigationBlockedByPrinting(bool aDisplayErrorDialog = true);
@@ -967,6 +968,7 @@ class nsDocShell final : public nsDocLoader,
   nsresult EnsureFind();
   nsresult EnsureCommandHandler();
   nsresult RefreshURIFromQueue();
+  void RefreshURIToQueue();
   nsresult Embed(nsIContentViewer* aContentViewer,
                  mozilla::dom::WindowGlobalChild* aWindowActor,
                  bool aIsTransientAboutBlank, bool aPersist);
@@ -1084,8 +1086,15 @@ class nsDocShell final : public nsDocLoader,
   RefPtr<nsDSURIContentListener> mContentListener;
   RefPtr<nsGlobalWindowOuter> mScriptGlobal;
   nsCOMPtr<nsIPrincipal> mParentCharsetPrincipal;
+  // The following 3 lists contain either nsITimer or nsRefreshTimer objects.
+  // URIs to refresh are collected to mRefreshURIList.
   nsCOMPtr<nsIMutableArray> mRefreshURIList;
+  // mSavedRefreshURIList is used to move the entries from mRefreshURIList to
+  // mOSHE.
   nsCOMPtr<nsIMutableArray> mSavedRefreshURIList;
+  // BFCache-in-parent implementation caches the entries in
+  // mBFCachedRefreshURIList.
+  nsCOMPtr<nsIMutableArray> mBFCachedRefreshURIList;
   uint64_t mContentWindowID;
   nsCOMPtr<nsIContentViewer> mContentViewer;
   nsCOMPtr<nsIWidget> mParentWidget;
@@ -1229,7 +1238,6 @@ class nsDocShell final : public nsDocLoader,
   bool mCSSErrorReportingEnabled : 1;
   bool mAllowAuth : 1;
   bool mAllowKeywordFixup : 1;
-  bool mIsOffScreenBrowser : 1;
   bool mDisableMetaRefreshWhenInactive : 1;
   bool mIsAppTab : 1;
   bool mDeviceSizeIsPageSize : 1;

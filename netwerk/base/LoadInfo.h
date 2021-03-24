@@ -216,10 +216,11 @@ class LoadInfo final : public nsILoadInfo {
       bool aIsPreflight, bool aLoadTriggeredFromExternal,
       bool aServiceWorkerTaintingSynthesized, bool aDocumentHasUserInteracted,
       bool aAllowListFutureDocumentsCreatedFromThisRedirectChain,
-      const nsAString& aCspNonce, bool aSkipContentSniffing,
-      uint32_t aHttpsOnlyStatus, bool aHasValidUserGestureActivation,
-      bool aAllowDeprecatedSystemRequests, bool aIsInDevToolsContext,
-      bool aParserCreatedScript, bool aHasStoragePermission,
+      bool aNeedForCheckingAntiTrackingHeuristic, const nsAString& aCspNonce,
+      bool aSkipContentSniffing, uint32_t aHttpsOnlyStatus,
+      bool aHasValidUserGestureActivation, bool aAllowDeprecatedSystemRequests,
+      bool aIsInDevToolsContext, bool aParserCreatedScript,
+      bool aHasStoragePermission, bool aIsMetaRefresh,
       uint32_t aRequestBlockingReason, nsINode* aLoadingContext,
       nsILoadInfo::CrossOriginEmbedderPolicy aLoadingEmbedderPolicy);
   LoadInfo(const LoadInfo& rhs);
@@ -314,6 +315,7 @@ class LoadInfo final : public nsILoadInfo {
   bool mServiceWorkerTaintingSynthesized = false;
   bool mDocumentHasUserInteracted = false;
   bool mAllowListFutureDocumentsCreatedFromThisRedirectChain = false;
+  bool mNeedForCheckingAntiTrackingHeuristic = false;
   nsString mCspNonce;
   bool mSkipContentSniffing = false;
   uint32_t mHttpsOnlyStatus = nsILoadInfo::HTTPS_ONLY_UNINITIALIZED;
@@ -322,6 +324,7 @@ class LoadInfo final : public nsILoadInfo {
   bool mIsInDevToolsContext = false;
   bool mParserCreatedScript = false;
   bool mHasStoragePermission = false;
+  bool mIsMetaRefresh = false;
 
   // Is true if this load was triggered by processing the attributes of the
   // browsing context container.

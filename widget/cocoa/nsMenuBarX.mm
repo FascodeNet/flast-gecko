@@ -6,7 +6,6 @@
 #include <objc/objc-runtime.h>
 
 #include "nsMenuBarX.h"
-#include "nsMenuBaseX.h"
 #include "nsMenuX.h"
 #include "nsMenuItemX.h"
 #include "nsMenuUtilsX.h"
@@ -72,11 +71,22 @@ static nsIContent* sQuitItemContent = nullptr;
 
 @end
 
-nsMenuBarX::nsMenuBarX()
-    : nsMenuGroupOwnerX(), mNeedsRebuild(false), mApplicationMenuDelegate(nil) {
+nsMenuBarX::nsMenuBarX(mozilla::dom::Element* aElement)
+    : mNeedsRebuild(false), mApplicationMenuDelegate(nil) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
+  mMenuGroupOwner = new nsMenuGroupOwnerX(aElement, this);
   mNativeMenu = [[GeckoNSMenu alloc] initWithTitle:@"MainMenuBar"];
+
+  mContent = aElement;
+
+  if (mContent) {
+    AquifyMenuBar();
+    mMenuGroupOwner->RegisterForContentChanges(mContent, this);
+    ConstructNativeMenus();
+  } else {
+    ConstructFallbackNativeMenus();
+  }
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
@@ -102,14 +112,13 @@ nsMenuBarX::~nsMenuBarX() {
 
   // make sure we unregister ourselves as a content observer
   if (mContent) {
-    UnregisterForContentChanges(mContent);
+    mMenuGroupOwner->UnregisterForContentChanges(mContent);
   }
 
-  // We have to manually clear the array here because clearing causes menu items
-  // to call back into the menu bar to unregister themselves. We don't want to
-  // depend on member variable ordering to ensure that the array gets cleared
-  // before the registration hash table is destroyed.
-  mMenuArray.Clear();
+  for (nsMenuX* menu : mMenuArray) {
+    menu->DetachFromGroupOwnerRecursive();
+    menu->DetachFromParent();
+  }
 
   if (mApplicationMenuDelegate) {
     [mApplicationMenuDelegate release];
@@ -120,35 +129,12 @@ nsMenuBarX::~nsMenuBarX() {
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
-nsresult nsMenuBarX::Create(Element* aContent) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
-
-  mContent = aContent;
-
-  if (mContent) {
-    AquifyMenuBar();
-
-    nsresult rv = nsMenuGroupOwnerX::Create(aContent);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-
-    RegisterForContentChanges(mContent, this);
-    ConstructNativeMenus();
-  } else {
-    ConstructFallbackNativeMenus();
-  }
-
-  return NS_OK;
-
-  NS_OBJC_END_TRY_ABORT_BLOCK;
-}
-
 void nsMenuBarX::ConstructNativeMenus() {
   for (nsIContent* menuContent = mContent->GetFirstChild(); menuContent;
        menuContent = menuContent->GetNextSibling()) {
     if (menuContent->IsXULElement(nsGkAtoms::menu)) {
-      InsertMenuAtIndex(MakeUnique<nsMenuX>(this, this, menuContent->AsElement()), GetMenuCount());
+      InsertMenuAtIndex(MakeRefPtr<nsMenuX>(this, mMenuGroupOwner, menuContent->AsElement()),
+                        GetMenuCount());
     }
   }
 }
@@ -213,7 +199,7 @@ bool nsMenuBarX::MenuContainsAppMenu() {
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
-void nsMenuBarX::InsertMenuAtIndex(UniquePtr<nsMenuX>&& aMenu, uint32_t aIndex) {
+void nsMenuBarX::InsertMenuAtIndex(RefPtr<nsMenuX>&& aMenu, uint32_t aIndex) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
   // If we've only yet created a fallback global Application menu (using
@@ -233,17 +219,12 @@ void nsMenuBarX::InsertMenuAtIndex(UniquePtr<nsMenuX>&& aMenu, uint32_t aIndex) 
   }
 
   // add menu to array that owns our menus
-  nsMenuX* menu = aMenu.get();
-  mMenuArray.InsertElementAt(aIndex, std::move(aMenu));
+  mMenuArray.InsertElementAt(aIndex, aMenu);
 
   // hook up submenus
-  nsIContent* menuContent = menu->Content();
+  RefPtr<nsIContent> menuContent = aMenu->Content();
   if (menuContent->GetChildCount() > 0 && !nsMenuUtilsX::NodeIsHiddenOrCollapsed(menuContent)) {
-    int insertionIndex = nsMenuUtilsX::CalculateNativeInsertionPoint(this, menu);
-    if (MenuContainsAppMenu()) {
-      insertionIndex++;
-    }
-    [mNativeMenu insertItem:menu->NativeMenuItem() atIndex:insertionIndex];
+    InsertChildNativeMenuItem(aMenu);
   }
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
@@ -257,16 +238,20 @@ void nsMenuBarX::RemoveMenuAtIndex(uint32_t aIndex) {
     return;
   }
 
+  RefPtr<nsMenuX> menu = mMenuArray[aIndex];
+  mMenuArray.RemoveElementAt(aIndex);
+
+  menu->DetachFromGroupOwnerRecursive();
+  menu->DetachFromParent();
+
   // Our native menu and our internal menu object array might be out of sync.
   // This happens, for example, when a submenu is hidden. Because of this we
   // should not assume that a native submenu is hooked up.
-  NSMenuItem* nativeMenuItem = mMenuArray[aIndex]->NativeMenuItem();
+  NSMenuItem* nativeMenuItem = menu->NativeNSMenuItem();
   int nativeMenuItemIndex = [mNativeMenu indexOfItem:nativeMenuItem];
   if (nativeMenuItemIndex != -1) {
     [mNativeMenu removeItemAtIndex:nativeMenuItemIndex];
   }
-
-  mMenuArray.RemoveElementAt(aIndex);
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
@@ -284,7 +269,8 @@ void nsMenuBarX::ObserveContentRemoved(mozilla::dom::Document* aDocument, nsICon
 
 void nsMenuBarX::ObserveContentInserted(mozilla::dom::Document* aDocument, nsIContent* aContainer,
                                         nsIContent* aChild) {
-  InsertMenuAtIndex(MakeUnique<nsMenuX>(this, this, aChild), aContainer->ComputeIndexOf(aChild));
+  InsertMenuAtIndex(MakeRefPtr<nsMenuX>(this, mMenuGroupOwner, aChild),
+                    aContainer->ComputeIndexOf(aChild));
 }
 
 void nsMenuBarX::ForceUpdateNativeMenuAt(const nsAString& aIndexString) {
@@ -299,17 +285,17 @@ void nsMenuBarX::ForceUpdateNativeMenuAt(const nsAString& aIndexString) {
     return;
   }
 
-  nsMenuX* currentMenu = nullptr;
+  RefPtr<nsMenuX> currentMenu = nullptr;
   int targetIndex = [[indexes objectAtIndex:0] intValue];
   int visible = 0;
   uint32_t length = mMenuArray.Length();
   // first find a menu in the menu bar
   for (unsigned int i = 0; i < length; i++) {
-    nsMenuX* menu = mMenuArray[i].get();
+    RefPtr<nsMenuX> menu = mMenuArray[i];
     if (!nsMenuUtilsX::NodeIsHiddenOrCollapsed(menu->Content())) {
       visible++;
       if (visible == (targetIndex + 1)) {
-        currentMenu = menu;
+        currentMenu = std::move(menu);
         break;
       }
     }
@@ -329,19 +315,17 @@ void nsMenuBarX::ForceUpdateNativeMenuAt(const nsAString& aIndexString) {
     visible = 0;
     length = currentMenu->GetItemCount();
     for (unsigned int j = 0; j < length; j++) {
-      nsMenuObjectX* targetMenu = currentMenu->GetItemAt(j);
+      Maybe<nsMenuX::MenuChild> targetMenu = currentMenu->GetItemAt(j);
       if (!targetMenu) {
         return;
       }
-      MOZ_RELEASE_ASSERT(targetMenu->MenuObjectType() == eSubmenuObjectType ||
-                         targetMenu->MenuObjectType() == eMenuItemObjectType);
-      RefPtr<nsIContent> content = targetMenu->MenuObjectType() == eSubmenuObjectType
-                                       ? static_cast<nsMenuX*>(targetMenu)->Content()
-                                       : static_cast<nsMenuItemX*>(targetMenu)->Content();
+      RefPtr<nsIContent> content = targetMenu->match(
+          [](const RefPtr<nsMenuX>& aMenu) { return aMenu->Content(); },
+          [](const RefPtr<nsMenuItemX>& aMenuItem) { return aMenuItem->Content(); });
       if (!nsMenuUtilsX::NodeIsHiddenOrCollapsed(content)) {
         visible++;
-        if (targetMenu->MenuObjectType() == eSubmenuObjectType && visible == (targetIndex + 1)) {
-          currentMenu = static_cast<nsMenuX*>(targetMenu);
+        if (targetMenu->is<RefPtr<nsMenuX>>() && visible == (targetIndex + 1)) {
+          currentMenu = targetMenu->as<RefPtr<nsMenuX>>();
           // fake open/close to cause lazy update to happen
           currentMenu->MenuOpened();
           currentMenu->MenuClosed();
@@ -397,7 +381,7 @@ void nsMenuBarX::SetSystemHelpMenu() {
 
   nsMenuX* xulHelpMenu = GetXULHelpMenu();
   if (xulHelpMenu) {
-    NSMenu* helpMenu = (NSMenu*)xulHelpMenu->NativeData();
+    NSMenu* helpMenu = xulHelpMenu->NativeNSMenu();
     if (helpMenu) {
       NSApp.helpMenu = helpMenu;
     }
@@ -462,6 +446,34 @@ void nsMenuBarX::ApplicationMenuOpened() {
 
 bool nsMenuBarX::PerformKeyEquivalent(NSEvent* aEvent) {
   return [mNativeMenu performSuperKeyEquivalent:aEvent];
+}
+
+void nsMenuBarX::InsertChildNativeMenuItem(nsMenuX* aChild) {
+  NSInteger insertionPoint = CalculateNativeInsertionPoint(aChild);
+  [mNativeMenu insertItem:aChild->NativeNSMenuItem() atIndex:insertionPoint];
+}
+
+void nsMenuBarX::RemoveChildNativeMenuItem(nsMenuX* aChild) {
+  NSMenuItem* item = aChild->NativeNSMenuItem();
+  if ([mNativeMenu indexOfItem:item] != -1) {
+    [mNativeMenu removeItem:item];
+  }
+}
+
+NSInteger nsMenuBarX::CalculateNativeInsertionPoint(nsMenuX* aChild) {
+  NSInteger insertionPoint = MenuContainsAppMenu() ? 1 : 0;
+  for (auto& currMenu : mMenuArray) {
+    if (currMenu == aChild) {
+      return insertionPoint;
+    }
+    // Only count items that are inside a menu.
+    // XXXmstange Not sure what would cause free-standing items. Maybe for collapsed/hidden menus?
+    // In that case, an nsMenuX::IsVisible() method would be better.
+    if (currMenu->NativeNSMenuItem().menu) {
+      insertionPoint++;
+    }
+  }
+  return insertionPoint;
 }
 
 // Hide the item in the menu by setting the 'hidden' attribute. Returns it so
@@ -581,10 +593,7 @@ NSMenuItem* nsMenuBarX::CreateNativeAppMenuItem(nsMenuX* aMenu, const nsAString&
   newMenuItem.tag = aTag;
   newMenuItem.target = aTarget;
   newMenuItem.keyEquivalentModifierMask = macKeyModifiers;
-
-  MenuItemInfo* info = [[MenuItemInfo alloc] initWithMenuGroupOwner:this];
-  newMenuItem.representedObject = info;
-  [info release];
+  newMenuItem.representedObject = mMenuGroupOwner->GetRepresentedObject();
 
   return newMenuItem;
 
@@ -855,16 +864,14 @@ static BOOL gMenuItemsExecuteCommands = YES;
 
   nsMenuGroupOwnerX* menuGroupOwner = nullptr;
   nsMenuBarX* menuBar = nullptr;
-  MenuItemInfo* info = [aSender representedObject];
+  MOZMenuItemRepresentedObject* representedObject = [aSender representedObject];
 
-  if (info) {
-    menuGroupOwner = info.menuGroupOwner;
+  if (representedObject) {
+    menuGroupOwner = representedObject.menuGroupOwner;
     if (!menuGroupOwner) {
       return;
     }
-    if (menuGroupOwner->MenuObjectType() == eMenuBarObjectType) {
-      menuBar = static_cast<nsMenuBarX*>(menuGroupOwner);
-    }
+    menuBar = menuGroupOwner->GetMenuBar();
   }
 
   // Do special processing if this is for an app-global command.

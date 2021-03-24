@@ -17,6 +17,11 @@ main-context-menu-back-2 =
     .aria-label = Back
     .accesskey = B
 
+# This menuitem is only visible on macOS
+main-context-menu-back-mac =
+    .label = Back
+    .accesskey = B
+
 navbar-tooltip-back-2 =
     .value = { main-context-menu-back-2.tooltiptext }
 
@@ -32,6 +37,11 @@ main-context-menu-forward-2 =
     .aria-label = Forward
     .accesskey = F
 
+# This menuitem is only visible on macOS
+main-context-menu-forward-mac =
+    .label = Forward
+    .accesskey = F
+
 navbar-tooltip-forward-2 =
     .value = { main-context-menu-forward-2.tooltiptext }
 
@@ -44,6 +54,11 @@ main-context-menu-reload =
     .aria-label = Reload
     .accesskey = R
 
+# This menuitem is only visible on macOS
+main-context-menu-reload-mac =
+    .label = Reload
+    .accesskey = R
+
 toolbar-button-reload =
     .label = { main-context-menu-reload.aria-label }
 
@@ -51,6 +66,11 @@ toolbar-button-reload =
 
 main-context-menu-stop =
     .aria-label = Stop
+    .accesskey = S
+
+# This menuitem is only visible on macOS
+main-context-menu-stop-mac =
+    .label = Stop
     .accesskey = S
 
 toolbar-button-stop =
@@ -73,6 +93,20 @@ main-context-menu-bookmark-add =
     .aria-label = Bookmark This Page
     .accesskey = m
     .tooltiptext = Bookmark this page
+
+# This menuitem is only visible on macOS
+# Cannot be shown at the same time as main-context-menu-bookmark-edit-mac,
+# so should probably have the same access key if possible.
+main-context-menu-bookmark-add-mac =
+    .label = Bookmark Page
+    .accesskey = m
+
+# This menuitem is only visible on macOS
+# Cannot be shown at the same time as main-context-menu-bookmark-add-mac,
+# so should probably have the same access key if possible.
+main-context-menu-bookmark-edit-mac =
+    .label = Edit Bookmark
+    .accesskey = m
 
 # Variables
 #   $shortcut (String) - A keyboard shortcut for the add bookmark command.
@@ -101,8 +135,8 @@ main-context-menu-open-link-new-tab =
     .label = Open Link in New Tab
     .accesskey = T
 
-main-context-menu-open-link-container =
-    .label = Open Link in New Container
+main-context-menu-open-link-container-tab =
+    .label = Open Link in New Container Tab
     .accesskey = w
 
 main-context-menu-open-link-new-window =
@@ -161,31 +195,24 @@ main-context-menu-media-unmute =
     .label = Unmute
     .accesskey = m
 
-main-context-menu-media-play-speed =
-    .label = Play Speed
+main-context-menu-media-play-speed-2 =
+    .label = Speed
     .accesskey = d
 
-main-context-menu-media-play-speed-slow =
-    .label = Slow (0.5×)
-    .accesskey = S
+main-context-menu-media-play-speed-slow-2 =
+    .label = 0.5×
 
-main-context-menu-media-play-speed-normal =
-    .label = Normal
-    .accesskey = N
+main-context-menu-media-play-speed-normal-2 =
+    .label = 1.0×
 
-main-context-menu-media-play-speed-fast =
-    .label = Fast (1.25×)
-    .accesskey = F
+main-context-menu-media-play-speed-fast-2 =
+    .label = 1.25×
 
-main-context-menu-media-play-speed-faster =
-    .label = Faster (1.5×)
-    .accesskey = a
+main-context-menu-media-play-speed-faster-2 =
+    .label = 1.5×
 
-# "Ludicrous" is a reference to the movie "Space Balls" and is meant
-# to say that this speed is very fast.
-main-context-menu-media-play-speed-fastest =
-    .label = Ludicrous (2×)
-    .accesskey = L
+main-context-menu-media-play-speed-fastest-2 =
+    .label = 2×
 
 main-context-menu-media-loop =
     .label = Loop
@@ -214,20 +241,20 @@ main-context-menu-media-video-leave-fullscreen =
 
 # This is used when right-clicking on a video in the
 # content area when the Picture-in-Picture feature is enabled.
-main-context-menu-media-pip =
-    .label = Picture-in-Picture
+main-context-menu-media-watch-pip =
+    .label = Watch in Picture-in-Picture
     .accesskey = u
 
 main-context-menu-image-reload =
     .label = Reload Image
     .accesskey = R
 
-main-context-menu-image-view =
-    .label = View Image
+main-context-menu-image-view-new-tab =
+    .label = Open Image in New Tab
     .accesskey = I
 
-main-context-menu-video-view =
-    .label = View Video
+main-context-menu-video-view-new-tab =
+    .label = Open Video in New Tab
     .accesskey = i
 
 main-context-menu-image-copy =
@@ -270,8 +297,8 @@ main-context-menu-audio-save-as =
     .label = Save Audio As…
     .accesskey = v
 
-main-context-menu-video-image-save-as =
-    .label = Save Snapshot As…
+main-context-menu-video-take-snapshot =
+    .label = Take Snapshot…
     .accesskey = S
 
 main-context-menu-video-email =
@@ -298,9 +325,23 @@ main-context-menu-send-to-device =
     .label = Send Page to Device
     .accesskey = n
 
-main-context-menu-generate-new-password =
-    .label = Use Generated Password…
-    .accesskey = G
+## The access keys for "Use Saved Login" and "Use Saved Password"
+## should be the same if possible; the two context menu items
+## are mutually exclusive.
+
+main-context-menu-use-saved-login =
+    .label = Use Saved Login
+    .accesskey = o
+
+main-context-menu-use-saved-password =
+    .label = Use Saved Password
+    .accesskey = o
+
+##
+
+main-context-menu-suggest-strong-password =
+    .label = Suggest Strong Password…
+    .accesskey = S
 
 main-context-menu-manage-logins =
     .label = Manage Logins…
@@ -361,6 +402,10 @@ main-context-menu-print-selection =
 main-context-menu-view-selection-source =
     .label = View Selection Source
     .accesskey = e
+
+main-context-menu-take-screenshot =
+    .label = Take Screenshot
+    .accesskey = T
 
 main-context-menu-view-page-source =
     .label = View Page Source

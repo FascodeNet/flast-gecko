@@ -40,6 +40,8 @@ async function test() {
   isfuzzy(initial_resolution, final_resolution, 0.0001, "The final resolution approximatly the same after zooming In and Out");
 
   // Scenario 4: zoom in, with the page using preventDefault()
+  var resolveWheelPromise;
+  var wheelPromise = new Promise(resolve => { resolveWheelPromise = resolve; });
   var deltaSum = 0;
   initial_resolution = final_resolution;
   var onWheel = function(e) {
@@ -52,20 +54,42 @@ async function test() {
         document.removeEventListener("wheel", onWheel, { passive: false });
         final_resolution = getResolution();
         ok(final_resolution === initial_resolution, "The final resolution (" + final_resolution + ") is equal after prevent default");
-        subtestDone();
+        resolveWheelPromise();
       }
     }
   };
 
   document.addEventListener("wheel", onWheel, { passive: false });
+  // Give APZ a chance to become aware of the listener, so it knows
+  // to queue events while it waits for a content response.
+  await promiseApzFlushedRepaints();
   // Do not use `await` because calling preventDefault() means
   // the APZ:TransformEnd notification will never be sent.
   pinchZoomInWithTouchpad(641, 465);
+  await wheelPromise;
+
+  // Scenario 5: check that page receives DOMMouseScroll event
+  var resolveDOMMouseScrollPromise;
+  var DOMMouseScrollPromise = new Promise(resolve => { resolveDOMMouseScrollPromise = resolve; });
+  deltaSum = 0;
+  var onDOMMouseScroll = function(e) {
+    if (e.ctrlKey) {
+      deltaSum += e.detail;
+      if (deltaSum < -40) {
+        ok(true, "Accumulated a deltaSum of -40");
+        document.removeEventListener("DOMMouseScroll", onDOMMouseScroll, { passive: false });
+        resolveDOMMouseScrollPromise();
+      }
+    }
+  };
+  document.addEventListener("DOMMouseScroll", onDOMMouseScroll, { passive: false });
+  pinchZoomInWithTouchpad(641, 465);
+  await DOMMouseScrollPromise;
 }
 
 waitUntilApzStable()
 .then(test)
-.catch(subtestFailed);
+.then(subtestDone, subtestFailed);
 
   </script>
 </head>

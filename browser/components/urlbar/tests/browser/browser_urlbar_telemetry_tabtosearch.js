@@ -108,8 +108,9 @@ add_task(async function setup() {
     set: [["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0]],
   });
 
-  let engine = await Services.search.addEngineWithDetails(ENGINE_NAME, {
-    template: `http://${ENGINE_DOMAIN}/?q={searchTerms}`,
+  await SearchTestUtils.installSearchExtension({
+    name: ENGINE_NAME,
+    search_url: `https://${ENGINE_DOMAIN}/`,
   });
 
   UrlbarTestUtils.init(this);
@@ -125,7 +126,6 @@ add_task(async function setup() {
   registerCleanupFunction(async () => {
     Services.telemetry.canRecordExtended = oldCanRecord;
     UrlbarTestUtils.uninit();
-    await Services.search.removeEngine(engine);
   });
 });
 
@@ -211,9 +211,12 @@ add_task(async function onboarding_impressions() {
 async function impressions_test(isOnboarding) {
   await BrowserTestUtils.withNewTab("about:blank", async browser => {
     const firstEngineHost = "example";
-    let secondEngine = await Services.search.addEngineWithDetails(
-      `${ENGINE_NAME}2`,
-      { template: `http://${firstEngineHost}-2.com/?q={searchTerms}` }
+    let extension = await SearchTestUtils.installSearchExtension(
+      {
+        name: `${ENGINE_NAME}2`,
+        search_url: `https://${firstEngineHost}-2.com/`,
+      },
+      true
     );
 
     for (let i = 0; i < 3; i++) {
@@ -444,6 +447,6 @@ async function impressions_test(isOnboarding) {
     );
 
     await PlacesUtils.history.clear();
-    await Services.search.removeEngine(secondEngine);
+    await extension.unload();
   });
 }

@@ -8,16 +8,6 @@
 
 ChromeUtils.defineModuleGetter(
   this,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "Services",
-  "resource://gre/modules/Services.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
   "AboutNewTab",
   "resource:///modules/AboutNewTab.jsm"
 );
@@ -264,6 +254,7 @@ this.browserSettings = class extends ExtensionAPI {
         ftpProtocolEnabled: getSettingsAPI({
           context,
           name: "ftpProtocolEnabled",
+          readOnly: true,
           callback() {
             return Services.prefs.getBoolPref("network.ftp.enabled");
           },

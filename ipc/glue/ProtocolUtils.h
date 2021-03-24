@@ -17,6 +17,7 @@
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/FunctionRef.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"
@@ -26,7 +27,7 @@
 #include "mozilla/ipc/MessageLink.h"
 #include "mozilla/ipc/SharedMemory.h"
 #include "mozilla/ipc/Shmem.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsISupports.h"
 #include "nsTArrayForwardDeclare.h"
@@ -164,6 +165,8 @@ const char* ProtocolIdToName(IPCMessageStart aId);
 
 class IToplevelProtocol;
 class ActorLifecycleProxy;
+class WeakActorLifecycleProxy;
+class IPDLResolverInner;
 
 class IProtocol : public HasResultCodes {
  public:
@@ -271,6 +274,7 @@ class IProtocol : public HasResultCodes {
 
   friend class IToplevelProtocol;
   friend class ActorLifecycleProxy;
+  friend class IPDLResolverInner;
 
   void SetId(int32_t aId);
 
@@ -526,7 +530,7 @@ class IToplevelProtocol : public IProtocol {
   int32_t NextId();
 
   template <class T>
-  using IDMap = nsDataHashtable<nsUint32HashKey, T>;
+  using IDMap = nsTHashMap<nsUint32HashKey, T>;
 
   base::ProcessId mOtherPid;
 
@@ -664,6 +668,8 @@ class ActorLifecycleProxy {
 
   IProtocol* Get() { return mActor; }
 
+  WeakActorLifecycleProxy* GetWeakProxy();
+
  private:
   friend class IProtocol;
 
@@ -678,10 +684,74 @@ class ActorLifecycleProxy {
   // Hold a reference to the actor's manager's ActorLifecycleProxy to help
   // prevent it from dying while we're still alive!
   RefPtr<ActorLifecycleProxy> mManager;
+
+  // When requested, the current self-referencing weak reference for this
+  // ActorLifecycleProxy.
+  RefPtr<WeakActorLifecycleProxy> mWeakProxy;
+};
+
+// Unlike ActorLifecycleProxy, WeakActorLifecycleProxy only holds a weak
+// reference to both the proxy and the actual actor, meaning that holding this
+// type will not attempt to keep the actor object alive.
+//
+// This type is safe to hold on threads other than the actor's thread, but is
+// _NOT_ safe to access on other threads, as actors and ActorLifecycleProxy
+// objects are not threadsafe.
+class WeakActorLifecycleProxy final {
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WeakActorLifecycleProxy)
+
+  // May only be called on the actor's event target.
+  // Will return `nullptr` if the actor has already been destroyed from IPC's
+  // point of view.
+  IProtocol* Get() const;
+
+  // Safe to call on any thread.
+  nsISerialEventTarget* ActorEventTarget() const { return mActorEventTarget; }
+
+ private:
+  friend class ActorLifecycleProxy;
+
+  explicit WeakActorLifecycleProxy(ActorLifecycleProxy* aProxy);
+  ~WeakActorLifecycleProxy();
+
+  WeakActorLifecycleProxy(const WeakActorLifecycleProxy&) = delete;
+  WeakActorLifecycleProxy& operator=(const WeakActorLifecycleProxy&) = delete;
+
+  // This field may only be accessed on the actor's thread, and will be
+  // automatically cleared when the ActorLifecycleProxy is destroyed.
+  ActorLifecycleProxy* MOZ_NON_OWNING_REF mProxy;
+
+  // The serial event target which owns the actor, and is the only thread where
+  // it is OK to access the ActorLifecycleProxy.
+  const nsCOMPtr<nsISerialEventTarget> mActorEventTarget;
 };
 
 void TableToArray(const nsTHashtable<nsPtrHashKey<void>>& aTable,
                   nsTArray<void*>& aArray);
+
+class IPDLResolverInner final {
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_DESTROY(IPDLResolverInner,
+                                                     Destroy())
+
+  explicit IPDLResolverInner(UniquePtr<IPC::Message> aReply, IProtocol* aActor);
+
+  template <typename F>
+  void Resolve(F&& aWrite) {
+    ResolveOrReject(true, aWrite);
+  }
+
+ private:
+  void ResolveOrReject(bool aResolve,
+                       FunctionRef<void(IPC::Message*, IProtocol*)> aWrite);
+
+  void Destroy();
+  ~IPDLResolverInner();
+
+  UniquePtr<IPC::Message> mReply;
+  RefPtr<WeakActorLifecycleProxy> mWeakProxy;
+};
 
 }  // namespace ipc
 

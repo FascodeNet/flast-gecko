@@ -17,7 +17,7 @@ add_task(async function() {
 
   info("Add a get watchpoint at b");
   await toggleScopeNode(dbg, 3);
-  const addedWatchpoint = waitForDispatch(dbg, "SET_WATCHPOINT");
+  const addedWatchpoint = waitForDispatch(dbg.store, "SET_WATCHPOINT");
   await rightClickScopeNode(dbg, 5);
   selectContextMenuItem(dbg, selectors.watchpointsSubmenu);
   const getWatchpointItem = document.querySelector(selectors.addGetWatchpoint);
@@ -25,19 +25,19 @@ add_task(async function() {
   pressKey(dbg, "Escape");
   await addedWatchpoint;
 
-  resume(dbg);
+  await resume(dbg);
   await waitForPaused(dbg);
   await waitForState(dbg, () => dbg.selectors.getSelectedInlinePreviews());
   assertPausedAtSourceAndLine(dbg, sourceId, 17);
   is(await getScopeValue(dbg, 5), "3");
 
   info("Resume and wait to pause at the access to b in the first `obj.b;`");
-  resume(dbg);
+  await resume(dbg);
   await waitForPaused(dbg);
   assertPausedAtSourceAndLine(dbg, sourceId, 19);
 
   info("Remove the get watchpoint on b");
-  const removedWatchpoint1 = waitForDispatch(dbg, "REMOVE_WATCHPOINT");
+  const removedWatchpoint1 = waitForDispatch(dbg.store, "REMOVE_WATCHPOINT");
   const el1 = await waitForElementWithSelector(dbg, ".remove-get-watchpoint");
   el1.scrollIntoView();
   clickElementWithSelector(dbg, ".remove-get-watchpoint");
@@ -46,18 +46,18 @@ add_task(async function() {
   info(
     "Resume and wait to skip the second `obj.b` and pause on the debugger statement"
   );
-  resume(dbg);
+  await resume(dbg);
   await waitForPaused(dbg);
   assertPausedAtSourceAndLine(dbg, sourceId, 21);
 
   info("Resume and pause on the debugger statement in getB");
-  resume(dbg);
+  await resume(dbg);
   await waitForPaused(dbg);
   assertPausedAtSourceAndLine(dbg, sourceId, 5);
 
   info("Add a get watchpoint to b");
   await toggleScopeNode(dbg, 4);
-  const addedWatchpoint2 = waitForDispatch(dbg, "SET_WATCHPOINT");
+  const addedWatchpoint2 = waitForDispatch(dbg.store, "SET_WATCHPOINT");
   await rightClickScopeNode(dbg, 6);
   let dummyA = selectContextMenuItem(dbg, selectors.watchpointsSubmenu);
   const getWatchpointItem2 = document.querySelector(selectors.addGetWatchpoint);
@@ -66,18 +66,18 @@ add_task(async function() {
   await addedWatchpoint2;
 
   info("Resume and wait to pause at the access to b in getB");
-  resume(dbg);
+  await resume(dbg);
   await waitForPaused(dbg);
   assertPausedAtSourceAndLine(dbg, sourceId, 6);
 
   info("Resume and pause on the debugger statement");
   await waitForRequestsToSettle(dbg);
-  resume(dbg);
+  await resume(dbg);
   await waitForPaused(dbg);
   assertPausedAtSourceAndLine(dbg, sourceId, 24);
 
   info("Remove the get watchpoint on b");
-  const removedWatchpoint2 = waitForDispatch(dbg, "REMOVE_WATCHPOINT");
+  const removedWatchpoint2 = waitForDispatch(dbg.store, "REMOVE_WATCHPOINT");
   await toggleScopeNode(dbg, 3);
   await rightClickScopeNode(dbg, 5);
   const el2 = await waitForElementWithSelector(dbg, ".remove-get-watchpoint");
@@ -86,7 +86,7 @@ add_task(async function() {
   await removedWatchpoint2;
 
   info("Add back the get watchpoint on b");
-  const addedWatchpoint3 = waitForDispatch(dbg, "SET_WATCHPOINT");
+  const addedWatchpoint3 = waitForDispatch(dbg.store, "SET_WATCHPOINT");
   await rightClickScopeNode(dbg, 5);
   selectContextMenuItem(dbg, selectors.watchpointsSubmenu);
   const getWatchpointItem3 = document.querySelector(selectors.addGetWatchpoint);
@@ -95,7 +95,7 @@ add_task(async function() {
   await addedWatchpoint3;
 
   info("Resume and wait to pause on the final `obj.b;`");
-  resume(dbg);
+  await resume(dbg);
 
   await waitForPaused(dbg);
   assertPausedAtSourceAndLine(dbg, sourceId, 25);

@@ -49,7 +49,7 @@
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
 #include "nsCRT.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsIConsoleService.h"
 #include "nsIFile.h"
@@ -1224,7 +1224,7 @@ static CallbackNode* gLastPriorityNode = nullptr;
 #endif
 
 #ifdef ACCESS_COUNTS
-using AccessCountsHashTable = nsDataHashtable<nsCStringHashKey, uint32_t>;
+using AccessCountsHashTable = nsTHashMap<nsCStringHashKey, uint32_t>;
 static AccessCountsHashTable* gAccessCounts = nullptr;
 
 static void AddAccessCount(const nsACString& aPrefName) {
@@ -2696,8 +2696,8 @@ size_t nsPrefBranch::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
   n += mPrefRoot.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 
   n += mObservers.ShallowSizeOfExcludingThis(aMallocSizeOf);
-  for (auto iter = mObservers.ConstIter(); !iter.Done(); iter.Next()) {
-    const PrefCallback* data = iter.UserData();
+  for (const auto& entry : mObservers) {
+    const PrefCallback* data = entry.GetWeak();
     n += data->SizeOfIncludingThis(aMallocSizeOf);
   }
 
@@ -3188,10 +3188,10 @@ PreferenceServiceReporter::CollectReports(
   size_t numWeakDead = 0;
   nsTArray<nsCString> suspectPreferences;
   // Count of the number of referents for each preference.
-  nsDataHashtable<nsCStringHashKey, uint32_t> prefCounter;
+  nsTHashMap<nsCStringHashKey, uint32_t> prefCounter;
 
-  for (auto iter = rootBranch->mObservers.Iter(); !iter.Done(); iter.Next()) {
-    auto callback = iter.UserData();
+  for (const auto& entry : rootBranch->mObservers) {
+    auto* callback = entry.GetWeak();
 
     if (callback->IsWeak()) {
       nsCOMPtr<nsIObserver> callbackRef = do_QueryReferent(callback->mWeakRef);
@@ -3903,8 +3903,8 @@ Preferences::GetDefaultBranch(const char* aPrefRoot, nsIPrefBranch** aRetVal) {
 NS_IMETHODIMP
 Preferences::ReadStats(nsIPrefStatsCallback* aCallback) {
 #ifdef ACCESS_COUNTS
-  for (auto iter = gAccessCounts->Iter(); !iter.Done(); iter.Next()) {
-    aCallback->Visit(iter.Key(), iter.Data());
+  for (const auto& entry : *gAccessCounts) {
+    aCallback->Visit(entry.GetKey(), entry.GetData());
   }
 
   return NS_OK;
@@ -3921,6 +3921,71 @@ Preferences::ResetStats() {
 #else
   return NS_ERROR_NOT_IMPLEMENTED;
 #endif
+}
+
+// We would much prefer to use C++ lambdas, but we cannot convert
+// lambdas that capture (here, the underlying observer) to C pointer
+// to functions.  So, here we are, with icky C callbacks.  Be aware
+// that nothing is thread-safe here because there's a single global
+// `nsIPrefObserver` instance.  Use this from the main thread only.
+nsIPrefObserver* PrefObserver = nullptr;
+
+void HandlePref(const char* aPrefName, PrefType aType, PrefValueKind aKind,
+                PrefValue aValue, bool aIsSticky, bool aIsLocked) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (!PrefObserver) {
+    return;
+  }
+
+  const char* kind = aKind == PrefValueKind::Default ? "Default" : "User";
+
+  switch (aType) {
+    case PrefType::String:
+      PrefObserver->OnStringPref(kind, aPrefName, aValue.mStringVal, aIsSticky,
+                                 aIsLocked);
+      break;
+    case PrefType::Int:
+      PrefObserver->OnIntPref(kind, aPrefName, aValue.mIntVal, aIsSticky,
+                              aIsLocked);
+      break;
+    case PrefType::Bool:
+      PrefObserver->OnBoolPref(kind, aPrefName, aValue.mBoolVal, aIsSticky,
+                               aIsLocked);
+      break;
+    default:
+      PrefObserver->OnError("Unexpected pref type.");
+  }
+}
+
+void HandleError(const char* aMsg) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (!PrefObserver) {
+    return;
+  }
+
+  PrefObserver->OnError(aMsg);
+}
+
+NS_IMETHODIMP
+Preferences::ParsePrefsFromBuffer(const nsTArray<uint8_t>& aBytes,
+                                  nsIPrefObserver* aObserver,
+                                  const char* aPathLabel) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // We need a null-terminated buffer.
+  nsTArray<uint8_t> data = aBytes.Clone();
+  data.AppendElement(0);
+
+  // Parsing as default handles both `pref` and `user_pref`.
+  PrefObserver = aObserver;
+  prefs_parser_parse(aPathLabel ? aPathLabel : "<ParsePrefsFromBuffer data>",
+                     PrefValueKind::Default, (const char*)data.Elements(),
+                     data.Length() - 1, HandlePref, HandleError);
+  PrefObserver = nullptr;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP

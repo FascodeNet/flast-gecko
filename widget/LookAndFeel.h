@@ -335,6 +335,12 @@ class LookAndFeel {
      */
     GTKCSDMaximizeButtonPosition,
 
+    /** The vertical scrollbar width, in CSS pixels. */
+    SystemVerticalScrollbarWidth,
+
+    /** The horizontal scrollbar height, in CSS pixels. */
+    SystemHorizontalScrollbarHeight,
+
     /*
      * Not an ID; used to define the range of valid IDs.  Must be last.
      */
@@ -401,6 +407,9 @@ class LookAndFeel {
     // The width/height ratio of the cursor. If used, the CaretWidth int metric
     // should be added to the calculated caret width.
     CaretAspectRatio,
+
+    // GTK text scale factor.
+    TextScaleFactor,
 
     // Not an ID; used to define the range of valid IDs.  Must be last.
     End,

@@ -797,9 +797,165 @@ static bool PropertyIsEnumerable(JSContext* cx, HandleObject obj, HandleId id,
   return true;
 }
 
+// Returns true if properties not named "__proto__" can be added to |obj|
+// with a fast path that doesn't check any properties on the prototype chain.
+static bool CanAddNewPropertyExcludingProtoFast(PlainObject* obj) {
+  // The object must be an extensible, non-prototype object. Prototypes require
+  // extra shadowing checks for shape teleporting.
+  if (!obj->isExtensible() || obj->isUsedAsPrototype()) {
+    return false;
+  }
+
+  // Ensure the object has no non-writable properties or getters/setters.
+  // For now only support PlainObjects so that we don't have to worry about
+  // resolve hooks and other JSClass hooks.
+  while (true) {
+    if (obj->hasNonWritableOrAccessorPropExclProto()) {
+      return false;
+    }
+
+    JSObject* proto = obj->staticPrototype();
+    if (!proto) {
+      return true;
+    }
+    if (!proto->is<PlainObject>()) {
+      return false;
+    }
+    obj = &proto->as<PlainObject>();
+  }
+}
+
+[[nodiscard]] static bool TryAssignPlain(JSContext* cx, HandleObject to,
+                                         HandleObject from, bool* optimized) {
+  // Object.assign is used with PlainObjects most of the time. This is a fast
+  // path to optimize that case. This lets us avoid checks that are only
+  // relevant for other JSClasses.
+
+  MOZ_ASSERT(*optimized == false);
+
+  if (!from->is<PlainObject>() || !to->is<PlainObject>()) {
+    return true;
+  }
+
+  // Don't use the fast path if |from| may have extra indexed properties.
+  HandlePlainObject fromPlain = from.as<PlainObject>();
+  if (fromPlain->getDenseInitializedLength() > 0 || fromPlain->isIndexed()) {
+    return true;
+  }
+  MOZ_ASSERT(!fromPlain->getClass()->getNewEnumerate());
+  MOZ_ASSERT(!fromPlain->getClass()->getEnumerate());
+
+  // Empty |from| objects are common, so check for this first.
+  if (fromPlain->empty()) {
+    *optimized = true;
+    return true;
+  }
+
+  HandlePlainObject toPlain = to.as<PlainObject>();
+  if (!CanAddNewPropertyExcludingProtoFast(toPlain)) {
+    return true;
+  }
+
+  // Get a list of all enumerable |from| properties.
+
+  using ShapeVector = GCVector<Shape*, 8>;
+  Rooted<ShapeVector> shapes(cx, ShapeVector(cx));
+
+#ifdef DEBUG
+  RootedShape fromShape(cx, fromPlain->lastProperty());
+#endif
+
+  bool hasPropsWithNonDefaultAttrs = false;
+  for (Shape::Range<NoGC> r(fromPlain->lastProperty()); !r.empty();
+       r.popFront()) {
+    // Symbol properties need to be assigned last. For now fall back to the
+    // slow path if we see a symbol property.
+    Shape& propShape = r.front();
+    jsid id = propShape.propidRaw();
+    if (MOZ_UNLIKELY(JSID_IS_SYMBOL(id))) {
+      return true;
+    }
+    // __proto__ is not supported by CanAddNewPropertyExcludingProtoFast.
+    if (MOZ_UNLIKELY(JSID_IS_ATOM(id, cx->names().proto))) {
+      return true;
+    }
+    if (MOZ_UNLIKELY(!propShape.isDataProperty())) {
+      return true;
+    }
+    if (propShape.attributes() == JSPROP_ENUMERATE) {
+      MOZ_ASSERT(propShape.writable());
+      MOZ_ASSERT(propShape.configurable());
+      MOZ_ASSERT(propShape.enumerable());
+    } else {
+      hasPropsWithNonDefaultAttrs = true;
+    }
+    if (!propShape.enumerable()) {
+      continue;
+    }
+    if (MOZ_UNLIKELY(!shapes.append(&propShape))) {
+      return false;
+    }
+  }
+
+  *optimized = true;
+
+  bool toWasEmpty = toPlain->empty();
+
+  // If the |to| object has no properties and the |from| object only has plain
+  // enumerable/writable/configurable data properties, try to use its shape.
+  if (toWasEmpty && !hasPropsWithNonDefaultAttrs &&
+      toPlain->canReuseShapeForNewProperties(fromPlain->shape())) {
+    Shape* newShape = fromPlain->shape();
+    if (!toPlain->setLastProperty(cx, newShape)) {
+      return false;
+    }
+    for (size_t i = shapes.length(); i > 0; i--) {
+      Shape* propShape = shapes[i - 1];
+      size_t slot = propShape->slot();
+      toPlain->initSlot(slot, fromPlain->getSlot(slot));
+    }
+    return true;
+  }
+
+  RootedValue propValue(cx);
+  RootedId nextKey(cx);
+
+  for (size_t i = shapes.length(); i > 0; i--) {
+    // Assert |from| still has the same properties.
+    MOZ_ASSERT(fromPlain->lastProperty() == fromShape);
+
+    Shape* fromPropShape = shapes[i - 1];
+    MOZ_ASSERT(fromPropShape->isDataProperty());
+    MOZ_ASSERT(fromPropShape->enumerable());
+
+    nextKey = fromPropShape->propid();
+    propValue = fromPlain->getSlot(fromPropShape->slot());
+
+    Shape* toShape;
+    if (toWasEmpty) {
+      MOZ_ASSERT(!toPlain->containsPure(nextKey));
+      toShape = nullptr;
+    } else {
+      toShape = toPlain->lookup(cx, nextKey);
+    }
+
+    if (toShape) {
+      MOZ_ASSERT(toShape->isDataProperty());
+      MOZ_ASSERT(toShape->writable());
+      toPlain->setSlot(toShape->slot(), propValue);
+    } else {
+      if (!AddDataPropertyNonPrototype(cx, toPlain, nextKey, propValue)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 static bool TryAssignNative(JSContext* cx, HandleObject to, HandleObject from,
                             bool* optimized) {
-  *optimized = false;
+  MOZ_ASSERT(*optimized == false);
 
   if (!from->is<NativeObject>() || !to->is<NativeObject>()) {
     return true;
@@ -844,11 +1000,9 @@ static bool TryAssignNative(JSContext* cx, HandleObject to, HandleObject from,
     shape = shapes[i - 1];
     nextKey = shape->propid();
 
-    // Ensure |from| is still native: a getter/setter might have been swapped
-    // with a non-native object.
-    if (MOZ_LIKELY(from->is<NativeObject>() &&
-                   from->as<NativeObject>().lastProperty() == fromShape &&
-                   shape->isDataProperty())) {
+    // If |from| still has the same shape, it must still be a NativeObject with
+    // the properties in |shapes|.
+    if (MOZ_LIKELY(from->shape() == fromShape && shape->isDataProperty())) {
       if (!shape->enumerable()) {
         continue;
       }
@@ -920,7 +1074,15 @@ static bool AssignSlow(JSContext* cx, HandleObject to, HandleObject from) {
 
 JS_PUBLIC_API bool JS_AssignObject(JSContext* cx, JS::HandleObject target,
                                    JS::HandleObject src) {
-  bool optimized;
+  bool optimized = false;
+
+  if (!TryAssignPlain(cx, target, src, &optimized)) {
+    return false;
+  }
+  if (optimized) {
+    return true;
+  }
+
   if (!TryAssignNative(cx, target, src, &optimized)) {
     return false;
   }
@@ -1462,11 +1624,9 @@ static bool TryEnumerableOwnPropertiesNative(JSContext* cx, HandleObject obj,
       Shape* shape = shapes[i - 1];
       id = shape->propid();
 
-      // Ensure |obj| is still native: a getter might have been swapped with a
-      // non-native object.
-      if (obj->is<NativeObject>() &&
-          obj->as<NativeObject>().lastProperty() == objShape &&
-          shape->isDataProperty()) {
+      // If |obj| still has the same shape, it must still be a NativeObject with
+      // the properties in |shapes|.
+      if (obj->shape() == objShape && shape->isDataProperty()) {
         if (!shape->enumerable()) {
           continue;
         }
@@ -2042,9 +2202,9 @@ static bool FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor,
    * [[Prototype]] before standard classes have been initialized.  For now,
    * only set the [[Prototype]] if it hasn't already been set.
    */
-  Rooted<TaggedProto> tagged(cx, TaggedProto(proto));
-  if (global->shouldSplicePrototype()) {
-    if (!GlobalObject::splicePrototype(cx, global, tagged)) {
+  if (global->staticPrototype() == nullptr) {
+    MOZ_ASSERT(!global->staticPrototypeIsImmutable());
+    if (!SetPrototype(cx, global, proto)) {
       return false;
     }
   }

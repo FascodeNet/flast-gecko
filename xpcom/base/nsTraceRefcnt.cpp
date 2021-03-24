@@ -743,29 +743,14 @@ static void EnsureWrite(FILE* aStream, const char* aBuf, size_t aLen) {
   }
 }
 
-static void PrintStackFrame(uint32_t aFrameNumber, void* aPC, void* aSP,
-                            void* aClosure) {
-  FILE* stream = (FILE*)aClosure;
-  MozCodeAddressDetails details;
-  static const size_t buflen = 1024;
-  char buf[buflen + 1];  // 1 for trailing '\n'
-
-  MozDescribeCodeAddress(aPC, &details);
-  MozFormatCodeAddressDetails(buf, buflen, aFrameNumber, aPC, &details);
-  size_t len = std::min(strlen(buf), buflen + 1 - 2);
-  buf[len++] = '\n';
-  buf[len] = '\0';
-  fflush(stream);
-  EnsureWrite(stream, buf, len);
-}
-
 static void PrintStackFrameCached(uint32_t aFrameNumber, void* aPC, void* aSP,
                                   void* aClosure) {
   auto stream = static_cast<FILE*>(aClosure);
-  static const size_t buflen = 1024;
+  static const int buflen = 1024;
   char buf[buflen + 5] = "    ";  // 5 for leading "    " and trailing '\n'
-  gCodeAddressService->GetLocation(aFrameNumber, aPC, buf + 4, buflen);
-  size_t len = std::min(strlen(buf), buflen + 5 - 2);
+  int len =
+      gCodeAddressService->GetLocation(aFrameNumber, aPC, buf + 4, buflen);
+  len = std::min(len, buflen + 1 - 2) + 4;
   buf[len++] = '\n';
   buf[len] = '\0';
   fflush(stream);
@@ -779,22 +764,11 @@ static void RecordStackFrame(uint32_t /*aFrameNumber*/, void* aPC,
 }
 }
 
-void nsTraceRefcnt::WalkTheStack(FILE* aStream, uint32_t aMaxFrames) {
-  MozStackWalk(PrintStackFrame, /* skipFrames */ 2, aMaxFrames, aStream);
-}
-
-#ifdef ANDROID
-void nsTraceRefcnt::WalkTheStack(void (*aWriter)(uint32_t, void*, void*,
-                                                 void*)) {
-  MozStackWalk(aWriter, /* skipFrames */ 2, /* maxFrames */ 0, nullptr);
-}
-#endif
-
 /**
- * This is a variant of |WalkTheStack| that uses |CodeAddressService| to cache
- * the results of |NS_DescribeCodeAddress|. If |WalkTheStackCached| is being
- * called frequently, it will be a few orders of magnitude faster than
- * |WalkTheStack|. However, the cache uses a lot of memory, which can cause
+ * This is a variant of |MozWalkTheStack| that uses |CodeAddressService| to
+ * cache the results of |NS_DescribeCodeAddress|. If |WalkTheStackCached| is
+ * being called frequently, it will be a few orders of magnitude faster than
+ * |MozWalkTheStack|. However, the cache uses a lot of memory, which can cause
  * OOM crashes. Therefore, this should only be used for things like refcount
  * logging which walk the stack extremely frequently.
  */

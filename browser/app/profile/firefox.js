@@ -620,7 +620,6 @@ pref("browser.bookmarks.defaultLocation", "toolbar");
 
 // Scripts & Windows prefs
 pref("dom.disable_open_during_load",              true);
-pref("javascript.options.showInConsole",          true);
 
 // allow JS to move and resize existing windows
 pref("dom.disable_window_move_resize",            false);
@@ -1473,6 +1472,7 @@ pref("browser.aboutwelcome.enabled", true);
 // Used to set multistage welcome UX
 pref("browser.aboutwelcome.screens", "");
 pref("browser.aboutwelcome.skipFocus", false);
+pref("browser.aboutwelcome.design", "");
 
 // The pref that controls if the What's New panel is enabled.
 pref("browser.messaging-system.whatsNewPanel.enabled", true);
@@ -1578,12 +1578,6 @@ pref("identity.fxaccounts.remote.pairing.uri", "wss://channelserver.services.moz
 
 // Token server used by the FxA Sync identity.
 pref("identity.sync.tokenserver.uri", "https://token.services.mozilla.com/1.0/sync/1.5");
-
-// Fetch Sync tokens using the OAuth token function
-pref("identity.sync.useOAuthForSyncToken", true);
-
-// Using session tokens to fetch OAuth tokens
-pref("identity.fxaccounts.useSessionTokensForOAuth", true);
 
 // Auto-config URL for FxA self-hosters, makes an HTTP request to
 // [identity.fxaccounts.autoconfig.uri]/.well-known/fxa-client-configuration
@@ -1837,6 +1831,13 @@ pref("privacy.webrtc.globalMuteToggles", false);
 // to switch tabs in a window that's being shared over WebRTC.
 pref("privacy.webrtc.sharedTabWarning", false);
 
+// Defines a grace period after camera or microphone use ends, where permission
+// is granted (even past navigation) to this tab + origin + device. This avoids
+// re-prompting without the user having to persist permission to the site, in a
+// common case of a web conference asking them for the camera in a lobby page,
+// before navigating to the actual meeting room page. Doesn't survive tab close.
+pref("privacy.webrtc.deviceGracePeriodTimeoutMs", 50000);
+
 // Start the browser in e10s mode
 pref("browser.tabs.remote.autostart", true);
 pref("browser.tabs.remote.desktopbehavior", true);
@@ -1862,9 +1863,6 @@ pref("browser.tabs.remote.warmup.unloadDelayMs", 2000);
 // For the about:tabcrashed page
 pref("browser.tabs.crashReporting.sendReport", true);
 pref("browser.tabs.crashReporting.includeURL", false);
-pref("browser.tabs.crashReporting.requestEmail", false);
-pref("browser.tabs.crashReporting.emailMe", false);
-pref("browser.tabs.crashReporting.email", "");
 
 // If true, unprivileged extensions may use experimental APIs on
 // nightly and developer edition.
@@ -1920,11 +1918,11 @@ pref("extensions.pocket.onSaveRecs.locales", "en-US,en-GB,en-CA");
 // Possibilities are: `control`, `control-one-button`, `variant_a`, `variant_b`, `variant_c`
 pref("extensions.pocket.loggedOutVariant", "control");
 
-#ifdef NIGHTLY_BUILD
 pref("signon.management.page.fileImport.enabled", true);
+
+#ifdef NIGHTLY_BUILD
 pref("signon.management.page.os-auth.enabled", true);
 #else
-pref("signon.management.page.fileImport.enabled", false);
 pref("signon.management.page.os-auth.enabled", false);
 #endif
 pref("signon.management.page.breach-alerts.enabled", true);
@@ -2416,8 +2414,8 @@ pref("devtools.browserconsole.input.editorWidth", 0);
 // Display an onboarding UI for the Editor mode.
 pref("devtools.webconsole.input.editorOnboarding", true);
 
-// Enable the new performance recording panel in Nightly builds.
-#if defined(NIGHTLY_BUILD)
+// Enable the new performance recording panel in Nightly and Beta/DevEdition builds.
+#if defined(NIGHTLY_BUILD) || defined(MOZ_DEV_EDITION)
   pref("devtools.performance.new-panel-enabled", true);
 #else
   pref("devtools.performance.new-panel-enabled", false);

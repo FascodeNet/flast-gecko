@@ -4,13 +4,14 @@
 
 "use strict";
 
+/* globals Services */
+
 const { E10SUtils } = ChromeUtils.import(
   "resource://gre/modules/E10SUtils.jsm"
 );
 const { Preferences } = ChromeUtils.import(
   "resource://gre/modules/Preferences.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 function linkColorFrameScript() {
   addMessageListener("HistoryDelegateTest:GetLinkColor", function onMessage(
@@ -55,6 +56,12 @@ this.test = class extends ExtensionAPI {
           "resource://android/assets/web_extensions/test-support/TestSupportChild.jsm",
       },
       allFrames: true,
+    });
+    ChromeUtils.registerProcessActor("TestSupportProcess", {
+      child: {
+        moduleURI:
+          "resource://android/assets/web_extensions/test-support/TestSupportProcessChild.jsm",
+      },
     });
   }
 
@@ -138,6 +145,28 @@ this.test = class extends ExtensionAPI {
           const tab = context.extension.tabManager.get(tabId);
           const pids = E10SUtils.getBrowserPids(tab.browser);
           return pids[0];
+        },
+
+        async getAllBrowserPids() {
+          const pids = [];
+          const processes = ChromeUtils.getAllDOMProcesses();
+          for (const process of processes) {
+            if (process.remoteType && process.remoteType.startsWith("web")) {
+              pids.push(process.osPid);
+            }
+          }
+          return pids;
+        },
+
+        async killContentProcess(pid) {
+          const procs = ChromeUtils.getAllDOMProcesses();
+          for (const proc of procs) {
+            if (pid === proc.osPid) {
+              proc
+                .getActor("TestSupportProcess")
+                .sendAsyncMessage("KillContentProcess");
+            }
+          }
         },
 
         async addHistogram(id, value) {

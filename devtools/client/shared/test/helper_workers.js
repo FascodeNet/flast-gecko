@@ -123,7 +123,7 @@ function waitForWorkerListChanged(targetFront) {
 
 async function waitForWorkerClose(workerDescriptorFront) {
   info("Waiting for worker to close.");
-  await workerDescriptorFront.once("close");
+  await workerDescriptorFront.once("descriptor-destroyed");
   info("Worker did close.");
 }
 
@@ -178,11 +178,10 @@ async function initWorkerDebugger(TAB_URL, WORKER_URL) {
   const { workers } = await listWorkers(target);
   const workerDescriptorFront = findWorker(workers, WORKER_URL);
 
-  const toolbox = await gDevTools.showToolbox(
-    workerDescriptorFront,
-    "jsdebugger",
-    Toolbox.HostType.WINDOW
-  );
+  const toolbox = await gDevTools.showToolbox(workerDescriptorFront, {
+    toolId: "jsdebugger",
+    hostType: Toolbox.HostType.WINDOW,
+  });
 
   const debuggerPanel = toolbox.getCurrentPanel();
 

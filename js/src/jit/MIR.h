@@ -82,15 +82,6 @@ class MDefinitionVisitorDefaultNoop {
 class CompactBufferWriter;
 class Range;
 
-template <typename T>
-struct ResultWithOOM {
-  T value;
-  bool oom;
-
-  static ResultWithOOM<T> ok(T val) { return {val, false}; }
-  static ResultWithOOM<T> fail() { return {T(), true}; }
-};
-
 static inline MIRType MIRTypeFromValue(const js::Value& vp) {
   if (vp.isDouble()) {
     return MIRType::Double;
@@ -3148,8 +3139,9 @@ class MCreateInlinedArgumentsObject : public MVariadicInstruction,
   bool canRecoverOnBailout() const override { return true; }
 };
 
-class MGetInlinedArgument : public MVariadicInstruction,
-                            public UnboxedInt32Policy<0>::Data {
+class MGetInlinedArgument
+    : public MVariadicInstruction,
+      public MixPolicy<UnboxedInt32Policy<0>, NoFloatPolicyAfter<1>>::Data {
   MGetInlinedArgument() : MVariadicInstruction(classOpcode) {
     setResultType(MIRType::Value);
   }
@@ -4286,11 +4278,7 @@ class MBitNot : public MUnaryInstruction, public BitwisePolicy::Data {
 
 class MTypeOf : public MUnaryInstruction,
                 public BoxExceptPolicy<0, MIRType::Object>::Data {
-  bool inputMaybeCallableOrEmulatesUndefined_;
-
-  explicit MTypeOf(MDefinition* def)
-      : MUnaryInstruction(classOpcode, def),
-        inputMaybeCallableOrEmulatesUndefined_(true) {
+  explicit MTypeOf(MDefinition* def) : MUnaryInstruction(classOpcode, def) {
     setResultType(MIRType::String);
     setMovable();
   }
@@ -4300,25 +4288,10 @@ class MTypeOf : public MUnaryInstruction,
   TRIVIAL_NEW_WRAPPERS
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
-  void cacheInputMaybeCallableOrEmulatesUndefined();
-
-  bool inputMaybeCallableOrEmulatesUndefined() const {
-    return inputMaybeCallableOrEmulatesUndefined_;
-  }
-  void markInputNotCallableOrEmulatesUndefined() {
-    inputMaybeCallableOrEmulatesUndefined_ = false;
-  }
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
   bool congruentTo(const MDefinition* ins) const override {
-    if (!ins->isTypeOf()) {
-      return false;
-    }
-    if (inputMaybeCallableOrEmulatesUndefined() !=
-        ins->toTypeOf()->inputMaybeCallableOrEmulatesUndefined()) {
-      return false;
-    }
     return congruentIfOperandsEqual(ins);
   }
 
@@ -6287,7 +6260,6 @@ class MBoxNonStrictThis : public MUnaryInstruction, public BoxPolicy<0>::Data {
   MBoxNonStrictThis(MDefinition* def, JSObject* globalThis)
       : MUnaryInstruction(classOpcode, def), globalThis_(globalThis) {
     setResultType(MIRType::Object);
-    setMovable();
   }
 
  public:
@@ -12504,29 +12476,25 @@ class MWasmStore : public MVariadicInstruction, public NoTypePolicy::Data {
 };
 
 class MAsmJSMemoryAccess {
-  uint32_t offset_;
   Scalar::Type accessType_;
   bool needsBoundsCheck_;
 
  public:
   explicit MAsmJSMemoryAccess(Scalar::Type accessType)
-      : offset_(0), accessType_(accessType), needsBoundsCheck_(true) {
+      : accessType_(accessType), needsBoundsCheck_(true) {
     MOZ_ASSERT(accessType != Scalar::Uint8Clamped);
   }
 
-  uint32_t offset() const { return offset_; }
-  uint32_t endOffset() const { return offset() + byteSize(); }
   Scalar::Type accessType() const { return accessType_; }
   unsigned byteSize() const { return TypedArrayElemSize(accessType()); }
   bool needsBoundsCheck() const { return needsBoundsCheck_; }
 
   wasm::MemoryAccessDesc access() const {
-    return wasm::MemoryAccessDesc(accessType_, Scalar::byteSize(accessType_),
-                                  offset_, wasm::BytecodeOffset());
+    return wasm::MemoryAccessDesc(accessType_, Scalar::byteSize(accessType_), 0,
+                                  wasm::BytecodeOffset());
   }
 
   void removeBoundsCheck() { needsBoundsCheck_ = false; }
-  void setOffset(uint32_t o) { offset_ = o; }
 };
 
 class MAsmJSLoadHeap

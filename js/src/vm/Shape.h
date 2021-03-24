@@ -646,7 +646,7 @@ struct StackBaseShape;
 // If you add a new flag here, please add appropriate code to JSObject::dump to
 // dump it as part of the object representation.
 enum class ObjectFlag : uint16_t {
-  Delegate = 1 << 0,
+  IsUsedAsPrototype = 1 << 0,
   NotExtensible = 1 << 1,
   Indexed = 1 << 2,
   HasInterestingSymbol = 1 << 3,
@@ -657,6 +657,19 @@ enum class ObjectFlag : uint16_t {
 
   // See JSObject::isQualifiedVarObj().
   QualifiedVarObj = 1 << 8,
+
+  // If set, the object may have a non-writable property or an accessor
+  // property.
+  //
+  // * This is only set for PlainObjects because we only need it for these
+  //   objects and setting it for other objects confuses insertInitialShape.
+  //
+  // * This flag does not account for properties named "__proto__". This is
+  //   because |Object.prototype| has a "__proto__" accessor property and we
+  //   don't want to include it because it would result in the flag being set on
+  //   most proto chains. Code using this flag must check for "__proto__"
+  //   property names separately.
+  HasNonWritableOrAccessorPropExclProto = 1 << 9,
 };
 
 using ObjectFlags = EnumFlags<ObjectFlag>;
@@ -1173,16 +1186,15 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
     return JSID_IS_EMPTY(propid_);
   }
 
-  uint32_t slotSpan(const JSClass* clasp) const {
+  uint32_t slotSpan() const {
     MOZ_ASSERT(!inDictionary());
-    // Proxy classes have reserved slots, but proxies manage their own slot
-    // layout. This means all non-native object shapes have nfixed == 0 and
-    // slotSpan == 0.
-    uint32_t free = clasp->isProxyObject() ? 0 : JSSLOT_FREE(clasp);
+    // slotSpan is only defined for native objects. Proxy classes have reserved
+    // slots, but proxies manage their own slot layout.
+    const JSClass* clasp = getObjectClass();
+    MOZ_ASSERT(clasp->isNativeObject());
+    uint32_t free = JSSLOT_FREE(clasp);
     return hasMissingSlot() ? free : std::max(free, maybeSlot() + 1);
   }
-
-  uint32_t slotSpan() const { return slotSpan(getObjectClass()); }
 
   void setSlot(uint32_t slot) {
     MOZ_ASSERT(slot <= SHAPE_INVALID_SLOT);
@@ -1371,6 +1383,9 @@ class AccessorShape : public Shape {
  public:
   /* Get a shape identical to this one, without parent/children information. */
   inline AccessorShape(const StackShape& other, uint32_t nfixed);
+
+  inline AccessorShape(BaseShape* base, ObjectFlags objectFlags,
+                       uint32_t nfixed);
 };
 
 class MOZ_RAII AutoRooterGetterSetter {

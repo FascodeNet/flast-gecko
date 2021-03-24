@@ -448,7 +448,7 @@ var StarUI = {
   showConfirmation() {
     let animationTriggered = LibraryUI.triggerLibraryAnimation("bookmark");
 
-    // Show the "Saved to Library!" hint in addition to the library button
+    // Show the "Saved to bookmarks" hint in addition to the library button
     // animation for the first three times, or when the animation was skipped
     // e.g. because the library button has been customized away.
     const HINT_COUNT_PREF =
@@ -476,7 +476,7 @@ var StarUI = {
     if (!anchor) {
       anchor = document.getElementById("PanelUI-menu-button");
     }
-    ConfirmationHint.show(anchor, "pageBookmarked");
+    ConfirmationHint.show(anchor, "pageBookmarked2");
   },
 };
 
@@ -2068,7 +2068,7 @@ var BookmarkingUI = {
     // that only require a label using the menubar.ftl messages.
     let menuItemL10nId = isStarred
       ? "menu-bookmark-edit"
-      : "menu-bookmark-this-page";
+      : "menu-bookmark-current-tab";
 
     let menuItem = document.getElementById("menu_bookmarkThisPage");
     if (menuItem) {
@@ -2089,20 +2089,30 @@ var BookmarkingUI = {
 
     // Localize the context menu item element.
     let contextItem = document.getElementById("context-bookmarkpage");
+    // On macOS regular menuitems are used and the shortcut isn't added
     if (contextItem) {
-      let shortcutElem = document.getElementById(this.BOOKMARK_BUTTON_SHORTCUT);
-      if (shortcutElem) {
-        let shortcut = ShortcutUtils.prettifyShortcut(shortcutElem);
+      if (AppConstants.platform == "macosx") {
         let contextItemL10nId = isStarred
-          ? "main-context-menu-bookmark-change-with-shortcut"
-          : "main-context-menu-bookmark-add-with-shortcut";
-        let l10nArgs = { shortcut };
-        document.l10n.setAttributes(contextItem, contextItemL10nId, l10nArgs);
-      } else {
-        let contextItemL10nId = isStarred
-          ? "main-context-menu-bookmark-change"
-          : "main-context-menu-bookmark-add";
+          ? "main-context-menu-bookmark-edit-mac"
+          : "main-context-menu-bookmark-add-mac";
         document.l10n.setAttributes(contextItem, contextItemL10nId);
+      } else {
+        let shortcutElem = document.getElementById(
+          this.BOOKMARK_BUTTON_SHORTCUT
+        );
+        if (shortcutElem) {
+          let shortcut = ShortcutUtils.prettifyShortcut(shortcutElem);
+          let contextItemL10nId = isStarred
+            ? "main-context-menu-bookmark-change-with-shortcut"
+            : "main-context-menu-bookmark-add-with-shortcut";
+          let l10nArgs = { shortcut };
+          document.l10n.setAttributes(contextItem, contextItemL10nId, l10nArgs);
+        } else {
+          let contextItemL10nId = isStarred
+            ? "main-context-menu-bookmark-change"
+            : "main-context-menu-bookmark-add";
+          document.l10n.setAttributes(contextItem, contextItemL10nId);
+        }
       }
     }
 

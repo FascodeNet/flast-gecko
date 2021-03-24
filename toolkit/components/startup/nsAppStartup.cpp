@@ -64,6 +64,8 @@ static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
 #define kNanosecondsPerSecond 1000000000.0
 
 #if defined(XP_WIN)
+#  include "mozilla/PreXULSkeletonUI.h"
+
 #  include "mozilla/perfprobe.h"
 /**
  * Events sent to the system for profiling purposes
@@ -580,6 +582,16 @@ nsAppStartup::GetSecondsSinceLastOSRestart(int64_t* aResult) {
 }
 
 NS_IMETHODIMP
+nsAppStartup::GetShowedPreXULSkeletonUI(bool* aResult) {
+#if defined(XP_WIN)
+  *aResult = GetPreXULSkeletonUIWasShown();
+#else
+  *aResult = false;
+#endif
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsAppStartup::SetInterrupted(bool aInterrupted) {
   mInterrupted = aInterrupted;
   return NS_OK;
@@ -1005,7 +1017,7 @@ nsAppStartup::CreateInstanceWithProfile(nsIToolkitProfile* aProfile) {
 
   NS_ConvertUTF8toUTF16 wideName(profileName);
 
-  const char16_t* args[] = {u"-no-remote", u"-P", wideName.get()};
+  const char16_t* args[] = {u"-P", wideName.get()};
   rv = process->Runw(false, args, 3);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;

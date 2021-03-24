@@ -660,6 +660,7 @@ async function fillGeneratedPasswordFromOpenACPopup(
   let popup = browser.ownerDocument.getElementById("PopupAutoComplete");
   let item;
 
+  await new Promise(requestAnimationFrame);
   await TestUtils.waitForCondition(() => {
     item = popup.querySelector(`[originaltype="generatedPassword"]`);
     return item && !EventUtils.isHidden(item);
@@ -702,7 +703,8 @@ async function openPasswordContextMenu(
   browser,
   input,
   assertCallback = null,
-  browsingContext = null
+  browsingContext = null,
+  openFillMenu = null
 ) {
   const doc = browser.ownerDocument;
   const CONTEXT_MENU = doc.getElementById("contentAreaContextMenu");
@@ -744,13 +746,15 @@ async function openPasswordContextMenu(
     }
   }
 
-  // Synthesize a mouse click over the fill login menu header.
-  let popupShownPromise = BrowserTestUtils.waitForCondition(
-    () => POPUP_HEADER.open && BrowserTestUtils.is_visible(LOGIN_POPUP),
-    "Waiting for header to be open and submenu to be visible"
-  );
-  EventUtils.synthesizeMouseAtCenter(POPUP_HEADER, {}, browser.ownerGlobal);
-  await popupShownPromise;
+  if (openFillMenu) {
+    // Synthesize a mouse click over the fill login menu header.
+    let popupShownPromise = BrowserTestUtils.waitForCondition(
+      () => POPUP_HEADER.open && BrowserTestUtils.is_visible(LOGIN_POPUP),
+      "Waiting for header to be open and submenu to be visible"
+    );
+    EventUtils.synthesizeMouseAtCenter(POPUP_HEADER, {}, browser.ownerGlobal);
+    await popupShownPromise;
+  }
 }
 
 /**

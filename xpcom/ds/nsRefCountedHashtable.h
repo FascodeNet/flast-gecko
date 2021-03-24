@@ -16,7 +16,7 @@
  * @param KeyClass a wrapper-class for the hashtable key, see nsHashKeys.h
  *   for a complete specification.
  * @param PtrType the reference-type being wrapped
- * @see nsDataHashtable, nsClassHashtable
+ * @see nsClassHashtable, nsTHashMap
  */
 template <class KeyClass, class PtrType>
 class nsRefCountedHashtable
@@ -89,6 +89,10 @@ class nsRefCountedHashtable
    * @return true if an entry for aKey was found (and removed)
    */
   inline bool Remove(KeyType aKey, RawPointerType* aData = nullptr);
+
+  nsRefCountedHashtable Clone() const {
+    return this->template CloneAs<nsRefCountedHashtable>();
+  }
 };
 
 template <typename K, typename T>

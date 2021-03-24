@@ -38,7 +38,6 @@ include protocol PRemoteSpellcheckEngine;
 include protocol PWebBrowserPersistDocument;
 include protocol PWebrtcGlobal;
 include protocol PWindowGlobal;
-include protocol PPresentation;
 include protocol PURLClassifier;
 include protocol PURLClassifierLocal;
 include protocol PVRManager;
@@ -426,7 +425,6 @@ nested(upto inside_cpow) sync protocol PContent
     manages PRemoteSpellcheckEngine;
     manages PWebBrowserPersistDocument;
     manages PWebrtcGlobal;
-    manages PPresentation;
     manages PURLClassifier;
     manages PURLClassifierLocal;
     manages PScriptCache;
@@ -738,18 +736,6 @@ child:
     async UpdateWindow(uintptr_t aChildId);
 
     /**
-     * Notify the child that presentation receiver has been launched with the
-     * correspondent iframe.
-     */
-    async NotifyPresentationReceiverLaunched(PBrowser aIframe, nsString aSessionId);
-
-    /**
-     * Notify the child that the info about a presentation receiver needs to be
-     * cleaned up.
-     */
-    async NotifyPresentationReceiverCleanUp(nsString aSessionId);
-
-    /**
      * Notify the child that cache is emptied.
      */
     async NotifyEmptyHTTPCache();
@@ -953,12 +939,6 @@ child:
   async UpdateMediaCodecsSupported(RemoteDecodeIn aLocation, MediaCodecsSupported aSupported);
 
 parent:
-    /**
-     * This is a temporary way to pass index and length through parent process.
-     * Used for testing.
-     */
-    async SessionHistoryUpdate(MaybeDiscardedBrowsingContext aTopContext,
-                               int32_t aIndex, int32_t aLength, nsID aChangeID);
 
     async SynchronizeLayoutHistoryState(MaybeDiscardedBrowsingContext aContext,
                                         nsILayoutHistoryState aState);
@@ -977,6 +957,8 @@ parent:
 
     async GetLoadingSessionHistoryInfoFromParent(MaybeDiscardedBrowsingContext aContext)
         returns (LoadingSessionHistoryInfo? aLoadingInfo, int32_t aRequestedIndex, int32_t aLength);
+
+    async RemoveFromBFCache(MaybeDiscardedBrowsingContext aContext);
 
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
 
@@ -1030,8 +1012,6 @@ parent:
     async PMedia();
 
     async PWebrtcGlobal();
-
-    async PPresentation();
 
     async CreateAudioIPCConnection() returns (FileDescOrError fd);
 
@@ -1830,9 +1810,10 @@ child:
                       MaybeDiscardedBrowsingContext aAncestorBrowsingContextToFocus,
                       bool aIsLeavingDocument, bool aAdjustWidget, uint64_t aActionId);
     async SetupFocusedAndActive(MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
-                                MaybeDiscardedBrowsingContext aActiveBrowsingContext);
-    async ReviseActiveBrowsingContext(MaybeDiscardedBrowsingContext aActiveBrowsingContext,
-                                      uint64_t aActionId);
+                                MaybeDiscardedBrowsingContext aActiveBrowsingContext,
+                                uint64_t aActionId);
+    async ReviseActiveBrowsingContext(uint64_t aOldActionId, MaybeDiscardedBrowsingContext aActiveBrowsingContext,
+                                      uint64_t aNewActionId);
 both:
     async MaybeExitFullscreen(MaybeDiscardedBrowsingContext aContext);
     async WindowPostMessage(MaybeDiscardedBrowsingContext aContext,

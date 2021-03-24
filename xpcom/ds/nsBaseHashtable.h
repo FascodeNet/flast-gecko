@@ -10,6 +10,7 @@
 #include <functional>
 #include <utility>
 
+#include "mozilla/dom/SafeRefPtr.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/RefPtr.h"
@@ -61,6 +62,22 @@ struct SmartPtrTraits<RefPtr<Pointee>> {
 };
 
 template <typename Pointee>
+struct SmartPtrTraits<SafeRefPtr<Pointee>> {
+  static constexpr bool IsSmartPointer = true;
+  static constexpr bool IsRefCounted = true;
+  using SmartPointerType = SafeRefPtr<Pointee>;
+  using PointeeType = Pointee;
+  using RawPointerType = Pointee*;
+  template <typename U>
+  using OtherSmartPtrType = SafeRefPtr<U>;
+
+  template <typename U, typename... Args>
+  static SmartPointerType NewObject(Args&&... aConstructionArgs) {
+    return MakeSafeRefPtr<U>(std::forward<Args>(aConstructionArgs)...);
+  }
+};
+
+template <typename Pointee>
 struct SmartPtrTraits<nsCOMPtr<Pointee>> {
   static constexpr bool IsSmartPointer = true;
   static constexpr bool IsRefCounted = true;
@@ -76,8 +93,6 @@ struct SmartPtrTraits<nsCOMPtr<Pointee>> {
   }
 };
 
-// XXX Add SafeRefPtr specialization
-
 template <class T>
 T* PtrGetWeak(T* aPtr) {
   return aPtr;
@@ -89,6 +104,11 @@ T* PtrGetWeak(const RefPtr<T>& aPtr) {
 }
 
 template <class T>
+T* PtrGetWeak(const SafeRefPtr<T>& aPtr) {
+  return aPtr.unsafeGetRawPtr();
+}
+
+template <class T>
 T* PtrGetWeak(const nsCOMPtr<T>& aPtr) {
   return aPtr.get();
 }
@@ -97,6 +117,60 @@ template <class T>
 T* PtrGetWeak(const UniquePtr<T>& aPtr) {
   return aPtr.get();
 }
+
+template <typename EntryType>
+class nsBaseHashtableValueIterator : public ::detail::nsTHashtableIteratorBase {
+  // friend class nsTHashtable<EntryType>;
+
+ public:
+  using iterator_category = std::forward_iterator_tag;
+  using value_type = const std::decay_t<typename EntryType::DataType>;
+  using difference_type = int32_t;
+  using pointer = value_type*;
+  using reference = value_type&;
+
+  using iterator_type = nsBaseHashtableValueIterator;
+  using const_iterator_type = nsBaseHashtableValueIterator;
+
+  using nsTHashtableIteratorBase::nsTHashtableIteratorBase;
+
+  value_type* operator->() const {
+    return &static_cast<const EntryType*>(mIterator.Get())->GetData();
+  }
+  decltype(auto) operator*() const {
+    return static_cast<const EntryType*>(mIterator.Get())->GetData();
+  }
+
+  iterator_type& operator++() {
+    mIterator.Next();
+    return *this;
+  }
+  iterator_type operator++(int) {
+    iterator_type it = *this;
+    ++*this;
+    return it;
+  }
+};
+
+template <typename EntryType>
+class nsBaseHashtableValueRange {
+ public:
+  using IteratorType = nsBaseHashtableValueIterator<EntryType>;
+  using iterator = IteratorType;
+
+  explicit nsBaseHashtableValueRange(const PLDHashTable& aHashtable)
+      : mHashtable{aHashtable} {}
+
+  auto begin() const { return IteratorType{mHashtable}; }
+  auto end() const {
+    return IteratorType{mHashtable, typename IteratorType::EndIteratorTag{}};
+  }
+  auto cbegin() const { return begin(); }
+  auto cend() const { return end(); }
+
+ private:
+  const PLDHashTable& mHashtable;
+};
 
 }  // namespace mozilla::detail
 
@@ -136,9 +210,11 @@ class nsDefaultConverter {
  * @see nsTHashtable for the specification of this class
  * @see nsBaseHashtable for template parameters
  */
-template <class KeyClass, class DataType>
+template <class KeyClass, class TDataType>
 class nsBaseHashtableET : public KeyClass {
  public:
+  using DataType = TDataType;
+
   const DataType& GetData() const { return mData; }
   DataType* GetModifiableData() { return &mData; }
   template <typename U>
@@ -156,6 +232,8 @@ class nsBaseHashtableET : public KeyClass {
   template <typename KeyClassX, typename DataTypeX, typename UserDataTypeX,
             typename ConverterX>
   friend class nsBaseHashtable;
+  friend class ::detail::nsTHashtableKeyIterator<
+      nsBaseHashtableET<KeyClass, DataType>>;
 
   typedef typename KeyClass::KeyType KeyType;
   typedef typename KeyClass::KeyTypePointer KeyTypePointer;
@@ -168,8 +246,8 @@ class nsBaseHashtableET : public KeyClass {
 
 /**
  * Templated hashtable. Usually, this isn't instantiated directly but through
- * its sub-class templates nsDataHashtable, nsInterfaceHashtable,
- * nsClassHashtable and nsRefPtrHashtable.
+ * its sub-class templates nsInterfaceHashtable, nsClassHashtable,
+ * nsRefPtrHashtable and nsTHashMap.
  *
  * Originally, UserDataType used to be the only type exposed to the user in the
  * public member function signatures (hence its name), but this has proven to
@@ -305,13 +383,11 @@ class nsBaseHashtable
     static_assert(
         SmartPtrTraits::IsSmartPointer,
         "GetOrInsertNew can only be used with smart pointer data types");
-    return LookupOrInsertWith(std::move(aKey),
-                              [&] {
-                                return SmartPtrTraits::template NewObject<
-                                    typename SmartPtrTraits::PointeeType>(
-                                    std::forward<Args>(aConstructionArgs)...);
-                              })
-        .get();
+    return mozilla::detail::PtrGetWeak(LookupOrInsertWith(std::move(aKey), [&] {
+      return SmartPtrTraits::template NewObject<
+          typename SmartPtrTraits::PointeeType>(
+          std::forward<Args>(aConstructionArgs)...);
+    }));
   }
 
   /**
@@ -459,16 +535,17 @@ class nsBaseHashtable
     return value;
   }
 
+  template <typename HashtableRef>
   struct LookupResult {
    private:
     EntryType* mEntry;
-    nsBaseHashtable& mTable;
+    HashtableRef mTable;
 #ifdef DEBUG
     uint32_t mTableGeneration;
 #endif
 
    public:
-    LookupResult(EntryType* aEntry, nsBaseHashtable& aTable)
+    LookupResult(EntryType* aEntry, HashtableRef aTable)
         : mEntry(aEntry),
           mTable(aTable)
 #ifdef DEBUG
@@ -549,8 +626,12 @@ class nsBaseHashtable
    * lookups.  If you want to insert a new entry if one does not exist, then use
    * WithEntryHandle instead, see below.
    */
-  [[nodiscard]] LookupResult Lookup(KeyType aKey) {
-    return LookupResult(this->GetEntry(aKey), *this);
+  [[nodiscard]] auto Lookup(KeyType aKey) {
+    return LookupResult<nsBaseHashtable&>(this->GetEntry(aKey), *this);
+  }
+
+  [[nodiscard]] auto Lookup(KeyType aKey) const {
+    return LookupResult<const nsBaseHashtable&>(this->GetEntry(aKey), *this);
   }
 
   /**
@@ -831,6 +912,8 @@ class nsBaseHashtable
     return ConstIterator(const_cast<nsBaseHashtable*>(this));
   }
 
+  using nsTHashtable<EntryType>::Remove;
+
   /**
    * Remove the entry associated with aIter.
    *
@@ -846,6 +929,32 @@ class nsBaseHashtable
   using nsTHashtable<EntryType>::end;
   using nsTHashtable<EntryType>::cbegin;
   using nsTHashtable<EntryType>::cend;
+
+  using nsTHashtable<EntryType>::Keys;
+
+  /**
+   * Return a range of the values (of DataType). Note this range iterates over
+   * the values in place, so modifications to the nsTHashtable invalidate the
+   * range while it's iterated, except when calling Remove() with a value
+   * iterator derived from that range.
+   */
+  auto Values() const {
+    return mozilla::detail::nsBaseHashtableValueRange<EntryType>{this->mTable};
+  }
+
+  /**
+   * Remove an entry from a value range, specified via a value iterator, e.g.
+   *
+   * for (auto it = hash.Values().begin(), end = hash.Values().end();
+   *      it != end; * ++it) {
+   *   if (*it > 42) { hash.Remove(it); }
+   * }
+   *
+   * You might also consider using RemoveIf though.
+   */
+  void Remove(mozilla::detail::nsBaseHashtableValueIterator<EntryType>& aIter) {
+    aIter.mIterator.Remove();
+  }
 
   /**
    * reset the hashtable, removing all entries
@@ -878,6 +987,26 @@ class nsBaseHashtable
   }
 
   using nsTHashtable<EntryType>::MarkImmutable;
+
+  /**
+   * Makes a clone of this hashtable by copying all entries. This requires
+   * KeyType and DataType to be copy-constructible.
+   */
+  nsBaseHashtable Clone() const { return CloneAs<nsBaseHashtable>(); }
+
+ protected:
+  template <typename T>
+  T CloneAs() const {
+    static_assert(std::is_base_of_v<nsBaseHashtable, T>);
+    // XXX This can probably be optimized, see Bug 1694368.
+    T result(Count());
+    for (const auto& srcEntry : *this) {
+      result.WithEntryHandle(srcEntry.GetKey(), [&](auto&& dstEntry) {
+        dstEntry.Insert(srcEntry.GetData());
+      });
+    }
+    return result;
+  }
 };
 
 //

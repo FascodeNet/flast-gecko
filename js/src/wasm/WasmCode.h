@@ -66,7 +66,7 @@ struct LinkData : LinkDataCacheablePod {
     uint32_t mode;
 #endif
   };
-  typedef Vector<InternalLink, 0, SystemAllocPolicy> InternalLinkVector;
+  using InternalLinkVector = Vector<InternalLink, 0, SystemAllocPolicy>;
 
   struct SymbolicLinkArray
       : EnumeratedArray<SymbolicAddress, SymbolicAddress::Limit, Uint32Vector> {
@@ -179,7 +179,7 @@ class ModuleSegment : public CodeSegment {
   static UniqueModuleSegment create(Tier tier, const Bytes& unlinkedBytes,
                                     const LinkData& linkData);
 
-  bool initialize(IsTier2 compileMode, const CodeTier& codeTier,
+  bool initialize(IsTier2 isTier2, const CodeTier& codeTier,
                   const LinkData& linkData, const Metadata& metadata,
                   const MetadataTier& metadataTier);
 
@@ -257,7 +257,7 @@ class FuncExport {
   WASM_DECLARE_SERIALIZABLE(FuncExport)
 };
 
-typedef Vector<FuncExport, 0, SystemAllocPolicy> FuncExportVector;
+using FuncExportVector = Vector<FuncExport, 0, SystemAllocPolicy>;
 
 // An FuncImport contains the runtime metadata needed to implement a call to an
 // imported function. Each function import has two call stubs: an optimized path
@@ -305,7 +305,7 @@ class FuncImport {
   WASM_DECLARE_SERIALIZABLE(FuncImport)
 };
 
-typedef Vector<FuncImport, 0, SystemAllocPolicy> FuncImportVector;
+using FuncImportVector = Vector<FuncImport, 0, SystemAllocPolicy>;
 
 // Metadata holds all the data that is needed to describe compiled wasm code
 // at runtime (as opposed to data that is only used to statically link or
@@ -342,8 +342,8 @@ struct MetadataCacheablePod {
 };
 
 typedef uint8_t ModuleHash[8];
-typedef Vector<ValTypeVector, 0, SystemAllocPolicy> FuncArgTypesVector;
-typedef Vector<ValTypeVector, 0, SystemAllocPolicy> FuncReturnTypesVector;
+using FuncArgTypesVector = Vector<ValTypeVector, 0, SystemAllocPolicy>;
+using FuncReturnTypesVector = Vector<ValTypeVector, 0, SystemAllocPolicy>;
 
 struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   TypeDefWithIdVector types;
@@ -797,7 +797,7 @@ class Code : public ShareableBase<Code> {
   uint8_t* serialize(uint8_t* cursor, const LinkData& linkData) const;
   static const uint8_t* deserialize(const uint8_t* cursor,
                                     const LinkData& linkData,
-                                    Metadata& metadata, SharedCode* code);
+                                    Metadata& metadata, SharedCode* out);
 };
 
 void PatchDebugSymbolicAccesses(uint8_t* codeBase, jit::MacroAssembler& masm);

@@ -58,7 +58,25 @@ class TabDescriptorFront extends DescriptorMixin(
     this.traits = json.traits || {};
   }
 
-  destroy() {
+  /**
+   * Destroy the front.
+   *
+   * @param Boolean If true, it means that we destroy the front when receiving the descriptor-destroyed
+   *                event from the server.
+   */
+  destroy({ isServerDestroyEvent = false } = {}) {
+    if (this.isDestroyed()) {
+      return;
+    }
+
+    // The descriptor may be destroyed first by the frontend.
+    // When closing the tab, the toolbox document is almost immediately removed from the DOM.
+    // The `unload` event fires and toolbox destroys itself, as well as its related client.
+    //
+    // In such case, we emit the descriptor-destroyed event
+    if (!isServerDestroyEvent) {
+      this.emit("descriptor-destroyed");
+    }
     if (this.isLocalTab) {
       this._teardownLocalTabListeners();
     }
@@ -138,6 +156,15 @@ class TabDescriptorFront extends DescriptorMixin(
     // Note that we are also checking that _targetFront has a valid actorID
     // in getTarget, this acts as an additional security to avoid races.
     this._targetFront = null;
+
+    // @backward-compat { version 88 } Descriptor actors now emit descriptor-destroyed.
+    // But about:debugging / remote debugging tabs doesn't support top level target switching
+    // so that we also have to remove the descriptor when the target is destroyed.
+    // Should be kept until about:debugging supports target switching and we remove the
+    // !isLocalTab check.
+    if (!this.traits.emitDescriptorDestroyed || !this.isLocalTab) {
+      this.destroy();
+    }
   }
 
   /**
@@ -168,19 +195,26 @@ class TabDescriptorFront extends DescriptorMixin(
     }
 
     this._targetFrontPromise = (async () => {
-      let targetFront = null;
+      let newTargetFront = null;
       try {
         const targetForm = await super.getTarget();
-        targetFront = this._createTabTarget(targetForm);
-        await targetFront.attach();
+        newTargetFront = this._createTabTarget(targetForm);
+        await newTargetFront.attach();
       } catch (e) {
         console.log(
           `Request to connect to TabDescriptor "${this.id}" failed: ${e}`
         );
       }
-      this._targetFront = targetFront;
+
+      // Completely ignore the previous target.
+      // We might nullify the _targetFront unexpectely due to previous target
+      // being destroyed after the new is created
+      if (this._targetFront) {
+        this._targetFront.off("target-destroyed", this._onTargetDestroyed);
+      }
+      this._targetFront = newTargetFront;
       this._targetFrontPromise = null;
-      return targetFront;
+      return newTargetFront;
     })();
     return this._targetFrontPromise;
   }
@@ -191,15 +225,10 @@ class TabDescriptorFront extends DescriptorMixin(
   async _handleTabEvent(event) {
     switch (event.type) {
       case "TabClose":
-        // Always destroy the toolbox opened for this local tab target.
-        // Toolboxes are no longer destroyed on target destruction.
+        // Always destroy the toolbox opened for this local tab descriptor.
         // When the toolbox is in a Window Host, it won't be removed from the
         // DOM when the tab is closed.
-        const toolbox = gDevTools.getToolbox(this._targetFront);
-        // A few tests are using TabTargetFactory.forTab, but aren't spawning any
-        // toolbox. In this case, the toobox won't destroy the target, so we
-        // do it from here. But ultimately, the target should destroy itself
-        // from the actor side anyway.
+        const toolbox = gDevTools.getToolboxForDescriptor(this);
         if (toolbox) {
           // Toolbox.destroy will call target.destroy eventually.
           await toolbox.destroy();

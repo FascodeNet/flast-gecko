@@ -58,10 +58,10 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(NotificationController)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mHangingChildDocuments)
-  for (auto it = tmp->mContentInsertions.ConstIter(); !it.Done(); it.Next()) {
+  for (const auto& entry : tmp->mContentInsertions) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mContentInsertions key");
-    cb.NoteXPCOMChild(it.Key());
-    nsTArray<nsCOMPtr<nsIContent>>* list = it.UserData();
+    cb.NoteXPCOMChild(entry.GetKey());
+    nsTArray<nsCOMPtr<nsIContent>>* list = entry.GetData().get();
     for (uint32_t i = 0; i < list->Length(); i++) {
       NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mContentInsertions value item");
       cb.NoteXPCOMChild(list->ElementAt(i));
@@ -522,8 +522,7 @@ void NotificationController::ProcessMutationEvents() {
   }
 
   // Group the show events by the parent of their target.
-  nsDataHashtable<nsPtrHashKey<LocalAccessible>,
-                  nsTArray<AccTreeMutationEvent*>>
+  nsTHashMap<nsPtrHashKey<LocalAccessible>, nsTArray<AccTreeMutationEvent*>>
       showEvents;
   for (AccTreeMutationEvent* event = mFirstMutationEvent; event;
        event = event->NextEvent()) {
@@ -655,9 +654,7 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
   }
 
   // Process rendered text change notifications.
-  for (auto iter = mTextHash.Iter(); !iter.Done(); iter.Next()) {
-    nsCOMPtrHashKey<nsIContent>* entry = iter.Get();
-    nsIContent* textNode = entry->GetKey();
+  for (nsIContent* textNode : mTextHash) {
     LocalAccessible* textAcc = mDocument->GetAccessible(textNode);
 
     // If the text node is not in tree or doesn't have a frame, or placed in
@@ -755,9 +752,9 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
   // move the current insertions into a temporary data structure and process
   // them from there. Any insertions queued during processing will get handled
   // in subsequent refresh driver ticks.
-  auto contentInsertions = std::move(mContentInsertions);
-  for (auto iter = contentInsertions.ConstIter(); !iter.Done(); iter.Next()) {
-    mDocument->ProcessContentInserted(iter.Key(), iter.UserData());
+  const auto contentInsertions = std::move(mContentInsertions);
+  for (const auto& entry : contentInsertions) {
+    mDocument->ProcessContentInserted(entry.GetKey(), entry.GetData().get());
     if (!mDocument) {
       return;
     }

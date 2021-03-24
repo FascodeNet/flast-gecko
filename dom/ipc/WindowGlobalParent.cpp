@@ -69,9 +69,9 @@ namespace mozilla::dom {
 
 WindowGlobalParent::WindowGlobalParent(
     CanonicalBrowsingContext* aBrowsingContext, uint64_t aInnerWindowId,
-    uint64_t aOuterWindowId, bool aInProcess, FieldValues&& aInit)
+    uint64_t aOuterWindowId, FieldValues&& aInit)
     : WindowContext(aBrowsingContext, aInnerWindowId, aOuterWindowId,
-                    aInProcess, std::move(aInit)),
+                    std::move(aInit)),
       mIsInitialDocument(false),
       mSandboxFlags(0),
       mDocumentHasLoaded(false),
@@ -82,7 +82,7 @@ WindowGlobalParent::WindowGlobalParent(
 }
 
 already_AddRefed<WindowGlobalParent> WindowGlobalParent::CreateDisconnected(
-    const WindowGlobalInit& aInit, bool aInProcess) {
+    const WindowGlobalInit& aInit) {
   RefPtr<CanonicalBrowsingContext> browsingContext =
       CanonicalBrowsingContext::Get(aInit.context().mBrowsingContextId);
   if (NS_WARN_IF(!browsingContext)) {
@@ -94,9 +94,9 @@ already_AddRefed<WindowGlobalParent> WindowGlobalParent::CreateDisconnected(
   MOZ_RELEASE_ASSERT(!wgp, "Creating duplicate WindowGlobalParent");
 
   FieldValues fields(aInit.context().mFields);
-  wgp = new WindowGlobalParent(browsingContext, aInit.context().mInnerWindowId,
-                               aInit.context().mOuterWindowId, aInProcess,
-                               std::move(fields));
+  wgp =
+      new WindowGlobalParent(browsingContext, aInit.context().mInnerWindowId,
+                             aInit.context().mOuterWindowId, std::move(fields));
   wgp->mDocumentPrincipal = aInit.principal();
   wgp->mDocumentURI = aInit.documentURI();
   wgp->mBlockAllMixedContent = aInit.blockAllMixedContent();
@@ -1133,22 +1133,23 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
     }
   }
 
-  // Note that our WindowContext has become discarded.
-  WindowContext::Discard();
-
   ContentParent* cp = nullptr;
   if (!IsInProcess()) {
     cp = static_cast<ContentParent*>(Manager()->Manager());
   }
 
-  RefPtr<WindowGlobalParent> self(this);
   Group()->EachOtherParent(cp, [&](ContentParent* otherContent) {
-    // Keep the WindowContext alive until other processes have acknowledged it
-    // has been discarded.
-    auto resolve = [self](bool) {};
-    auto reject = [self](mozilla::ipc::ResponseRejectReason) {};
-    otherContent->SendDiscardWindowContext(InnerWindowId(), resolve, reject);
+    // Keep the WindowContext and our BrowsingContextGroup alive until other
+    // processes have acknowledged it has been discarded.
+    Group()->AddKeepAlive();
+    auto callback = [self = RefPtr{this}](auto) {
+      self->Group()->RemoveKeepAlive();
+    };
+    otherContent->SendDiscardWindowContext(InnerWindowId(), callback, callback);
   });
+
+  // Note that our WindowContext has become discarded.
+  WindowContext::Discard();
 
   // Report content blocking log when destroyed.
   // There shouldn't have any content blocking log when a documnet is loaded in

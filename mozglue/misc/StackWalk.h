@@ -11,6 +11,9 @@
 
 #include "mozilla/Types.h"
 #include <stdint.h>
+#include <stdio.h>
+
+MOZ_BEGIN_EXTERN_C
 
 /**
  * The callback for MozStackWalk and MozStackWalkThread.
@@ -43,39 +46,6 @@ typedef void (*MozWalkStackCallback)(uint32_t aFrameNumber, void* aPC,
  */
 MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
                            uint32_t aMaxFrames, void* aClosure);
-
-#if defined(_WIN32) && (defined(_M_IX86) || defined(_M_AMD64) || \
-                        defined(_M_IA64) || defined(_M_ARM64))
-
-#  include <windows.h>
-
-#  define MOZ_STACKWALK_SUPPORTS_WINDOWS 1
-
-/**
- * Like MozStackWalk, but walks the stack for another thread.
- * Call aCallback for each stack frame on the current thread, from
- * the caller of MozStackWalk to main (or above).
- *
- * @param aCallback    Same as for MozStackWalk().
- * @param aSkipFrames  Same as for MozStackWalk().
- * @param aMaxFrames   Same as for MozStackWalk().
- * @param aClosure     Same as for MozStackWalk().
- * @param aThread      The handle of the thread whose stack is to be walked.
- *                     If 0, walks the current thread.
- * @param aContext     A CONTEXT, presumably obtained with GetThreadContext()
- *                     after suspending the thread with SuspendThread(). If
- *                     null, the CONTEXT will be re-obtained.
- */
-MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
-                                 uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                 void* aClosure, HANDLE aThread,
-                                 CONTEXT* aContext);
-
-#else
-
-#  define MOZ_STACKWALK_SUPPORTS_WINDOWS 0
-
-#endif
 
 typedef struct {
   /*
@@ -135,12 +105,16 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
  * @param aLOffset     The library offset.
  * @param aFileName    The filename. Possibly null or the empty string.
  * @param aLineNo      The line number. Possibly zero.
+ * @return             The minimum number of characters necessary to format
+ *                     the frame information, without the terminating null.
+ *                     The buffer will have been truncated if the returned
+ *                     value is greater than aBufferSize-1.
  */
-MFBT_API void MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
-                                   uint32_t aFrameNumber, const void* aPC,
-                                   const char* aFunction, const char* aLibrary,
-                                   ptrdiff_t aLOffset, const char* aFileName,
-                                   uint32_t aLineNo);
+MFBT_API int MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
+                                  uint32_t aFrameNumber, const void* aPC,
+                                  const char* aFunction, const char* aLibrary,
+                                  ptrdiff_t aLOffset, const char* aFileName,
+                                  uint32_t aLineNo);
 
 /**
  * Format the information about a code address in the same fashion as
@@ -156,22 +130,63 @@ MFBT_API void MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
  * @param aFrameNumber The frame number.
  * @param aPC          The code address.
  * @param aDetails     The value filled in by MozDescribeCodeAddress(aPC).
+ * @return             The minimum number of characters necessary to format
+ *                     the frame information, without the terminating null.
+ *                     The buffer will have been truncated if the returned
+ *                     value is greater than aBufferSize-1.
  */
-MFBT_API void MozFormatCodeAddressDetails(
-    char* aBuffer, uint32_t aBufferSize, uint32_t aFrameNumber, void* aPC,
-    const MozCodeAddressDetails* aDetails);
+MFBT_API int MozFormatCodeAddressDetails(char* aBuffer, uint32_t aBufferSize,
+                                         uint32_t aFrameNumber, void* aPC,
+                                         const MozCodeAddressDetails* aDetails);
 
+#ifdef __cplusplus
+#  define FRAMES_DEFAULT = 0
+#else
+#  define FRAMES_DEFAULT
+#endif
+/**
+ * Walk the stack and print the stack trace to the given stream.
+ *
+ * @param aStream      A stdio stream.
+ * @param aSkipFrames  Number of initial frames to skip.  0 means that
+ *                     the first callback will be for the caller of
+ *                     MozWalkTheStack.
+ * @param aMaxFrames   Maximum number of frames to trace.  0 means no limit.
+ */
+MFBT_API void MozWalkTheStack(FILE* aStream,
+                              uint32_t aSkipFrames FRAMES_DEFAULT,
+                              uint32_t aMaxFrames FRAMES_DEFAULT);
+
+/**
+ * Walk the stack and send each stack trace line to a callback writer.
+ * Each line string is null terminated but doesn't contain a '\n' character.
+ *
+ * @param aWriter      The callback.
+ * @param aSkipFrames  Number of initial frames to skip.  0 means that
+ *                     the first callback will be for the caller of
+ *                     MozWalkTheStack.
+ * @param aMaxFrames   Maximum number of frames to trace.  0 means no limit.
+ */
+MFBT_API void MozWalkTheStackWithWriter(void (*aWriter)(const char*),
+                                        uint32_t aSkipFrames FRAMES_DEFAULT,
+                                        uint32_t aMaxFrames FRAMES_DEFAULT);
+
+#undef FRAMES_DEFAULT
+
+MOZ_END_EXTERN_C
+
+#ifdef __cplusplus
 namespace mozilla {
 
 MFBT_API void FramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                    void* aClosure, void** aBp,
-                                    void* aStackEnd);
+                                    uint32_t aMaxFrames, void* aClosure,
+                                    void** aBp, void* aStackEnd);
 
-#if defined(XP_LINUX) || defined(XP_FREEBSD)
+#  if defined(XP_LINUX) || defined(XP_FREEBSD)
 MFBT_API void DemangleSymbol(const char* aSymbol, char* aBuffer, int aBufLen);
-#endif
+#  endif
 
 }  // namespace mozilla
+#endif
 
 #endif

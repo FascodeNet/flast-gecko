@@ -151,6 +151,10 @@ function initSandbox(params) {
   globalThis.style = _constants.Style;
   globalThis.trans = _constants.Trans;
   globalThis.zoomtype = _constants.ZoomType;
+  globalThis.ADBE = {
+    Reader_Value_Asked: true,
+    Viewer_Value_Asked: true
+  };
   const aform = new _aform.AForm(doc, app, util, color);
 
   for (const name of Object.getOwnPropertyNames(_aform.AForm.prototype)) {
@@ -891,6 +895,10 @@ class RadioButtonField extends Field {
   }
 
   set value(value) {
+    if (value === null) {
+      this._value = "";
+    }
+
     const i = this.exportValues.indexOf(value);
 
     if (0 <= i && i < this._radioIds.length) {
@@ -4652,8 +4660,8 @@ Object.defineProperty(exports, "initSandbox", ({
 
 var _initialization = __w_pdfjs_require__(1);
 
-const pdfjsVersion = '2.8.126';
-const pdfjsBuild = 'fafe03984';
+const pdfjsVersion = '2.8.243';
+const pdfjsBuild = 'a16494135';
 })();
 
 /******/ 	return __webpack_exports__;

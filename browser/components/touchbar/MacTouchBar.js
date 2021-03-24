@@ -141,7 +141,7 @@ var gBuiltInInputs = {
   },
   ReaderView: {
     title: "reader-view",
-    image: "chrome://browser/skin/readerMode.svg",
+    image: "chrome://browser/skin/reader-mode.svg",
     type: kInputTypes.BUTTON,
     callback: () => execCommand("View:ReaderView"),
     disabled: true, // Updated when the page is found to be Reader View-able.
@@ -416,15 +416,20 @@ class TouchBarHelper {
   observe(subject, topic, data) {
     switch (topic) {
       case "touchbar-location-change":
-        this.activeUrl = data;
-        // ReaderView button is disabled on every location change since
-        // Reader View must determine if the new page can be Reader Viewed.
-        gBuiltInInputs.ReaderView.disabled = !data.startsWith("about:reader");
+        let updatedInputs = ["Back", "Forward"];
         gBuiltInInputs.Back.disabled = !TouchBarHelper.window.gBrowser
           .canGoBack;
         gBuiltInInputs.Forward.disabled = !TouchBarHelper.window.gBrowser
           .canGoForward;
-        this._updateTouchBarInputs("ReaderView", "Back", "Forward");
+        if (subject.QueryInterface(Ci.nsIWebProgress)?.isTopLevel) {
+          this.activeUrl = data;
+          // ReaderView button is disabled on every toplevel location change
+          // since Reader View must determine if the new page can be Reader
+          // Viewed.
+          updatedInputs.push("ReaderView");
+          gBuiltInInputs.ReaderView.disabled = !data.startsWith("about:reader");
+        }
+        this._updateTouchBarInputs(...updatedInputs);
         break;
       case "fullscreen-painted":
         if (TouchBarHelper.window.document.fullscreenElement) {

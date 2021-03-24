@@ -298,6 +298,9 @@ with Files("SocketCommon.webidl"):
 with Files("SourceBuffer*"):
     BUG_COMPONENT = ("Core", "Audio/Video")
 
+with Files("Speech*"):
+    BUG_COMPONENT = ("Core", "Web Speech")
+
 with Files("StereoPannerNode.webidl"):
     BUG_COMPONENT = ("Core", "Web Audio")
 
@@ -330,9 +333,6 @@ with Files("UIEvent.webidl"):
 
 with Files("URL.webidl"):
     BUG_COMPONENT = ("Core", "Audio/Video")
-
-with Files("UserProximityEvent.webidl"):
-    BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
 with Files("VTT*"):
     BUG_COMPONENT = ("Core", "Audio/Video")
@@ -763,12 +763,6 @@ WEBIDL_FILES = [
     "Plugin.webidl",
     "PluginArray.webidl",
     "PointerEvent.webidl",
-    "Presentation.webidl",
-    "PresentationAvailability.webidl",
-    "PresentationConnection.webidl",
-    "PresentationConnectionList.webidl",
-    "PresentationReceiver.webidl",
-    "PresentationRequest.webidl",
     "ProcessingInstruction.webidl",
     "ProfileTimelineMarker.webidl",
     "Promise.webidl",
@@ -977,6 +971,7 @@ WEBIDL_FILES = [
     "WorkerGlobalScope.webidl",
     "WorkerLocation.webidl",
     "WorkerNavigator.webidl",
+    "WorkerTestUtils.webidl",
     "Worklet.webidl",
     "WorkletGlobalScope.webidl",
     "XMLDocument.webidl",
@@ -1076,7 +1071,6 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     "CloseEvent.webidl",
     "DeviceLightEvent.webidl",
     "DeviceOrientationEvent.webidl",
-    "DeviceProximityEvent.webidl",
     "ErrorEvent.webidl",
     "FontFaceSetLoadEvent.webidl",
     "FormDataEvent.webidl",
@@ -1101,8 +1095,6 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     "PopupBlockedEvent.webidl",
     "PopupPositionedEvent.webidl",
     "PositionStateEvent.webidl",
-    "PresentationConnectionAvailableEvent.webidl",
-    "PresentationConnectionCloseEvent.webidl",
     "ProgressEvent.webidl",
     "PromiseRejectionEvent.webidl",
     "ScrollViewChangeEvent.webidl",
@@ -1114,7 +1106,6 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     "TCPSocketEvent.webidl",
     "TrackEvent.webidl",
     "UDPMessageEvent.webidl",
-    "UserProximityEvent.webidl",
     "WebGLContextEvent.webidl",
     "XRInputSourceEvent.webidl",
     "XRInputSourcesChangeEvent.webidl",

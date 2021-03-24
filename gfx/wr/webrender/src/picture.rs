@@ -126,7 +126,7 @@ use crate::render_task::{BlurTask, RenderTask, RenderTaskLocation, BlurTaskCache
 use crate::render_task::{StaticRenderTaskSurface, RenderTaskKind};
 use crate::renderer::BlendMode;
 use crate::resource_cache::{ResourceCache, ImageGeneration, ImageRequest};
-use crate::space::{SpaceMapper, SpaceSnapper};
+use crate::space::SpaceMapper;
 use crate::scene::SceneProperties;
 use smallvec::SmallVec;
 use std::{mem, u8, marker, u32};
@@ -3974,25 +3974,15 @@ impl<'a> PictureUpdateState<'a> {
             self,
             frame_context,
         ) {
-            for cluster in &prim_list.clusters {
-                if !cluster.flags.contains(ClusterFlags::IS_PICTURE) {
-                    continue;
-                }
-                for prim_instance in &prim_list.prim_instances[cluster.prim_range()] {
-                    let child_pic_index = match prim_instance.kind {
-                        PrimitiveInstanceKind::Picture { pic_index, .. } => pic_index,
-                        _ => unreachable!(),
-                    };
-
-                    self.update(
-                        child_pic_index,
-                        picture_primitives,
-                        frame_context,
-                        gpu_cache,
-                        clip_store,
-                        data_stores,
-                    );
-                }
+            for child_pic_index in &prim_list.child_pictures {
+                self.update(
+                    *child_pic_index,
+                    picture_primitives,
+                    frame_context,
+                    gpu_cache,
+                    clip_store,
+                    data_stores,
+                );
             }
 
             picture_primitives[pic_index.0].post_update(
@@ -4268,16 +4258,14 @@ bitflags! {
     /// A set of flags describing why a picture may need a backing surface.
     #[cfg_attr(feature = "capture", derive(Serialize))]
     pub struct ClusterFlags: u32 {
-        /// This cluster is a picture
-        const IS_PICTURE = 1;
         /// Whether this cluster is visible when the position node is a backface.
-        const IS_BACKFACE_VISIBLE = 2;
+        const IS_BACKFACE_VISIBLE = 1;
         /// This flag is set during the first pass picture traversal, depending on whether
         /// the cluster is visible or not. It's read during the second pass when primitives
         /// consult their owning clusters to see if the primitive itself is visible.
-        const IS_VISIBLE = 4;
+        const IS_VISIBLE = 2;
         /// Is a backdrop-filter cluster that requires special handling during post_update.
-        const IS_BACKDROP_FILTER = 8;
+        const IS_BACKDROP_FILTER = 4;
     }
 }
 
@@ -4352,6 +4340,7 @@ pub struct PrimitiveList {
     /// List of primitives grouped into clusters.
     pub clusters: Vec<PrimitiveCluster>,
     pub prim_instances: Vec<PrimitiveInstance>,
+    pub child_pictures: Vec<PictureIndex>,
 }
 
 impl PrimitiveList {
@@ -4363,6 +4352,7 @@ impl PrimitiveList {
         PrimitiveList {
             clusters: Vec::new(),
             prim_instances: Vec::new(),
+            child_pictures: Vec::new(),
         }
     }
 
@@ -4379,8 +4369,8 @@ impl PrimitiveList {
         // Pictures are always put into a new cluster, to make it faster to
         // iterate all pictures in a given primitive list.
         match prim_instance.kind {
-            PrimitiveInstanceKind::Picture { .. } => {
-                flags.insert(ClusterFlags::IS_PICTURE);
+            PrimitiveInstanceKind::Picture { pic_index, .. } => {
+                self.child_pictures.push(pic_index);
             }
             PrimitiveInstanceKind::Backdrop { .. } => {
                 flags.insert(ClusterFlags::IS_BACKDROP_FILTER);
@@ -4559,17 +4549,8 @@ impl PicturePrimitive {
         pt.add_item(format!("raster_config: {:?}", self.raster_config));
         pt.add_item(format!("requested_composite_mode: {:?}", self.requested_composite_mode));
 
-        for cluster in &self.prim_list.clusters {
-            if !cluster.flags.contains(ClusterFlags::IS_PICTURE) {
-                continue;
-            }
-            for instance in &self.prim_list.prim_instances[cluster.prim_range()] {
-                let index = match instance.kind {
-                    PrimitiveInstanceKind::Picture { pic_index, .. } => pic_index,
-                    _ => unreachable!(),
-                };
-                pictures[index.0].print(pictures, index, pt);
-            }
+        for child_pic_index in &self.prim_list.child_pictures {
+            pictures[child_pic_index.0].print(pictures, *child_pic_index, pt);
         }
 
         pt.end_level();
@@ -5766,7 +5747,7 @@ impl PicturePrimitive {
 
         // Disallow subpixel AA if an intermediate surface is needed.
         // TODO(lsalzman): allow overriding parent if intermediate surface is opaque
-        let (is_passthrough, subpixel_mode) = match self.raster_config {
+        let subpixel_mode = match self.raster_config {
             Some(RasterConfig { ref composite_mode, .. }) => {
                 let subpixel_mode = match composite_mode {
                     PictureCompositeMode::TileCache { slice_id } => {
@@ -5785,10 +5766,10 @@ impl PicturePrimitive {
                     }
                 };
 
-                (false, subpixel_mode)
+                subpixel_mode
             }
             None => {
-                (true, SubpixelMode::Allow)
+                SubpixelMode::Allow
             }
         };
 
@@ -5824,7 +5805,6 @@ impl PicturePrimitive {
         let context = PictureContext {
             pic_index,
             apply_local_clip_rect: self.apply_local_clip_rect,
-            is_passthrough,
             raster_spatial_node_index,
             surface_spatial_node_index,
             surface_index,
@@ -6247,23 +6227,8 @@ impl PicturePrimitive {
         if let Some(ref mut raster_config) = self.raster_config {
             let surface = state.current_surface_mut();
             // Inflate the local bounding rect if required by the filter effect.
-            // This inflaction factor is to be applied to the surface itself.
             if self.options.inflate_if_required {
                 surface.rect = raster_config.composite_mode.inflate_picture_rect(surface.rect, surface.scale_factors);
-
-                // The picture's local rect is calculated as the union of the
-                // snapped primitive rects, which should result in a snapped
-                // local rect, unless it was inflated. This is also done during
-                // update visibility when calculating the picture's precise
-                // local rect.
-                let snap_surface_to_raster = SpaceSnapper::new_with_target(
-                    surface.raster_spatial_node_index,
-                    self.spatial_node_index,
-                    surface.device_pixel_scale,
-                    frame_context.spatial_tree,
-                );
-
-                surface.rect = snap_surface_to_raster.snap_rect(&surface.rect);
             }
 
             let mut surface_rect = surface.rect * Scale::new(1.0);

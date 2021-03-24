@@ -40,7 +40,8 @@ var prefs = [
   // Disable touch resampling so that touch events are processed without delay
   // and we don't zoom more than expected due to overprediction.
   ["android.touch_resampling.enabled", false],
-
+  // Tests depend on window.visualViewport
+  ["dom.visualviewport.enabled", true],
 ];
 
 var instant_repaint_prefs = [
@@ -69,7 +70,7 @@ if (isApzEnabled()) {
 
   if (getPlatform() == "linux") {
         subtests.push(
-          {file: "helper_zoom_with_touchpad.html"}
+          {file: "helper_zoom_with_touchpad.html", "prefs": prefs}
         );
   }
   window.onload = function() {

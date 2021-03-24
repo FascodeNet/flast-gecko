@@ -180,7 +180,7 @@
                    onpopupshowing="gSync.populateSendTabToDevicesMenu(event.target, TabContextMenu.contextTab.linkedBrowser.currentURI.spec, TabContextMenu.contextTab.linkedBrowser.contentTitle, TabContextMenu.contextTab.multiselected);"/>
       </menu>
       <menu id="context_reopenInContainer"
-            data-lazy-l10n-id="tab-context-open-in-container"
+            data-lazy-l10n-id="tab-context-open-in-new-container-tab"
             hidden="true">
         <menupopup oncommand="TabContextMenu.reopenInContainer(event);"
                    onpopupshowing="TabContextMenu.createReopenInContainerMenu(event);"/>
@@ -753,12 +753,8 @@
       <vbox class="panel-subview-body">
         <vbox id="appMenu-addon-banners"/>
         <toolbarbutton id="appMenu-update-banner" class="panel-banner-item"
-                       data-l10n-id="appmenuitem-update-banner"
-                       data-l10n-attrs="label-update-downloading"
-                       label-update-available="&updateAvailable.panelUI.label;"
-                       label-update-manual="&updateManual.panelUI.label;"
-                       label-update-unsupported="&updateUnsupported.panelUI.label;"
-                       label-update-restart="&updateRestart.panelUI.label2;"
+                       data-l10n-id="appmenuitem-update-banner2"
+                       data-l10n-attrs="label-update-downloading, label-update-available, label-update-manual, label-update-unsupported, label-update-restart"
                        oncommand="PanelUI._onBannerItemSelected(event)"
                        wrap="true"
                        hidden="true"/>
@@ -876,7 +872,7 @@
                        />
         <toolbarbutton id="appMenu-addons-button"
                        class="subviewbutton subviewbutton-iconic"
-                       label="&addons.label;"
+                       data-l10n-id="appmenuitem-addons-and-themes"
                        key="key_openAddons"
                        command="Tools:Addons"
                        />
@@ -969,24 +965,20 @@
       <vbox class="panel-subview-body">
         <vbox id="appMenu-proton-addon-banners"/>
         <toolbarbutton id="appMenu-proton-update-banner" class="panel-banner-item"
-                       data-l10n-id="appmenuitem-update-banner"
-                       data-l10n-attrs="label-update-downloading"
-                       label-update-available="&updateAvailable.panelUI.label;"
-                       label-update-manual="&updateManual.panelUI.label;"
-                       label-update-unsupported="&updateUnsupported.panelUI.label;"
-                       label-update-restart="&updateRestart.panelUI.label2;"
+                       data-l10n-id="appmenuitem-update-banner2"
+                       data-l10n-attrs="label-update-downloading, label-update-available, label-update-manual, label-update-unsupported, label-update-restart"
                        oncommand="PanelUI._onBannerItemSelected(event)"
                        wrap="true"
                        hidden="true"/>
         <toolbaritem id="appMenu-fxa-status2"
+                     closemenu="none"
                      class="subviewbutton toolbaritem-combined-buttons">
           <label id="appMenu-fxa-text" class="toolbarbutton-text" data-l10n-id="appmenu-fxa-sync-and-save-data"/>
           <toolbarbutton id="appMenu-fxa-label2"
                         class="subviewbutton"
-                        closemenu="none"
                         oncommand="gSync.toggleAccountPanel(this, event)"/>
         </toolbaritem>
-        <toolbarseparator class="proton-zap"/>
+        <toolbarseparator id="appMenu-fxa-separator" class="proton-zap"/>
         <toolbarbutton id="appMenu-new-tab-button2"
                        class="subviewbutton"
                        label="&tabCmd.label;"
@@ -1025,7 +1017,7 @@
                        />
         <toolbarbutton id="appMenu-extensions-themes-button"
                        class="subviewbutton"
-                       data-l10n-id="appmenuitem-extensions-and-themes"
+                       data-l10n-id="appmenuitem-addons-and-themes"
                        key="key_openAddons"
                        command="Tools:Addons"
                        />
@@ -1332,6 +1324,10 @@
 
     <panelview id="appMenu-moreView" title="&moreMenu.label;" class="PanelUI-subView">
       <vbox class="panel-subview-body">
+        <toolbarbutton id="appMenu-taskmanager-button"
+                       class="subviewbutton subviewbutton-iconic"
+                       data-l10n-id="appmenu-taskmanager"
+                       oncommand="switchToTabHavingURI('about:performance', true)"/>
         <toolbarbutton id="appMenu-characterencoding-button"
                        class="subviewbutton subviewbutton-nav"
                        label="&charsetMenu2.label;"
@@ -1384,12 +1380,20 @@
                            <observes element="sidebar-box" attribute="positionend"/>
             </toolbarbutton>
             <toolbarbutton id="PanelUI-remotetabs-syncnow"
-                           data-l10n-id="appmenuitem-fxa-toolbar-sync-now"
-                           syncinglabel="fxa-toolbar-sync-syncing-tabs"
-                           class="syncNowBtn subviewbutton subviewbutton-iconic"
+                           align="center"
+                           class="subviewbutton subviewbutton-iconic"
                            oncommand="gSync.doSync();"
                            onmouseover="gSync.refreshSyncButtonsTooltip();"
-                           closemenu="none"/>
+                           closemenu="none">
+              <hbox flex="1">
+                <image class="syncNowBtn"/>
+                <label class="syncnow-label"
+                       data-l10n-id="appmenuitem-fxa-toolbar-sync-now2"
+                       sync-now-data-l10n-id="appmenuitem-fxa-toolbar-sync-now2"
+                       syncing-data-l10n-id="fxa-toolbar-sync-syncing2"
+                       crop="end"/>
+              </hbox>
+            </toolbarbutton>
             <toolbarseparator id="PanelUI-remotetabs-separator"/>
           </vbox>
           <deck id="PanelUI-remotetabs-deck">
@@ -1517,18 +1521,17 @@
                        align="center"
                        class="subviewbutton subviewbutton-iconic"
                        oncommand="gSync.doSyncFromFxaMenu(this);"
+                       onmouseover="gSync.refreshSyncButtonsTooltip();"
                        closemenu="none">
-          <vbox flex="1">
-            <label id="PanelUI-fxa-menu-syncnow-label"
+          <hbox flex="1">
+            <image id="PanelUI-appMenu-fxa-image-last-synced"
+                   class="syncNowBtn"/>
+            <label class="syncnow-label"
+                   data-l10n-id="appmenuitem-fxa-toolbar-sync-now2"
+                   sync-now-data-l10n-id="appmenuitem-fxa-toolbar-sync-now2"
+                   syncing-data-l10n-id="fxa-toolbar-sync-syncing2"
                    crop="end"/>
-            <hbox>
-              <label id="PanelUI-appMenu-fxa-label-last-synced"
-                     crop="end"/>
-              <image id="PanelUI-appMenu-fxa-image-last-synced"
-                     class="syncNowBtn"
-                     syncinglabel="fxa-toolbar-sync-syncing-tabs"/>
-            </hbox>
-          </vbox>
+          </hbox>
         </toolbarbutton>
         <toolbarbutton id="PanelUI-fxa-menu-setup-sync-button"
                         class="subviewbutton subviewbutton-iconic"
@@ -2218,6 +2221,11 @@
         </hbox>
       </toolbaritem>
     </toolbar>
+
+    <html:template id="tab-notification-deck-template">
+      <html:named-deck id="tab-notification-deck"></html:named-deck>
+    </html:template>
+
 
     <html:template id="BrowserToolbarPalette">
       <toolbarbutton id="import-button"

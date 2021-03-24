@@ -317,8 +317,6 @@ pub enum SystemColor {
 
     /// Font smoothing background colors needed by the Mac OS X theme, based on
     /// -moz-appearance names.
-    MozMacVibrancyLight,
-    MozMacVibrancyDark,
     MozMacVibrantTitlebarLight,
     MozMacVibrantTitlebarDark,
     MozMacMenupopup,
@@ -337,10 +335,6 @@ pub enum SystemColor {
     #[parse(condition = "ParserContext::in_ua_or_chrome_sheet")]
     MozAccentColorForeground,
 
-    /// Accent color for title bar.
-    MozWinAccentcolor,
-    /// Color from drawing text over the accent color.
-    MozWinAccentcolortext,
     /// Media rebar text.
     MozWinMediatext,
     /// Communications rebar text.
@@ -553,6 +547,11 @@ fn parse_hash_color(value: &[u8]) -> Result<RGBA, ()> {
 }
 
 impl Color {
+    /// Returns whether this color is a system color.
+    pub fn is_system(&self) -> bool {
+        matches!(self, Color::System(..))
+    }
+
     /// Returns currentcolor value.
     #[inline]
     pub fn currentcolor() -> Color {

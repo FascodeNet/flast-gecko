@@ -34,6 +34,7 @@ ChromeUtils.defineModuleGetter(
 );
 
 const kPrefCustomizationDebug = "browser.uiCustomization.debug";
+const kPrefScreenshots = "extensions.screenshots.disabled";
 
 XPCOMUtils.defineLazyGetter(this, "log", () => {
   let scope = {};
@@ -45,6 +46,13 @@ XPCOMUtils.defineLazyGetter(this, "log", () => {
   };
   return new scope.ConsoleAPI(consoleOptions);
 });
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "screenshotsDisabled",
+  kPrefScreenshots,
+  false
+);
 
 function setAttributes(aNode, aAttrs) {
   let doc = aNode.ownerDocument;
@@ -606,6 +614,11 @@ if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
     onViewShowing(aEvent) {
       let panelview = aEvent.target;
       let doc = panelview.ownerDocument;
+
+      let syncNowBtn = panelview.querySelector(".syncnow-label");
+      let l10nId = syncNowBtn.getAttribute("sync-now-data-l10n-id");
+      syncNowBtn.setAttribute("data-l10n-id", l10nId);
+
       let SyncedTabsPanelList = doc.defaultView.SyncedTabsPanelList;
       panelview.syncedTabsPanelList = new SyncedTabsPanelList(
         panelview,
@@ -616,6 +629,26 @@ if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
     onViewHiding(aEvent) {
       aEvent.target.syncedTabsPanelList.destroy();
       aEvent.target.syncedTabsPanelList = null;
+    },
+  });
+}
+
+if (!screenshotsDisabled) {
+  CustomizableWidgets.push({
+    id: "screenshot-button",
+    l10nId: "screenshot-toolbarbutton",
+    onCommand(aEvent) {
+      Services.obs.notifyObservers(null, "menuitem-screenshot");
+    },
+    onCreated(aNode) {
+      this.screenshotNode = aNode;
+      this.screenshotNode.ownerGlobal.MozXULElement.insertFTLIfNeeded(
+        "browser/screenshots.ftl"
+      );
+      Services.obs.addObserver(this, "toggle-screenshot-disable");
+    },
+    observe(subj, topic, data) {
+      this.screenshotNode.setAttribute("disabled", data);
     },
   });
 }

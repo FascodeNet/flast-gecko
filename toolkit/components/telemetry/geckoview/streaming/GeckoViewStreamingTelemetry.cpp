@@ -12,7 +12,7 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/StaticPrefs_toolkit.h"
 #include "mozilla/TimeStamp.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsITimer.h"
@@ -44,15 +44,15 @@ static StaticMutex gMutex;
 // The time the batch began.
 TimeStamp gBatchBegan;
 // The batch of histograms and samples.
-typedef nsDataHashtable<nsCStringHashKey, nsTArray<uint32_t>> HistogramBatch;
+typedef nsTHashMap<nsCStringHashKey, nsTArray<uint32_t>> HistogramBatch;
 HistogramBatch gBatch;
 HistogramBatch gCategoricalBatch;
 // The batches of Scalars and their values.
-typedef nsDataHashtable<nsCStringHashKey, bool> BoolScalarBatch;
+typedef nsTHashMap<nsCStringHashKey, bool> BoolScalarBatch;
 BoolScalarBatch gBoolScalars;
-typedef nsDataHashtable<nsCStringHashKey, nsCString> StringScalarBatch;
+typedef nsTHashMap<nsCStringHashKey, nsCString> StringScalarBatch;
 StringScalarBatch gStringScalars;
-typedef nsDataHashtable<nsCStringHashKey, uint32_t> UintScalarBatch;
+typedef nsTHashMap<nsCStringHashKey, uint32_t> UintScalarBatch;
 UintScalarBatch gUintScalars;
 // The delegate to receive the samples and values.
 StaticRefPtr<StreamingTelemetryDelegate> gDelegate;
@@ -117,38 +117,38 @@ class SendBatchRunnable : public Runnable {
       gJICTimer->Cancel();
     }
 
-    for (auto iter = mBatch.Iter(); !iter.Done(); iter.Next()) {
-      const nsCString& histogramName = PromiseFlatCString(iter.Key());
-      const nsTArray<uint32_t>& samples = iter.Data();
+    for (const auto& entry : mBatch) {
+      const nsCString& histogramName = PromiseFlatCString(entry.GetKey());
+      const nsTArray<uint32_t>& samples = entry.GetData();
 
       mDelegate->ReceiveHistogramSamples(histogramName, samples);
     }
     mBatch.Clear();
 
-    for (auto iter = mCategoricalBatch.Iter(); !iter.Done(); iter.Next()) {
-      const nsCString& histogramName = PromiseFlatCString(iter.Key());
-      const nsTArray<uint32_t>& samples = iter.Data();
+    for (const auto& entry : mCategoricalBatch) {
+      const nsCString& histogramName = PromiseFlatCString(entry.GetKey());
+      const nsTArray<uint32_t>& samples = entry.GetData();
 
       mDelegate->ReceiveCategoricalHistogramSamples(histogramName, samples);
     }
     mCategoricalBatch.Clear();
 
-    for (auto iter = mBoolScalars.Iter(); !iter.Done(); iter.Next()) {
-      const nsCString& scalarName = PromiseFlatCString(iter.Key());
-      mDelegate->ReceiveBoolScalarValue(scalarName, iter.Data());
+    for (const auto& entry : mBoolScalars) {
+      const nsCString& scalarName = PromiseFlatCString(entry.GetKey());
+      mDelegate->ReceiveBoolScalarValue(scalarName, entry.GetData());
     }
     mBoolScalars.Clear();
 
-    for (auto iter = mStringScalars.Iter(); !iter.Done(); iter.Next()) {
-      const nsCString& scalarName = PromiseFlatCString(iter.Key());
-      const nsCString& scalarValue = PromiseFlatCString(iter.Data());
+    for (const auto& entry : mStringScalars) {
+      const nsCString& scalarName = PromiseFlatCString(entry.GetKey());
+      const nsCString& scalarValue = PromiseFlatCString(entry.GetData());
       mDelegate->ReceiveStringScalarValue(scalarName, scalarValue);
     }
     mStringScalars.Clear();
 
-    for (auto iter = mUintScalars.Iter(); !iter.Done(); iter.Next()) {
-      const nsCString& scalarName = PromiseFlatCString(iter.Key());
-      mDelegate->ReceiveUintScalarValue(scalarName, iter.Data());
+    for (const auto& entry : mUintScalars) {
+      const nsCString& scalarName = PromiseFlatCString(entry.GetKey());
+      mDelegate->ReceiveUintScalarValue(scalarName, entry.GetData());
     }
     mUintScalars.Clear();
 

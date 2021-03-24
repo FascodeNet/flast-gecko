@@ -10,13 +10,13 @@
 
 :root {
   /* ::::: Variables ::::: */
-  --arrowpanel-padding: 10px;
   --default-arrowpanel-background: Field;
   --default-arrowpanel-color: FieldText;
   --default-arrowpanel-border-color: ThreeDShadow;
   --arrowpanel-background: var(--default-arrowpanel-background);
   --arrowpanel-color: var(--default-arrowpanel-color);
   --arrowpanel-border-color: var(--default-arrowpanel-border-color);
+  --arrowpanel-border-radius: 8px;
   --panel-disabled-color: GrayText;
   --panel-description-color: GrayText;
 
@@ -26,34 +26,41 @@
   font: message-box;
 }
 
+@supports not -moz-bool-pref("browser.proton.enabled") {
+:root {
+  --arrowpanel-padding: 10px;
+  --arrowpanel-border-radius: 0;
+}
+} /** END not Proton **/
+
 @supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   :root {
     /* Override some menu color variables for light browser themes. */
     --menuitem-hover-background-color: #e0e0e6;
-    --menuitem-hover-color: black;
     --menu-background-color: #f9f9fb;
-    --menu-color: black;
+    --menu-color: #15141a;
     --menu-disabled-color: rgba(21, 20, 26, 0.4);
-    --menu-border-color: #f0f0f4;
+    --menu-border-color: #cfcfd8;
+    --menu-icon-opacity: 0.7;
 
     /* Declare menu colors for dark themes, but don't override anything yet. */
-    --dark-menuitem-hover-background-color: #53535f;
-    --dark-menuitem-hover-color: white;
-    --dark-menu-background-color: #15141a;
-    --dark-menu-color: white;
-    --dark-menu-disabled-color: rgba(251, 251, 254, 0.6);
-    --dark-menu-border-color: #5b5b67;
+    --dark-menuitem-hover-background-color: #52525e;
+    --dark-menu-background-color: #2b2a33;
+    --dark-menu-color: #fbfbfe;
+    --dark-menu-disabled-color: rgba(251, 251, 254, 0.4);
+    --dark-menu-border-color: #5b5b66;
+    --dark-menu-icon-opacity: 1;
   }
 
   /* Override the menu color variables for dark browser themes. */
   :root:-moz-lwtheme-brighttext {
     --menuitem-hover-background-color: var(--dark-menuitem-hover-background-color);
-    --menuitem-hover-color: var(--dark-menuitem-hover-color);
     --menu-background-color: var(--dark-menu-background-color);
     --menu-color: var(--dark-menu-color);
     --menu-disabled-color: var(--dark-menu-disabled-color);
     --menu-border-color: var(--dark-menu-border-color);
+    --menu-icon-opacity: var(--dark-menu-icon-opacity);
   }
 
   /* We also need to override these color variables in situations where
@@ -63,11 +70,11 @@
   @media (prefers-color-scheme: dark) {
     :root:not(:-moz-lwtheme) {
       --menuitem-hover-background-color: var(--dark-menuitem-hover-background-color);
-      --menuitem-hover-color: var(--dark-menuitem-hover-color);
       --menu-background-color: var(--dark-menu-background-color);
       --menu-color: var(--dark-menu-color);
       --menu-disabled-color: var(--dark-menu-disabled-color);
       --menu-border-color: var(--dark-menu-border-color);
+      --menu-icon-opacity: var(--dark-menu-icon-opacity);
     }
   }
 }
@@ -88,6 +95,8 @@
 .question-icon {
   width: 32px;
   height: 32px;
+  -moz-context-properties: fill;
+  fill: currentColor;
 }
 
 .message-icon {
@@ -97,35 +106,18 @@
 .alert-dialog #infoIcon,
 .alert-icon {
   list-style-image: url("chrome://global/skin/icons/warning.svg");
+  fill: #ffa436;
 }
 
 .error-icon {
-  list-style-image: url("chrome://global/skin/icons/Error.png");
+  list-style-image: url("chrome://global/skin/icons/error.svg");
+  fill: #e22850;
 }
 
 .question-icon {
   list-style-image: url("chrome://global/skin/icons/help.svg");
   -moz-context-properties: fill, fill-opacity;
-  fill: currentColor;
   fill-opacity: 0.8;
-}
-
-/* ::::: iframe ::::: */
-
-xul|iframe {
-  border: none;
-  width: 100px;
-  height: 100px;
-  min-width: 10px;
-  min-height: 10px;
-}
-
-@supports -moz-bool-pref("layout.css.emulate-moz-box-with-flex") {
-  /* In emulation, <iframe> is block instead of inline, so reset the width/height */
-  xul|iframe {
-    width: auto;
-    height: auto;
-  }
 }
 
 /* XXX(ntim): [mode="text"] is only used by comm-central */

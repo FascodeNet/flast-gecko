@@ -954,7 +954,14 @@ static MOZ_ALWAYS_INLINE JSAtom* AllocateNewAtom(
   MOZ_ASSERT(atom->hash() == lookup.hash);
 
   if (indexValue) {
-    atom->maybeInitializeIndex(*indexValue, true);
+    atom->setIsIndex(*indexValue);
+  } else {
+    // We need to call isIndexSlow directly to avoid the flag check in isIndex,
+    // because we still have to initialize that flag.
+    uint32_t index;
+    if (atom->isIndexSlow(&index)) {
+      atom->setIsIndex(index);
+    }
   }
 
   return atom;
@@ -1299,37 +1306,7 @@ template XDRResult js::XDRAtomOrNull(XDRState<XDR_ENCODE>* xdr,
                                      MutableHandleAtom atomp);
 
 template <XDRMode mode>
-static XDRResult XDRAtomIndex(XDRState<mode>* xdr, uint32_t* index) {
-  return xdr->codeUint32(index);
-}
-
-template <XDRMode mode>
 XDRResult js::XDRAtom(XDRState<mode>* xdr, MutableHandleAtom atomp) {
-  if (!xdr->hasAtomTable()) {
-    return XDRAtomData(xdr, atomp);
-  }
-
-  MOZ_ASSERT(mode == XDR_DECODE);
-
-  uint32_t atomIndex;
-  MOZ_TRY(XDRAtomIndex(xdr, &atomIndex));
-  if (atomIndex >= xdr->atomTable().length()) {
-    return xdr->fail(JS::TranscodeResult::Failure_BadDecode);
-  }
-  JSAtom* atom = xdr->atomTable()[atomIndex];
-
-  atomp.set(atom);
-  return Ok();
-}
-
-template XDRResult js::XDRAtom(XDRState<XDR_DECODE>* xdr,
-                               MutableHandleAtom atomp);
-
-template XDRResult js::XDRAtom(XDRState<XDR_ENCODE>* xdr,
-                               MutableHandleAtom atomp);
-
-template <XDRMode mode>
-XDRResult js::XDRAtomData(XDRState<mode>* xdr, MutableHandleAtom atomp) {
   bool latin1 = false;
   uint32_t length = 0;
   uint32_t lengthAndEncoding = 0;
@@ -1383,11 +1360,11 @@ XDRResult js::XDRAtomData(XDRState<mode>* xdr, MutableHandleAtom atomp) {
   return Ok();
 }
 
-template XDRResult js::XDRAtomData(XDRState<XDR_ENCODE>* xdr,
-                                   MutableHandleAtom atomp);
+template XDRResult js::XDRAtom(XDRState<XDR_DECODE>* xdr,
+                               MutableHandleAtom atomp);
 
-template XDRResult js::XDRAtomData(XDRState<XDR_DECODE>* xdr,
-                                   MutableHandleAtom atomp);
+template XDRResult js::XDRAtom(XDRState<XDR_ENCODE>* xdr,
+                               MutableHandleAtom atomp);
 
 Handle<PropertyName*> js::ClassName(JSProtoKey key, JSContext* cx) {
   return ClassName(key, cx->names());

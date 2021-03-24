@@ -60,7 +60,7 @@ LazyLogModule gMediaTrackGraphLog("MediaTrackGraph");
  *
  * The key is a hash of nsPIDOMWindowInner, see `WindowToHash`.
  */
-static nsDataHashtable<nsUint32HashKey, MediaTrackGraphImpl*> gGraphs;
+static nsTHashMap<nsUint32HashKey, MediaTrackGraphImpl*> gGraphs;
 
 MediaTrackGraphImpl::~MediaTrackGraphImpl() {
   MOZ_ASSERT(mTracks.IsEmpty() && mSuspendedTracks.IsEmpty(),
@@ -685,9 +685,9 @@ void MediaTrackGraphImpl::CloseAudioInputImpl(
   MOZ_ASSERT(OnGraphThread());
   // It is possible to not know the ID here, find it first.
   if (aID.isNothing()) {
-    for (auto iter = mInputDeviceUsers.Iter(); !iter.Done(); iter.Next()) {
-      if (iter.Data().Contains(aListener)) {
-        aID = Some(iter.Key());
+    for (const auto& entry : mInputDeviceUsers) {
+      if (entry.GetData().Contains(aListener)) {
+        aID = Some(entry.GetKey());
       }
     }
     MOZ_ASSERT(aID.isSome(), "Closing an audio input that was not opened.");
@@ -1836,7 +1836,8 @@ void MediaTrackGraphImpl::SignalMainThreadCleanup() {
 
 void MediaTrackGraphImpl::AppendMessage(UniquePtr<ControlMessage> aMessage) {
   MOZ_ASSERT(NS_IsMainThread(), "main thread only");
-  MOZ_ASSERT_IF(aMessage->GetTrack(), !aMessage->GetTrack()->IsDestroyed());
+  MOZ_RELEASE_ASSERT(!aMessage->GetTrack() ||
+                     !aMessage->GetTrack()->IsDestroyed());
   MOZ_DIAGNOSTIC_ASSERT(mMainThreadTrackCount > 0 || mMainThreadPortCount > 0);
 
   if (!mGraphDriverRunning &&

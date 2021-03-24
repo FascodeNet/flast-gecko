@@ -11,6 +11,13 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/StackWalk.h"
+#ifdef XP_WIN
+#  include "mozilla/StackWalkThread.h"
+#  include <io.h>
+#else
+#  include <unistd.h>
+#endif
+#include "mozilla/Sprintf.h"
 
 #include <string.h>
 
@@ -62,7 +69,7 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
 #  include <pthread.h>
 #endif
 
-#if MOZ_STACKWALK_SUPPORTS_WINDOWS
+#ifdef XP_WIN
 
 #  include <windows.h>
 #  include <process.h>
@@ -376,7 +383,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
  * whose in memory address doesn't match its in-file address.
  */
 
-MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
+static void DoMozStackWalkThread(MozWalkStackCallback aCallback,
                                  uint32_t aSkipFrames, uint32_t aMaxFrames,
                                  void* aClosure, HANDLE aThread,
                                  CONTEXT* aContext) {
@@ -425,10 +432,17 @@ MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
   }
 }
 
+MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
+                                 uint32_t aMaxFrames, void* aClosure,
+                                 HANDLE aThread, CONTEXT* aContext) {
+  DoMozStackWalkThread(aCallback, /* aSkipFrames = */ 0, aMaxFrames, aClosure,
+                       aThread, aContext);
+}
+
 MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
                            uint32_t aMaxFrames, void* aClosure) {
-  MozStackWalkThread(aCallback, aSkipFrames, aMaxFrames, aClosure, nullptr,
-                     nullptr);
+  DoMozStackWalkThread(aCallback, aSkipFrames, aMaxFrames, aClosure, nullptr,
+                       nullptr);
 }
 
 static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
@@ -676,6 +690,11 @@ void DemangleSymbol(const char* aSymbol, char* aBuffer, int aBufLen) {
 #  if ((defined(__i386) || defined(PPC) || defined(__ppc__)) && \
        (MOZ_STACKWALK_SUPPORTS_MACOSX || MOZ_STACKWALK_SUPPORTS_LINUX))
 
+static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
+                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
+                                    void* aClosure, void** aBp,
+                                    void* aStackEnd);
+
 MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
                            uint32_t aMaxFrames, void* aClosure) {
   // Get the frame pointer
@@ -714,8 +733,8 @@ MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
 #    else
 #      error Unsupported configuration
 #    endif
-  FramePointerStackWalk(aCallback, aSkipFrames, aMaxFrames, aClosure, bp,
-                        stackEnd);
+  DoFramePointerStackWalk(aCallback, aSkipFrames, aMaxFrames, aClosure, bp,
+                          stackEnd);
 }
 
 #  elif defined(HAVE__UNWIND_BACKTRACE)
@@ -838,11 +857,11 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
 #endif
 
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(XP_LINUX)
-namespace mozilla {
 MOZ_ASAN_BLACKLIST
-void FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
-                           uint32_t aMaxFrames, void* aClosure, void** aBp,
-                           void* aStackEnd) {
+static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
+                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
+                                    void* aClosure, void** aBp,
+                                    void* aStackEnd) {
   // Stack walking code courtesy Kipp's "leaky".
 
   int32_t skip = aSkipFrames;
@@ -880,50 +899,120 @@ void FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
     aBp = next;
   }
 }
+
+namespace mozilla {
+
+void FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aMaxFrames,
+                           void* aClosure, void** aBp, void* aStackEnd) {
+  DoFramePointerStackWalk(aCallback, /* aSkipFrames = */ 0, aMaxFrames,
+                          aClosure, aBp, aStackEnd);
+}
+
 }  // namespace mozilla
 
 #else
 
 namespace mozilla {
 MFBT_API void FramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                    void* aClosure, void** aBp,
-                                    void* aStackEnd) {}
+                                    uint32_t aMaxFrames, void* aClosure,
+                                    void** aBp, void* aStackEnd) {}
 }  // namespace mozilla
 
 #endif
 
-MFBT_API void MozFormatCodeAddressDetails(
+MFBT_API int MozFormatCodeAddressDetails(
     char* aBuffer, uint32_t aBufferSize, uint32_t aFrameNumber, void* aPC,
     const MozCodeAddressDetails* aDetails) {
-  MozFormatCodeAddress(aBuffer, aBufferSize, aFrameNumber, aPC,
-                       aDetails->function, aDetails->library, aDetails->loffset,
-                       aDetails->filename, aDetails->lineno);
+  return MozFormatCodeAddress(aBuffer, aBufferSize, aFrameNumber, aPC,
+                              aDetails->function, aDetails->library,
+                              aDetails->loffset, aDetails->filename,
+                              aDetails->lineno);
 }
 
-MFBT_API void MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
-                                   uint32_t aFrameNumber, const void* aPC,
-                                   const char* aFunction, const char* aLibrary,
-                                   ptrdiff_t aLOffset, const char* aFileName,
-                                   uint32_t aLineNo) {
+MFBT_API int MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
+                                  uint32_t aFrameNumber, const void* aPC,
+                                  const char* aFunction, const char* aLibrary,
+                                  ptrdiff_t aLOffset, const char* aFileName,
+                                  uint32_t aLineNo) {
   const char* function = aFunction && aFunction[0] ? aFunction : "???";
   if (aFileName && aFileName[0]) {
     // We have a filename and (presumably) a line number. Use them.
-    snprintf(aBuffer, aBufferSize, "#%02u: %s (%s:%u)", aFrameNumber, function,
-             aFileName, aLineNo);
+    return SprintfBuf(aBuffer, aBufferSize, "#%02u: %s (%s:%u)", aFrameNumber,
+                      function, aFileName, aLineNo);
   } else if (aLibrary && aLibrary[0]) {
     // We have no filename, but we do have a library name. Use it and the
     // library offset, and print them in a way that `fix_stacks.py` can
     // post-process.
-    snprintf(aBuffer, aBufferSize, "#%02u: %s[%s +0x%" PRIxPTR "]",
-             aFrameNumber, function, aLibrary,
-             static_cast<uintptr_t>(aLOffset));
+    return SprintfBuf(aBuffer, aBufferSize, "#%02u: %s[%s +0x%" PRIxPTR "]",
+                      aFrameNumber, function, aLibrary,
+                      static_cast<uintptr_t>(aLOffset));
   } else {
     // We have nothing useful to go on. (The format string is split because
     // '??)' is a trigraph and causes a warning, sigh.)
-    snprintf(aBuffer, aBufferSize,
-             "#%02u: ??? (???:???"
-             ")",
-             aFrameNumber);
+    return SprintfBuf(aBuffer, aBufferSize,
+                      "#%02u: ??? (???:???"
+                      ")",
+                      aFrameNumber);
   }
+}
+
+static void EnsureWrite(FILE* aStream, const char* aBuf, size_t aLen) {
+#ifdef XP_WIN
+  int fd = _fileno(aStream);
+#else
+  int fd = fileno(aStream);
+#endif
+  while (aLen > 0) {
+#ifdef XP_WIN
+    auto written = _write(fd, aBuf, aLen);
+#else
+    auto written = write(fd, aBuf, aLen);
+#endif
+    if (written <= 0 || size_t(written) > aLen) {
+      break;
+    }
+    aBuf += written;
+    aLen -= written;
+  }
+}
+
+template <int N>
+static int PrintStackFrameBuf(char (&aBuf)[N], uint32_t aFrameNumber, void* aPC,
+                              void* aSP) {
+  MozCodeAddressDetails details;
+  MozDescribeCodeAddress(aPC, &details);
+  int len =
+      MozFormatCodeAddressDetails(aBuf, N - 1, aFrameNumber, aPC, &details);
+  len = std::min(len, N - 2);
+  aBuf[len++] = '\n';
+  aBuf[len] = '\0';
+  return len;
+}
+
+static void PrintStackFrame(uint32_t aFrameNumber, void* aPC, void* aSP,
+                            void* aClosure) {
+  FILE* stream = (FILE*)aClosure;
+  char buf[1025];  // 1024 + 1 for trailing '\n'
+  int len = PrintStackFrameBuf(buf, aFrameNumber, aPC, aSP);
+  fflush(stream);
+  EnsureWrite(stream, buf, len);
+}
+
+MFBT_API void MozWalkTheStack(FILE* aStream, uint32_t aSkipFrames,
+                              uint32_t aMaxFrames) {
+  MozStackWalk(PrintStackFrame, aSkipFrames + 1, aMaxFrames, aStream);
+}
+
+static void WriteStackFrame(uint32_t aFrameNumber, void* aPC, void* aSP,
+                            void* aClosure) {
+  auto writer = (void (*)(const char*))aClosure;
+  char buf[1024];
+  PrintStackFrameBuf(buf, aFrameNumber, aPC, aSP);
+  writer(buf);
+}
+
+MFBT_API void MozWalkTheStackWithWriter(void (*aWriter)(const char*),
+                                        uint32_t aSkipFrames,
+                                        uint32_t aMaxFrames) {
+  MozStackWalk(WriteStackFrame, aSkipFrames + 1, aMaxFrames, (void*)aWriter);
 }

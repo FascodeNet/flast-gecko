@@ -620,6 +620,7 @@ class Raptor(
         self.browsertime_visualmetrics = False
         self.browsertime_video = False
         self.enable_marionette_trace = self.config.get("enable_marionette_trace")
+        self.browser_cycles = self.config.get("browser_cycles")
 
         for (arg,), details in Raptor.browsertime_options:
             # Allow overriding defaults on the `./mach raptor-test ...` command-line.
@@ -899,6 +900,10 @@ class Raptor(
             )
         if self.config.get("enable_marionette_trace", False):
             options.extend(["--enable-marionette-trace"])
+        if self.config.get("browser_cycles"):
+            options.extend(
+                ["--browser-cycles={}".format(self.config.get("browser_cycles"))]
+            )
 
         for (arg,), details in Raptor.browsertime_options:
             # Allow overriding defaults on the `./mach raptor-test ...` command-line
@@ -1055,9 +1060,6 @@ class Raptor(
         # mitmproxy needs path to mozharness when installing the cert, and tooltool
         env["SCRIPTSPATH"] = scripts_path
         env["EXTERNALTOOLSPATH"] = external_tools_path
-
-        # disable "GC poisoning" Bug# 1499043
-        env["JSGC_DISABLE_POISONING"] = "1"
 
         # Needed to load unsigned Raptor WebExt on release builds
         if self.is_release_build:

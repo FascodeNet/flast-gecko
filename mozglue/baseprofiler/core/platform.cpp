@@ -48,6 +48,9 @@
 #include "mozilla/Services.h"
 #include "mozilla/Span.h"
 #include "mozilla/StackWalk.h"
+#ifdef XP_WIN
+#  include "mozilla/StackWalkThread.h"
+#endif
 #include "mozilla/StaticPtr.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
@@ -229,17 +232,16 @@ static uint32_t AvailableFeatures() {
 // Default features common to all contexts (even if not available).
 static uint32_t DefaultFeatures() {
   return ProfilerFeature::Java | ProfilerFeature::JS | ProfilerFeature::Leaf |
-         ProfilerFeature::StackWalk | ProfilerFeature::Threads;
+         ProfilerFeature::StackWalk | ProfilerFeature::Threads |
+         ProfilerFeature::CPUUtilization;
 }
 
 // Extra default features when MOZ_PROFILER_STARTUP is set (even if not
 // available).
 static uint32_t StartupExtraDefaultFeatures() {
-  // Enable CPUUtilization by default for startup profiles as it is useful to
-  // see when startup alternates between CPU intensive tasks and being blocked.
   // Enable mainthreadio by default for startup profiles as startup is heavy on
   // I/O operations, and main thread I/O is really important to see there.
-  return ProfilerFeature::CPUUtilization | ProfilerFeature::MainThreadIO;
+  return ProfilerFeature::MainThreadIO;
 }
 
 class MOZ_RAII PSAutoTryLock;
@@ -1428,8 +1430,8 @@ static void DoFramePointerBacktrace(PSLockRef aLock,
 
   const void* stackEnd = aRegisteredThread.StackTop();
   if (aRegs.mFP >= aRegs.mSP && aRegs.mFP <= stackEnd) {
-    FramePointerStackWalk(StackWalkCallback, /* skipFrames */ 0, maxFrames,
-                          &aNativeStack, reinterpret_cast<void**>(aRegs.mFP),
+    FramePointerStackWalk(StackWalkCallback, maxFrames, &aNativeStack,
+                          reinterpret_cast<void**>(aRegs.mFP),
                           const_cast<void*>(stackEnd));
   }
 }
@@ -1454,8 +1456,8 @@ static void DoMozStackWalkBacktrace(PSLockRef aLock,
 
   HANDLE thread = GetThreadHandle(aRegisteredThread.GetPlatformData());
   MOZ_ASSERT(thread);
-  MozStackWalkThread(StackWalkCallback, /* skipFrames */ 0, maxFrames,
-                     &aNativeStack, thread, /* context */ nullptr);
+  MozStackWalkThread(StackWalkCallback, maxFrames, &aNativeStack, thread,
+                     /* context */ nullptr);
 }
 #endif
 

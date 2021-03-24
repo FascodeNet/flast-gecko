@@ -195,14 +195,25 @@ bool IsSameSite(nsIChannel* aHTTPChannel) {
 // Helper function to determine whether a request was triggered
 // by the end user in the context of SecFetch.
 bool IsUserTriggeredForSecFetchSite(nsIHttpChannel* aHTTPChannel) {
+  /*
+   * The goal is to distinguish between "webby" navigations that are controlled
+   * by a given website (e.g. links, the window.location setter,form
+   * submissions, etc.), and those that are not (e.g. user interaction with a
+   * user agent’s address bar, bookmarks, etc).
+   */
   nsCOMPtr<nsILoadInfo> loadInfo = aHTTPChannel->LoadInfo();
-  nsContentPolicyType contentType = loadInfo->InternalContentPolicyType();
+  ExtContentPolicyType contentType = loadInfo->GetExternalContentPolicyType();
 
   // only requests wich result in type "document" are subject to
   // user initiated actions in the context of SecFetch.
-  if (contentType != nsIContentPolicy::TYPE_DOCUMENT &&
-      contentType != nsIContentPolicy::TYPE_SUBDOCUMENT &&
-      contentType != nsIContentPolicy::TYPE_INTERNAL_IFRAME) {
+  if (contentType != ExtContentPolicy::TYPE_DOCUMENT &&
+      contentType != ExtContentPolicy::TYPE_SUBDOCUMENT) {
+    return false;
+  }
+
+  // We can assert that the navigation must be "webby" if the load was triggered
+  // by a meta refresh. See also Bug 1647128.
+  if (loadInfo->GetIsMetaRefresh()) {
     return false;
   }
 

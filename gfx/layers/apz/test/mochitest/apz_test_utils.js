@@ -207,12 +207,19 @@ function isLayerized(elementId) {
 // Return a rect (or null) that holds the last known content-side displayport
 // for a given element. (The element selection works the same way, and with
 // the same assumptions as the isLayerized function above).
-function getLastContentDisplayportFor(elementId) {
+function getLastContentDisplayportFor(elementId, expectPainted = true) {
   var contentTestData = SpecialPowers.getDOMWindowUtils(
     window
   ).getContentAPZTestData();
+  if (contentTestData == undefined) {
+    ok(!expectPainted, "expected to have apz test data (1)");
+    return null;
+  }
   var nonEmptyBucket = getLastNonemptyBucket(contentTestData.paints);
-  ok(nonEmptyBucket != null, "expected at least one nonempty paint");
+  if (nonEmptyBucket == null) {
+    ok(!expectPainted, "expected to have apz test data (2)");
+    return null;
+  }
   var seqno = nonEmptyBucket.sequenceNumber;
   contentTestData = convertTestData(contentTestData);
   var paint = contentTestData.paints[seqno];
@@ -229,9 +236,9 @@ function getLastContentDisplayportFor(elementId) {
 }
 
 // Return a promise that is resolved on the next rAF callback
-function promiseFrame() {
+function promiseFrame(aWindow = window) {
   return new Promise(resolve => {
-    window.requestAnimationFrame(resolve);
+    aWindow.requestAnimationFrame(resolve);
   });
 }
 
@@ -242,7 +249,13 @@ function promiseAfterPaint() {
   });
 }
 
-function promiseApzRepaintsFlushed(aWindow = window) {
+// This waits until any pending events on the APZ controller thread are
+// processed, and any resulting repaint requests are received by the main
+// thread. Note that while the repaint requests do get processed by the
+// APZ handler on the main thread, the repaints themselves may not have
+// occurred by the the returned promise resolves. If you want to wait
+// for those repaints, consider using promiseApzFlushedRepaints instead.
+function promiseOnlyApzControllerFlushed(aWindow = window) {
   return new Promise(function(resolve, reject) {
     var repaintDone = function() {
       dump("PromiseApzRepaintsFlushed: APZ flush done\n");
@@ -266,13 +279,6 @@ function promiseApzRepaintsFlushed(aWindow = window) {
   });
 }
 
-function flushApzRepaints(aCallback, aWindow = window) {
-  if (!aCallback) {
-    throw new Error("A callback must be provided!");
-  }
-  promiseApzRepaintsFlushed(aWindow).then(aCallback);
-}
-
 // Flush repaints, APZ pending repaints, and any repaints resulting from that
 // flush. This is particularly useful if the test needs to reach some sort of
 // "idle" state in terms of repaints. Usually just waiting for all paints
@@ -284,7 +290,7 @@ function flushApzRepaints(aCallback, aWindow = window) {
 // most tests.
 async function promiseApzFlushedRepaints() {
   await promiseAllPaintsDone();
-  await promiseApzRepaintsFlushed();
+  await promiseOnlyApzControllerFlushed();
   await promiseAllPaintsDone();
 }
 
@@ -347,22 +353,18 @@ function runSubtestsSeriallyInFreshWindows(aSubtests) {
           );
         }
 
-        let promiseFocus = SimpleTest.promiseFocus(window);
-
         if (test.prefs) {
           // We pushed some prefs for this test, pop them, and re-invoke
           // advanceSubtestExecution() after that's been processed
-          SpecialPowers.popPrefEnv(async function() {
+          SpecialPowers.popPrefEnv(function() {
             w.close();
             w = null;
-            await promiseFocus;
             advanceSubtestExecution();
           });
           return;
         }
 
         w.close();
-        await promiseFocus;
       }
 
       testIndex++;
@@ -370,6 +372,8 @@ function runSubtestsSeriallyInFreshWindows(aSubtests) {
         resolve();
         return;
       }
+
+      await SimpleTest.promiseFocus(window);
 
       test = aSubtests[testIndex];
 
@@ -585,7 +589,7 @@ async function waitUntilApzStable() {
   dump("WaitUntilApzStable: done promiseFocus\n");
   await promiseAllPaintsDone();
   dump("WaitUntilApzStable: done promiseAllPaintsDone\n");
-  await promiseApzRepaintsFlushed();
+  await promiseOnlyApzControllerFlushed();
   dump("WaitUntilApzStable: all done\n");
 }
 
@@ -611,7 +615,7 @@ async function forceLayerTreeToCompositor() {
     }
   }
   await promiseAllPaintsDone(null, true);
-  await promiseApzRepaintsFlushed();
+  await promiseOnlyApzControllerFlushed();
 }
 
 function isApzEnabled() {
@@ -1147,18 +1151,12 @@ function assertNotCheckerboarded(utils, scrollerId, msgPrefix) {
   utils.restoreNormalRefresh();
 }
 
-function waitToClearOutAnyPotentialScrolls(aWindow) {
-  return new Promise(resolve => {
-    aWindow.requestAnimationFrame(() => {
-      aWindow.requestAnimationFrame(() => {
-        flushApzRepaints(() => {
-          aWindow.requestAnimationFrame(() => {
-            aWindow.requestAnimationFrame(resolve);
-          });
-        }, aWindow);
-      });
-    });
-  });
+async function waitToClearOutAnyPotentialScrolls(aWindow) {
+  await promiseFrame(aWindow);
+  await promiseFrame(aWindow);
+  await promiseOnlyApzControllerFlushed(aWindow);
+  await promiseFrame(aWindow);
+  await promiseFrame(aWindow);
 }
 
 function waitForScrollEvent(target) {

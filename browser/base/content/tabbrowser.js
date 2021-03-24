@@ -667,6 +667,7 @@
     _updateTabBarForPinnedTabs() {
       this.tabContainer._unlockTabSizing();
       this.tabContainer._positionPinnedTabs();
+      this.tabContainer._setPositionalAttributes();
       this.tabContainer._updateCloseButtons();
     },
 
@@ -806,15 +807,59 @@
       return (aBrowser || this.selectedBrowser).parentNode.parentNode;
     },
 
+    getTabNotificationDeck() {
+      if (!this._tabNotificationDeck) {
+        let template = document.getElementById(
+          "tab-notification-deck-template"
+        );
+        template.replaceWith(template.content);
+        this._tabNotificationDeck = document.getElementById(
+          "tab-notification-deck"
+        );
+      }
+      return this._tabNotificationDeck;
+    },
+
+    _nextNotificationBoxId: 0,
     getNotificationBox(aBrowser) {
       let browser = aBrowser || this.selectedBrowser;
       if (!browser._notificationBox) {
         browser._notificationBox = new MozElements.NotificationBox(element => {
           element.setAttribute("notificationside", "top");
-          this.getBrowserContainer(browser).prepend(element);
+          if (
+            Services.prefs.getBoolPref("browser.proton.infobars.enabled", false)
+          ) {
+            element.setAttribute(
+              "name",
+              `tab-notification-box-${this._nextNotificationBoxId++}`
+            );
+            // With Proton enabled all notification boxes are at the top, built into the browser chrome.
+            this.getTabNotificationDeck().append(element);
+            if (browser == this.selectedBrowser) {
+              this._updateVisibleNotificationBox(browser);
+            }
+          } else {
+            this.getBrowserContainer(browser).prepend(element);
+          }
         });
       }
       return browser._notificationBox;
+    },
+
+    readNotificationBox(aBrowser) {
+      let browser = aBrowser || this.selectedBrowser;
+      return browser._notificationBox || null;
+    },
+
+    _updateVisibleNotificationBox(aBrowser) {
+      if (!this._tabNotificationDeck) {
+        // If the deck hasn't been created we don't need to create it here.
+        return;
+      }
+      let notificationBox = this.readNotificationBox(aBrowser);
+      this.getTabNotificationDeck().selectedViewName = notificationBox
+        ? notificationBox.stack.getAttribute("name")
+        : "";
     },
 
     getTabModalPromptBox(aBrowser) {
@@ -1068,6 +1113,12 @@
       this.showTab(newTab);
 
       this._appendStatusPanel();
+
+      if (
+        Services.prefs.getBoolPref("browser.proton.infobars.enabled", false)
+      ) {
+        this._updateVisibleNotificationBox(newBrowser);
+      }
 
       let oldBrowserPopupsBlocked = oldBrowser.popupBlocker.getBlockedPopupCount();
       let newBrowserPopupsBlocked = newBrowser.popupBlocker.getBlockedPopupCount();
@@ -3089,7 +3140,7 @@
       // see bug #350299 for more details
       window.focus();
       let warningMessage = gTabBrowserBundle.GetStringFromName(
-        "tabs.closeWarningMultiple"
+        "tabs.closeWarningMultipleTabs"
       );
       warningMessage = PluralForm.get(tabsToClose, warningMessage).replace(
         "#1",
@@ -3100,7 +3151,7 @@
         ps.BUTTON_TITLE_CANCEL * ps.BUTTON_POS_1;
       let checkboxLabel =
         aCloseTabs == this.closingTabsEnum.ALL
-          ? gTabBrowserBundle.GetStringFromName("tabs.closeWarningPromptMe")
+          ? gTabBrowserBundle.GetStringFromName("tabs.closeWarningPrompt")
           : null;
       var buttonPressed = ps.confirmEx(
         window,
@@ -3426,7 +3477,7 @@
         Promise.all(beforeUnloadPromises).then(() => {
           done = true;
         });
-        Services.tm.spinEventLoopUntilOrShutdown(
+        Services.tm.spinEventLoopUntilOrQuit(
           "tabbrowser.js:removeTabs",
           () => done || window.closed
         );
@@ -3752,6 +3803,9 @@
           "BrowserTab"
         );
       }
+
+      let notificationBox = this.readNotificationBox(browser);
+      notificationBox?.stack.remove();
 
       if (aTab.linkedPanel) {
         if (!adoptedByTab && !gMultiProcessBrowser) {
@@ -4096,6 +4150,15 @@
         aOurTab._sharingState = aOtherTab._sharingState;
         webrtcUI.swapBrowserForNotification(otherBrowser, ourBrowser);
       }
+      if (aOtherTab.hasAttribute("pictureinpicture")) {
+        aOurTab.setAttribute("pictureinpicture", true);
+        modifiedAttrs.push("pictureinpicture");
+
+        let event = new CustomEvent("TabSwapPictureInPicture", {
+          detail: aOurTab,
+        });
+        aOtherTab.dispatchEvent(event);
+      }
 
       SitePermissions.copyTemporaryPermissions(otherBrowser, ourBrowser);
 
@@ -4308,7 +4371,7 @@
       let browser = this.getBrowserForTab(aTab);
       // Reset temporary permissions on the current tab. This is done here
       // because we only want to reset permissions on user reload.
-      SitePermissions.clearTemporaryPermissions(browser);
+      SitePermissions.clearTemporaryBlockPermissions(browser);
       // Also reset DOS mitigations for the basic auth prompt on reload.
       delete browser.authPromptAbuseCounter;
       gIdentityHandler.hidePopup();
@@ -5284,7 +5347,7 @@
       // When Picture-in-Picture is open, we repurpose '.tab-icon-sound' as
       // an inert Picture-in-Picture indicator, so we should display
       // the default tooltip
-      else if (tab._overPlayingIcon && !tab.pictureinpicture) {
+      else if (!gProtonTabs && tab._overPlayingIcon && !tab.pictureinpicture) {
         let stringID;
         if (tab.selected) {
           stringID = tab.linkedBrowser.audioMuted
@@ -7046,8 +7109,14 @@ var TabContextMenu = {
   },
 
   updateShareURLMenuItem() {
-    // We don't show a "share URL" in Linux, so bail.
-    if (!gProton || AppConstants.platform == "linux") {
+    // We only support "share URL" on macOS and on Windows 10:
+    if (
+      !gProton ||
+      !(
+        AppConstants.platform == "macosx" ||
+        AppConstants.isPlatformAndVersionAtLeast("win", "6.4")
+      )
+    ) {
       return;
     }
 

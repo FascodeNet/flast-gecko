@@ -547,6 +547,25 @@ template void js::TraceManuallyBarrieredCrossCompartmentEdge<JSObject*>(
 template void js::TraceManuallyBarrieredCrossCompartmentEdge<BaseScript*>(
     JSTracer*, JSObject*, BaseScript**, const char*);
 
+class MOZ_RAII AutoDisableCompartmentCheckTracer {
+#ifdef DEBUG
+  JSContext* cx_;
+  bool prev_;
+
+ public:
+  AutoDisableCompartmentCheckTracer()
+      : cx_(TlsContext.get()), prev_(cx_->disableCompartmentCheckTracer) {
+    cx_->disableCompartmentCheckTracer = true;
+  }
+  ~AutoDisableCompartmentCheckTracer() {
+    cx_->disableCompartmentCheckTracer = prev_;
+  }
+#else
+ public:
+  AutoDisableCompartmentCheckTracer(){};
+#endif
+};
+
 template <typename T>
 void js::TraceSameZoneCrossCompartmentEdge(JSTracer* trc,
                                            const WriteBarriered<T>* dst,
@@ -564,6 +583,7 @@ void js::TraceSameZoneCrossCompartmentEdge(JSTracer* trc,
 
   // Clear expected compartment for cross-compartment edge.
   AutoClearTracingSource acts(trc);
+  AutoDisableCompartmentCheckTracer adcct;
   TraceEdgeInternal(trc, ConvertToBase(dst->unbarrieredAddress()), name);
 }
 template void js::TraceSameZoneCrossCompartmentEdge(
@@ -1577,59 +1597,6 @@ static inline void CallTraceHook(JSTracer* trc, JSObject* obj) {
     AutoSetTracingSource asts(trc, obj);
     clasp->doTrace(trc, obj);
   }
-}
-
-template <typename Functor>
-static void VisitTraceListWithFunctor(const Functor& f,
-                                      const uint32_t* traceList,
-                                      uint8_t* memory) {
-  size_t stringCount = *traceList++;
-  size_t objectCount = *traceList++;
-  size_t valueCount = *traceList++;
-  for (size_t i = 0; i < stringCount; i++) {
-    f(reinterpret_cast<JSString**>(memory + *traceList));
-    traceList++;
-  }
-  for (size_t i = 0; i < objectCount; i++) {
-    auto** objp = reinterpret_cast<JSObject**>(memory + *traceList);
-    if (*objp) {
-      f(objp);
-    }
-    traceList++;
-  }
-  for (size_t i = 0; i < valueCount; i++) {
-    f(reinterpret_cast<Value*>(memory + *traceList));
-    traceList++;
-  }
-}
-
-/*
- * Trace TypedObject memory according to the layout specified by |traceList|
- * with optimized paths for GC tracers.
- *
- * I'm not sure how much difference this makes versus calling TraceEdge for each
- * edge; that at least has to dispatch on the tracer kind each time.
- */
-void js::gc::VisitTraceList(JSTracer* trc, JSObject* obj,
-                            const uint32_t* traceList, uint8_t* memory) {
-  if (trc->isMarkingTracer()) {
-    auto* marker = GCMarker::fromTracer(trc);
-    VisitTraceListWithFunctor([=](auto thingp) { DoMarking(marker, *thingp); },
-                              traceList, memory);
-    return;
-  }
-
-  if (trc->isTenuringTracer()) {
-    auto* ttrc = static_cast<TenuringTracer*>(trc);
-    VisitTraceListWithFunctor([=](auto thingp) { ttrc->traverse(thingp); },
-                              traceList, memory);
-    return;
-  }
-
-  VisitTraceListWithFunctor(
-      [=](auto thingp) { TraceEdgeInternal(trc, thingp, "TypedObject edge"); },
-      traceList, memory);
-  return;
 }
 
 /*** Mark-stack Marking *****************************************************/
@@ -4026,7 +3993,7 @@ void UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing) {
   if (zone->isGCMarking()) {
     if (!cell->isMarkedBlack()) {
       // Skip disptaching on known tracer type.
-      BarrierTracer* trc = BarrierTracer::fromTracer(zone->barrierTracer());
+      BarrierTracer* trc = &runtime()->gc.barrierTracer;
       trc->performBarrier(thing);
       unmarkedAny = true;
     }
@@ -4200,6 +4167,7 @@ void BarrierTracer::performBarrier(JS::GCCellPtr cell) {
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime()));
   MOZ_ASSERT(!runtime()->gc.isBackgroundMarking());
   MOZ_ASSERT(!cell.asCell()->isForwarded());
+  MOZ_ASSERT(!cell.asCell()->hasTempHeaderData());
 
   // Mark the cell here to prevent us recording it again.
   if (!cell.asCell()->asTenured().markIfUnmarked()) {
@@ -4252,14 +4220,21 @@ void GCMarker::traceBarrieredCell(JS::GCCellPtr cell) {
   MOZ_ASSERT(!cell.asCell()->isForwarded());
 
   ApplyGCThingTyped(cell, [this](auto thing) {
-    if (!ShouldMark(this, thing)) {
-      return;
+    MOZ_ASSERT(ShouldMark(this, thing));
+    MOZ_ASSERT(thing->isMarkedBlack());
+
+    if constexpr (std::is_same_v<decltype(thing), JSString*>) {
+      if (thing->isBeingFlattened()) {
+        // This string is an interior node of a rope that is currently being
+        // flattened. The flattening process invokes the barrier on all nodes in
+        // the tree, so interior nodes need not be traversed.
+        return;
+      }
     }
 
     CheckTracedThing(this, thing);
     AutoClearTracingSource acts(this);
 
-    MOZ_ASSERT(thing->isMarkedBlack());
     traverse(thing);
   });
 }

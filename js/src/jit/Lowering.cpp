@@ -297,7 +297,18 @@ void LIRGenerator::visitCreateInlinedArgumentsObject(
 }
 
 void LIRGenerator::visitGetInlinedArgument(MGetInlinedArgument* ins) {
-  LAllocation index = useRegisterAtStart(ins->index());
+#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_MIPS64)
+  // On some 64-bit architectures, we don't support boxing a typed
+  // register in-place without using a scratch register, so the result
+  // register can't be the same as any of the inputs. Fortunately,
+  // those architectures have registers to spare.
+  const bool useAtStart = false;
+#else
+  const bool useAtStart = true;
+#endif
+
+  LAllocation index =
+      useAtStart ? useRegisterAtStart(ins->index()) : useRegister(ins->index());
   uint32_t numActuals = ins->numActuals();
   uint32_t numOperands =
       numActuals * BOX_PIECES + LGetInlinedArgument::NumNonArgumentOperands;
@@ -312,9 +323,9 @@ void LIRGenerator::visitGetInlinedArgument(MGetInlinedArgument* ins) {
   for (uint32_t i = 0; i < numActuals; i++) {
     MDefinition* arg = ins->getArg(i);
     uint32_t index = LGetInlinedArgument::ArgIndex(i);
-    lir->setBoxOperand(index, useBoxOrTypedOrConstant(arg,
-                                                      /*useConstant = */ true,
-                                                      /*useAtStart = */ true));
+    lir->setBoxOperand(
+        index, useBoxOrTypedOrConstant(arg,
+                                       /*useConstant = */ true, useAtStart));
   }
   defineBox(lir, ins);
 }
@@ -777,10 +788,7 @@ void LIRGenerator::visitTest(MTest* test) {
     if (comp->compareType() == MCompare::Compare_Int64 ||
         comp->compareType() == MCompare::Compare_UInt64) {
       JSOp op = ReorderComparison(comp->jsop(), &left, &right);
-      LCompareI64AndBranch* lir = new (alloc())
-          LCompareI64AndBranch(comp, op, useInt64Register(left),
-                               useInt64OrConstant(right), ifTrue, ifFalse);
-      add(lir, test);
+      lowerForCompareI64AndBranch(test, comp, op, left, right, ifTrue, ifFalse);
       return;
     }
 
@@ -3950,7 +3958,7 @@ void LIRGenerator::visitGuardNoDenseElements(MGuardNoDenseElements* ins) {
 void LIRGenerator::visitGuardShape(MGuardShape* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
 
-  if (JitOptions.spectreObjectMitigationsMisc) {
+  if (JitOptions.spectreObjectMitigations) {
     auto* lir =
         new (alloc()) LGuardShape(useRegisterAtStart(ins->object()), temp());
     assignSnapshot(lir, ins->bailoutKind());
@@ -5914,9 +5922,17 @@ void LIRGenerator::visitWasmSelect(MWasmSelect* ins) {
   }
 
   if (ins->type() == MIRType::Int64) {
+#if defined(JS_CODEGEN_ARM64)
+    // arm64 needs all three arguments forced into registers, but for x86, it
+    // may be beneficial to be more relaxed.  Hence special-case arm64.
+    auto* lir = new (alloc()) LWasmSelectI64(
+        useInt64RegisterAtStart(ins->trueExpr()),
+        useInt64Register(ins->falseExpr()), useRegister(ins->condExpr()));
+#else
     auto* lir = new (alloc()) LWasmSelectI64(
         useInt64RegisterAtStart(ins->trueExpr()), useInt64(ins->falseExpr()),
         useRegister(ins->condExpr()));
+#endif
 
     defineInt64ReuseInput(lir, ins, LWasmSelectI64::TrueExprIndex);
     return;

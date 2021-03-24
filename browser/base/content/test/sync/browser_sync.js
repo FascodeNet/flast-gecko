@@ -39,11 +39,7 @@ add_task(async function test_ui_state_notification_calls_updateAllUI() {
 
 add_task(async function test_navBar_button_visibility() {
   const button = document.getElementById("fxa-toolbar-menu-button");
-  const protonEnabled = Services.prefs.getBoolPref(
-    "browser.proton.toolbar.enabled",
-    false
-  );
-  info("pref browser.proton.toolbar.enabled: " + protonEnabled);
+  info("proton enabled: " + CustomizableUI.protonToolbarEnabled);
 
   ok(button.closest("#nav-bar"), "button is in the #nav-bar");
 
@@ -54,7 +50,7 @@ add_task(async function test_navBar_button_visibility() {
   gSync.updateAllUI(state);
   is(
     BrowserTestUtils.is_visible(button),
-    !protonEnabled,
+    !CustomizableUI.protonToolbarEnabled,
     "Check button visibility with STATUS_NOT_CONFIGURED"
   );
 
@@ -173,7 +169,7 @@ add_task(async function test_ui_state_signedin() {
   await closeTabAndMainPanel();
 });
 
-add_task(async function test_ui_state_syncing() {
+add_task(async function test_ui_state_syncing_panel_closed() {
   let state = {
     status: UIState.STATUS_SIGNED_IN,
     syncEnabled: true,
@@ -198,6 +194,54 @@ add_task(async function test_ui_state_syncing() {
   });
   // Because we switch from syncing to non-syncing, and there's a timeout involved.
   await promiseObserver("test:browser-sync:activity-stop");
+});
+
+add_task(async function test_ui_state_syncing_panel_open() {
+  await BrowserTestUtils.openNewForegroundTab(gBrowser, "https://example.com/");
+
+  let state = {
+    status: UIState.STATUS_SIGNED_IN,
+    syncEnabled: true,
+    email: "foo@bar.com",
+    displayName: "Foo Bar",
+    avatarURL: "https://foo.bar",
+    lastSync: new Date(),
+    syncing: false,
+  };
+
+  gSync.updateAllUI(state);
+
+  await openFxaPanel();
+
+  checkSyncNowButtons(false);
+
+  state = {
+    status: UIState.STATUS_SIGNED_IN,
+    syncEnabled: true,
+    email: "foo@bar.com",
+    displayName: "Foo Bar",
+    avatarURL: "https://foo.bar",
+    lastSync: new Date(),
+    syncing: true,
+  };
+
+  gSync.updateAllUI(state);
+
+  checkSyncNowButtons(true);
+
+  // Be good citizens and remove the "syncing" state.
+  gSync.updateAllUI({
+    status: UIState.STATUS_SIGNED_IN,
+    syncEnabled: true,
+    email: "foo@bar.com",
+    lastSync: new Date(),
+    syncing: false,
+  });
+  // Because we switch from syncing to non-syncing, and there's a timeout involved.
+  await promiseObserver("test:browser-sync:activity-stop");
+
+  await closeFxaPanel();
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 add_task(async function test_ui_state_unconfigured() {
@@ -338,8 +382,8 @@ add_task(async function test_ui_state_unverified() {
     await openFxaPanel();
   }
 
-  const expectedLabel = gSync.fxaStrings.GetStringFromName(
-    "account.finishAccountSetup"
+  const expectedLabel = gSync.fluentStrings.formatValueSync(
+    "account-finish-account-setup"
   );
 
   checkMenuBarItem("sync-unverifieditem");
@@ -392,8 +436,8 @@ add_task(async function test_ui_state_loginFailed() {
     await openFxaPanel();
   }
 
-  const expectedLabel = gSync.fxaStrings.GetStringFromName(
-    "account.reconnectToFxA"
+  const expectedLabel = gSync.fluentStrings.formatValueSync(
+    "account-reconnect-to-fxa"
   );
 
   checkMenuBarItem("sync-reauthitem");
@@ -496,22 +540,21 @@ function checkSyncNowButtons(syncing, tooltip = null) {
         "button tooltiptext is set to the right value"
       );
     }
+  }
 
-    is(
-      syncButton.hasAttribute("disabled"),
-      syncing,
-      "disabled has the right value"
-    );
+  const syncLabels = document.querySelectorAll(".syncnow-label");
+
+  for (const syncLabel of syncLabels) {
     if (syncing) {
       is(
-        document.l10n.getAttributes(syncButton).id,
-        syncButton.getAttribute("syncinglabel"),
+        syncLabel.getAttribute("data-l10n-id"),
+        syncLabel.getAttribute("data-l10n-id"),
         "label is set to the right value"
       );
     } else {
       is(
-        document.l10n.getAttributes(syncButton).id,
-        "appmenuitem-fxa-toolbar-sync-now",
+        syncLabel.getAttribute("data-l10n-id"),
+        syncLabel.getAttribute("sync-now-data-l10n-id"),
         "label is set to the right value"
       );
     }

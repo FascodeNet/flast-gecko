@@ -836,7 +836,6 @@ PresShell::PresShell(Document* aDocument)
       mFontSizeInflationForceEnabled(false),
       mFontSizeInflationDisabledInMasterProcess(false),
       mFontSizeInflationEnabled(false),
-      mPaintingIsFrozen(false),
       mIsNeverPainting(false),
       mResolutionUpdated(false),
       mResolutionUpdatedByApz(false),
@@ -904,13 +903,6 @@ PresShell::~PresShell() {
   NS_ASSERTION(mFirstCallbackEventRequest == nullptr &&
                    mLastCallbackEventRequest == nullptr,
                "post-reflow queues not empty.  This means we're leaking");
-
-  // Verify that if painting was frozen, but we're being removed from the tree,
-  // that we now re-enable painting on our refresh driver, since it may need to
-  // be re-used by another presentation.
-  if (mPaintingIsFrozen) {
-    mPresContext->RefreshDriver()->Thaw();
-  }
 
   MOZ_ASSERT(mAllocatedPointers.IsEmpty(),
              "Some pres arena objects were not freed");
@@ -1467,7 +1459,7 @@ void PresShell::Destroy() {
     mAutoWeakFrames->Clear(this);
   }
   nsTArray<WeakFrame*> toRemove(mWeakFrames.Count());
-  for (auto iter = mWeakFrames.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mWeakFrames.ConstIter(); !iter.Done(); iter.Next()) {
     toRemove.AppendElement(iter.Get()->GetKey());
   }
   for (WeakFrame* weakFrame : toRemove) {
@@ -1942,8 +1934,15 @@ nsresult PresShell::Initialize() {
       // Initialize the timer.
 
       // Default to PAINTLOCK_EVENT_DELAY if we can't get the pref value.
-      int32_t delay = Preferences::GetInt("nglayout.initialpaint.delay",
-                                          PAINTLOCK_EVENT_DELAY);
+      Document* doc = mDocument->GetDisplayDocument()
+                          ? mDocument->GetDisplayDocument()
+                          : mDocument.get();
+      int32_t delay = Preferences::GetInt(
+          !doc->GetBrowsingContext() ||
+                  doc->GetBrowsingContext()->Top()->IsInProcess()
+              ? "nglayout.initialpaint.delay"
+              : "nglayout.initialpaint.delay_in_oopif",
+          PAINTLOCK_EVENT_DELAY);
 
       mPaintSuppressionTimer->SetTarget(
           mDocument->EventTargetFor(TaskCategory::Other));
@@ -2674,7 +2673,7 @@ void PresShell::PostPendingScrollAnchorSelection(
 }
 
 void PresShell::FlushPendingScrollAnchorSelections() {
-  for (auto iter = mPendingScrollAnchorSelection.Iter(); !iter.Done();
+  for (auto iter = mPendingScrollAnchorSelection.ConstIter(); !iter.Done();
        iter.Next()) {
     nsIScrollableFrame* scroll = iter.Get()->GetKey();
     scroll->Anchor()->SelectAnchor();
@@ -2688,7 +2687,7 @@ void PresShell::PostPendingScrollAnchorAdjustment(
 }
 
 void PresShell::FlushPendingScrollAnchorAdjustments() {
-  for (auto iter = mPendingScrollAnchorAdjustment.Iter(); !iter.Done();
+  for (auto iter = mPendingScrollAnchorAdjustment.ConstIter(); !iter.Done();
        iter.Next()) {
     nsIScrollableFrame* scroll = iter.Get()->GetKey();
     scroll->Anchor()->ApplyAdjustments();
@@ -3077,7 +3076,7 @@ void PresShell::ClearFrameRefs(nsIFrame* aFrame) {
   }
 
   AutoTArray<WeakFrame*, 4> toRemove;
-  for (auto iter = mWeakFrames.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mWeakFrames.ConstIter(); !iter.Done(); iter.Next()) {
     WeakFrame* weakFrame = iter.Get()->GetKey();
     if (weakFrame->GetFrame() == aFrame) {
       toRemove.AppendElement(weakFrame);
@@ -4087,7 +4086,6 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
 
   MOZ_ASSERT(NeedFlush(flushType), "Why did we get called?");
 
-#ifdef MOZ_GECKO_PROFILER
   AUTO_PROFILER_MARKER_TEXT(
       "DoFlushPendingNotifications", LAYOUT,
       MarkerOptions(MarkerStack::Capture(), MarkerInnerWindowIdFromDocShell(
@@ -4096,7 +4094,6 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
   AUTO_PROFILER_LABEL_DYNAMIC_CSTR_NONSENSITIVE(
       "PresShell::DoFlushPendingNotifications", LAYOUT,
       kFlushTypeNames[flushType]);
-#endif
 
 #ifdef ACCESSIBILITY
 #  ifdef DEBUG
@@ -5834,7 +5831,7 @@ void PresShell::MarkFramesInListApproximatelyVisible(
 void PresShell::DecApproximateVisibleCount(
     VisibleFrames& aFrames, const Maybe<OnNonvisible>& aNonvisibleAction
     /* = Nothing() */) {
-  for (auto iter = aFrames.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = aFrames.ConstIter(); !iter.Done(); iter.Next()) {
     nsIFrame* frame = iter.Get()->GetKey();
     // Decrement the frame's visible count if we're still tracking its
     // visibility. (We may not be, if the frame disabled visibility tracking
@@ -6384,7 +6381,10 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   if (!(aFlags & PaintFlags::PaintComposite)) {
     flags |= PaintFrameFlags::NoComposite;
   }
-  if (aFlags & PaintFlags::PaintSyncDecodeImages) {
+  // We force sync-decode for printing / print-preview (printing already does
+  // this from nsPageSequenceFrame::PrintNextSheet).
+  if (aFlags & PaintFlags::PaintSyncDecodeImages ||
+      mDocument->IsStaticDocument()) {
     flags |= PaintFrameFlags::SyncDecodeImages;
   }
   if (mNextPaintCompressed) {
@@ -7806,21 +7806,12 @@ PresShell::EventHandler::ComputeRootFrameToHandleEventWithCapturingContent(
   *aIsCapturingContentIgnored = false;
   *aIsCaptureRetargeted = false;
 
-  // If a capture is active, determine if the docshell is visible. If not,
-  // clear the capture and target the mouse event normally instead. This
+  // If a capture is active, determine if the BrowsingContext is active. If
+  // not, clear the capture and target the mouse event normally instead. This
   // would occur if the mouse button is held down while a tab change occurs.
-  // If the docshell is visible, look for a scrolling container.
-  nsCOMPtr<nsIBaseWindow> baseWindow =
-      do_QueryInterface(GetPresContext()->GetContainerWeak());
-  if (!baseWindow) {
-    ClearMouseCapture(nullptr);
-    *aIsCapturingContentIgnored = true;
-    return aRootFrameToHandleEvent;
-  }
-
-  bool isBaseWindowVisible = false;
-  nsresult rv = baseWindow->GetVisibility(&isBaseWindowVisible);
-  if (NS_FAILED(rv) || !isBaseWindowVisible) {
+  // If the BrowsingContext is active, look for a scrolling container.
+  BrowsingContext* bc = GetPresContext()->Document()->GetBrowsingContext();
+  if (!bc || !bc->IsActive()) {
     ClearMouseCapture(nullptr);
     *aIsCapturingContentIgnored = true;
     return aRootFrameToHandleEvent;
@@ -8067,7 +8058,7 @@ Document* PresShell::GetPrimaryContentDocument() {
     return nullptr;
   }
 
-  return childDocShell->GetDocument();
+  return childDocShell->GetExtantDocument();
 }
 
 #ifdef DEBUG
@@ -8588,20 +8579,7 @@ PresShell::EventHandler::GetDocumentPrincipalToCompareWithBlacklist(
   if (NS_WARN_IF(!presContext)) {
     return nullptr;
   }
-  // If the document is sandboxed document or data: document, we should
-  // get URI of the parent document.
-  for (Document* document = presContext->Document();
-       document && document->IsContentDocument();
-       document = document->GetInProcessParentDocument()) {
-    // The document URI may be about:blank even if it comes from actual web
-    // site.  Therefore, we need to check the URI of its principal.
-    nsIPrincipal* principal = document->NodePrincipal();
-    if (principal->GetIsNullPrincipal()) {
-      continue;
-    }
-    return principal;
-  }
-  return nullptr;
+  return presContext->Document()->GetPrincipalForPrefBasedHacks();
 }
 
 nsresult PresShell::EventHandler::DispatchEventToDOM(
@@ -8641,41 +8619,25 @@ nsresult PresShell::EventHandler::DispatchEventToDOM(
       // behave so, however, some web apps may be broken.  On such web apps,
       // we should keep using legacy our behavior.
       if (!mPresShell->mInitializedWithKeyPressEventDispatchingBlacklist) {
-        bool isInPrefList = false;
         mPresShell->mInitializedWithKeyPressEventDispatchingBlacklist = true;
         nsCOMPtr<nsIPrincipal> principal =
             GetDocumentPrincipalToCompareWithBlacklist(*mPresShell);
         if (principal) {
-          principal->IsURIInPrefList(
-              "dom.keyboardevent.keypress.hack.dispatch_non_printable_keys",
-              &isInPrefList);
           mPresShell->mForceDispatchKeyPressEventsForNonPrintableKeys =
-              isInPrefList;
+              principal->IsURIInPrefList(
+                  "dom.keyboardevent.keypress.hack.dispatch_non_printable_"
+                  "keys") ||
+              principal->IsURIInPrefList(
+                  "dom.keyboardevent.keypress.hack."
+                  "dispatch_non_printable_keys.addl");
 
-          principal->IsURIInPrefList(
-              "dom.keyboardevent.keypress.hack."
-              "dispatch_non_printable_keys.addl",
-              &isInPrefList);
-          mPresShell->mForceDispatchKeyPressEventsForNonPrintableKeys |=
-              isInPrefList;
-
-          principal->IsURIInPrefList(
-              "dom.keyboardevent.keypress.hack."
-              "use_legacy_keycode_and_charcode",
-              &isInPrefList);
-          mPresShell->mForceUseLegacyKeyCodeAndCharCodeValues |= isInPrefList;
-
-          principal->IsURIInPrefList(
-              "dom.keyboardevent.keypress.hack."
-              "use_legacy_keycode_and_charcode",
-              &isInPrefList);
-          mPresShell->mForceUseLegacyKeyCodeAndCharCodeValues |= isInPrefList;
-
-          principal->IsURIInPrefList(
-              "dom.keyboardevent.keypress.hack."
-              "use_legacy_keycode_and_charcode.addl",
-              &isInPrefList);
-          mPresShell->mForceUseLegacyKeyCodeAndCharCodeValues |= isInPrefList;
+          mPresShell->mForceUseLegacyKeyCodeAndCharCodeValues |=
+              principal->IsURIInPrefList(
+                  "dom.keyboardevent.keypress.hack."
+                  "use_legacy_keycode_and_charcode") ||
+              principal->IsURIInPrefList(
+                  "dom.keyboardevent.keypress.hack."
+                  "use_legacy_keycode_and_charcode.addl");
         }
       }
       if (mPresShell->mForceDispatchKeyPressEventsForNonPrintableKeys) {
@@ -8699,11 +8661,9 @@ nsresult PresShell::EventHandler::DispatchEventToDOM(
             GetDocumentPrincipalToCompareWithBlacklist(*mPresShell);
 
         if (principal) {
-          bool isInPrefList = false;
-          principal->IsURIInPrefList(
-              "dom.mouseevent.click.hack.use_legacy_non-primary_dispatch",
-              &isInPrefList);
-          mPresShell->mForceUseLegacyNonPrimaryDispatch = isInPrefList;
+          mPresShell->mForceUseLegacyNonPrimaryDispatch =
+              principal->IsURIInPrefList(
+                  "dom.mouseevent.click.hack.use_legacy_non-primary_dispatch");
         }
       }
       if (mPresShell->mForceUseLegacyNonPrimaryDispatch) {
@@ -9503,11 +9463,9 @@ bool PresShell::ScheduleReflowOffTimer() {
 
 bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
                          OverflowChangedTracker* aOverflowTracker) {
-#ifdef MOZ_GECKO_PROFILER
-  nsIURI* uri = mDocument->GetDocumentURI();
+  [[maybe_unused]] nsIURI* uri = mDocument->GetDocumentURI();
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
       "Reflow", LAYOUT_Reflow, uri ? uri->GetSpecOrDefault() : "N/A"_ns);
-#endif
 
   LAYOUT_TELEMETRY_RECORD_BASE(Reflow);
 
@@ -9700,9 +9658,9 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
   bool interrupted = mPresContext->HasPendingInterrupt();
   if (interrupted) {
     // Make sure target gets reflowed again.
-    for (auto iter = mFramesToDirty.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = mFramesToDirty.ConstIter(); !iter.Done(); iter.Next()) {
       // Mark frames dirty until target frame.
-      nsPtrHashKey<nsIFrame>* p = iter.Get();
+      const nsPtrHashKey<nsIFrame>* p = iter.Get();
       for (nsIFrame* f = p->GetKey(); f && !f->IsSubtreeDirty();
            f = f->GetParent()) {
         f->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
@@ -10666,8 +10624,8 @@ void ReflowCountMgr::DoGrandTotals() {
     printf("-");
   }
   printf("\n");
-  for (auto iter = mCounts.Iter(); !iter.Done(); iter.Next()) {
-    iter.Data()->DisplayTotals(iter.Key());
+  for (const auto& entry : mCounts) {
+    entry.GetData()->DisplayTotals(entry.GetKey());
   }
 }
 
@@ -10709,7 +10667,7 @@ void ReflowCountMgr::DoIndiTotalsTree() {
     printf("------------------------------------------------\n");
     printf("-- Individual Counts of Frames not in Root Tree\n");
     printf("------------------------------------------------\n");
-    for (auto iter = mIndiFrameCounts.Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = mIndiFrameCounts.ConstIter(); !iter.Done(); iter.Next()) {
       IndiReflowCounter* counter = iter.UserData();
       if (!counter->mHasBeenOutput) {
         char* name = ToNewCString(counter->mName);
@@ -10740,8 +10698,8 @@ void ReflowCountMgr::DoGrandHTMLTotals() {
   }
   fprintf(mFD, "</tr>\n");
 
-  for (auto iter = mCounts.Iter(); !iter.Done(); iter.Next()) {
-    iter.Data()->DisplayHTMLTotals(iter.Key());
+  for (const auto& entry : mCounts) {
+    entry.GetData()->DisplayHTMLTotals(entry.GetKey());
   }
 }
 
@@ -10791,7 +10749,7 @@ void ReflowCountMgr::DisplayHTMLTotals(const char* aStr) {
 
 //------------------------------------------------------------------
 void ReflowCountMgr::ClearTotals() {
-  for (auto iter = mCounts.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = mCounts.ConstIter(); !iter.Done(); iter.Next()) {
     iter.Data()->ClearTotals();
   }
 }
@@ -10819,12 +10777,12 @@ void ReflowCountMgr::DisplayDiffsInTotals() {
     ClearGrandTotals();
   }
 
-  for (auto iter = mCounts.Iter(); !iter.Done(); iter.Next()) {
+  for (const auto& entry : mCounts) {
     if (mCycledOnce) {
-      iter.Data()->CalcDiffInTotals();
-      iter.Data()->DisplayDiffTotals(iter.Key());
+      entry.GetData()->CalcDiffInTotals();
+      entry.GetData()->DisplayDiffTotals(entry.GetKey());
     }
-    iter.Data()->SetTotalsCache();
+    entry.GetData()->SetTotalsCache();
   }
 
   mCycledOnce = true;
@@ -11041,7 +10999,7 @@ nsresult PresShell::UpdateImageLockingState() {
   if (locked) {
     // Request decodes for visible image frames; we want to start decoding as
     // quickly as possible when we get foregrounded to minimize flashing.
-    for (auto iter = mApproximatelyVisibleFrames.Iter(); !iter.Done();
+    for (auto iter = mApproximatelyVisibleFrames.ConstIter(); !iter.Done();
          iter.Next()) {
       nsImageFrame* imageFrame = do_QueryFrame(iter.Get()->GetKey());
       if (imageFrame) {
@@ -11405,22 +11363,6 @@ bool PresShell::DetermineFontSizeInflationState() {
   }
 
   return true;
-}
-
-void PresShell::PausePainting() {
-  if (GetPresContext()->RefreshDriver()->GetPresContext() != GetPresContext())
-    return;
-
-  mPaintingIsFrozen = true;
-  GetPresContext()->RefreshDriver()->Freeze();
-}
-
-void PresShell::ResumePainting() {
-  if (GetPresContext()->RefreshDriver()->GetPresContext() != GetPresContext())
-    return;
-
-  mPaintingIsFrozen = false;
-  GetPresContext()->RefreshDriver()->Thaw();
 }
 
 void PresShell::SyncWindowProperties(nsView* aView) {

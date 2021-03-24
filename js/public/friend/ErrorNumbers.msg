@@ -438,6 +438,7 @@ MSG_DEF(JSMSG_WASM_OUT_OF_BOUNDS,      0, JSEXN_WASMRUNTIMEERROR, "index out of 
 MSG_DEF(JSMSG_WASM_UNALIGNED_ACCESS,   0, JSEXN_WASMRUNTIMEERROR, "unaligned memory access")
 MSG_DEF(JSMSG_WASM_WAKE_OVERFLOW,      0, JSEXN_WASMRUNTIMEERROR, "too many woken agents")
 MSG_DEF(JSMSG_WASM_DEREF_NULL,         0, JSEXN_WASMRUNTIMEERROR, "dereferencing null pointer")
+MSG_DEF(JSMSG_WASM_BAD_CAST,           0, JSEXN_WASMRUNTIMEERROR, "bad cast")
 MSG_DEF(JSMSG_WASM_MEM_IMP_LIMIT,      0, JSEXN_WASMRUNTIMEERROR, "too many memory pages")
 MSG_DEF(JSMSG_WASM_TABLE_IMP_LIMIT,    0, JSEXN_WASMRUNTIMEERROR, "too many table elements")
 MSG_DEF(JSMSG_WASM_BAD_RANGE ,         2, JSEXN_RANGEERR,    "bad {0} {1}")
@@ -748,6 +749,7 @@ MSG_DEF(JSMSG_WRITABLESTREAM_ALREADY_LOCKED,             0, JSEXN_TYPEERR, "writ
 MSG_DEF(JSMSG_READABLESTREAM_NYI,                        0, JSEXN_ERR,     "full WritableStream support is not yet implemented")
 
 // Other Stream-related
+MSG_DEF(JSMSG_STREAM_MISSING_HIGHWATERMARK,              0, JSEXN_TYPEERR,  "'highWaterMark' must not be undefined.")
 MSG_DEF(JSMSG_STREAM_INVALID_HIGHWATERMARK,              0, JSEXN_RANGEERR, "'highWaterMark' must be a non-negative, non-NaN number.")
 MSG_DEF(JSMSG_STREAM_CONSUME_ERROR,                      0, JSEXN_TYPEERR,  "error consuming stream body")
 

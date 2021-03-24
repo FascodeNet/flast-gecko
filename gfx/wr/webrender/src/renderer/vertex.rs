@@ -99,7 +99,7 @@ pub mod desc {
         ],
     };
 
-    pub const GRADIENT: VertexDescriptor = VertexDescriptor {
+    pub const FAST_LINEAR_GRADIENT: VertexDescriptor = VertexDescriptor {
         vertex_attributes: &[VertexAttribute {
             name: "aPosition",
             count: 2,
@@ -149,6 +149,96 @@ pub mod desc {
                 name: "aStartStop",
                 count: 2,
                 kind: VertexAttributeKind::F32,
+            },
+        ],
+    };
+
+    pub const RADIAL_GRADIENT: VertexDescriptor = VertexDescriptor {
+        vertex_attributes: &[VertexAttribute {
+            name: "aPosition",
+            count: 2,
+            kind: VertexAttributeKind::U8Norm,
+        }],
+        instance_attributes: &[
+            VertexAttribute {
+                name: "aTaskRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aCenter",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aStartRadius",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aEndRadius",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aXYRatio",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aExtendMode",
+                count: 1,
+                kind: VertexAttributeKind::I32,
+            },
+            VertexAttribute {
+                name: "aGradientStopsAddress",
+                count: 1,
+                kind: VertexAttributeKind::I32,
+            },
+        ],
+    };
+
+    pub const CONIC_GRADIENT: VertexDescriptor = VertexDescriptor {
+        vertex_attributes: &[VertexAttribute {
+            name: "aPosition",
+            count: 2,
+            kind: VertexAttributeKind::U8Norm,
+        }],
+        instance_attributes: &[
+            VertexAttribute {
+                name: "aTaskRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aCenter",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aStartOffset",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aEndOffset",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aAngle",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aExtendMode",
+                count: 1,
+                kind: VertexAttributeKind::I32,
+            },
+            VertexAttribute {
+                name: "aGradientStopsAddress",
+                count: 1,
+                kind: VertexAttributeKind::I32,
             },
         ],
     };
@@ -223,7 +313,7 @@ pub mod desc {
             VertexAttribute {
                 name: "aScaleSourceRect",
                 count: 4,
-                kind: VertexAttributeKind::I32,
+                kind: VertexAttributeKind::F32,
             },
         ],
     };
@@ -651,7 +741,9 @@ pub enum VertexArrayKind {
     Border,
     Scale,
     LineDecoration,
-    Gradient,
+    FastLinearGradient,
+    RadialGradient,
+    ConicGradient,
     Resolve,
     SvgFilter,
     Composite,
@@ -872,7 +964,9 @@ pub struct RendererVAOs {
     border_vao: VAO,
     line_vao: VAO,
     scale_vao: VAO,
-    gradient_vao: VAO,
+    fast_linear_gradient_vao: VAO,
+    radial_gradient_vao: VAO,
+    conic_gradient_vao: VAO,
     resolve_vao: VAO,
     svg_filter_vao: VAO,
     composite_vao: VAO,
@@ -915,7 +1009,9 @@ impl RendererVAOs {
             border_vao: device.create_vao_with_new_instances(&desc::BORDER, &prim_vao),
             scale_vao: device.create_vao_with_new_instances(&desc::SCALE, &prim_vao),
             line_vao: device.create_vao_with_new_instances(&desc::LINE, &prim_vao),
-            gradient_vao: device.create_vao_with_new_instances(&desc::GRADIENT, &prim_vao),
+            fast_linear_gradient_vao: device.create_vao_with_new_instances(&desc::FAST_LINEAR_GRADIENT, &prim_vao),
+            radial_gradient_vao: device.create_vao_with_new_instances(&desc::RADIAL_GRADIENT, &prim_vao),
+            conic_gradient_vao: device.create_vao_with_new_instances(&desc::CONIC_GRADIENT, &prim_vao),
             resolve_vao: device.create_vao_with_new_instances(&desc::RESOLVE, &prim_vao),
             svg_filter_vao: device.create_vao_with_new_instances(&desc::SVG_FILTER, &prim_vao),
             composite_vao: device.create_vao_with_new_instances(&desc::COMPOSITE, &prim_vao),
@@ -930,7 +1026,9 @@ impl RendererVAOs {
         device.delete_vao(self.clip_rect_vao);
         device.delete_vao(self.clip_box_shadow_vao);
         device.delete_vao(self.clip_image_vao);
-        device.delete_vao(self.gradient_vao);
+        device.delete_vao(self.fast_linear_gradient_vao);
+        device.delete_vao(self.radial_gradient_vao);
+        device.delete_vao(self.conic_gradient_vao);
         device.delete_vao(self.blur_vao);
         device.delete_vao(self.line_vao);
         device.delete_vao(self.border_vao);
@@ -954,7 +1052,9 @@ impl ops::Index<VertexArrayKind> for RendererVAOs {
             VertexArrayKind::Border => &self.border_vao,
             VertexArrayKind::Scale => &self.scale_vao,
             VertexArrayKind::LineDecoration => &self.line_vao,
-            VertexArrayKind::Gradient => &self.gradient_vao,
+            VertexArrayKind::FastLinearGradient => &self.fast_linear_gradient_vao,
+            VertexArrayKind::RadialGradient => &self.radial_gradient_vao,
+            VertexArrayKind::ConicGradient => &self.conic_gradient_vao,
             VertexArrayKind::Resolve => &self.resolve_vao,
             VertexArrayKind::SvgFilter => &self.svg_filter_vao,
             VertexArrayKind::Composite => &self.composite_vao,

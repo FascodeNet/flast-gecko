@@ -1072,6 +1072,21 @@ struct ivec4_scalar {
   friend ivec4_scalar operator&(int32_t a, ivec4_scalar b) {
     return ivec4_scalar{a & b.x, a & b.y, a & b.z, a & b.w};
   }
+
+  int32_t& operator[](int index) {
+    switch (index) {
+      case 0:
+        return x;
+      case 1:
+        return y;
+      case 2:
+        return z;
+      case 3:
+        return w;
+      default:
+        UNREACHABLE;
+    }
+  }
 };
 
 struct ivec4 {
@@ -1770,7 +1785,7 @@ struct vec4 {
         y(Float{s0.y, s1.y, s2.y, s3.y}),
         z(Float{s0.z, s1.z, s2.z, s3.z}),
         w(Float{s0.w, s1.w, s2.w, s3.w}) {}
-  Float& select(XYZW c) {
+  ALWAYS_INLINE Float& select(XYZW c) {
     switch (c) {
       case X:
         return x;
@@ -1784,23 +1799,23 @@ struct vec4 {
         UNREACHABLE;
     }
   }
-  Float& sel(XYZW c1) { return select(c1); }
+  ALWAYS_INLINE Float& sel(XYZW c1) { return select(c1); }
 
-  vec2 sel(XYZW c1, XYZW c2) { return vec2(select(c1), select(c2)); }
+  ALWAYS_INLINE vec2 sel(XYZW c1, XYZW c2) { return vec2(select(c1), select(c2)); }
 
-  vec3 sel(XYZW c1, XYZW c2, XYZW c3) {
+  ALWAYS_INLINE vec3 sel(XYZW c1, XYZW c2, XYZW c3) {
     return vec3(select(c1), select(c2), select(c3));
   }
-  vec3_ref lsel(XYZW c1, XYZW c2, XYZW c3) {
+  ALWAYS_INLINE vec3_ref lsel(XYZW c1, XYZW c2, XYZW c3) {
     return vec3_ref(select(c1), select(c2), select(c3));
   }
 
-  vec2_ref lsel(XYZW c1, XYZW c2) { return vec2_ref(select(c1), select(c2)); }
+  ALWAYS_INLINE vec2_ref lsel(XYZW c1, XYZW c2) { return vec2_ref(select(c1), select(c2)); }
 
-  vec4 sel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
+  ALWAYS_INLINE vec4 sel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
     return vec4(select(c1), select(c2), select(c3), select(c4));
   }
-  vec4_ref lsel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
+  ALWAYS_INLINE vec4_ref lsel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
     return vec4_ref(select(c1), select(c2), select(c3), select(c4));
   }
 

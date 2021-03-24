@@ -97,7 +97,9 @@ class FontFaceSet final : public DOMEventTargetHelper,
         const nsTArray<gfxFontFeature>& aFeatureSettings,
         const nsTArray<gfxFontVariation>& aVariationSettings,
         uint32_t aLanguageOverride, gfxCharacterMap* aUnicodeRanges,
-        StyleFontDisplay aFontDisplay, RangeFlags aRangeFlags) override;
+        StyleFontDisplay aFontDisplay, RangeFlags aRangeFlags,
+        float aAscentOverride, float aDescentOverride,
+        float aLineGapOverride) override;
 
    private:
     RefPtr<FontFaceSet> mFontFaceSet;
@@ -360,7 +362,7 @@ class FontFaceSet final : public DOMEventTargetHelper,
   //
   // We could use just the pointer and use this as a hash set, but then we'd
   // have no way to verify that we've checked all the loads we should.
-  nsDataHashtable<nsPtrHashKey<const gfxFontFaceSrc>, bool> mAllowedFontLoads;
+  nsTHashMap<nsPtrHashKey<const gfxFontFaceSrc>, bool> mAllowedFontLoads;
 
   // Whether mNonRuleFaces has changed since last time UpdateRules ran.
   bool mNonRuleFacesDirty;

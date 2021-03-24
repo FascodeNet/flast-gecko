@@ -281,7 +281,7 @@ input[type = "url"]:focus:-moz-ui-invalid:not(:placeholder-shown) ~ .tooltip-con
 }
 
 .copied-button-text {
-  background-image: url(chrome://global/skin/icons/check.svg);
+  background-image: url(chrome://global/skin/icons/success.svg);
   background-repeat: no-repeat;
   -moz-context-properties: fill;
   fill: currentColor;
@@ -337,16 +337,6 @@ input[name="password"] {
   background-image: url("chrome://browser/content/aboutlogins/icons/hide-password.svg") !important;
 }
 
-.reveal-password-checkbox:-moz-focusring {
-  outline: 2px solid var(--in-content-border-active);
-  /* offset outline to align with 1px border-width set for buttons/menulists above. */
-  outline-offset: -1px;
-  /* Make outline-radius slightly bigger than the border-radius set above,
-   * to make the thicker outline corners look smooth */
-  -moz-outline-radius: 3px;
-  box-shadow: 0 0 0 4px var(--in-content-border-active-shadow);
-}
-
 .login-item-favicon {
   width: 24px;
 }
@@ -356,7 +346,7 @@ input[name="password"] {
   height: 24px;
   width: 24px;
   flex-shrink: 0;
-  background-image: url("chrome://mozapps/skin/places/defaultFavicon.svg");
+  background-image: url("chrome://global/skin/icons/defaultFavicon.svg");
   background-repeat: no-repeat;
   background-size: contain;
   -moz-context-properties: fill, fill-opacity;

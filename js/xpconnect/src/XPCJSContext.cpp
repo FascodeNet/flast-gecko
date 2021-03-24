@@ -579,18 +579,18 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   // Now is a good time to turn on profiling if it's pending.
   PROFILER_JS_INTERRUPT_CALLBACK();
 
-#ifdef MOZ_GECKO_PROFILER
-  nsDependentCString filename("unknown file");
-  JS::AutoFilename scriptFilename;
-  // Computing the line number can be very expensive (see bug 1330231 for
-  // example), so don't request it here.
-  if (JS::DescribeScriptedCaller(cx, &scriptFilename)) {
-    if (const char* file = scriptFilename.get()) {
-      filename.Assign(file, strlen(file));
+  if (profiler_can_accept_markers()) {
+    nsDependentCString filename("unknown file");
+    JS::AutoFilename scriptFilename;
+    // Computing the line number can be very expensive (see bug 1330231 for
+    // example), so don't request it here.
+    if (JS::DescribeScriptedCaller(cx, &scriptFilename)) {
+      if (const char* file = scriptFilename.get()) {
+        filename.Assign(file, strlen(file));
+      }
+      PROFILER_MARKER_TEXT("JS::InterruptCallback", JS, {}, filename);
     }
-    PROFILER_MARKER_TEXT("JS::InterruptCallback", JS, {}, filename);
   }
-#endif
 
   // Normally we record mSlowScriptCheckpoint when we start to process an
   // event. However, we can run JS outside of event handlers. This code takes
@@ -619,7 +619,6 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
 
   nsString addonId;
   const char* prefName;
-  bool runningContentJS = false;
   auto principal = BasePrincipal::Cast(nsContentUtils::SubjectPrincipal(cx));
   bool chrome = principal->Is<SystemPrincipal>();
   if (chrome) {
@@ -633,7 +632,6 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   } else {
     prefName = PREF_MAX_SCRIPT_RUN_TIME_CONTENT;
     limit = StaticPrefs::dom_max_script_run_time();
-    runningContentJS = true;
   }
 
   // When the parent process slow script dialog is disabled, we still want
@@ -660,9 +658,13 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
     return true;
   }
 
-  // For content scripts, we only want to show the slow script dialogue if the
-  // user is actually trying to perform an important interaction.
-  if (runningContentJS && XRE_IsContentProcess() &&
+  // For scripts in content processes, we only want to show the slow script
+  // dialogue if the user is actually trying to perform an important
+  // interaction. In theory this could be a chrome script running in the
+  // content process, which we probably don't want to give the user the ability
+  // to terminate. However, if this is the case we won't be able to map the
+  // script global to a window and we'll bail out below.
+  if (XRE_IsContentProcess() &&
       StaticPrefs::dom_max_script_run_time_require_critical_input()) {
     // Call possibly slow PeekMessages after the other common early returns in
     // this method.
@@ -824,111 +826,100 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
 
   JSContext* cx = xpccx->Context();
 
-  bool useBaselineInterp = Preferences::GetBool(JS_OPTIONS_DOT_STR "blinterp");
-  bool useBaselineJit = Preferences::GetBool(JS_OPTIONS_DOT_STR "baselinejit");
-  bool useIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "ion");
+  // Some prefs are unlisted in all.js / StaticPrefs (and thus are invisible in
+  // about:config). Make sure we use explicit defaults here.
   bool useJitForTrustedPrincipals =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "jit_trustedprincipals");
-  bool useNativeRegExp =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "native_regexp");
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "jit_trustedprincipals", false);
+  bool disableWasmHugeMemory = Preferences::GetBool(
+      JS_OPTIONS_DOT_STR "wasm_disable_huge_memory", false);
 
-  bool offthreadIonCompilation =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "ion.offthread_compilation");
-  bool useBaselineEager = Preferences::GetBool(
-      JS_OPTIONS_DOT_STR "baselinejit.unsafe_eager_compilation");
-  bool useIonEager =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "ion.unsafe_eager_compilation");
-#ifdef DEBUG
-  bool fullJitDebugChecks =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "jit.full_debug_checks");
-#endif
-
-  int32_t baselineInterpThreshold =
-      Preferences::GetInt(JS_OPTIONS_DOT_STR "blinterp.threshold", -1);
-  int32_t baselineThreshold =
-      Preferences::GetInt(JS_OPTIONS_DOT_STR "baselinejit.threshold", -1);
-  int32_t normalIonThreshold =
-      Preferences::GetInt(JS_OPTIONS_DOT_STR "ion.threshold", -1);
-  int32_t ionFrequentBailoutThreshold = Preferences::GetInt(
-      JS_OPTIONS_DOT_STR "ion.frequent_bailout_threshold", -1);
-
-  bool spectreIndexMasking =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.index_masking");
-  bool spectreObjectMitigationsBarriers = Preferences::GetBool(
-      JS_OPTIONS_DOT_STR "spectre.object_mitigations.barriers");
-  bool spectreObjectMitigationsMisc = Preferences::GetBool(
-      JS_OPTIONS_DOT_STR "spectre.object_mitigations.misc");
-  bool spectreStringMitigations =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.string_mitigations");
-  bool spectreValueMasking =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.value_masking");
-  bool spectreJitToCxxCalls =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.jit_to_C++_calls");
-
-  bool disableWasmHugeMemory =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_disable_huge_memory");
-
+  bool safeMode = false;
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
   if (xr) {
-    bool safeMode = false;
     xr->GetInSafeMode(&safeMode);
-    if (safeMode) {
-      useBaselineJit = false;
-      useIon = false;
-      useJitForTrustedPrincipals = false;
-      useNativeRegExp = false;
-    }
   }
 
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_BASELINE_INTERPRETER_ENABLE,
-                                useBaselineInterp);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_BASELINE_ENABLE,
-                                useBaselineJit);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_ENABLE, useIon);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_JIT_TRUSTEDPRINCIPALS_ENABLE,
-                                useJitForTrustedPrincipals);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
-                                useNativeRegExp);
+  // NOTE: Baseline Interpreter is still used in safe-mode. This gives a big
+  //       perf gain and is our simplest JIT so we make a tradeoff.
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_BASELINE_INTERPRETER_ENABLE,
+      StaticPrefs::javascript_options_blinterp_DoNotUseDirectly());
 
-  JS_SetOffthreadIonCompilationEnabled(cx, offthreadIonCompilation);
+  // Disable most JITs in Safe-Mode.
+  if (safeMode) {
+    JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_BASELINE_ENABLE, false);
+    JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_ENABLE, false);
+    JS_SetGlobalJitCompilerOption(
+        cx, JSJITCOMPILER_JIT_TRUSTEDPRINCIPALS_ENABLE, false);
+    JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
+                                  false);
+  } else {
+    JS_SetGlobalJitCompilerOption(
+        cx, JSJITCOMPILER_BASELINE_ENABLE,
+        StaticPrefs::javascript_options_baselinejit_DoNotUseDirectly());
+    JS_SetGlobalJitCompilerOption(
+        cx, JSJITCOMPILER_ION_ENABLE,
+        StaticPrefs::javascript_options_ion_DoNotUseDirectly());
+    JS_SetGlobalJitCompilerOption(cx,
+                                  JSJITCOMPILER_JIT_TRUSTEDPRINCIPALS_ENABLE,
+                                  useJitForTrustedPrincipals);
+    JS_SetGlobalJitCompilerOption(
+        cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
+        StaticPrefs::javascript_options_native_regexp_DoNotUseDirectly());
+  }
+
+  JS_SetOffthreadIonCompilationEnabled(
+      cx, StaticPrefs::
+              javascript_options_ion_offthread_compilation_DoNotUseDirectly());
 
   JS_SetGlobalJitCompilerOption(
       cx, JSJITCOMPILER_BASELINE_INTERPRETER_WARMUP_TRIGGER,
-      baselineInterpThreshold);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_BASELINE_WARMUP_TRIGGER,
-                                useBaselineEager ? 0 : baselineThreshold);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_NORMAL_WARMUP_TRIGGER,
-                                useIonEager ? 0 : normalIonThreshold);
-  JS_SetGlobalJitCompilerOption(cx,
-                                JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD,
-                                ionFrequentBailoutThreshold);
+      StaticPrefs::javascript_options_blinterp_threshold_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_BASELINE_WARMUP_TRIGGER,
+      StaticPrefs::javascript_options_baselinejit_threshold_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_ION_NORMAL_WARMUP_TRIGGER,
+      StaticPrefs::javascript_options_ion_threshold_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD,
+      StaticPrefs::
+          javascript_options_ion_frequent_bailout_threshold_DoNotUseDirectly());
 
 #ifdef DEBUG
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_FULL_DEBUG_CHECKS,
-                                fullJitDebugChecks);
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_FULL_DEBUG_CHECKS,
+      StaticPrefs::javascript_options_jit_full_debug_checks_DoNotUseDirectly());
 #endif
 
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_SPECTRE_INDEX_MASKING,
-                                spectreIndexMasking);
+#if !defined(JS_CODEGEN_MIPS32) && !defined(JS_CODEGEN_MIPS64)
   JS_SetGlobalJitCompilerOption(
-      cx, JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS_BARRIERS,
-      spectreObjectMitigationsBarriers);
-  JS_SetGlobalJitCompilerOption(cx,
-                                JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS_MISC,
-                                spectreObjectMitigationsMisc);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_SPECTRE_STRING_MITIGATIONS,
-                                spectreStringMitigations);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_SPECTRE_VALUE_MASKING,
-                                spectreValueMasking);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_SPECTRE_JIT_TO_CXX_CALLS,
-                                spectreJitToCxxCalls);
+      cx, JSJITCOMPILER_SPECTRE_INDEX_MASKING,
+      StaticPrefs::javascript_options_spectre_index_masking_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS,
+      StaticPrefs::
+          javascript_options_spectre_object_mitigations_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_SPECTRE_STRING_MITIGATIONS,
+      StaticPrefs::
+          javascript_options_spectre_string_mitigations_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_SPECTRE_VALUE_MASKING,
+      StaticPrefs::javascript_options_spectre_value_masking_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_SPECTRE_JIT_TO_CXX_CALLS,
+      StaticPrefs::
+          javascript_options_spectre_jit_to_cxx_calls_DoNotUseDirectly());
+#endif
+
   if (disableWasmHugeMemory) {
     bool disabledHugeMemory = JS::DisableWasmHugeMemory();
     MOZ_RELEASE_ASSERT(disabledHugeMemory);
   }
 
   JS::SetLargeArrayBuffersEnabled(
-      StaticPrefs::javascript_options_large_arraybuffers());
+      StaticPrefs::javascript_options_large_arraybuffers_DoNotUseDirectly());
 }
 
 static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
@@ -943,6 +934,10 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_trustedprincipals");
   bool useWasmOptimizing =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_optimizingjit");
+#ifdef ENABLE_WASM_CRANELIFT
+  // Cranelift->Ion transition.  When we land for phase 2, this goes away.
+  bool forceWasmIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_force_ion");
+#endif
   bool useWasmBaseline =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_baselinejit");
   bool useWasmReftypes =
@@ -1041,7 +1036,9 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       .setWasm(useWasm)
       .setWasmForTrustedPrinciples(useWasmTrustedPrincipals)
 #ifdef ENABLE_WASM_CRANELIFT
-      .setWasmCranelift(useWasmOptimizing)
+      // Cranelift->Ion transition
+      .setWasmCranelift(useWasmOptimizing && !forceWasmIon)
+      .setWasmIon(useWasmOptimizing && forceWasmIon)
 #else
       .setWasmIon(useWasmOptimizing)
 #endif

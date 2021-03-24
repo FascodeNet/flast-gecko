@@ -28,7 +28,7 @@
    type of icon displayed. This rule must be defined before the others in order
    for its list-style-image to be overridden. */
 .notification-anchor-icon {
-  list-style-image: url(chrome://browser/skin/notification-icons/default-info.svg);
+  list-style-image: url(chrome://global/skin/icons/info-filled.svg);
 }
 
 /* INDIVIDUAL NOTIFICATIONS */
@@ -199,20 +199,54 @@
   list-style-image: url(chrome://browser/skin/notification-icons/webauthn.svg);
 }
 
+@supports -moz-bool-pref("browser.proton.doorhangers.enabled") {
 #webRTC-preview:not([hidden]) {
-  display: grid;
+  min-width: 368px;
+  min-height: 10em;
+  -moz-box-orient: vertical;
+}
+
+#webRTC-previewVideo {
   border-radius: 4px;
   border: 1px solid var(--panel-separator-color);
-  overflow: hidden;
+  width: 368px;
+  /* If we don't set the min-width, width is ignored. */
+  min-width: 368px;
+  min-height: 10em;
+  max-height: 250px;
+}
+
+#webRTC-all-windows-shared,
+#webRTC-previewWarning {
+  font-size: 0.75em;
+  opacity: 0.6;
+}
+
+#webRTC-previewWarning {
+  margin-block-start: 14px;
+}
+
+/**
+ * All learn-more links tend to have an !important margin-top, but
+ * the small one below the WebRTC preview warning is special and
+ * doesn't have one by design.
+ */
+#webRTC-previewWarning-learnMore {
+  margin-top: 0 !important;
+  font-size: 0.75em;
+}
+} /** END Proton **/
+
+@supports not -moz-bool-pref("browser.proton.doorhangers.enabled") {
+#webRTC-preview:not([hidden]) {
+  border-radius: 4px;
+  border: 1px solid var(--panel-separator-color);
   min-width: 300px;
   min-height: 10em;
+  -moz-box-orient: vertical;
 }
 
-#webRTC-preview > *|* {
-  grid-area: 1 / 1;
-}
-
-html|*#webRTC-previewVideo {
+#webRTC-previewVideo {
   width: 300px;
   /* If we don't set the min-width, width is ignored. */
   min-width: 300px;
@@ -220,7 +254,7 @@ html|*#webRTC-previewVideo {
   max-height: 200px;
 }
 
-#webRTC-previewWarning {
+#webRTC-previewWarningBox {
   background: rgba(255,217,99,.8) url("chrome://browser/skin/warning.svg") no-repeat .75em .75em;
   color: #000;
   -moz-context-properties: fill;
@@ -230,8 +264,9 @@ html|*#webRTC-previewVideo {
   padding-inline-start: calc(1.5em + 16px);
   border-top: 1px solid var(--panel-separator-color);
 }
+} /** END not Proton **/
 
-#webRTC-previewWarning:-moz-locale-dir(rtl) {
+#webRTC-previewWarningBox:-moz-locale-dir(rtl) {
   background-position: calc(100% - .75em) .75em;
 }
 
@@ -318,13 +353,13 @@ html|*#webRTC-previewVideo {
 /* OFFLINE APPS */
 
 .popup-notification-icon[popupid="offline-app-usage"] {
-  list-style-image: url(chrome://global/skin/icons/question-64.png);
+  list-style-image: url(chrome://global/skin/icons/help.svg);
 }
 
 /* PLUGINS */
 
 .plugin-icon {
-  list-style-image: url(chrome://global/skin/plugins/plugin.svg);
+  list-style-image: url(chrome://global/skin/icons/plugin.svg);
   transition: fill 1.5s;
 }
 
@@ -358,7 +393,7 @@ html|*#webRTC-previewVideo {
 }
 
 .plugin-blocked > .plugin-icon {
-  list-style-image: url(chrome://global/skin/plugins/plugin-blocked.svg);
+  list-style-image: url(chrome://global/skin/icons/plugin-blocked.svg);
   fill: #d92215 !important;
 }
 

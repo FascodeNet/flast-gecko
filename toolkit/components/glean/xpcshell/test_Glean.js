@@ -73,20 +73,13 @@ add_task(function test_setup() {
   // Mock SysInfo.
   SysInfo.overrides = {
     version: "1.2.3",
-    arc: "x64",
+    arch: "x64",
   };
   MockRegistrar.register("@mozilla.org/system-info;1", SysInfo);
 
   // We need to initialize it once, otherwise operations will be stuck in the pre-init queue.
   let FOG = Cc["@mozilla.org/toolkit/glean;1"].createInstance(Ci.nsIFOG);
   FOG.initializeFOG();
-});
-
-add_task(function test_osversion_is_set() {
-  Assert.equal(
-    "1.2.3",
-    Glean.fogValidation.osVersion.testGetValue("fog-validation")
-  );
 });
 
 add_task(function test_fog_counter_works() {
@@ -158,13 +151,18 @@ add_task(function test_fog_boolean_works() {
 
 add_task(async function test_fog_event_works() {
   Glean.testOnlyIpc.noExtraEvent.record();
-  // FIXME(bug 1678567): Check that the value was recorded when we can.
-  // Assert.ok(Glean.testOnlyIpc.noExtraEvent.testGetValue("store1"));
+  var events = Glean.testOnlyIpc.noExtraEvent.testGetValue();
+  Assert.equal(1, events.length);
+  Assert.equal("test_only.ipc", events[0].category);
+  Assert.equal("no_extra_event", events[0].name);
 
   let extra = { extra1: "can set extras", extra2: "passing more data" };
   Glean.testOnlyIpc.anEvent.record(extra);
-  // FIXME(bug 1678567): Check that the value was recorded when we can.
-  // Assert.ok(Glean.testOnlyIpc.anEvent.testGetValue("store1"));
+  events = Glean.testOnlyIpc.anEvent.testGetValue();
+  Assert.equal(1, events.length);
+  Assert.equal("test_only.ipc", events[0].category);
+  Assert.equal("an_event", events[0].name);
+  Assert.deepEqual(extra, events[0].extra);
 });
 
 add_task(async function test_fog_memory_distribution_works() {

@@ -1182,7 +1182,9 @@ static Result CheckForStartComOrWoSign(const UniqueCERTCertList& certChain) {
     if (!node || !node->cert) {
       return Result::FATAL_ERROR_LIBRARY_FAILURE;
     }
-    if (CertDNIsInList(node->cert, StartComAndWoSignDNs)) {
+    nsTArray<uint8_t> certDER(node->cert->derCert.data,
+                              node->cert->derCert.len);
+    if (CertDNIsInList(certDER, StartComAndWoSignDNs)) {
       return Result::ERROR_REVOKED_CERTIFICATE;
     }
   }
@@ -1353,13 +1355,12 @@ Result NSSCertDBTrustDomain::IsChainValid(const DERArray& certArray, Time time,
   // This algorithm only applies if we are verifying in the context of a TLS
   // handshake. To determine this, we check mHostname: If it isn't set, this is
   // not TLS, so don't run the algorithm.
-  if (mHostname && CertDNIsInList(root.get(), RootSymantecDNs)) {
-    rootCert = nullptr;  // Clear the state for Segment...
-    nsTArray<RefPtr<nsIX509Cert>> intCerts;
-    nsCOMPtr<nsIX509Cert> eeCert;
+  nsTArray<uint8_t> rootCertDER(root.get()->derCert.data,
+                                root.get()->derCert.len);
+  if (mHostname && CertDNIsInList(rootCertDER, RootSymantecDNs)) {
+    nsTArray<nsTArray<uint8_t>> intCerts;
 
-    nsrv = nsNSSCertificate::SegmentCertificateChain(nssCertList, rootCert,
-                                                     intCerts, eeCert);
+    nsrv = nsNSSCertificate::GetIntermediatesAsDER(nssCertList, intCerts);
     if (NS_FAILED(nsrv)) {
       // This chain is supposed to be complete, so this is an error.
       return Result::ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED;
@@ -1803,48 +1804,50 @@ bool CertIsInCertStorage(CERTCertificate* cert, nsICertStorage* certStorage) {
  *
  * @param certList the verified certificate list
  */
-void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
-  if (!certList) {
-    return;
-  }
-
+void SaveIntermediateCerts(const nsTArray<nsTArray<uint8_t>>& certList) {
   UniqueCERTCertList intermediates(CERT_NewCertList());
   if (!intermediates) {
     return;
   }
 
-  bool isEndEntity = true;
+  size_t index = 0;
   size_t numIntermediates = 0;
-  for (CERTCertListNode* node = CERT_LIST_HEAD(certList);
-       !CERT_LIST_END(node, certList); node = CERT_LIST_NEXT(node)) {
-    if (isEndEntity) {
-      // Skip the end-entity; we only want to store intermediates
-      isEndEntity = false;
+  for (const auto& certDER : certList) {
+    // Skip the end-entity; we only want to store intermediates. Similarly,
+    // there's no need to save the trust anchor - it's either already a
+    // permanent certificate or it's the Microsoft Family Safety root or an
+    // enterprise root temporarily imported via the child mode or enterprise
+    // root features. We don't want to import these because they're intended to
+    // be temporary (and because importing them happens to reset their trust
+    // settings, which breaks these features).
+    index++;
+    if (index == 1 || index == certList.Length()) {
       continue;
     }
 
-    if (node->cert->slot) {
+    SECItem certDERItem = {siBuffer,
+                           const_cast<unsigned char*>(certDER.Elements()),
+                           AssertedCast<unsigned int>(certDER.Length())};
+    UniqueCERTCertificate certHandle(CERT_NewTempCertificate(
+        CERT_GetDefaultCertDB(), &certDERItem, nullptr, false, true));
+    if (!certHandle) {
+      continue;
+    }
+    if (certHandle->slot) {
       // This cert was found on a token; no need to remember it in the permanent
       // database.
       continue;
     }
 
-    if (node->cert->isperm) {
+    PRBool isperm;
+    if (CERT_GetCertIsPerm(certHandle.get(), &isperm) != SECSuccess) {
+      continue;
+    }
+    if (isperm) {
       // We don't need to remember certs already stored in perm db.
       continue;
     }
 
-    // No need to save the trust anchor - it's either already a permanent
-    // certificate or it's the Microsoft Family Safety root or an enterprise
-    // root temporarily imported via the child mode or enterprise root features.
-    // We don't want to import these because they're intended to be temporary
-    // (and because importing them happens to reset their trust settings, which
-    // breaks these features).
-    if (node == CERT_LIST_TAIL(certList)) {
-      continue;
-    }
-
-    UniqueCERTCertificate certHandle(CERT_DupCertificate(node->cert));
     if (CERT_AddCertToListTail(intermediates.get(), certHandle.get()) !=
         SECSuccess) {
       // If this fails, we're probably out of memory. Just return.
@@ -1877,6 +1880,16 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
             }
 
             if (CertIsInCertStorage(node->cert, certStorage)) {
+              continue;
+            }
+            PRBool isperm;
+            if (CERT_GetCertIsPerm(node->cert, &isperm) != SECSuccess) {
+              continue;
+            }
+            if (isperm) {
+              // This may be a certificate that has already been imported by
+              // another background import task that happened to run before
+              // this one.
               continue;
             }
             // This is a best-effort attempt at avoiding unknown issuer errors

@@ -13,6 +13,15 @@ const EXPORTED_SYMBOLS = ["ExperimentAPI", "ExperimentFeature"];
  * In the future, this will be moved to a configuration file.
  */
 const MANIFEST = {
+  urlbar: {
+    description: "The Address Bar",
+    variables: {
+      quickSuggestEnabled: {
+        type: "boolean",
+        fallbackPref: "browser.urlbar.quicksuggest.enabled",
+      },
+    },
+  },
   aboutwelcome: {
     description: "The about:welcome page",
     enabledFallbackPref: "browser.aboutwelcome.enabled",
@@ -20,6 +29,10 @@ const MANIFEST = {
       screens: {
         type: "json",
         fallbackPref: "browser.aboutwelcome.screens",
+      },
+      design: {
+        type: "string",
+        fallbackPref: "browser.aboutwelcome.design",
       },
       skipFocus: {
         type: "boolean",
@@ -320,7 +333,7 @@ class ExperimentFeature {
   static MANIFEST = MANIFEST;
   constructor(featureId, manifest) {
     this.featureId = featureId;
-    this.defaultPrefValues = {};
+    this.prefGetters = {};
     this.manifest = manifest || ExperimentFeature.MANIFEST[featureId];
     if (!this.manifest) {
       Cu.reportError(
@@ -349,7 +362,7 @@ class ExperimentFeature {
       const { type, fallbackPref } = variables[key];
       if (fallbackPref) {
         XPCOMUtils.defineLazyPreferenceGetter(
-          this.defaultPrefValues,
+          this.prefGetters,
           key,
           fallbackPref,
           null,
@@ -363,6 +376,22 @@ class ExperimentFeature {
         );
       }
     });
+  }
+
+  _getUserPrefsValues() {
+    let userPrefs = {};
+    Object.keys(this.manifest?.variables || {}).forEach(variable => {
+      if (
+        this.manifest.variables[variable].fallbackPref &&
+        Services.prefs.prefHasUserValue(
+          this.manifest.variables[variable].fallbackPref
+        )
+      ) {
+        userPrefs[variable] = this.prefGetters[variable];
+      }
+    });
+
+    return userPrefs;
   }
 
   ready() {
@@ -401,18 +430,18 @@ class ExperimentFeature {
    * @param {{sendExposureEvent: boolean, defaultValue?: any}} options
    * @returns {obj} The feature value
    */
-  getValue({ sendExposureEvent, defaultValue = null } = {}) {
+  getValue({ sendExposureEvent } = {}) {
+    // Any user pref will override any other configuration
+    let userPrefs = this._getUserPrefsValues();
     const branch = ExperimentAPI.activateBranch({
       featureId: this.featureId,
       sendExposureEvent,
     });
     if (branch?.feature?.value) {
-      return branch.feature.value;
+      return { ...branch.feature.value, ...userPrefs };
     }
 
-    return Object.keys(this.defaultPrefValues).length
-      ? this.defaultPrefValues
-      : defaultValue;
+    return this.prefGetters;
   }
 
   recordExposureEvent() {
@@ -438,11 +467,12 @@ class ExperimentFeature {
         featureId: this.featureId,
       }),
       fallbackPrefs:
-        this.defaultPrefValues &&
-        Object.keys(this.defaultPrefValues).map(prefName => [
+        this.prefGetters &&
+        Object.keys(this.prefGetters).map(prefName => [
           prefName,
-          this.defaultPrefValues[prefName],
+          this.prefGetters[prefName],
         ]),
+      userPrefs: this._getUserPrefsValues(),
     };
   }
 }

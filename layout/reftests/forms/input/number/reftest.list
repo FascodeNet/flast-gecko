@@ -17,6 +17,7 @@ fuzzy-if(skiaContent,0-2,0-13) == show-value.html show-value-ref.html
 
 # disabled
 == number-disabled.html number-disabled-ref.html
+fails-if(Android&&nativeThemePref) != number-spinbox-disabled.html number-spinbox-disabled-notref.html
 
 # auto width:
 == number-auto-width-1.html number-auto-width-1-ref.html
@@ -33,6 +34,8 @@ fuzzy-if(!nativeThemePref,0-1,0-1) == number-significant-fractional-digits.html 
 
 # focus
 fuzzy-if(skiaContent,0-2,0-5) needs-focus == focus-handling.html focus-handling-ref.html
+== spinner-overflow.html spinner-overflow-ref.html
+== spinner-overflow-vertical.html spinner-overflow-vertical-ref.html
 
 # select
 fuzzy-if(skiaContent,0-1,0-1) == number-selected.html number-selected-ref.html
@@ -41,6 +44,7 @@ fuzzy-if(skiaContent,0-1,0-1) == number-selected.html number-selected-ref.html
 == number-pseudo-elements.html number-pseudo-elements-ref.html
 
 == number-placeholder.html number-placeholder-ref.html
+== number-placeholder-right-aligned.html number-placeholder-right-aligned-ref.html
 
 # check that if the anonymous text control is reframed, we reframe the whole
 # number control (the fuzzy is for the top-right and bottom-left of the border

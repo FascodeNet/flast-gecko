@@ -9,18 +9,10 @@
   --toolbarbutton-outer-padding: 2px;
   --toolbarbutton-inner-padding: 8px;
 
-  /* These hover and active colors should work on both light and dark
-     backgrounds. We'll later set colors that cater for light and dark
-     backgrounds specifically when we can detect them. */
-  --toolbarbutton-hover-background: var(--lwt-toolbarbutton-hover-background, hsla(0,0%,70%,.4));
-  --toolbarbutton-active-background: var(--lwt-toolbarbutton-active-background, hsla(0,0%,70%,.6));
+  --toolbarbutton-hover-background: var(--button-hover-bgcolor);
+  --toolbarbutton-active-background: var(--button-active-bgcolor);
 
-  --backbutton-background: hsla(0,100%,100%,.8);
-  --backbutton-hover-background: var(--backbutton-background);
-  --backbutton-active-background: var(--toolbarbutton-active-background);
-  --backbutton-border-color: hsla(240,5%,5%,.3);
-
-  --toolbarseparator-color: var(--lwt-toolbar-vertical-separator, rgba(0,0,0,.3));
+  --toolbarseparator-color: color-mix(in srgb, currentColor 20%, transparent);
 
   --bookmark-block-padding: 4px;
 
@@ -33,6 +25,25 @@
 @supports not -moz-bool-pref("browser.proton.enabled") {
 :root {
   --toolbarbutton-focus-outline: 2px solid currentColor;
+
+  --toolbarbutton-hover-background: color-mix(in srgb, currentColor 10%, transparent);
+  --toolbarbutton-active-background: color-mix(in srgb, currentColor 15%, transparent);
+
+  --backbutton-background: hsla(0,100%,100%,.5);
+  --backbutton-hover-background: var(--backbutton-background);
+  --backbutton-active-background: var(--toolbarbutton-active-background);
+  --backbutton-border-color: hsla(240,5%,5%,.3);
+}
+
+:root:-moz-lwtheme {
+  --toolbarbutton-hover-background: color-mix(in srgb, currentColor 15%, transparent);
+  --toolbarbutton-active-background: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+:root:-moz-lwtheme-brighttext {
+  --backbutton-background: var(--toolbarbutton-hover-background);
+  --backbutton-hover-background: var(--toolbarbutton-active-background);
+  --backbutton-active-background: color-mix(in srgb, currentColor 20%, transparent);
 }
 } /*** END !proton ***/
 
@@ -41,43 +52,34 @@
   --toolbarbutton-focus-outline: var(--focus-outline);
 }
 } /*** END proton ***/
-@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
-:root {
+:root[uidensity=compact] {
+  --toolbarbutton-outer-padding: 3px;
+  --toolbarbutton-inner-padding: 6px;
+  --bookmark-block-padding: 1px;
+}
 
+@supports not -moz-bool-pref("browser.proton.enabled") {
+:root {
   --toolbarbutton-outer-padding: 2px;
   --toolbarbutton-inner-padding: 6px;
 }
-} /** END !proton **/
-
 :root[uidensity=compact] {
   --toolbarbutton-outer-padding: 1px;
-  --bookmark-block-padding: 1px;
 }
+} /** END !proton **/
 
 :root[uidensity=touch] {
   --toolbarbutton-inner-padding: 9px;
   --bookmark-block-padding: 7px;
 }
 
-/* We use :-moz-lwtheme-* for toolbarbuttons that aren't inside a toolbar, and
-   [brighttext] to cater for OS themes where :-moz-lwtheme-* doesn't apply. */
-:root:-moz-lwtheme-darktext,
-toolbar:not([brighttext]) {
-  --toolbarbutton-hover-background: var(--lwt-toolbarbutton-hover-background, hsla(240,5%,5%,.1));
-  --toolbarbutton-active-background: var(--lwt-toolbarbutton-active-background, hsla(240,5%,5%,.15));
+@supports -moz-bool-pref("browser.proton.tabs.enabled") {
+:root:not([uidensity=touch]) #TabsToolbar {
+  /* Override the inner padding to ensure the dimensions match the tabs, but also making sure
+     different types of buttons (combined-buttons-dropmarker or text) still look correct. */
+  --toolbarbutton-inner-padding: calc((var(--tab-min-height) - 16px) / 2);
 }
-
-:root:-moz-lwtheme-brighttext,
-toolbar[brighttext] {
-  --toolbarbutton-hover-background: var(--lwt-toolbarbutton-hover-background, hsla(0,0%,70%,.4));
-  --toolbarbutton-active-background: var(--lwt-toolbarbutton-active-background, hsla(0,0%,70%,.6));
-
-  --backbutton-background: var(--toolbarbutton-hover-background);
-  --backbutton-hover-background: var(--toolbarbutton-active-background);
-  --backbutton-active-background: hsla(0,0%,100%,.4);
-
-  --toolbarseparator-color: var(--lwt-toolbar-vertical-separator, rgba(255,255,255,.3));
-}
+} /*** END proton ***/
 
 /* ::::: primary toolbar buttons ::::: */
 
@@ -123,11 +125,6 @@ toolbar[brighttext] {
   background-color: Highlight;
 }
 
-.findbar-button {
-  appearance: none;
-  color: inherit;
-}
-
 toolbar .toolbarbutton-1 {
   appearance: none;
   margin: 0;
@@ -135,7 +132,7 @@ toolbar .toolbarbutton-1 {
   -moz-box-pack: center;
 }
 
-@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
+@supports not -moz-bool-pref("browser.proton.enabled") {
 :root:not([uidensity=compact]) #PanelUI-button {
   padding-inline-start: 5px;
 }
@@ -144,7 +141,7 @@ toolbar .toolbarbutton-1 {
   padding-inline-end: 5px;
 }
 } /*** END !proton ***/
-@supports -moz-bool-pref("browser.proton.toolbar.enabled") {
+@supports -moz-bool-pref("browser.proton.enabled") {
 /*** Adds padding to end of toolbar while making that space click the first button ***/
 #PanelUI-menu-button {
   padding-inline-end: var(--toolbar-start-end-padding);
@@ -155,7 +152,6 @@ toolbar .toolbarbutton-1 > menupopup {
   margin-top: -3px;
 }
 
-.findbar-button,
 toolbar .toolbarbutton-1 > .toolbarbutton-icon,
 toolbar .toolbarbutton-1 > .toolbarbutton-text,
 toolbar .toolbarbutton-1 > .toolbarbutton-badge-stack {
@@ -167,7 +163,7 @@ toolbar .toolbarbutton-1 > .toolbarbutton-badge-stack {
 #TabsToolbar .toolbarbutton-1 > .toolbarbutton-icon,
 #TabsToolbar .toolbarbutton-1 > .toolbarbutton-text,
 #TabsToolbar .toolbarbutton-1 > .toolbarbutton-badge-stack {
-  border-radius: var(--proton-tab-radius);
+  border-radius: var(--tab-border-radius);
 }
 } /*** END proton ***/
 
@@ -183,16 +179,6 @@ toolbar .toolbarbutton-combined-buttons-dropmarker > .toolbarbutton-icon {
   padding-block: calc(var(--toolbarbutton-inner-padding) + (16px - 12px) / 2);
   width: calc(2 * 2px + 12px);
 }
-
-@supports -moz-bool-pref("browser.proton.tabs.enabled") {
-#TabsToolbar .toolbarbutton-1 > .toolbarbutton-icon,
-#TabsToolbar .toolbarbutton-1 > .toolbarbutton-badge-stack {
-  min-height: var(--tab-min-height);
-  /* Increase the vertical padding to account for the taller button
-    and not stretch the icon. */
-  padding-block: calc((var(--tab-min-height) - 16px) / 2);
-}
-} /*** END proton ***/
 
 toolbar .toolbarbutton-1 > .toolbarbutton-text {
   padding-top: var(--toolbarbutton-vertical-text-padding);
@@ -232,7 +218,6 @@ toolbar[brighttext] .toolbaritem-combined-buttons > separator {
 #PersonalToolbar .toolbarbutton-1:not([disabled=true], [checked], [open], :active):hover,
 #tabbrowser-arrowscrollbox:not([scrolledtostart=true])::part(scrollbutton-up):hover,
 #tabbrowser-arrowscrollbox:not([scrolledtoend=true])::part(scrollbutton-down):hover,
-.findbar-button:not([checked="true"],[disabled="true"]):hover,
 toolbarbutton.bookmark-item:not(.subviewbutton, [disabled=true], [open]):hover,
 toolbar .toolbarbutton-1:not([disabled=true], [checked], [open], :active):hover > .toolbarbutton-icon,
 toolbar .toolbarbutton-1:not([disabled=true], [checked], [open], :active):hover > .toolbarbutton-text,
@@ -242,7 +227,6 @@ toolbar .toolbarbutton-1:not([disabled=true], [checked], [open], :active):hover 
 }
 
 #PersonalToolbar .toolbarbutton-1:not([disabled=true]):is([open],[checked],:hover:active),
-.findbar-button:not([disabled=true]):is([checked="true"],:hover:active),
 toolbarbutton.bookmark-item:hover:active:not(.subviewbutton, [disabled="true"]),
 toolbarbutton.bookmark-item[open="true"],
 toolbar .toolbarbutton-1:not([disabled=true]):is([open],[checked],:hover:active) > .toolbarbutton-icon,
@@ -252,14 +236,8 @@ toolbar .toolbarbutton-1:not([disabled=true]):is([open],[checked],:hover:active)
   color: inherit;
 }
 
-toolbar .toolbarbutton-1[checked]:not(:active):hover > .toolbarbutton-icon {
-  background-color: var(--toolbarbutton-hover-background);
-  transition: background-color .4s;
-}
-
 /* Keyboard focus styling */
 #PersonalToolbar .toolbarbutton-1:-moz-focusring,
-.findbar-button:-moz-focusring,
 findbar toolbarbutton.tabbable:-moz-focusring,
 toolbarbutton.bookmark-item:not(.subviewbutton):-moz-focusring,
 toolbar:not(#PersonalToolbar) .toolbarbutton-1:-moz-focusring > .toolbarbutton-icon,
@@ -271,7 +249,6 @@ toolbar:not(#PersonalToolbar) .toolbarbutton-1:-moz-focusring > .toolbarbutton-b
   outline-offset: calc(var(--focus-outline-width) * -1);
 }
 
-:root[uidensity=compact] .findbar-button:-moz-focusring,
 :root[uidensity=compact] findbar toolbarbutton.tabbable:-moz-focusring,
 :root[uidensity=compact] toolbar:not(#PersonalToolbar) .toolbarbutton-1:-moz-focusring > .toolbarbutton-icon,
 :root[uidensity=compact] toolbar:not(#PersonalToolbar) .toolbarbutton-1:-moz-focusring > .toolbarbutton-text,
@@ -288,7 +265,7 @@ toolbar .toolbarbutton-1:-moz-focusring {
   outline: none;
 }
 
-@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
+@supports not -moz-bool-pref("browser.proton.enabled") {
 :root:not([uidensity=compact]) #back-button {
   padding-block: 3px;
   padding-inline: 3px 0;
@@ -364,17 +341,28 @@ toolbar .toolbarbutton-1:-moz-focusring {
 
 /* ::::: bookmark buttons ::::: */
 
-@supports not -moz-bool-pref("browser.proton.toolbar.enabled") {
+#personal-toolbar-empty-description,
+#PersonalToolbar .toolbarbutton-1,
+toolbarbutton.bookmark-item:not(.subviewbutton) {
+  margin: 2px;
+  padding: var(--bookmark-block-padding) 4px;
+}
+
+#PersonalToolbar .toolbarbutton-1,
+toolbarbutton.bookmark-item:not(.subviewbutton) {
+  border-radius: var(--toolbarbutton-border-radius);
+}
+
+:root[uidensity=compact] #PersonalToolbar .toolbarbutton-1,
+:root[uidensity=compact] toolbarbutton.bookmark-item:not(.subviewbutton) {
+  margin-inline: 1px;
+}
+
+@supports not -moz-bool-pref("browser.proton.enabled") {
   #PersonalToolbar .toolbarbutton-1,
   #personal-toolbar-empty-description,
   toolbarbutton.bookmark-item:not(.subviewbutton) {
-    margin: 0 2px;
-    padding: var(--bookmark-block-padding) 4px;
-  }
-
-  #PersonalToolbar .toolbarbutton-1,
-  toolbarbutton.bookmark-item:not(.subviewbutton) {
-    border-radius: var(--toolbarbutton-border-radius);
+    margin-block: 0;
   }
 
   #PersonalToolbar > #wrapper-import-button + #wrapper-personal-bookmarks > #personal-bookmarks,
@@ -404,33 +392,11 @@ toolbar .toolbarbutton-1:-moz-focusring {
       border-inline-start-width: 0.5px;
     }
   }
-} /** END !proton **/
-
-@supports -moz-bool-pref("browser.proton.toolbar.enabled") {
-  #PersonalToolbar .toolbarbutton-1,
-  #personal-toolbar-empty-description,
-  toolbarbutton.bookmark-item:not(.subviewbutton) {
-    margin: 2px;
-    padding: var(--bookmark-block-padding) 4px;
-  }
-
-  /*
-   * bookmark items' border radius differ from other toolbar items, which is why we don't reuse
-   * --toolbarbutton-border-radius.
-   */
-  #PersonalToolbar .toolbarbutton-1,
-  toolbarbutton.bookmark-item:not(.subviewbutton) {
-    border-radius: 2px;
-  }
-} /** END proton **/
+} /*** END !proton ***/
 
 toolbarbutton.bookmark-item:not(.subviewbutton) {
   max-width: 13em;
   appearance: none;
-}
-
-:root[uidensity=compact] toolbarbutton.bookmark-item:not(.subviewbutton) {
-  margin-inline: 1px;
 }
 
 /**

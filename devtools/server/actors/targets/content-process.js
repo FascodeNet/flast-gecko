@@ -98,10 +98,6 @@ const ContentProcessTargetActor = TargetActorMixin(
       return true;
     },
 
-    get exited() {
-      return !this._contextPool;
-    },
-
     get url() {
       return undefined;
     },
@@ -156,6 +152,8 @@ const ContentProcessTargetActor = TargetActorMixin(
 
         traits: {
           networkMonitor: false,
+          // See trait description in browsing-context.js
+          supportsTopLevelTargetFlag: false,
         },
       };
     },

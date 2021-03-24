@@ -55,7 +55,7 @@ use crate::batch::{AlphaBatchContainer, BatchKind, BatchFeatures, BatchTextures,
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::capture::{CaptureConfig, ExternalCaptureImage, PlainExternalImage};
 use crate::composite::{CompositeState, CompositeTileSurface, CompositeTile, ResolvedExternalSurface, CompositorSurfaceTransform};
-use crate::composite::{CompositorKind, Compositor, NativeTileId, CompositeSurfaceFormat, ResolvedExternalSurfaceColorData};
+use crate::composite::{CompositorKind, Compositor, NativeTileId, CompositeFeatures, CompositeSurfaceFormat, ResolvedExternalSurfaceColorData};
 use crate::composite::{CompositorConfig, NativeSurfaceOperationDetails, NativeSurfaceId, NativeSurfaceOperation};
 use crate::c_str;
 use crate::debug_colors;
@@ -75,7 +75,7 @@ use crate::gpu_types::{PrimitiveInstanceData, ScalingInstance, SvgFilterInstance
 use crate::gpu_types::{BlurInstance, ClearInstance, CompositeInstance, ZBufferId};
 use crate::internal_types::{TextureSource, ResourceCacheError};
 use crate::internal_types::{CacheTextureId, DebugOutput, FastHashMap, FastHashSet, RenderedDocument, ResultMsg};
-use crate::internal_types::{TextureCacheAllocationKind, TextureUpdateList};
+use crate::internal_types::{TextureCacheAllocInfo, TextureCacheAllocationKind, TextureUpdateList};
 use crate::internal_types::{RenderTargetInfo, Swizzle, DeferredResolveIndex};
 use crate::picture::{self, ResolvedSurfaceTexture};
 use crate::prim_store::DeferredResolve;
@@ -171,14 +171,6 @@ const GPU_TAG_BRUSH_LINEAR_GRADIENT: GpuProfileTag = GpuProfileTag {
     label: "B_LinearGradient",
     color: debug_colors::POWDERBLUE,
 };
-const GPU_TAG_BRUSH_RADIAL_GRADIENT: GpuProfileTag = GpuProfileTag {
-    label: "B_RadialGradient",
-    color: debug_colors::LIGHTPINK,
-};
-const GPU_TAG_BRUSH_CONIC_GRADIENT: GpuProfileTag = GpuProfileTag {
-    label: "B_ConicGradient",
-    color: debug_colors::GREEN,
-};
 const GPU_TAG_BRUSH_YUV_IMAGE: GpuProfileTag = GpuProfileTag {
     label: "B_YuvImage",
     color: debug_colors::DARKGREEN,
@@ -211,8 +203,16 @@ const GPU_TAG_CACHE_LINE_DECORATION: GpuProfileTag = GpuProfileTag {
     label: "C_LineDecoration",
     color: debug_colors::YELLOWGREEN,
 };
-const GPU_TAG_CACHE_GRADIENT: GpuProfileTag = GpuProfileTag {
-    label: "C_Gradient",
+const GPU_TAG_CACHE_FAST_LINEAR_GRADIENT: GpuProfileTag = GpuProfileTag {
+    label: "C_FastLinearGradient",
+    color: debug_colors::BROWN,
+};
+const GPU_TAG_CACHE_RADIAL_GRADIENT: GpuProfileTag = GpuProfileTag {
+    label: "C_RadialGradient",
+    color: debug_colors::BROWN,
+};
+const GPU_TAG_CACHE_CONIC_GRADIENT: GpuProfileTag = GpuProfileTag {
+    label: "C_ConicGradient",
     color: debug_colors::BROWN,
 };
 const GPU_TAG_SETUP_TARGET: GpuProfileTag = GpuProfileTag {
@@ -285,8 +285,6 @@ impl BatchKind {
                     BrushBatchKind::Blend => "Brush (Blend)",
                     BrushBatchKind::MixBlend { .. } => "Brush (Composite)",
                     BrushBatchKind::YuvImage(..) => "Brush (YuvImage)",
-                    BrushBatchKind::ConicGradient => "Brush (ConicGradient)",
-                    BrushBatchKind::RadialGradient => "Brush (RadialGradient)",
                     BrushBatchKind::LinearGradient => "Brush (LinearGradient)",
                     BrushBatchKind::Opacity => "Brush (Opacity)",
                 }
@@ -305,8 +303,6 @@ impl BatchKind {
                     BrushBatchKind::Blend => GPU_TAG_BRUSH_BLEND,
                     BrushBatchKind::MixBlend { .. } => GPU_TAG_BRUSH_MIXBLEND,
                     BrushBatchKind::YuvImage(..) => GPU_TAG_BRUSH_YUV_IMAGE,
-                    BrushBatchKind::ConicGradient => GPU_TAG_BRUSH_CONIC_GRADIENT,
-                    BrushBatchKind::RadialGradient => GPU_TAG_BRUSH_RADIAL_GRADIENT,
                     BrushBatchKind::LinearGradient => GPU_TAG_BRUSH_LINEAR_GRADIENT,
                     BrushBatchKind::Opacity => GPU_TAG_BRUSH_OPACITY,
                 }
@@ -595,6 +591,21 @@ impl TextureResolver {
             _ => {
                 default_value
             }
+        }
+    }
+
+    /// Returns the size of the texture in pixels
+    fn get_texture_size(&self, texture: &TextureSource) -> DeviceIntSize {
+        match *texture {
+            TextureSource::Invalid => DeviceIntSize::zero(),
+            TextureSource::TextureCache(id, _) => {
+                self.texture_cache_map[&id].get_dimensions()
+            },
+            TextureSource::External(index, _) => {
+                let uv_rect = self.external_images[&index].get_uv_rect();
+                (uv_rect.uv1 - uv_rect.uv0).abs().to_size().to_i32()
+            },
+            TextureSource::Dummy => DeviceIntSize::new(1, 1),
         }
     }
 
@@ -1128,6 +1139,7 @@ impl Renderer {
             gpu_supports_advanced_blend: ext_blend_equation_advanced,
             advanced_blend_is_coherent: ext_blend_equation_advanced_coherent,
             gpu_supports_render_target_partial_update: device.get_capabilities().supports_render_target_partial_update,
+            external_images_require_copy: !device.get_capabilities().supports_image_external_essl3,
             batch_lookback_count: RendererOptions::BATCH_LOOKBACK_COUNT,
             background_color: options.clear_color,
             compositor_kind,
@@ -1985,6 +1997,7 @@ impl Renderer {
                     offset: surface_info.origin,
                     external_fbo_id: surface_info.fbo_id,
                     dimensions: surface_size,
+                    surface_origin_is_top_left: self.device.surface_origin_is_top_left(),
                 };
                 self.device.bind_draw_target(draw_target);
 
@@ -2343,30 +2356,86 @@ impl Renderer {
         let mut delete_cache_texture_time = 0;
 
         for update_list in pending_texture_updates.drain(..) {
+            // Find any textures that will need to be deleted in this group of allocations.
+            let mut pending_deletes = Vec::new();
+            for allocation in &update_list.allocations {
+                let old = self.texture_resolver.texture_cache_map.remove(&allocation.id);
+                match allocation.kind {
+                    TextureCacheAllocationKind::Alloc(_) => {
+                        assert!(old.is_none(), "Renderer and backend disagree!");
+                    }
+                    TextureCacheAllocationKind::Reset(_) |
+                    TextureCacheAllocationKind::Free => {
+                        assert!(old.is_some(), "Renderer and backend disagree!");
+                    }
+                }
+                if let Some(texture) = old {
+                    // Regenerate the cache allocation info so we can search through deletes for reuse.
+                    let size = texture.get_dimensions();
+                    let info = TextureCacheAllocInfo {
+                        width: size.width,
+                        height: size.height,
+                        format: texture.get_format(),
+                        filter: texture.get_filter(),
+                        target: texture.get_target(),
+                        is_shared_cache: texture.flags().contains(TextureFlags::IS_SHARED_TEXTURE_CACHE),
+                        has_depth: texture.supports_depth(),
+                    };
+                    pending_deletes.push((texture, info));
+                }
+            }
+            // Look for any alloc or reset that has matching alloc info and save it from being deleted.
+            let mut reused_textures = VecDeque::with_capacity(pending_deletes.len());
+            for allocation in &update_list.allocations {
+                match allocation.kind {
+                    TextureCacheAllocationKind::Alloc(ref info) |
+                    TextureCacheAllocationKind::Reset(ref info) => {
+                        reused_textures.push_back(
+                            pending_deletes.iter()
+                                .position(|(_, old_info)| *old_info == *info)
+                                .map(|index| pending_deletes.swap_remove(index).0)
+                        );
+                    }
+                    TextureCacheAllocationKind::Free => {}
+                }
+            }
+            // Now that we've saved as many deletions for reuse as we can, actually delete whatever is left.
+            if !pending_deletes.is_empty() {
+                let delete_texture_start = precise_time_ns();
+                for (texture, _) in pending_deletes {
+                    add_event_marker(c_str!("TextureCacheFree"));
+                    self.device.delete_texture(texture);
+                }
+                delete_cache_texture_time += precise_time_ns() - delete_texture_start;
+            }
+
             for allocation in update_list.allocations {
                 match allocation.kind {
                     TextureCacheAllocationKind::Alloc(_) => add_event_marker(c_str!("TextureCacheAlloc")),
                     TextureCacheAllocationKind::Reset(_) => add_event_marker(c_str!("TextureCacheReset")),
-                    TextureCacheAllocationKind::Free => add_event_marker(c_str!("TextureCacheFree")),
+                    TextureCacheAllocationKind::Free => {}
                 };
-                let old = match allocation.kind {
+                match allocation.kind {
                     TextureCacheAllocationKind::Alloc(ref info) |
                     TextureCacheAllocationKind::Reset(ref info) => {
                         let create_cache_texture_start = precise_time_ns();
                         // Create a new native texture, as requested by the texture cache.
+                        // If we managed to reuse a deleted texture, then prefer that instead.
                         //
                         // Ensure no PBO is bound when creating the texture storage,
                         // or GL will attempt to read data from there.
-                        let mut texture = self.device.create_texture(
-                            info.target,
-                            info.format,
-                            info.width,
-                            info.height,
-                            info.filter,
-                            // This needs to be a render target because some render
-                            // tasks get rendered into the texture cache.
-                            Some(RenderTargetInfo { has_depth: info.has_depth }),
-                        );
+                        let mut texture = reused_textures.pop_front().unwrap_or(None).unwrap_or_else(|| {
+                            self.device.create_texture(
+                                info.target,
+                                info.format,
+                                info.width,
+                                info.height,
+                                info.filter,
+                                // This needs to be a render target because some render
+                                // tasks get rendered into the texture cache.
+                                Some(RenderTargetInfo { has_depth: info.has_depth }),
+                            )
+                        });
 
                         if info.is_shared_cache {
                             texture.flags_mut()
@@ -2391,28 +2460,10 @@ impl Renderer {
 
                         create_cache_texture_time += precise_time_ns() - create_cache_texture_start;
 
-                        self.texture_resolver.texture_cache_map.insert(allocation.id, texture)
+                        self.texture_resolver.texture_cache_map.insert(allocation.id, texture);
                     }
-                    TextureCacheAllocationKind::Free => {
-                        self.texture_resolver.texture_cache_map.remove(&allocation.id)
-                    }
+                    TextureCacheAllocationKind::Free => {}
                 };
-
-                match allocation.kind {
-                    TextureCacheAllocationKind::Alloc(_) => {
-                        assert!(old.is_none(), "Renderer and backend disagree!");
-                    }
-                    TextureCacheAllocationKind::Reset(_) |
-                    TextureCacheAllocationKind::Free => {
-                        assert!(old.is_some(), "Renderer and backend disagree!");
-                    }
-                }
-
-                if let Some(old) = old {
-                    let delete_texture_start = precise_time_ns();
-                    self.device.delete_texture(old);
-                    delete_cache_texture_time += precise_time_ns() - delete_texture_start;
-                }
             }
 
             upload_to_texture_cache(self, update_list.updates);
@@ -2687,6 +2738,7 @@ impl Renderer {
                 .bind(
                     &mut self.device,
                     &projection,
+                    Some(self.texture_resolver.get_texture_size(source).to_f32()),
                     &mut self.renderer_errors,
                 );
 
@@ -2715,6 +2767,7 @@ impl Renderer {
         self.shaders.borrow_mut().cs_svg_filter.bind(
             &mut self.device,
             &projection,
+            None,
             &mut self.renderer_errors
         );
 
@@ -2772,6 +2825,7 @@ impl Renderer {
                     self.shaders.borrow_mut().ps_clear.bind(
                         &mut self.device,
                         &projection,
+                        None,
                         &mut self.renderer_errors,
                     );
                     self.draw_instanced_batch(
@@ -2852,7 +2906,7 @@ impl Renderer {
                     self.shaders.borrow_mut()
                         .get(&batch.key, batch.features, self.debug_flags, &self.device)
                         .bind(
-                            &mut self.device, projection,
+                            &mut self.device, projection, None,
                             &mut self.renderer_errors,
                         );
 
@@ -2928,6 +2982,7 @@ impl Renderer {
                             shader.bind(
                                 &mut self.device,
                                 projection,
+                                None,
                                 &mut self.renderer_errors,
                             );
                             self.device.switch_mode(ShaderColorMode::SubpixelWithBgColorPass0 as _);
@@ -2968,6 +3023,7 @@ impl Renderer {
                 shader.bind(
                     &mut self.device,
                     projection,
+                    None,
                     &mut self.renderer_errors,
                 );
 
@@ -2984,6 +3040,7 @@ impl Renderer {
                     shader.bind(
                         &mut self.device,
                         projection,
+                        None,
                         &mut self.renderer_errors,
                     );
                     self.device.switch_mode(ShaderColorMode::SubpixelWithBgColorPass1 as _);
@@ -3000,6 +3057,7 @@ impl Renderer {
                     shader.bind(
                         &mut self.device,
                         projection,
+                        None,
                         &mut self.renderer_errors,
                     );
                     self.device.switch_mode(ShaderColorMode::SubpixelWithBgColorPass2 as _);
@@ -3068,6 +3126,7 @@ impl Renderer {
                 offset: surface_info.origin,
                 external_fbo_id: surface_info.fbo_id,
                 dimensions: surface_size,
+                surface_origin_is_top_left: self.device.surface_origin_is_top_left(),
             };
             self.device.bind_draw_target(draw_target);
 
@@ -3090,9 +3149,11 @@ impl Renderer {
                         .get_composite_shader(
                             CompositeSurfaceFormat::Yuv,
                             surface.image_buffer_kind,
+                            CompositeFeatures::empty(),
                         ).bind(
                             &mut self.device,
                             &projection,
+                            None,
                             &mut self.renderer_errors
                         );
 
@@ -3133,9 +3194,11 @@ impl Renderer {
                         .get_composite_shader(
                             CompositeSurfaceFormat::Rgba,
                             surface.image_buffer_kind,
+                            CompositeFeatures::empty(),
                         ).bind(
                             &mut self.device,
                             &projection,
+                            None,
                             &mut self.renderer_errors
                         );
 
@@ -3183,20 +3246,27 @@ impl Renderer {
         partial_present_mode: Option<PartialPresentMode>,
         stats: &mut RendererStats,
     ) {
+        let mut current_shader_params = (
+            CompositeSurfaceFormat::Rgba,
+            ImageBufferKind::Texture2D,
+            CompositeFeatures::empty(),
+            None,
+        );
+        let mut current_textures = BatchTextures::empty();
+        let mut instances = Vec::new();
+
         self.shaders
             .borrow_mut()
             .get_composite_shader(
-                CompositeSurfaceFormat::Rgba,
-                ImageBufferKind::Texture2D,
+                current_shader_params.0,
+                current_shader_params.1,
+                current_shader_params.2,
             ).bind(
                 &mut self.device,
                 projection,
+                None,
                 &mut self.renderer_errors
             );
-
-        let mut current_shader_params = (CompositeSurfaceFormat::Rgba, ImageBufferKind::Texture2D);
-        let mut current_textures = BatchTextures::empty();
-        let mut instances = Vec::new();
 
         for tile in tiles_iter {
             // Determine a clip rect to apply to this tile, depending on what
@@ -3227,41 +3297,52 @@ impl Renderer {
                 CompositeTileSurface::Color { color } => {
                     let dummy = TextureSource::Dummy;
                     let image_buffer_kind = dummy.image_buffer_kind();
+                    let instance = CompositeInstance::new(
+                        tile.rect,
+                        clip_rect,
+                        color.premultiplied(),
+                        tile.z_id,
+                    );
+                    let features = instance.get_rgb_features();
                     (
-                        CompositeInstance::new(
-                            tile.rect,
-                            clip_rect,
-                            color.premultiplied(),
-                            tile.z_id,
-                        ),
+                        instance,
                         BatchTextures::composite_rgb(dummy),
-                        (CompositeSurfaceFormat::Rgba, image_buffer_kind),
+                        (CompositeSurfaceFormat::Rgba, image_buffer_kind, features, None),
                     )
                 }
                 CompositeTileSurface::Clear => {
                     let dummy = TextureSource::Dummy;
                     let image_buffer_kind = dummy.image_buffer_kind();
+                    let instance = CompositeInstance::new(
+                        tile.rect,
+                        clip_rect,
+                        PremultipliedColorF::BLACK,
+                        tile.z_id,
+                    );
+                    let features = instance.get_rgb_features();
                     (
-                        CompositeInstance::new(
-                            tile.rect,
-                            clip_rect,
-                            PremultipliedColorF::BLACK,
-                            tile.z_id,
-                        ),
+                        instance,
                         BatchTextures::composite_rgb(dummy),
-                        (CompositeSurfaceFormat::Rgba, image_buffer_kind),
+                        (CompositeSurfaceFormat::Rgba, image_buffer_kind, features, None),
                     )
                 }
                 CompositeTileSurface::Texture { surface: ResolvedSurfaceTexture::TextureCache { texture } } => {
+                    let instance = CompositeInstance::new(
+                        tile.rect,
+                        clip_rect,
+                        PremultipliedColorF::WHITE,
+                        tile.z_id,
+                    );
+                    let features = instance.get_rgb_features();
                     (
-                        CompositeInstance::new(
-                            tile.rect,
-                            clip_rect,
-                            PremultipliedColorF::WHITE,
-                            tile.z_id,
-                        ),
+                        instance,
                         BatchTextures::composite_rgb(texture),
-                        (CompositeSurfaceFormat::Rgba, ImageBufferKind::Texture2D),
+                        (
+                            CompositeSurfaceFormat::Rgba,
+                            ImageBufferKind::Texture2D,
+                            features,
+                            None,
+                        ),
                     )
                 }
                 CompositeTileSurface::ExternalSurface { external_surface_index } => {
@@ -3297,7 +3378,12 @@ impl Renderer {
                                     uv_rects,
                                 ),
                                 textures,
-                                (CompositeSurfaceFormat::Yuv, surface.image_buffer_kind),
+                                (
+                                    CompositeSurfaceFormat::Yuv,
+                                    surface.image_buffer_kind,
+                                    CompositeFeatures::empty(),
+                                    None
+                                ),
                             )
                         },
                         ResolvedExternalSurfaceColorData::Rgb{ ref plane, flip_y, .. } => {
@@ -3308,17 +3394,23 @@ impl Renderer {
                                 uv_rect.uv0.y = uv_rect.uv1.y;
                                 uv_rect.uv1.y = y;
                             }
-
+                            let instance = CompositeInstance::new_rgb(
+                                tile.rect,
+                                clip_rect,
+                                PremultipliedColorF::WHITE,
+                                tile.z_id,
+                                uv_rect,
+                            );
+                            let features = instance.get_rgb_features();
                             (
-                                CompositeInstance::new_rgb(
-                                    tile.rect,
-                                    clip_rect,
-                                    PremultipliedColorF::WHITE,
-                                    tile.z_id,
-                                    uv_rect,
-                                ),
+                                instance,
                                 BatchTextures::composite_rgb(plane.texture),
-                                (CompositeSurfaceFormat::Rgba, surface.image_buffer_kind),
+                                (
+                                    CompositeSurfaceFormat::Rgba,
+                                    surface.image_buffer_kind,
+                                    features,
+                                    Some(self.texture_resolver.get_texture_size(&plane.texture).to_f32()),
+                                ),
                             )
                         },
                     }
@@ -3347,10 +3439,11 @@ impl Renderer {
             if shader_params != current_shader_params {
                 self.shaders
                     .borrow_mut()
-                    .get_composite_shader(shader_params.0, shader_params.1)
+                    .get_composite_shader(shader_params.0, shader_params.1, shader_params.2)
                     .bind(
                         &mut self.device,
                         projection,
+                        shader_params.3,
                         &mut self.renderer_errors
                     );
 
@@ -3570,7 +3663,7 @@ impl Renderer {
 
             self.set_blend(false, framebuffer_kind);
             self.shaders.borrow_mut().cs_blur_rgba8
-                .bind(&mut self.device, projection, &mut self.renderer_errors);
+                .bind(&mut self.device, projection, None, &mut self.renderer_errors);
 
             if !target.vertical_blurs.is_empty() {
                 self.draw_blurs(
@@ -3654,6 +3747,7 @@ impl Renderer {
             self.shaders.borrow_mut().cs_clip_rectangle_slow.bind(
                 &mut self.device,
                 projection,
+                None,
                 &mut self.renderer_errors,
             );
             self.draw_instanced_batch(
@@ -3668,6 +3762,7 @@ impl Renderer {
             self.shaders.borrow_mut().cs_clip_rectangle_fast.bind(
                 &mut self.device,
                 projection,
+                None,
                 &mut self.renderer_errors,
             );
             self.draw_instanced_batch(
@@ -3683,7 +3778,7 @@ impl Renderer {
             let _gm2 = self.gpu_profiler.start_marker("box-shadows");
             let textures = BatchTextures::composite_rgb(*mask_texture_id);
             self.shaders.borrow_mut().cs_clip_box_shadow
-                .bind(&mut self.device, projection, &mut self.renderer_errors);
+                .bind(&mut self.device, projection, None, &mut self.renderer_errors);
             self.draw_instanced_batch(
                 items,
                 VertexArrayKind::ClipBoxShadow,
@@ -3697,7 +3792,7 @@ impl Renderer {
             let _gm2 = self.gpu_profiler.start_marker("clip images");
             let textures = BatchTextures::composite_rgb(*mask_texture_id);
             self.shaders.borrow_mut().cs_clip_image
-                .bind(&mut self.device, projection, &mut self.renderer_errors);
+                .bind(&mut self.device, projection, None, &mut self.renderer_errors);
             self.draw_instanced_batch(
                 items,
                 VertexArrayKind::ClipImage,
@@ -3765,7 +3860,7 @@ impl Renderer {
             let _timer = self.gpu_profiler.start_timer(GPU_TAG_BLUR);
 
             self.shaders.borrow_mut().cs_blur_a8
-                .bind(&mut self.device, projection, &mut self.renderer_errors);
+                .bind(&mut self.device, projection, None, &mut self.renderer_errors);
 
             if !target.vertical_blurs.is_empty() {
                 self.draw_blurs(
@@ -3873,6 +3968,7 @@ impl Renderer {
                 self.shaders.borrow_mut().ps_clear.bind(
                     &mut self.device,
                     &projection,
+                    None,
                     &mut self.renderer_errors,
                 );
                 self.draw_instanced_batch(
@@ -3912,6 +4008,7 @@ impl Renderer {
                 self.shaders.borrow_mut().cs_border_solid.bind(
                     &mut self.device,
                     &projection,
+                    None,
                     &mut self.renderer_errors,
                 );
 
@@ -3927,6 +4024,7 @@ impl Renderer {
                 self.shaders.borrow_mut().cs_border_segment.bind(
                     &mut self.device,
                     &projection,
+                    None,
                     &mut self.renderer_errors,
                 );
 
@@ -3951,6 +4049,7 @@ impl Renderer {
             self.shaders.borrow_mut().cs_line_decoration.bind(
                 &mut self.device,
                 &projection,
+                None,
                 &mut self.renderer_errors,
             );
 
@@ -3965,20 +4064,71 @@ impl Renderer {
         }
 
         // Draw any gradients for this target.
-        if !target.gradients.is_empty() {
-            let _timer = self.gpu_profiler.start_timer(GPU_TAG_CACHE_GRADIENT);
+        if !target.fast_linear_gradients.is_empty() {
+            let _timer = self.gpu_profiler.start_timer(GPU_TAG_CACHE_FAST_LINEAR_GRADIENT);
 
             self.set_blend(false, FramebufferKind::Other);
 
-            self.shaders.borrow_mut().cs_gradient.bind(
+            self.shaders.borrow_mut().cs_fast_linear_gradient.bind(
                 &mut self.device,
                 &projection,
+                None,
                 &mut self.renderer_errors,
             );
 
             self.draw_instanced_batch(
-                &target.gradients,
-                VertexArrayKind::Gradient,
+                &target.fast_linear_gradients,
+                VertexArrayKind::FastLinearGradient,
+                &BatchTextures::empty(),
+                stats,
+            );
+        }
+
+        // Draw any radial gradients for this target.
+        if !target.radial_gradients.is_empty() {
+            let _timer = self.gpu_profiler.start_timer(GPU_TAG_CACHE_RADIAL_GRADIENT);
+
+            self.set_blend(false, FramebufferKind::Other);
+
+            self.shaders.borrow_mut().cs_radial_gradient.bind(
+                &mut self.device,
+                &projection,
+                None,
+                &mut self.renderer_errors,
+            );
+
+            if let Some(ref texture) = self.dither_matrix_texture {
+                self.device.bind_texture(TextureSampler::Dither, texture, Swizzle::default());
+            }
+
+            self.draw_instanced_batch(
+                &target.radial_gradients,
+                VertexArrayKind::RadialGradient,
+                &BatchTextures::empty(),
+                stats,
+            );
+        }
+
+        // Draw any conic gradients for this target.
+        if !target.conic_gradients.is_empty() {
+            let _timer = self.gpu_profiler.start_timer(GPU_TAG_CACHE_CONIC_GRADIENT);
+
+            self.set_blend(false, FramebufferKind::Other);
+
+            self.shaders.borrow_mut().cs_conic_gradient.bind(
+                &mut self.device,
+                &projection,
+                None,
+                &mut self.renderer_errors,
+            );
+
+            if let Some(ref texture) = self.dither_matrix_texture {
+                self.device.bind_texture(TextureSampler::Dither, texture, Swizzle::default());
+            }
+
+            self.draw_instanced_batch(
+                &target.conic_gradients,
+                VertexArrayKind::ConicGradient,
                 &BatchTextures::empty(),
                 stats,
             );
@@ -3993,7 +4143,7 @@ impl Renderer {
                 match target.target_kind {
                     RenderTargetKind::Alpha => &mut shaders.cs_blur_a8,
                     RenderTargetKind::Color => &mut shaders.cs_blur_rgba8,
-                }.bind(&mut self.device, &projection, &mut self.renderer_errors);
+                }.bind(&mut self.device, &projection, None, &mut self.renderer_errors);
             }
 
             self.draw_blurs(
@@ -4416,6 +4566,20 @@ impl Renderer {
                                 offset: surface_info.origin,
                                 external_fbo_id: surface_info.fbo_id,
                                 dimensions: size,
+                                surface_origin_is_top_left: self.device.surface_origin_is_top_left(),
+                            }
+                        }
+                    };
+
+                    let (bottom, top) = match picture_target.surface {
+                        ResolvedSurfaceTexture::TextureCache { .. } => {
+                            (0.0, draw_target.dimensions().height as f32)
+                        }
+                        ResolvedSurfaceTexture::Native { .. } => {
+                            if self.device.surface_origin_is_top_left() {
+                              (0.0, draw_target.dimensions().height as f32)
+                            } else {
+                              (draw_target.dimensions().height as f32, 0.0)
                             }
                         }
                     };
@@ -4423,8 +4587,8 @@ impl Renderer {
                     let projection = Transform3D::ortho(
                         0.0,
                         draw_target.dimensions().width as f32,
-                        0.0,
-                        draw_target.dimensions().height as f32,
+                        bottom,
+                        top,
                         self.device.ortho_near_plane(),
                         self.device.ortho_far_plane(),
                     );
@@ -5875,8 +6039,6 @@ fn should_skip_batch(kind: &BatchKind, flags: DebugFlags) -> bool {
         BatchKind::TextRun(_) => {
             flags.contains(DebugFlags::DISABLE_TEXT_PRIMS)
         }
-        BatchKind::Brush(BrushBatchKind::ConicGradient) |
-        BatchKind::Brush(BrushBatchKind::RadialGradient) |
         BatchKind::Brush(BrushBatchKind::LinearGradient) => {
             flags.contains(DebugFlags::DISABLE_GRADIENT_PRIMS)
         }

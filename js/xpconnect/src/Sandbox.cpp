@@ -558,6 +558,11 @@ bool IsSandboxPrototypeProxy(JSObject* obj) {
   return js::IsProxy(obj) && js::GetProxyHandler(obj) == &sandboxProxyHandler;
 }
 
+bool IsWebExtensionContentScriptSandbox(JSObject* obj) {
+  return IsSandbox(obj) &&
+         CompartmentPrivate::Get(obj)->isWebExtensionContentScript;
+}
+
 }  // namespace xpc
 
 // A proxy handler that lets us wrap callables and invoke them with
@@ -1326,7 +1331,7 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
         }
       }
 
-      ok = JS_SplicePrototype(cx, sandbox, options.proto);
+      ok = JS_SetPrototype(cx, sandbox, options.proto);
       if (!ok) {
         return NS_ERROR_XPC_UNEXPECTED;
       }

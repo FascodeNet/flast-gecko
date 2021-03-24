@@ -1062,7 +1062,7 @@ class ModalPrompter {
       .finally(() => {
         closed = true;
       });
-    Services.tm.spinEventLoopUntilOrShutdown(
+    Services.tm.spinEventLoopUntilOrQuit(
       "prompts/Prompter.jsm:openPromptSync",
       () => closed
     );
@@ -1123,9 +1123,8 @@ class ModalPrompter {
       return args;
     }
 
+    args.promptPrincipal = this.browsingContext.window?.document.nodePrincipal;
     if (IS_CONTENT) {
-      args.promptPrincipal = this.browsingContext.window?.document.nodePrincipal;
-
       let docShell = this.browsingContext.docShell;
       let inPermitUnload = docShell?.contentViewer?.inPermitUnload;
       args.inPermitUnload = inPermitUnload;

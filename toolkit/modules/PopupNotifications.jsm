@@ -88,10 +88,6 @@ function Notification(
   this.owner = owner;
   this.options = options || {};
 
-  if (!this.options.hasOwnProperty("opinionated")) {
-    this.options.opinionated = true;
-  }
-
   this._dismissed = false;
   // Will become a boolean when manually toggled by the user.
   this._checkboxChecked = null;
@@ -273,6 +269,10 @@ function PopupNotifications(tabbrowser, panel, iconBox, options = {}) {
     ) {
       let escAction = notification.notification.options.escAction;
       this._onButtonEvent(aEvent, escAction, "esc-press", notification);
+      // Without this preventDefault call, the event will be sent to the content page
+      // and our event listener might be called again after receiving a reply from
+      // the content process, which could accidentally dismiss another notification.
+      aEvent.preventDefault();
     }
   };
 
@@ -533,12 +533,6 @@ PopupNotifications.prototype = {
    *        extraAttr:
    *                     An optional string value which will be given to the
    *                     extraAttr attribute on the notification's anchorElement
-   *        opinionated:
-   *                     A boolean. If true, the main action button will be styled
-   *                     differently from other actions. If false, the main action
-   *                     will look the same as other actions. Defaults to true if
-   *                     omitted.
-   *
    * @returns the Notification object corresponding to the added notification.
    */
   show: function PopupNotifications_show(
@@ -1010,7 +1004,10 @@ PopupNotifications.prototype = {
         `PopupNotifications._dismiss(event, true);`
       );
 
-      popupnotification.toggleAttribute("opinionated", n.options.opinionated);
+      popupnotification.toggleAttribute(
+        "hasicon",
+        !!(n.options.popupIconURL || n.options.popupIconClass)
+      );
 
       if (n.mainAction) {
         popupnotification.setAttribute("buttonlabel", n.mainAction.label);
@@ -1700,6 +1697,11 @@ PopupNotifications.prototype = {
     if (event.target != this.panel) {
       return;
     }
+
+    // It's possible that a popupnotification set `aria-describedby` on the
+    // panel element in its eventCallback function. If so, we'll clear that out
+    // before showing the next notification.
+    this.panel.removeAttribute("aria-describedby");
 
     // We may have removed the "noautofocus" attribute before showing the panel
     // if the notification specified it wants to autofocus on first show.

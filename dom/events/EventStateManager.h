@@ -573,7 +573,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   // DocShell Focus Traversal Methods
   //---------------------------------------------
 
-  nsIContent* GetFocusedContent();
+  dom::Element* GetFocusedElement();
   bool IsShellVisible(nsIDocShell* aShell);
 
   // These functions are for mousewheel and pixel scrolling
@@ -1105,9 +1105,9 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   static void UpdateAncestorState(nsIContent* aStartNode,
                                   nsIContent* aStopBefore, EventStates aState,
                                   bool aAddState);
-  static void ResetLastOverForContent(const uint32_t& aIdx,
-                                      RefPtr<OverOutElementsWrapper>& aChunk,
-                                      nsIContent* aClosure);
+  static void ResetLastOverForContent(
+      const uint32_t& aIdx, const RefPtr<OverOutElementsWrapper>& aChunk,
+      nsIContent* aClosure);
 
   /**
    * Update the attribute mLastRefPoint of the mouse event. It should be
@@ -1188,6 +1188,9 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   uint32_t mMClickCount;
   uint32_t mRClickCount;
 
+  bool mShouldAlwaysUseLineDeltas : 1;
+  bool mShouldAlwaysUseLineDeltasInitialized : 1;
+
   bool mInTouchDrag;
 
   bool m_haveShutdown;
@@ -1196,10 +1199,13 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   nsRefPtrHashtable<nsUint32HashKey, OverOutElementsWrapper>
       mPointersEnterLeaveHelper;
 
+  // Array for accesskey support
+  nsCOMArray<dom::Element> mAccessKeys;
+
+  bool ShouldAlwaysUseLineDeltas();
+
  public:
   static nsresult UpdateUserActivityTimer(void);
-  // Array for accesskey support
-  nsCOMArray<nsIContent> mAccessKeys;
 
   static bool sNormalLMouseEventInProcess;
   static int16_t sCurrentMouseBtn;

@@ -30,27 +30,17 @@ class nsBaseHashtable;
 template <class KeyClass, class T>
 class nsClassHashtable;
 
-/**
- * templated hashtable class maps keys to simple datatypes.
- * See nsBaseHashtable for complete declaration
- * @param KeyClass a wrapper-class for the hashtable key, see nsHashKeys.h
- *   for a complete specification.
- * @param DataType the simple datatype being wrapped
- * @see nsInterfaceHashtable, nsClassHashtable
- */
-template <class KeyClass, class DataType>
-using nsDataHashtable = nsBaseHashtable<KeyClass, DataType, DataType>;
-
 template <class KeyClass, class PtrType>
 class nsRefCountedHashtable;
 
 /**
  * templated hashtable class maps keys to interface pointers.
  * See nsBaseHashtable for complete declaration.
+ * @deprecated This is going to be removed. Use nsTHashMap instead.
  * @param KeyClass a wrapper-class for the hashtable key, see nsHashKeys.h
  *   for a complete specification.
  * @param Interface the interface-type being wrapped
- * @see nsDataHashtable, nsClassHashtable
+ * @see nsClassHashtable, nsTHashMap
  */
 template <class KeyClass, class Interface>
 using nsInterfaceHashtable =
@@ -59,12 +49,46 @@ using nsInterfaceHashtable =
 /**
  * templated hashtable class maps keys to reference pointers.
  * See nsBaseHashtable for complete declaration.
+ * @deprecated This is going to be removed. Use nsTHashMap instead.
  * @param KeyClass a wrapper-class for the hashtable key, see nsHashKeys.h
  *   for a complete specification.
  * @param PtrType the reference-type being wrapped
- * @see nsDataHashtable, nsClassHashtable
+ * @see nsClassHashtable, nsTHashMap
  */
 template <class KeyClass, class ClassType>
 using nsRefPtrHashtable = nsRefCountedHashtable<KeyClass, RefPtr<ClassType>>;
+
+namespace mozilla::detail {
+template <class KeyType>
+struct nsKeyClass;
+}  // namespace mozilla::detail
+
+/**
+ * A universal hash map that maps some KeyType to some DataType. It can be used
+ * for any DataType, including RefPtr<T>, nsCOMPtr<T> and UniquePtr<T>.
+ *
+ * For the default hash keys types, the appropriate hash key class is determined
+ * automatically, so you can just specify `nsTHashMap<uint32_t,
+ * RefPtr<Foo>>`, for example.
+ *
+ * If you require custom hash behaviour (e.g. case insensitive string handling),
+ * you can still specify a hash key class derived from PLDHashEntryHdr
+ * explicitly.
+ *
+ * If you need to use a custom UserDataType, use nsBaseHashtable (or
+ * nsTHashtable) directly. However, you should double-check if that's really
+ * necessary.
+ */
+template <class KeyType, class DataType>
+using nsTHashMap =
+    nsBaseHashtable<typename mozilla::detail::nsKeyClass<KeyType>::type,
+                    DataType, DataType>;
+
+template <class KeyClass>
+class nsTBaseHashSet;
+
+template <class KeyType>
+using nsTHashSet =
+    nsTBaseHashSet<typename mozilla::detail::nsKeyClass<KeyType>::type>;
 
 #endif  // XPCOM_DS_NSHASHTABLESFWD_H_

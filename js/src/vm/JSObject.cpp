@@ -1523,9 +1523,9 @@ void JSObject::swap(JSContext* cx, HandleObject a, HandleObject b,
   // teleporting optimizations.
   //
   // See: ReshapeForProtoMutation, ReshapeForShadowedProp
-  MOZ_ASSERT_IF(a->is<NativeObject>() && a->isDelegate(),
+  MOZ_ASSERT_IF(a->is<NativeObject>() && a->isUsedAsPrototype(),
                 a->taggedProto() == TaggedProto());
-  MOZ_ASSERT_IF(b->is<NativeObject>() && b->isDelegate(),
+  MOZ_ASSERT_IF(b->is<NativeObject>() && b->isUsedAsPrototype(),
                 b->taggedProto() == TaggedProto());
 
   bool aIsProxyWithInlineValues =
@@ -1751,12 +1751,12 @@ static bool ReshapeForProtoMutation(JSContext* cx, HandleObject obj) {
   //
   // There are two cases:
   //
-  // (1) The object is not marked Delegate. This is the common case. Because
-  //     shape implies proto, we rely on the caller changing the object's shape.
-  //     The JIT guards on this object's shape or prototype so there's nothing
-  //     we have to do here for objects on the proto chain.
+  // (1) The object is not marked IsUsedAsPrototype. This is the common case.
+  //     Because shape implies proto, we rely on the caller changing the
+  //     object's shape. The JIT guards on this object's shape or prototype so
+  //     there's nothing we have to do here for objects on the proto chain.
   //
-  // (2) The object is marked Delegate. This implies the object may be
+  // (2) The object is marked IsUsedAsPrototype. This implies the object may be
   //     participating in shape teleporting. To invalidate JIT ICs depending on
   //     the proto chain being unchanged, set the UncacheableProto shape flag
   //     for this object and objects on its proto chain.
@@ -1771,7 +1771,7 @@ static bool ReshapeForProtoMutation(JSContext* cx, HandleObject obj) {
   //  - GeneratePrototypeGuards
   //  - GeneratePrototypeHoleGuards
 
-  if (!obj->isDelegate()) {
+  if (!obj->isUsedAsPrototype()) {
     return true;
   }
 
@@ -1799,7 +1799,7 @@ static bool SetProto(JSContext* cx, HandleObject obj,
 
   if (proto.isObject()) {
     RootedObject protoObj(cx, proto.toObject());
-    if (!JSObject::setDelegate(cx, protoObj)) {
+    if (!JSObject::setIsUsedAsPrototype(cx, protoObj)) {
       return false;
     }
   }
@@ -1931,7 +1931,7 @@ bool js::LookupName(JSContext* cx, HandlePropertyName name,
 }
 
 bool js::LookupNameNoGC(JSContext* cx, PropertyName* name, JSObject* envChain,
-                        JSObject** objp, JSObject** pobjp,
+                        JSObject** objp, NativeObject** pobjp,
                         PropertyResult* propp) {
   AutoAssertNoPendingException nogc(cx);
 
@@ -2065,7 +2065,7 @@ bool js::HasOwnProperty(JSContext* cx, HandleObject obj, HandleId id,
 }
 
 bool js::LookupPropertyPure(JSContext* cx, JSObject* obj, jsid id,
-                            JSObject** objp, PropertyResult* propp) {
+                            NativeObject** objp, PropertyResult* propp) {
   if (obj->getOpsLookupProperty()) {
     return false;
   }
@@ -2107,7 +2107,7 @@ static inline bool NativeGetPureInline(NativeObject* pobj, jsid id,
 }
 
 bool js::GetPropertyPure(JSContext* cx, JSObject* obj, jsid id, Value* vp) {
-  JSObject* pobj;
+  NativeObject* pobj;
   PropertyResult prop;
   if (!LookupPropertyPure(cx, obj, id, &pobj, &prop)) {
     return false;
@@ -2118,8 +2118,7 @@ bool js::GetPropertyPure(JSContext* cx, JSObject* obj, jsid id, Value* vp) {
     return true;
   }
 
-  return pobj->is<NativeObject>() &&
-         NativeGetPureInline(&pobj->as<NativeObject>(), id, prop, vp, cx);
+  return NativeGetPureInline(pobj, id, prop, vp, cx);
 }
 
 bool js::GetOwnPropertyPure(JSContext* cx, JSObject* obj, jsid id, Value* vp,
@@ -2159,7 +2158,7 @@ static inline bool NativeGetGetterPureInline(PropertyResult prop,
 bool js::GetGetterPure(JSContext* cx, JSObject* obj, jsid id, JSFunction** fp) {
   /* Just like GetPropertyPure, but get getter function, without invoking
    * it. */
-  JSObject* pobj;
+  NativeObject* pobj;
   PropertyResult prop;
   if (!LookupPropertyPure(cx, obj, id, &pobj, &prop)) {
     return false;
@@ -2280,16 +2279,6 @@ bool js::SetPrototype(JSContext* cx, HandleObject obj, HandleObject proto,
   }
   if (!extensible) {
     return result.fail(JSMSG_CANT_SET_PROTO);
-  }
-
-  // If this is a global object, resolve the Object class so that its
-  // [[Prototype]] chain is always properly immutable, even in the presence
-  // of lazy standard classes.
-  if (obj->is<GlobalObject>()) {
-    Handle<GlobalObject*> global = obj.as<GlobalObject>();
-    if (!GlobalObject::ensureConstructor(cx, global, JSProto_Object)) {
-      return false;
-    }
   }
 
   /*
@@ -2488,6 +2477,16 @@ bool js::SetImmutablePrototype(JSContext* cx, HandleObject obj,
   if (obj->hasDynamicPrototype()) {
     MOZ_ASSERT(!cx->isHelperThreadContext());
     return Proxy::setImmutablePrototype(cx, obj, succeeded);
+  }
+
+  // If this is a global object, resolve the Object class first to ensure the
+  // global's prototype is set to Object.prototype before we mark the global as
+  // having an immutable prototype.
+  if (obj->is<GlobalObject>()) {
+    Handle<GlobalObject*> global = obj.as<GlobalObject>();
+    if (!GlobalObject::ensureConstructor(cx, global, JSProto_Object)) {
+      return false;
+    }
   }
 
   if (!JSObject::setFlag(cx, obj, ObjectFlag::ImmutablePrototype)) {
@@ -3209,15 +3208,27 @@ void JSObject::dump(js::GenericPrinter& out) const {
   out.printf("  shape %p\n", shape);
 
   out.put("  flags:");
-  if (obj->isDelegate()) out.put(" delegate");
-  if (!obj->is<ProxyObject>() && !obj->nonProxyIsExtensible())
+  if (obj->isUsedAsPrototype()) {
+    out.put(" used_as_prototype");
+  }
+  if (!obj->is<ProxyObject>() && !obj->nonProxyIsExtensible()) {
     out.put(" not_extensible");
-  if (obj->maybeHasInterestingSymbolProperty())
+  }
+  if (obj->maybeHasInterestingSymbolProperty()) {
     out.put(" maybe_has_interesting_symbol");
-  if (obj->isBoundFunction()) out.put(" bound_function");
-  if (obj->isQualifiedVarObj()) out.put(" varobj");
-  if (obj->isUnqualifiedVarObj()) out.put(" unqualified_varobj");
-  if (obj->hasUncacheableProto()) out.put(" has_uncacheable_proto");
+  }
+  if (obj->isBoundFunction()) {
+    out.put(" bound_function");
+  }
+  if (obj->isQualifiedVarObj()) {
+    out.put(" varobj");
+  }
+  if (obj->isUnqualifiedVarObj()) {
+    out.put(" unqualified_varobj");
+  }
+  if (obj->hasUncacheableProto()) {
+    out.put(" has_uncacheable_proto");
+  }
   if (obj->hasStaticPrototype() && obj->staticPrototypeIsImmutable()) {
     out.put(" immutable_prototype");
   }
@@ -3239,6 +3250,10 @@ void JSObject::dump(js::GenericPrinter& out) const {
     }
     if (nobj->isIndexed()) {
       out.put(" indexed");
+    }
+    if (nobj->is<PlainObject>() &&
+        nobj->as<PlainObject>().hasNonWritableOrAccessorPropExclProto()) {
+      out.put(" has_non_writable_or_accessor_prop_excl_proto");
     }
     if (!nobj->denseElementsArePacked()) {
       out.put(" non_packed_elements");
@@ -3507,16 +3522,16 @@ js::gc::AllocKind JSObject::allocKindForTenure(
   // Inlined typed objects are followed by their data, so make sure we copy
   // it all over to the new object.
   if (is<InlineTypedObject>()) {
-    // Figure out the size of this object, from the prototype's TypeDescr.
+    // Figure out the size of this object, from the prototype's RttValue.
     // The objects we are traversing here are all tenured, so we don't need
     // to check forwarding pointers.
-    TypeDescr& descr = as<InlineTypedObject>().typeDescr();
+    RttValue& descr = as<InlineTypedObject>().rttValue();
     MOZ_ASSERT(!IsInsideNursery(&descr));
-    return InlineTypedObject::allocKindForTypeDescriptor(&descr);
+    return InlineTypedObject::allocKindForRttValue(&descr);
   }
 
   if (is<OutlineTypedObject>()) {
-    return OutlineTypedObject::allocKind;
+    return OutlineTypedObject::allocKind();
   }
 
   // All nursery allocatable non-native objects are handled above.
@@ -3591,7 +3606,6 @@ size_t JSObject::sizeOfIncludingThisInNursery() const {
   if (is<NativeObject>()) {
     const NativeObject& native = as<NativeObject>();
 
-    size += native.numFixedSlots() * sizeof(Value);
     size += native.numDynamicSlots() * sizeof(Value);
 
     if (native.hasDynamicElements()) {
@@ -3798,14 +3812,13 @@ void JSObject::debugCheckNewObject(Shape* shape, js::gc::AllocKind allocKind,
 
   MOZ_ASSERT(!shape->realm()->hasObjectPendingMetadata());
 
-  // Non-native classes manage their own data and slots, so numFixedSlots and
-  // slotSpan are always 0. Note that proxy classes can have reserved slots
-  // but they're also not included in numFixedSlots/slotSpan.
+  // Non-native classes manage their own data and slots, so numFixedSlots is
+  // always 0. Note that proxy classes can have reserved slots but they're not
+  // included in numFixedSlots.
   if (!clasp->isNativeObject()) {
     MOZ_ASSERT_IF(!clasp->isProxyObject(), JSCLASS_RESERVED_SLOTS(clasp) == 0);
     MOZ_ASSERT(!clasp->hasPrivate());
     MOZ_ASSERT_IF(shape, shape->numFixedSlots() == 0);
-    MOZ_ASSERT_IF(shape, shape->slotSpan() == 0);
   }
 }
 #endif

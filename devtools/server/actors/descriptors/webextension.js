@@ -59,11 +59,8 @@ const WebExtensionDescriptorActor = protocol.ActorClassWithSpec(
       this.addonId = addon.id;
       this._childFormPromise = null;
 
-      // Called when the debug browser element has been destroyed
-      this._extensionFrameDisconnect = this._extensionFrameDisconnect.bind(
-        this
-      );
       this._onChildExit = this._onChildExit.bind(this);
+      this.destroy = this.destroy.bind(this);
       AddonManager.addAddonListener(this);
     },
 
@@ -71,7 +68,10 @@ const WebExtensionDescriptorActor = protocol.ActorClassWithSpec(
       const policy = ExtensionParent.WebExtensionPolicy.getByID(this.addonId);
       return {
         actor: this.actorID,
-        debuggable: this.addon.isDebuggable,
+        // Note that until the policy becomes active,
+        // getTarget/connectToFrame will fail attaching to the web extension:
+        // https://searchfox.org/mozilla-central/rev/526a5089c61db85d4d43eb0e46edaf1f632e853a/toolkit/components/extensions/WebExtensionPolicy.cpp#551-553
+        debuggable: policy?.active && this.addon.isDebuggable,
         hidden: this.addon.hidden,
         // iconDataURL is available after calling loadIconDataURL
         iconDataURL: this._iconDataURL,
@@ -121,9 +121,17 @@ const WebExtensionDescriptorActor = protocol.ActorClassWithSpec(
       this._form = await connectToFrame(
         this.conn,
         this._browser,
-        this._extensionFrameDisconnect,
+        this.destroy,
         { addonId: this.addonId }
       );
+
+      // connectToFrame may resolve to a null form,
+      // in case the browser element is destroyed before it is fully connected to it.
+      if (!this._form) {
+        throw new Error(
+          "browser element destroyed while connecting to it: " + this.addon.name
+        );
+      }
 
       this._childActorID = this._form.actor;
 
@@ -192,7 +200,36 @@ const WebExtensionDescriptorActor = protocol.ActorClassWithSpec(
       );
     },
 
-    _extensionFrameDisconnect() {
+    /**
+     * Handle the child actor exit.
+     */
+    _onChildExit(msg) {
+      if (msg.json.actor !== this._childActorID) {
+        return;
+      }
+
+      this.destroy();
+    },
+
+    // AddonManagerListener callbacks.
+    onInstalled(addon) {
+      if (addon.id != this.addonId) {
+        return;
+      }
+
+      // Update the AddonManager's addon object on reload/update.
+      this.addon = addon;
+    },
+
+    onUninstalled(addon) {
+      if (addon != this.addon) {
+        return;
+      }
+
+      this.destroy();
+    },
+
+    destroy() {
       AddonManager.removeAddonListener(this);
 
       this.addon = null;
@@ -211,39 +248,9 @@ const WebExtensionDescriptorActor = protocol.ActorClassWithSpec(
 
       this._browser = null;
       this._childActorID = null;
-    },
 
-    /**
-     * Handle the child actor exit.
-     */
-    _onChildExit(msg) {
-      if (msg.json.actor !== this._childActorID) {
-        return;
-      }
+      this.emit("descriptor-destroyed");
 
-      this._extensionFrameDisconnect();
-    },
-
-    // AddonManagerListener callbacks.
-    onInstalled(addon) {
-      if (addon.id != this.addonId) {
-        return;
-      }
-
-      // Update the AddonManager's addon object on reload/update.
-      this.addon = addon;
-    },
-
-    onUninstalled(addon) {
-      if (addon != this.addon) {
-        return;
-      }
-
-      this._extensionFrameDisconnect();
-    },
-
-    destroy() {
-      this._extensionFrameDisconnect();
       protocol.Actor.prototype.destroy.call(this);
     },
   }

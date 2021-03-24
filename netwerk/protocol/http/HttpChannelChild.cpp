@@ -11,6 +11,7 @@
 #include "nsHttp.h"
 #include "nsICacheEntry.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/PerfStats.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/DocGroup.h"
@@ -451,6 +452,7 @@ void HttpChannelChild::OnStartRequest(
   SetApplyConversion(aArgs.applyConversion());
 
   StoreAfterOnStartRequestBegun(true);
+  StoreHasHTTPSRR(aArgs.hasHTTPSRR());
 
   AutoEventEnqueuer ensureSerialDispatch(mEventQ);
 
@@ -909,6 +911,15 @@ void HttpChannelChild::OnStopRequest(
         std::move(mSource), Some(nsDependentCString(contentType.get())));
   }
 #endif
+
+  if (mIsFromCache) {
+    PerfStats::RecordMeasurement(PerfStats::Metric::HttpChannelCompletion_Cache,
+                                 TimeStamp::Now() - mAsyncOpenTime);
+  } else {
+    PerfStats::RecordMeasurement(
+        PerfStats::Metric::HttpChannelCompletion_Network,
+        TimeStamp::Now() - mAsyncOpenTime);
+  }
 
   mResponseTrailers = MakeUnique<nsHttpHeaderArray>(aResponseTrailers);
 

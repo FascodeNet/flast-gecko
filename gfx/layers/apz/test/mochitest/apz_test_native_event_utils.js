@@ -377,56 +377,34 @@ function synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY, aObserver) {
   return true;
 }
 
-// Synthesizes a native mousewheel event and invokes the callback once the
+// Synthesizes a native mousewheel event and resolve the returned promise once the
 // request has been successfully made to the OS. This does not necessarily
 // guarantee that the OS generates the event we requested. See
 // synthesizeNativeWheel for details on the parameters.
-function synthesizeNativeWheelAndWaitForObserver(
+function promiseNativeWheelAndWaitForObserver(
   aElement,
   aX,
   aY,
   aDeltaX,
-  aDeltaY,
-  aCallback
+  aDeltaY
 ) {
-  var observer = {
-    observe(aSubject, aTopic, aData) {
-      if (aCallback && aTopic == "mousescrollevent") {
-        setTimeout(aCallback, 0);
-      }
-    },
-  };
-  return synthesizeNativeWheel(aElement, aX, aY, aDeltaX, aDeltaY, observer);
+  return new Promise(resolve => {
+    var observer = {
+      observe(aSubject, aTopic, aData) {
+        if (aTopic == "mousescrollevent") {
+          resolve();
+        }
+      },
+    };
+    synthesizeNativeWheel(aElement, aX, aY, aDeltaX, aDeltaY, observer);
+  });
 }
 
-// Synthesizes a native mousewheel event and invokes the callback once the
+// Synthesizes a native mousewheel event and resolve the returned promise once the
 // wheel event is dispatched to |aTarget|'s containing window. If the event
 // targets content in a subdocument, |aTarget| should be inside the
 // subdocument (or the subdocument's window). See synthesizeNativeWheel for
 // details on the other parameters.
-function synthesizeNativeWheelAndWaitForWheelEvent(
-  aTarget,
-  aX,
-  aY,
-  aDeltaX,
-  aDeltaY,
-  aCallback
-) {
-  let p = promiseNativeWheelAndWaitForWheelEvent(
-    aTarget,
-    aX,
-    aY,
-    aDeltaX,
-    aDeltaY
-  );
-  if (aCallback) {
-    p.then(aCallback);
-  }
-  return true;
-}
-
-// Same as synthesizeNativeWheelAndWaitForWheelEvent, except returns a promise
-// instead of taking a callback
 function promiseNativeWheelAndWaitForWheelEvent(
   aTarget,
   aX,
@@ -451,31 +429,11 @@ function promiseNativeWheelAndWaitForWheelEvent(
   });
 }
 
-// Synthesizes a native mousewheel event and invokes the callback once the
+// Synthesizes a native mousewheel event and resolves the returned promise once the
 // first resulting scroll event is dispatched to |aTarget|'s containing window.
 // If the event targets content in a subdocument, |aTarget| should be inside
 // the subdocument (or the subdocument's window).  See synthesizeNativeWheel
 // for details on the other parameters.
-function synthesizeNativeWheelAndWaitForScrollEvent(
-  aTarget,
-  aX,
-  aY,
-  aDeltaX,
-  aDeltaY,
-  aCallback
-) {
-  promiseNativeWheelAndWaitForScrollEvent(
-    aTarget,
-    aX,
-    aY,
-    aDeltaX,
-    aDeltaY
-  ).then(aCallback);
-  return true;
-}
-
-// Same as synthesizeNativeWheelAndWaitForScrollEvent, but returns a promise
-// instead of taking a callback
 function promiseNativeWheelAndWaitForScrollEvent(
   aTarget,
   aX,
@@ -808,6 +766,17 @@ function synthesizeNativeTap(aElement, aX, aY, aObserver = null) {
   return true;
 }
 
+function synthesizeNativeTouchpadDoubleTap(aTarget, aX, aY) {
+  let pt = coordinatesRelativeToScreen({
+    offsetX: aX,
+    offsetY: aY,
+    target: aTarget,
+  });
+  let utils = utilsForTarget(aTarget);
+  utils.sendNativeTouchpadDoubleTap(pt.x, pt.y, 0);
+  return true;
+}
+
 // If the event targets content in a subdocument, |aTarget| should be inside the
 // subdocument (or the subdocument window).
 function synthesizeNativeMouseEventWithAPZ(aParams, aObserver = null) {
@@ -927,56 +896,29 @@ function promiseNativeMouseEventWithAPZ(aParams) {
 }
 
 // See synthesizeNativeMouseEventWithAPZ for the detail of aParams.
-function synthesizeNativeMouseEventWithAPZAndWaitForEvent(
-  aParams,
-  aCallback = null
-) {
-  const targetWindow = windowForTarget(aParams.target);
-  const eventType = aParams.eventTypeToWait || aParams.type;
-  targetWindow.addEventListener(
-    eventType,
-    function(e) {
-      setTimeout(aCallback, 0);
-    },
-    { capture: true, once: true }
-  );
-  return synthesizeNativeMouseEventWithAPZ(aParams);
-}
-
 function promiseNativeMouseEventWithAPZAndWaitForEvent(aParams) {
   return new Promise(resolve => {
-    synthesizeNativeMouseEventWithAPZAndWaitForEvent(aParams, resolve);
+    const targetWindow = windowForTarget(aParams.target);
+    const eventType = aParams.eventTypeToWait || aParams.type;
+    targetWindow.addEventListener(eventType, resolve, {
+      capture: true,
+      once: true,
+    });
+    synthesizeNativeMouseEventWithAPZ(aParams);
   });
 }
 
 // Move the mouse to (dx, dy) relative to |target|, and scroll the wheel
 // at that location.
 // Moving the mouse is necessary to avoid wheel events from two consecutive
-// moveMouseAndScrollWheelOver() calls on different elements being incorrectly
+// promiseMoveMouseAndScrollWheelOver() calls on different elements being incorrectly
 // considered as part of the same wheel transaction.
 // We also wait for the mouse move event to be processed before sending the
 // wheel event, otherwise there is a chance they might get reordered, and
 // we have the transaction problem again.
-function moveMouseAndScrollWheelOver(
-  target,
-  dx,
-  dy,
-  testDriver,
-  waitForScroll = true,
-  scrollDelta = 10
-) {
-  promiseMoveMouseAndScrollWheelOver(
-    target,
-    dx,
-    dy,
-    waitForScroll,
-    scrollDelta
-  ).then(testDriver);
-  return true;
-}
-
-// Same as moveMouseAndScrollWheelOver, but returns a promise instead of taking
-// a callback function.
+// This function returns a promise that is resolved when the resulting wheel
+// (if waitForScroll = false) or scroll (if waitForScroll = true) event is
+// received.
 function promiseMoveMouseAndScrollWheelOver(
   target,
   dx,

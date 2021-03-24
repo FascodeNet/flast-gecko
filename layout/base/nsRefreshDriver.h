@@ -30,9 +30,7 @@
 #include "mozilla/layers/TransactionIdAllocator.h"
 #include "LayersTypes.h"
 
-#ifdef MOZ_GECKO_PROFILER
-#  include "mozilla/ProfileChunkedBuffer.h"
-#endif
+#include "GeckoProfiler.h"  // for ProfileChunkedBuffer
 
 class nsPresContext;
 
@@ -45,7 +43,7 @@ class PendingFullscreenEvent;
 class PresShell;
 class RefreshDriverTimer;
 class Runnable;
-
+class Task;
 }  // namespace mozilla
 
 class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
@@ -321,20 +319,6 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   void SetIsResizeSuppressed() { mResizeSuppressed = true; }
   bool IsResizeSuppressed() const { return mResizeSuppressed; }
 
-  /**
-   * The latest value of process-wide jank levels.
-   *
-   * For each i, sJankLevels[i] counts the number of times delivery of
-   * vsync to the main thread has been delayed by at least 2^i
-   * ms. This data structure has been designed to make it easy to
-   * determine how much jank has taken place between two instants in
-   * time.
-   *
-   * Return `false` if `aJank` needs to be grown to accomodate the
-   * data but we didn't have enough memory.
-   */
-  static bool GetJankLevels(mozilla::Vector<uint64_t>& aJank);
-
   // mozilla::layers::TransactionIdAllocator
   TransactionId GetTransactionId(bool aThrottle) override;
   TransactionId LastTransactionId() const override;
@@ -376,9 +360,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
    */
   static mozilla::Maybe<mozilla::TimeStamp> GetNextTickHint();
 
-  static void DispatchIdleRunnableAfterTickUnlessExists(nsIRunnable* aRunnable,
-                                                        uint32_t aDelay);
-  static void CancelIdleRunnable(nsIRunnable* aRunnable);
+  static void DispatchIdleTaskAfterTickUnlessExists(mozilla::Task* aTask);
+  static void CancelIdleTask(mozilla::Task* aTask);
 
   void NotifyDOMContentLoaded();
 
@@ -424,6 +407,9 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     eHasVisualViewportScrollEvents = 1 << 5,
   };
 
+  void AddForceNotifyContentfulPaintPresContext(nsPresContext* aPresContext);
+  void FlushForceNotifyContentfulPaintPresContext();
+
  private:
   typedef nsTArray<RefPtr<VVPResizeEvent>> VisualViewportResizeEventArray;
   typedef nsTArray<RefPtr<mozilla::Runnable>> ScrollEventArray;
@@ -442,9 +428,7 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     const char* mDescription;
     mozilla::TimeStamp mRegisterTime;
     mozilla::Maybe<uint64_t> mInnerWindowId;
-#ifdef MOZ_GECKO_PROFILER
     mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mCause;
-#endif
     mozilla::FlushType mFlushType;
 
     bool operator==(nsARefreshObserver* aObserver) const {
@@ -497,9 +481,7 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   mozilla::RefreshDriverTimer* ChooseTimer();
   mozilla::RefreshDriverTimer* mActiveTimer;
   RefPtr<mozilla::RefreshDriverTimer> mOwnTimer;
-#ifdef MOZ_GECKO_PROFILER
   mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mRefreshTimerStartedCause;
-#endif
 
   // nsPresContext passed in constructor and unset in Disconnect.
   mozilla::WeakPtr<nsPresContext> mPresContext;
@@ -528,9 +510,7 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   // flush since the last time we did it.
   const mozilla::TimeDuration mMinRecomputeVisibilityInterval;
 
-#ifdef MOZ_GECKO_PROFILER
   mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mViewManagerFlushCause;
-#endif
 
   bool mThrottled : 1;
   bool mNeedToRecomputeVisibility : 1;
@@ -611,23 +591,23 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   AutoTArray<mozilla::AnimationEventDispatcher*, 16>
       mAnimationEventFlushObservers;
 
+  // nsPresContexts which `NotifyContentfulPaint` have been called,
+  // however the corresponding paint doesn't come from a regular
+  // rendering steps(aka tick).
+  //
+  // For these nsPresContexts, we invoke
+  // `FlushForceNotifyContentfulPaintPresContext` in the next tick
+  // to force notify contentful paint, regardless whether the tick paints
+  // or not.
+  nsTArray<mozilla::WeakPtr<nsPresContext>>
+      mForceNotifyContentfulPaintPresContexts;
+
   void BeginRefreshingImages(RequestTable& aEntries,
                              mozilla::TimeStamp aDesired);
 
   friend class mozilla::RefreshDriverTimer;
 
   static void Shutdown();
-
-  // `true` if we are currently in jank-critical mode.
-  //
-  // In jank-critical mode, any iteration of the event loop that takes
-  // more than 16ms to compute will cause an ongoing animation to miss
-  // frames.
-  //
-  // For simplicity, the current implementation assumes that we are
-  // in jank-critical mode if and only if the vsync driver has at least
-  // one observer.
-  static bool IsJankCritical();
 };
 
 #endif /* !defined(nsRefreshDriver_h_) */

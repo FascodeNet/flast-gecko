@@ -12,6 +12,8 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
+#include <type_traits>
+
 #include "gc/Allocator.h"
 #include "gc/GCProbes.h"
 #include "gc/MaybeRooted.h"
@@ -21,7 +23,6 @@
 #include "vm/JSContext.h"
 #include "vm/ProxyObject.h"
 #include "vm/TypedArrayObject.h"
-#include "wasm/TypedObject.h"
 
 #include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
@@ -572,6 +573,29 @@ MOZ_ALWAYS_INLINE bool NativeObject::setLastProperty(JSContext* cx,
   return true;
 }
 
+MOZ_ALWAYS_INLINE bool NativeObject::setLastPropertyForNewDataProperty(
+    JSContext* cx, Shape* shape) {
+  MOZ_ASSERT(!inDictionaryMode());
+  MOZ_ASSERT(!shape->inDictionary());
+  MOZ_ASSERT(shape->zone() == zone());
+  MOZ_ASSERT(shape->numFixedSlots() == numFixedSlots());
+
+  MOZ_ASSERT(shape->previous() == lastProperty());
+  MOZ_ASSERT(shape->base() == lastProperty()->base());
+  MOZ_ASSERT(shape->isDataProperty());
+  MOZ_ASSERT(shape->slotSpan() == lastProperty()->slotSpan() + 1);
+
+  size_t slot = shape->slot();
+  MOZ_ASSERT(slot == lastProperty()->slotSpan());
+
+  if (MOZ_UNLIKELY(!updateSlotsForSpan(cx, slot, slot + 1))) {
+    return false;
+  }
+
+  setShape(shape);
+  return true;
+}
+
 inline js::gc::AllocKind NativeObject::allocKindForTenure() const {
   using namespace js::gc;
   AllocKind kind = GetGCObjectFixedSlotsKind(numFixedSlots());
@@ -772,7 +796,9 @@ template <AllowGC allowGC,
 static MOZ_ALWAYS_INLINE bool NativeLookupPropertyInline(
     JSContext* cx, typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
     typename MaybeRooted<jsid, allowGC>::HandleType id,
-    typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
+    typename MaybeRooted<
+        std::conditional_t<allowGC == AllowGC::CanGC, JSObject*, NativeObject*>,
+        allowGC>::MutableHandleType objp,
     typename MaybeRooted<PropertyResult, allowGC>::MutableHandleType propp) {
   /* Search scopes starting with obj and following the prototype link. */
   typename MaybeRooted<NativeObject*, allowGC>::RootType current(cx, obj);
@@ -853,11 +879,11 @@ inline bool IsPackedArray(JSObject* obj) {
   return true;
 }
 
-MOZ_ALWAYS_INLINE bool AddDataPropertyNonDelegate(JSContext* cx,
-                                                  HandlePlainObject obj,
-                                                  HandleId id, HandleValue v) {
+MOZ_ALWAYS_INLINE bool AddDataPropertyNonPrototype(JSContext* cx,
+                                                   HandlePlainObject obj,
+                                                   HandleId id, HandleValue v) {
   MOZ_ASSERT(!JSID_IS_INT(id));
-  MOZ_ASSERT(!obj->isDelegate());
+  MOZ_ASSERT(!obj->isUsedAsPrototype());
 
   // If we know this is a new property we can call addProperty instead of
   // the slower putProperty.
@@ -866,7 +892,7 @@ MOZ_ALWAYS_INLINE bool AddDataPropertyNonDelegate(JSContext* cx,
     return false;
   }
 
-  obj->setSlot(shape->slot(), v);
+  obj->initSlot(shape->slot(), v);
 
   MOZ_ASSERT(!obj->getClass()->getAddProperty());
   return true;

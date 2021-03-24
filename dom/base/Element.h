@@ -45,7 +45,7 @@
 #include "nsAttrValueInlines.h"
 #include "nsCaseTreatment.h"
 #include "nsChangeHint.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsError.h"
 #include "nsGkAtoms.h"
@@ -132,7 +132,7 @@ template <typename T>
 class Optional;
 enum class CallerType : uint32_t;
 enum class ReferrerPolicy : uint8_t;
-typedef nsDataHashtable<nsRefPtrHashKey<DOMIntersectionObserver>, int32_t>
+typedef nsTHashMap<nsRefPtrHashKey<DOMIntersectionObserver>, int32_t>
     IntersectionObserverList;
 }  // namespace dom
 }  // namespace mozilla
@@ -1647,6 +1647,20 @@ class Element : public FragmentOrElement {
   enum PresContextFor { eForComposedDoc, eForUncomposedDoc };
   nsPresContext* GetPresContext(PresContextFor aFor);
 
+  /**
+   * The method focuses (or activates) element that accesskey is bound to. It is
+   * called when accesskey is activated.
+   *
+   * @param aKeyCausesActivation - if true then element should be activated
+   * @param aIsTrustedEvent - if true then event that is cause of accesskey
+   *                          execution is trusted.
+   * @return true if the focus was changed.
+   */
+  MOZ_CAN_RUN_SCRIPT virtual bool PerformAccesskey(bool aKeyCausesActivation,
+                                                   bool aIsTrustedEvent) {
+    return false;
+  }
+
  protected:
   /*
    * Named-bools for use with SetAttrAndNotify to make call sites easier to
@@ -1945,6 +1959,11 @@ class Element : public FragmentOrElement {
    * for adding the actual event listener.
    */
   static nsAtom* GetEventNameForAttr(nsAtom* aAttr);
+
+  /**
+   * Register/unregister this element to accesskey map if it supports accesskey.
+   */
+  virtual void RegUnRegAccessKey(bool aDoReg);
 
  private:
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED

@@ -110,7 +110,7 @@ LocalStorageCache* LocalStorageManager::GetCache(
 
 already_AddRefed<StorageUsage> LocalStorageManager::GetOriginUsage(
     const nsACString& aOriginNoSuffix, const uint32_t aPrivateBrowsingId) {
-  RefPtr<StorageUsage> usage = mUsages.LookupOrInsertWith(aOriginNoSuffix, [&] {
+  return do_AddRef(mUsages.LookupOrInsertWith(aOriginNoSuffix, [&] {
     auto usage = MakeRefPtr<StorageUsage>(aOriginNoSuffix);
 
     StorageDBChild* storageChild =
@@ -120,9 +120,7 @@ already_AddRefed<StorageUsage> LocalStorageManager::GetOriginUsage(
     }
 
     return usage;
-  });
-
-  return usage.forget();
+  }));
 }
 
 already_AddRefed<LocalStorageCache> LocalStorageManager::PutCache(
@@ -323,16 +321,16 @@ LocalStorageManager::IsPreloaded(nsIPrincipal* aPrincipal, JSContext* aContext,
 void LocalStorageManager::ClearCaches(uint32_t aUnloadFlags,
                                       const OriginAttributesPattern& aPattern,
                                       const nsACString& aOriginScope) {
-  for (auto iter1 = mCaches.Iter(); !iter1.Done(); iter1.Next()) {
+  for (const auto& cacheEntry : mCaches) {
     OriginAttributes oa;
-    DebugOnly<bool> rv = oa.PopulateFromSuffix(iter1.Key());
+    DebugOnly<bool> rv = oa.PopulateFromSuffix(cacheEntry.GetKey());
     MOZ_ASSERT(rv);
     if (!aPattern.Matches(oa)) {
       // This table doesn't match the given origin attributes pattern
       continue;
     }
 
-    CacheOriginHashtable* table = iter1.UserData();
+    CacheOriginHashtable* table = cacheEntry.GetWeak();
 
     for (auto iter2 = table->Iter(); !iter2.Done(); iter2.Next()) {
       LocalStorageCache* cache = iter2.Get()->cache();
